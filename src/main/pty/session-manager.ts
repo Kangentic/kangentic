@@ -2,6 +2,7 @@ import * as pty from 'node-pty';
 import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
 import { ShellResolver } from './shell-resolver';
+import { adaptCommandForShell } from '../../shared/paths';
 import type { Session, SessionStatus, SpawnSessionInput } from '../../shared/types';
 
 const MAX_SCROLLBACK = 512 * 1024; // 512KB per session
@@ -78,7 +79,20 @@ export class SessionManager extends EventEmitter {
 
   private async doSpawn(input: SpawnSessionInput): Promise<Session> {
     const shell = this.configuredShell || await this.shellResolver.getDefaultShell();
-    const id = input.taskId ? (this.findByTaskId(input.taskId)?.id || uuidv4()) : uuidv4();
+    const existing = input.taskId ? this.findByTaskId(input.taskId) : null;
+    const id = existing?.id || uuidv4();
+
+    // Kill any existing PTY for this task to prevent orphaned processes
+    // that would emit data with the same session ID (double output).
+    if (existing?.pty) {
+      const ptyRef = existing.pty;
+      existing.pty = null;
+      ptyRef.kill();
+    }
+
+    // Carry over scrollback from the previous session so the terminal
+    // shows the full conversation history when a session is resumed.
+    const previousScrollback = existing?.scrollback || '';
 
     // Determine shell args and actual executable based on shell type
     const shellName = shell.toLowerCase();
@@ -119,11 +133,9 @@ export class SessionManager extends EventEmitter {
       exitCode: null,
       buffer: '',
       flushScheduled: false,
-      scrollback: '',
+      scrollback: previousScrollback,
     };
 
-    // Remove any queued placeholder
-    const existing = this.sessions.get(id);
     this.sessions.set(id, session);
 
     // Batched data output (~60fps)
@@ -159,7 +171,7 @@ export class SessionManager extends EventEmitter {
     // If there's a command to run, send it after a brief delay
     if (input.command) {
       setTimeout(() => {
-        const cmd = this.adaptCommandForShell(input.command!, shellName);
+        const cmd = adaptCommandForShell(input.command!, shellName);
         ptyProcess.write(cmd + '\r');
       }, 100);
     }
@@ -184,7 +196,9 @@ export class SessionManager extends EventEmitter {
   kill(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session?.pty) {
-      session.pty.kill();
+      const ptyRef = session.pty;
+      session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
+      ptyRef.kill();
     }
     // Also remove from queue
     const queueIdx = this.queue.findIndex(q => {
@@ -231,62 +245,6 @@ export class SessionManager extends EventEmitter {
     }
   }
 
-  /**
-   * Adapt a command string for the target shell.
-   * On Windows, converts executable paths and syntax for cross-shell compatibility.
-   */
-  private adaptCommandForShell(cmd: string, shellName: string): string {
-    if (process.platform !== 'win32') return cmd;
-
-    // PowerShell needs the & call operator for quoted/path commands
-    if (shellName.includes('powershell') || shellName.includes('pwsh')) {
-      return '& ' + cmd;
-    }
-
-    // Unix-like shells on Windows (Git Bash, WSL, fish, etc.):
-    // Convert the Windows executable path to POSIX format
-    if (this.isUnixLikeShell(shellName)) {
-      const isWsl = shellName.startsWith('wsl');
-      return this.convertWindowsExePath(cmd, isWsl);
-    }
-
-    return cmd;
-  }
-
-  private isUnixLikeShell(shellName: string): boolean {
-    // cmd.exe is the only Windows-native shell that doesn't need path conversion
-    // (PowerShell is handled separately above)
-    return !shellName.includes('cmd');
-  }
-
-  /**
-   * Convert a Windows-style executable path at the start of a command to POSIX format.
-   * Git Bash: C:\Users\... → /c/Users/...
-   * WSL:      C:\Users\... → /mnt/c/Users/...
-   */
-  private convertWindowsExePath(cmd: string, isWsl: boolean): string {
-    const prefix = isWsl ? '/mnt/' : '/';
-
-    // Quoted Windows path at start: "C:\path with spaces\exe" ...rest
-    if (cmd.startsWith('"')) {
-      return cmd.replace(
-        /^"([A-Za-z]):((?:\\[^"]+)+)"/,
-        (_m, drive: string, rest: string) => {
-          const posix = `${prefix}${drive.toLowerCase()}${rest.replace(/\\/g, '/')}`;
-          return posix.includes(' ') ? `"${posix}"` : posix;
-        },
-      );
-    }
-
-    // Unquoted Windows path at start: C:\path\to\exe ...rest
-    return cmd.replace(
-      /^([A-Za-z]):((?:\\[^\s]+)+)/,
-      (_m, drive: string, rest: string) => {
-        return `${prefix}${drive.toLowerCase()}${rest.replace(/\\/g, '/')}`;
-      },
-    );
-  }
-
   private toSession(s: ManagedSession): Session {
     return {
       id: s.id,
@@ -301,28 +259,58 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Kill all running PTY processes but return their session IDs
-   * so they can be marked as 'suspended' in the DB for later resume.
+   * Gracefully suspend all running PTY sessions.
+   *
+   * Sends Ctrl+C then /exit to each Claude Code process so it saves its
+   * conversation state (JSONL) before exiting. Waits up to `timeoutMs`
+   * for processes to exit on their own, then force-kills any remaining.
+   *
+   * Returns task IDs so the caller can mark them as 'suspended' in the DB.
    */
-  suspendAll(): string[] {
-    const suspendedIds: string[] = [];
+  async suspendAll(timeoutMs = 2000): Promise<string[]> {
+    const taskIds: string[] = [];
+    const ptysToKill: pty.IPty[] = [];
+
     for (const session of this.sessions.values()) {
       if (session.pty && session.status === 'running') {
-        suspendedIds.push(session.id);
-        session.pty.kill();
+        taskIds.push(session.taskId);
+
+        // Ask Claude Code to exit gracefully: Ctrl+C interrupts any
+        // in-progress operation, then /exit triggers a clean shutdown
+        // that flushes the JSONL conversation file.
+        try {
+          session.pty.write('\x03');
+          session.pty.write('/exit\r');
+        } catch {
+          // PTY may already be dead
+        }
+        ptysToKill.push(session.pty);
         session.status = 'exited';
-        session.pty = null;
       }
     }
+
     // Also count queued sessions as suspended
     for (const session of this.sessions.values()) {
       if (session.status === 'queued') {
-        suspendedIds.push(session.id);
+        taskIds.push(session.taskId);
         session.status = 'exited';
       }
     }
     this.queue.length = 0;
-    return suspendedIds;
+
+    // Wait for graceful exit, then force-kill any remaining
+    if (ptysToKill.length > 0) {
+      await new Promise((resolve) => setTimeout(resolve, timeoutMs));
+    }
+    for (const session of this.sessions.values()) {
+      if (session.pty) {
+        const ptyRef = session.pty;
+        session.pty = null;
+        try { ptyRef.kill(); } catch { /* already dead */ }
+      }
+    }
+
+    return taskIds;
   }
 
   killAll(): void {

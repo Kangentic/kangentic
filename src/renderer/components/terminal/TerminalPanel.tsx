@@ -6,11 +6,13 @@ export function TerminalPanel() {
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
+  const setOpenTaskId = useSessionStore((s) => s.setOpenTaskId);
+  const dialogSessionId = useSessionStore((s) => s.dialogSessionId);
 
-  // Show sessions that are running/queued, plus exited sessions that have an
-  // exit code (so the user can see the final output).
+  // Only show sessions that are actively running or queued.
+  // Exited/suspended sessions are removed from the panel.
   const activeSessions = sessions.filter(
-    (s) => s.status === 'running' || s.status === 'queued' || s.exitCode !== null,
+    (s) => s.status === 'running' || s.status === 'queued',
   );
 
   // Resolve the effective active ID: must be in the activeSessions list.
@@ -46,6 +48,7 @@ export function TerminalPanel() {
           <button
             key={session.id}
             onClick={() => setActiveSession(session.id)}
+            onDoubleClick={() => setOpenTaskId(session.taskId)}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-zinc-700 transition-colors whitespace-nowrap ${
               effectiveActiveId === session.id
                 ? 'bg-zinc-800 text-zinc-100'
@@ -62,17 +65,24 @@ export function TerminalPanel() {
         ))}
       </div>
 
-      {/* Terminal panes — only the active one is positioned; rest are display:none */}
+      {/* Terminal panes — only the active one is positioned; rest are display:none.
+          Sessions owned by the detail dialog are unmounted to avoid two xterm
+          instances fighting over PTY dimensions (different column widths cause
+          garbled TUI output). The panel recreates the terminal from scrollback
+          when the dialog closes. */}
       <div className="flex-1 min-h-0 relative">
         {activeSessions.map((session) => {
           const isActive = effectiveActiveId === session.id;
+          const ownedByDialog = dialogSessionId === session.id;
           return (
             <div
               key={session.id}
-              style={{ display: isActive ? 'block' : 'none' }}
+              style={{ display: isActive && !ownedByDialog ? 'block' : 'none' }}
               className="absolute inset-0"
             >
-              <TerminalTab sessionId={session.id} active={isActive} />
+              {!ownedByDialog && (
+                <TerminalTab sessionId={session.id} active={isActive} />
+              )}
             </div>
           );
         })}

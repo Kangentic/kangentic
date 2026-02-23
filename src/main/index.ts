@@ -94,26 +94,24 @@ app.on('activate', () => {
   }
 });
 
-app.on('before-quit', () => {
+async function shutdownSessions(): Promise<void> {
   const sessionManager = getSessionManager();
   const projectId = getCurrentProjectId();
 
-  // Suspend running sessions instead of killing them outright
-  const suspendedIds = sessionManager.suspendAll();
-
-  // Persist suspended status to DB
-  if (projectId && suspendedIds.length > 0) {
+  // Mark running DB records as 'suspended' BEFORE calling suspendAll().
+  // suspendAll() triggers PTY exits whose async onExit handler would
+  // otherwise race and overwrite 'running' → 'exited', preventing resume.
+  if (projectId) {
     try {
       const db = getProjectDb(projectId);
       const sessionRepo = new SessionRepository(db);
       const now = new Date().toISOString();
-      for (const sessionId of suspendedIds) {
-        // Find session record by claude_session_id (which matches the PTY session ID)
-        const record = db.prepare(
-          `SELECT id FROM sessions WHERE claude_session_id = ? AND status = 'running' LIMIT 1`
-        ).get(sessionId) as { id: string } | undefined;
-        if (record) {
-          sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: now });
+      for (const session of sessionManager.listSessions()) {
+        if (session.status === 'running' || session.status === 'queued') {
+          const record = sessionRepo.getLatestForTask(session.taskId);
+          if (record && record.status === 'running') {
+            sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: now });
+          }
         }
       }
     } catch {
@@ -121,6 +119,34 @@ app.on('before-quit', () => {
     }
   }
 
+  // Gracefully suspend running sessions — sends /exit then waits for
+  // Claude Code to save its conversation state before force-killing.
+  await sessionManager.suspendAll();
+
   sessionManager.killAll();
   closeAll();
+}
+
+let isShuttingDown = false;
+
+app.on('before-quit', (event) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  // Delay quit until async shutdown completes
+  event.preventDefault();
+  shutdownSessions().finally(() => {
+    app.exit(0);
+  });
 });
+
+// Handle force-close (Ctrl+C / SIGINT / SIGTERM) which may not fire before-quit
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    shutdownSessions().finally(() => {
+      process.exit(0);
+    });
+  });
+}

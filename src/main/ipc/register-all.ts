@@ -94,6 +94,22 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(IPC.TASK_DELETE, (_, id) => {
     const { tasks } = getProjectRepos();
+    const task = tasks.getById(id);
+
+    // Kill any active PTY session before deleting DB records
+    if (task?.session_id) {
+      try {
+        sessionManager.kill(task.session_id);
+      } catch (err) {
+        console.error('Failed to kill session during task delete:', err);
+      }
+    }
+
+    // Delete session DB records before the task to avoid FK constraint errors
+    const db = getProjectDb(currentProjectId!);
+    const sessionRepo = new SessionRepository(db);
+    sessionRepo.deleteByTaskId(id);
+
     tasks.delete(id);
   });
 
@@ -113,20 +129,21 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     // Move the task in the database
     tasks.move(input);
 
-    // If leaving an active column for a non-active column, suspend the session
+    // If leaving an active column for a non-active column, suspend the session.
+    // Mark as 'suspended' in the DB BEFORE killing the PTY so the async
+    // onExit handler sees 'suspended' and doesn't overwrite it with 'exited'.
     if (fromIsActive && !toIsActive && task.session_id) {
-      sessionManager.kill(task.session_id);
-
-      // Persist suspended status in session DB
       const db = getProjectDb(currentProjectId!);
       const sessionRepo = new SessionRepository(db);
-      const record = db.prepare(
-        `SELECT id FROM sessions WHERE claude_session_id = ? AND status = 'running' LIMIT 1`
-      ).get(task.session_id) as { id: string } | undefined;
-      if (record) {
+      const record = sessionRepo.getLatestForTask(task.id);
+      if (record && record.status === 'running') {
         sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: new Date().toISOString() });
+        console.log(`[TASK_MOVE] Suspended session record ${record.id.slice(0, 8)} (claude_id=${record.claude_session_id?.slice(0, 8)}) for task ${task.id.slice(0, 8)}`);
+      } else {
+        console.log(`[TASK_MOVE] No running session record to suspend for task ${task.id.slice(0, 8)} (latest record: ${record ? `status=${record.status}` : 'none'})`);
       }
 
+      sessionManager.kill(task.session_id);
       tasks.update({ id: task.id, session_id: null });
       return;
     }
@@ -265,11 +282,14 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
       try {
         const db = getProjectDb(currentProjectId);
         const sessionRepo = new SessionRepository(db);
-        // Look up by task ID from the in-memory session
+        // Look up by task ID from the in-memory session.
+        // Only mark 'running' records as 'exited' — never overwrite
+        // 'suspended' status, which is set by TASK_MOVE before the
+        // async onExit fires and is needed for resume on re-entry.
         const session = sessionManager.getSession(sessionId);
         if (session) {
           const record = sessionRepo.getLatestForTask(session.taskId);
-          if (record) {
+          if (record && record.status === 'running') {
             sessionRepo.updateStatus(record.id, 'exited', {
               exit_code: exitCode,
               exited_at: new Date().toISOString(),

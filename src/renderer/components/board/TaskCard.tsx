@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { TaskDetailDialog } from '../dialogs/TaskDetailDialog';
@@ -14,8 +14,19 @@ export function TaskCard({ task, isDragOverlay }: TaskCardProps) {
   const [showDetail, setShowDetail] = useState(false);
   const sessions = useSessionStore((s) => s.sessions);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
+  const activeSessionId = useSessionStore((s) => s.activeSessionId);
+  const openTaskId = useSessionStore((s) => s.openTaskId);
+  const setOpenTaskId = useSessionStore((s) => s.setOpenTaskId);
 
   const session = task.session_id ? sessions.find((s) => s.id === task.session_id) : null;
+  const isHighlighted = !!task.session_id && task.session_id === activeSessionId;
+
+  useEffect(() => {
+    if (openTaskId === task.id) {
+      setShowDetail(true);
+      setOpenTaskId(null);
+    }
+  }, [openTaskId, task.id, setOpenTaskId]);
 
   const {
     attributes,
@@ -68,7 +79,7 @@ export function TaskCard({ task, isDragOverlay }: TaskCardProps) {
         onClick={handleClick}
         className={`bg-zinc-800 border border-zinc-700 rounded-md p-2.5 cursor-grab active:cursor-grabbing hover:border-zinc-600 transition-colors ${
           isDragOverlay ? 'shadow-xl' : ''
-        }`}
+        } ${isHighlighted ? 'ring-2 ring-blue-500/60' : ''}`}
       >
         <div className="text-sm text-zinc-100 font-medium truncate">{task.title}</div>
 

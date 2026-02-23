@@ -9,7 +9,7 @@ interface TerminalTabProps {
 
 export function TerminalTab({ sessionId, active }: TerminalTabProps) {
   const config = useConfigStore((s) => s.config);
-  const { terminalRef, initTerminal, fit, focus } = useTerminal({
+  const { terminalRef, initTerminal, fit, focus, scrollbackPending } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
@@ -56,9 +56,13 @@ export function TerminalTab({ sessionId, active }: TerminalTabProps) {
   useEffect(() => {
     if (!active || !initialized.current) return;
 
-    // Fit after a frame to ensure layout is settled
+    // Fit after a frame to ensure layout is settled.
+    // Skip fit if scrollback is still loading — initTerminal handles the
+    // fit-after-scrollback sequence to ensure proper xterm reflow.
     const initRafId = requestAnimationFrame(() => {
-      fit();
+      if (!scrollbackPending.current) {
+        fit();
+      }
       focus();
     });
 
@@ -76,10 +80,18 @@ export function TerminalTab({ sessionId, active }: TerminalTabProps) {
     });
     observer.observe(el);
 
+    // Refit after panel drag ends (the ResizeObserver may miss the final
+    // layout when rAF debouncing races with React re-renders during drag).
+    const handlePanelResize = () => {
+      requestAnimationFrame(() => fit());
+    };
+    window.addEventListener('terminal-panel-resize', handlePanelResize);
+
     return () => {
       cancelAnimationFrame(initRafId);
       if (pendingRaf) cancelAnimationFrame(pendingRaf);
       observer.disconnect();
+      window.removeEventListener('terminal-panel-resize', handlePanelResize);
     };
   }, [active, fit, focus]);
 

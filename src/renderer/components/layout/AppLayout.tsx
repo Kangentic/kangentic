@@ -19,6 +19,8 @@ export function AppLayout() {
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     setIsResizing(true);
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
 
     const startY = e.clientY;
     const startHeight = terminalHeight;
@@ -30,9 +32,15 @@ export function AppLayout() {
     };
 
     const onMouseUp = () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
       setIsResizing(false);
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+      // Signal terminals to refit after the panel resize settles
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
+      });
     };
 
     document.addEventListener('mousemove', onMouseMove);
@@ -64,12 +72,12 @@ export function AppLayout() {
 
               {/* Resize handle */}
               <div
-                className="resize-handle h-1 bg-zinc-700 flex-shrink-0"
+                className="resize-handle h-1 bg-zinc-700 flex-shrink-0 cursor-row-resize hover:bg-zinc-500 transition-colors"
                 onMouseDown={handleResizeStart}
               />
 
               {/* Terminal panel */}
-              <div style={{ height: terminalHeight }} className="flex-shrink-0">
+              <div style={{ height: terminalHeight }} className={`flex-shrink-0 ${isResizing ? 'pointer-events-none' : ''}`}>
                 <TerminalPanel />
               </div>
             </>

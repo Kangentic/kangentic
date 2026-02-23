@@ -96,6 +96,106 @@ test.describe('Command Builder Logic', () => {
   });
 });
 
+test.describe('Prompt Delivery (Claude Agent)', () => {
+  function quoteArg(arg: string): string {
+    if (/^[a-zA-Z0-9_.\/:-]+$/.test(arg)) return arg;
+    if (process.platform === 'win32') return `"${arg.replace(/"/g, '\\"')}"`;
+    return `'${arg.replace(/'/g, "'\\''")}'`;
+  }
+
+  /** Simplified buildClaudeCommand matching the real implementation */
+  function buildClaudeCommand(options: {
+    claudePath: string;
+    prompt?: string;
+    sessionId?: string;
+    resume?: boolean;
+    permissionMode?: string;
+  }): string {
+    const parts = [quoteArg(options.claudePath)];
+
+    if (options.permissionMode === 'plan-mode') {
+      parts.push('--permission-mode', 'plan');
+    }
+
+    if (options.sessionId) {
+      const flag = options.resume ? '--resume' : '--session-id';
+      parts.push(flag, quoteArg(options.sessionId));
+    }
+
+    if (options.prompt) {
+      parts.push(quoteArg(options.prompt));
+    }
+
+    return parts.join(' ');
+  }
+
+  test('fresh session includes task title and description in prompt', () => {
+    const cmd = buildClaudeCommand({
+      claudePath: '/usr/bin/claude',
+      prompt: 'Task: Fix login bug\n\nUsers cannot log in with OAuth',
+    });
+
+    expect(cmd).toContain('Fix login bug');
+    expect(cmd).toContain('Users cannot log in with OAuth');
+  });
+
+  test('new session with session-id uses --session-id flag', () => {
+    const cmd = buildClaudeCommand({
+      claudePath: '/usr/bin/claude',
+      sessionId: 'abc-123-def',
+      prompt: 'Task: My Task\n\nDescription',
+    });
+
+    expect(cmd).toContain('--session-id');
+    expect(cmd).not.toContain('--resume');
+    expect(cmd).toContain('abc-123-def');
+  });
+
+  test('resumed session uses --resume flag and omits prompt', () => {
+    const cmd = buildClaudeCommand({
+      claudePath: '/usr/bin/claude',
+      sessionId: 'abc-123-def',
+      resume: true,
+    });
+
+    expect(cmd).toContain('--resume');
+    expect(cmd).not.toContain('--session-id');
+    expect(cmd).toContain('abc-123-def');
+    // No trailing positional argument — just the resume flag
+    const parts = cmd.split(' ');
+    const lastPart = parts[parts.length - 1];
+    expect(lastPart).toContain('abc-123-def');
+  });
+
+  test('fresh session to Planning includes plan mode flag and prompt', () => {
+    const cmd = buildClaudeCommand({
+      claudePath: '/usr/bin/claude',
+      prompt: 'Task: Design auth\n\nArchitect the system',
+      permissionMode: 'plan-mode',
+    });
+
+    expect(cmd).toContain('--permission-mode');
+    expect(cmd).toContain('plan');
+    expect(cmd).toContain('Design auth');
+    expect(cmd).toContain('Architect the system');
+  });
+
+  test('resumed session with --resume has no prompt text', () => {
+    const cmd = buildClaudeCommand({
+      claudePath: '/usr/bin/claude',
+      sessionId: 'session-xyz',
+      resume: true,
+      permissionMode: 'plan-mode',
+    });
+
+    expect(cmd).toContain('--resume');
+    expect(cmd).not.toContain('--session-id');
+    // Should NOT contain any task text
+    expect(cmd).not.toContain('Task:');
+    expect(cmd).not.toContain('Continue working');
+  });
+});
+
 test.describe('Slugify Logic', () => {
   test('converts titles to filesystem-safe slugs', () => {
     function slugify(text: string, maxLen = 50): string {

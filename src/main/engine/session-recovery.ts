@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { getProjectDb } from '../db/database';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
@@ -8,6 +9,7 @@ import { ClaudeDetector } from '../agent/claude-detector';
 import { CommandBuilder } from '../agent/command-builder';
 import { ConfigManager } from '../config/config-manager';
 import type { SessionRecord, SkillConfig } from '../../shared/types';
+import { ensureWorktreeTrust } from '../agent/trust-manager';
 
 // ---------------------------------------------------------------------------
 // Shared helper: determine which swimlane IDs should have active agents
@@ -115,6 +117,10 @@ export async function recoverSessions(
   // 4. Determine which columns should have active agents
   const agentLaneIds = getAgentSwimlaneIds(skillRepo);
 
+  // Cache transitions and skills for prompt lookup during recovery
+  const allTransitions = skillRepo.listTransitions();
+  const allSkills = skillRepo.list();
+
   // Detect Claude CLI once
   const config = configManager.getEffectiveConfig(projectPath);
   const claude = await claudeDetector.detect(config.claude.cliPath);
@@ -144,11 +150,21 @@ export async function recoverSessions(
       }
 
       // --- Guard: task must be in an agent-active column ---
+      // If the task is in a non-agent column but the session is 'suspended',
+      // leave it as-is so that moving the task back into an agent column can
+      // resume the conversation via --resume. Only orphaned records (crash
+      // recovery) get marked exited when outside agent columns.
       if (!agentLaneIds.has(task.swimlane_id)) {
-        console.log(
-          `Session recovery: task ${record.task_id} not in agent column — marking exited`,
-        );
-        sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+        if (record.status === 'suspended') {
+          console.log(
+            `Session recovery: task ${record.task_id} not in agent column — preserving suspended status for future resume`,
+          );
+        } else {
+          console.log(
+            `Session recovery: task ${record.task_id} not in agent column — marking exited`,
+          );
+          sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+        }
         skipped++;
         continue;
       }
@@ -163,18 +179,68 @@ export async function recoverSessions(
         continue;
       }
 
+      // Pre-populate trust for worktree paths
+      if (record.cwd !== projectPath) {
+        ensureWorktreeTrust(record.cwd);
+      }
+
       // Always use the CURRENT config permission mode, not the stale value
       // from the old session record (which may be outdated after settings change).
       const permissionMode = config.claude.permissionMode;
-      const resumePrompt = 'Continue working on the task.';
+
+      // Decide whether to resume or start fresh.
+      // Both SUSPENDED (clean shutdown) and ORPHANED (crash) sessions can
+      // attempt --resume as long as the claude_session_id is known — the
+      // JSONL file is usually intact. If the file is missing or corrupt,
+      // Claude CLI will error and the session exits; reconciliation will
+      // create a fresh one on the next app launch.
+      const canResume = (record.status === 'suspended' || record.status === 'orphaned')
+        && !!record.claude_session_id;
+
+      let prompt: string | undefined;
+      let claudeSessionId: string;
+
+      if (canResume) {
+        // Resume existing Claude conversation — no extra prompt needed
+        claudeSessionId = record.claude_session_id!;
+        prompt = undefined;
+      } else {
+        // Fresh session (orphaned or no prior session ID)
+        claudeSessionId = randomUUID();
+
+        // Find the spawn_agent skill that targets this task's lane
+        const incomingTransition = allTransitions.find(
+          (t) =>
+            t.to_swimlane_id === task.swimlane_id &&
+            allSkills.find((s) => s.id === t.skill_id)?.type === 'spawn_agent',
+        );
+        const skill = incomingTransition
+          ? allSkills.find((s) => s.id === incomingTransition.skill_id)
+          : undefined;
+        const skillConfig = skill
+          ? (JSON.parse(skill.config_json) as SkillConfig)
+          : undefined;
+
+        prompt = skillConfig?.promptTemplate
+          ? commandBuilder.interpolateTemplate(skillConfig.promptTemplate, {
+              title: task.title,
+              description: task.description,
+              taskId: task.id,
+              worktreePath: task.worktree_path || '',
+              branchName: task.branch_name || '',
+            })
+          : `Task: ${task.title}\n\n${task.description}`;
+      }
+
       const command = commandBuilder.buildClaudeCommand({
         claudePath: claude.path,
         taskId: task.id,
-        prompt: resumePrompt,
+        prompt,
         cwd: record.cwd,
         permissionMode: permissionMode as any,
         projectRoot: projectPath,
-        sessionId: record.claude_session_id || undefined,
+        sessionId: claudeSessionId,
+        resume: canResume,
       });
 
       // Spawn a new PTY
@@ -191,11 +257,11 @@ export async function recoverSessions(
       sessionRepo.insert({
         task_id: task.id,
         session_type: 'claude_agent',
-        claude_session_id: record.claude_session_id,
+        claude_session_id: claudeSessionId,
         command,
         cwd: record.cwd,
         permission_mode: permissionMode,
-        prompt: resumePrompt,
+        prompt: prompt ?? null,
         status: 'running',
         exit_code: null,
         started_at: now,
@@ -303,6 +369,11 @@ export async function reconcileSessions(
           continue;
         }
 
+        // Pre-populate trust for worktree paths
+        if (cwd !== projectPath) {
+          ensureWorktreeTrust(cwd);
+        }
+
         const claude = await claudeDetector.detect(config.claude.cliPath);
         if (!claude.found || !claude.path) {
           console.warn(
@@ -311,6 +382,8 @@ export async function reconcileSessions(
           continue;
         }
 
+        // Generate a Claude session ID upfront so recovery can resume
+        const claudeSessionId = randomUUID();
         const prompt = skillConfig.promptTemplate
           ? commandBuilder.interpolateTemplate(skillConfig.promptTemplate, {
               title: task.title,
@@ -328,6 +401,7 @@ export async function reconcileSessions(
           cwd,
           permissionMode: permissionMode as any,
           projectRoot: projectPath,
+          sessionId: claudeSessionId,
         });
 
         const session = await sessionManager.spawn({
@@ -345,7 +419,7 @@ export async function reconcileSessions(
         sessionRepo.insert({
           task_id: task.id,
           session_type: 'claude_agent',
-          claude_session_id: session.id,
+          claude_session_id: claudeSessionId,
           command,
           cwd,
           permission_mode: permissionMode,

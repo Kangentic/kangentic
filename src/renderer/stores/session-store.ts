@@ -4,11 +4,15 @@ import type { Session, SpawnSessionInput } from '../../shared/types';
 interface SessionStore {
   sessions: Session[];
   activeSessionId: string | null;
+  openTaskId: string | null;
+  dialogSessionId: string | null;
 
   loadSessions: () => Promise<void>;
   spawnSession: (input: SpawnSessionInput) => Promise<Session>;
   killSession: (id: string) => Promise<void>;
   setActiveSession: (id: string | null) => void;
+  setOpenTaskId: (id: string | null) => void;
+  setDialogSessionId: (id: string | null) => void;
   updateSessionStatus: (id: string, updates: Partial<Session>) => void;
 
   getRunningCount: () => number;
@@ -18,6 +22,8 @@ interface SessionStore {
 export const useSessionStore = create<SessionStore>((set, get) => ({
   sessions: [],
   activeSessionId: null,
+  openTaskId: null,
+  dialogSessionId: null,
 
   loadSessions: async () => {
     const sessions = await window.electronAPI.sessions.list();
@@ -50,6 +56,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   setActiveSession: (id) => set({ activeSessionId: id }),
+  setOpenTaskId: (id) => set({ openTaskId: id }),
+  setDialogSessionId: (id) => set({ dialogSessionId: id }),
 
   updateSessionStatus: (id, updates) => {
     set((s) => ({

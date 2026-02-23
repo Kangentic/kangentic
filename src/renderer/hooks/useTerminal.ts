@@ -15,6 +15,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const scrollbackPendingRef = useRef(false);
 
   const initTerminal = useCallback(() => {
     if (!terminalRef.current || xtermRef.current) return;
@@ -64,7 +65,6 @@ export function useTerminal(options: UseTerminalOptions) {
       // WebGL not available, use canvas fallback
     }
 
-    fitAddon.fit();
     xtermRef.current = terminal;
     fitAddonRef.current = fitAddon;
 
@@ -79,12 +79,33 @@ export function useTerminal(options: UseTerminalOptions) {
         window.electronAPI.sessions.resize(options.sessionId!, cols, rows);
       });
 
-      // Replay buffered scrollback so we see past output
+      // Replay buffered scrollback BEFORE fitting so xterm's reflow engine
+      // can properly re-wrap lines when fit() changes the column count.
+      // The scrollback was generated at the PTY's initial 120x30 which
+      // likely differs from the dialog's actual dimensions.
+      scrollbackPendingRef.current = true;
       window.electronAPI.sessions.getScrollback(options.sessionId).then((scrollback) => {
         if (scrollback && xtermRef.current) {
           xtermRef.current.write(scrollback);
         }
+        // Now fit — xterm reflows all content to the actual container size,
+        // and onResize fires to sync the PTY to the correct dimensions.
+        if (fitAddonRef.current) {
+          fitAddonRef.current.fit();
+        }
+        scrollbackPendingRef.current = false;
+        // Force an explicit resize to the PTY even if dimensions haven't
+        // changed, so the running process (Claude Code's TUI) re-renders.
+        requestAnimationFrame(() => {
+          if (xtermRef.current && options.sessionId) {
+            const { cols, rows } = xtermRef.current;
+            window.electronAPI.sessions.resize(options.sessionId, cols, rows);
+          }
+        });
       });
+    } else {
+      // No session — just fit immediately
+      fitAddon.fit();
     }
   }, [options.sessionId, options.fontFamily, options.fontSize]);
 
@@ -132,5 +153,6 @@ export function useTerminal(options: UseTerminalOptions) {
     fit,
     focus,
     clear,
+    scrollbackPending: scrollbackPendingRef,
   };
 }

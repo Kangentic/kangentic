@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useLayoutEffect } from 'react';
 import { X } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -19,7 +19,19 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
   const [description, setDescription] = useState(task.description);
   const [isEditing, setIsEditing] = useState(false);
 
+  const setDialogSessionId = useSessionStore((s) => s.setDialogSessionId);
   const session = task.session_id ? sessions.find((s) => s.id === task.session_id) : null;
+
+  // Register this session with the store so the bottom panel unmounts its
+  // TerminalTab BEFORE any terminal effects fire. useLayoutEffect runs
+  // synchronously after DOM mutations but before paint, ensuring the panel's
+  // terminal is torn down before the dialog's terminal initializes.
+  useLayoutEffect(() => {
+    if (session?.id) {
+      setDialogSessionId(session.id);
+      return () => setDialogSessionId(null);
+    }
+  }, [session?.id, setDialogSessionId]);
 
   const handleSave = async () => {
     await updateTask({ id: task.id, title, description });
@@ -27,11 +39,13 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
   };
 
   const handleDelete = async () => {
+    // Close dialog first to unmount the terminal (xterm) cleanly
+    // before tearing down the session — prevents WebGL renderer crash
+    onClose();
     if (task.session_id) {
       await killSession(task.session_id);
     }
     await deleteTask(task.id);
-    onClose();
   };
 
   // Global Escape key listener

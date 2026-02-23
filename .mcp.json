@@ -1,16 +1,16 @@
 {
   "mcpServers": {
     "azure": {
-      "command": "node",
-      "args": ["mcp-npx.js", "-y", "@azure/mcp@latest", "server", "start"]
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@azure/mcp@latest", "server", "start"]
     },
     "playwright": {
-      "command": "node",
-      "args": ["mcp-npx.js", "-y", "@playwright/mcp@latest"]
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@playwright/mcp@latest"]
     },
     "context7": {
-      "command": "node",
-      "args": ["mcp-npx.js", "-y", "@upstash/context7-mcp"]
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@upstash/context7-mcp"]
     },
     "microsoft-learn": {
       "type": "http",

@@ -74,6 +74,11 @@ export class SessionRepository {
     ).all() as SessionRecord[];
   }
 
+  /** Delete all session records for a given task */
+  deleteByTaskId(taskId: string): void {
+    this.db.prepare('DELETE FROM sessions WHERE task_id = ?').run(taskId);
+  }
+
   /** Find the latest session record for a given task */
   getLatestForTask(taskId: string): SessionRecord | undefined {
     return this.db.prepare(
