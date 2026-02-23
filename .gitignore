@@ -7,8 +7,6 @@
 # Build output
 dist/
 
-# MCP config (personal)
-.mcp.json
 
 # Logs
 logs
