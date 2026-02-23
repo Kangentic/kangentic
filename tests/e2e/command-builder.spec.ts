@@ -334,6 +334,137 @@ test.describe('Windows Path Conversion for Shells', () => {
   });
 });
 
+test.describe('Status Bridge Script', () => {
+  const { execSync } = require('node:child_process');
+  const bridgePath = path.join(__dirname, '..', '..', 'src', 'main', 'agent', 'status-bridge.js');
+
+  test('bridge writes JSON to output file', () => {
+    const tmpFile = path.join(__dirname, '..', '.tmp', `bridge-test-${Date.now()}.json`);
+    fs.mkdirSync(path.dirname(tmpFile), { recursive: true });
+
+    const input = JSON.stringify({
+      context_window: { used_percentage: 42, total_input_tokens: 1000, total_output_tokens: 500, context_window_size: 200000 },
+      cost: { total_cost_usd: 0.15, total_duration_ms: 5000 },
+      model: { id: 'claude-opus-4-6', display_name: 'Opus 4.6' },
+    });
+
+    try {
+      execSync(`node "${bridgePath}" "${tmpFile}"`, {
+        input,
+        encoding: 'utf-8',
+        timeout: 5000,
+      });
+
+      const written = JSON.parse(fs.readFileSync(tmpFile, 'utf-8'));
+      expect(written.context_window.used_percentage).toBe(42);
+      expect(written.cost.total_cost_usd).toBe(0.15);
+      expect(written.model.display_name).toBe('Opus 4.6');
+    } finally {
+      try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+    }
+  });
+
+  test('bridge outputs empty string to stdout (no TUI status line)', () => {
+    const input = JSON.stringify({
+      context_window: { used_percentage: 67.5 },
+      cost: { total_cost_usd: 1.234 },
+      model: { display_name: 'Sonnet 4.6' },
+    });
+
+    const stdout = execSync(`node "${bridgePath}"`, {
+      input,
+      encoding: 'utf-8',
+      timeout: 5000,
+    });
+
+    // Bridge should output nothing — Kangentic renders usage in its own UI
+    expect(stdout).toBe('');
+  });
+
+  test('bridge handles malformed JSON gracefully', () => {
+    const stdout = execSync(`node "${bridgePath}"`, {
+      input: 'not-json{{{',
+      encoding: 'utf-8',
+      timeout: 5000,
+    });
+
+    // Should not crash — outputs empty string
+    expect(stdout).toBe('');
+  });
+
+  test('bridge handles missing fields gracefully', () => {
+    const input = JSON.stringify({});
+
+    const stdout = execSync(`node "${bridgePath}"`, {
+      input,
+      encoding: 'utf-8',
+      timeout: 5000,
+    });
+
+    // Should output nothing — no crash
+    expect(stdout).toBe('');
+  });
+});
+
+test.describe('Merged Settings (statusLine)', () => {
+  test('statusLine is an object with type and command fields', () => {
+    // Simulate what createMergedSettings produces
+    const existingSettings = { permissions: { allow: ['Read'] } };
+    const bridgePath = '/path/to/status-bridge.js';
+    const statusPath = '/project/.kangentic/status/session-123.json';
+
+    const merged = {
+      ...existingSettings,
+      statusLine: {
+        type: 'command',
+        command: `node "${bridgePath}" "${statusPath}"`,
+      },
+    };
+
+    expect(merged.statusLine).toHaveProperty('type', 'command');
+    expect(merged.statusLine).toHaveProperty('command');
+    expect(typeof merged.statusLine.command).toBe('string');
+    expect(merged.statusLine.command).toContain('node');
+    expect(merged.statusLine.command).toContain('status-bridge.js');
+    expect(merged.statusLine.command).toContain('session-123.json');
+  });
+
+  test('merged settings preserve existing project settings', () => {
+    const existingSettings = {
+      permissions: { allow: ['Read', 'Edit'] },
+      env: { CUSTOM_VAR: 'hello' },
+    };
+
+    const merged = {
+      ...existingSettings,
+      statusLine: {
+        type: 'command',
+        command: 'node /bridge.js /output.json',
+      },
+    };
+
+    // Original settings should be preserved
+    expect(merged.permissions).toEqual({ allow: ['Read', 'Edit'] });
+    expect(merged.env).toEqual({ CUSTOM_VAR: 'hello' });
+    // statusLine should be added
+    expect(merged.statusLine.type).toBe('command');
+  });
+
+  test('statusLine is not a plain string (regression check)', () => {
+    const merged = {
+      statusLine: {
+        type: 'command',
+        command: 'node /bridge.js /output.json',
+      },
+    };
+
+    // The critical check: statusLine MUST be an object, never a string.
+    // Claude Code rejects string values with "Expected object, but received string"
+    expect(typeof merged.statusLine).toBe('object');
+    expect(typeof merged.statusLine).not.toBe('string');
+  });
+});
+
 test.describe('Shell Detection', () => {
   test('at least one shell is available', () => {
     const shells = detectAvailableShells();

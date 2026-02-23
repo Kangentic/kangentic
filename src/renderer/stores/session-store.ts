@@ -1,11 +1,12 @@
 import { create } from 'zustand';
-import type { Session, SpawnSessionInput } from '../../shared/types';
+import type { Session, SessionUsage, SpawnSessionInput } from '../../shared/types';
 
 interface SessionStore {
   sessions: Session[];
   activeSessionId: string | null;
   openTaskId: string | null;
   dialogSessionId: string | null;
+  sessionUsage: Record<string, SessionUsage>;
 
   loadSessions: () => Promise<void>;
   spawnSession: (input: SpawnSessionInput) => Promise<Session>;
@@ -14,6 +15,7 @@ interface SessionStore {
   setOpenTaskId: (id: string | null) => void;
   setDialogSessionId: (id: string | null) => void;
   updateSessionStatus: (id: string, updates: Partial<Session>) => void;
+  updateUsage: (sessionId: string, data: SessionUsage) => void;
 
   getRunningCount: () => number;
   getQueuedCount: () => number;
@@ -24,16 +26,20 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   activeSessionId: null,
   openTaskId: null,
   dialogSessionId: null,
+  sessionUsage: {},
 
   loadSessions: async () => {
     const sessions = await window.electronAPI.sessions.list();
     const currentActive = get().activeSessionId;
     const stillExists = currentActive && sessions.some((s) => s.id === currentActive);
+
+    // Restore cached usage data from main process (survives renderer reloads)
+    const cachedUsage = await window.electronAPI.sessions.getUsage();
+
     set({
       sessions,
-      // Reset activeSessionId when it no longer matches a loaded session.
-      // The TerminalPanel auto-selects the first session on next render.
       activeSessionId: stillExists ? currentActive : null,
+      sessionUsage: { ...get().sessionUsage, ...cachedUsage },
     });
   },
 
@@ -64,6 +70,12 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       sessions: s.sessions.map((sess) =>
         sess.id === id ? { ...sess, ...updates } : sess
       ),
+    }));
+  },
+
+  updateUsage: (sessionId, data) => {
+    set((s) => ({
+      sessionUsage: { ...s.sessionUsage, [sessionId]: data },
     }));
   },
 

@@ -13,6 +13,7 @@ export function App() {
   const loadConfig = useConfigStore((s) => s.loadConfig);
   const detectClaude = useConfigStore((s) => s.detectClaude);
   const updateSessionStatus = useSessionStore((s) => s.updateSessionStatus);
+  const updateUsage = useSessionStore((s) => s.updateUsage);
 
   useEffect(() => {
     loadConfig();
@@ -42,6 +43,14 @@ export function App() {
   useEffect(() => {
     const cleanup = window.electronAPI.sessions.onExit((sessionId, exitCode) => {
       updateSessionStatus(sessionId, { status: 'exited', exitCode });
+    });
+    return cleanup;
+  }, []);
+
+  // Listen for session usage data updates
+  useEffect(() => {
+    const cleanup = window.electronAPI.sessions.onUsage((sessionId, data) => {
+      updateUsage(sessionId, data);
     });
     return cleanup;
   }, []);

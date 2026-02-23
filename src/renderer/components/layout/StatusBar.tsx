@@ -5,6 +5,7 @@ import { useConfigStore } from '../../stores/config-store';
 export function StatusBar() {
   const sessions = useSessionStore((s) => s.sessions);
   const claudeInfo = useConfigStore((s) => s.claudeInfo);
+  const claudeVersionLabel = useConfigStore((s) => s.claudeVersionLabel);
   const config = useConfigStore((s) => s.config);
 
   const running = sessions.filter((s) => s.status === 'running').length;
@@ -24,9 +25,11 @@ export function StatusBar() {
 
       <div className="flex items-center gap-4">
         {claudeInfo && (
-          <span className={claudeInfo.found ? 'text-green-400' : 'text-red-400'}>
-            {claudeInfo.found ? `claude ${claudeInfo.version || 'detected'}` : 'claude not found'}
-          </span>
+          claudeInfo.found ? (
+            <span className="text-zinc-500">{claudeVersionLabel}</span>
+          ) : (
+            <span className="text-red-400">claude not found</span>
+          )
         )}
       </div>
     </div>

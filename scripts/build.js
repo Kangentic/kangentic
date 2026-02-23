@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 const esbuild = require('esbuild');
 
@@ -44,6 +45,14 @@ async function build() {
     }),
   ]);
   console.log('[build] Main + preload built');
+
+  // Copy status-bridge.js (external script invoked by Claude Code, not bundled)
+  fs.copyFileSync(
+    path.join(projectDir, 'src/main/agent/status-bridge.js'),
+    path.join(projectDir, '.vite/build/status-bridge.js'),
+  );
+  console.log('[build] Copied status-bridge.js');
+
   console.log('[build] Done! Output in .vite/build/');
 }
 

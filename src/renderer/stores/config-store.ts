@@ -2,9 +2,17 @@ import { create } from 'zustand';
 import type { AppConfig } from '../../shared/types';
 import { DEFAULT_CONFIG } from '../../shared/types';
 
+/** Format the raw version string (e.g. "2.1.50 (Claude Code)") into a display label. */
+function formatClaudeVersion(version: string | null): string {
+  const ver = version?.replace(/\s*\(.*\)/, '');
+  return ver ? `Claude Code (v${ver})` : 'Claude Code';
+}
+
 interface ConfigStore {
   config: AppConfig;
   claudeInfo: { found: boolean; path: string | null; version: string | null } | null;
+  /** Pre-formatted display label, e.g. "Claude Code (v2.1.50)" */
+  claudeVersionLabel: string;
   loading: boolean;
   settingsOpen: boolean;
 
@@ -17,6 +25,7 @@ interface ConfigStore {
 export const useConfigStore = create<ConfigStore>((set) => ({
   config: DEFAULT_CONFIG,
   claudeInfo: null,
+  claudeVersionLabel: 'Claude Code',
   loading: false,
   settingsOpen: false,
 
@@ -34,7 +43,7 @@ export const useConfigStore = create<ConfigStore>((set) => ({
 
   detectClaude: async () => {
     const claudeInfo = await window.electronAPI.claude.detect();
-    set({ claudeInfo });
+    set({ claudeInfo, claudeVersionLabel: formatClaudeVersion(claudeInfo?.version ?? null) });
   },
 
   setSettingsOpen: (open) => set({ settingsOpen: open }),

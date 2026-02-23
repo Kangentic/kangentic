@@ -7,6 +7,7 @@ import { TerminalPanel } from '../terminal/TerminalPanel';
 import { SettingsPage } from '../settings/SettingsPage';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
+import { ToastContainer } from './ToastContainer';
 
 export function AppLayout() {
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
@@ -52,6 +53,7 @@ export function AppLayout() {
       <div className="h-screen flex flex-col bg-zinc-900">
         <TitleBar sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
         <SettingsPage />
+        <ToastContainer />
       </div>
     );
   }
@@ -93,6 +95,7 @@ export function AppLayout() {
       </div>
 
       <StatusBar />
+      <ToastContainer />
     </div>
   );
 }

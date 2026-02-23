@@ -53,6 +53,7 @@ const api: ElectronAPI = {
     resize: (id, cols, rows) => ipcRenderer.invoke(IPC.SESSION_RESIZE, id, cols, rows),
     list: () => ipcRenderer.invoke(IPC.SESSION_LIST),
     getScrollback: (id) => ipcRenderer.invoke(IPC.SESSION_GET_SCROLLBACK, id),
+    getUsage: () => ipcRenderer.invoke(IPC.SESSION_GET_USAGE),
     onData: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: string) => callback(sessionId, data);
       ipcRenderer.on(IPC.SESSION_DATA, handler);
@@ -62,6 +63,11 @@ const api: ElectronAPI = {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, exitCode: number) => callback(sessionId, exitCode);
       ipcRenderer.on(IPC.SESSION_EXIT, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_EXIT, handler);
+    },
+    onUsage: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: any) => callback(sessionId, data);
+      ipcRenderer.on(IPC.SESSION_USAGE, handler);
+      return () => ipcRenderer.removeListener(IPC.SESSION_USAGE, handler);
     },
   },
 

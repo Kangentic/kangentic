@@ -275,11 +275,18 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.SESSION_RESIZE, (_, id, cols, rows) => sessionManager.resize(id, cols, rows));
   ipcMain.handle(IPC.SESSION_LIST, () => sessionManager.listSessions());
   ipcMain.handle(IPC.SESSION_GET_SCROLLBACK, (_, id) => sessionManager.getScrollback(id));
+  ipcMain.handle(IPC.SESSION_GET_USAGE, () => sessionManager.getUsageCache());
 
   // Forward PTY events to renderer (guard against destroyed window during shutdown)
   sessionManager.on('data', (sessionId: string, data: string) => {
     if (!mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC.SESSION_DATA, sessionId, data);
+    }
+  });
+
+  sessionManager.on('usage', (sessionId: string, data: any) => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC.SESSION_USAGE, sessionId, data);
     }
   });
 

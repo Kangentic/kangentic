@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useLayoutEffect } from 'react';
-import { X } from 'lucide-react';
+import { X, Trash2, Pencil } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
+import { useConfigStore } from '../../stores/config-store';
 import { TerminalTab } from '../terminal/TerminalTab';
+import { ContextBar } from '../terminal/ContextBar';
+import { useToastStore } from '../../stores/toast-store';
 import type { Task } from '../../../shared/types';
 
 interface TaskDetailDialogProps {
@@ -18,8 +21,10 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
   const [isEditing, setIsEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const setDialogSessionId = useSessionStore((s) => s.setDialogSessionId);
+  const claudeVersionLabel = useConfigStore((s) => s.claudeVersionLabel);
   const session = task.session_id ? sessions.find((s) => s.id === task.session_id) : null;
 
   // Register this session with the store so the bottom panel unmounts its
@@ -39,6 +44,7 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
   };
 
   const handleDelete = async () => {
+    const taskTitle = task.title;
     // Close dialog first to unmount the terminal (xterm) cleanly
     // before tearing down the session — prevents WebGL renderer crash
     onClose();
@@ -46,6 +52,10 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
       await killSession(task.session_id);
     }
     await deleteTask(task.id);
+    useToastStore.getState().addToast({
+      message: `Deleted task "${taskTitle}"`,
+      variant: 'info',
+    });
   };
 
   // Global Escape key listener
@@ -89,14 +99,13 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
             ) : (
               <h2 className="text-base font-semibold text-zinc-100 truncate">{task.title}</h2>
             )}
-            {task.agent && !isEditing && (
-              <span className="text-xs text-zinc-500 flex-shrink-0">{task.agent}</span>
-            )}
             {session && !isEditing && (
-              <span className="text-xs text-zinc-500 flex-shrink-0">({session.status})</span>
+              <span className="text-xs text-zinc-500 flex-shrink-0">
+                {claudeVersionLabel}
+              </span>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-1 flex-shrink-0">
             {isEditing ? (
               <>
                 <button
@@ -114,23 +123,44 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
               </>
             ) : (
               <>
-                <button
-                  onClick={handleDelete}
-                  className="px-2 py-1 text-xs text-red-400 hover:text-red-300 hover:bg-red-400/10 rounded transition-colors"
-                >
-                  Delete
-                </button>
+                {confirmDelete ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-red-400 mr-1">Delete this task?</span>
+                    <button
+                      onClick={handleDelete}
+                      className="px-2 py-1 text-xs bg-red-600 hover:bg-red-500 text-white rounded transition-colors"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      onClick={() => setConfirmDelete(false)}
+                      className="px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmDelete(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-400/10 rounded transition-colors"
+                  >
+                    <Trash2 size={13} />
+                    Delete
+                  </button>
+                )}
                 <button
                   onClick={() => setIsEditing(true)}
-                  className="px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 rounded transition-colors"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700 rounded transition-colors"
                 >
+                  <Pencil size={13} />
                   Edit
                 </button>
+                <div className="w-px h-4 bg-zinc-700 mx-1" />
               </>
             )}
             <button
               onClick={onClose}
-              className="p-1 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700 rounded transition-colors"
+              className="p-1.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700 rounded transition-colors"
             >
               <X size={16} />
             </button>
@@ -170,11 +200,14 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
 
         {/* Terminal or empty state */}
         {session ? (
-          <div className="flex-1 min-h-0 relative">
-            <div className="absolute inset-0">
-              <TerminalTab key={session.id} sessionId={session.id} active={true} />
+          <>
+            <div className="flex-1 min-h-0 relative">
+              <div className="absolute inset-0">
+                <TerminalTab key={session.id} sessionId={session.id} active={true} />
+              </div>
             </div>
-          </div>
+            <ContextBar sessionId={session.id} />
+          </>
         ) : (
           !isEditing && !task.description && (
             <div className="flex-1 flex items-center justify-center text-zinc-600 text-sm p-8">

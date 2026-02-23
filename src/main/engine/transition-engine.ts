@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Task, Skill, SkillConfig, SwimlaneTransition, AppConfig } from '../../shared/types';
 import { SessionManager } from '../pty/session-manager';
@@ -122,6 +124,12 @@ export class TransitionEngine {
         : `Task: ${task.title}\n\n${task.description}`;
     }
 
+    // Ensure the status output directory exists and compute the output path
+    const projectRoot = appConfig.projectPath || cwd;
+    const statusDir = path.join(projectRoot, '.kangentic', 'status');
+    fs.mkdirSync(statusDir, { recursive: true });
+    const statusOutputPath = path.join(statusDir, `${claudeSessionId}.json`);
+
     const command = this.commandBuilder.buildClaudeCommand({
       claudePath: claude.path,
       taskId: task.id,
@@ -132,12 +140,14 @@ export class TransitionEngine {
       sessionId: claudeSessionId,
       resume: !!canResume,
       nonInteractive: config.nonInteractive ?? false,
+      statusOutputPath,
     });
 
     const session = await this.sessionManager.spawn({
       taskId: task.id,
       command,
       cwd,
+      statusOutputPath,
     });
 
     this.taskRepo.update({

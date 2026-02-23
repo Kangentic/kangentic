@@ -121,6 +121,25 @@ export interface SessionRecord {
   exited_at: string | null;
 }
 
+// === Session Usage (Claude Code Status Line) ===
+
+export interface SessionUsage {
+  contextWindow: {
+    usedPercentage: number;
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    contextWindowSize: number;
+  };
+  cost: {
+    totalCostUsd: number;
+    totalDurationMs: number;
+  };
+  model: {
+    id: string;
+    displayName: string;
+  };
+}
+
 // === Configuration ===
 
 export type PermissionMode = 'dangerously-skip' | 'project-settings' | 'plan-mode' | 'manual';
@@ -248,6 +267,7 @@ export interface SpawnSessionInput {
   command: string;
   cwd: string;
   env?: Record<string, string>;
+  statusOutputPath?: string; // path for the status bridge JSON file
 }
 
 // === Preload API (exposed to renderer via contextBridge) ===
@@ -305,8 +325,10 @@ export interface ElectronAPI {
     resize: (sessionId: string, cols: number, rows: number) => Promise<void>;
     list: () => Promise<Session[]>;
     getScrollback: (sessionId: string) => Promise<string>;
+    getUsage: () => Promise<Record<string, SessionUsage>>;
     onData: (callback: (sessionId: string, data: string) => void) => () => void;
     onExit: (callback: (sessionId: string, exitCode: number) => void) => () => void;
+    onUsage: (callback: (sessionId: string, data: SessionUsage) => void) => () => void;
   };
 
   // Config

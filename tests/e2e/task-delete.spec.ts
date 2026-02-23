@@ -150,8 +150,13 @@ test.describe('Task Delete', () => {
     const deleteButton = dialog.locator('button', { hasText: /^Delete$/ });
     await deleteButton.waitFor({ state: 'visible', timeout: 3000 });
 
-    // Click Delete — this should NOT crash the app
+    // Click Delete — this shows the confirmation prompt
     await deleteButton.click();
+
+    // Confirm the deletion — this should NOT crash the app
+    const confirmButton = dialog.locator('button:has-text("Confirm")');
+    await confirmButton.waitFor({ state: 'visible', timeout: 3000 });
+    await confirmButton.click();
     await page.waitForTimeout(1000);
 
     // Verify the app is still alive (board is visible)
@@ -200,6 +205,11 @@ test.describe('Task Delete', () => {
     const deleteButton = dialog.locator('button', { hasText: /^Delete$/ });
     await deleteButton.waitFor({ state: 'visible', timeout: 3000 });
     await deleteButton.click();
+
+    // Confirm the deletion
+    const confirmButton = dialog.locator('button:has-text("Confirm")');
+    await confirmButton.waitFor({ state: 'visible', timeout: 3000 });
+    await confirmButton.click();
     await page.waitForTimeout(1000);
 
     // Verify app is still alive
@@ -338,6 +348,11 @@ test.describe('Task Delete', () => {
     const deleteButton = dialog.locator('button', { hasText: /^Delete$/ });
     await deleteButton.waitFor({ state: 'visible', timeout: 3000 });
     await deleteButton.click();
+
+    // Confirm the deletion
+    const confirmButton = dialog.locator('button:has-text("Confirm")');
+    await confirmButton.waitFor({ state: 'visible', timeout: 3000 });
+    await confirmButton.click();
     await page.waitForTimeout(500);
 
     // Verify app is still alive and task is gone

@@ -148,9 +148,10 @@ test.describe('Task CRUD', () => {
     await page.waitForTimeout(300);
 
     await page.locator('button:has-text("Delete")').click();
+    await page.locator('button:has-text("Confirm")').click();
     await page.waitForTimeout(500);
 
-    await expect(page.locator('text=Test Task Beta')).not.toBeVisible();
+    await expect(taskCard('Test Task Beta')).not.toBeVisible();
   });
 });
 

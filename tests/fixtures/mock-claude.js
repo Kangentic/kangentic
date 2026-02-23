@@ -13,6 +13,7 @@
  *   MOCK_CLAUDE_RESUMED:<id>   → existing session resumed via --resume
  *   MOCK_CLAUDE_PROMPT:<text>  → prompt/task text delivered
  *   MOCK_CLAUDE_NO_PROMPT      → no session-id and no prompt
+ *   MOCK_CLAUDE_SETTINGS:<path> → settings file path from --settings
  *
  * Stays alive for a few seconds to simulate a running session,
  * then exits cleanly.
@@ -30,6 +31,7 @@ if (args.includes('--version')) {
 let sessionId = null;
 let resumed = false;
 let prompt = null;
+let settingsPath = null;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--session-id' && i + 1 < args.length) {
@@ -40,13 +42,20 @@ for (let i = 0; i < args.length; i++) {
     sessionId = args[i + 1];
     resumed = true;
     i++; // skip value
-  } else if (args[i] === '--settings' || args[i] === '--permission-mode') {
+  } else if (args[i] === '--settings' && i + 1 < args.length) {
+    settingsPath = args[i + 1];
+    i++; // skip value
+  } else if (args[i] === '--permission-mode') {
     i++; // skip value
   } else if (args[i] === '--dangerously-skip-permissions' || args[i] === '--print') {
     // flag without value, skip
   } else if (!args[i].startsWith('-')) {
     prompt = args[i];
   }
+}
+
+if (settingsPath) {
+  console.log('MOCK_CLAUDE_SETTINGS:' + settingsPath);
 }
 
 if (sessionId) {

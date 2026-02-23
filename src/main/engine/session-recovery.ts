@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getProjectDb } from '../db/database';
 import { SessionRepository } from '../db/repositories/session-repository';
@@ -257,6 +258,11 @@ export async function recoverSessions(
           : `Task: ${task.title}\n\n${task.description}`;
       }
 
+      // Ensure the status output directory exists
+      const statusDir = path.join(projectPath, '.kangentic', 'status');
+      fs.mkdirSync(statusDir, { recursive: true });
+      const statusOutputPath = path.join(statusDir, `${claudeSessionId}.json`);
+
       const command = commandBuilder.buildClaudeCommand({
         claudePath: claude.path,
         taskId: task.id,
@@ -266,6 +272,7 @@ export async function recoverSessions(
         projectRoot: projectPath,
         sessionId: claudeSessionId,
         resume: canResume,
+        statusOutputPath,
       });
 
       // Spawn a new PTY
@@ -273,6 +280,7 @@ export async function recoverSessions(
         taskId: task.id,
         command,
         cwd: record.cwd,
+        statusOutputPath,
       });
 
       // Mark old record as exited
@@ -429,6 +437,11 @@ export async function reconcileSessions(
             })
           : `Task: ${task.title}\n\n${task.description}`;
 
+        // Ensure the status output directory exists
+        const statusDir = path.join(projectPath, '.kangentic', 'status');
+        fs.mkdirSync(statusDir, { recursive: true });
+        const statusOutputPath = path.join(statusDir, `${claudeSessionId}.json`);
+
         const command = commandBuilder.buildClaudeCommand({
           claudePath: claude.path,
           taskId: task.id,
@@ -437,12 +450,14 @@ export async function reconcileSessions(
           permissionMode: permissionMode as any,
           projectRoot: projectPath,
           sessionId: claudeSessionId,
+          statusOutputPath,
         });
 
         const session = await sessionManager.spawn({
           taskId: task.id,
           command,
           cwd,
+          statusOutputPath,
         });
 
         taskRepo.update({
