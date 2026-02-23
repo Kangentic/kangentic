@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(git:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(rm:*)",
+      "Bash(pwd)",
+      "Bash(sleep:*)",
+      "Bash(tasklist:*)",
+      "Bash(taskkill:*)",
+      "WebSearch",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:nodejs.org)",
+      "WebFetch(domain:vitejs.dev)",
+      "WebFetch(domain:www.electronjs.org)",
+      "WebFetch(domain:playwright.dev)"
+    ],
+    "deny": []
+  }
+}

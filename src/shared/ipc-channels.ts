@@ -5,6 +5,8 @@ export const IPC = {
   PROJECT_DELETE: 'project:delete',
   PROJECT_OPEN: 'project:open',
   PROJECT_GET_CURRENT: 'project:getCurrent',
+  PROJECT_OPEN_BY_PATH: 'project:openByPath',
+  PROJECT_AUTO_OPENED: 'project:autoOpened',
 
   // Tasks
   TASK_LIST: 'task:list',
@@ -37,6 +39,7 @@ export const IPC = {
   SESSION_WRITE: 'session:write',
   SESSION_RESIZE: 'session:resize',
   SESSION_LIST: 'session:list',
+  SESSION_GET_SCROLLBACK: 'session:getScrollback',
   SESSION_DATA: 'session:data',
   SESSION_EXIT: 'session:exit',
 

@@ -7,6 +7,7 @@
     "kgnt": "./bin/kgnt.js"
   },
   "main": ".vite/build/index.js",
+  "repository": "https://github.com/Kangentic/kangentic",
   "private": true,
   "scripts": {
     "start": "electron-forge start",
@@ -15,24 +16,28 @@
     "publish": "electron-forge publish",
     "lint": "eslint --ext .ts,.tsx .",
     "test": "npx playwright test",
+    "test:headed": "HEADED=1 npx playwright test",
     "test:screenshots": "npx playwright test --grep Screenshots",
-    "dev": "node scripts/dev.js"
+    "dev": "node scripts/dev.js",
+    "build": "node scripts/build.js"
   },
   "keywords": [],
   "author": {
-    "name": "Tyler Vorpahl",
-    "email": "tyler.vorpahl@gmail.com"
+    "name": "Kangentic",
+    "url": "https://github.com/Kangentic"
   },
   "license": "MIT",
   "devDependencies": {
     "@electron-forge/cli": "^7.11.1",
     "@electron-forge/maker-deb": "^7.11.1",
+    "@electron-forge/maker-dmg": "^7.11.1",
     "@electron-forge/maker-rpm": "^7.11.1",
     "@electron-forge/maker-squirrel": "^7.11.1",
     "@electron-forge/maker-zip": "^7.11.1",
     "@electron-forge/plugin-auto-unpack-natives": "^7.11.1",
     "@electron-forge/plugin-fuses": "^7.11.1",
     "@electron-forge/plugin-vite": "^7.11.1",
+    "@electron-forge/publisher-github": "^7.11.1",
     "@electron/fuses": "^1.8.0",
     "@playwright/test": "^1.58.2",
     "@tailwindcss/postcss": "^4.2.0",
@@ -67,10 +72,12 @@
     "better-sqlite3": "^12.6.2",
     "commander": "^14.0.3",
     "electron-squirrel-startup": "^1.0.1",
+    "lucide-react": "^0.575.0",
     "node-pty": "^1.1.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "simple-git": "^3.32.1",
+    "update-electron-app": "^3.1.2",
     "uuid": "^13.0.0",
     "which": "^6.0.1",
     "zustand": "^5.0.11"

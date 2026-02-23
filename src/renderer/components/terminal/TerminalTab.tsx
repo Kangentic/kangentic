@@ -16,21 +16,71 @@ export function TerminalTab({ sessionId, active }: TerminalTabProps) {
   });
   const initialized = useRef(false);
 
+  // Init terminal once the container has real pixel dimensions.
+  // The cleanup resets initialized so React StrictMode's
+  // mount→unmount→remount cycle re-creates the terminal properly.
   useEffect(() => {
-    if (!initialized.current && terminalRef.current) {
-      initTerminal();
-      initialized.current = true;
+    const el = terminalRef.current;
+    if (!el) return;
+
+    // Try to init immediately if container already has dimensions
+    const tryInit = () => {
+      if (initialized.current) return;
+      if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+        initTerminal();
+        initialized.current = true;
+      }
+    };
+
+    tryInit();
+
+    // If container didn't have dimensions yet, watch for them
+    let observer: ResizeObserver | null = null;
+    if (!initialized.current) {
+      observer = new ResizeObserver(() => {
+        tryInit();
+        if (initialized.current) {
+          observer?.disconnect();
+        }
+      });
+      observer.observe(el);
     }
+
+    return () => {
+      observer?.disconnect();
+      initialized.current = false;
+    };
   }, [initTerminal]);
 
+  // Re-fit and focus when tab becomes active or container resizes
   useEffect(() => {
-    if (active && initialized.current) {
-      // Small delay to allow DOM to update
-      requestAnimationFrame(() => {
+    if (!active || !initialized.current) return;
+
+    // Fit after a frame to ensure layout is settled
+    const initRafId = requestAnimationFrame(() => {
+      fit();
+      focus();
+    });
+
+    // Debounced re-fit on container resize via rAF coalescing
+    const el = terminalRef.current;
+    if (!el) return () => cancelAnimationFrame(initRafId);
+
+    let pendingRaf = 0;
+    const observer = new ResizeObserver(() => {
+      if (pendingRaf) cancelAnimationFrame(pendingRaf);
+      pendingRaf = requestAnimationFrame(() => {
+        pendingRaf = 0;
         fit();
-        focus();
       });
-    }
+    });
+    observer.observe(el);
+
+    return () => {
+      cancelAnimationFrame(initRafId);
+      if (pendingRaf) cancelAnimationFrame(pendingRaf);
+      observer.disconnect();
+    };
   }, [active, fit, focus]);
 
   return (

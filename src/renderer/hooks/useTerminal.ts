@@ -78,6 +78,13 @@ export function useTerminal(options: UseTerminalOptions) {
       terminal.onResize(({ cols, rows }) => {
         window.electronAPI.sessions.resize(options.sessionId!, cols, rows);
       });
+
+      // Replay buffered scrollback so we see past output
+      window.electronAPI.sessions.getScrollback(options.sessionId).then((scrollback) => {
+        if (scrollback && xtermRef.current) {
+          xtermRef.current.write(scrollback);
+        }
+      });
     }
   }, [options.sessionId, options.fontFamily, options.fontSize]);
 
@@ -97,16 +104,6 @@ export function useTerminal(options: UseTerminalOptions) {
       cleanupRef.current = null;
     };
   }, [options.sessionId]);
-
-  // Handle resize
-  useEffect(() => {
-    const handleResize = () => {
-      fitAddonRef.current?.fit();
-    };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
 
   // Cleanup on unmount
   useEffect(() => {

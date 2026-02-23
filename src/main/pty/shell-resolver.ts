@@ -1,7 +1,7 @@
 import which from 'which';
-import os from 'node:os';
+import { execSync } from 'node:child_process';
 
-interface ShellInfo {
+export interface ShellInfo {
   name: string;
   path: string;
 }
@@ -12,6 +12,7 @@ export class ShellResolver {
     const platform = process.platform;
 
     if (platform === 'win32') {
+      // Native Windows shells
       const candidates = [
         { name: 'PowerShell 7', cmd: 'pwsh' },
         { name: 'PowerShell 5', cmd: 'powershell' },
@@ -24,12 +25,51 @@ export class ShellResolver {
           shells.push({ name: c.name, path: resolved });
         } catch { /* not found */ }
       }
-    } else {
-      const candidates = ['zsh', 'bash', 'fish', 'sh'];
-      for (const cmd of candidates) {
+
+      // WSL distributions (skip Docker-internal distros)
+      try {
+        const wslOutput = execSync('wsl --list --quiet', {
+          encoding: 'utf-8',
+          timeout: 5000,
+        });
+        const distros = wslOutput
+          .split('\n')
+          .map((l) => l.replace(/\0/g, '').trim())
+          .filter((d) => d && !d.toLowerCase().startsWith('docker-'));
+        for (const distro of distros) {
+          shells.push({ name: `WSL: ${distro}`, path: `wsl -d ${distro}` });
+        }
+      } catch { /* WSL not available */ }
+    } else if (platform === 'darwin') {
+      // macOS
+      const candidates = [
+        { name: 'zsh', cmd: 'zsh' },
+        { name: 'bash', cmd: 'bash' },
+        { name: 'fish', cmd: 'fish' },
+        { name: 'nushell', cmd: 'nu' },
+        { name: 'sh', cmd: 'sh' },
+      ];
+      for (const c of candidates) {
         try {
-          const resolved = await which(cmd);
-          shells.push({ name: cmd, path: resolved });
+          const resolved = await which(c.cmd);
+          shells.push({ name: c.name, path: resolved });
+        } catch { /* not found */ }
+      }
+    } else {
+      // Linux
+      const candidates = [
+        { name: 'bash', cmd: 'bash' },
+        { name: 'zsh', cmd: 'zsh' },
+        { name: 'fish', cmd: 'fish' },
+        { name: 'dash', cmd: 'dash' },
+        { name: 'nushell', cmd: 'nu' },
+        { name: 'ksh', cmd: 'ksh' },
+        { name: 'sh', cmd: 'sh' },
+      ];
+      for (const c of candidates) {
+        try {
+          const resolved = await which(c.cmd);
+          shells.push({ name: c.name, path: resolved });
         } catch { /* not found */ }
       }
     }
@@ -50,13 +90,14 @@ export class ShellResolver {
       return 'cmd.exe';
     }
 
-    // Unix: use $SHELL
+    // Unix/macOS: use $SHELL
     const envShell = process.env.SHELL;
     if (envShell) return envShell;
 
-    // Fallback
+    // macOS defaults to zsh, Linux to bash
+    const fallback = platform === 'darwin' ? 'zsh' : 'bash';
     try {
-      return await which('bash');
+      return await which(fallback);
     } catch {
       return '/bin/sh';
     }

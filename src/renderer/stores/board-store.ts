@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Task, Swimlane, TaskCreateInput, TaskUpdateInput, TaskMoveInput, SwimlaneCreateInput, SwimlaneUpdateInput } from '../../shared/types';
+import { useSessionStore } from './session-store';
 
 interface BoardStore {
   tasks: Task[];
@@ -69,9 +70,20 @@ export const useBoardStore = create<BoardStore>((set, get) => ({
     });
 
     await window.electronAPI.tasks.move(input);
-    // Reload to get accurate positions
-    const tasks = await window.electronAPI.tasks.list();
+    // Reload tasks and sessions (transition engine may have spawned/killed sessions)
+    const [tasks, sessions] = await Promise.all([
+      window.electronAPI.tasks.list(),
+      window.electronAPI.sessions.list(),
+    ]);
     set({ tasks });
+    const sessionStore = useSessionStore.getState();
+    const prevCount = sessionStore.sessions.length;
+    useSessionStore.setState({ sessions });
+    // Auto-select newly spawned session
+    if (sessions.length > prevCount) {
+      const newest = sessions[sessions.length - 1];
+      if (newest) useSessionStore.setState({ activeSessionId: newest.id });
+    }
   },
 
   getTasksBySwimlane: (swimlaneId) => {

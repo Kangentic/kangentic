@@ -1,9 +1,11 @@
-import type { Task, Skill, SkillConfig, SwimlaneTransition } from '../../shared/types';
+import type { Task, Skill, SkillConfig, SwimlaneTransition, AppConfig } from '../../shared/types';
 import { SessionManager } from '../pty/session-manager';
 import { CommandBuilder } from '../agent/command-builder';
 import { ClaudeDetector } from '../agent/claude-detector';
+import { WorktreeManager } from '../git/worktree-manager';
 import type { SkillRepository } from '../db/repositories/skill-repository';
 import type { TaskRepository } from '../db/repositories/task-repository';
+import type { SessionRepository } from '../db/repositories/session-repository';
 
 export class TransitionEngine {
   constructor(
@@ -12,7 +14,8 @@ export class TransitionEngine {
     private taskRepo: TaskRepository,
     private claudeDetector: ClaudeDetector,
     private commandBuilder: CommandBuilder,
-    private getConfig: () => { permissionMode: string; claudePath: string | null },
+    private getConfig: () => { permissionMode: string; claudePath: string | null; projectPath: string | null; gitConfig: AppConfig['git'] },
+    private sessionRepo?: SessionRepository,
   ) {}
 
   async executeTransition(task: Task, fromSwimlaneId: string, toSwimlaneId: string): Promise<void> {
@@ -58,8 +61,13 @@ export class TransitionEngine {
         await this.executeWebhook(config, templateVars);
         break;
 
-      // create_worktree and cleanup_worktree are handled by GitManager
-      // and invoked separately
+      case 'create_worktree':
+        await this.executeCreateWorktree(config, task);
+        break;
+
+      case 'cleanup_worktree':
+        await this.executeCleanupWorktree(task);
+        break;
     }
   }
 
@@ -70,23 +78,45 @@ export class TransitionEngine {
       throw new Error('Claude CLI not found on PATH');
     }
 
-    const prompt = config.promptTemplate
-      ? this.commandBuilder.interpolateTemplate(config.promptTemplate, vars)
-      : `Task: ${task.title}\n\n${task.description}`;
-
     const permissionMode = config.permissionMode || appConfig.permissionMode;
+    const cwd = task.worktree_path || appConfig.projectPath || process.cwd();
+
+    // Check for a previous session to resume (suspended or exited claude_agent)
+    const previousSession = this.sessionRepo?.getLatestForTask(task.id);
+    const canResume = previousSession
+      && previousSession.claude_session_id
+      && previousSession.session_type === 'claude_agent'
+      && (previousSession.status === 'suspended' || previousSession.status === 'exited');
+
+    let prompt: string;
+    let sessionId: string | undefined;
+
+    if (canResume) {
+      // Resume the previous Claude conversation
+      prompt = 'Continue working on the task.';
+      sessionId = previousSession.claude_session_id!;
+    } else {
+      // Fresh session
+      prompt = config.promptTemplate
+        ? this.commandBuilder.interpolateTemplate(config.promptTemplate, vars)
+        : `Task: ${task.title}\n\n${task.description}`;
+    }
+
     const command = this.commandBuilder.buildClaudeCommand({
       claudePath: claude.path,
       taskId: task.id,
       prompt,
-      cwd: task.worktree_path || '',
+      cwd,
       permissionMode: permissionMode as any,
+      projectRoot: appConfig.projectPath || undefined,
+      sessionId,
+      nonInteractive: config.nonInteractive ?? false,
     });
 
     const session = await this.sessionManager.spawn({
       taskId: task.id,
       command,
-      cwd: task.worktree_path || process.cwd(),
+      cwd,
     });
 
     this.taskRepo.update({
@@ -94,6 +124,31 @@ export class TransitionEngine {
       session_id: session.id,
       agent: config.agent || 'claude',
     });
+
+    // Persist session record for resume capability
+    if (this.sessionRepo) {
+      // Mark the old record as exited if we're resuming
+      if (canResume) {
+        this.sessionRepo.updateStatus(previousSession.id, 'exited', {
+          exited_at: new Date().toISOString(),
+        });
+      }
+
+      this.sessionRepo.insert({
+        task_id: task.id,
+        session_type: 'claude_agent',
+        claude_session_id: canResume ? sessionId! : session.id,
+        command,
+        cwd,
+        permission_mode: permissionMode,
+        prompt,
+        status: 'running',
+        exit_code: null,
+        started_at: new Date().toISOString(),
+        suspended_at: null,
+        exited_at: null,
+      });
+    }
   }
 
   private executeSendCommand(config: SkillConfig, task: Task, vars: Record<string, string>): void {
@@ -112,9 +167,10 @@ export class TransitionEngine {
       : '';
     if (!script) return;
 
+    const appConfig = this.getConfig();
     const cwd = config.workingDir === 'worktree' && task.worktree_path
       ? task.worktree_path
-      : process.cwd();
+      : appConfig.projectPath || process.cwd();
 
     await this.sessionManager.spawn({
       taskId: task.id + '-script',
@@ -152,5 +208,48 @@ export class TransitionEngine {
     } catch (err) {
       console.error('Webhook failed:', err);
     }
+  }
+
+  private async executeCreateWorktree(config: SkillConfig, task: Task): Promise<void> {
+    if (task.worktree_path) return; // already has one
+
+    const appConfig = this.getConfig();
+    if (!appConfig.projectPath || !appConfig.gitConfig.worktreesEnabled) return;
+
+    const wm = new WorktreeManager(appConfig.projectPath);
+    const baseBranch = config.baseBranch || appConfig.gitConfig.defaultBaseBranch;
+    const copyFiles = config.copyFiles || appConfig.gitConfig.copyFiles;
+
+    const { worktreePath, branchName } = await wm.createWorktree(
+      task.id,
+      task.title,
+      baseBranch,
+      copyFiles,
+    );
+
+    this.taskRepo.update({
+      id: task.id,
+      worktree_path: worktreePath,
+      branch_name: branchName,
+    });
+  }
+
+  private async executeCleanupWorktree(task: Task): Promise<void> {
+    if (!task.worktree_path || !task.branch_name) return;
+
+    const appConfig = this.getConfig();
+    if (!appConfig.projectPath) return;
+
+    const wm = new WorktreeManager(appConfig.projectPath);
+    await wm.removeWorktree(task.worktree_path);
+    if (appConfig.gitConfig.autoCleanup) {
+      await wm.removeBranch(task.branch_name);
+    }
+
+    this.taskRepo.update({
+      id: task.id,
+      worktree_path: null,
+      branch_name: null,
+    });
   }
 }

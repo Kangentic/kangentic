@@ -62,6 +62,7 @@ export interface SkillConfig {
   agent?: string;
   promptTemplate?: string;
   permissionMode?: PermissionMode;
+  nonInteractive?: boolean;
 
   // send_command
   command?: string;
@@ -87,7 +88,7 @@ export interface SwimlaneTransition {
 
 // === Session Management ===
 
-export type SessionStatus = 'running' | 'queued' | 'idle' | 'exited' | 'error';
+export type SessionStatus = 'running' | 'queued' | 'idle' | 'exited' | 'suspended' | 'error';
 
 export interface Session {
   id: string;
@@ -98,6 +99,26 @@ export interface Session {
   cwd: string;
   startedAt: string;
   exitCode: number | null;
+}
+
+// === Session Persistence (DB) ===
+
+export type SessionRecordStatus = 'running' | 'suspended' | 'exited' | 'orphaned';
+
+export interface SessionRecord {
+  id: string;
+  task_id: string;
+  session_type: 'claude_agent' | 'run_script';
+  claude_session_id: string | null;
+  command: string;
+  cwd: string;
+  permission_mode: string | null;
+  prompt: string | null;
+  status: SessionRecordStatus;
+  exit_code: number | null;
+  started_at: string;
+  suspended_at: string | null;
+  exited_at: string | null;
 }
 
 // === Configuration ===
@@ -147,7 +168,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     showPreview: false,
   },
   claude: {
-    permissionMode: 'dangerously-skip',
+    permissionMode: 'project-settings',
     cliPath: null,
     maxConcurrentSessions: 5,
     queueOverflow: 'queue',
@@ -156,7 +177,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     worktreesEnabled: true,
     autoCleanup: true,
     defaultBaseBranch: 'main',
-    copyFiles: ['.env', '.env.local'],
+    copyFiles: ['.env', '.env.local', '.claude/settings.local.json'],
     initScript: null,
   },
 };
@@ -239,6 +260,8 @@ export interface ElectronAPI {
     delete: (id: string) => Promise<void>;
     open: (id: string) => Promise<void>;
     getCurrent: () => Promise<Project | null>;
+    openByPath: (path: string) => Promise<Project>;
+    onAutoOpened: (callback: (project: Project) => void) => () => void;
   };
 
   // Tasks
@@ -281,6 +304,7 @@ export interface ElectronAPI {
     write: (sessionId: string, data: string) => Promise<void>;
     resize: (sessionId: string, cols: number, rows: number) => Promise<void>;
     list: () => Promise<Session[]>;
+    getScrollback: (sessionId: string) => Promise<string>;
     onData: (callback: (sessionId: string, data: string) => void) => () => void;
     onExit: (callback: (sessionId: string, exitCode: number) => void) => () => void;
   };

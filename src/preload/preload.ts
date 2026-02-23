@@ -9,6 +9,12 @@ const api: ElectronAPI = {
     delete: (id) => ipcRenderer.invoke(IPC.PROJECT_DELETE, id),
     open: (id) => ipcRenderer.invoke(IPC.PROJECT_OPEN, id),
     getCurrent: () => ipcRenderer.invoke(IPC.PROJECT_GET_CURRENT),
+    openByPath: (path: string) => ipcRenderer.invoke(IPC.PROJECT_OPEN_BY_PATH, path),
+    onAutoOpened: (callback: (project: any) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, project: any) => callback(project);
+      ipcRenderer.on(IPC.PROJECT_AUTO_OPENED, handler);
+      return () => ipcRenderer.removeListener(IPC.PROJECT_AUTO_OPENED, handler);
+    },
   },
 
   tasks: {
@@ -46,6 +52,7 @@ const api: ElectronAPI = {
     write: (id, data) => ipcRenderer.invoke(IPC.SESSION_WRITE, id, data),
     resize: (id, cols, rows) => ipcRenderer.invoke(IPC.SESSION_RESIZE, id, cols, rows),
     list: () => ipcRenderer.invoke(IPC.SESSION_LIST),
+    getScrollback: (id) => ipcRenderer.invoke(IPC.SESSION_GET_SCROLLBACK, id),
     onData: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: string) => callback(sessionId, data);
       ipcRenderer.on(IPC.SESSION_DATA, handler);

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type { PermissionMode, Task, SkillConfig } from '../../shared/types';
 
 interface CommandOptions {
@@ -6,7 +7,9 @@ interface CommandOptions {
   prompt: string;
   cwd: string;
   permissionMode: PermissionMode;
+  projectRoot?: string; // main repo root (for worktree settings resolution)
   sessionId?: string;
+  nonInteractive?: boolean;
 }
 
 export class CommandBuilder {
@@ -19,10 +22,17 @@ export class CommandBuilder {
         parts.push('--dangerously-skip-permissions');
         break;
       case 'plan-mode':
-        parts.push('--plan');
+        parts.push('--permission-mode', 'plan');
+        if (options.projectRoot && options.cwd !== options.projectRoot) {
+          parts.push('--settings', this.quoteArg(this.settingsPath(options.projectRoot)));
+        }
         break;
       case 'project-settings':
-        // No flag needed - uses project's .claude/settings.json
+        // When running from a worktree, Claude resolves settings from CWD,
+        // not the git root. Explicitly pass --settings for the main project.
+        if (options.projectRoot && options.cwd !== options.projectRoot) {
+          parts.push('--settings', this.quoteArg(this.settingsPath(options.projectRoot)));
+        }
         break;
       case 'manual':
         // No flags - full interactive mode
@@ -34,8 +44,12 @@ export class CommandBuilder {
       parts.push('--session-id', this.quoteArg(options.sessionId));
     }
 
-    // The prompt
-    parts.push('--print');
+    // Non-interactive mode (print and exit) vs interactive
+    if (options.nonInteractive) {
+      parts.push('--print');
+    }
+
+    // The prompt as positional argument
     parts.push(this.quoteArg(options.prompt));
 
     return parts.join(' ');
@@ -49,7 +63,27 @@ export class CommandBuilder {
     return result;
   }
 
+  /**
+   * Build the path to the project's .claude/settings.json.
+   * Always uses forward slashes so the path works in Git Bash, WSL,
+   * PowerShell, and cmd without shell-specific conversion.
+   */
+  private settingsPath(projectRoot: string): string {
+    return path.join(projectRoot, '.claude', 'settings.json').replace(/\\/g, '/');
+  }
+
+  /**
+   * Quote a CLI argument if it contains characters that need escaping.
+   * Path arguments should use forward slashes (via `settingsPath()`) so
+   * they work correctly across all shells without conversion.
+   */
   private quoteArg(arg: string): string {
+    // Skip quoting for simple args with no spaces or special chars.
+    // Backslashes are NOT considered simple — they're escape characters
+    // in Unix-like shells (Git Bash, WSL).
+    if (/^[a-zA-Z0-9_.\/:-]+$/.test(arg)) {
+      return arg;
+    }
     if (process.platform === 'win32') {
       // Windows: use double quotes and escape internal double quotes
       return `"${arg.replace(/"/g, '\\"')}"`;

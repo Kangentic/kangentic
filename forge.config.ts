@@ -1,16 +1,21 @@
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
+import { MakerDMG } from '@electron-forge/maker-dmg';
 import { MakerDeb } from '@electron-forge/maker-deb';
 import { MakerRpm } from '@electron-forge/maker-rpm';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import { AutoUnpackNativesPlugin } from '@electron-forge/plugin-auto-unpack-natives';
+import { PublisherGithub } from '@electron-forge/publisher-github';
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    name: 'Kangentic',
+    executableName: 'kangentic',
+    icon: './resources/icon',
   },
   rebuildConfig: {
     // node-pty ships NAPI prebuilt binaries that work across Node/Electron
@@ -19,10 +24,39 @@ const config: ForgeConfig = {
     onlyModules: ['better-sqlite3'],
   },
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({
+      name: 'Kangentic',
+      setupIcon: './resources/icon.ico',
+    }),
+    new MakerDMG({
+      name: 'Kangentic',
+      icon: './resources/icon.icns',
+    }),
     new MakerZIP({}, ['darwin']),
-    new MakerRpm({}),
-    new MakerDeb({}),
+    new MakerDeb({
+      options: {
+        name: 'kangentic',
+        productName: 'Kangentic',
+        icon: './resources/icon.png',
+      },
+    }),
+    new MakerRpm({
+      options: {
+        name: 'kangentic',
+        productName: 'Kangentic',
+        icon: './resources/icon.png',
+      },
+    }),
+  ],
+  publishers: [
+    new PublisherGithub({
+      repository: {
+        owner: 'Kangentic',
+        name: 'kangentic',
+      },
+      prerelease: false,
+      draft: true,
+    }),
   ],
   plugins: [
     new AutoUnpackNativesPlugin({}),
@@ -42,7 +76,7 @@ const config: ForgeConfig = {
       renderer: [
         {
           name: 'main_window',
-          config: 'vite.renderer.config.ts',
+          config: 'vite.renderer.config.mts',
         },
       ],
     }),

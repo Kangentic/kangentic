@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect } from 'react';
 import { useSessionStore } from '../../stores/session-store';
 import { TerminalTab } from './TerminalTab';
 
@@ -7,14 +7,28 @@ export function TerminalPanel() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
 
-  const activeSessions = sessions.filter((s) => s.status !== 'exited' || s.exitCode !== null);
+  // Show sessions that are running/queued, plus exited sessions that have an
+  // exit code (so the user can see the final output).
+  const activeSessions = sessions.filter(
+    (s) => s.status === 'running' || s.status === 'queued' || s.exitCode !== null,
+  );
 
+  // Resolve the effective active ID: must be in the activeSessions list.
+  // If activeSessionId is stale (from a previous project or removed session),
+  // fall back to the first session.
+  const effectiveActiveId =
+    activeSessions.some((s) => s.id === activeSessionId)
+      ? activeSessionId
+      : activeSessions.length > 0
+        ? activeSessions[0].id
+        : null;
+
+  // Sync the store when the effective ID differs (stale or first auto-select)
   useEffect(() => {
-    // Auto-select first session if none active
-    if (!activeSessionId && activeSessions.length > 0) {
-      setActiveSession(activeSessions[0].id);
+    if (effectiveActiveId !== activeSessionId) {
+      setActiveSession(effectiveActiveId);
     }
-  }, [activeSessions.length]);
+  }, [effectiveActiveId, activeSessionId, setActiveSession]);
 
   if (activeSessions.length === 0) {
     return (
@@ -33,7 +47,7 @@ export function TerminalPanel() {
             key={session.id}
             onClick={() => setActiveSession(session.id)}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-zinc-700 transition-colors whitespace-nowrap ${
-              activeSessionId === session.id
+              effectiveActiveId === session.id
                 ? 'bg-zinc-800 text-zinc-100'
                 : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
             }`}
@@ -48,16 +62,20 @@ export function TerminalPanel() {
         ))}
       </div>
 
-      {/* Active terminal */}
-      <div className="flex-1 min-h-0">
-        {activeSessions.map((session) => (
-          <div
-            key={session.id}
-            className={activeSessionId === session.id ? 'h-full' : 'hidden'}
-          >
-            <TerminalTab sessionId={session.id} active={activeSessionId === session.id} />
-          </div>
-        ))}
+      {/* Terminal panes — only the active one is positioned; rest are display:none */}
+      <div className="flex-1 min-h-0 relative">
+        {activeSessions.map((session) => {
+          const isActive = effectiveActiveId === session.id;
+          return (
+            <div
+              key={session.id}
+              style={{ display: isActive ? 'block' : 'none' }}
+              className="absolute inset-0"
+            >
+              <TerminalTab sessionId={session.id} active={isActive} />
+            </div>
+          );
+        })}
       </div>
     </div>
   );

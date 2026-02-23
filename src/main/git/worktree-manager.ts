@@ -2,6 +2,19 @@ import simpleGit, { SimpleGit } from 'simple-git';
 import path from 'node:path';
 import fs from 'node:fs';
 
+/**
+ * Turn a task title into a filesystem-safe slug.
+ * e.g. "Fix login bug (urgent!)" → "fix-login-bug-urgent"
+ */
+function slugify(text: string, maxLen = 50): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, maxLen)
+    .replace(/-+$/, '');
+}
+
 export class WorktreeManager {
   private git: SimpleGit;
 
@@ -9,9 +22,22 @@ export class WorktreeManager {
     this.git = simpleGit(projectPath);
   }
 
-  async createWorktree(taskId: string, baseBranch: string = 'main', copyFiles: string[] = []): Promise<{ worktreePath: string; branchName: string }> {
-    const branchName = `kanban/${taskId}`;
-    const worktreePath = path.join(this.projectPath, '.worktrees', taskId);
+  /**
+   * Create a worktree for a task. The worktree folder and branch are named
+   * using a slug derived from the task title, with the taskId suffix to
+   * guarantee uniqueness.
+   */
+  async createWorktree(
+    taskId: string,
+    taskTitle: string,
+    baseBranch: string = 'main',
+    copyFiles: string[] = [],
+  ): Promise<{ worktreePath: string; branchName: string }> {
+    const slug = slugify(taskTitle) || 'task';
+    const shortId = taskId.slice(0, 8);
+    const folderName = `${slug}-${shortId}`;
+    const branchName = `kanban/${folderName}`;
+    const worktreePath = path.join(this.projectPath, '.worktrees', folderName);
 
     // Ensure .worktrees dir exists
     fs.mkdirSync(path.join(this.projectPath, '.worktrees'), { recursive: true });
@@ -32,14 +58,13 @@ export class WorktreeManager {
     return { worktreePath, branchName };
   }
 
-  async removeWorktree(taskId: string): Promise<void> {
-    const worktreePath = path.join(this.projectPath, '.worktrees', taskId);
+  async removeWorktree(worktreePath: string): Promise<void> {
     if (fs.existsSync(worktreePath)) {
       await this.git.raw(['worktree', 'remove', worktreePath, '--force']);
     }
+  }
 
-    // Also try to delete the branch
-    const branchName = `kanban/${taskId}`;
+  async removeBranch(branchName: string): Promise<void> {
     try {
       await this.git.raw(['branch', '-D', branchName]);
     } catch { /* branch may not exist */ }

@@ -21,7 +21,14 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
   loadSessions: async () => {
     const sessions = await window.electronAPI.sessions.list();
-    set({ sessions });
+    const currentActive = get().activeSessionId;
+    const stillExists = currentActive && sessions.some((s) => s.id === currentActive);
+    set({
+      sessions,
+      // Reset activeSessionId when it no longer matches a loaded session.
+      // The TerminalPanel auto-selects the first session on next render.
+      activeSessionId: stillExists ? currentActive : null,
+    });
   },
 
   spawnSession: async (input) => {

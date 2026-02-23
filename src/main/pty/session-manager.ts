@@ -4,6 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { ShellResolver } from './shell-resolver';
 import type { Session, SessionStatus, SpawnSessionInput } from '../../shared/types';
 
+const MAX_SCROLLBACK = 512 * 1024; // 512KB per session
+
 interface ManagedSession {
   id: string;
   taskId: string;
@@ -15,6 +17,7 @@ interface ManagedSession {
   exitCode: number | null;
   buffer: string;
   flushScheduled: boolean;
+  scrollback: string;
 }
 
 export class SessionManager extends EventEmitter {
@@ -63,6 +66,7 @@ export class SessionManager extends EventEmitter {
           exitCode: null,
           buffer: '',
           flushScheduled: false,
+          scrollback: '',
         };
         this.sessions.set(id, session);
         this.emit('status', id, 'queued');
@@ -76,18 +80,27 @@ export class SessionManager extends EventEmitter {
     const shell = this.configuredShell || await this.shellResolver.getDefaultShell();
     const id = input.taskId ? (this.findByTaskId(input.taskId)?.id || uuidv4()) : uuidv4();
 
-    // Determine shell args based on shell type
+    // Determine shell args and actual executable based on shell type
     const shellName = shell.toLowerCase();
+    let shellExe = shell;
     let shellArgs: string[];
-    if (shellName.includes('cmd')) {
+
+    if (shellName.startsWith('wsl ')) {
+      // WSL: e.g. "wsl -d Ubuntu" — split into exe + args
+      const parts = shell.split(/\s+/);
+      shellExe = parts[0];
+      shellArgs = parts.slice(1);
+    } else if (shellName.includes('cmd')) {
       shellArgs = [];
     } else if (shellName.includes('powershell') || shellName.includes('pwsh')) {
       shellArgs = ['-NoLogo'];
+    } else if (shellName.includes('fish') || shellName.includes('nu')) {
+      shellArgs = [];
     } else {
       shellArgs = ['--login'];
     }
 
-    const ptyProcess = pty.spawn(shell, shellArgs, {
+    const ptyProcess = pty.spawn(shellExe, shellArgs, {
       name: 'xterm-256color',
       cols: 120,
       rows: 30,
@@ -106,6 +119,7 @@ export class SessionManager extends EventEmitter {
       exitCode: null,
       buffer: '',
       flushScheduled: false,
+      scrollback: '',
     };
 
     // Remove any queued placeholder
@@ -115,6 +129,11 @@ export class SessionManager extends EventEmitter {
     // Batched data output (~60fps)
     ptyProcess.onData((data: string) => {
       session.buffer += data;
+      // Accumulate scrollback for late-connecting terminals
+      session.scrollback += data;
+      if (session.scrollback.length > MAX_SCROLLBACK) {
+        session.scrollback = session.scrollback.slice(-MAX_SCROLLBACK);
+      }
       if (!session.flushScheduled) {
         session.flushScheduled = true;
         setTimeout(() => {
@@ -140,7 +159,8 @@ export class SessionManager extends EventEmitter {
     // If there's a command to run, send it after a brief delay
     if (input.command) {
       setTimeout(() => {
-        ptyProcess.write(input.command + '\r');
+        const cmd = this.adaptCommandForShell(input.command!, shellName);
+        ptyProcess.write(cmd + '\r');
       }, 100);
     }
 
@@ -180,6 +200,11 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  getScrollback(sessionId: string): string {
+    const session = this.sessions.get(sessionId);
+    return session?.scrollback || '';
+  }
+
   getSession(sessionId: string): Session | undefined {
     const s = this.sessions.get(sessionId);
     return s ? this.toSession(s) : undefined;
@@ -206,6 +231,62 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  /**
+   * Adapt a command string for the target shell.
+   * On Windows, converts executable paths and syntax for cross-shell compatibility.
+   */
+  private adaptCommandForShell(cmd: string, shellName: string): string {
+    if (process.platform !== 'win32') return cmd;
+
+    // PowerShell needs the & call operator for quoted/path commands
+    if (shellName.includes('powershell') || shellName.includes('pwsh')) {
+      return '& ' + cmd;
+    }
+
+    // Unix-like shells on Windows (Git Bash, WSL, fish, etc.):
+    // Convert the Windows executable path to POSIX format
+    if (this.isUnixLikeShell(shellName)) {
+      const isWsl = shellName.startsWith('wsl');
+      return this.convertWindowsExePath(cmd, isWsl);
+    }
+
+    return cmd;
+  }
+
+  private isUnixLikeShell(shellName: string): boolean {
+    // cmd.exe is the only Windows-native shell that doesn't need path conversion
+    // (PowerShell is handled separately above)
+    return !shellName.includes('cmd');
+  }
+
+  /**
+   * Convert a Windows-style executable path at the start of a command to POSIX format.
+   * Git Bash: C:\Users\... → /c/Users/...
+   * WSL:      C:\Users\... → /mnt/c/Users/...
+   */
+  private convertWindowsExePath(cmd: string, isWsl: boolean): string {
+    const prefix = isWsl ? '/mnt/' : '/';
+
+    // Quoted Windows path at start: "C:\path with spaces\exe" ...rest
+    if (cmd.startsWith('"')) {
+      return cmd.replace(
+        /^"([A-Za-z]):((?:\\[^"]+)+)"/,
+        (_m, drive: string, rest: string) => {
+          const posix = `${prefix}${drive.toLowerCase()}${rest.replace(/\\/g, '/')}`;
+          return posix.includes(' ') ? `"${posix}"` : posix;
+        },
+      );
+    }
+
+    // Unquoted Windows path at start: C:\path\to\exe ...rest
+    return cmd.replace(
+      /^([A-Za-z]):((?:\\[^\s]+)+)/,
+      (_m, drive: string, rest: string) => {
+        return `${prefix}${drive.toLowerCase()}${rest.replace(/\\/g, '/')}`;
+      },
+    );
+  }
+
   private toSession(s: ManagedSession): Session {
     return {
       id: s.id,
@@ -217,6 +298,31 @@ export class SessionManager extends EventEmitter {
       startedAt: s.startedAt,
       exitCode: s.exitCode,
     };
+  }
+
+  /**
+   * Kill all running PTY processes but return their session IDs
+   * so they can be marked as 'suspended' in the DB for later resume.
+   */
+  suspendAll(): string[] {
+    const suspendedIds: string[] = [];
+    for (const session of this.sessions.values()) {
+      if (session.pty && session.status === 'running') {
+        suspendedIds.push(session.id);
+        session.pty.kill();
+        session.status = 'exited';
+        session.pty = null;
+      }
+    }
+    // Also count queued sessions as suspended
+    for (const session of this.sessions.values()) {
+      if (session.status === 'queued') {
+        suspendedIds.push(session.id);
+        session.status = 'exited';
+      }
+    }
+    this.queue.length = 0;
+    return suspendedIds;
   }
 
   killAll(): void {

@@ -133,9 +133,9 @@ export function SettingsPage() {
                   onChange={(e) => updateConfig({ claude: { ...config.claude, permissionMode: e.target.value as PermissionMode } })}
                   className="bg-zinc-800 border border-zinc-600 rounded px-3 py-2 text-sm text-zinc-100 w-full focus:outline-none focus:border-blue-500"
                 >
+                  <option value="project-settings">Project Settings (default)</option>
+                  <option value="plan-mode">Plan Mode (--permission-mode plan)</option>
                   <option value="dangerously-skip">Autonomous (--dangerously-skip-permissions)</option>
-                  <option value="project-settings">Project Settings</option>
-                  <option value="plan-mode">Plan Mode (--plan)</option>
                   <option value="manual">Manual (interactive)</option>
                 </select>
               </div>

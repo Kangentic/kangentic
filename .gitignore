@@ -1,3 +1,15 @@
+# Claude Code
+.claude/settings.local.json
+
+# Worktrees (runtime)
+.worktrees/
+
+# Build output
+dist/
+
+# MCP config (personal)
+.mcp.json
+
 # Logs
 logs
 *.log
@@ -93,4 +105,8 @@ out/
 
 # Test artifacts
 tests/screenshots/
+tests/.tmp/
+tests/.test-data/
+tests/reports/
 test-results/
+playwright-report/

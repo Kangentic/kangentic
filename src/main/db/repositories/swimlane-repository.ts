@@ -53,6 +53,14 @@ export class SwimlaneRepository {
   }
 
   reorder(ids: string[]): void {
+    // System columns (positions 0, 1, 2) must keep their positions
+    const systemLanes = this.db.prepare('SELECT id, position FROM swimlanes WHERE position <= 2 ORDER BY position ASC').all() as Array<{ id: string; position: number }>;
+    for (const lane of systemLanes) {
+      if (ids[lane.position] !== lane.id) {
+        throw new Error('System columns cannot be reordered.');
+      }
+    }
+
     const tx = this.db.transaction(() => {
       const stmt = this.db.prepare('UPDATE swimlanes SET position = ? WHERE id = ?');
       ids.forEach((id, index) => {
@@ -63,6 +71,12 @@ export class SwimlaneRepository {
   }
 
   delete(id: string): void {
+    // Cannot delete system columns (positions 0, 1, 2)
+    const lane = this.getById(id);
+    if (lane && lane.position <= 2) {
+      throw new Error('Cannot delete a system column.');
+    }
+
     const taskCount = this.db.prepare('SELECT COUNT(*) as c FROM tasks WHERE swimlane_id = ?').get(id) as { c: number };
     if (taskCount.c > 0) {
       throw new Error('Cannot delete swimlane with tasks. Move or delete tasks first.');

@@ -17,11 +17,20 @@ export function App() {
     loadConfig();
     detectClaude();
     loadProjects();
+
+    // Listen for auto-opened project (from --cwd CLI arg)
+    const cleanup = window.electronAPI.projects.onAutoOpened((project) => {
+      useProjectStore.setState({ currentProject: project });
+      // Refresh the project list to include the auto-opened project
+      loadProjects();
+    });
+    return cleanup;
   }, []);
 
   useEffect(() => {
     if (currentProject) {
       loadBoard();
+      useSessionStore.getState().loadSessions();
     }
   }, [currentProject]);
 

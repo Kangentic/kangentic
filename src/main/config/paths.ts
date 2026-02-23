@@ -3,6 +3,11 @@ import os from 'node:os';
 import fs from 'node:fs';
 
 function getConfigDir(): string {
+  // Allow override for test isolation (each test run gets its own data dir)
+  if (process.env.KANGENTIC_DATA_DIR) {
+    return process.env.KANGENTIC_DATA_DIR;
+  }
+
   const platform = process.platform;
   let base: string;
   if (platform === 'win32') {
