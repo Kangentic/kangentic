@@ -53,18 +53,25 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.PROJECT_OPEN, async (_, id) => {
     const project = projectRepo.getById(id);
     if (!project) throw new Error(`Project ${id} not found`);
+
+    // Skip full recovery if re-opening the same project (e.g. Vite hot-reload
+    // causes the renderer to re-mount and call PROJECT_OPEN again).
+    const isReopen = currentProjectId === id;
+
     currentProjectId = id;
     currentProjectPath = project.path;
     projectRepo.updateLastOpened(id);
 
-    // Apply project config overrides
+    // Apply project config overrides (always — config may have changed)
     const config = configManager.getEffectiveConfig(project.path);
     sessionManager.setMaxConcurrent(config.claude.maxConcurrentSessions);
     sessionManager.setShell(config.terminal.shell);
 
-    // Recover any suspended/orphaned sessions, then reconcile missing ones
-    await recoverSessions(id, project.path, sessionManager, claudeDetector, commandBuilder, configManager);
-    await reconcileSessions(id, project.path, sessionManager, claudeDetector, commandBuilder, configManager);
+    if (!isReopen) {
+      // Recover any suspended/orphaned sessions, then reconcile missing ones
+      await recoverSessions(id, project.path, sessionManager, claudeDetector, commandBuilder, configManager);
+      await reconcileSessions(id, project.path, sessionManager, claudeDetector, commandBuilder, configManager);
+    }
   });
 
   ipcMain.handle(IPC.PROJECT_GET_CURRENT, () => {
@@ -393,6 +400,9 @@ export async function openProjectByPath(projectPath: string) {
     getProjectDb(project.id);
   }
 
+  // Skip full recovery if re-opening the same project
+  const isReopen = currentProjectId === project.id;
+
   // Open the project
   currentProjectId = project.id;
   currentProjectPath = project.path;
@@ -402,9 +412,11 @@ export async function openProjectByPath(projectPath: string) {
   sessionManager.setMaxConcurrent(config.claude.maxConcurrentSessions);
   sessionManager.setShell(config.terminal.shell);
 
-  // Recover suspended/orphaned sessions, then reconcile missing ones
-  await recoverSessions(project.id, project.path, sessionManager, claudeDetector, commandBuilder, configManager);
-  await reconcileSessions(project.id, project.path, sessionManager, claudeDetector, commandBuilder, configManager);
+  if (!isReopen) {
+    // Recover suspended/orphaned sessions, then reconcile missing ones
+    await recoverSessions(project.id, project.path, sessionManager, claudeDetector, commandBuilder, configManager);
+    await reconcileSessions(project.id, project.path, sessionManager, claudeDetector, commandBuilder, configManager);
+  }
 
   return project;
 }

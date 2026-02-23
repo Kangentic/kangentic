@@ -73,8 +73,20 @@ export async function recoverSessions(
   const taskRepo = new TaskRepository(db);
   const skillRepo = new SkillRepository(db);
 
-  // 1. Mark any leftover 'running' records as orphaned (crash case)
-  sessionRepo.markAllRunningAsOrphaned();
+  // 1. Mark leftover 'running' records as orphaned (crash case).
+  //    SKIP records whose task already has a live PTY session — this prevents
+  //    re-entrant calls (Vite hot-reload, duplicate PROJECT_OPEN) from
+  //    orphaning sessions that were JUST created and are actively running.
+  const liveTaskIds = new Set(
+    sessionManager.listSessions()
+      .filter(s => s.status === 'running' || s.status === 'queued')
+      .map(s => s.taskId),
+  );
+  if (liveTaskIds.size > 0) {
+    sessionRepo.markRunningAsOrphanedExcluding(liveTaskIds);
+  } else {
+    sessionRepo.markAllRunningAsOrphaned();
+  }
 
   // 2. Gather ALL recoverable session records
   const suspended = sessionRepo.getResumable();
@@ -138,6 +150,14 @@ export async function recoverSessions(
 
   for (const record of toRecover) {
     try {
+      // --- Guard: task already has a live PTY session ---
+      // Skip if the task is already being served by an active PTY process
+      // (e.g. re-entrant call from Vite hot-reload or duplicate PROJECT_OPEN).
+      if (liveTaskIds.has(record.task_id)) {
+        skipped++;
+        continue;
+      }
+
       // --- Guard: task must still exist ---
       const task = taskRepo.getById(record.task_id);
       if (!task) {

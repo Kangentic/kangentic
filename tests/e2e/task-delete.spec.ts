@@ -210,6 +210,121 @@ test.describe('Task Delete', () => {
     await expect(taskCards).toHaveCount(0);
   });
 
+  test('delete task with queued session does not crash', async () => {
+    const titleA = `QueueSlot ${runId}`;
+    const titleB = `QueueWait ${runId}`;
+
+    // Lower max concurrent to 1 so the second move queues
+    await page.evaluate(async () => {
+      const cfg = await window.electronAPI.config.get();
+      cfg.claude.maxConcurrentSessions = 1;
+      await window.electronAPI.config.set(cfg);
+    });
+
+    // Create two tasks
+    await createTask(page, titleA, 'Occupies the only slot');
+    await createTask(page, titleB, 'Should be queued');
+
+    // Get swimlane IDs for Backlog (position 0) and Planning (position 1)
+    const { planningId, taskAId, taskBId } = await page.evaluate(async (titles) => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      const planning = lanes.find((l: any) => l.position === 1);
+      const tasks = await window.electronAPI.tasks.list();
+      const a = tasks.find((t: any) => t.title === titles.a);
+      const b = tasks.find((t: any) => t.title === titles.b);
+      return { planningId: planning.id, taskAId: a.id, taskBId: b.id };
+    }, { a: titleA, b: titleB });
+
+    // Move task A to Planning — this one gets the running session
+    await page.evaluate(async (args) => {
+      await window.electronAPI.tasks.move({
+        taskId: args.taskId,
+        targetSwimlaneId: args.laneId,
+        targetPosition: 0,
+      });
+    }, { taskId: taskAId, laneId: planningId });
+
+    // Wait for task A to get a running session
+    await waitForSession(titleA);
+
+    // Move task B to Planning — with maxConcurrent=1, this one gets queued
+    await page.evaluate(async (args) => {
+      await window.electronAPI.tasks.move({
+        taskId: args.taskId,
+        targetSwimlaneId: args.laneId,
+        targetPosition: 1,
+      });
+    }, { taskId: taskBId, laneId: planningId });
+
+    // Wait briefly for the queue entry to be created
+    await page.waitForTimeout(500);
+
+    // Verify task B has a session_id (queued sessions still get one)
+    const taskBSessionId = await page.evaluate(async (title) => {
+      const tasks = await window.electronAPI.tasks.list();
+      const t = tasks.find((tk: any) => tk.title === title);
+      return t?.session_id ?? null;
+    }, titleB);
+    expect(taskBSessionId).not.toBeNull();
+
+    // Verify the session for B is queued (not running)
+    const sessionBStatus = await page.evaluate(async (sid) => {
+      const sessions = await window.electronAPI.sessions.list();
+      const s = sessions.find((sess: any) => sess.id === sid);
+      return s?.status ?? null;
+    }, taskBSessionId);
+    expect(sessionBStatus).toBe('queued');
+
+    // Delete task B (the one with the queued session) via IPC
+    await page.evaluate(async (id) => {
+      await window.electronAPI.tasks.delete(id);
+    }, taskBId);
+    await page.waitForTimeout(500);
+
+    // Verify app is still alive
+    await waitForBoard(page);
+
+    // Verify task B is gone
+    const taskBExists = await page.evaluate(async (title) => {
+      const tasks = await window.electronAPI.tasks.list();
+      return tasks.some((t: any) => t.title === title);
+    }, titleB);
+    expect(taskBExists).toBe(false);
+
+    // Verify the queued session is no longer queued (killed sessions stay in
+    // the in-memory map but are marked exited, not removed entirely)
+    const queuedSessionStatus = await page.evaluate(async (sid) => {
+      const sessions = await window.electronAPI.sessions.list();
+      const s = sessions.find((s: any) => s.id === sid);
+      return s?.status ?? 'gone';
+    }, taskBSessionId);
+    expect(queuedSessionStatus).not.toBe('queued');
+
+    // Verify task A's session is still running
+    const taskASession = await page.evaluate(async (title) => {
+      const tasks = await window.electronAPI.tasks.list();
+      const t = tasks.find((tk: any) => tk.title === title);
+      if (!t?.session_id) return null;
+      const sessions = await window.electronAPI.sessions.list();
+      const s = sessions.find((sess: any) => sess.id === t.session_id);
+      return s?.status ?? null;
+    }, titleA);
+    expect(taskASession).toBe('running');
+
+    // Clean up: restore maxConcurrentSessions and kill task A's session
+    await page.evaluate(async (title) => {
+      const cfg = await window.electronAPI.config.get();
+      cfg.claude.maxConcurrentSessions = 5;
+      await window.electronAPI.config.set(cfg);
+      const tasks = await window.electronAPI.tasks.list();
+      const t = tasks.find((tk: any) => tk.title === title);
+      if (t?.session_id) {
+        await window.electronAPI.sessions.kill(t.session_id);
+      }
+    }, titleA);
+    await page.waitForTimeout(300);
+  });
+
   test('delete task without session from detail dialog', async () => {
     const title = `Remove NoSession ${runId}`;
     await createTask(page, title, 'No session');

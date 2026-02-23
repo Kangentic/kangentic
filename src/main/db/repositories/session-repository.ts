@@ -67,6 +67,23 @@ export class SessionRepository {
     ).run();
   }
 
+  /**
+   * Mark 'running' sessions as 'orphaned', but SKIP records whose task_id
+   * is in the exclusion set. This prevents re-entrant recovery calls (e.g.
+   * Vite hot-reload) from orphaning sessions that are actively running.
+   */
+  markRunningAsOrphanedExcluding(excludeTaskIds: Set<string>): void {
+    if (excludeTaskIds.size === 0) {
+      this.markAllRunningAsOrphaned();
+      return;
+    }
+    const ids = Array.from(excludeTaskIds);
+    const placeholders = ids.map(() => '?').join(', ');
+    this.db.prepare(
+      `UPDATE sessions SET status = 'orphaned' WHERE status = 'running' AND task_id NOT IN (${placeholders})`
+    ).run(...ids);
+  }
+
   /** Get orphaned claude_agent sessions */
   getOrphaned(): SessionRecord[] {
     return this.db.prepare(
