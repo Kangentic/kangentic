@@ -23,7 +23,7 @@ interface ManagedSession {
 
 export class SessionManager extends EventEmitter {
   private sessions = new Map<string, ManagedSession>();
-  private queue: Array<{ input: SpawnSessionInput; resolve: (session: Session) => void }> = [];
+  private queue: Array<{ input: SpawnSessionInput; sessionId: string }> = [];
   private maxConcurrent = 5;
   private shellResolver = new ShellResolver();
   private configuredShell: string | null = null;
@@ -51,27 +51,26 @@ export class SessionManager extends EventEmitter {
 
   async spawn(input: SpawnSessionInput): Promise<Session> {
     if (this.activeCount >= this.maxConcurrent) {
-      // Queue it
-      return new Promise((resolve) => {
-        this.queue.push({ input, resolve });
-        // Create a placeholder session
-        const id = uuidv4();
-        const session: ManagedSession = {
-          id,
-          taskId: input.taskId,
-          pty: null,
-          status: 'queued',
-          shell: '',
-          cwd: input.cwd,
-          startedAt: new Date().toISOString(),
-          exitCode: null,
-          buffer: '',
-          flushScheduled: false,
-          scrollback: '',
-        };
-        this.sessions.set(id, session);
-        this.emit('status', id, 'queued');
-      });
+      // Return a queued placeholder immediately (don't block the caller).
+      // processQueue() will upgrade it to a running PTY when a slot opens.
+      const id = uuidv4();
+      const session: ManagedSession = {
+        id,
+        taskId: input.taskId,
+        pty: null,
+        status: 'queued',
+        shell: '',
+        cwd: input.cwd,
+        startedAt: new Date().toISOString(),
+        exitCode: null,
+        buffer: '',
+        flushScheduled: false,
+        scrollback: '',
+      };
+      this.sessions.set(id, session);
+      this.queue.push({ input, sessionId: id });
+      this.emit('status', id, 'queued');
+      return this.toSession(session);
     }
 
     return this.doSpawn(input);
@@ -149,11 +148,13 @@ export class SessionManager extends EventEmitter {
       if (!session.flushScheduled) {
         session.flushScheduled = true;
         setTimeout(() => {
-          if (session.buffer) {
-            this.emit('data', id, session.buffer);
-            session.buffer = '';
+          // Guard: session may have been removed from the map during the 16ms window
+          const current = this.sessions.get(id);
+          if (current && current.buffer) {
+            this.emit('data', id, current.buffer);
+            current.buffer = '';
           }
-          session.flushScheduled = false;
+          if (current) current.flushScheduled = false;
         }, 16);
       }
     });
@@ -239,8 +240,8 @@ export class SessionManager extends EventEmitter {
     while (this.queue.length > 0 && this.activeCount < this.maxConcurrent) {
       const next = this.queue.shift();
       if (next) {
-        const session = await this.doSpawn(next.input);
-        next.resolve(session);
+        // doSpawn will find the placeholder by taskId and upgrade it in-place
+        await this.doSpawn(next.input);
       }
     }
   }
@@ -316,7 +317,9 @@ export class SessionManager extends EventEmitter {
   killAll(): void {
     for (const session of this.sessions.values()) {
       if (session.pty) {
-        session.pty.kill();
+        const ptyRef = session.pty;
+        session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
+        ptyRef.kill();
       }
     }
     this.sessions.clear();

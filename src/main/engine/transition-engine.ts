@@ -33,7 +33,13 @@ export class TransitionEngine {
   }
 
   private async executeSkill(skill: Skill, task: Task): Promise<void> {
-    const config: SkillConfig = JSON.parse(skill.config_json);
+    let config: SkillConfig;
+    try {
+      config = JSON.parse(skill.config_json);
+    } catch (err) {
+      console.error(`Failed to parse config for skill ${skill.id}:`, err);
+      return; // skip skill with malformed config
+    }
     const templateVars: Record<string, string> = {
       title: task.title,
       description: task.description,
@@ -143,7 +149,7 @@ export class TransitionEngine {
     // Persist session record for resume capability
     if (this.sessionRepo) {
       // Mark the old record as exited if we're resuming
-      if (canResume) {
+      if (canResume && previousSession) {
         this.sessionRepo.updateStatus(previousSession.id, 'exited', {
           exited_at: new Date().toISOString(),
         });

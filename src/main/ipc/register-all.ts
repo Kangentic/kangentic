@@ -286,6 +286,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
         // Only mark 'running' records as 'exited' — never overwrite
         // 'suspended' status, which is set by TASK_MOVE before the
         // async onExit fires and is needed for resume on re-entry.
+        let updated = false;
         const session = sessionManager.getSession(sessionId);
         if (session) {
           const record = sessionRepo.getLatestForTask(session.taskId);
@@ -294,17 +295,20 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
               exit_code: exitCode,
               exited_at: new Date().toISOString(),
             });
+            updated = true;
           }
         }
-        // Also try matching by claude_session_id (PTY ID)
-        const byClaudeId = db.prepare(
-          `SELECT id FROM sessions WHERE claude_session_id = ? AND status = 'running' LIMIT 1`
-        ).get(sessionId) as { id: string } | undefined;
-        if (byClaudeId) {
-          sessionRepo.updateStatus(byClaudeId.id, 'exited', {
-            exit_code: exitCode,
-            exited_at: new Date().toISOString(),
-          });
+        // Fallback: try matching by claude_session_id only if taskId lookup didn't find it
+        if (!updated) {
+          const byClaudeId = db.prepare(
+            `SELECT id FROM sessions WHERE claude_session_id = ? AND status = 'running' LIMIT 1`
+          ).get(sessionId) as { id: string } | undefined;
+          if (byClaudeId) {
+            sessionRepo.updateStatus(byClaudeId.id, 'exited', {
+              exit_code: exitCode,
+              exited_at: new Date().toISOString(),
+            });
+          }
         }
       } catch {
         // DB may be closed during shutdown

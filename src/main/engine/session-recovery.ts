@@ -217,9 +217,14 @@ export async function recoverSessions(
         const skill = incomingTransition
           ? allSkills.find((s) => s.id === incomingTransition.skill_id)
           : undefined;
-        const skillConfig = skill
-          ? (JSON.parse(skill.config_json) as SkillConfig)
-          : undefined;
+        let skillConfig: SkillConfig | undefined;
+        if (skill) {
+          try {
+            skillConfig = JSON.parse(skill.config_json) as SkillConfig;
+          } catch {
+            console.error(`Session recovery: malformed config for skill ${skill.id} — using defaults`);
+          }
+        }
 
         prompt = skillConfig?.promptTemplate
           ? commandBuilder.interpolateTemplate(skillConfig.promptTemplate, {
@@ -281,7 +286,11 @@ export async function recoverSessions(
         `Session recovery failed for session ${record.id} (task ${record.task_id}):`,
         err,
       );
-      sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+      try {
+        sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+      } catch (updateErr) {
+        console.error(`Failed to mark session ${record.id} as exited:`, updateErr);
+      }
     }
   }
 
@@ -356,7 +365,13 @@ export async function reconcileSessions(
         );
         if (!skill) continue;
 
-        const skillConfig: SkillConfig = JSON.parse(skill.config_json);
+        let skillConfig: SkillConfig;
+        try {
+          skillConfig = JSON.parse(skill.config_json);
+        } catch {
+          console.error(`Session reconciliation: malformed config for skill ${skill.id} — skipping`);
+          continue;
+        }
         const permissionMode =
           skillConfig.permissionMode || config.claude.permissionMode;
         const cwd = task.worktree_path || projectPath;
