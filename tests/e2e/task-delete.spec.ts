@@ -1,11 +1,12 @@
 /**
- * E2E tests for deleting tasks — including tasks with active sessions.
+ * E2E tests for archiving and deleting tasks — including tasks with active sessions.
  *
  * Verifies that:
- *  - Deleting a task with a running session doesn't crash the app
- *  - Deleting a task with an exited session doesn't crash the app
- *  - The task is removed from the board after deletion
- *  - The session is cleaned up from the session store
+ *  - Archiving a task with a running session doesn't crash the app
+ *  - Archiving a task with an exited session doesn't crash the app
+ *  - The task is removed from the board after archiving
+ *  - Deleting a queued session task via IPC doesn't crash
+ *  - Archiving a task without a session works cleanly
  *
  * Uses mock-claude so tests work without a real Claude installation.
  */
@@ -127,12 +128,26 @@ async function waitForSession(taskTitle: string, timeoutMs = 15000): Promise<voi
   throw new Error(`Timed out waiting for session on task: ${taskTitle}`);
 }
 
+/** Open the kebab menu in the task detail dialog and click an action */
+async function clickKebabAction(dialog: ReturnType<Page['locator']>, actionText: string) {
+  // Click the kebab (MoreHorizontal) button — it's the icon-only button before the divider
+  const kebabButton = dialog.locator('button[title="Actions"]');
+  await kebabButton.waitFor({ state: 'visible', timeout: 3000 });
+  await kebabButton.click();
+  await page.waitForTimeout(200);
+
+  // Click the action in the dropdown
+  const actionButton = dialog.locator('button', { hasText: new RegExp(`^${actionText}$`) });
+  await actionButton.waitFor({ state: 'visible', timeout: 3000 });
+  await actionButton.click();
+}
+
 test.describe('Task Delete', () => {
   test.beforeEach(async () => {
     await ensureBoard();
   });
 
-  test('delete task with active session from detail dialog', async () => {
+  test('archive task with active session from detail dialog', async () => {
     const title = `Remove Active ${runId}`;
     await createTask(page, title, 'Session should be cleaned up');
 
@@ -145,38 +160,27 @@ test.describe('Task Delete', () => {
     await card.click();
     await page.waitForTimeout(500);
 
-    // Verify the detail dialog opened (has Delete button)
+    // Open kebab menu and click Archive (no confirmation needed)
     const dialog = page.locator('.fixed.inset-0');
-    const deleteButton = dialog.locator('button', { hasText: /^Delete$/ });
-    await deleteButton.waitFor({ state: 'visible', timeout: 3000 });
-
-    // Click Delete — this shows the confirmation prompt
-    await deleteButton.click();
-
-    // Confirm the deletion — this should NOT crash the app
-    const confirmButton = dialog.locator('button:has-text("Confirm")');
-    await confirmButton.waitFor({ state: 'visible', timeout: 3000 });
-    await confirmButton.click();
+    await clickKebabAction(dialog, 'Archive');
     await page.waitForTimeout(1000);
 
     // Verify the app is still alive (board is visible)
     await waitForBoard(page);
 
-    // Verify the task is gone
+    // Verify the task is gone from the board
     const taskCards = page.locator('[data-testid="swimlane"]').locator(`text=${title}`);
     await expect(taskCards).toHaveCount(0);
 
-    // Verify the session was cleaned up
-    const sessionCount = await page.evaluate(async (t) => {
-      const sessions = await window.electronAPI.sessions.list();
-      const tasks = await window.electronAPI.tasks.list();
-      const task = tasks.find((tk: any) => tk.title === t);
-      return { sessions: sessions.length, taskExists: !!task };
+    // Verify the task was archived (not deleted)
+    const taskArchived = await page.evaluate(async (t) => {
+      const archived = await window.electronAPI.tasks.listArchived();
+      return archived.some((tk: any) => tk.title === t);
     }, title);
-    expect(sessionCount.taskExists).toBe(false);
+    expect(taskArchived).toBe(true);
   });
 
-  test('delete task with exited session from detail dialog', async () => {
+  test('archive task with exited session from detail dialog', async () => {
     const title = `Remove Exited ${runId}`;
     await createTask(page, title, 'Exited session cleanup');
 
@@ -184,7 +188,6 @@ test.describe('Task Delete', () => {
     await dragTaskToColumn(title, 'Running');
     await waitForSession(title);
 
-    // Wait for mock-claude to exit (it exits after ~10s, but let's kill it sooner)
     // Kill the session via IPC so it becomes "(exited)"
     await page.evaluate(async (t) => {
       const tasks = await window.electronAPI.tasks.list();
@@ -200,22 +203,15 @@ test.describe('Task Delete', () => {
     await card.click();
     await page.waitForTimeout(500);
 
-    // Click Delete on the exited session
+    // Open kebab menu and click Archive
     const dialog = page.locator('.fixed.inset-0');
-    const deleteButton = dialog.locator('button', { hasText: /^Delete$/ });
-    await deleteButton.waitFor({ state: 'visible', timeout: 3000 });
-    await deleteButton.click();
-
-    // Confirm the deletion
-    const confirmButton = dialog.locator('button:has-text("Confirm")');
-    await confirmButton.waitFor({ state: 'visible', timeout: 3000 });
-    await confirmButton.click();
+    await clickKebabAction(dialog, 'Archive');
     await page.waitForTimeout(1000);
 
     // Verify app is still alive
     await waitForBoard(page);
 
-    // Verify task is gone
+    // Verify task is gone from board
     const taskCards = page.locator('[data-testid="swimlane"]').locator(`text=${title}`);
     await expect(taskCards).toHaveCount(0);
   });
@@ -235,10 +231,10 @@ test.describe('Task Delete', () => {
     await createTask(page, titleA, 'Occupies the only slot');
     await createTask(page, titleB, 'Should be queued');
 
-    // Get swimlane IDs for Backlog (position 0) and Planning (position 1)
+    // Get swimlane IDs for Planning (role='planning')
     const { planningId, taskAId, taskBId } = await page.evaluate(async (titles) => {
       const lanes = await window.electronAPI.swimlanes.list();
-      const planning = lanes.find((l: any) => l.position === 1);
+      const planning = lanes.find((l: any) => l.role === 'planning');
       const tasks = await window.electronAPI.tasks.list();
       const a = tasks.find((t: any) => t.title === titles.a);
       const b = tasks.find((t: any) => t.title === titles.b);
@@ -335,7 +331,7 @@ test.describe('Task Delete', () => {
     await page.waitForTimeout(300);
   });
 
-  test('delete task without session from detail dialog', async () => {
+  test('archive task without session from detail dialog', async () => {
     const title = `Remove NoSession ${runId}`;
     await createTask(page, title, 'No session');
 
@@ -344,20 +340,21 @@ test.describe('Task Delete', () => {
     await card.click();
     await page.waitForTimeout(300);
 
+    // Open kebab menu and click Archive
     const dialog = page.locator('.fixed.inset-0');
-    const deleteButton = dialog.locator('button', { hasText: /^Delete$/ });
-    await deleteButton.waitFor({ state: 'visible', timeout: 3000 });
-    await deleteButton.click();
-
-    // Confirm the deletion
-    const confirmButton = dialog.locator('button:has-text("Confirm")');
-    await confirmButton.waitFor({ state: 'visible', timeout: 3000 });
-    await confirmButton.click();
+    await clickKebabAction(dialog, 'Archive');
     await page.waitForTimeout(500);
 
-    // Verify app is still alive and task is gone
+    // Verify app is still alive and task is gone from board
     await waitForBoard(page);
     const taskCards = page.locator('[data-testid="swimlane"]').locator(`text=${title}`);
     await expect(taskCards).toHaveCount(0);
+
+    // Verify the task was archived
+    const taskArchived = await page.evaluate(async (t) => {
+      const archived = await window.electronAPI.tasks.listArchived();
+      return archived.some((tk: any) => tk.title === t);
+    }, title);
+    expect(taskArchived).toBe(true);
   });
 });

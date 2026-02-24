@@ -58,6 +58,31 @@ export class WorktreeManager {
     return { worktreePath, branchName };
   }
 
+  /**
+   * Rename the git branch for a task after a title edit.
+   * Only renames the branch ref — the worktree directory stays unchanged.
+   * Returns the new branch name on success, null if skipped or failed.
+   */
+  async renameBranch(
+    taskId: string,
+    oldBranchName: string,
+    newTitle: string,
+  ): Promise<string | null> {
+    const slug = slugify(newTitle) || 'task';
+    const shortId = taskId.slice(0, 8);
+    const newBranchName = `kanban/${slug}-${shortId}`;
+
+    if (newBranchName === oldBranchName) return null; // slug didn't change
+
+    try {
+      await this.git.raw(['branch', '-m', oldBranchName, newBranchName]);
+      return newBranchName;
+    } catch (err) {
+      console.error('Branch rename failed:', err);
+      return null;
+    }
+  }
+
   async removeWorktree(worktreePath: string): Promise<void> {
     if (fs.existsSync(worktreePath)) {
       await this.git.raw(['worktree', 'remove', worktreePath, '--force']);

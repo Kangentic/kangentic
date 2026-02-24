@@ -14,6 +14,8 @@ export const IPC = {
   TASK_UPDATE: 'task:update',
   TASK_DELETE: 'task:delete',
   TASK_MOVE: 'task:move',
+  TASK_LIST_ARCHIVED: 'task:list-archived',
+  TASK_UNARCHIVE: 'task:unarchive',
 
   // Swimlanes
   SWIMLANE_LIST: 'swimlane:list',
@@ -44,6 +46,8 @@ export const IPC = {
   SESSION_EXIT: 'session:exit',
   SESSION_USAGE: 'session:usage',
   SESSION_GET_USAGE: 'session:getUsage',
+  SESSION_ACTIVITY: 'session:activity',
+  SESSION_GET_ACTIVITY: 'session:getActivity',
 
   // Config
   CONFIG_GET: 'config:get',
@@ -57,6 +61,9 @@ export const IPC = {
   // Shell
   SHELL_GET_AVAILABLE: 'shell:getAvailable',
   SHELL_GET_DEFAULT: 'shell:getDefault',
+
+  // Shell utilities
+  SHELL_OPEN_PATH: 'shell:openPath',
 
   // Window
   WINDOW_MINIMIZE: 'window:minimize',

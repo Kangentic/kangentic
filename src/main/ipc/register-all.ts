@@ -1,4 +1,5 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import fs from 'node:fs';
+import { ipcMain, BrowserWindow, shell } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
 import type Database from 'better-sqlite3';
 import { ProjectRepository } from '../db/repositories/project-repository';
@@ -12,7 +13,7 @@ import { ShellResolver } from '../pty/shell-resolver';
 import { TransitionEngine } from '../engine/transition-engine';
 import { CommandBuilder } from '../agent/command-builder';
 import { SessionRepository } from '../db/repositories/session-repository';
-import { recoverSessions, reconcileSessions } from '../engine/session-recovery';
+import { recoverSessions, reconcileSessions, pruneOrphanedWorktrees } from '../engine/session-recovery';
 import { WorktreeManager } from '../git/worktree-manager';
 import { getProjectDb } from '../db/database';
 
@@ -68,6 +69,12 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     sessionManager.setShell(config.terminal.shell);
 
     if (!isReopen) {
+      // Prune tasks whose worktrees have been deleted externally
+      const db = getProjectDb(id);
+      const taskRepo = new TaskRepository(db);
+      const sessionRepo = new SessionRepository(db);
+      pruneOrphanedWorktrees(project.path, taskRepo, sessionRepo, sessionManager);
+
       // Recover any suspended/orphaned sessions, then reconcile missing ones
       await recoverSessions(id, project.path, sessionManager, claudeDetector, commandBuilder, configManager);
       await reconcileSessions(id, project.path, sessionManager, claudeDetector, commandBuilder, configManager);
@@ -94,12 +101,42 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     return tasks.create(input);
   });
 
-  ipcMain.handle(IPC.TASK_UPDATE, (_, input) => {
+  ipcMain.handle(IPC.TASK_UPDATE, async (_, input) => {
     const { tasks } = getProjectRepos();
+    const existing = tasks.getById(input.id);
+
+    // If title changed and task has a worktree branch, try to rename the branch
+    if (input.title && existing?.branch_name && existing?.worktree_path
+        && input.title !== existing.title && currentProjectPath
+        && !existing.pr_url) {
+      // Guard: skip if the agent is actively thinking (git operations may be in flight)
+      const taskSession = sessionManager.listSessions()
+        .find(s => s.taskId === input.id && (s.status === 'running' || s.status === 'queued'));
+      const activityCache = sessionManager.getActivityCache();
+      const isThinking = taskSession && activityCache[taskSession.id] === 'thinking';
+
+      if (isThinking) {
+        console.log(`[TASK_UPDATE] Skipping branch rename — task ${input.id.slice(0, 8)} agent is thinking`);
+      } else if (!fs.existsSync(existing.worktree_path)) {
+        console.log(`[TASK_UPDATE] Skipping branch rename — worktree path missing: ${existing.worktree_path}`);
+      } else {
+        const wm = new WorktreeManager(currentProjectPath);
+        const newBranchName = await wm.renameBranch(
+          input.id, existing.branch_name, input.title,
+        );
+        if (newBranchName) {
+          console.log(`[TASK_UPDATE] Branch renamed: ${existing.branch_name} → ${newBranchName}`);
+          input.branch_name = newBranchName;
+        } else {
+          console.log(`[TASK_UPDATE] Branch rename skipped (same slug or failed) for ${existing.branch_name}`);
+        }
+      }
+    }
+
     return tasks.update(input);
   });
 
-  ipcMain.handle(IPC.TASK_DELETE, (_, id) => {
+  ipcMain.handle(IPC.TASK_DELETE, async (_, id) => {
     const { tasks } = getProjectRepos();
     const task = tasks.getById(id);
 
@@ -109,6 +146,22 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
         sessionManager.kill(task.session_id);
       } catch (err) {
         console.error('Failed to kill session during task delete:', err);
+      }
+    }
+
+    // Clean up worktree and branch if present
+    if (task?.worktree_path && currentProjectPath) {
+      try {
+        const wm = new WorktreeManager(currentProjectPath);
+        await wm.removeWorktree(task.worktree_path);
+        if (task.branch_name) {
+          const config = configManager.getEffectiveConfig(currentProjectPath);
+          if (config.git.autoCleanup) {
+            await wm.removeBranch(task.branch_name);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to clean up worktree during task delete:', err);
       }
     }
 
@@ -127,11 +180,12 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
 
     const fromSwimlaneId = task.swimlane_id;
 
-    // Determine if source/target are session-active columns (Planning=1, Running=2)
-    const fromLane = swimlanes.getById(fromSwimlaneId);
+    // Determine if source/target are agent-active columns by checking
+    // whether they have spawn_agent transitions — avoids hardcoding roles
     const toLane = swimlanes.getById(input.targetSwimlaneId);
-    const fromIsActive = fromLane && (fromLane.position === 1 || fromLane.position === 2);
-    const toIsActive = toLane && (toLane.position === 1 || toLane.position === 2);
+    const agentLaneIds = skills.getAgentSwimlaneIds();
+    const fromIsActive = agentLaneIds.has(fromSwimlaneId);
+    const toIsActive = agentLaneIds.has(input.targetSwimlaneId);
 
     // Move the task in the database
     tasks.move(input);
@@ -155,8 +209,8 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
       return;
     }
 
-    // Create worktree if moving into Planning and worktrees are enabled
-    if (toLane && toLane.position === 1 && !task.worktree_path && currentProjectPath) {
+    // Create worktree if moving into an agent-active column and worktrees are enabled
+    if (toIsActive && !task.worktree_path && currentProjectPath) {
       const config = configManager.getEffectiveConfig(currentProjectPath);
       if (config.git.worktreesEnabled) {
         try {
@@ -203,6 +257,78 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     } catch (err) {
       console.error('Transition engine error:', err);
     }
+
+    // Auto-archive when moving to a Done column
+    if (toLane && toLane.role === 'done') {
+      tasks.archive(input.taskId);
+      console.log(`[TASK_MOVE] Auto-archived task ${input.taskId.slice(0, 8)} (moved to Done)`);
+    }
+  });
+
+  ipcMain.handle(IPC.TASK_LIST_ARCHIVED, () => {
+    const { tasks } = getProjectRepos();
+    return tasks.listArchived();
+  });
+
+  ipcMain.handle(IPC.TASK_UNARCHIVE, async (_, input: { id: string; targetSwimlaneId: string }) => {
+    const { tasks, swimlanes, skills } = getProjectRepos();
+
+    // Determine position at end of target lane
+    const laneTasks = tasks.list(input.targetSwimlaneId);
+    const position = laneTasks.length;
+
+    const task = tasks.unarchive(input.id, input.targetSwimlaneId, position);
+
+    // If target is an agent-active column, trigger session resume via transition engine
+    const agentLaneIds = skills.getAgentSwimlaneIds();
+    const toIsActive = agentLaneIds.has(input.targetSwimlaneId);
+
+    if (toIsActive && currentProjectPath) {
+      // Create worktree if needed when moving to an agent-active column
+      if (!task.worktree_path) {
+        const config = configManager.getEffectiveConfig(currentProjectPath);
+        if (config.git.worktreesEnabled) {
+          try {
+            const wm = new WorktreeManager(currentProjectPath);
+            const { worktreePath, branchName } = await wm.createWorktree(
+              task.id, task.title, config.git.defaultBaseBranch, config.git.copyFiles,
+            );
+            tasks.update({ id: task.id, worktree_path: worktreePath, branch_name: branchName });
+            Object.assign(task, tasks.getById(task.id));
+          } catch (err) {
+            console.error('Worktree creation failed during unarchive:', err);
+          }
+        }
+      }
+
+      // Execute transition skills (from Done → target)
+      const doneLane = swimlanes.list().find((l) => l.role === 'done');
+      if (doneLane) {
+        const db = getProjectDb(currentProjectId!);
+        const sessionRepo = new SessionRepository(db);
+        const engine = new TransitionEngine(
+          sessionManager, skills, tasks, claudeDetector, commandBuilder,
+          () => {
+            const config = configManager.getEffectiveConfig(currentProjectPath || undefined);
+            return {
+              permissionMode: config.claude.permissionMode,
+              claudePath: config.claude.cliPath,
+              projectPath: currentProjectPath,
+              gitConfig: config.git,
+            };
+          },
+          sessionRepo,
+        );
+
+        try {
+          await engine.executeTransition(task, doneLane.id, input.targetSwimlaneId);
+        } catch (err) {
+          console.error('Transition engine error during unarchive:', err);
+        }
+      }
+    }
+
+    return tasks.getById(input.id);
   });
 
   // === Swimlanes ===
@@ -276,6 +402,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.SESSION_LIST, () => sessionManager.listSessions());
   ipcMain.handle(IPC.SESSION_GET_SCROLLBACK, (_, id) => sessionManager.getScrollback(id));
   ipcMain.handle(IPC.SESSION_GET_USAGE, () => sessionManager.getUsageCache());
+  ipcMain.handle(IPC.SESSION_GET_ACTIVITY, () => sessionManager.getActivityCache());
 
   // Forward PTY events to renderer (guard against destroyed window during shutdown)
   sessionManager.on('data', (sessionId: string, data: string) => {
@@ -287,6 +414,12 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   sessionManager.on('usage', (sessionId: string, data: any) => {
     if (!mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC.SESSION_USAGE, sessionId, data);
+    }
+  });
+
+  sessionManager.on('activity', (sessionId: string, state: string) => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC.SESSION_ACTIVITY, sessionId, state);
     }
   });
 
@@ -364,6 +497,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   // === Shell ===
   ipcMain.handle(IPC.SHELL_GET_AVAILABLE, () => shellResolver.getAvailableShells());
   ipcMain.handle(IPC.SHELL_GET_DEFAULT, () => shellResolver.getDefaultShell());
+  ipcMain.handle(IPC.SHELL_OPEN_PATH, (_, dirPath: string) => shell.openPath(dirPath));
 
   // === Window ===
   ipcMain.on(IPC.WINDOW_MINIMIZE, () => mainWindow.minimize());
@@ -424,6 +558,12 @@ export async function openProjectByPath(projectPath: string) {
   sessionManager.setShell(config.terminal.shell);
 
   if (!isReopen) {
+    // Prune tasks whose worktrees have been deleted externally
+    const db = getProjectDb(project.id);
+    const taskRepo = new TaskRepository(db);
+    const sessionRepo = new SessionRepository(db);
+    pruneOrphanedWorktrees(project.path, taskRepo, sessionRepo, sessionManager);
+
     // Recover suspended/orphaned sessions, then reconcile missing ones
     await recoverSessions(project.id, project.path, sessionManager, claudeDetector, commandBuilder, configManager);
     await reconcileSessions(project.id, project.path, sessionManager, claudeDetector, commandBuilder, configManager);

@@ -1,19 +1,12 @@
 import React, { useState } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Map, Zap, Lock, Pencil, GripVertical } from 'lucide-react';
+import { Lock, Pencil, GripVertical } from 'lucide-react';
 import { TaskCard } from './TaskCard';
 import { NewTaskDialog } from '../dialogs/NewTaskDialog';
 import { EditColumnDialog } from '../dialogs/EditColumnDialog';
+import { getSwimlaneIcon } from '../../utils/swimlane-icons';
 import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
-
-type ColumnRole = 'planning' | 'running' | null;
-
-function getColumnRole(position: number): ColumnRole {
-  if (position === 1) return 'planning';
-  if (position === 2) return 'running';
-  return null;
-}
 
 export interface SwimlaneProps {
   swimlane: SwimlaneType;
@@ -30,7 +23,7 @@ export function Swimlane({ swimlane, tasks, dragHandleProps }: SwimlaneProps) {
     data: { type: 'swimlane' },
   });
 
-  const role = getColumnRole(swimlane.position);
+  const role = swimlane.role;
   const isSystemColumn = role !== null;
   const isDraggable = !!dragHandleProps;
 
@@ -38,7 +31,7 @@ export function Swimlane({ swimlane, tasks, dragHandleProps }: SwimlaneProps) {
     <div
       data-testid="swimlane"
       data-swimlane-name={swimlane.name}
-      className={`flex-shrink-0 w-72 flex flex-col rounded-lg ${
+      className={`flex-shrink-0 w-72 h-full flex flex-col rounded-lg ${
         isSystemColumn ? 'bg-zinc-800/70 ring-1 ring-zinc-700/50' : 'bg-zinc-800/50'
       }`}
     >
@@ -67,16 +60,17 @@ export function Swimlane({ swimlane, tasks, dragHandleProps }: SwimlaneProps) {
         )}
 
         {/* Role icon or color dot */}
-        {role === 'planning' ? (
-          <span style={{ color: swimlane.color }}><Map size={14} strokeWidth={1.75} /></span>
-        ) : role === 'running' ? (
-          <span style={{ color: swimlane.color }}><Zap size={14} strokeWidth={1.75} /></span>
-        ) : (
-          <div
-            className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-            style={{ backgroundColor: swimlane.color }}
-          />
-        )}
+        {(() => {
+          const Icon = getSwimlaneIcon(swimlane);
+          return Icon ? (
+            <span style={{ color: swimlane.color }}><Icon size={14} strokeWidth={1.75} /></span>
+          ) : (
+            <div
+              className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+              style={{ backgroundColor: swimlane.color }}
+            />
+          );
+        })()}
 
         {/* Clickable name area opens edit dialog */}
         <button
@@ -93,7 +87,7 @@ export function Swimlane({ swimlane, tasks, dragHandleProps }: SwimlaneProps) {
 
         <span className="text-xs text-zinc-500 tabular-nums">{tasks.length}</span>
 
-        {isSystemColumn ? (
+        {role === 'backlog' ? (
           <Lock size={12} className="flex-shrink-0 opacity-40" />
         ) : (
           <button

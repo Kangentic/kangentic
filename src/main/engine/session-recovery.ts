@@ -15,32 +15,49 @@ import { ensureWorktreeTrust } from '../agent/trust-manager';
 // ---------------------------------------------------------------------------
 // Shared helper: determine which swimlane IDs should have active agents
 // ---------------------------------------------------------------------------
+// Delegates to SkillRepository.getAgentSwimlaneIds() — the single source of
+// truth for "which lanes have spawn_agent transitions".
+
+// ---------------------------------------------------------------------------
+// Prune orphaned worktree tasks (worktree dir deleted externally)
+// ---------------------------------------------------------------------------
 
 /**
- * Return the set of swimlane IDs that should have active agent sessions.
+ * Delete tasks whose worktree directories have been removed outside the app.
  *
- * A swimlane is an "agent lane" if at least one transition with a
- * `spawn_agent` skill targets it (`to_swimlane_id`).
+ * Called on project open, before session recovery. Only prunes if the
+ * `.worktrees/` parent directory exists (if missing, the project may be
+ * on an unmounted drive — don't prune anything).
  *
- * Currently: Planning, Running.
- * Future:    A Review/PR column may be added.
- *
- * Both `recoverSessions` and `reconcileSessions` use this as their single
- * source of truth so the logic for "should this task have an agent?" is
- * defined in exactly one place.
+ * Never prunes tasks without a worktree_path or tasks with an active PTY.
  */
-function getAgentSwimlaneIds(skillRepo: SkillRepository): Set<string> {
-  const transitions = skillRepo.listTransitions();
-  const skills = skillRepo.list();
+export function pruneOrphanedWorktrees(
+  projectPath: string,
+  taskRepo: TaskRepository,
+  sessionRepo: SessionRepository,
+  sessionManager: SessionManager,
+): number {
+  const worktreesDir = path.join(projectPath, '.worktrees');
+  if (!fs.existsSync(worktreesDir)) return 0; // Parent missing — don't prune
 
-  const ids = new Set<string>();
-  for (const t of transitions) {
-    const skill = skills.find((s) => s.id === t.skill_id);
-    if (skill?.type === 'spawn_agent') {
-      ids.add(t.to_swimlane_id);
-    }
+  const activeTaskIds = new Set(
+    sessionManager.listSessions()
+      .filter(s => s.status === 'running' || s.status === 'queued')
+      .map(s => s.taskId),
+  );
+
+  let pruned = 0;
+  for (const task of taskRepo.list()) {
+    if (!task.worktree_path) continue;              // Never had a worktree
+    if (fs.existsSync(task.worktree_path)) continue; // Worktree still exists
+    if (activeTaskIds.has(task.id)) continue;         // Safety check
+
+    console.log(`[PRUNE] Deleting orphaned task "${task.title}" (${task.id.slice(0, 8)}) — worktree missing`);
+    sessionRepo.deleteByTaskId(task.id);
+    taskRepo.delete(task.id);
+    pruned++;
   }
-  return ids;
+  return pruned;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +145,7 @@ export async function recoverSessions(
   }
 
   // 4. Determine which columns should have active agents
-  const agentLaneIds = getAgentSwimlaneIds(skillRepo);
+  const agentLaneIds = skillRepo.getAgentSwimlaneIds();
 
   // Cache transitions and skills for prompt lookup during recovery
   const allTransitions = skillRepo.listTransitions();
@@ -262,6 +279,7 @@ export async function recoverSessions(
       const statusDir = path.join(projectPath, '.kangentic', 'status');
       fs.mkdirSync(statusDir, { recursive: true });
       const statusOutputPath = path.join(statusDir, `${claudeSessionId}.json`);
+      const activityOutputPath = path.join(statusDir, `${claudeSessionId}.activity.json`);
 
       const command = commandBuilder.buildClaudeCommand({
         claudePath: claude.path,
@@ -273,6 +291,7 @@ export async function recoverSessions(
         sessionId: claudeSessionId,
         resume: canResume,
         statusOutputPath,
+        activityOutputPath,
       });
 
       // Spawn a new PTY
@@ -281,6 +300,7 @@ export async function recoverSessions(
         command,
         cwd: record.cwd,
         statusOutputPath,
+        activityOutputPath,
       });
 
       // Mark old record as exited
@@ -341,7 +361,7 @@ export async function recoverSessions(
  * session (e.g., session exited, app closed without suspend, or the task
  * was placed there manually).
  *
- * Only columns returned by `getAgentSwimlaneIds()` are considered.
+ * Only columns returned by `skillRepo.getAgentSwimlaneIds()` are considered.
  */
 export async function reconcileSessions(
   projectId: string,
@@ -358,7 +378,7 @@ export async function reconcileSessions(
   const config = configManager.getEffectiveConfig(projectPath);
 
   // Determine which columns should have active agents
-  const agentLaneIds = getAgentSwimlaneIds(skillRepo);
+  const agentLaneIds = skillRepo.getAgentSwimlaneIds();
   if (agentLaneIds.size === 0) return;
 
   // Build set of task IDs that already have a running PTY session
@@ -441,6 +461,7 @@ export async function reconcileSessions(
         const statusDir = path.join(projectPath, '.kangentic', 'status');
         fs.mkdirSync(statusDir, { recursive: true });
         const statusOutputPath = path.join(statusDir, `${claudeSessionId}.json`);
+        const activityOutputPath = path.join(statusDir, `${claudeSessionId}.activity.json`);
 
         const command = commandBuilder.buildClaudeCommand({
           claudePath: claude.path,
@@ -451,6 +472,7 @@ export async function reconcileSessions(
           projectRoot: projectPath,
           sessionId: claudeSessionId,
           statusOutputPath,
+          activityOutputPath,
         });
 
         const session = await sessionManager.spawn({
@@ -458,6 +480,7 @@ export async function reconcileSessions(
           command,
           cwd,
           statusOutputPath,
+          activityOutputPath,
         });
 
         taskRepo.update({

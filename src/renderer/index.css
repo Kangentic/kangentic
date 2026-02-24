@@ -23,6 +23,44 @@
 .drag-overlay {
   opacity: 0.85;
   transform: rotate(3deg);
+  pointer-events: none;
+}
+
+/* Swirling drop zone border */
+@keyframes spin-border {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.drop-zone-active {
+  position: relative;
+  overflow: hidden;
+}
+
+.drop-zone-active::before {
+  content: '';
+  position: absolute;
+  inset: -50%;
+  background: conic-gradient(
+    transparent 0deg,
+    var(--drop-color, #22c55e) 60deg,
+    transparent 120deg,
+    transparent 180deg,
+    var(--drop-color, #22c55e) 240deg,
+    transparent 300deg,
+    transparent 360deg
+  );
+  animation: spin-border 2s linear infinite;
+  z-index: 0;
+}
+
+.drop-zone-active::after {
+  content: '';
+  position: absolute;
+  inset: 2px;
+  border-radius: calc(0.5rem - 2px);
+  background: color-mix(in srgb, var(--drop-color, #22c55e) 10%, #18181b);
+  z-index: 0;
 }
 
 /* Terminal panel resize handle */
@@ -34,3 +72,26 @@
 .resize-handle:hover {
   background-color: #3b82f6;
 }
+
+/* react-colorful dark theme */
+.react-colorful {
+  --rcp-width: 100%;
+  --rcp-border-radius: 8px;
+}
+
+/* Task completion: grow in */
+@keyframes grow-in {
+  0%   { transform: scale(0.3); opacity: 0; }
+  70%  { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.grow-in {
+  animation: grow-in 250ms ease-out forwards;
+}
+
+/* Dialog transitions */
+@keyframes dialog-backdrop-in  { from { opacity: 0 } }
+@keyframes dialog-backdrop-out { to   { opacity: 0 } }
+@keyframes dialog-content-in   { from { opacity: 0; transform: scale(0.95) translateY(8px) } }
+@keyframes dialog-content-out  { to   { opacity: 0; transform: scale(0.95) translateY(8px) } }

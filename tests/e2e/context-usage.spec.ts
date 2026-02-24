@@ -280,9 +280,13 @@ test.describe('Context Window Usage', () => {
     const usageBar = page.locator('[data-testid="usage-bar"]', { hasText: '95%' });
     await usageBar.waitFor({ state: 'visible', timeout: 10000 });
 
-    // Verify the bar has the red color class
-    const barFill = usageBar.locator('.bg-red-500');
-    await expect(barFill).toBeVisible();
+    // Verify the bar fill has the red color via inline style (smooth gradient)
+    const barFill = usageBar.locator('.rounded-full.transition-all');
+    const bgColor = await barFill.evaluate(
+      (el) => getComputedStyle(el).backgroundColor,
+    );
+    // red-500 is rgb(239, 68, 68) — at 95% the lerp is clamped to pure red
+    expect(bgColor).toBe('rgb(239, 68, 68)');
   });
 
   test('usage bar appears on the task card for first session', async () => {

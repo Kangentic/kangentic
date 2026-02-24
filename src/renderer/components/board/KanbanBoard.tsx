@@ -22,12 +22,16 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { Swimlane, type SwimlaneProps } from './Swimlane';
+import { DoneSwimlane, type DoneSwimlaneProps } from './DoneSwimlane';
 import { TaskCard } from './TaskCard';
 import { AddColumnButton } from './AddColumnButton';
 import { useBoardStore } from '../../stores/board-store';
 import type { Task, Swimlane as SwimlaneType } from '../../../shared/types';
+import { useToastStore } from '../../stores/toast-store';
 
-/** Wrapper that makes a column draggable via @dnd-kit/sortable */
+/** Wrapper that registers a column with @dnd-kit/sortable.
+ *  All columns participate so dnd-kit knows their positions,
+ *  but only custom columns (role === null) get a drag handle. */
 function SortableSwimlane({ swimlane, tasks }: SwimlaneProps) {
   const {
     attributes,
@@ -41,6 +45,8 @@ function SortableSwimlane({ swimlane, tasks }: SwimlaneProps) {
     data: { type: 'column' },
   });
 
+  const isDraggable = swimlane.role !== 'backlog';
+
   const style: React.CSSProperties = {
     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
     transition: transition || undefined,
@@ -48,13 +54,83 @@ function SortableSwimlane({ swimlane, tasks }: SwimlaneProps) {
     zIndex: isDragging ? 10 : undefined,
   };
 
+  if (swimlane.role === 'done') {
+    return (
+      <div ref={setNodeRef} style={style} {...attributes} className="h-full outline-none">
+        <DoneSwimlane
+          swimlane={swimlane}
+          tasks={tasks}
+          dragHandleProps={isDraggable ? listeners : undefined}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div ref={setNodeRef} style={style} {...attributes}>
+    <div ref={setNodeRef} style={style} {...attributes} className="h-full outline-none">
       <Swimlane
         swimlane={swimlane}
         tasks={tasks}
-        dragHandleProps={listeners}
+        dragHandleProps={isDraggable ? listeners : undefined}
       />
+    </div>
+  );
+}
+
+/** Fixed-position card that flies from the drop position into the Done drop zone. */
+function FlyingCard() {
+  const completingTask = useBoardStore((s) => s.completingTask);
+  const finalizeCompletion = useBoardStore((s) => s.finalizeCompletion);
+  const [flying, setFlying] = React.useState(false);
+
+  React.useEffect(() => {
+    if (completingTask) {
+      setFlying(false);
+      // Trigger transition on next frame so browser paints at start position first
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setFlying(true);
+        });
+      });
+    }
+  }, [completingTask]);
+
+  if (!completingTask) return null;
+
+  const { task, startRect } = completingTask;
+  const dropZone = document.querySelector('[data-done-drop-zone]');
+  const targetRect = dropZone?.getBoundingClientRect();
+
+  const style: React.CSSProperties = flying && targetRect ? {
+    position: 'fixed',
+    left: targetRect.left + targetRect.width / 2 - startRect.width / 2,
+    top: targetRect.top + targetRect.height / 2 - 20,
+    width: startRect.width,
+    transform: 'scale(0.01)',
+    opacity: 0,
+    transition: 'all 500ms ease-in',
+    zIndex: 9999,
+    pointerEvents: 'none',
+  } : {
+    position: 'fixed',
+    left: startRect.left,
+    top: startRect.top,
+    width: startRect.width,
+    opacity: 0.85,
+    zIndex: 9999,
+    pointerEvents: 'none',
+  };
+
+  return (
+    <div
+      style={style}
+      onTransitionEnd={(e) => {
+        if (e.propertyName === 'transform') {
+          finalizeCompletion();
+        }
+      }}
+    >
+      <TaskCard task={task} isDragOverlay />
     </div>
   );
 }
@@ -63,6 +139,7 @@ export function KanbanBoard() {
   const swimlanes = useBoardStore((s) => s.swimlanes);
   const tasks = useBoardStore((s) => s.tasks);
   const moveTask = useBoardStore((s) => s.moveTask);
+  const setCompletingTask = useBoardStore((s) => s.setCompletingTask);
   const reorderSwimlanes = useBoardStore((s) => s.reorderSwimlanes);
   const [activeTask, setActiveTask] = React.useState<Task | null>(null);
 
@@ -78,18 +155,11 @@ export function KanbanBoard() {
     }),
   );
 
-  // Split into system (locked) and custom (sortable) columns
-  const systemColumns = useMemo(
-    () => swimlanes.filter((s) => s.position <= 2),
+  // All columns participate in the sortable context so dnd-kit knows
+  // their positions.  Only custom columns get drag handles (see SortableSwimlane).
+  const sortableColumnIds = useMemo(
+    () => swimlanes.map((s) => `column:${s.id}`),
     [swimlanes],
-  );
-  const customColumns = useMemo(
-    () => swimlanes.filter((s) => s.position > 2),
-    [swimlanes],
-  );
-  const customColumnSortIds = useMemo(
-    () => customColumns.map((s) => `column:${s.id}`),
-    [customColumns],
   );
 
   const swimlaneIds = useMemo(
@@ -108,34 +178,51 @@ export function KanbanBoard() {
   /** Resolve which swimlane a draggable/droppable ID belongs to. */
   const findSwimlane = useCallback((id: string): string | undefined => {
     if (swimlaneIds.has(id)) return id;
-    const currentTasks = useBoardStore.getState().tasks;
-    return currentTasks.find((t) => t.id === id)?.swimlane_id;
+    const state = useBoardStore.getState();
+    const task = state.tasks.find((t) => t.id === id)
+      ?? state.archivedTasks.find((t) => t.id === id);
+    return task?.swimlane_id;
   }, [swimlaneIds]);
 
   /**
    * Custom collision detection: use pointerWithin first (checks if cursor
    * is inside a droppable rect), fall back to rectIntersection.
    * For column drags, use closestCorners.
+   * When multiple collisions are found, prioritize swimlane droppables
+   * over sortable task items so the column drop zone always highlights.
    */
   const collisionDetection = useCallback<CollisionDetection>((args) => {
     if (String(args.active.id).startsWith('column:')) {
       return closestCorners(args);
     }
     const pointer = pointerWithin(args);
-    if (pointer.length > 0) return pointer;
+    if (pointer.length > 0) {
+      const containerMap = new Map<string, any>();
+      for (const c of args.droppableContainers) {
+        containerMap.set(String(c.id), c);
+      }
+      const swimlaneHits = pointer.filter((c) => {
+        const container = containerMap.get(String(c.id));
+        return container?.data?.current?.type === 'swimlane';
+      });
+      if (swimlaneHits.length > 0) return swimlaneHits;
+      return pointer;
+    }
     return rectIntersection(args);
   }, []);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const id = event.active.id as string;
     if (!id.startsWith('column:')) {
-      const task = tasks.find((t) => t.id === id);
+      const state = useBoardStore.getState();
+      const task = state.tasks.find((t) => t.id === id)
+        ?? state.archivedTasks.find((t) => t.id === id);
       if (task) {
         setActiveTask(task);
         dragOriginRef.current = task.swimlane_id;
       }
     }
-  }, [tasks]);
+  }, []);
 
   /**
    * Fires continuously as the dragged item moves over different containers.
@@ -149,10 +236,21 @@ export function KanbanBoard() {
     const activeId = String(active.id);
     if (activeId.startsWith('column:')) return;
 
+    // Skip visual cross-container transfer for archived tasks — they aren't
+    // in the `tasks` array. The DragOverlay shows the floating card and
+    // handleDragEnd will call unarchiveTask on drop.
+    const state = useBoardStore.getState();
+    if (state.archivedTasks.some((t) => t.id === activeId)) return;
+
     const activeContainer = findSwimlane(activeId);
     const overContainer = findSwimlane(String(over.id));
 
     if (!activeContainer || !overContainer || activeContainer === overContainer) return;
+
+    // Don't visually transfer to Done — the card stays in its current column
+    // and shrinks in place when dropped
+    const doneLane = useBoardStore.getState().swimlanes.find((s) => s.role === 'done');
+    if (doneLane && overContainer === doneLane.id) return;
 
     // Move the task to the new container visually
     useBoardStore.setState((s) => ({
@@ -189,16 +287,24 @@ export function KanbanBoard() {
       const fromSwimlaneId = activeId.slice(7); // strip 'column:'
       const toSwimlaneId = overId.slice(7);
 
-      const oldIndex = customColumns.findIndex((s) => s.id === fromSwimlaneId);
-      const newIndex = customColumns.findIndex((s) => s.id === toSwimlaneId);
-      if (oldIndex === -1 || newIndex === -1) return;
+      // Backlog and Done are locked in place
+      const draggedCol = swimlanes.find((s) => s.id === fromSwimlaneId);
+      if (!draggedCol || draggedCol.role === 'backlog') return;
 
-      const reordered = arrayMove(customColumns, oldIndex, newIndex);
-      const newOrder = [
-        ...systemColumns.map((s) => s.id),
-        ...reordered.map((s) => s.id),
-      ];
-      await reorderSwimlanes(newOrder);
+      const fromIdx = swimlanes.findIndex((s) => s.id === fromSwimlaneId);
+      const toIdx = swimlanes.findIndex((s) => s.id === toSwimlaneId);
+      if (fromIdx === -1 || toIdx === -1) return;
+
+      // arrayMove handles directional offset correctly for dnd-kit
+      const ordered = arrayMove([...swimlanes], fromIdx, toIdx);
+
+      // Validate constraints: Backlog must be first
+      const backlogIdx = ordered.findIndex((s) => s.role === 'backlog');
+
+      const toast = useToastStore.getState().addToast;
+      if (backlogIdx !== 0) { toast({ message: 'Backlog must remain the first column', variant: 'warning' }); return; }
+
+      await reorderSwimlanes(ordered.map((s) => s.id));
       return;
     }
 
@@ -212,8 +318,20 @@ export function KanbanBoard() {
       return;
     }
 
+    // --- Archived task: unarchive instead of move ---
+    const state = useBoardStore.getState();
+    const archivedTask = state.archivedTasks.find((t) => t.id === taskId);
+    if (archivedTask) {
+      // Dropped back on Done column — no-op
+      const doneLane = swimlanes.find((s) => s.role === 'done');
+      if (doneLane && targetSwimlaneId === doneLane.id) return;
+
+      await state.unarchiveTask({ id: taskId, targetSwimlaneId });
+      return;
+    }
+
     // Determine position within the target container
-    const currentTasks = useBoardStore.getState().tasks;
+    const currentTasks = state.tasks;
     const laneTasks = currentTasks.filter(
       (t) => t.swimlane_id === targetSwimlaneId && t.id !== taskId,
     );
@@ -234,9 +352,33 @@ export function KanbanBoard() {
       return;
     }
 
+    // Done target: defer moveTask and fly the card into the drop zone
+    const doneLane = swimlanes.find((s) => s.role === 'done');
+    if (doneLane && targetSwimlaneId === doneLane.id && originalSwimlane) {
+      const task = state.tasks.find((t) => t.id === taskId);
+      if (!task) return;
+      // Capture where the DragOverlay was at drop time
+      const initialRect = active.rect.current.initial;
+      const startRect = {
+        left: initialRect.left + event.delta.x,
+        top: initialRect.top + event.delta.y,
+        width: initialRect.width,
+        height: initialRect.height,
+      };
+      setCompletingTask({
+        taskId,
+        targetSwimlaneId,
+        targetPosition,
+        originSwimlaneId: originalSwimlane,
+        task,
+        startRect,
+      });
+      return;
+    }
+
     // Persist the move (moveTask handles optimistic update, IPC, and reload)
     await moveTask({ taskId, targetSwimlaneId, targetPosition });
-  }, [moveTask, findSwimlane, customColumns, systemColumns, reorderSwimlanes]);
+  }, [moveTask, setCompletingTask, findSwimlane, swimlanes, reorderSwimlanes]);
 
   const handleDragCancel = useCallback(() => {
     setActiveTask(null);
@@ -254,31 +396,20 @@ export function KanbanBoard() {
         onDragEnd={handleDragEnd}
         onDragCancel={handleDragCancel}
       >
-        <div className="flex gap-4 h-full">
-          {/* System columns (positions 0, 1, 2) — not draggable */}
-          {systemColumns.map((swimlane) => (
-            <Swimlane
-              key={swimlane.id}
-              swimlane={swimlane}
-              tasks={tasksForLane(swimlane)}
-            />
-          ))}
-
-          {/* Custom columns — sortable */}
-          <SortableContext items={customColumnSortIds} strategy={horizontalListSortingStrategy}>
-            {customColumns.map((swimlane) => (
+        <SortableContext items={sortableColumnIds} strategy={horizontalListSortingStrategy}>
+          <div className="flex gap-4 h-full">
+            {swimlanes.map((swimlane) => (
               <SortableSwimlane
                 key={swimlane.id}
                 swimlane={swimlane}
                 tasks={tasksForLane(swimlane)}
               />
             ))}
-          </SortableContext>
+            <AddColumnButton />
+          </div>
+        </SortableContext>
 
-          <AddColumnButton />
-        </div>
-
-        <DragOverlay>
+        <DragOverlay style={{ pointerEvents: 'none' }}>
           {activeTask ? (
             <div className="drag-overlay">
               <TaskCard task={activeTask} isDragOverlay />
@@ -286,6 +417,7 @@ export function KanbanBoard() {
           ) : null}
         </DragOverlay>
       </DndContext>
+      <FlyingCard />
     </div>
   );
 }

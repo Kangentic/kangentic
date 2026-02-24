@@ -23,6 +23,8 @@ const api: ElectronAPI = {
     update: (input) => ipcRenderer.invoke(IPC.TASK_UPDATE, input),
     delete: (id) => ipcRenderer.invoke(IPC.TASK_DELETE, id),
     move: (input) => ipcRenderer.invoke(IPC.TASK_MOVE, input),
+    listArchived: () => ipcRenderer.invoke(IPC.TASK_LIST_ARCHIVED),
+    unarchive: (input) => ipcRenderer.invoke(IPC.TASK_UNARCHIVE, input),
   },
 
   swimlanes: {
@@ -69,6 +71,12 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.SESSION_USAGE, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_USAGE, handler);
     },
+    getActivity: () => ipcRenderer.invoke(IPC.SESSION_GET_ACTIVITY),
+    onActivity: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, state: string) => callback(sessionId, state as any);
+      ipcRenderer.on(IPC.SESSION_ACTIVITY, handler);
+      return () => ipcRenderer.removeListener(IPC.SESSION_ACTIVITY, handler);
+    },
   },
 
   config: {
@@ -85,6 +93,7 @@ const api: ElectronAPI = {
   shell: {
     getAvailable: () => ipcRenderer.invoke(IPC.SHELL_GET_AVAILABLE),
     getDefault: () => ipcRenderer.invoke(IPC.SHELL_GET_DEFAULT),
+    openPath: (dirPath: string) => ipcRenderer.invoke(IPC.SHELL_OPEN_PATH, dirPath),
   },
 
   window: {

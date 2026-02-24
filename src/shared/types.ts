@@ -22,15 +22,20 @@ export interface Task {
   branch_name: string | null;
   pr_number: number | null;
   pr_url: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
+export type SwimlaneRole = 'backlog' | 'planning' | 'running' | 'done';
+
 export interface Swimlane {
   id: string;
   name: string;
+  role: SwimlaneRole | null;
   position: number;
   color: string;
+  icon: string | null;
   is_terminal: boolean;
   created_at: string;
 }
@@ -121,6 +126,10 @@ export interface SessionRecord {
   exited_at: string | null;
 }
 
+// === Session Activity (Claude Code Hooks) ===
+
+export type ActivityState = 'thinking' | 'idle';
+
 // === Session Usage (Claude Code Status Line) ===
 
 export interface SessionUsage {
@@ -157,6 +166,7 @@ export interface AppConfig {
     fontFamily: string;
     fontSize: number;
     showPreview: boolean;
+    panelHeight: number; // persisted terminal panel height in px
   };
 
   claude: {
@@ -173,6 +183,8 @@ export interface AppConfig {
     copyFiles: string[];
     initScript: string | null;
   };
+
+  skipDeleteConfirm: boolean;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -185,6 +197,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     fontFamily: 'Consolas, "Courier New", monospace',
     fontSize: 14,
     showPreview: false,
+    panelHeight: 250,
   },
   claude: {
     permissionMode: 'project-settings',
@@ -199,6 +212,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     copyFiles: ['.env', '.env.local', '.claude/settings.local.json'],
     initScript: null,
   },
+  skipDeleteConfirm: false,
 };
 
 // === IPC API Types ===
@@ -229,9 +243,15 @@ export interface TaskMoveInput {
   targetPosition: number;
 }
 
+export interface TaskUnarchiveInput {
+  id: string;
+  targetSwimlaneId: string;
+}
+
 export interface SwimlaneCreateInput {
   name: string;
   color?: string;
+  icon?: string | null;
   is_terminal?: boolean;
 }
 
@@ -239,6 +259,7 @@ export interface SwimlaneUpdateInput {
   id: string;
   name?: string;
   color?: string;
+  icon?: string | null;
   position?: number;
   is_terminal?: boolean;
 }
@@ -268,6 +289,7 @@ export interface SpawnSessionInput {
   cwd: string;
   env?: Record<string, string>;
   statusOutputPath?: string; // path for the status bridge JSON file
+  activityOutputPath?: string; // path for the activity bridge JSON file
 }
 
 // === Preload API (exposed to renderer via contextBridge) ===
@@ -291,6 +313,8 @@ export interface ElectronAPI {
     update: (input: TaskUpdateInput) => Promise<Task>;
     delete: (id: string) => Promise<void>;
     move: (input: TaskMoveInput) => Promise<void>;
+    listArchived: () => Promise<Task[]>;
+    unarchive: (input: TaskUnarchiveInput) => Promise<Task>;
   };
 
   // Swimlanes
@@ -329,6 +353,8 @@ export interface ElectronAPI {
     onData: (callback: (sessionId: string, data: string) => void) => () => void;
     onExit: (callback: (sessionId: string, exitCode: number) => void) => () => void;
     onUsage: (callback: (sessionId: string, data: SessionUsage) => void) => () => void;
+    getActivity: () => Promise<Record<string, ActivityState>>;
+    onActivity: (callback: (sessionId: string, state: ActivityState) => void) => () => void;
   };
 
   // Config
@@ -348,6 +374,7 @@ export interface ElectronAPI {
   shell: {
     getAvailable: () => Promise<Array<{ name: string; path: string }>>;
     getDefault: () => Promise<string>;
+    openPath: (dirPath: string) => Promise<string>;
   };
 
   // Window controls

@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
 import { ShellResolver } from './shell-resolver';
 import { adaptCommandForShell } from '../../shared/paths';
-import type { Session, SessionStatus, SessionUsage, SpawnSessionInput } from '../../shared/types';
+import type { Session, SessionStatus, SessionUsage, ActivityState, SpawnSessionInput } from '../../shared/types';
 
 const MAX_SCROLLBACK = 512 * 1024; // 512KB per session
 
@@ -22,6 +22,8 @@ interface ManagedSession {
   scrollback: string;
   statusOutputPath: string | null;
   statusWatcher: fs.FSWatcher | null;
+  activityOutputPath: string | null;
+  activityWatcher: fs.FSWatcher | null;
   mergedSettingsPath: string | null;
 }
 
@@ -32,6 +34,7 @@ export class SessionManager extends EventEmitter {
   private shellResolver = new ShellResolver();
   private configuredShell: string | null = null;
   private usageCache = new Map<string, SessionUsage>();
+  private activityCache = new Map<string, ActivityState>();
 
   setMaxConcurrent(max: number): void {
     this.maxConcurrent = max;
@@ -73,6 +76,8 @@ export class SessionManager extends EventEmitter {
         scrollback: '',
         statusOutputPath: input.statusOutputPath || null,
         statusWatcher: null,
+        activityOutputPath: input.activityOutputPath || null,
+        activityWatcher: null,
         mergedSettingsPath: null,
       };
       this.sessions.set(id, session);
@@ -97,10 +102,26 @@ export class SessionManager extends EventEmitter {
       ptyRef.kill();
     }
 
-    // Stop any existing status watcher for this task
+    // Stop any existing watchers for this task
     if (existing?.statusWatcher) {
       existing.statusWatcher.close();
       existing.statusWatcher = null;
+    }
+    if (existing?.activityWatcher) {
+      existing.activityWatcher.close();
+      existing.activityWatcher = null;
+    }
+
+    // Null out file paths on the old session object to prevent its
+    // onExit callback (which runs asynchronously after ptyRef.kill())
+    // from deleting files that the new session will create at the same
+    // paths. This race occurs when resuming a session: the old and new
+    // sessions share the same claudeSessionId, so the merged settings,
+    // status, and activity files all resolve to the same path.
+    if (existing) {
+      existing.mergedSettingsPath = null;
+      existing.statusOutputPath = null;
+      existing.activityOutputPath = null;
     }
 
     // Carry over scrollback from the previous session so the terminal
@@ -160,6 +181,8 @@ export class SessionManager extends EventEmitter {
       scrollback: previousScrollback,
       statusOutputPath: input.statusOutputPath || null,
       statusWatcher: null,
+      activityOutputPath: input.activityOutputPath || null,
+      activityWatcher: null,
       mergedSettingsPath,
     };
 
@@ -169,6 +192,19 @@ export class SessionManager extends EventEmitter {
     if (input.statusOutputPath) {
       this.startUsageWatcher(session);
     }
+
+    // Start watching the activity output file for thinking/idle state
+    if (input.activityOutputPath) {
+      this.startActivityWatcher(session);
+    }
+
+    // Default activity to 'idle'. The 'thinking' state is only set when
+    // a Claude Code hook (UserPromptSubmit) explicitly fires. This avoids
+    // perpetual spinners when hooks don't work in a given environment.
+    // The "Initializing..." bar on the task card handles the visual
+    // feedback during startup (before usage data arrives).
+    this.activityCache.set(id, 'idle');
+    this.emit('activity', id, 'idle');
 
     // Batched data output (~60fps)
     ptyProcess.onData((data: string) => {
@@ -271,6 +307,15 @@ export class SessionManager extends EventEmitter {
     const result: Record<string, SessionUsage> = {};
     for (const [id, usage] of this.usageCache) {
       result[id] = usage;
+    }
+    return result;
+  }
+
+  /** Return cached activity state for all sessions (survives renderer reloads). */
+  getActivityCache(): Record<string, ActivityState> {
+    const result: Record<string, ActivityState> = {};
+    for (const [id, state] of this.activityCache) {
+      result[id] = state;
     }
     return result;
   }
@@ -383,17 +428,77 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Stop the status watcher and clean up status + merged settings files.
+   * Start watching a session's activity output file for thinking/idle state.
+   * Claude Code hooks write JSON to this file via our activity bridge script.
+   */
+  private startActivityWatcher(session: ManagedSession): void {
+    if (!session.activityOutputPath) return;
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const readAndEmit = () => {
+      try {
+        const raw = fs.readFileSync(session.activityOutputPath!, 'utf-8');
+        const data = JSON.parse(raw);
+        const state = data.state as ActivityState;
+        if (state === 'thinking' || state === 'idle') {
+          this.activityCache.set(session.id, state);
+          this.emit('activity', session.id, state);
+        }
+      } catch {
+        // File may not exist yet, or be partially written — ignore
+      }
+    };
+
+    try {
+      const watcher = fs.watch(session.activityOutputPath, () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(readAndEmit, 50);
+      });
+
+      watcher.on('error', () => {});
+      session.activityWatcher = watcher;
+    } catch {
+      // File may not exist yet; try polling on the directory instead
+      const dir = session.activityOutputPath.replace(/[/\\][^/\\]+$/, '');
+      try {
+        const watcher = fs.watch(dir, (eventType, filename) => {
+          if (!filename) return;
+          const expected = session.activityOutputPath!.replace(/^.*[/\\]/, '');
+          if (filename === expected) {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(readAndEmit, 50);
+          }
+        });
+
+        watcher.on('error', () => {});
+        session.activityWatcher = watcher;
+      } catch {
+        // Can't watch — no activity data for this session
+      }
+    }
+  }
+
+  /**
+   * Stop watchers and clean up status + activity + merged settings files.
    */
   private cleanupSessionFiles(session: ManagedSession): void {
     if (session.statusWatcher) {
       session.statusWatcher.close();
       session.statusWatcher = null;
     }
-
+    if (session.activityWatcher) {
+      session.activityWatcher.close();
+      session.activityWatcher = null;
+    }
     // Clean up status JSON file
     if (session.statusOutputPath) {
       try { fs.unlinkSync(session.statusOutputPath); } catch { /* may not exist */ }
+    }
+
+    // Clean up activity JSON file
+    if (session.activityOutputPath) {
+      try { fs.unlinkSync(session.activityOutputPath); } catch { /* may not exist */ }
     }
 
     // Clean up merged settings file

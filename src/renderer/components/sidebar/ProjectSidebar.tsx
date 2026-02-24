@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useProjectStore } from '../../stores/project-store';
+import { useToastStore } from '../../stores/toast-store';
 import type { ProjectCreateInput } from '../../../shared/types';
 
 export function ProjectSidebar() {
@@ -14,7 +15,12 @@ export function ProjectSidebar() {
 
   const handleCreate = async () => {
     if (!newName.trim() || !newPath.trim()) return;
-    const project = await createProject({ name: newName.trim(), path: newPath.trim() });
+    const projectName = newName.trim();
+    const project = await createProject({ name: projectName, path: newPath.trim() });
+    useToastStore.getState().addToast({
+      message: `Created project "${projectName}"`,
+      variant: 'info',
+    });
     await openProject(project.id);
     setShowNew(false);
     setNewName('');
@@ -22,7 +28,7 @@ export function ProjectSidebar() {
   };
 
   return (
-    <div className="w-56 bg-zinc-800 border-r border-zinc-700 flex flex-col flex-shrink-0">
+    <div className="w-56 bg-zinc-800 flex flex-col flex-shrink-0">
       <div className="p-3 border-b border-zinc-700">
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium text-zinc-300">Projects</span>

@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Plus } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
+import { useToastStore } from '../../stores/toast-store';
 
 export function AddColumnButton() {
   const createSwimlane = useBoardStore((s) => s.createSwimlane);
@@ -17,7 +18,12 @@ export function AddColumnButton() {
       setEditing(false);
       return;
     }
-    await createSwimlane({ name: name.trim() });
+    const colName = name.trim();
+    await createSwimlane({ name: colName });
+    useToastStore.getState().addToast({
+      message: `Created column "${colName}"`,
+      variant: 'info',
+    });
     setName('');
     setEditing(false);
   };

@@ -69,6 +69,17 @@ export function SettingsPage() {
                   <option value="system">System</option>
                 </select>
               </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="skipDeleteConfirm"
+                  checked={config.skipDeleteConfirm}
+                  onChange={(e) => updateConfig({ skipDeleteConfirm: e.target.checked })}
+                  className="accent-blue-500"
+                />
+                <label htmlFor="skipDeleteConfirm" className="text-sm text-zinc-300">Skip delete confirmation</label>
+              </div>
             </div>
           )}
 

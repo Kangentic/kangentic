@@ -1,30 +1,29 @@
 import React, { useEffect, useRef } from 'react';
-import { useTerminal } from '../../hooks/useTerminal';
+import { useAggregateTerminal } from '../../hooks/useAggregateTerminal';
 import { useConfigStore } from '../../stores/config-store';
 
-interface TerminalTabProps {
-  sessionId: string;
+interface AggregateTerminalProps {
   active: boolean;
+  sessionIds: string[];
+  taskIdMap: Map<string, string>;
 }
 
-export function TerminalTab({ sessionId, active }: TerminalTabProps) {
+export function AggregateTerminal({ active, sessionIds, taskIdMap }: AggregateTerminalProps) {
   const config = useConfigStore((s) => s.config);
-  const { terminalRef, initTerminal, fit, focus, scrollbackPending } = useTerminal({
-    sessionId,
+  const { terminalRef, initTerminal, fit, focus } = useAggregateTerminal({
+    sessionIds,
+    taskIdMap,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
   });
   const initialized = useRef(false);
   const draggingRef = useRef(false);
 
-  // Init terminal once the container has real pixel dimensions.
-  // The cleanup resets initialized so React StrictMode's
-  // mount→unmount→remount cycle re-creates the terminal properly.
+  // Init terminal once the container has real pixel dimensions
   useEffect(() => {
     const el = terminalRef.current;
     if (!el) return;
 
-    // Try to init immediately if container already has dimensions
     const tryInit = () => {
       if (initialized.current) return;
       if (el.offsetWidth > 0 && el.offsetHeight > 0) {
@@ -35,7 +34,6 @@ export function TerminalTab({ sessionId, active }: TerminalTabProps) {
 
     tryInit();
 
-    // If container didn't have dimensions yet, watch for them
     let observer: ResizeObserver | null = null;
     if (!initialized.current) {
       observer = new ResizeObserver(() => {
@@ -53,46 +51,29 @@ export function TerminalTab({ sessionId, active }: TerminalTabProps) {
     };
   }, [initTerminal]);
 
-  // Re-fit and focus when tab becomes active or container resizes.
-  // Always set up the ResizeObserver when active — even if the terminal
-  // hasn't initialized yet. Tabs that start with display:none initialize
-  // late (via the init effect's ResizeObserver), so we guard fit() calls
-  // with initialized checks inside the callbacks instead of bailing early.
+  // Re-fit when tab becomes active or container resizes
   useEffect(() => {
     if (!active) return;
 
-    // Fit after a frame to ensure layout is settled.
-    // Skip fit if scrollback is still loading — initTerminal handles the
-    // fit-after-scrollback sequence to ensure proper xterm reflow.
     const initRafId = requestAnimationFrame(() => {
-      if (initialized.current && !scrollbackPending.current) {
-        fit();
-      }
       if (initialized.current) {
+        fit();
         focus();
       }
     });
 
-    // Secondary delayed fit: for tabs that initialize late (display:none
-    // at mount), initTerminal may fit at slightly wrong dimensions during
-    // the container's layout transition. This ensures correct sizing.
     const delayedFitId = setTimeout(() => {
-      if (initialized.current && !scrollbackPending.current) {
+      if (initialized.current) {
         fit();
       }
     }, 100);
 
-    // Suppress fit() while the user drags the panel resize handle.
-    // Calling fit() on every frame during a drag changes xterm's row count
-    // repeatedly; each shrink pushes viewport lines into scrollback, and
-    // if the 5000-line scrollback buffer is full the oldest lines are
-    // permanently evicted.  Deferring to mouseup avoids this.
+    // Suppress fit() during panel drag to prevent scrollback eviction
     const handleDragStart = () => { draggingRef.current = true; };
     const handleDragEnd = () => { draggingRef.current = false; };
     window.addEventListener('terminal-panel-drag-start', handleDragStart);
     window.addEventListener('terminal-panel-drag-end', handleDragEnd);
 
-    // Debounced re-fit on container resize via rAF coalescing
     const el = terminalRef.current;
     if (!el) return () => {
       cancelAnimationFrame(initRafId);
@@ -112,8 +93,6 @@ export function TerminalTab({ sessionId, active }: TerminalTabProps) {
     });
     observer.observe(el);
 
-    // Refit after panel drag / resize events. Uses double-rAF so the fit
-    // runs after React commits layout changes and the browser paints.
     let panelRaf = 0;
     const handlePanelResize = () => {
       if (!initialized.current) return;

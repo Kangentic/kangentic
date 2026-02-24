@@ -14,6 +14,7 @@ interface CommandOptions {
   resume?: boolean; // true = --resume (existing session), false = --session-id (new session)
   nonInteractive?: boolean;
   statusOutputPath?: string; // path where the status bridge writes JSON
+  activityOutputPath?: string; // path where the activity bridge writes JSON
 }
 
 export class CommandBuilder {
@@ -132,7 +133,16 @@ export class CommandBuilder {
     const bridgePath = toForwardSlash(bridgeScript);
     const statusPath = toForwardSlash(options.statusOutputPath!);
 
-    const merged = {
+    // Resolve activity bridge (same candidate pattern as status bridge)
+    const activityCandidates = [
+      path.join(__dirname, 'activity-bridge.js'),
+      path.resolve(__dirname, '..', '..', 'src', 'main', 'agent', 'activity-bridge.js'),
+      path.resolve(process.cwd(), 'src', 'main', 'agent', 'activity-bridge.js'),
+    ];
+    const activityBridge = toForwardSlash(activityCandidates.find(p => fs.existsSync(p)) || activityCandidates[0]);
+    const activityPath = options.activityOutputPath ? toForwardSlash(options.activityOutputPath) : null;
+
+    const merged: Record<string, any> = {
       ...existingSettings,
       statusLine: {
         type: 'command',
@@ -140,12 +150,78 @@ export class CommandBuilder {
       },
     };
 
+    // Deep-merge hooks for activity tracking (preserve existing user hooks)
+    if (activityPath) {
+      const existingHooks = existingSettings.hooks || {};
+      merged.hooks = {
+        ...existingHooks,
+        UserPromptSubmit: [
+          ...(existingHooks.UserPromptSubmit || []),
+          { matcher: '', hooks: [{ type: 'command', command: `node "${activityBridge}" "${activityPath}" thinking` }] },
+        ],
+        Stop: [
+          ...(existingHooks.Stop || []),
+          { matcher: '', hooks: [{ type: 'command', command: `node "${activityBridge}" "${activityPath}" idle` }] },
+        ],
+      };
+    }
+
     // Write to .kangentic/claude-settings-<sessionId>.json
     const kangenticDir = path.join(projectRoot, '.kangentic');
     fs.mkdirSync(kangenticDir, { recursive: true });
     const mergedPath = path.join(kangenticDir, `claude-settings-${options.sessionId || options.taskId}.json`);
     fs.writeFileSync(mergedPath, JSON.stringify(merged, null, 2));
 
+    // Also write hooks to <cwd>/.claude/settings.local.json so Claude Code
+    // picks them up from its standard settings hierarchy. The --settings flag
+    // may not load hooks in all Claude Code versions.
+    if (activityPath) {
+      this.injectActivityHooks(options.cwd, activityBridge, activityPath);
+    }
+
     return mergedPath;
+  }
+
+  /**
+   * Write activity hooks into <cwd>/.claude/settings.local.json.
+   * Claude Code reads this file from its standard settings hierarchy,
+   * ensuring hooks fire regardless of --settings support.
+   *
+   * Preserves existing user settings and hooks.
+   */
+  private injectActivityHooks(cwd: string, activityBridge: string, activityPath: string): void {
+    const localSettingsDir = path.join(cwd, '.claude');
+    fs.mkdirSync(localSettingsDir, { recursive: true });
+    const localSettingsPath = path.join(localSettingsDir, 'settings.local.json');
+
+    let localSettings: Record<string, any> = {};
+    try {
+      const raw = fs.readFileSync(localSettingsPath, 'utf-8');
+      localSettings = JSON.parse(raw);
+    } catch {
+      // Doesn't exist or malformed — start fresh
+    }
+
+    const existingHooks = localSettings.hooks || {};
+
+    // Filter out any stale activity-bridge entries from previous sessions
+    const filterStale = (entries: any[] | undefined): any[] =>
+      (entries || []).filter((e: any) =>
+        !e?.hooks?.some?.((h: any) => typeof h.command === 'string' && h.command.includes('activity-bridge')),
+      );
+
+    localSettings.hooks = {
+      ...existingHooks,
+      UserPromptSubmit: [
+        ...filterStale(existingHooks.UserPromptSubmit),
+        { matcher: '', hooks: [{ type: 'command', command: `node "${activityBridge}" "${activityPath}" thinking` }] },
+      ],
+      Stop: [
+        ...filterStale(existingHooks.Stop),
+        { matcher: '', hooks: [{ type: 'command', command: `node "${activityBridge}" "${activityPath}" idle` }] },
+      ],
+    };
+
+    fs.writeFileSync(localSettingsPath, JSON.stringify(localSettings, null, 2));
   }
 }

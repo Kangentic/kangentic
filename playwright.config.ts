@@ -4,7 +4,7 @@ export default defineConfig({
   testDir: './tests/e2e',
   timeout: 60000,
   retries: 0,
-  workers: 4, // Each test suite launches its own isolated Electron app
+  workers: 8, // Each test suite launches its own isolated Electron app
   use: {
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',

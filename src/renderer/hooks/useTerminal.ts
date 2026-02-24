@@ -2,7 +2,13 @@ import { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
+import { cleanSelection } from '../utils/terminal-clipboard';
 import '@xterm/xterm/css/xterm.css';
+
+/** Delay before forwarding a resize to the PTY. Coalesces rapid resizes
+ *  (panel drag, window resize) into a single PTY resize so the TUI
+ *  (Claude Code) only redraws once and scrollback isn't churned. */
+const PTY_RESIZE_DEBOUNCE_MS = 200;
 
 interface UseTerminalOptions {
   sessionId: string | null;
@@ -16,6 +22,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const fitAddonRef = useRef<FitAddon | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const scrollbackPendingRef = useRef(false);
+  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const initTerminal = useCallback(() => {
     if (!terminalRef.current || xtermRef.current) return;
@@ -27,7 +34,7 @@ export function useTerminal(options: UseTerminalOptions) {
         background: '#18181b',
         foreground: '#e4e4e7',
         cursor: '#e4e4e7',
-        selectionBackground: '#3f3f46',
+        selectionBackground: 'rgba(58, 130, 246, 0.35)',
         black: '#18181b',
         red: '#ef4444',
         green: '#22c55e',
@@ -75,9 +82,15 @@ export function useTerminal(options: UseTerminalOptions) {
         window.electronAPI.sessions.write(options.sessionId!, data);
       });
 
-      // Resize PTY when terminal resizes
+      // Debounced PTY resize — coalesces rapid dimension changes so the
+      // TUI only redraws once after resizing settles.
+      const sid = options.sessionId;
       terminal.onResize(({ cols, rows }) => {
-        window.electronAPI.sessions.resize(options.sessionId!, cols, rows);
+        if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
+        resizeTimerRef.current = setTimeout(() => {
+          resizeTimerRef.current = null;
+          window.electronAPI.sessions.resize(sid, cols, rows);
+        }, PTY_RESIZE_DEBOUNCE_MS);
       });
 
       // Replay buffered scrollback BEFORE fitting so xterm's reflow engine
@@ -134,28 +147,55 @@ export function useTerminal(options: UseTerminalOptions) {
     };
   }, [options.sessionId]);
 
+  // Handle context-menu Copy / Select All dispatched from the main process.
+  // The event detail carries the right-click coordinates so we only act when
+  // the click landed inside THIS terminal's container.
+  useEffect(() => {
+    const isInside = (e: Event): boolean => {
+      const el = terminalRef.current;
+      if (!el || !xtermRef.current) return false;
+      const { x, y } = (e as CustomEvent).detail || {};
+      if (x == null || y == null) return false;
+      const rect = el.getBoundingClientRect();
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    };
+    const handleCopy = (e: Event) => {
+      if (!isInside(e)) return;
+      const term = xtermRef.current!;
+      const selection = term.getSelection();
+      if (selection) {
+        const cleaned = cleanSelection(selection, term.cols);
+        if (cleaned) navigator.clipboard.writeText(cleaned);
+      }
+    };
+    const handleSelectAll = (e: Event) => {
+      if (!isInside(e)) return;
+      xtermRef.current!.selectAll();
+    };
+    window.addEventListener('terminal-copy', handleCopy);
+    window.addEventListener('terminal-select-all', handleSelectAll);
+    return () => {
+      window.removeEventListener('terminal-copy', handleCopy);
+      window.removeEventListener('terminal-select-all', handleSelectAll);
+    };
+  }, []);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
   }, []);
 
+  // fit() only refits xterm visually. The debounced onResize callback
+  // forwards dimensions to the PTY automatically when cols/rows change.
   const fit = useCallback(() => {
     if (!fitAddonRef.current) return;
     fitAddonRef.current.fit();
-    // Always send the current dimensions to the PTY after fitting.
-    // xterm's onResize only fires when cols/rows actually change, but
-    // the container may have resized by pixels that don't cross a row
-    // boundary. Sending an explicit resize ensures the running process
-    // (Claude Code's TUI) re-renders at the correct dimensions.
-    if (xtermRef.current && options.sessionId) {
-      const { cols, rows } = xtermRef.current;
-      window.electronAPI.sessions.resize(options.sessionId, cols, rows);
-    }
-  }, [options.sessionId]);
+  }, []);
 
   const focus = useCallback(() => {
     xtermRef.current?.focus();

@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, Menu } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { registerAllIpc, getSessionManager, getCurrentProjectId, openProjectByPath } from './ipc/register-all';
@@ -42,7 +42,7 @@ const createWindow = () => {
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#18181b',
-    show: !isTest,
+    show: false,
     frame: false,
     titleBarStyle: 'hidden',
     webPreferences: {
@@ -52,8 +52,69 @@ const createWindow = () => {
     },
   });
 
+  mainWindow.once('ready-to-show', () => {
+    if (!isTest) {
+      mainWindow!.maximize();
+    }
+    mainWindow!.show();
+  });
+
   // Register all IPC handlers
   registerAllIpc(mainWindow);
+
+  // Native right-click context menu (Copy / Paste / Select All).
+  // xterm.js renders to canvas/WebGL — standard DOM copy/selectAll don't
+  // reach its content.  We use the right-click coordinates (captured before
+  // the menu opens) to detect if the click landed on a terminal, then
+  // dispatch custom events with those coordinates so the correct terminal
+  // hook can respond.
+  const wc = mainWindow.webContents;
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const { x, y } = params;
+    const menu = Menu.buildFromTemplate([
+      {
+        label: 'Copy',
+        accelerator: 'CmdOrCtrl+C',
+        enabled: params.editFlags.canCopy || true,
+        click: () => {
+          wc.executeJavaScript(`
+            (function() {
+              var el = document.elementFromPoint(${x}, ${y});
+              if (el && el.closest('.xterm')) {
+                window.dispatchEvent(new CustomEvent('terminal-copy', { detail: { x: ${x}, y: ${y} } }));
+              } else {
+                document.execCommand('copy');
+              }
+            })()
+          `);
+        },
+      },
+      {
+        label: 'Paste',
+        accelerator: 'CmdOrCtrl+V',
+        enabled: params.editFlags.canPaste,
+        click: () => { wc.paste(); },
+      },
+      { type: 'separator' },
+      {
+        label: 'Select All',
+        accelerator: 'CmdOrCtrl+A',
+        click: () => {
+          wc.executeJavaScript(`
+            (function() {
+              var el = document.elementFromPoint(${x}, ${y});
+              if (el && el.closest('.xterm')) {
+                window.dispatchEvent(new CustomEvent('terminal-select-all', { detail: { x: ${x}, y: ${y} } }));
+              } else {
+                document.execCommand('selectAll');
+              }
+            })()
+          `);
+        },
+      },
+    ]);
+    menu.popup();
+  });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);

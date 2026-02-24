@@ -12,7 +12,8 @@ export function ToastContainer() {
     <div
       role="status"
       aria-live="polite"
-      className="fixed top-12 right-4 z-[60] flex flex-col items-end gap-2 pointer-events-none"
+      className="fixed right-3 z-[60] flex flex-col items-end gap-2 pointer-events-none"
+      style={{ bottom: '40px' }}
     >
       {toasts.map((toast) => (
         <ToastItem key={toast.id} toast={toast} onDismiss={dismissToast} />

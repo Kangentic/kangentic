@@ -129,6 +129,7 @@ export class TransitionEngine {
     const statusDir = path.join(projectRoot, '.kangentic', 'status');
     fs.mkdirSync(statusDir, { recursive: true });
     const statusOutputPath = path.join(statusDir, `${claudeSessionId}.json`);
+    const activityOutputPath = path.join(statusDir, `${claudeSessionId}.activity.json`);
 
     const command = this.commandBuilder.buildClaudeCommand({
       claudePath: claude.path,
@@ -141,6 +142,7 @@ export class TransitionEngine {
       resume: !!canResume,
       nonInteractive: config.nonInteractive ?? false,
       statusOutputPath,
+      activityOutputPath,
     });
 
     const session = await this.sessionManager.spawn({
@@ -148,6 +150,7 @@ export class TransitionEngine {
       command,
       cwd,
       statusOutputPath,
+      activityOutputPath,
     });
 
     this.taskRepo.update({

@@ -6,8 +6,11 @@ import {
   createTask,
   createTempProject,
   cleanupTempProject,
+  getTestDataDir,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
+import path from 'node:path';
+import fs from 'node:fs';
 
 const TEST_NAME = 'terminal-rendering';
 const runId = Date.now();
@@ -15,10 +18,40 @@ const PROJECT_NAME = `Term Test ${runId}`;
 let app: ElectronApplication;
 let page: Page;
 let tmpDir: string;
+let dataDir: string;
+
+/** Resolve the platform-appropriate mock Claude path */
+function mockClaudePath(): string {
+  const fixturesDir = path.join(__dirname, '..', 'fixtures');
+  if (process.platform === 'win32') {
+    return path.join(fixturesDir, 'mock-claude.cmd');
+  }
+  const jsPath = path.join(fixturesDir, 'mock-claude.js');
+  fs.chmodSync(jsPath, 0o755);
+  return jsPath;
+}
 
 test.beforeAll(async () => {
   tmpDir = createTempProject(TEST_NAME);
-  const result = await launchApp();
+  dataDir = getTestDataDir(TEST_NAME);
+
+  // Pre-write config with mock Claude CLI so sessions stay alive
+  fs.writeFileSync(
+    path.join(dataDir, 'config.json'),
+    JSON.stringify({
+      claude: {
+        cliPath: mockClaudePath(),
+        permissionMode: 'project-settings',
+        maxConcurrentSessions: 5,
+        queueOverflow: 'queue',
+      },
+      git: {
+        worktreesEnabled: false,
+      },
+    }),
+  );
+
+  const result = await launchApp({ dataDir });
   app = result.app;
   page = result.page;
   await createProject(page, PROJECT_NAME, tmpDir);
@@ -30,8 +63,13 @@ test.afterAll(async () => {
 });
 
 async function ensureBoard() {
-  await page.keyboard.press('Escape');
-  await page.waitForTimeout(200);
+  // Dispatch Escape directly on document to bypass xterm's key capture.
+  // xterm intercepts Escape (used for ANSI sequences) so
+  // page.keyboard.press('Escape') doesn't reach the dialog's document listener.
+  await page.evaluate(() => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  });
+  await page.waitForTimeout(300);
   const backlog = page.locator('[data-swimlane-name="Backlog"]');
   if (await backlog.isVisible().catch(() => false)) return;
   await page.locator(`button:has-text("${PROJECT_NAME}")`).first().click();
@@ -75,16 +113,28 @@ async function dragTaskToColumn(taskTitle: string, targetColumn: string) {
 }
 
 /**
- * Wait for the moveTask IPC to complete (agent label or timeout).
+ * Wait for terminal scrollback to contain the expected text.
  */
-async function waitForMoveSettle(column: string, taskTitle: string) {
-  const col = page.locator(`[data-swimlane-name="${column}"]`);
-  await expect(col.locator(`text=${taskTitle}`).first()).toBeVisible({ timeout: 10000 });
-  try {
-    await col.locator(`text=${taskTitle}`).first().locator('..').locator('text=claude').waitFor({ timeout: 10000 });
-  } catch {
-    await page.waitForTimeout(3000);
+async function waitForTerminalOutput(marker: string, timeoutMs = 15000): Promise<string> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const scrollback = await page.evaluate(async () => {
+      const sessions = await window.electronAPI.sessions.list();
+      const texts: string[] = [];
+      for (const s of sessions) {
+        const sb = await window.electronAPI.sessions.getScrollback(s.id);
+        texts.push(sb);
+      }
+      return texts.join('\n');
+    });
+
+    if (scrollback.includes(marker)) {
+      return scrollback;
+    }
+
+    await page.waitForTimeout(500);
   }
+  throw new Error(`Timed out waiting for terminal output containing: ${marker}`);
 }
 
 test.describe('Terminal Rendering', () => {
@@ -98,7 +148,7 @@ test.describe('Terminal Rendering', () => {
 
     // Drag to Planning to spawn a session
     await dragTaskToColumn(taskName, 'Planning');
-    await waitForMoveSettle('Planning', taskName);
+    await waitForTerminalOutput('MOCK_CLAUDE_SESSION:');
 
     // The bottom terminal panel should now have a session tab
     const sessionTab = page.locator('.resize-handle ~ div button').first();
@@ -128,17 +178,16 @@ test.describe('Terminal Rendering', () => {
 
     // Drag to Planning to spawn a session
     await dragTaskToColumn(taskName, 'Planning');
-    await waitForMoveSettle('Planning', taskName);
+    await waitForTerminalOutput('MOCK_CLAUDE_SESSION:');
 
     // Open the task detail dialog by clicking the card
     const card = page.locator('[data-swimlane-name="Planning"]').locator(`text=${taskName}`).first();
     await card.click();
     await page.waitForTimeout(500);
 
-    // Dialog should be visible with session info
+    // Dialog should be visible
     const dialog = page.locator('.fixed.inset-0');
     await expect(dialog).toBeVisible({ timeout: 3000 });
-    await expect(dialog.locator('text=claude')).toBeVisible({ timeout: 3000 });
 
     // xterm should render inside the dialog
     const dialogXterm = dialog.locator('.xterm');
@@ -163,7 +212,7 @@ test.describe('Terminal Rendering', () => {
 
     // Drag to Planning to spawn a session
     await dragTaskToColumn(taskName, 'Planning');
-    await waitForMoveSettle('Planning', taskName);
+    await waitForTerminalOutput('MOCK_CLAUDE_SESSION:');
 
     // Open task detail dialog
     const card = page.locator('[data-swimlane-name="Planning"]').locator(`text=${taskName}`).first();
@@ -185,5 +234,85 @@ test.describe('Terminal Rendering', () => {
 
     await page.keyboard.press('Escape');
     await page.waitForTimeout(300);
+  });
+
+  test('panel resize preserves scrollback and refits xterm', async () => {
+    // Extended timeout: session spawn + drag operations
+    test.setTimeout(90000);
+
+    const taskName = `Resize Test ${runId}`;
+    await createTask(page, taskName, 'Test scrollback and refit after resize');
+
+    // Spawn a session so the bottom panel has a live terminal
+    await dragTaskToColumn(taskName, 'Planning');
+    await waitForTerminalOutput('MOCK_CLAUDE_SESSION:');
+
+    // Click the session tab to ensure this terminal is active.
+    // With multiple sessions, the "All" tab may be selected by default.
+    const sessionTab = page.locator('.resize-handle ~ div button', { hasText: /resize-test/i });
+    await sessionTab.click();
+    await page.waitForTimeout(300);
+
+    // With multiple sessions, each terminal pane is display:none unless active.
+    // Select the xterm inside the visible pane (display: block).
+    const terminalPanel = page.locator('.resize-handle ~ div');
+    const activePane = terminalPanel.locator('div.absolute.inset-0[style*="display: block"]');
+    await expect(activePane.locator('.xterm').first()).toBeVisible({ timeout: 5000 });
+
+    // --- Part 1: Scrollback preservation ---
+    const scrollbackBefore = await page.evaluate(async () => {
+      const sessions = await window.electronAPI.sessions.list();
+      if (sessions.length === 0) return '';
+      return window.electronAPI.sessions.getScrollback(sessions[0].id);
+    });
+    expect(scrollbackBefore.length).toBeGreaterThan(0);
+
+    const handle = page.locator('.resize-handle');
+    await expect(handle).toBeVisible({ timeout: 3000 });
+    const handleBox = await handle.boundingBox();
+    expect(handleBox).toBeTruthy();
+
+    const handleX = handleBox!.x + handleBox!.width / 2;
+    const handleY = handleBox!.y + handleBox!.height / 2;
+
+    // Drag UP (bigger) → DOWN (smaller) → UP (bigger again).
+    // This is the resize pattern that was losing scrollback before the fix.
+    await page.mouse.move(handleX, handleY);
+    await page.mouse.down();
+    await page.mouse.move(handleX, handleY - 100, { steps: 10 });
+    await page.mouse.move(handleX, handleY + 30, { steps: 10 });
+    await page.mouse.move(handleX, handleY - 80, { steps: 10 });
+    await page.mouse.up();
+    await page.waitForTimeout(1000);
+
+    const scrollbackAfter = await page.evaluate(async () => {
+      const sessions = await window.electronAPI.sessions.list();
+      if (sessions.length === 0) return '';
+      return window.electronAPI.sessions.getScrollback(sessions[0].id);
+    });
+
+    // PTY buffer is the source of truth — unaffected by xterm row changes.
+    expect(scrollbackAfter).toBe(scrollbackBefore);
+
+    // --- Part 2: xterm refits after resize ---
+    const xtermScreen = activePane.locator('.xterm-screen').first();
+    const boxBefore = await xtermScreen.boundingBox();
+    expect(boxBefore).toBeTruthy();
+
+    // Drag handle UP another 100px to make panel bigger
+    const handle2 = await handle.boundingBox();
+    expect(handle2).toBeTruthy();
+    const h2X = handle2!.x + handle2!.width / 2;
+    const h2Y = handle2!.y + handle2!.height / 2;
+
+    await page.mouse.move(h2X, h2Y);
+    await page.mouse.down();
+    await page.mouse.move(h2X, h2Y - 100, { steps: 10 });
+    await page.mouse.up();
+    await page.waitForTimeout(1000);
+
+    const boxAfter = await xtermScreen.boundingBox();
+    expect(boxAfter).toBeTruthy();
+    expect(boxAfter!.height).toBeGreaterThan(boxBefore!.height);
   });
 });

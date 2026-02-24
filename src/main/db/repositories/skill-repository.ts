@@ -55,9 +55,28 @@ export class SkillRepository {
   }
 
   getTransitionsFor(fromId: string, toId: string): SwimlaneTransition[] {
-    return this.db.prepare(
+    // Exact match takes priority; fall back to wildcard '*' source
+    const exact = this.db.prepare(
       'SELECT * FROM swimlane_transitions WHERE from_swimlane_id = ? AND to_swimlane_id = ? ORDER BY execution_order'
     ).all(fromId, toId) as SwimlaneTransition[];
+    if (exact.length > 0) return exact;
+    return this.db.prepare(
+      "SELECT * FROM swimlane_transitions WHERE from_swimlane_id = '*' AND to_swimlane_id = ? ORDER BY execution_order"
+    ).all(toId) as SwimlaneTransition[];
+  }
+
+  /** Returns the set of swimlane IDs that have spawn_agent transitions targeting them. */
+  getAgentSwimlaneIds(): Set<string> {
+    const transitions = this.listTransitions();
+    const skills = this.list();
+    const ids = new Set<string>();
+    for (const t of transitions) {
+      const skill = skills.find((s) => s.id === t.skill_id);
+      if (skill?.type === 'spawn_agent') {
+        ids.add(t.to_swimlane_id);
+      }
+    }
+    return ids;
   }
 
   setTransitions(fromId: string, toId: string, skillIds: string[]): void {

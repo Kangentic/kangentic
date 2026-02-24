@@ -4,6 +4,7 @@ import { useProjectStore } from './stores/project-store';
 import { useBoardStore } from './stores/board-store';
 import { useConfigStore } from './stores/config-store';
 import { useSessionStore } from './stores/session-store';
+import { useToastStore } from './stores/toast-store';
 
 export function App() {
   const loadProjects = useProjectStore((s) => s.loadProjects);
@@ -14,6 +15,7 @@ export function App() {
   const detectClaude = useConfigStore((s) => s.detectClaude);
   const updateSessionStatus = useSessionStore((s) => s.updateSessionStatus);
   const updateUsage = useSessionStore((s) => s.updateUsage);
+  const updateActivity = useSessionStore((s) => s.updateActivity);
 
   useEffect(() => {
     loadConfig();
@@ -43,6 +45,13 @@ export function App() {
   useEffect(() => {
     const cleanup = window.electronAPI.sessions.onExit((sessionId, exitCode) => {
       updateSessionStatus(sessionId, { status: 'exited', exitCode });
+      // Find task associated with this session for the toast message
+      const task = useBoardStore.getState().tasks.find((t) => t.session_id === sessionId);
+      const label = task ? `"${task.title}"` : sessionId.slice(0, 8);
+      useToastStore.getState().addToast({
+        message: `Session ended for ${label} (exit ${exitCode})`,
+        variant: exitCode === 0 ? 'info' : 'warning',
+      });
     });
     return cleanup;
   }, []);
@@ -51,6 +60,14 @@ export function App() {
   useEffect(() => {
     const cleanup = window.electronAPI.sessions.onUsage((sessionId, data) => {
       updateUsage(sessionId, data);
+    });
+    return cleanup;
+  }, []);
+
+  // Listen for session activity state changes (thinking/idle)
+  useEffect(() => {
+    const cleanup = window.electronAPI.sessions.onActivity((sessionId, state) => {
+      updateActivity(sessionId, state);
     });
     return cleanup;
   }, []);

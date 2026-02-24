@@ -7,9 +7,9 @@ export class TaskRepository {
 
   list(swimlaneId?: string): Task[] {
     if (swimlaneId) {
-      return this.db.prepare('SELECT * FROM tasks WHERE swimlane_id = ? ORDER BY position ASC').all(swimlaneId) as Task[];
+      return this.db.prepare('SELECT * FROM tasks WHERE swimlane_id = ? AND archived_at IS NULL ORDER BY position ASC').all(swimlaneId) as Task[];
     }
-    return this.db.prepare('SELECT * FROM tasks ORDER BY swimlane_id, position ASC').all() as Task[];
+    return this.db.prepare('SELECT * FROM tasks WHERE archived_at IS NULL ORDER BY swimlane_id, position ASC').all() as Task[];
   }
 
   getById(id: string): Task | undefined {
@@ -35,6 +35,7 @@ export class TaskRepository {
       branch_name: null,
       pr_number: null,
       pr_url: null,
+      archived_at: null,
       created_at: now,
       updated_at: now,
     };
@@ -84,6 +85,22 @@ export class TaskRepository {
         .run(targetSwimlaneId, targetPosition, new Date().toISOString(), taskId);
     });
     tx();
+  }
+
+  archive(id: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare('UPDATE tasks SET archived_at = ?, updated_at = ? WHERE id = ?').run(now, now, id);
+  }
+
+  unarchive(id: string, targetSwimlaneId: string, position: number): Task {
+    const now = new Date().toISOString();
+    this.db.prepare('UPDATE tasks SET archived_at = NULL, swimlane_id = ?, position = ?, updated_at = ? WHERE id = ?')
+      .run(targetSwimlaneId, position, now, id);
+    return this.getById(id)!;
+  }
+
+  listArchived(): Task[] {
+    return this.db.prepare('SELECT * FROM tasks WHERE archived_at IS NOT NULL ORDER BY archived_at DESC').all() as Task[];
   }
 
   delete(id: string): void {
