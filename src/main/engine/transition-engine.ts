@@ -1,20 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Task, Skill, SkillConfig, SwimlaneTransition, AppConfig } from '../../shared/types';
+import type { Task, Action, ActionConfig, SwimlaneTransition, AppConfig } from '../../shared/types';
 import { SessionManager } from '../pty/session-manager';
 import { CommandBuilder } from '../agent/command-builder';
 import { ClaudeDetector } from '../agent/claude-detector';
 import { WorktreeManager } from '../git/worktree-manager';
 import { ensureWorktreeTrust } from '../agent/trust-manager';
-import type { SkillRepository } from '../db/repositories/skill-repository';
+import type { ActionRepository } from '../db/repositories/action-repository';
 import type { TaskRepository } from '../db/repositories/task-repository';
 import type { SessionRepository } from '../db/repositories/session-repository';
 
 export class TransitionEngine {
   constructor(
     private sessionManager: SessionManager,
-    private skillRepo: SkillRepository,
+    private actionRepo: ActionRepository,
     private taskRepo: TaskRepository,
     private claudeDetector: ClaudeDetector,
     private commandBuilder: CommandBuilder,
@@ -37,24 +37,24 @@ export class TransitionEngine {
   }
 
   async executeTransition(task: Task, fromSwimlaneId: string, toSwimlaneId: string): Promise<void> {
-    const transitions = this.skillRepo.getTransitionsFor(fromSwimlaneId, toSwimlaneId);
+    const transitions = this.actionRepo.getTransitionsFor(fromSwimlaneId, toSwimlaneId);
     if (transitions.length === 0) return;
 
     for (const transition of transitions) {
-      const skill = this.skillRepo.getById(transition.skill_id);
-      if (!skill) continue;
+      const action = this.actionRepo.getById(transition.action_id);
+      if (!action) continue;
 
-      await this.executeSkill(skill, task);
+      await this.executeAction(action, task);
     }
   }
 
-  private async executeSkill(skill: Skill, task: Task): Promise<void> {
-    let config: SkillConfig;
+  private async executeAction(action: Action, task: Task): Promise<void> {
+    let config: ActionConfig;
     try {
-      config = JSON.parse(skill.config_json);
+      config = JSON.parse(action.config_json);
     } catch (err) {
-      console.error(`Failed to parse config for skill ${skill.id}:`, err);
-      return; // skip skill with malformed config
+      console.error(`Failed to parse config for action ${action.id}:`, err);
+      return; // skip action with malformed config
     }
     const templateVars: Record<string, string> = {
       title: task.title,
@@ -64,7 +64,7 @@ export class TransitionEngine {
       branchName: task.branch_name || '',
     };
 
-    switch (skill.type) {
+    switch (action.type) {
       case 'spawn_agent':
         await this.executeSpawnAgent(config, task, templateVars);
         break;
@@ -95,7 +95,7 @@ export class TransitionEngine {
     }
   }
 
-  private async executeSpawnAgent(config: SkillConfig, task: Task, vars: Record<string, string>): Promise<void> {
+  private async executeSpawnAgent(config: ActionConfig, task: Task, vars: Record<string, string>): Promise<void> {
     const appConfig = this.getConfig();
     const claude = await this.claudeDetector.detect(appConfig.claudePath);
     if (!claude.found || !claude.path) {
@@ -135,7 +135,7 @@ export class TransitionEngine {
       claudeSessionId = randomUUID();
       prompt = config.promptTemplate
         ? this.commandBuilder.interpolateTemplate(config.promptTemplate, vars)
-        : `Task: ${task.title}\n\n${task.description}`;
+        : undefined;
     }
 
     // Ensure the per-session directory exists and compute output paths
@@ -204,7 +204,7 @@ export class TransitionEngine {
     }
   }
 
-  private executeSendCommand(config: SkillConfig, task: Task, vars: Record<string, string>): void {
+  private executeSendCommand(config: ActionConfig, task: Task, vars: Record<string, string>): void {
     if (!task.session_id) return;
     const command = config.command
       ? this.commandBuilder.interpolateTemplate(config.command, vars)
@@ -214,7 +214,7 @@ export class TransitionEngine {
     }
   }
 
-  private async executeRunScript(config: SkillConfig, task: Task, vars: Record<string, string>): Promise<void> {
+  private async executeRunScript(config: ActionConfig, task: Task, vars: Record<string, string>): Promise<void> {
     const script = config.script
       ? this.commandBuilder.interpolateTemplate(config.script, vars)
       : '';
@@ -235,7 +235,7 @@ export class TransitionEngine {
   private executeKillSession(task: Task): void {
     if (task.session_id) {
       // Mark session as 'suspended' in DB before killing the PTY.
-      // This allows a subsequent spawn_agent skill (e.g. Planning → Running)
+      // This allows a subsequent spawn_agent action (e.g. Planning → Running)
       // to resume the conversation via --resume, preserving Claude's context.
       if (this.sessionRepo) {
         const record = this.sessionRepo.getLatestForTask(task.id);
@@ -254,7 +254,7 @@ export class TransitionEngine {
     }
   }
 
-  private async executeWebhook(config: SkillConfig, vars: Record<string, string>): Promise<void> {
+  private async executeWebhook(config: ActionConfig, vars: Record<string, string>): Promise<void> {
     if (!config.url) return;
     const url = this.commandBuilder.interpolateTemplate(config.url, vars);
     const body = config.body
@@ -275,7 +275,7 @@ export class TransitionEngine {
     }
   }
 
-  private async executeCreateWorktree(config: SkillConfig, task: Task): Promise<void> {
+  private async executeCreateWorktree(config: ActionConfig, task: Task): Promise<void> {
     if (task.worktree_path) return; // already has one
 
     const appConfig = this.getConfig();

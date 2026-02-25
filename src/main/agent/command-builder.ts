@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { toForwardSlash, quoteArg } from '../../shared/paths';
-import type { PermissionMode, Task, SkillConfig } from '../../shared/types';
+import type { PermissionMode, Task } from '../../shared/types';
 
 interface CommandOptions {
   claudePath: string;

@@ -51,7 +51,7 @@ export function runProjectMigrations(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_tasks_swimlane_position ON tasks(swimlane_id, position);
 
-    CREATE TABLE IF NOT EXISTS skills (
+    CREATE TABLE IF NOT EXISTS actions (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       type TEXT NOT NULL,
@@ -63,7 +63,7 @@ export function runProjectMigrations(db: Database.Database): void {
       id TEXT PRIMARY KEY,
       from_swimlane_id TEXT NOT NULL,
       to_swimlane_id TEXT NOT NULL REFERENCES swimlanes(id),
-      skill_id TEXT NOT NULL REFERENCES skills(id),
+      action_id TEXT NOT NULL REFERENCES actions(id),
       execution_order INTEGER NOT NULL DEFAULT 0
     );
 
@@ -124,19 +124,19 @@ export function runProjectMigrations(db: Database.Database): void {
         laneIds.push(id);
       });
 
-      // Seed default skills and transitions
-      seedSkillsAndTransitions(db, now);
+      // Seed default actions and transitions
+      seedActionsAndTransitions(db, now);
 
     });
     tx();
   }
 
-  // For existing projects: seed default skills if the skills table is empty
-  const skillCount = db.prepare('SELECT COUNT(*) as c FROM skills').get() as { c: number };
-  if (skillCount.c === 0 && laneCount.c > 0) {
+  // For existing projects: seed default actions if the actions table is empty
+  const actionCount = db.prepare('SELECT COUNT(*) as c FROM actions').get() as { c: number };
+  if (actionCount.c === 0 && laneCount.c > 0) {
     const now = new Date().toISOString();
     const tx = db.transaction(() => {
-      seedSkillsAndTransitions(db, now);
+      seedActionsAndTransitions(db, now);
     });
     tx();
   }
@@ -163,7 +163,7 @@ export function runProjectMigrations(db: Database.Database): void {
         id TEXT PRIMARY KEY,
         from_swimlane_id TEXT NOT NULL,
         to_swimlane_id TEXT NOT NULL REFERENCES swimlanes(id),
-        skill_id TEXT NOT NULL REFERENCES skills(id),
+        action_id TEXT NOT NULL REFERENCES actions(id),
         execution_order INTEGER NOT NULL DEFAULT 0
       );
       INSERT INTO swimlane_transitions_new SELECT * FROM swimlane_transitions;
@@ -174,64 +174,64 @@ export function runProjectMigrations(db: Database.Database): void {
   }
 
   // Data migration: convert explicit per-source transitions to wildcard '*' source.
-  // This ensures skills fire when moving from ANY column into the target, not just
+  // This ensures actions fire when moving from ANY column into the target, not just
   // from specific columns (e.g. Backlog → Planning becomes * → Planning).
   const hasWildcard = db.prepare(
     "SELECT COUNT(*) as c FROM swimlane_transitions WHERE from_swimlane_id = '*'"
   ).get() as { c: number };
 
   if (hasWildcard.c === 0) {
-    // Group existing transitions by target swimlane + skill, keeping the lowest execution_order
+    // Group existing transitions by target swimlane + action, keeping the lowest execution_order
     const existing = db.prepare(
-      'SELECT DISTINCT to_swimlane_id, skill_id, MIN(execution_order) as execution_order FROM swimlane_transitions GROUP BY to_swimlane_id, skill_id ORDER BY to_swimlane_id, execution_order'
-    ).all() as Array<{ to_swimlane_id: string; skill_id: string; execution_order: number }>;
+      'SELECT DISTINCT to_swimlane_id, action_id, MIN(execution_order) as execution_order FROM swimlane_transitions GROUP BY to_swimlane_id, action_id ORDER BY to_swimlane_id, execution_order'
+    ).all() as Array<{ to_swimlane_id: string; action_id: string; execution_order: number }>;
 
     if (existing.length > 0) {
       const tx = db.transaction(() => {
         db.prepare('DELETE FROM swimlane_transitions').run();
         const insert = db.prepare(
-          'INSERT INTO swimlane_transitions (id, from_swimlane_id, to_swimlane_id, skill_id, execution_order) VALUES (?, ?, ?, ?, ?)'
+          'INSERT INTO swimlane_transitions (id, from_swimlane_id, to_swimlane_id, action_id, execution_order) VALUES (?, ?, ?, ?, ?)'
         );
         for (const row of existing) {
-          insert.run(uuidv4(), '*', row.to_swimlane_id, row.skill_id, row.execution_order);
+          insert.run(uuidv4(), '*', row.to_swimlane_id, row.action_id, row.execution_order);
         }
       });
       tx();
     }
   }
 
-  // Data migration: update spawn_agent skills that still use 'dangerously-skip'
+  // Data migration: update spawn_agent actions that still use 'dangerously-skip'
   // permission mode to omit it (falling through to app default: project-settings).
-  const agentSkills = db.prepare(
-    "SELECT id, config_json FROM skills WHERE type = 'spawn_agent'"
+  const agentActions = db.prepare(
+    "SELECT id, config_json FROM actions WHERE type = 'spawn_agent'"
   ).all() as Array<{ id: string; config_json: string }>;
 
-  for (const skill of agentSkills) {
+  for (const action of agentActions) {
     try {
-      const config = JSON.parse(skill.config_json);
+      const config = JSON.parse(action.config_json);
       if (config.permissionMode === 'dangerously-skip') {
         delete config.permissionMode;
-        db.prepare('UPDATE skills SET config_json = ? WHERE id = ?')
-          .run(JSON.stringify(config), skill.id);
+        db.prepare('UPDATE actions SET config_json = ? WHERE id = ?')
+          .run(JSON.stringify(config), action.id);
       }
     } catch { /* skip malformed config */ }
   }
 }
 
-function seedSkillsAndTransitions(db: Database.Database, now: string): void {
+function seedActionsAndTransitions(db: Database.Database, now: string): void {
   // Build role → lane ID map from the DB so we don't rely on array indices
   const lanes = db.prepare('SELECT id, role FROM swimlanes WHERE role IS NOT NULL').all() as Array<{ id: string; role: string }>;
   const byRole: Record<string, string> = {};
   for (const lane of lanes) byRole[lane.role] = lane.id;
 
-  const insertSkill = db.prepare(
-    'INSERT INTO skills (id, name, type, config_json, created_at) VALUES (?, ?, ?, ?, ?)'
+  const insertAction = db.prepare(
+    'INSERT INTO actions (id, name, type, config_json, created_at) VALUES (?, ?, ?, ?, ?)'
   );
 
   // Planning agent: launches Claude in plan mode (--plan)
-  const planSkillId = uuidv4();
-  insertSkill.run(
-    planSkillId,
+  const planActionId = uuidv4();
+  insertAction.run(
+    planActionId,
     'Start Planning Agent',
     'spawn_agent',
     JSON.stringify({
@@ -243,9 +243,9 @@ function seedSkillsAndTransitions(db: Database.Database, now: string): void {
   );
 
   // Running agent: launches Claude with project-settings permissions (default)
-  const runSkillId = uuidv4();
-  insertSkill.run(
-    runSkillId,
+  const runActionId = uuidv4();
+  insertAction.run(
+    runActionId,
     'Start Running Agent',
     'spawn_agent',
     JSON.stringify({
@@ -255,26 +255,26 @@ function seedSkillsAndTransitions(db: Database.Database, now: string): void {
     now,
   );
 
-  // Kill session skill
-  const killSkillId = uuidv4();
-  insertSkill.run(killSkillId, 'Kill Session', 'kill_session', '{}', now);
+  // Kill session action
+  const killActionId = uuidv4();
+  insertAction.run(killActionId, 'Kill Session', 'kill_session', '{}', now);
 
   const insertTransition = db.prepare(
-    'INSERT INTO swimlane_transitions (id, from_swimlane_id, to_swimlane_id, skill_id, execution_order) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO swimlane_transitions (id, from_swimlane_id, to_swimlane_id, action_id, execution_order) VALUES (?, ?, ?, ?, ?)'
   );
 
   // * → Planning: kill any existing session, then spawn planning agent
   if (byRole.planning) {
-    insertTransition.run(uuidv4(), '*', byRole.planning, killSkillId, 0);
-    insertTransition.run(uuidv4(), '*', byRole.planning, planSkillId, 1);
+    insertTransition.run(uuidv4(), '*', byRole.planning, killActionId, 0);
+    insertTransition.run(uuidv4(), '*', byRole.planning, planActionId, 1);
   }
   // * → Running: kill any existing session, then spawn running agent
   if (byRole.running) {
-    insertTransition.run(uuidv4(), '*', byRole.running, killSkillId, 0);
-    insertTransition.run(uuidv4(), '*', byRole.running, runSkillId, 1);
+    insertTransition.run(uuidv4(), '*', byRole.running, killActionId, 0);
+    insertTransition.run(uuidv4(), '*', byRole.running, runActionId, 1);
   }
   // * → Done: kill session
   if (byRole.done) {
-    insertTransition.run(uuidv4(), '*', byRole.done, killSkillId, 0);
+    insertTransition.run(uuidv4(), '*', byRole.done, killActionId, 0);
   }
 }

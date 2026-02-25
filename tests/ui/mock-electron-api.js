@@ -1,7 +1,7 @@
 /**
  * In-memory mock of window.electronAPI for headless UI testing.
  * Injected via page.addInitScript() before the React app mounts.
- * Provides full CRUD for projects, tasks, swimlanes, skills, and config
+ * Provides full CRUD for projects, tasks, swimlanes, actions, and config
  * without any real backend.
  */
 (function () {
@@ -9,7 +9,7 @@
   let tasks = [];
   let swimlanes = [];
   let archivedTasks = [];
-  let skills = [];
+  let actions = [];
   let sessions = [];
   let currentProjectId = null;
 
@@ -114,7 +114,7 @@
           tasks = [];
           swimlanes = [];
           archivedTasks = [];
-          skills = [];
+          actions = [];
           sessions = [];
         }
       },
@@ -302,28 +302,28 @@
       },
     },
 
-    skills: {
+    actions: {
       list: async function () {
-        return skills;
+        return actions;
       },
       create: async function (input) {
-        var skill = Object.assign({ id: uuid(), created_at: now() }, input);
-        skills.push(skill);
-        return skill;
+        var action = Object.assign({ id: uuid(), created_at: now() }, input);
+        actions.push(action);
+        return action;
       },
       update: async function (input) {
-        var idx = skills.findIndex(function (s) {
-          return s.id === input.id;
+        var idx = actions.findIndex(function (a) {
+          return a.id === input.id;
         });
         if (idx >= 0) {
-          skills[idx] = Object.assign({}, skills[idx], input);
-          return skills[idx];
+          actions[idx] = Object.assign({}, actions[idx], input);
+          return actions[idx];
         }
-        throw new Error('Skill not found: ' + input.id);
+        throw new Error('Action not found: ' + input.id);
       },
       delete: async function (id) {
-        skills = skills.filter(function (s) {
-          return s.id !== id;
+        actions = actions.filter(function (a) {
+          return a.id !== id;
         });
       },
     },

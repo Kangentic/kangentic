@@ -4,19 +4,14 @@ import { randomUUID } from 'node:crypto';
 import { getProjectDb } from '../db/database';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
-import { SkillRepository } from '../db/repositories/skill-repository';
+import { ActionRepository } from '../db/repositories/action-repository';
+import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { SessionManager } from '../pty/session-manager';
 import { ClaudeDetector } from '../agent/claude-detector';
 import { CommandBuilder } from '../agent/command-builder';
 import { ConfigManager } from '../config/config-manager';
-import type { SessionRecord, SkillConfig } from '../../shared/types';
+import type { SessionRecord, ActionConfig } from '../../shared/types';
 import { ensureWorktreeTrust } from '../agent/trust-manager';
-
-// ---------------------------------------------------------------------------
-// Shared helper: determine which swimlane IDs should have active agents
-// ---------------------------------------------------------------------------
-// Delegates to SkillRepository.getAgentSwimlaneIds() — the single source of
-// truth for "which lanes have spawn_agent transitions".
 
 // ---------------------------------------------------------------------------
 // Prune orphaned worktree tasks (worktree dir deleted externally)
@@ -73,7 +68,7 @@ export function pruneOrphanedWorktrees(
  *  3. Deduplicate: keep only the LATEST record per task_id.
  *     Mark all older duplicates as exited. This prevents compounding on
  *     repeated restarts.
- *  4. For each candidate, verify the task exists AND is in an agent-active
+ *  4. For each candidate, verify the task exists AND is NOT in a Backlog/Done
  *     column. Skip and mark exited otherwise.
  *  5. Spawn a new PTY with `--session-id` to let Claude CLI resume.
  *  6. Mark old records as exited; insert fresh records for the new PTYs.
@@ -89,7 +84,7 @@ export async function recoverSessions(
   const db = getProjectDb(projectId);
   const sessionRepo = new SessionRepository(db);
   const taskRepo = new TaskRepository(db);
-  const skillRepo = new SkillRepository(db);
+  const actionRepo = new ActionRepository(db);
 
   // 1. Mark leftover 'running' records as orphaned (crash case).
   //    SKIP records whose task already has a live PTY session — this prevents
@@ -144,12 +139,17 @@ export async function recoverSessions(
     );
   }
 
-  // 4. Determine which columns should have active agents
-  const agentLaneIds = skillRepo.getAgentSwimlaneIds();
+  // 4. Determine which columns should NOT have active agents (backlog + done)
+  const swimlaneRepo = new SwimlaneRepository(db);
+  const excludedLaneIds = new Set(
+    swimlaneRepo.list()
+      .filter(l => l.role === 'backlog' || l.role === 'done')
+      .map(l => l.id),
+  );
 
-  // Cache transitions and skills for prompt lookup during recovery
-  const allTransitions = skillRepo.listTransitions();
-  const allSkills = skillRepo.list();
+  // Cache transitions and actions for prompt lookup during recovery
+  const allTransitions = actionRepo.listTransitions();
+  const allActions = actionRepo.list();
 
   // Detect Claude CLI once
   const config = configManager.getEffectiveConfig(projectPath);
@@ -187,19 +187,17 @@ export async function recoverSessions(
         continue;
       }
 
-      // --- Guard: task must be in an agent-active column ---
-      // If the task is in a non-agent column but the session is 'suspended',
-      // leave it as-is so that moving the task back into an agent column can
-      // resume the conversation via --resume. Only orphaned records (crash
-      // recovery) get marked exited when outside agent columns.
-      if (!agentLaneIds.has(task.swimlane_id)) {
+      // --- Guard: task must NOT be in Backlog or Done ---
+      // Tasks in Backlog/Done should not have active agents. Preserve suspended
+      // records for future resume; mark orphaned records as exited.
+      if (excludedLaneIds.has(task.swimlane_id)) {
         if (record.status === 'suspended') {
           console.log(
-            `Session recovery: task ${record.task_id} not in agent column — preserving suspended status for future resume`,
+            `Session recovery: task ${record.task_id} in Backlog/Done — preserving suspended status for future resume`,
           );
         } else {
           console.log(
-            `Session recovery: task ${record.task_id} not in agent column — marking exited`,
+            `Session recovery: task ${record.task_id} in Backlog/Done — marking exited`,
           );
           sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
         }
@@ -246,33 +244,33 @@ export async function recoverSessions(
         // Fresh session (orphaned or no prior session ID)
         claudeSessionId = randomUUID();
 
-        // Find the spawn_agent skill that targets this task's lane
+        // Find the spawn_agent action that targets this task's lane
         const incomingTransition = allTransitions.find(
           (t) =>
             t.to_swimlane_id === task.swimlane_id &&
-            allSkills.find((s) => s.id === t.skill_id)?.type === 'spawn_agent',
+            allActions.find((a) => a.id === t.action_id)?.type === 'spawn_agent',
         );
-        const skill = incomingTransition
-          ? allSkills.find((s) => s.id === incomingTransition.skill_id)
+        const action = incomingTransition
+          ? allActions.find((a) => a.id === incomingTransition.action_id)
           : undefined;
-        let skillConfig: SkillConfig | undefined;
-        if (skill) {
+        let actionConfig: ActionConfig | undefined;
+        if (action) {
           try {
-            skillConfig = JSON.parse(skill.config_json) as SkillConfig;
+            actionConfig = JSON.parse(action.config_json) as ActionConfig;
           } catch {
-            console.error(`Session recovery: malformed config for skill ${skill.id} — using defaults`);
+            console.error(`Session recovery: malformed config for action ${action.id} — using defaults`);
           }
         }
 
-        prompt = skillConfig?.promptTemplate
-          ? commandBuilder.interpolateTemplate(skillConfig.promptTemplate, {
+        prompt = actionConfig?.promptTemplate
+          ? commandBuilder.interpolateTemplate(actionConfig.promptTemplate, {
               title: task.title,
               description: task.description,
               taskId: task.id,
               worktreePath: task.worktree_path || '',
               branchName: task.branch_name || '',
             })
-          : `Task: ${task.title}\n\n${task.description}`;
+          : undefined;
       }
 
       // Ensure the per-session directory exists
@@ -359,14 +357,14 @@ export async function recoverSessions(
 // ---------------------------------------------------------------------------
 
 /**
- * Reconcile sessions on project open: find tasks in agent-active columns
- * that don't have a running PTY session, and spawn one.
+ * Reconcile sessions on project open: find tasks in any non-Backlog/non-Done
+ * column that don't have a running PTY session, and spawn one.
  *
- * This handles the case where a task is in Planning/Running but has no
+ * This handles the case where a task is in an active column but has no
  * session (e.g., session exited, app closed without suspend, or the task
  * was placed there manually).
  *
- * Only columns returned by `skillRepo.getAgentSwimlaneIds()` are considered.
+ * All columns except those with role 'backlog' or 'done' are considered.
  */
 export async function reconcileSessions(
   projectId: string,
@@ -378,13 +376,15 @@ export async function reconcileSessions(
 ): Promise<void> {
   const db = getProjectDb(projectId);
   const taskRepo = new TaskRepository(db);
-  const skillRepo = new SkillRepository(db);
+  const actionRepo = new ActionRepository(db);
   const sessionRepo = new SessionRepository(db);
   const config = configManager.getEffectiveConfig(projectPath);
 
-  // Determine which columns should have active agents
-  const agentLaneIds = skillRepo.getAgentSwimlaneIds();
-  if (agentLaneIds.size === 0) return;
+  // Determine which columns should have active agents (all except backlog/done)
+  const swimlaneRepo = new SwimlaneRepository(db);
+  const allLanes = swimlaneRepo.list();
+  const activeLanes = allLanes.filter(l => l.role !== 'backlog' && l.role !== 'done');
+  if (activeLanes.length === 0) return;
 
   // Build set of task IDs that already have a running PTY session
   const activePtySessions = sessionManager.listSessions();
@@ -394,39 +394,40 @@ export async function reconcileSessions(
       .map((s) => s.taskId),
   );
 
-  // Cache transitions and skills for building commands
-  const allTransitions = skillRepo.listTransitions();
-  const allSkills = skillRepo.list();
+  // Cache transitions and actions for building commands
+  const allTransitions = actionRepo.listTransitions();
+  const allActions = actionRepo.list();
 
   let reconciled = 0;
-  for (const laneId of agentLaneIds) {
-    const tasks = taskRepo.list(laneId);
+  for (const lane of activeLanes) {
+    const tasks = taskRepo.list(lane.id);
     for (const task of tasks) {
       if (activeTaskIds.has(task.id)) continue; // already has a session
 
       try {
-        // Find a spawn_agent transition that targets this lane
+        // Find a spawn_agent transition that targets this lane (optional — provides custom prompt)
         const incomingTransition = allTransitions.find(
           (t) =>
-            t.to_swimlane_id === laneId &&
-            allSkills.find((s) => s.id === t.skill_id)?.type === 'spawn_agent',
+            t.to_swimlane_id === lane.id &&
+            allActions.find((a) => a.id === t.action_id)?.type === 'spawn_agent',
         );
-        if (!incomingTransition) continue;
 
-        const skill = allSkills.find(
-          (s) => s.id === incomingTransition.skill_id,
-        );
-        if (!skill) continue;
-
-        let skillConfig: SkillConfig;
-        try {
-          skillConfig = JSON.parse(skill.config_json);
-        } catch {
-          console.error(`Session reconciliation: malformed config for skill ${skill.id} — skipping`);
-          continue;
+        let actionConfig: ActionConfig | undefined;
+        if (incomingTransition) {
+          const action = allActions.find(
+            (a) => a.id === incomingTransition.action_id,
+          );
+          if (action) {
+            try {
+              actionConfig = JSON.parse(action.config_json);
+            } catch {
+              console.error(`Session reconciliation: malformed config for action ${action.id} — using defaults`);
+            }
+          }
         }
+
         const permissionMode =
-          skillConfig.permissionMode || config.claude.permissionMode;
+          actionConfig?.permissionMode || config.claude.permissionMode;
         const cwd = task.worktree_path || projectPath;
 
         // Guard: CWD must still exist
@@ -452,15 +453,15 @@ export async function reconcileSessions(
 
         // Generate a Claude session ID upfront so recovery can resume
         const claudeSessionId = randomUUID();
-        const prompt = skillConfig.promptTemplate
-          ? commandBuilder.interpolateTemplate(skillConfig.promptTemplate, {
+        const prompt = actionConfig?.promptTemplate
+          ? commandBuilder.interpolateTemplate(actionConfig.promptTemplate, {
               title: task.title,
               description: task.description,
               taskId: task.id,
               worktreePath: task.worktree_path || '',
               branchName: task.branch_name || '',
             })
-          : `Task: ${task.title}\n\n${task.description}`;
+          : undefined;
 
         // Ensure the per-session directory exists
         const sessionDir = path.join(projectPath, '.kangentic', 'sessions', claudeSessionId);
@@ -496,7 +497,7 @@ export async function reconcileSessions(
         taskRepo.update({
           id: task.id,
           session_id: session.id,
-          agent: skillConfig.agent || 'claude',
+          agent: actionConfig?.agent || 'claude',
         });
 
         sessionRepo.insert({
@@ -530,3 +531,4 @@ export async function reconcileSessions(
     );
   }
 }
+

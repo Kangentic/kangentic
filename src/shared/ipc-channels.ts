@@ -24,11 +24,11 @@ export const IPC = {
   SWIMLANE_DELETE: 'swimlane:delete',
   SWIMLANE_REORDER: 'swimlane:reorder',
 
-  // Skills
-  SKILL_LIST: 'skill:list',
-  SKILL_CREATE: 'skill:create',
-  SKILL_UPDATE: 'skill:update',
-  SKILL_DELETE: 'skill:delete',
+  // Actions
+  ACTION_LIST: 'action:list',
+  ACTION_CREATE: 'action:create',
+  ACTION_UPDATE: 'action:update',
+  ACTION_DELETE: 'action:delete',
 
   // Transitions
   TRANSITION_LIST: 'transition:list',

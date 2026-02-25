@@ -295,6 +295,87 @@ test.describe('Claude Agent — Session Move Lifecycle', () => {
     expect(resumedSessionId).toBe(originalSessionId);
   });
 
+  test('Backlog → Done → Unarchive to Review spawns fresh agent (no prior session)', async () => {
+    const title = `No Prior Session ${runId}`;
+    await createTask(page, title, 'Test fresh spawn when no prior session exists');
+
+    const taskId = await getTaskId(page, title);
+
+    // Move directly to Done (no session was ever created) → archives
+    await moveTask(page, taskId, lanes['role:done']);
+    await page.waitForTimeout(1000);
+
+    // Verify task is archived
+    const isArchived = await page.evaluate(async (tid) => {
+      const tasks = await window.electronAPI.tasks.listArchived();
+      return tasks.some((t: any) => t.id === tid);
+    }, taskId);
+    expect(isArchived).toBe(true);
+
+    // Unarchive to Review → should spawn a FRESH session
+    await page.evaluate(async ({ taskId, swimlaneId }) => {
+      await window.electronAPI.tasks.unarchive({ id: taskId, targetSwimlaneId: swimlaneId });
+    }, { taskId, swimlaneId: lanes['Review'] });
+
+    await waitForRunningSession(page);
+
+    const scrollback = await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:');
+    expect(scrollback).toContain('MOCK_CLAUDE_SESSION:');
+    const sessionId = extractSessionId(scrollback, 'SESSION');
+    expect(sessionId).toBeTruthy();
+  });
+
+  test('Exited session preserved for resume through Done → Unarchive cycle', async () => {
+    const title = `Exited Resume ${runId}`;
+    await createTask(page, title, 'Test exited session gets preserved and resumed');
+
+    const taskId = await getTaskId(page, title);
+
+    // Move to Planning → spawns session
+    await moveTask(page, taskId, lanes['Planning']);
+    await waitForRunningSession(page);
+
+    const scrollback1 = await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:');
+    const originalSessionId = extractSessionId(scrollback1, 'SESSION');
+    expect(originalSessionId).toBeTruthy();
+
+    // Send /exit to make mock Claude exit naturally
+    await page.evaluate(async (tid) => {
+      const sessions = await window.electronAPI.sessions.list();
+      const s = sessions.find((s: any) => s.taskId === tid && s.status === 'running');
+      if (s) await window.electronAPI.sessions.write(s.id, '/exit\r');
+    }, taskId);
+
+    // Wait for the session to exit
+    await waitForNoRunningSessions(page);
+    await page.waitForTimeout(1000);
+
+    // Move to Done → should mark 'exited' record as 'suspended' + archive
+    await moveTask(page, taskId, lanes['role:done']);
+    await page.waitForTimeout(1000);
+
+    // Verify task is archived
+    const isArchived = await page.evaluate(async (tid) => {
+      const tasks = await window.electronAPI.tasks.listArchived();
+      return tasks.some((t: any) => t.id === tid);
+    }, taskId);
+    expect(isArchived).toBe(true);
+
+    // Unarchive to Review → should RESUME the previous session
+    await page.evaluate(async ({ taskId, swimlaneId }) => {
+      await window.electronAPI.tasks.unarchive({ id: taskId, targetSwimlaneId: swimlaneId });
+    }, { taskId, swimlaneId: lanes['Review'] });
+
+    await waitForRunningSession(page);
+
+    const scrollback2 = await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_RESUMED:');
+    const resumedSessionId = extractSessionId(scrollback2, 'RESUMED');
+    expect(resumedSessionId).toBeTruthy();
+
+    // Same Claude session ID should be preserved
+    expect(resumedSessionId).toBe(originalSessionId);
+  });
+
   test('Backlog → Planning → Backlog → Done: no false resume from exited session', async () => {
     const title = `No False Resume ${runId}`;
     await createTask(page, title, 'Test that Backlog exited sessions are not resumed by Done');

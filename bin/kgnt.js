@@ -1,12 +1,65 @@
 #!/usr/bin/env node
 
 // Kangentic CLI entry point
-// Usage: kgnt [path]  — opens the Kanban board linked to the given (or current) directory
+// Usage: kgnt [path]   — opens the Kanban board linked to the given (or current) directory
+//        kgnt --reset  — deletes all app data (databases, config) and exits
 
 const { spawn } = require('child_process');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 
 const args = process.argv.slice(2);
+
+// --reset: wipe all app data and exit
+if (args.includes('--reset')) {
+  const platform = process.platform;
+  let base;
+  if (platform === 'win32') {
+    base = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+  } else if (platform === 'darwin') {
+    base = path.join(os.homedir(), 'Library', 'Application Support');
+  } else {
+    base = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+  }
+  const dataDir = path.join(base, 'kangentic');
+
+  if (!fs.existsSync(dataDir)) {
+    console.log('Nothing to reset — no data directory found.');
+    process.exit(0);
+  }
+
+  // Delete databases and config (preserve Electron cache dirs)
+  const toDelete = ['index.db', 'index.db-shm', 'index.db-wal', 'config.json', 'projects'];
+  let deleted = 0;
+  let locked = false;
+  for (const name of toDelete) {
+    const target = path.join(dataDir, name);
+    if (fs.existsSync(target)) {
+      try {
+        fs.rmSync(target, { recursive: true, force: true });
+        deleted++;
+      } catch (err) {
+        if (err.code === 'EBUSY' || err.code === 'EPERM') {
+          locked = true;
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+
+  if (locked) {
+    console.error('Error: database files are locked — close Kangentic first, then retry.');
+    process.exit(1);
+  } else if (deleted > 0) {
+    console.log('Reset complete — all projects, databases, and config removed.');
+    console.log('Next launch will start fresh.');
+  } else {
+    console.log('Nothing to reset — app data was already clean.');
+  }
+  process.exit(0);
+}
 
 // Find the electron binary
 let electronPath;

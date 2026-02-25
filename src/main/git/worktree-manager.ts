@@ -90,8 +90,13 @@ export class WorktreeManager {
   }
 
   async removeWorktree(worktreePath: string): Promise<void> {
-    if (fs.existsSync(worktreePath)) {
+    if (!fs.existsSync(worktreePath)) return;
+    try {
       await this.git.raw(['worktree', 'remove', worktreePath, '--force']);
+    } catch {
+      // Corrupted worktree (missing .git file) — remove manually and prune
+      fs.rmSync(worktreePath, { recursive: true, force: true });
+      await this.git.raw(['worktree', 'prune']);
     }
   }
 

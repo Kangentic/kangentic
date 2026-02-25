@@ -1,22 +1,22 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
-import type { Skill, SkillCreateInput, SkillUpdateInput, SwimlaneTransition } from '../../../shared/types';
+import type { Action, ActionCreateInput, ActionUpdateInput, SwimlaneTransition } from '../../../shared/types';
 
-export class SkillRepository {
+export class ActionRepository {
   constructor(private db: Database.Database) {}
 
-  list(): Skill[] {
-    return this.db.prepare('SELECT * FROM skills ORDER BY name ASC').all() as Skill[];
+  list(): Action[] {
+    return this.db.prepare('SELECT * FROM actions ORDER BY name ASC').all() as Action[];
   }
 
-  getById(id: string): Skill | undefined {
-    return this.db.prepare('SELECT * FROM skills WHERE id = ?').get(id) as Skill | undefined;
+  getById(id: string): Action | undefined {
+    return this.db.prepare('SELECT * FROM actions WHERE id = ?').get(id) as Action | undefined;
   }
 
-  create(input: SkillCreateInput): Skill {
+  create(input: ActionCreateInput): Action {
     const now = new Date().toISOString();
     const id = uuidv4();
-    const skill: Skill = {
+    const action: Action = {
       id,
       name: input.name,
       type: input.type,
@@ -24,14 +24,14 @@ export class SkillRepository {
       created_at: now,
     };
     this.db.prepare(
-      'INSERT INTO skills (id, name, type, config_json, created_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(skill.id, skill.name, skill.type, skill.config_json, skill.created_at);
-    return skill;
+      'INSERT INTO actions (id, name, type, config_json, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(action.id, action.name, action.type, action.config_json, action.created_at);
+    return action;
   }
 
-  update(input: SkillUpdateInput): Skill {
+  update(input: ActionUpdateInput): Action {
     const existing = this.getById(input.id);
-    if (!existing) throw new Error(`Skill ${input.id} not found`);
+    if (!existing) throw new Error(`Action ${input.id} not found`);
 
     const updated = { ...existing };
     if (input.name !== undefined) updated.name = input.name;
@@ -39,14 +39,14 @@ export class SkillRepository {
     if (input.config_json !== undefined) updated.config_json = input.config_json;
 
     this.db.prepare(
-      'UPDATE skills SET name = ?, type = ?, config_json = ? WHERE id = ?'
+      'UPDATE actions SET name = ?, type = ?, config_json = ? WHERE id = ?'
     ).run(updated.name, updated.type, updated.config_json, updated.id);
     return updated;
   }
 
   delete(id: string): void {
-    this.db.prepare('DELETE FROM swimlane_transitions WHERE skill_id = ?').run(id);
-    this.db.prepare('DELETE FROM skills WHERE id = ?').run(id);
+    this.db.prepare('DELETE FROM swimlane_transitions WHERE action_id = ?').run(id);
+    this.db.prepare('DELETE FROM actions WHERE id = ?').run(id);
   }
 
   // Transition management
@@ -68,25 +68,25 @@ export class SkillRepository {
   /** Returns the set of swimlane IDs that have spawn_agent transitions targeting them. */
   getAgentSwimlaneIds(): Set<string> {
     const transitions = this.listTransitions();
-    const skills = this.list();
+    const actions = this.list();
     const ids = new Set<string>();
     for (const t of transitions) {
-      const skill = skills.find((s) => s.id === t.skill_id);
-      if (skill?.type === 'spawn_agent') {
+      const action = actions.find((a) => a.id === t.action_id);
+      if (action?.type === 'spawn_agent') {
         ids.add(t.to_swimlane_id);
       }
     }
     return ids;
   }
 
-  setTransitions(fromId: string, toId: string, skillIds: string[]): void {
+  setTransitions(fromId: string, toId: string, actionIds: string[]): void {
     const tx = this.db.transaction(() => {
       this.db.prepare('DELETE FROM swimlane_transitions WHERE from_swimlane_id = ? AND to_swimlane_id = ?').run(fromId, toId);
       const insert = this.db.prepare(
-        'INSERT INTO swimlane_transitions (id, from_swimlane_id, to_swimlane_id, skill_id, execution_order) VALUES (?, ?, ?, ?, ?)'
+        'INSERT INTO swimlane_transitions (id, from_swimlane_id, to_swimlane_id, action_id, execution_order) VALUES (?, ?, ?, ?, ?)'
       );
-      skillIds.forEach((skillId, order) => {
-        insert.run(uuidv4(), fromId, toId, skillId, order);
+      actionIds.forEach((actionId, order) => {
+        insert.run(uuidv4(), fromId, toId, actionId, order);
       });
     });
     tx();

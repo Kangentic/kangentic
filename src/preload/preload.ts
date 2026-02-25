@@ -35,16 +35,16 @@ const api: ElectronAPI = {
     reorder: (ids) => ipcRenderer.invoke(IPC.SWIMLANE_REORDER, ids),
   },
 
-  skills: {
-    list: () => ipcRenderer.invoke(IPC.SKILL_LIST),
-    create: (input) => ipcRenderer.invoke(IPC.SKILL_CREATE, input),
-    update: (input) => ipcRenderer.invoke(IPC.SKILL_UPDATE, input),
-    delete: (id) => ipcRenderer.invoke(IPC.SKILL_DELETE, id),
+  actions: {
+    list: () => ipcRenderer.invoke(IPC.ACTION_LIST),
+    create: (input) => ipcRenderer.invoke(IPC.ACTION_CREATE, input),
+    update: (input) => ipcRenderer.invoke(IPC.ACTION_UPDATE, input),
+    delete: (id) => ipcRenderer.invoke(IPC.ACTION_DELETE, id),
   },
 
   transitions: {
     list: () => ipcRenderer.invoke(IPC.TRANSITION_LIST),
-    set: (fromId, toId, skillIds) => ipcRenderer.invoke(IPC.TRANSITION_SET, fromId, toId, skillIds),
+    set: (fromId, toId, actionIds) => ipcRenderer.invoke(IPC.TRANSITION_SET, fromId, toId, actionIds),
     getForTransition: (fromId, toId) => ipcRenderer.invoke(IPC.TRANSITION_GET_FOR, fromId, toId),
   },
 

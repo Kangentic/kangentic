@@ -18,7 +18,7 @@ src/
   main/           # Electron main process
     agent/        # Claude CLI detection & command building
     db/           # SQLite database, migrations, repositories
-    engine/       # Transition engine (skill execution)
+    engine/       # Transition engine (action execution)
     git/          # Worktree manager
     ipc/          # IPC handler registration
     pty/          # PTY session manager, shell resolver
@@ -47,8 +47,8 @@ scripts/          # Build and dev scripts
 ### Data Flow
 1. User drags a task between columns (swimlanes)
 2. `TASK_MOVE` IPC handler fires in main process
-3. Transition engine checks for skills attached to that lane transition
-4. `spawn_agent` skill builds a Claude CLI command and spawns a PTY session
+3. Transition engine checks for actions attached to that lane transition
+4. `spawn_agent` action builds a Claude CLI command and spawns a PTY session
 5. Terminal output streams to renderer via IPC
 
 ### Key Patterns
@@ -56,7 +56,7 @@ scripts/          # Build and dev scripts
 - **Stores** use Zustand with IPC bridge: renderer store calls `window.electronAPI.*`, main process handles via `ipcMain.handle`
 - **Icons** use Lucide React — no inline SVGs
 - **PTY sessions** handle cross-platform shells (PowerShell needs `& ` prefix, WSL splits into exe + args, fish/nushell skip `--login`)
-- **Claude CLI** is invoked with `cwd` set to the project directory (or worktree path) so that `.claude/`, `CLAUDE.md`, and skills are loaded into context
+- **Claude CLI** is invoked with `cwd` set to the project directory (or worktree path) so that `.claude/`, `CLAUDE.md`, and commands are loaded into context
 
 ### Per-Project Directory
 All runtime data lives under `<project>/.kangentic/` (auto-added to `.gitignore` on project open):
@@ -66,7 +66,7 @@ All runtime data lives under `<project>/.kangentic/` (auto-added to `.gitignore`
 
 ### Database
 - Global DB (`~/.kangentic/kangentic.db`) for projects list
-- Per-project DB (`<project>/.kangentic/project.db`) for tasks, swimlanes, skills, sessions
+- Per-project DB (`<project>/.kangentic/project.db`) for tasks, swimlanes, actions, sessions
 - Migrations run automatically on open
 
 ### Testing

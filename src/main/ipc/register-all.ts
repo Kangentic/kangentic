@@ -6,7 +6,7 @@ import type Database from 'better-sqlite3';
 import { ProjectRepository } from '../db/repositories/project-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
-import { SkillRepository } from '../db/repositories/skill-repository';
+import { ActionRepository } from '../db/repositories/action-repository';
 import { SessionManager } from '../pty/session-manager';
 import { ConfigManager } from '../config/config-manager';
 import { ClaudeDetector } from '../agent/claude-detector';
@@ -58,14 +58,74 @@ const claudeDetector = new ClaudeDetector();
 const shellResolver = new ShellResolver();
 const commandBuilder = new CommandBuilder();
 
-function getProjectRepos(): { tasks: TaskRepository; swimlanes: SwimlaneRepository; skills: SkillRepository } {
+function getProjectRepos(): { tasks: TaskRepository; swimlanes: SwimlaneRepository; actions: ActionRepository } {
   if (!currentProjectId) throw new Error('No project is currently open');
   const db = getProjectDb(currentProjectId);
   return {
     tasks: new TaskRepository(db),
     swimlanes: new SwimlaneRepository(db),
-    skills: new SkillRepository(db),
+    actions: new ActionRepository(db),
   };
+}
+
+/**
+ * Kill the PTY session and wipe session records for a task.
+ * Preserves the worktree and branch so code is not lost.
+ *
+ * Used by TASK_MOVE → Backlog ("shelve this task").
+ */
+async function cleanupTaskSession(
+  task: { id: string; session_id: string | null; worktree_path: string | null; branch_name: string | null },
+  tasks: TaskRepository,
+): Promise<void> {
+  // Kill active PTY session
+  if (task.session_id) {
+    try { sessionManager.kill(task.session_id); } catch { /* may already be dead */ }
+    tasks.update({ id: task.id, session_id: null });
+  }
+
+  // Remove session directories from disk + DB records
+  if (currentProjectId && currentProjectPath) {
+    const db = getProjectDb(currentProjectId);
+    const sessionRepo = new SessionRepository(db);
+    const records = db.prepare(
+      'SELECT claude_session_id FROM sessions WHERE task_id = ? AND claude_session_id IS NOT NULL'
+    ).all(task.id) as Array<{ claude_session_id: string }>;
+    for (const { claude_session_id } of records) {
+      const sessionDir = path.join(currentProjectPath, '.kangentic', 'sessions', claude_session_id);
+      try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch { /* may not exist */ }
+    }
+    sessionRepo.deleteByTaskId(task.id);
+  }
+}
+
+/**
+ * Full cleanup: kill session, remove worktree + branch, wipe session records.
+ *
+ * Used by TASK_DELETE (permanent removal).
+ */
+async function cleanupTaskResources(
+  task: { id: string; session_id: string | null; worktree_path: string | null; branch_name: string | null },
+  tasks: TaskRepository,
+): Promise<void> {
+  await cleanupTaskSession(task, tasks);
+
+  // Remove worktree + branch
+  if (task.worktree_path && currentProjectPath) {
+    try {
+      const wm = new WorktreeManager(currentProjectPath);
+      await wm.removeWorktree(task.worktree_path);
+      if (task.branch_name) {
+        const config = configManager.getEffectiveConfig(currentProjectPath);
+        if (config.git.autoCleanup) {
+          await wm.removeBranch(task.branch_name);
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to clean up worktree for task ${task.id.slice(0, 8)}:`, err);
+    }
+    tasks.update({ id: task.id, worktree_path: null, branch_name: null });
+  }
 }
 
 export function registerAllIpc(mainWindow: BrowserWindow): void {
@@ -170,61 +230,17 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.TASK_DELETE, async (_, id) => {
     const { tasks } = getProjectRepos();
     const task = tasks.getById(id);
-
-    // Kill any active PTY session before deleting DB records
-    if (task?.session_id) {
-      try {
-        sessionManager.kill(task.session_id);
-      } catch (err) {
-        console.error('Failed to kill session during task delete:', err);
-      }
-    }
-
-    // Clean up worktree and branch if present
-    if (task?.worktree_path && currentProjectPath) {
-      try {
-        const wm = new WorktreeManager(currentProjectPath);
-        await wm.removeWorktree(task.worktree_path);
-        if (task.branch_name) {
-          const config = configManager.getEffectiveConfig(currentProjectPath);
-          if (config.git.autoCleanup) {
-            await wm.removeBranch(task.branch_name);
-          }
-        }
-      } catch (err) {
-        console.error('Failed to clean up worktree during task delete:', err);
-      }
-    }
-
-    // Clean up session directories from disk before deleting DB records
-    const db = getProjectDb(currentProjectId!);
-    const sessionRepo = new SessionRepository(db);
-
-    if (currentProjectPath) {
-      const records = db.prepare(
-        `SELECT claude_session_id FROM sessions WHERE task_id = ? AND claude_session_id IS NOT NULL`
-      ).all(id) as Array<{ claude_session_id: string }>;
-      for (const { claude_session_id } of records) {
-        const sessionDir = path.join(currentProjectPath, '.kangentic', 'sessions', claude_session_id);
-        try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch { /* may not exist */ }
-      }
-    }
-
-    // Delete session DB records before the task to avoid FK constraint errors
-    sessionRepo.deleteByTaskId(id);
-
+    if (task) await cleanupTaskResources(task, tasks);
     tasks.delete(id);
   });
 
   ipcMain.handle(IPC.TASK_MOVE, async (_, input) => {
-    const { tasks, skills, swimlanes } = getProjectRepos();
+    const { tasks, actions, swimlanes } = getProjectRepos();
     const task = tasks.getById(input.taskId);
     if (!task) throw new Error(`Task ${input.taskId} not found`);
 
     const fromSwimlaneId = task.swimlane_id;
     const toLane = swimlanes.getById(input.targetSwimlaneId);
-    const agentLaneIds = skills.getAgentSwimlaneIds();
-    const toIsActive = agentLaneIds.has(input.targetSwimlaneId);
 
     // Move the task in the database
     tasks.move(input);
@@ -232,17 +248,10 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     const db = getProjectDb(currentProjectId!);
     const sessionRepo = new SessionRepository(db);
 
-    // --- Priority 1: TARGET IS BACKLOG → full kill (no future resume) ---
+    // --- Priority 1: TARGET IS BACKLOG → kill session, preserve worktree ---
     if (toLane?.role === 'backlog') {
-      if (task.session_id) {
-        const record = sessionRepo.getLatestForTask(task.id);
-        if (record && record.status === 'running') {
-          sessionRepo.updateStatus(record.id, 'exited', { exited_at: new Date().toISOString() });
-        }
-        sessionManager.kill(task.session_id);
-        tasks.update({ id: task.id, session_id: null });
-        console.log(`[TASK_MOVE] Killed session for task ${task.id.slice(0, 8)} (moved to Backlog)`);
-      }
+      await cleanupTaskSession(task, tasks);
+      console.log(`[TASK_MOVE] Killed session for task ${task.id.slice(0, 8)} (moved to Backlog, worktree preserved)`);
       return;
     }
 
@@ -250,38 +259,34 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     if (toLane?.role === 'done') {
       if (task.session_id) {
         const record = sessionRepo.getLatestForTask(task.id);
-        if (record && record.status === 'running') {
+        // Accept 'running' AND 'exited' — exited covers Claude natural exit
+        if (record && record.claude_session_id
+            && (record.status === 'running' || record.status === 'exited')) {
           sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: new Date().toISOString() });
           console.log(`[TASK_MOVE] Suspended session record ${record.id.slice(0, 8)} for task ${task.id.slice(0, 8)}`);
         }
         sessionManager.suspend(task.session_id);
         tasks.update({ id: task.id, session_id: null });
+      } else {
+        // No active PTY — preserve latest exited session for future resume
+        const record = sessionRepo.getLatestForTask(task.id);
+        if (record && record.claude_session_id
+            && record.session_type === 'claude_agent'
+            && record.status === 'exited') {
+          sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: new Date().toISOString() });
+          console.log(`[TASK_MOVE] Preserved exited session ${record.id.slice(0, 8)} for future resume`);
+        }
       }
       tasks.archive(input.taskId);
       console.log(`[TASK_MOVE] Auto-archived task ${input.taskId.slice(0, 8)} (moved to Done)`);
       return;
     }
 
-    // --- Priority 3: TASK HAS ACTIVE SESSION → keep alive ---
+    // --- Priority 3: TASK HAS ACTIVE SESSION → keep alive, skip transitions ---
+    // If the agent is already running, moving between non-terminal columns
+    // (e.g. Review → Running) should NOT kill and respawn — just let it continue.
     if (task.session_id) {
-      const engine = new TransitionEngine(
-        sessionManager, skills, tasks, claudeDetector, commandBuilder,
-        () => {
-          const config = configManager.getEffectiveConfig(currentProjectPath || undefined);
-          return {
-            permissionMode: config.claude.permissionMode,
-            claudePath: config.claude.cliPath,
-            projectPath: currentProjectPath,
-            gitConfig: config.git,
-          };
-        },
-        sessionRepo,
-      );
-      try {
-        await engine.executeTransition(task, fromSwimlaneId, input.targetSwimlaneId);
-      } catch (err) {
-        console.error('Transition engine error:', err);
-      }
+      console.log(`[TASK_MOVE] Task ${task.id.slice(0, 8)} already has active session — skipping transitions`);
       return;
     }
 
@@ -306,9 +311,9 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
       }
     }
 
-    // Execute transition skills (may fire spawn_agent which handles resume internally)
+    // Execute transition actions (may fire spawn_agent which handles resume internally)
     const engine = new TransitionEngine(
-      sessionManager, skills, tasks, claudeDetector, commandBuilder,
+      sessionManager, actions, tasks, claudeDetector, commandBuilder,
       () => {
         const config = configManager.getEffectiveConfig(currentProjectPath || undefined);
         return {
@@ -330,32 +335,14 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     // Re-read task from DB — transition engine may have spawned a session
     const updatedTask = tasks.getById(task.id);
 
-    // If task STILL has no session, try to resume a suspended session or spawn fresh
+    // If task STILL has no session, resume a suspended session or spawn fresh.
+    // resumeSuspendedSession handles both cases internally via executeSpawnAgent.
     if (updatedTask && !updatedTask.session_id) {
-      const previousSession = sessionRepo.getLatestForTask(task.id);
-      if (
-        previousSession
-        && previousSession.claude_session_id
-        && previousSession.session_type === 'claude_agent'
-        && previousSession.status === 'suspended'
-      ) {
-        // Suspended session exists — resume it
-        console.log(`[TASK_MOVE] Auto-resuming suspended session for task ${task.id.slice(0, 8)}`);
-        try {
-          await engine.resumeSuspendedSession(updatedTask);
-        } catch (err) {
-          console.error('Failed to resume suspended session:', err);
-        }
-      } else if (!toIsActive) {
-        // No transition fired spawn_agent (non-agent column) and no suspended
-        // session to resume — spawn a fresh agent so the task isn't left idle.
-        // This covers moves like Backlog → Review/PR/custom.
-        console.log(`[TASK_MOVE] Spawning fresh session for task ${task.id.slice(0, 8)} (non-agent column, no prior session)`);
-        try {
-          await engine.resumeSuspendedSession(updatedTask);
-        } catch (err) {
-          console.error('Failed to spawn fresh session:', err);
-        }
+      console.log(`[TASK_MOVE] Ensuring agent for task ${task.id.slice(0, 8)}`);
+      try {
+        await engine.resumeSuspendedSession(updatedTask);
+      } catch (err) {
+        console.error('Failed to start session:', err);
       }
     }
   });
@@ -366,7 +353,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   });
 
   ipcMain.handle(IPC.TASK_UNARCHIVE, async (_, input: { id: string; targetSwimlaneId: string }) => {
-    const { tasks, swimlanes, skills } = getProjectRepos();
+    const { tasks, swimlanes, actions } = getProjectRepos();
 
     // Determine position at end of target lane
     const laneTasks = tasks.list(input.targetSwimlaneId);
@@ -381,11 +368,8 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
       return tasks.getById(input.id);
     }
 
-    const agentLaneIds = skills.getAgentSwimlaneIds();
-    const toIsActive = agentLaneIds.has(input.targetSwimlaneId);
-
-    // Create worktree if needed when moving to an agent-active column
-    if (toIsActive && !task.worktree_path && currentProjectPath) {
+    // Create worktree if needed (any non-backlog column gets an agent)
+    if (!task.worktree_path && currentProjectPath) {
       const config = configManager.getEffectiveConfig(currentProjectPath);
       if (config.git.worktreesEnabled) {
         try {
@@ -401,14 +385,14 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
       }
     }
 
-    // Execute transition skills (from Done → target) for ALL non-kill columns
+    // Execute transition actions (from Done → target) for ALL non-kill columns
     if (currentProjectPath) {
       const doneLane = swimlanes.list().find((l) => l.role === 'done');
       if (doneLane) {
         const db = getProjectDb(currentProjectId!);
         const sessionRepo = new SessionRepository(db);
         const engine = new TransitionEngine(
-          sessionManager, skills, tasks, claudeDetector, commandBuilder,
+          sessionManager, actions, tasks, claudeDetector, commandBuilder,
           () => {
             const config = configManager.getEffectiveConfig(currentProjectPath || undefined);
             return {
@@ -427,22 +411,15 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
           console.error('Transition engine error during unarchive:', err);
         }
 
-        // Re-read task; if still no session and a suspended record exists, auto-resume
+        // Re-read task; if still no session, resume suspended or spawn fresh.
+        // resumeSuspendedSession handles both cases internally via executeSpawnAgent.
         const updatedTask = tasks.getById(task.id);
         if (updatedTask && !updatedTask.session_id) {
-          const previousSession = sessionRepo.getLatestForTask(task.id);
-          if (
-            previousSession
-            && previousSession.claude_session_id
-            && previousSession.session_type === 'claude_agent'
-            && previousSession.status === 'suspended'
-          ) {
-            console.log(`[TASK_UNARCHIVE] Auto-resuming suspended session for task ${task.id.slice(0, 8)}`);
-            try {
-              await engine.resumeSuspendedSession(updatedTask);
-            } catch (err) {
-              console.error('Failed to resume suspended session during unarchive:', err);
-            }
+          console.log(`[TASK_UNARCHIVE] Ensuring agent for task ${task.id.slice(0, 8)}`);
+          try {
+            await engine.resumeSuspendedSession(updatedTask);
+          } catch (err) {
+            console.error('Failed to start session during unarchive:', err);
           }
         }
       }
@@ -477,41 +454,41 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     swimlanes.reorder(ids);
   });
 
-  // === Skills ===
-  ipcMain.handle(IPC.SKILL_LIST, () => {
-    const { skills } = getProjectRepos();
-    return skills.list();
+  // === Actions ===
+  ipcMain.handle(IPC.ACTION_LIST, () => {
+    const { actions } = getProjectRepos();
+    return actions.list();
   });
 
-  ipcMain.handle(IPC.SKILL_CREATE, (_, input) => {
-    const { skills } = getProjectRepos();
-    return skills.create(input);
+  ipcMain.handle(IPC.ACTION_CREATE, (_, input) => {
+    const { actions } = getProjectRepos();
+    return actions.create(input);
   });
 
-  ipcMain.handle(IPC.SKILL_UPDATE, (_, input) => {
-    const { skills } = getProjectRepos();
-    return skills.update(input);
+  ipcMain.handle(IPC.ACTION_UPDATE, (_, input) => {
+    const { actions } = getProjectRepos();
+    return actions.update(input);
   });
 
-  ipcMain.handle(IPC.SKILL_DELETE, (_, id) => {
-    const { skills } = getProjectRepos();
-    skills.delete(id);
+  ipcMain.handle(IPC.ACTION_DELETE, (_, id) => {
+    const { actions } = getProjectRepos();
+    actions.delete(id);
   });
 
   // === Transitions ===
   ipcMain.handle(IPC.TRANSITION_LIST, () => {
-    const { skills } = getProjectRepos();
-    return skills.listTransitions();
+    const { actions } = getProjectRepos();
+    return actions.listTransitions();
   });
 
-  ipcMain.handle(IPC.TRANSITION_SET, (_, fromId, toId, skillIds) => {
-    const { skills } = getProjectRepos();
-    skills.setTransitions(fromId, toId, skillIds);
+  ipcMain.handle(IPC.TRANSITION_SET, (_, fromId, toId, actionIds) => {
+    const { actions } = getProjectRepos();
+    actions.setTransitions(fromId, toId, actionIds);
   });
 
   ipcMain.handle(IPC.TRANSITION_GET_FOR, (_, fromId, toId) => {
-    const { skills } = getProjectRepos();
-    return skills.getTransitionsFor(fromId, toId);
+    const { actions } = getProjectRepos();
+    return actions.getTransitionsFor(fromId, toId);
   });
 
   // === Sessions ===

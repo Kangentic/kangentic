@@ -67,7 +67,7 @@ export function TerminalPanel({ collapsed = false, onToggleCollapse }: TerminalP
   if (activeSessions.length === 0) {
     return (
       <div className="h-full bg-zinc-900 flex items-center justify-center text-zinc-600 text-sm">
-        No active sessions. Drag a task to a column with a spawn_agent skill to start one.
+        No active sessions. Drag a task to a column with a spawn_agent action to start one.
       </div>
     );
   }

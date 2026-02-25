@@ -40,7 +40,7 @@ export interface Swimlane {
   created_at: string;
 }
 
-export type SkillType =
+export type ActionType =
   | 'create_worktree'
   | 'spawn_agent'
   | 'send_command'
@@ -50,15 +50,15 @@ export type SkillType =
   | 'kill_session'
   | 'webhook';
 
-export interface Skill {
+export interface Action {
   id: string;
   name: string;
-  type: SkillType;
+  type: ActionType;
   config_json: string;
   created_at: string;
 }
 
-export interface SkillConfig {
+export interface ActionConfig {
   // create_worktree
   baseBranch?: string;
   copyFiles?: string[];
@@ -87,7 +87,7 @@ export interface SwimlaneTransition {
   id: string;
   from_swimlane_id: string;
   to_swimlane_id: string;
-  skill_id: string;
+  action_id: string;
   execution_order: number;
 }
 
@@ -271,16 +271,16 @@ export interface SwimlaneUpdateInput {
   is_terminal?: boolean;
 }
 
-export interface SkillCreateInput {
+export interface ActionCreateInput {
   name: string;
-  type: SkillType;
+  type: ActionType;
   config_json: string;
 }
 
-export interface SkillUpdateInput {
+export interface ActionUpdateInput {
   id: string;
   name?: string;
-  type?: SkillType;
+  type?: ActionType;
   config_json?: string;
 }
 
@@ -333,18 +333,18 @@ export interface ElectronAPI {
     reorder: (ids: string[]) => Promise<void>;
   };
 
-  // Skills
-  skills: {
-    list: () => Promise<Skill[]>;
-    create: (input: SkillCreateInput) => Promise<Skill>;
-    update: (input: SkillUpdateInput) => Promise<Skill>;
+  // Actions
+  actions: {
+    list: () => Promise<Action[]>;
+    create: (input: ActionCreateInput) => Promise<Action>;
+    update: (input: ActionUpdateInput) => Promise<Action>;
     delete: (id: string) => Promise<void>;
   };
 
   // Transitions
   transitions: {
     list: () => Promise<SwimlaneTransition[]>;
-    set: (fromId: string, toId: string, skillIds: string[]) => Promise<void>;
+    set: (fromId: string, toId: string, actionIds: string[]) => Promise<void>;
     getForTransition: (fromId: string, toId: string) => Promise<SwimlaneTransition[]>;
   };
 
