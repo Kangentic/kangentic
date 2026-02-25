@@ -16,7 +16,9 @@ import { CommandBuilder } from '../agent/command-builder';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { recoverSessions, reconcileSessions, pruneOrphanedWorktrees } from '../engine/session-recovery';
 import { WorktreeManager } from '../git/worktree-manager';
-import { getProjectDb } from '../db/database';
+import { stripActivityHooks } from '../agent/hook-manager';
+import { getProjectDb, closeProjectDb } from '../db/database';
+import { PATHS } from '../config/paths';
 
 /**
  * Ensure `.kangentic/` is listed in the project's `.gitignore`.
@@ -24,6 +26,7 @@ import { getProjectDb } from '../db/database';
  * permission issue must never prevent the app from opening.
  */
 function ensureGitignore(projectPath: string): void {
+  if (!WorktreeManager.isGitRepo(projectPath)) return;
   try {
     const gitignorePath = path.join(projectPath, '.gitignore');
     let content = '';
@@ -128,6 +131,117 @@ async function cleanupTaskResources(
   }
 }
 
+/**
+ * Detach Kangentic from a project: kill PTY sessions, cleanly remove git
+ * worktrees (branches with user code are preserved), strip our injected
+ * activity hooks from `.claude/settings.local.json`, remove `.kangentic/`,
+ * and delete the per-project database file from app data.
+ *
+ * Does NOT touch the `.claude/` directory, git branches, or any user data.
+ */
+async function cleanupProject(projectId: string, projectPath: string): Promise<void> {
+  // Guard: project path must exist
+  if (!fs.existsSync(projectPath)) {
+    console.warn(`[PROJECT_DELETE] Project path does not exist: ${projectPath} — skipping filesystem cleanup`);
+    closeProjectDb(projectId);
+    const dbPath = PATHS.projectDb(projectId);
+    try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }
+    try { fs.unlinkSync(dbPath + '-wal'); } catch { /* may not exist */ }
+    try { fs.unlinkSync(dbPath + '-shm'); } catch { /* may not exist */ }
+    if (currentProjectId === projectId) {
+      currentProjectId = null;
+      currentProjectPath = null;
+    }
+    return;
+  }
+
+  // 1. Kill all active PTY sessions belonging to this project's tasks
+  let allTasks: any[] = [];
+  try {
+    const db = getProjectDb(projectId);
+    const taskRepo = new TaskRepository(db);
+    allTasks = taskRepo.list();
+  } catch (err) {
+    console.error('[PROJECT_DELETE] Failed to read tasks:', err);
+  }
+
+  for (const task of allTasks) {
+    if (task.session_id) {
+      try { sessionManager.kill(task.session_id); } catch { /* may already be dead */ }
+    }
+  }
+
+  // 2. Cleanly detach git worktrees (keeps branches with user code intact)
+  if (WorktreeManager.isGitRepo(projectPath)) {
+    for (const task of allTasks) {
+      if (task.worktree_path && fs.existsSync(task.worktree_path)) {
+        try {
+          const wm = new WorktreeManager(projectPath);
+          await wm.removeWorktree(task.worktree_path);
+        } catch (err) {
+          console.error(`[PROJECT_DELETE] Failed to detach worktree for task ${task.id.slice(0, 8)}:`, err);
+        }
+      }
+    }
+  }
+
+  // 3. Strip our activity-bridge hooks from .claude/settings.local.json
+  //    (project root and any worktree dirs that may still exist)
+  stripActivityHooks(projectPath);
+  const worktreesDir = path.join(projectPath, '.kangentic', 'worktrees');
+  if (fs.existsSync(worktreesDir)) {
+    try {
+      for (const entry of fs.readdirSync(worktreesDir)) {
+        stripActivityHooks(path.join(worktreesDir, entry));
+      }
+    } catch { /* best effort */ }
+  }
+
+  // 4. Close the project DB connection before deleting files
+  closeProjectDb(projectId);
+
+  // 5. Remove our `.kangentic/` entry from .gitignore (delete file if it becomes empty)
+  try {
+    const gitignorePath = path.join(projectPath, '.gitignore');
+    if (fs.existsSync(gitignorePath)) {
+      const content = fs.readFileSync(gitignorePath, 'utf-8');
+      const filtered = content.split('\n').filter(
+        (l) => l.trim() !== '.kangentic' && l.trim() !== '.kangentic/',
+      );
+      const newContent = filtered.join('\n');
+      if (newContent.replace(/\s/g, '').length === 0) {
+        fs.unlinkSync(gitignorePath);
+      } else {
+        fs.writeFileSync(gitignorePath, newContent);
+      }
+    }
+  } catch { /* non-fatal */ }
+
+  // 6. Remove .kangentic/ directory (ours entirely)
+  const kangenticDir = path.join(projectPath, '.kangentic');
+  if (fs.existsSync(kangenticDir)) {
+    try {
+      fs.rmSync(kangenticDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+    } catch (err) {
+      console.error(`[PROJECT_DELETE] Failed to remove ${kangenticDir}:`, err);
+    }
+  }
+
+  // 6. Delete the per-project database file from app data
+  const dbPath = PATHS.projectDb(projectId);
+  try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }
+  try { fs.unlinkSync(dbPath + '-wal'); } catch { /* may not exist */ }
+  try { fs.unlinkSync(dbPath + '-shm'); } catch { /* may not exist */ }
+
+  // 7. Clear current project if this was the active one
+  if (currentProjectId === projectId) {
+    currentProjectId = null;
+    currentProjectPath = null;
+  }
+
+  console.log(`[PROJECT_DELETE] Cleaned up project at ${projectPath}`);
+}
+
 export function registerAllIpc(mainWindow: BrowserWindow): void {
   // === Projects ===
   ipcMain.handle(IPC.PROJECT_LIST, () => projectRepo.list());
@@ -139,7 +253,13 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     return project;
   });
 
-  ipcMain.handle(IPC.PROJECT_DELETE, (_, id) => projectRepo.delete(id));
+  ipcMain.handle(IPC.PROJECT_DELETE, async (_, id) => {
+    const project = projectRepo.getById(id);
+    if (project) {
+      await cleanupProject(id, project.path);
+    }
+    projectRepo.delete(id);
+  });
 
   ipcMain.handle(IPC.PROJECT_OPEN, async (_, id) => {
     const project = projectRepo.getById(id);
@@ -296,7 +416,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     // a fresh session (e.g. Backlog → Review).
     if (!task.worktree_path && currentProjectPath) {
       const config = configManager.getEffectiveConfig(currentProjectPath);
-      if (config.git.worktreesEnabled) {
+      if (config.git.worktreesEnabled && WorktreeManager.isGitRepo(currentProjectPath)) {
         try {
           const wm = new WorktreeManager(currentProjectPath);
           const { worktreePath, branchName } = await wm.createWorktree(
@@ -371,7 +491,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     // Create worktree if needed (any non-backlog column gets an agent)
     if (!task.worktree_path && currentProjectPath) {
       const config = configManager.getEffectiveConfig(currentProjectPath);
-      if (config.git.worktreesEnabled) {
+      if (config.git.worktreesEnabled && WorktreeManager.isGitRepo(currentProjectPath)) {
         try {
           const wm = new WorktreeManager(currentProjectPath);
           const { worktreePath, branchName } = await wm.createWorktree(

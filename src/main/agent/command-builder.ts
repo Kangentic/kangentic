@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { toForwardSlash, quoteArg } from '../../shared/paths';
 import type { PermissionMode, Task } from '../../shared/types';
+import { injectActivityHooks } from './hook-manager';
 
 interface CommandOptions {
   claudePath: string;
@@ -181,52 +182,9 @@ export class CommandBuilder {
     // picks them up from its standard settings hierarchy. The --settings flag
     // may not load hooks in all Claude Code versions.
     if (activityPath) {
-      this.injectActivityHooks(options.cwd, activityBridge, activityPath);
+      injectActivityHooks(options.cwd, activityBridge, activityPath);
     }
 
     return mergedPath;
-  }
-
-  /**
-   * Write activity hooks into <cwd>/.claude/settings.local.json.
-   * Claude Code reads this file from its standard settings hierarchy,
-   * ensuring hooks fire regardless of --settings support.
-   *
-   * Preserves existing user settings and hooks.
-   */
-  private injectActivityHooks(cwd: string, activityBridge: string, activityPath: string): void {
-    const localSettingsDir = path.join(cwd, '.claude');
-    fs.mkdirSync(localSettingsDir, { recursive: true });
-    const localSettingsPath = path.join(localSettingsDir, 'settings.local.json');
-
-    let localSettings: Record<string, any> = {};
-    try {
-      const raw = fs.readFileSync(localSettingsPath, 'utf-8');
-      localSettings = JSON.parse(raw);
-    } catch {
-      // Doesn't exist or malformed — start fresh
-    }
-
-    const existingHooks = localSettings.hooks || {};
-
-    // Filter out any stale activity-bridge entries from previous sessions
-    const filterStale = (entries: any[] | undefined): any[] =>
-      (entries || []).filter((e: any) =>
-        !e?.hooks?.some?.((h: any) => typeof h.command === 'string' && h.command.includes('activity-bridge')),
-      );
-
-    localSettings.hooks = {
-      ...existingHooks,
-      UserPromptSubmit: [
-        ...filterStale(existingHooks.UserPromptSubmit),
-        { matcher: '', hooks: [{ type: 'command', command: `node "${activityBridge}" "${activityPath}" thinking` }] },
-      ],
-      Stop: [
-        ...filterStale(existingHooks.Stop),
-        { matcher: '', hooks: [{ type: 'command', command: `node "${activityBridge}" "${activityPath}" idle` }] },
-      ],
-    };
-
-    fs.writeFileSync(localSettingsPath, JSON.stringify(localSettings, null, 2));
   }
 }

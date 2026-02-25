@@ -29,6 +29,14 @@ export function getProjectDb(projectId: string): Database.Database {
   return db;
 }
 
+export function closeProjectDb(projectId: string): void {
+  const db = projectDbs.get(projectId);
+  if (db) {
+    db.close();
+    projectDbs.delete(projectId);
+  }
+}
+
 export function closeAll(): void {
   if (globalDb) {
     globalDb.close();

@@ -22,6 +22,11 @@ export class WorktreeManager {
     this.git = simpleGit(projectPath);
   }
 
+  /** Check whether the project path is inside a git repository. */
+  static isGitRepo(projectPath: string): boolean {
+    return fs.existsSync(path.join(projectPath, '.git'));
+  }
+
   /**
    * Create a worktree for a task. The worktree folder and branch are named
    * using a slug derived from the task title, with the taskId suffix to
