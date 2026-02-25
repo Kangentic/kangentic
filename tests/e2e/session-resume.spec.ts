@@ -171,34 +171,23 @@ test.describe('Claude Agent — Session Resume via Column Move', () => {
     cleanupTestDataDir(`${TEST_NAME}-move`);
   });
 
-  test('moving Planning → Backlog → Planning resumes with --resume and same session ID', async () => {
+  test('moving Planning → Done → Unarchive to Planning resumes with --resume and same session ID', async () => {
     const title = `Move Resume ${runId}`;
-    await createTask(page, title, 'Test suspend and resume via drag');
+    await createTask(page, title, 'Test suspend and resume via Done/unarchive');
 
-    // --- Step 1: Drag to Planning → spawns a NEW session ---
-    await dragTaskToColumn(page, title, 'Planning');
-    await waitForMoveSettle(page, 'Planning', title);
-
-    // Wait for mock Claude to output its SESSION marker
-    const scrollback1 = await waitForScrollback(page, 'MOCK_CLAUDE_SESSION:');
-    const originalSessionId = extractSessionId(scrollback1, 'SESSION');
-    expect(originalSessionId).toBeTruthy();
-
-    // Verify sessions are active
-    await expect(page.locator('text=/[1-9]\\d*\\/\\d+ sessions/')).toBeVisible({ timeout: 10000 });
-
-    // --- Step 2: Move to Backlog via IPC → suspends the session ---
-    // Using IPC directly avoids drag-and-drop flakiness for LEFT-ward moves
-    const backlogSwimlaneId = await page.evaluate(async () => {
+    // --- Step 1: Move to Planning via IPC → spawns a NEW session ---
+    const swimlaneIds = await page.evaluate(async () => {
       const swimlanes = await window.electronAPI.swimlanes.list();
-      const backlog = swimlanes.find((s: any) => s.name === 'Backlog');
-      return backlog?.id;
+      const planning = swimlanes.find((s: any) => s.name === 'Planning');
+      const done = swimlanes.find((s: any) => s.role === 'done');
+      return { planning: planning?.id, done: done?.id };
     });
-    expect(backlogSwimlaneId).toBeTruthy();
+    expect(swimlaneIds.planning).toBeTruthy();
+    expect(swimlaneIds.done).toBeTruthy();
 
-    const taskId = await page.evaluate(async (title) => {
+    const taskId = await page.evaluate(async (t) => {
       const tasks = await window.electronAPI.tasks.list();
-      const task = tasks.find((t: any) => t.title === title);
+      const task = tasks.find((tk: any) => tk.title === t);
       return task?.id;
     }, title);
     expect(taskId).toBeTruthy();
@@ -209,9 +198,29 @@ test.describe('Claude Agent — Session Resume via Column Move', () => {
         targetSwimlaneId: swimlaneId,
         targetPosition: 0,
       });
-    }, { taskId: taskId!, swimlaneId: backlogSwimlaneId! });
+    }, { taskId: taskId!, swimlaneId: swimlaneIds.planning! });
 
-    // Wait for no running sessions via IPC (session was killed during suspend)
+    // Wait for a running session to appear
+    await page.waitForFunction(async () => {
+      const sessions = await (window as any).electronAPI.sessions.list();
+      return sessions.some((s: any) => s.status === 'running');
+    }, null, { timeout: 15000 });
+
+    // Wait for mock Claude to output its SESSION marker (task-specific)
+    const scrollback1 = await waitForScrollback(page, 'MOCK_CLAUDE_SESSION:');
+    const originalSessionId = extractSessionId(scrollback1, 'SESSION');
+    expect(originalSessionId).toBeTruthy();
+
+    // --- Step 2: Move to Done via IPC → suspends session + archives task ---
+    await page.evaluate(async ({ taskId, swimlaneId }) => {
+      await window.electronAPI.tasks.move({
+        taskId,
+        targetSwimlaneId: swimlaneId,
+        targetPosition: 0,
+      });
+    }, { taskId: taskId!, swimlaneId: swimlaneIds.done! });
+
+    // Wait for no running sessions (session was suspended + PTY killed)
     await page.waitForFunction(async () => {
       const sessions = await (window as any).electronAPI.sessions.list();
       return !sessions.some((s: any) => s.status === 'running');
@@ -220,21 +229,17 @@ test.describe('Claude Agent — Session Resume via Column Move', () => {
     // Pause for DB update + onExit handler to settle
     await page.waitForTimeout(2000);
 
-    // --- Step 3: Move back to Planning via IPC → should RESUME ---
-    const planningSwimlaneId = await page.evaluate(async () => {
-      const swimlanes = await window.electronAPI.swimlanes.list();
-      const planning = swimlanes.find((s: any) => s.name === 'Planning');
-      return planning?.id;
-    });
-    expect(planningSwimlaneId).toBeTruthy();
+    // Verify task is now archived
+    const archived = await page.evaluate(async (tid) => {
+      const tasks = await window.electronAPI.tasks.listArchived();
+      return tasks.some((t: any) => t.id === tid);
+    }, taskId!);
+    expect(archived).toBe(true);
 
+    // --- Step 3: Unarchive back to Planning → should RESUME ---
     await page.evaluate(async ({ taskId, swimlaneId }) => {
-      await window.electronAPI.tasks.move({
-        taskId,
-        targetSwimlaneId: swimlaneId,
-        targetPosition: 0,
-      });
-    }, { taskId: taskId!, swimlaneId: planningSwimlaneId! });
+      await window.electronAPI.tasks.unarchive({ id: taskId, targetSwimlaneId: swimlaneId });
+    }, { taskId: taskId!, swimlaneId: swimlaneIds.planning! });
 
     // Wait for a running session to appear via IPC
     await page.waitForFunction(async () => {
@@ -249,12 +254,6 @@ test.describe('Claude Agent — Session Resume via Column Move', () => {
 
     // The resumed session ID must match the original
     expect(resumedSessionId).toBe(originalSessionId);
-
-    // The critical assertions already passed above:
-    // - MOCK_CLAUDE_RESUMED marker was found (not a fresh SESSION)
-    // - The resumed UUID matches the original UUID
-    // Marker counting across scrollback is unreliable because doSpawn
-    // carries over previous scrollback, so we skip it here.
   });
 });
 
@@ -289,13 +288,16 @@ test.describe('Claude Agent — Session Resume across App Restart', () => {
     await dragTaskToColumn(page, title, 'Planning');
     await waitForMoveSettle(page, 'Planning', title);
 
+    // Wait for a running session via IPC
+    await page.waitForFunction(async () => {
+      const sessions = await (window as any).electronAPI.sessions.list();
+      return sessions.some((s: any) => s.status === 'running');
+    }, null, { timeout: 15000 });
+
     // Wait for mock Claude to output its SESSION marker
     const scrollback1 = await waitForScrollback(page, 'MOCK_CLAUDE_SESSION:');
     const originalSessionId = extractSessionId(scrollback1, 'SESSION');
     expect(originalSessionId).toBeTruthy();
-
-    // Verify a session is running
-    await expect(page.locator('text=/[1-9]\\d*\\/\\d+ sessions/')).toBeVisible({ timeout: 10000 });
 
     // === Phase 2: Close the app (triggers shutdownSessions) ===
     await app.close();
@@ -321,8 +323,11 @@ test.describe('Claude Agent — Session Resume across App Restart', () => {
     const planningCol = page.locator('[data-swimlane-name="Planning"]');
     await expect(planningCol.locator(`text=${title}`).first()).toBeVisible({ timeout: 10000 });
 
-    // Wait for session recovery to spawn a session
-    await expect(page.locator('text=/[1-9]\\d*\\/\\d+ sessions/')).toBeVisible({ timeout: 20000 });
+    // Wait for session recovery to spawn a running session via IPC
+    await page.waitForFunction(async () => {
+      const sessions = await (window as any).electronAPI.sessions.list();
+      return sessions.some((s: any) => s.status === 'running');
+    }, null, { timeout: 20000 });
 
     // Wait for the mock Claude to output a marker
     // It should be RESUMED (not SESSION) if the session was properly suspended

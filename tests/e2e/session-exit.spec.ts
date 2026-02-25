@@ -248,5 +248,16 @@ test.describe('Claude Agent — Session Exit Handling', () => {
 
     expect(newSession).toBeTruthy();
     expect(newSession.status).toBe('running');
+
+    // Backlog marks sessions as 'exited' (not 'suspended'), so re-entry
+    // must spawn a FRESH session (MOCK_CLAUDE_SESSION), never a resumed one.
+    // Poll until the marker appears in this task's scrollback.
+    await page.waitForFunction(async (tid) => {
+      const sessions = await (window as any).electronAPI.sessions.list();
+      const s = sessions.find((s: any) => s.taskId === tid && s.status === 'running');
+      if (!s) return false;
+      const sb = await (window as any).electronAPI.sessions.getScrollback(s.id);
+      return sb && sb.includes('MOCK_CLAUDE_SESSION:');
+    }, taskId!, { timeout: 15000 });
   });
 });

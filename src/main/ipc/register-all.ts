@@ -222,50 +222,82 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     if (!task) throw new Error(`Task ${input.taskId} not found`);
 
     const fromSwimlaneId = task.swimlane_id;
-
-    // Determine if source/target are agent-active columns by checking
-    // whether they have spawn_agent transitions — avoids hardcoding roles
     const toLane = swimlanes.getById(input.targetSwimlaneId);
     const agentLaneIds = skills.getAgentSwimlaneIds();
-    const fromIsActive = agentLaneIds.has(fromSwimlaneId);
     const toIsActive = agentLaneIds.has(input.targetSwimlaneId);
 
     // Move the task in the database
     tasks.move(input);
 
-    // If leaving an active column for a non-active column, suspend the session.
-    // Mark as 'suspended' in the DB BEFORE killing the PTY so the async
-    // onExit handler sees 'suspended' and doesn't overwrite it with 'exited'.
-    if (fromIsActive && !toIsActive && task.session_id) {
-      const db = getProjectDb(currentProjectId!);
-      const sessionRepo = new SessionRepository(db);
-      const record = sessionRepo.getLatestForTask(task.id);
-      if (record && record.status === 'running') {
-        sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: new Date().toISOString() });
-        console.log(`[TASK_MOVE] Suspended session record ${record.id.slice(0, 8)} (claude_id=${record.claude_session_id?.slice(0, 8)}) for task ${task.id.slice(0, 8)}`);
-      } else {
-        console.log(`[TASK_MOVE] No running session record to suspend for task ${task.id.slice(0, 8)} (latest record: ${record ? `status=${record.status}` : 'none'})`);
-      }
+    const db = getProjectDb(currentProjectId!);
+    const sessionRepo = new SessionRepository(db);
 
-      sessionManager.suspend(task.session_id);
-      tasks.update({ id: task.id, session_id: null });
+    // --- Priority 1: TARGET IS BACKLOG → full kill (no future resume) ---
+    if (toLane?.role === 'backlog') {
+      if (task.session_id) {
+        const record = sessionRepo.getLatestForTask(task.id);
+        if (record && record.status === 'running') {
+          sessionRepo.updateStatus(record.id, 'exited', { exited_at: new Date().toISOString() });
+        }
+        sessionManager.kill(task.session_id);
+        tasks.update({ id: task.id, session_id: null });
+        console.log(`[TASK_MOVE] Killed session for task ${task.id.slice(0, 8)} (moved to Backlog)`);
+      }
       return;
     }
 
-    // Create worktree if moving into an agent-active column and worktrees are enabled
-    if (toIsActive && !task.worktree_path && currentProjectPath) {
+    // --- Priority 2: TARGET IS DONE → suspend + archive (resumable on unarchive) ---
+    if (toLane?.role === 'done') {
+      if (task.session_id) {
+        const record = sessionRepo.getLatestForTask(task.id);
+        if (record && record.status === 'running') {
+          sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: new Date().toISOString() });
+          console.log(`[TASK_MOVE] Suspended session record ${record.id.slice(0, 8)} for task ${task.id.slice(0, 8)}`);
+        }
+        sessionManager.suspend(task.session_id);
+        tasks.update({ id: task.id, session_id: null });
+      }
+      tasks.archive(input.taskId);
+      console.log(`[TASK_MOVE] Auto-archived task ${input.taskId.slice(0, 8)} (moved to Done)`);
+      return;
+    }
+
+    // --- Priority 3: TASK HAS ACTIVE SESSION → keep alive ---
+    if (task.session_id) {
+      const engine = new TransitionEngine(
+        sessionManager, skills, tasks, claudeDetector, commandBuilder,
+        () => {
+          const config = configManager.getEffectiveConfig(currentProjectPath || undefined);
+          return {
+            permissionMode: config.claude.permissionMode,
+            claudePath: config.claude.cliPath,
+            projectPath: currentProjectPath,
+            gitConfig: config.git,
+          };
+        },
+        sessionRepo,
+      );
+      try {
+        await engine.executeTransition(task, fromSwimlaneId, input.targetSwimlaneId);
+      } catch (err) {
+        console.error('Transition engine error:', err);
+      }
+      return;
+    }
+
+    // --- Priority 4: TASK HAS NO ACTIVE SESSION ---
+    // Create worktree if worktrees are enabled and task doesn't have one yet.
+    // Needed for agent-active columns AND non-agent columns that will spawn
+    // a fresh session (e.g. Backlog → Review).
+    if (!task.worktree_path && currentProjectPath) {
       const config = configManager.getEffectiveConfig(currentProjectPath);
       if (config.git.worktreesEnabled) {
         try {
           const wm = new WorktreeManager(currentProjectPath);
           const { worktreePath, branchName } = await wm.createWorktree(
-            task.id,
-            task.title,
-            config.git.defaultBaseBranch,
-            config.git.copyFiles,
+            task.id, task.title, config.git.defaultBaseBranch, config.git.copyFiles,
           );
           tasks.update({ id: task.id, worktree_path: worktreePath, branch_name: branchName });
-          // Re-read task so downstream transition engine uses the updated worktree_path
           const updated = tasks.getById(task.id);
           if (updated) Object.assign(task, updated);
         } catch (err) {
@@ -274,15 +306,9 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
       }
     }
 
-    // Execute transition skills (handles spawning agents, etc.)
-    const db = getProjectDb(currentProjectId!);
-    const sessionRepo = new SessionRepository(db);
+    // Execute transition skills (may fire spawn_agent which handles resume internally)
     const engine = new TransitionEngine(
-      sessionManager,
-      skills,
-      tasks,
-      claudeDetector,
-      commandBuilder,
+      sessionManager, skills, tasks, claudeDetector, commandBuilder,
       () => {
         const config = configManager.getEffectiveConfig(currentProjectPath || undefined);
         return {
@@ -301,10 +327,36 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
       console.error('Transition engine error:', err);
     }
 
-    // Auto-archive when moving to a Done column
-    if (toLane && toLane.role === 'done') {
-      tasks.archive(input.taskId);
-      console.log(`[TASK_MOVE] Auto-archived task ${input.taskId.slice(0, 8)} (moved to Done)`);
+    // Re-read task from DB — transition engine may have spawned a session
+    const updatedTask = tasks.getById(task.id);
+
+    // If task STILL has no session, try to resume a suspended session or spawn fresh
+    if (updatedTask && !updatedTask.session_id) {
+      const previousSession = sessionRepo.getLatestForTask(task.id);
+      if (
+        previousSession
+        && previousSession.claude_session_id
+        && previousSession.session_type === 'claude_agent'
+        && previousSession.status === 'suspended'
+      ) {
+        // Suspended session exists — resume it
+        console.log(`[TASK_MOVE] Auto-resuming suspended session for task ${task.id.slice(0, 8)}`);
+        try {
+          await engine.resumeSuspendedSession(updatedTask);
+        } catch (err) {
+          console.error('Failed to resume suspended session:', err);
+        }
+      } else if (!toIsActive) {
+        // No transition fired spawn_agent (non-agent column) and no suspended
+        // session to resume — spawn a fresh agent so the task isn't left idle.
+        // This covers moves like Backlog → Review/PR/custom.
+        console.log(`[TASK_MOVE] Spawning fresh session for task ${task.id.slice(0, 8)} (non-agent column, no prior session)`);
+        try {
+          await engine.resumeSuspendedSession(updatedTask);
+        } catch (err) {
+          console.error('Failed to spawn fresh session:', err);
+        }
+      }
     }
   });
 
@@ -322,29 +374,35 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
 
     const task = tasks.unarchive(input.id, input.targetSwimlaneId, position);
 
-    // If target is an agent-active column, trigger session resume via transition engine
+    const toLane = swimlanes.getById(input.targetSwimlaneId);
+
+    // Guard: don't resume if target is Backlog (shouldn't happen, but safe)
+    if (toLane?.role === 'backlog') {
+      return tasks.getById(input.id);
+    }
+
     const agentLaneIds = skills.getAgentSwimlaneIds();
     const toIsActive = agentLaneIds.has(input.targetSwimlaneId);
 
-    if (toIsActive && currentProjectPath) {
-      // Create worktree if needed when moving to an agent-active column
-      if (!task.worktree_path) {
-        const config = configManager.getEffectiveConfig(currentProjectPath);
-        if (config.git.worktreesEnabled) {
-          try {
-            const wm = new WorktreeManager(currentProjectPath);
-            const { worktreePath, branchName } = await wm.createWorktree(
-              task.id, task.title, config.git.defaultBaseBranch, config.git.copyFiles,
-            );
-            tasks.update({ id: task.id, worktree_path: worktreePath, branch_name: branchName });
-            Object.assign(task, tasks.getById(task.id));
-          } catch (err) {
-            console.error('Worktree creation failed during unarchive:', err);
-          }
+    // Create worktree if needed when moving to an agent-active column
+    if (toIsActive && !task.worktree_path && currentProjectPath) {
+      const config = configManager.getEffectiveConfig(currentProjectPath);
+      if (config.git.worktreesEnabled) {
+        try {
+          const wm = new WorktreeManager(currentProjectPath);
+          const { worktreePath, branchName } = await wm.createWorktree(
+            task.id, task.title, config.git.defaultBaseBranch, config.git.copyFiles,
+          );
+          tasks.update({ id: task.id, worktree_path: worktreePath, branch_name: branchName });
+          Object.assign(task, tasks.getById(task.id));
+        } catch (err) {
+          console.error('Worktree creation failed during unarchive:', err);
         }
       }
+    }
 
-      // Execute transition skills (from Done → target)
+    // Execute transition skills (from Done → target) for ALL non-kill columns
+    if (currentProjectPath) {
       const doneLane = swimlanes.list().find((l) => l.role === 'done');
       if (doneLane) {
         const db = getProjectDb(currentProjectId!);
@@ -367,6 +425,25 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
           await engine.executeTransition(task, doneLane.id, input.targetSwimlaneId);
         } catch (err) {
           console.error('Transition engine error during unarchive:', err);
+        }
+
+        // Re-read task; if still no session and a suspended record exists, auto-resume
+        const updatedTask = tasks.getById(task.id);
+        if (updatedTask && !updatedTask.session_id) {
+          const previousSession = sessionRepo.getLatestForTask(task.id);
+          if (
+            previousSession
+            && previousSession.claude_session_id
+            && previousSession.session_type === 'claude_agent'
+            && previousSession.status === 'suspended'
+          ) {
+            console.log(`[TASK_UNARCHIVE] Auto-resuming suspended session for task ${task.id.slice(0, 8)}`);
+            try {
+              await engine.resumeSuspendedSession(updatedTask);
+            } catch (err) {
+              console.error('Failed to resume suspended session during unarchive:', err);
+            }
+          }
         }
       }
     }
