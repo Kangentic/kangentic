@@ -4,9 +4,10 @@ import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
 import { ShellResolver } from './shell-resolver';
 import { adaptCommandForShell } from '../../shared/paths';
-import type { Session, SessionStatus, SessionUsage, ActivityState, SpawnSessionInput } from '../../shared/types';
+import type { Session, SessionStatus, SessionUsage, ActivityState, SessionEvent, SpawnSessionInput } from '../../shared/types';
 
 const MAX_SCROLLBACK = 512 * 1024; // 512KB per session
+const MAX_EVENTS_PER_SESSION = 500; // Cap rendered events in renderer
 
 interface ManagedSession {
   id: string;
@@ -24,6 +25,9 @@ interface ManagedSession {
   statusWatcher: fs.FSWatcher | null;
   activityOutputPath: string | null;
   activityWatcher: fs.FSWatcher | null;
+  eventsOutputPath: string | null;
+  eventsWatcher: fs.FSWatcher | null;
+  eventsFileOffset: number;
   mergedSettingsPath: string | null;
 }
 
@@ -35,6 +39,7 @@ export class SessionManager extends EventEmitter {
   private configuredShell: string | null = null;
   private usageCache = new Map<string, SessionUsage>();
   private activityCache = new Map<string, ActivityState>();
+  private eventCache = new Map<string, SessionEvent[]>();
 
   setMaxConcurrent(max: number): void {
     this.maxConcurrent = max;
@@ -78,6 +83,9 @@ export class SessionManager extends EventEmitter {
         statusWatcher: null,
         activityOutputPath: input.activityOutputPath || null,
         activityWatcher: null,
+        eventsOutputPath: input.eventsOutputPath || null,
+        eventsWatcher: null,
+        eventsFileOffset: 0,
         mergedSettingsPath: null,
       };
       this.sessions.set(id, session);
@@ -111,6 +119,10 @@ export class SessionManager extends EventEmitter {
       existing.activityWatcher.close();
       existing.activityWatcher = null;
     }
+    if (existing?.eventsWatcher) {
+      existing.eventsWatcher.close();
+      existing.eventsWatcher = null;
+    }
 
     // Null out file paths on the old session object to prevent its
     // onExit callback (which runs asynchronously after ptyRef.kill())
@@ -122,6 +134,7 @@ export class SessionManager extends EventEmitter {
       existing.mergedSettingsPath = null;
       existing.statusOutputPath = null;
       existing.activityOutputPath = null;
+      existing.eventsOutputPath = null;
     }
 
     // Carry over scrollback from the previous session so the terminal
@@ -181,6 +194,9 @@ export class SessionManager extends EventEmitter {
       statusWatcher: null,
       activityOutputPath: input.activityOutputPath || null,
       activityWatcher: null,
+      eventsOutputPath: input.eventsOutputPath || null,
+      eventsWatcher: null,
+      eventsFileOffset: 0,
       mergedSettingsPath,
     };
 
@@ -194,6 +210,11 @@ export class SessionManager extends EventEmitter {
     // Start watching the activity output file for thinking/idle state
     if (input.activityOutputPath) {
       this.startActivityWatcher(session);
+    }
+
+    // Start watching the events JSONL file for activity log
+    if (input.eventsOutputPath) {
+      this.startEventWatcher(session);
     }
 
     // Default activity to 'idle'. The 'thinking' state is only set when
@@ -227,7 +248,10 @@ export class SessionManager extends EventEmitter {
     });
 
     ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
-      session.status = 'exited';
+      // Don't overwrite 'suspended' — suspend() sets that before killing PTY
+      if (session.status !== 'suspended') {
+        session.status = 'exited';
+      }
       session.exitCode = exitCode;
       session.pty = null;
 
@@ -279,6 +303,7 @@ export class SessionManager extends EventEmitter {
     this.sessions.delete(sessionId);
     this.usageCache.delete(sessionId);
     this.activityCache.delete(sessionId);
+    this.eventCache.delete(sessionId);
   }
 
   kill(sessionId: string): void {
@@ -322,12 +347,20 @@ export class SessionManager extends EventEmitter {
       session.activityWatcher.close();
       session.activityWatcher = null;
     }
+    if (session.eventsWatcher) {
+      session.eventsWatcher.close();
+      session.eventsWatcher = null;
+    }
 
     // Null out file paths BEFORE killing so the onExit handler's
     // cleanupSessionFiles() skips file deletion — files persist for resume
     session.statusOutputPath = null;
     session.activityOutputPath = null;
+    session.eventsOutputPath = null;
     session.mergedSettingsPath = null;
+
+    // Mark suspended BEFORE killing so the async onExit handler preserves it
+    session.status = 'suspended';
 
     if (session.pty) {
       const ptyRef = session.pty;
@@ -335,17 +368,15 @@ export class SessionManager extends EventEmitter {
       ptyRef.kill();
     }
 
-    // Also remove from queue
+    this.emit('status', sessionId, 'suspended');
+
+    // Also remove from queue (queued sessions have no PTY yet)
     const queueIdx = this.queue.findIndex(q => {
       const s = this.findByTaskId(q.input.taskId);
       return s?.id === sessionId;
     });
     if (queueIdx >= 0) {
       this.queue.splice(queueIdx, 1);
-      if (session) {
-        session.status = 'exited';
-        session.exitCode = -1;
-      }
     }
   }
 
@@ -379,6 +410,11 @@ export class SessionManager extends EventEmitter {
       result[id] = state;
     }
     return result;
+  }
+
+  /** Return cached events for a specific session (survives renderer reloads). */
+  getEventsForSession(sessionId: string): SessionEvent[] {
+    return this.eventCache.get(sessionId) || [];
   }
 
   private findByTaskId(taskId: string): ManagedSession | undefined {
@@ -541,7 +577,95 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Stop watchers and clean up status + activity + merged settings files.
+   * Start watching a session's events JSONL file for activity log events.
+   * Claude Code hooks write JSON lines to this file via our event bridge script.
+   * Only reads new bytes appended since the last read (offset tracking).
+   */
+  private startEventWatcher(session: ManagedSession): void {
+    if (!session.eventsOutputPath) return;
+
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Truncate existing file on resume — historical events aren't needed
+    try {
+      fs.writeFileSync(session.eventsOutputPath, '');
+    } catch {
+      // File may not exist yet — that's OK, bridge will create it
+    }
+
+    const readNewLines = () => {
+      if (!session.eventsOutputPath) return;
+      try {
+        const stat = fs.statSync(session.eventsOutputPath);
+        if (stat.size <= session.eventsFileOffset) return;
+
+        const fd = fs.openSync(session.eventsOutputPath, 'r');
+        const buf = Buffer.alloc(stat.size - session.eventsFileOffset);
+        fs.readSync(fd, buf, 0, buf.length, session.eventsFileOffset);
+        fs.closeSync(fd);
+        session.eventsFileOffset = stat.size;
+
+        const chunk = buf.toString('utf-8');
+        const lines = chunk.split('\n').filter(Boolean);
+
+        // Get or create event cache for this session
+        let events = this.eventCache.get(session.id);
+        if (!events) {
+          events = [];
+          this.eventCache.set(session.id, events);
+        }
+
+        for (const line of lines) {
+          try {
+            const event = JSON.parse(line) as SessionEvent;
+            events.push(event);
+            this.emit('event', session.id, event);
+          } catch {
+            // Malformed line — skip
+          }
+        }
+
+        // Cap cached events per session
+        if (events.length > MAX_EVENTS_PER_SESSION) {
+          const trimmed = events.slice(-MAX_EVENTS_PER_SESSION);
+          this.eventCache.set(session.id, trimmed);
+        }
+      } catch {
+        // File may not exist yet, or be partially written — ignore
+      }
+    };
+
+    try {
+      const watcher = fs.watch(session.eventsOutputPath, () => {
+        if (debounceTimer) clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(readNewLines, 50);
+      });
+
+      watcher.on('error', () => {});
+      session.eventsWatcher = watcher;
+    } catch {
+      // File may not exist yet; try polling on the directory instead
+      const dir = session.eventsOutputPath.replace(/[/\\][^/\\]+$/, '');
+      try {
+        const watcher = fs.watch(dir, (eventType, filename) => {
+          if (!filename) return;
+          const expected = session.eventsOutputPath!.replace(/^.*[/\\]/, '');
+          if (filename === expected) {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(readNewLines, 50);
+          }
+        });
+
+        watcher.on('error', () => {});
+        session.eventsWatcher = watcher;
+      } catch {
+        // Can't watch — no events data for this session
+      }
+    }
+  }
+
+  /**
+   * Stop watchers and clean up status + activity + events + merged settings files.
    */
   private cleanupSessionFiles(session: ManagedSession): void {
     if (session.statusWatcher) {
@@ -552,6 +676,10 @@ export class SessionManager extends EventEmitter {
       session.activityWatcher.close();
       session.activityWatcher = null;
     }
+    if (session.eventsWatcher) {
+      session.eventsWatcher.close();
+      session.eventsWatcher = null;
+    }
     // Clean up status JSON file
     if (session.statusOutputPath) {
       try { fs.unlinkSync(session.statusOutputPath); } catch { /* may not exist */ }
@@ -560,6 +688,11 @@ export class SessionManager extends EventEmitter {
     // Clean up activity JSON file
     if (session.activityOutputPath) {
       try { fs.unlinkSync(session.activityOutputPath); } catch { /* may not exist */ }
+    }
+
+    // Clean up events JSONL file
+    if (session.eventsOutputPath) {
+      try { fs.unlinkSync(session.eventsOutputPath); } catch { /* may not exist */ }
     }
 
     // Clean up merged settings file
@@ -629,6 +762,10 @@ export class SessionManager extends EventEmitter {
         session.activityWatcher.close();
         session.activityWatcher = null;
       }
+      if (session.eventsWatcher) {
+        session.eventsWatcher.close();
+        session.eventsWatcher = null;
+      }
 
       if (session.pty) {
         const ptyRef = session.pty;
@@ -636,6 +773,7 @@ export class SessionManager extends EventEmitter {
         // Null file paths before kill so onExit doesn't clean them up
         session.statusOutputPath = null;
         session.activityOutputPath = null;
+        session.eventsOutputPath = null;
         session.mergedSettingsPath = null;
         try { ptyRef.kill(); } catch { /* already dead */ }
       }

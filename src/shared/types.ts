@@ -130,6 +130,15 @@ export interface SessionRecord {
 
 export type ActivityState = 'thinking' | 'idle';
 
+// === Session Events (Claude Code Hooks → Activity Log) ===
+
+export interface SessionEvent {
+  ts: number;
+  type: 'prompt' | 'tool_start' | 'tool_end' | 'idle';
+  tool?: string;    // for tool_start/tool_end
+  detail?: string;  // file path, command, etc.
+}
+
 // === Session Usage (Claude Code Status Line) ===
 
 export interface SessionUsage {
@@ -297,6 +306,7 @@ export interface SpawnSessionInput {
   env?: Record<string, string>;
   statusOutputPath?: string; // path for the status bridge JSON file
   activityOutputPath?: string; // path for the activity bridge JSON file
+  eventsOutputPath?: string; // path for the event bridge JSONL file (activity log)
 }
 
 // === Preload API (exposed to renderer via contextBridge) ===
@@ -364,6 +374,8 @@ export interface ElectronAPI {
     onUsage: (callback: (sessionId: string, data: SessionUsage) => void) => () => void;
     getActivity: () => Promise<Record<string, ActivityState>>;
     onActivity: (callback: (sessionId: string, state: ActivityState) => void) => () => void;
+    getEvents: (sessionId: string) => Promise<SessionEvent[]>;
+    onEvent: (callback: (sessionId: string, event: SessionEvent) => void) => () => void;
   };
 
   // Config

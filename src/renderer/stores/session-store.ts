@@ -1,14 +1,17 @@
 import { create } from 'zustand';
-import type { Session, SessionUsage, ActivityState, SpawnSessionInput } from '../../shared/types';
+import type { Session, SessionUsage, ActivityState, SessionEvent, SpawnSessionInput } from '../../shared/types';
+
+const MAX_EVENTS_PER_SESSION = 500;
 
 interface SessionStore {
   sessions: Session[];
-  // '__all__' = aggregate terminal tab; session UUID = individual tab; null = none
+  // '__all__' = activity log tab; session UUID = individual tab; null = none
   activeSessionId: string | null;
   openTaskId: string | null;
   dialogSessionId: string | null;
   sessionUsage: Record<string, SessionUsage>;
   sessionActivity: Record<string, ActivityState>;
+  sessionEvents: Record<string, SessionEvent[]>;
 
   loadSessions: () => Promise<void>;
   spawnSession: (input: SpawnSessionInput) => Promise<Session>;
@@ -21,6 +24,8 @@ interface SessionStore {
   updateSessionStatus: (id: string, updates: Partial<Session>) => void;
   updateUsage: (sessionId: string, data: SessionUsage) => void;
   updateActivity: (sessionId: string, state: ActivityState) => void;
+  addEvent: (sessionId: string, event: SessionEvent) => void;
+  clearEvents: (sessionId: string) => void;
 
   getRunningCount: () => number;
   getQueuedCount: () => number;
@@ -33,6 +38,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   dialogSessionId: null,
   sessionUsage: {},
   sessionActivity: {},
+  sessionEvents: {},
 
   loadSessions: async () => {
     const sessions = await window.electronAPI.sessions.list();
@@ -113,6 +119,25 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     set((s) => ({
       sessionActivity: { ...s.sessionActivity, [sessionId]: state },
     }));
+  },
+
+  addEvent: (sessionId, event) => {
+    set((s) => {
+      const existing = s.sessionEvents[sessionId] || [];
+      const updated = [...existing, event];
+      // Cap at MAX_EVENTS_PER_SESSION to keep DOM bounded
+      const capped = updated.length > MAX_EVENTS_PER_SESSION
+        ? updated.slice(-MAX_EVENTS_PER_SESSION)
+        : updated;
+      return { sessionEvents: { ...s.sessionEvents, [sessionId]: capped } };
+    });
+  },
+
+  clearEvents: (sessionId) => {
+    set((s) => {
+      const { [sessionId]: _, ...rest } = s.sessionEvents;
+      return { sessionEvents: rest };
+    });
   },
 
   getRunningCount: () => get().sessions.filter((s) => s.status === 'running').length,

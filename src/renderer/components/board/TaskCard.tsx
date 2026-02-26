@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Loader2, Trash2, Power } from 'lucide-react';
+import { Loader2, Trash2, CirclePause, Plug } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { TaskDetailDialog } from '../dialogs/TaskDetailDialog';
 import { useSessionStore } from '../../stores/session-store';
@@ -153,13 +153,11 @@ export function TaskCard({ task, isDragOverlay, compact, onDelete }: TaskCardPro
           const progressColor = getProgressColor(pct);
           return (
             <div className="mt-2 pt-2 border-t border-zinc-700" data-testid="usage-bar">
-              <div className="flex items-center justify-between mb-0.5">
+              <div className="flex items-center justify-between mb-1.5">
                 <span className="text-xs text-zinc-500 flex items-center gap-1">
-                  {isThinking ? (
+                  {isThinking && (
                     <Loader2 size={12} className="text-zinc-500 animate-spin" />
-                  ) : canToggle ? (
-                    <Power size={12} />
-                  ) : null}
+                  )}
                   {usage.model.displayName || 'Claude'}
                 </span>
                 <span className="text-xs text-zinc-500">{pct}%</span>
@@ -177,8 +175,8 @@ export function TaskCard({ task, isDragOverlay, compact, onDelete }: TaskCardPro
             <span className="text-xs text-zinc-500 flex items-center gap-1">
               {taskSession?.status === 'suspended' ? (
                 <>
-                  <Power size={12} />
-                  Suspended
+                  <CirclePause size={12} />
+                  Paused
                 </>
               ) : (
                 <>

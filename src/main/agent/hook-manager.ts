@@ -3,24 +3,58 @@ import path from 'node:path';
 
 /**
  * Identify a hook entry injected by Kangentic.
- * Matches BOTH `activity-bridge` AND `.kangentic` in the command string
+ * Matches a known bridge script name AND `.kangentic` in the command string
  * to ensure we never touch user-defined hooks.
  */
 function isKangenticHook(h: any): boolean {
-  return (
-    typeof h.command === 'string'
-    && h.command.includes('activity-bridge')
-    && h.command.includes('.kangentic')
+  if (typeof h.command !== 'string') return false;
+  const cmd = h.command;
+  return cmd.includes('.kangentic') && (
+    cmd.includes('activity-bridge') || cmd.includes('event-bridge')
   );
 }
 
+/** Check if a hook entry is specifically an activity-bridge entry. */
+function isActivityBridgeHook(h: any): boolean {
+  return typeof h.command === 'string'
+    && h.command.includes('activity-bridge')
+    && h.command.includes('.kangentic');
+}
+
+/** Check if a hook entry is specifically an event-bridge entry. */
+function isEventBridgeHook(h: any): boolean {
+  return typeof h.command === 'string'
+    && h.command.includes('event-bridge')
+    && h.command.includes('.kangentic');
+}
+
 /**
- * Filter out Kangentic-injected entries from a hook event array.
- * Returns only entries that are NOT ours.
+ * Filter out ALL Kangentic-injected entries from a hook event array.
+ * Returns only entries that are NOT ours (any bridge type).
  */
 function filterOurHooks(entries: any[] | undefined): any[] {
   return (entries || []).filter(
     (e: any) => !e?.hooks?.some?.(isKangenticHook),
+  );
+}
+
+/**
+ * Filter out only activity-bridge entries from a hook event array.
+ * Preserves event-bridge entries and user-defined hooks.
+ */
+function filterActivityHooks(entries: any[] | undefined): any[] {
+  return (entries || []).filter(
+    (e: any) => !e?.hooks?.some?.(isActivityBridgeHook),
+  );
+}
+
+/**
+ * Filter out only event-bridge entries from a hook event array.
+ * Preserves activity-bridge entries and user-defined hooks.
+ */
+function filterEventHooks(entries: any[] | undefined): any[] {
+  return (entries || []).filter(
+    (e: any) => !e?.hooks?.some?.(isEventBridgeHook),
   );
 }
 
@@ -46,8 +80,8 @@ function readSettingsLocal(dir: string): Record<string, any> | null {
 
 /**
  * Inject Kangentic activity hooks into `<cwd>/.claude/settings.local.json`.
- * Replaces any stale entries from previous sessions while preserving all
- * user-defined hooks and settings.
+ * Replaces any stale activity-bridge entries from previous sessions while
+ * preserving event-bridge hooks and all user-defined hooks/settings.
  */
 export function injectActivityHooks(
   cwd: string,
@@ -71,11 +105,11 @@ export function injectActivityHooks(
   settings.hooks = {
     ...existingHooks,
     UserPromptSubmit: [
-      ...filterOurHooks(existingHooks.UserPromptSubmit),
+      ...filterActivityHooks(existingHooks.UserPromptSubmit),
       { matcher: '', hooks: [{ type: 'command', command: `node "${activityBridge}" "${activityPath}" thinking` }] },
     ],
     Stop: [
-      ...filterOurHooks(existingHooks.Stop),
+      ...filterActivityHooks(existingHooks.Stop),
       { matcher: '', hooks: [{ type: 'command', command: `node "${activityBridge}" "${activityPath}" idle` }] },
     ],
   };
@@ -84,11 +118,61 @@ export function injectActivityHooks(
 }
 
 /**
- * Strip Kangentic activity-bridge hook entries from `.claude/settings.local.json`
- * at the given directory. Preserves all other user hooks and settings.
+ * Inject Kangentic event-bridge hooks into `<cwd>/.claude/settings.local.json`.
+ * Adds PreToolUse, PostToolUse, UserPromptSubmit, and Stop hooks for the
+ * event log (activity log stream). Replaces any stale event-bridge entries
+ * from previous sessions while preserving activity-bridge hooks and all
+ * user-defined hooks/settings.
+ */
+export function injectEventHooks(
+  cwd: string,
+  eventBridge: string,
+  eventsPath: string,
+): void {
+  const localSettingsDir = path.join(cwd, '.claude');
+  fs.mkdirSync(localSettingsDir, { recursive: true });
+  const p = settingsLocalPath(cwd);
+
+  let settings: Record<string, any> = {};
+  try {
+    const raw = fs.readFileSync(p, 'utf-8');
+    settings = JSON.parse(raw);
+  } catch {
+    // Doesn't exist or malformed — start fresh
+  }
+
+  const existingHooks = settings.hooks || {};
+
+  settings.hooks = {
+    ...existingHooks,
+    PreToolUse: [
+      ...filterEventHooks(existingHooks.PreToolUse),
+      { matcher: '', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" tool_start` }] },
+    ],
+    PostToolUse: [
+      ...filterEventHooks(existingHooks.PostToolUse),
+      { matcher: '', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" tool_end` }] },
+    ],
+    UserPromptSubmit: [
+      ...filterEventHooks(existingHooks.UserPromptSubmit),
+      { matcher: '', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" prompt` }] },
+    ],
+    Stop: [
+      ...filterEventHooks(existingHooks.Stop),
+      { matcher: '', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" idle` }] },
+    ],
+  };
+
+  fs.writeFileSync(p, JSON.stringify(settings, null, 2));
+}
+
+/**
+ * Strip ALL Kangentic hook entries (activity-bridge + event-bridge) from
+ * `.claude/settings.local.json` at the given directory. Preserves all
+ * other user hooks and settings.
  *
  * Safety guarantees:
- * - Only removes entries matching BOTH `activity-bridge` AND `.kangentic`
+ * - Only removes entries matching a known bridge AND `.kangentic`
  * - Backs up the original file before any modification
  * - Validates the result is valid JSON before writing
  * - Restores from backup on any error

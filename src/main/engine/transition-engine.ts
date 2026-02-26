@@ -149,6 +149,7 @@ export class TransitionEngine {
     }
     const statusOutputPath = path.join(sessionDir, 'status.json');
     const activityOutputPath = path.join(sessionDir, 'activity.json');
+    const eventsOutputPath = path.join(sessionDir, 'events.jsonl');
 
     const command = this.commandBuilder.buildClaudeCommand({
       claudePath: claude.path,
@@ -162,6 +163,7 @@ export class TransitionEngine {
       nonInteractive: config.nonInteractive ?? false,
       statusOutputPath,
       activityOutputPath,
+      eventsOutputPath,
     });
 
     const session = await this.sessionManager.spawn({
@@ -170,6 +172,7 @@ export class TransitionEngine {
       cwd,
       statusOutputPath,
       activityOutputPath,
+      eventsOutputPath,
     });
 
     this.taskRepo.update({

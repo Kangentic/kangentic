@@ -1,5 +1,5 @@
 import React, { useState, useLayoutEffect, useRef, useEffect } from 'react';
-import { X, Trash2, Pencil, Loader2, ExternalLink, ArrowRightLeft, ChevronRight, MoreHorizontal, Archive, Power, Play } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, ExternalLink, ArrowRightLeft, ChevronRight, MoreHorizontal, Archive, CirclePause, CirclePlay, Play } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { getSwimlaneIcon } from '../../utils/swimlane-icons';
@@ -119,6 +119,16 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
     }
   };
 
+  // Refit terminal when session resumes (transitions to running)
+  useEffect(() => {
+    if (session?.status === 'running') {
+      const id = setTimeout(() => {
+        window.dispatchEvent(new Event('terminal-panel-resize'));
+      }, 300);
+      return () => clearTimeout(id);
+    }
+  }, [session?.status]);
+
   // Register this session with the store so the bottom panel unmounts its
   // TerminalTab BEFORE any terminal effects fire. useLayoutEffect runs
   // synchronously after DOM mutations but before paint, ensuring the panel's
@@ -177,24 +187,26 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
 
   const customHeader = (
     <div className="flex items-center gap-3 px-4 py-3">
-      {/* Power toggle */}
+      {/* Pause / Resume toggle */}
       {canToggle && (
         toggling ? (
-          <Loader2 size={14} className="text-zinc-400 animate-spin flex-shrink-0" />
+          <Loader2 size={18} className="text-zinc-400 animate-spin flex-shrink-0" />
         ) : (
           <button
             onClick={handleToggle}
-            className={`p-1.5 rounded-full transition-colors flex-shrink-0 ${
+            className={`p-1 rounded-full transition-colors flex-shrink-0 ${
               isSessionActive
                 ? 'text-green-400 hover:bg-green-400/10'
                 : 'text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300'
             }`}
-            title={isSessionActive ? 'Suspend session' : 'Resume session'}
+            title={isSessionActive ? 'Pause session' : 'Resume session'}
           >
             {isSessionActive && isThinking ? (
-              <Loader2 size={14} className="animate-spin" />
+              <Loader2 size={18} className="animate-spin" />
+            ) : isSessionActive ? (
+              <CirclePause size={18} />
             ) : (
-              <Power size={14} />
+              <CirclePlay size={18} />
             )}
           </button>
         )
@@ -294,6 +306,27 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
                     </div>
                   )}
                 </div>
+              )}
+
+              {/* Pause / Resume */}
+              {canToggle && (
+                <button
+                  onClick={() => { setShowKebabMenu(false); setShowMoveSubmenu(false); handleToggle(new MouseEvent('click') as any); }}
+                  disabled={toggling}
+                  className="w-full text-left px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-zinc-100 transition-colors flex items-center gap-2 disabled:opacity-50"
+                >
+                  {isSessionActive ? (
+                    <>
+                      <CirclePause size={14} />
+                      Pause session
+                    </>
+                  ) : (
+                    <>
+                      <CirclePlay size={14} />
+                      Resume session
+                    </>
+                  )}
+                </button>
               )}
 
               {/* Divider */}
@@ -429,12 +462,12 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
             <button
               onClick={handleToggle}
               disabled={toggling}
-              className="flex items-center gap-2.5 px-6 py-3 rounded-lg border border-blue-500/40 text-base text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 transition-colors disabled:opacity-50"
+              className="flex items-center gap-2.5 px-6 py-3 rounded-lg bg-blue-500/20 border border-blue-500/40 text-base text-blue-400 hover:bg-blue-500/30 transition-colors disabled:opacity-50"
             >
               {toggling ? (
                 <Loader2 size={14} className="animate-spin" />
               ) : (
-                <Play size={14} />
+                <Play size={16} />
               )}
               Resume session
             </button>

@@ -32,7 +32,7 @@ test.describe('Project Deletion Cleanup', () => {
     await expect(page.locator('[data-swimlane-name="Backlog"]')).toBeVisible();
 
     // Hover project in sidebar → click delete icon
-    await page.locator(`button:has-text("${name}")`).hover();
+    await page.locator(`[role="button"]:has-text("${name}")`).hover();
     await page.locator('button[title="Delete project"]').click();
 
     // Confirm deletion in dialog
@@ -45,7 +45,7 @@ test.describe('Project Deletion Cleanup', () => {
     await expect(page.locator('[data-testid="swimlane"]')).toHaveCount(0);
 
     // Project removed from sidebar
-    await expect(page.locator(`button:has-text("${name}")`)).not.toBeVisible();
+    await expect(page.locator(`[role="button"]:has-text("${name}")`)).not.toBeVisible();
 
     // Mock backend state is cleared
     const tasks = await page.evaluate(() => window.electronAPI.tasks.list());
@@ -76,7 +76,7 @@ test.describe('Project Deletion Cleanup', () => {
     const name = `PostDel ${runId}`;
 
     // Try to delete but cancel
-    await page.locator(`button:has-text("${name}")`).hover();
+    await page.locator(`[role="button"]:has-text("${name}")`).hover();
     await page.locator('button[title="Delete project"]').click();
 
     // Dialog appears
@@ -88,7 +88,7 @@ test.describe('Project Deletion Cleanup', () => {
 
     // Dialog dismissed, project and board intact
     await expect(page.locator('h3:has-text("Delete Project")')).not.toBeVisible();
-    await expect(page.locator(`button:has-text("${name}")`)).toBeVisible();
+    await expect(page.locator(`[role="button"]:has-text("${name}")`)).toBeVisible();
     await expect(page.locator('[data-swimlane-name="Backlog"]')).toBeVisible();
     await expect(taskCard(page, `Fresh Task ${runId}`)).toBeVisible();
   });

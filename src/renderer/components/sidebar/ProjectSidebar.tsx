@@ -101,10 +101,13 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
         {projects.map((project) => {
           const isActive = currentProject?.id === project.id;
           return (
-            <button
+            <div
               key={project.id}
+              role="button"
+              tabIndex={0}
               onClick={() => openProject(project.id)}
-              className={`group w-full text-left px-3 py-2 text-sm transition-colors border-l-2 ${
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openProject(project.id); }}
+              className={`group w-full text-left px-3 py-2 text-sm transition-colors border-l-2 cursor-pointer ${
                 isActive
                   ? 'border-blue-500 bg-zinc-700 text-zinc-100'
                   : 'border-transparent text-zinc-400 hover:bg-zinc-750 hover:text-zinc-200'
@@ -140,7 +143,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
                   </button>
                 </div>
               </div>
-            </button>
+            </div>
           );
         })}
         {projects.length === 0 && (

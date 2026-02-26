@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { toForwardSlash, quoteArg } from '../../shared/paths';
 import type { PermissionMode, Task } from '../../shared/types';
-import { injectActivityHooks } from './hook-manager';
+import { injectActivityHooks, injectEventHooks } from './hook-manager';
 
 interface CommandOptions {
   claudePath: string;
@@ -16,6 +16,7 @@ interface CommandOptions {
   nonInteractive?: boolean;
   statusOutputPath?: string; // path where the status bridge writes JSON
   activityOutputPath?: string; // path where the activity bridge writes JSON
+  eventsOutputPath?: string; // path where the event bridge appends JSONL
 }
 
 export class CommandBuilder {
@@ -151,20 +152,50 @@ export class CommandBuilder {
       },
     };
 
-    // Deep-merge hooks for activity tracking (preserve existing user hooks)
-    if (activityPath) {
+    // Resolve event bridge (same candidate pattern as status/activity bridge)
+    const eventCandidates = [
+      path.join(__dirname, 'event-bridge.js'),
+      path.resolve(__dirname, '..', '..', 'src', 'main', 'agent', 'event-bridge.js'),
+      path.resolve(process.cwd(), 'src', 'main', 'agent', 'event-bridge.js'),
+    ];
+    const eventBridge = toForwardSlash(eventCandidates.find(p => fs.existsSync(p)) || eventCandidates[0]);
+    const eventsPath = options.eventsOutputPath ? toForwardSlash(options.eventsOutputPath) : null;
+
+    // Deep-merge hooks for activity tracking + event logging (preserve existing user hooks)
+    if (activityPath || eventsPath) {
       const existingHooks = existingSettings.hooks || {};
-      merged.hooks = {
-        ...existingHooks,
-        UserPromptSubmit: [
+      merged.hooks = { ...existingHooks };
+
+      if (activityPath) {
+        merged.hooks.UserPromptSubmit = [
           ...(existingHooks.UserPromptSubmit || []),
           { matcher: '', hooks: [{ type: 'command', command: `node "${activityBridge}" "${activityPath}" thinking` }] },
-        ],
-        Stop: [
+        ];
+        merged.hooks.Stop = [
           ...(existingHooks.Stop || []),
           { matcher: '', hooks: [{ type: 'command', command: `node "${activityBridge}" "${activityPath}" idle` }] },
-        ],
-      };
+        ];
+      }
+
+      if (eventsPath) {
+        // Append event-bridge hooks for all four hook points
+        merged.hooks.PreToolUse = [
+          ...(merged.hooks.PreToolUse || existingHooks.PreToolUse || []),
+          { matcher: '', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" tool_start` }] },
+        ];
+        merged.hooks.PostToolUse = [
+          ...(merged.hooks.PostToolUse || existingHooks.PostToolUse || []),
+          { matcher: '', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" tool_end` }] },
+        ];
+        merged.hooks.UserPromptSubmit = [
+          ...(merged.hooks.UserPromptSubmit || existingHooks.UserPromptSubmit || []),
+          { matcher: '', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" prompt` }] },
+        ];
+        merged.hooks.Stop = [
+          ...(merged.hooks.Stop || existingHooks.Stop || []),
+          { matcher: '', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" idle` }] },
+        ];
+      }
     }
 
     // Write to .kangentic/sessions/<sessionId>/settings.json
@@ -183,6 +214,9 @@ export class CommandBuilder {
     // may not load hooks in all Claude Code versions.
     if (activityPath) {
       injectActivityHooks(options.cwd, activityBridge, activityPath);
+    }
+    if (eventsPath) {
+      injectEventHooks(options.cwd, eventBridge, eventsPath);
     }
 
     return mergedPath;

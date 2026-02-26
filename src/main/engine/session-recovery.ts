@@ -283,6 +283,7 @@ export async function recoverSessions(
       }
       const statusOutputPath = path.join(sessionDir, 'status.json');
       const activityOutputPath = path.join(sessionDir, 'activity.json');
+      const eventsOutputPath = path.join(sessionDir, 'events.jsonl');
 
       const command = commandBuilder.buildClaudeCommand({
         claudePath: claude.path,
@@ -295,6 +296,7 @@ export async function recoverSessions(
         resume: canResume,
         statusOutputPath,
         activityOutputPath,
+        eventsOutputPath,
       });
 
       // Spawn a new PTY
@@ -304,6 +306,7 @@ export async function recoverSessions(
         cwd: record.cwd,
         statusOutputPath,
         activityOutputPath,
+        eventsOutputPath,
       });
 
       // Mark old record as exited
@@ -473,6 +476,7 @@ export async function reconcileSessions(
         }
         const statusOutputPath = path.join(sessionDir, 'status.json');
         const activityOutputPath = path.join(sessionDir, 'activity.json');
+        const eventsOutputPath = path.join(sessionDir, 'events.jsonl');
 
         const command = commandBuilder.buildClaudeCommand({
           claudePath: claude.path,
@@ -484,6 +488,7 @@ export async function reconcileSessions(
           sessionId: claudeSessionId,
           statusOutputPath,
           activityOutputPath,
+          eventsOutputPath,
         });
 
         const session = await sessionManager.spawn({
@@ -492,6 +497,7 @@ export async function reconcileSessions(
           cwd,
           statusOutputPath,
           activityOutputPath,
+          eventsOutputPath,
         });
 
         taskRepo.update({

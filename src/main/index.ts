@@ -1,6 +1,7 @@
-import { app, BrowserWindow, Menu } from 'electron';
+import { app, BrowserWindow, Menu, session } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { registerAllIpc, getSessionManager, getCurrentProjectId, openProjectByPath } from './ipc/register-all';
 import { closeAll, getProjectDb } from './db/database';
 import { SessionRepository } from './db/repositories/session-repository';
@@ -141,7 +142,31 @@ const createWindow = () => {
   });
 };
 
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  // Load React DevTools extension in development
+  if (!app.isPackaged) {
+    try {
+      const reactDevToolsId = 'fmkadmapgofadopljbjfkapdkoienihi';
+      const extDir = path.join(
+        os.homedir(),
+        'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Default', 'Extensions',
+        reactDevToolsId,
+      );
+      if (fs.existsSync(extDir)) {
+        const versions = fs.readdirSync(extDir).sort();
+        const latest = versions[versions.length - 1];
+        if (latest) {
+          await session.defaultSession.extensions.loadExtension(path.join(extDir, latest));
+          console.log('React DevTools loaded');
+        }
+      }
+    } catch (err) {
+      console.log('Failed to load React DevTools:', err);
+    }
+  }
+
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

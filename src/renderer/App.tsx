@@ -16,6 +16,7 @@ export function App() {
   const updateSessionStatus = useSessionStore((s) => s.updateSessionStatus);
   const updateUsage = useSessionStore((s) => s.updateUsage);
   const updateActivity = useSessionStore((s) => s.updateActivity);
+  const addEvent = useSessionStore((s) => s.addEvent);
 
   useEffect(() => {
     loadConfig();
@@ -40,7 +41,7 @@ export function App() {
       useSessionStore.getState().loadSessions();
     } else {
       useBoardStore.setState({ tasks: [], swimlanes: [], archivedTasks: [] });
-      useSessionStore.setState({ sessions: [], activeSessionId: null, sessionUsage: {}, sessionActivity: {} });
+      useSessionStore.setState({ sessions: [], activeSessionId: null, sessionUsage: {}, sessionActivity: {}, sessionEvents: {} });
     }
   }, [currentProject]);
 
@@ -76,6 +77,14 @@ export function App() {
   useEffect(() => {
     const cleanup = window.electronAPI.sessions.onActivity((sessionId, state) => {
       updateActivity(sessionId, state);
+    });
+    return cleanup;
+  }, []);
+
+  // Listen for session events (tool calls, idle, prompt — activity log)
+  useEffect(() => {
+    const cleanup = window.electronAPI.sessions.onEvent((sessionId, event) => {
+      addEvent(sessionId, event);
     });
     return cleanup;
   }, []);

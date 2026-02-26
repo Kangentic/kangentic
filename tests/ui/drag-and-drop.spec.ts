@@ -23,7 +23,7 @@ async function ensureBoard() {
   await page.waitForTimeout(200);
   const backlog = page.locator('[data-swimlane-name="Backlog"]');
   if (await backlog.isVisible().catch(() => false)) return;
-  await page.locator(`button:has-text("${PROJECT_NAME}")`).first().click();
+  await page.locator(`[role="button"]:has-text("${PROJECT_NAME}")`).first().click();
   await waitForBoard(page);
 }
 

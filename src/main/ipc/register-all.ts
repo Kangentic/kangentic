@@ -633,6 +633,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.SESSION_GET_SCROLLBACK, (_, id) => sessionManager.getScrollback(id));
   ipcMain.handle(IPC.SESSION_GET_USAGE, () => sessionManager.getUsageCache());
   ipcMain.handle(IPC.SESSION_GET_ACTIVITY, () => sessionManager.getActivityCache());
+  ipcMain.handle(IPC.SESSION_GET_EVENTS, (_, sessionId: string) => sessionManager.getEventsForSession(sessionId));
 
   // === Session Suspend / Resume ===
   ipcMain.handle(IPC.SESSION_SUSPEND, async (_, taskId: string) => {
@@ -729,6 +730,12 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   sessionManager.on('activity', (sessionId: string, state: string) => {
     if (!mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC.SESSION_ACTIVITY, sessionId, state);
+    }
+  });
+
+  sessionManager.on('event', (sessionId: string, event: any) => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC.SESSION_EVENT, sessionId, event);
     }
   });
 

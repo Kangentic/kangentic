@@ -24,7 +24,7 @@ async function ensureBoardVisible() {
   const backlog = page.locator('[data-swimlane-name="Backlog"]');
   if (await backlog.isVisible().catch(() => false)) return;
 
-  const projectBtn = page.locator(`button:has-text("${PROJECT_NAME}")`).first();
+  const projectBtn = page.locator(`[role="button"]:has-text("${PROJECT_NAME}")`).first();
   await projectBtn.click();
   await waitForBoard(page);
 }
@@ -49,7 +49,7 @@ test.describe('App Launch', () => {
   });
 
   test('status bar exists', async () => {
-    await expect(page.locator('.h-6.bg-zinc-900.border-t')).toBeVisible();
+    await expect(page.locator('.h-9.bg-zinc-900.border-t')).toBeVisible();
   });
 });
 
@@ -70,7 +70,7 @@ test.describe('Project Management', () => {
 
   test('project appears in sidebar', async () => {
     await expect(
-      page.locator(`button:has-text("${PROJECT_NAME}")`).first(),
+      page.locator(`[role="button"]:has-text("${PROJECT_NAME}")`).first(),
     ).toBeVisible();
   });
 

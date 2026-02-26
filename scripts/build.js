@@ -55,7 +55,11 @@ async function build() {
     path.join(projectDir, 'src/main/agent/activity-bridge.js'),
     path.join(projectDir, '.vite/build/activity-bridge.js'),
   );
-  console.log('[build] Copied status-bridge.js + activity-bridge.js');
+  fs.copyFileSync(
+    path.join(projectDir, 'src/main/agent/event-bridge.js'),
+    path.join(projectDir, '.vite/build/event-bridge.js'),
+  );
+  console.log('[build] Copied status-bridge.js + activity-bridge.js + event-bridge.js');
 
   console.log('[build] Done! Output in .vite/build/');
 }

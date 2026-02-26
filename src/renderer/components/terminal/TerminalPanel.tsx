@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo } from 'react';
-import { ChevronDown, ChevronUp, Layers, Loader2 } from 'lucide-react';
+import { Activity, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
 import { TerminalTab } from './TerminalTab';
-import { AggregateTerminal } from './AggregateTerminal';
+import { ActivityLog } from './ActivityLog';
 import { slugify } from '../../utils/slugify';
 
-const ALL_SESSIONS_TAB = '__all__';
+const ACTIVITY_TAB = '__all__';
 
 interface TerminalPanelProps {
   collapsed?: boolean;
@@ -28,13 +28,13 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
     (s) => s.status === 'running' || s.status === 'queued',
   );
 
-  const showAllTab = activeSessions.length >= 2;
+  const showActivityTab = activeSessions.length >= 1;
 
   // Resolve the effective active ID: must be in the activeSessions list
-  // or be the ALL_SESSIONS_TAB sentinel (when 2+ sessions exist).
+  // or be the ACTIVITY_TAB sentinel (when 1+ sessions exist).
   const effectiveActiveId =
-    activeSessionId === ALL_SESSIONS_TAB && showAllTab
-      ? ALL_SESSIONS_TAB
+    activeSessionId === ACTIVITY_TAB && showActivityTab
+      ? ACTIVITY_TAB
       : activeSessions.some((s) => s.id === activeSessionId)
         ? activeSessionId
         : activeSessions.length > 0
@@ -50,7 +50,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
 
   const tasks = useBoardStore((s) => s.tasks);
 
-  // Build sessionId → slug map for tab labels and aggregate terminal badges
+  // Build sessionId → slug map for tab labels
   const taskLabelMap = useMemo(() => {
     const map = new Map<string, string>();
     for (const session of activeSessions) {
@@ -60,7 +60,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
     return map;
   }, [activeSessions, tasks]);
 
-  const aggregateSessionIds = useMemo(
+  const activeSessionIds = useMemo(
     () => activeSessions.map((s) => s.id),
     [activeSessions],
   );
@@ -73,25 +73,25 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
     );
   }
 
-  const isAllActive = effectiveActiveId === ALL_SESSIONS_TAB;
+  const isActivityActive = effectiveActiveId === ACTIVITY_TAB;
 
   return (
     <div className="h-full flex flex-col bg-zinc-900">
       {/* Tab bar */}
       <div className="flex items-center border-b border-zinc-700 flex-shrink-0">
         <div className="flex items-center overflow-x-auto flex-1 min-w-0">
-          {/* "All" aggregate tab — only when 2+ sessions */}
-          {showAllTab && (
+          {/* Activity tab — visible when 1+ sessions */}
+          {showActivityTab && (
             <button
-              onClick={() => setActiveSession(ALL_SESSIONS_TAB)}
+              onClick={() => setActiveSession(ACTIVITY_TAB)}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-zinc-700 transition-colors whitespace-nowrap ${
-                isAllActive
+                isActivityActive
                   ? 'bg-zinc-800 text-zinc-100'
                   : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
               }`}
             >
-              <Layers size={12} />
-              All
+              <Activity size={12} />
+              Activity
             </button>
           )}
 
@@ -141,16 +141,16 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
               garbled TUI output). The panel recreates the terminal from scrollback
               when the dialog closes. */}
           <div className="flex-1 min-h-0 relative">
-            {/* Aggregate "All" terminal */}
-            {showAllTab && (
+            {/* Activity log tab */}
+            {showActivityTab && (
               <div
-                style={{ display: isAllActive ? 'block' : 'none' }}
+                style={{ display: isActivityActive ? 'block' : 'none' }}
                 className="absolute inset-0"
               >
-                <AggregateTerminal
-                  active={isAllActive}
-                  sessionIds={aggregateSessionIds}
-                  taskIdMap={taskLabelMap}
+                <ActivityLog
+                  active={isActivityActive}
+                  sessionIds={activeSessionIds}
+                  taskLabelMap={taskLabelMap}
                 />
               </div>
             )}

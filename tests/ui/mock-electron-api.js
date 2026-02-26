@@ -399,6 +399,12 @@
       onActivity: function () {
         return noop;
       },
+      getEvents: async function () {
+        return [];
+      },
+      onEvent: function () {
+        return noop;
+      },
     },
 
     config: {

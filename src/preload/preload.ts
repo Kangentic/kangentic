@@ -79,6 +79,12 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.SESSION_ACTIVITY, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_ACTIVITY, handler);
     },
+    getEvents: (sessionId) => ipcRenderer.invoke(IPC.SESSION_GET_EVENTS, sessionId),
+    onEvent: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, event: any) => callback(sessionId, event);
+      ipcRenderer.on(IPC.SESSION_EVENT, handler);
+      return () => ipcRenderer.removeListener(IPC.SESSION_EVENT, handler);
+    },
   },
 
   config: {

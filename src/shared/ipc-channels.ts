@@ -48,6 +48,8 @@ export const IPC = {
   SESSION_GET_USAGE: 'session:getUsage',
   SESSION_ACTIVITY: 'session:activity',
   SESSION_GET_ACTIVITY: 'session:getActivity',
+  SESSION_EVENT: 'session:event',
+  SESSION_GET_EVENTS: 'session:getEvents',
   SESSION_SUSPEND: 'session:suspend',
   SESSION_RESUME: 'session:resume',
 
