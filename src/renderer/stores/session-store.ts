@@ -13,6 +13,8 @@ interface SessionStore {
   loadSessions: () => Promise<void>;
   spawnSession: (input: SpawnSessionInput) => Promise<Session>;
   killSession: (id: string) => Promise<void>;
+  suspendSession: (taskId: string) => Promise<void>;
+  resumeSession: (taskId: string) => Promise<Session>;
   setActiveSession: (id: string | null) => void;
   setOpenTaskId: (id: string | null) => void;
   setDialogSessionId: (id: string | null) => void;
@@ -65,6 +67,28 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         sess.id === id ? { ...sess, status: 'exited' as const, exitCode: -1 } : sess
       ),
     }));
+  },
+
+  suspendSession: async (taskId) => {
+    // Optimistically mark session as suspended
+    set((s) => ({
+      sessions: s.sessions.map((sess) =>
+        sess.taskId === taskId ? { ...sess, status: 'suspended' as const } : sess
+      ),
+    }));
+    await window.electronAPI.sessions.suspend(taskId);
+  },
+
+  resumeSession: async (taskId) => {
+    const newSession = await window.electronAPI.sessions.resume(taskId);
+    set((s) => ({
+      sessions: [
+        ...s.sessions.filter((sess) => sess.taskId !== taskId),
+        newSession,
+      ],
+      activeSessionId: newSession.id,
+    }));
+    return newSession;
   },
 
   setActiveSession: (id) => set({ activeSessionId: id }),

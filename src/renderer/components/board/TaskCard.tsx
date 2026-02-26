@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Loader2, Trash2 } from 'lucide-react';
+import { Loader2, Trash2, Power } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { TaskDetailDialog } from '../dialogs/TaskDetailDialog';
 import { useSessionStore } from '../../stores/session-store';
+import { useBoardStore } from '../../stores/board-store';
 import { getProgressColor } from '../../utils/color-lerp';
 import type { Task } from '../../../shared/types';
 
@@ -17,11 +18,39 @@ export function TaskCard({ task, isDragOverlay, compact, onDelete }: TaskCardPro
   const sessionUsage = useSessionStore((s) => s.sessionUsage);
   const sessionActivity = useSessionStore((s) => s.sessionActivity);
 
+  const suspendSession = useSessionStore((s) => s.suspendSession);
+  const resumeSession = useSessionStore((s) => s.resumeSession);
+  const loadBoard = useBoardStore((s) => s.loadBoard);
+
   const session = task.session_id ? sessions.find((s) => s.id === task.session_id) : null;
   const isHighlighted = !!task.session_id && task.session_id === activeSessionId;
   const usage = task.session_id ? sessionUsage[task.session_id] : undefined;
   const activity = task.session_id ? sessionActivity[task.session_id] : undefined;
   const isThinking = session?.status === 'running' && activity !== 'idle';
+
+  // For toggle: find session by taskId (includes suspended sessions)
+  const taskSession = sessions.find((s) => s.taskId === task.id);
+  const canToggle = taskSession && (taskSession.status === 'running' || taskSession.status === 'queued' || taskSession.status === 'suspended');
+  const isSessionActive = taskSession?.status === 'running' || taskSession?.status === 'queued';
+  const [toggling, setToggling] = useState(false);
+
+  const handleToggle = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canToggle || toggling) return;
+    setToggling(true);
+    try {
+      if (isSessionActive) {
+        await suspendSession(task.id);
+      } else {
+        await resumeSession(task.id);
+      }
+      await loadBoard();
+    } catch (err) {
+      console.error('Toggle session failed:', err);
+    } finally {
+      setToggling(false);
+    }
+  };
 
   useEffect(() => {
     if (openTaskId === task.id) {
@@ -125,11 +154,15 @@ export function TaskCard({ task, isDragOverlay, compact, onDelete }: TaskCardPro
           return (
             <div className="mt-2 pt-2 border-t border-zinc-700" data-testid="usage-bar">
               <div className="flex items-center justify-between mb-0.5">
-                <span className="text-[11px] text-zinc-500 flex items-center gap-1">
-                  {isThinking && <Loader2 size={10} className="text-green-400 animate-spin" />}
+                <span className="text-xs text-zinc-500 flex items-center gap-1">
+                  {isThinking ? (
+                    <Loader2 size={12} className="text-zinc-500 animate-spin" />
+                  ) : canToggle ? (
+                    <Power size={12} />
+                  ) : null}
                   {usage.model.displayName || 'Claude'}
                 </span>
-                <span className="text-[11px] transition-colors duration-300" style={{ color: progressColor }}>{pct}%</span>
+                <span className="text-xs text-zinc-500">{pct}%</span>
               </div>
               <div className="w-full h-1 bg-zinc-700 rounded-full overflow-hidden">
                 <div
@@ -139,14 +172,21 @@ export function TaskCard({ task, isDragOverlay, compact, onDelete }: TaskCardPro
               </div>
             </div>
           );
-        })() : session && (
+        })() : taskSession && (
           <div className="mt-2 pt-2 border-t border-zinc-700" data-testid="initializing-bar">
-            <div className="flex items-center gap-1.5">
-              <Loader2 size={10} className="text-zinc-500 animate-spin" />
-              <span className="text-[11px] text-zinc-500">
-                {session.status === 'queued' ? 'Queued...' : 'Initializing...'}
-              </span>
-            </div>
+            <span className="text-xs text-zinc-500 flex items-center gap-1">
+              {taskSession?.status === 'suspended' ? (
+                <>
+                  <Power size={12} />
+                  Suspended
+                </>
+              ) : (
+                <>
+                  <Loader2 size={12} className="animate-spin" />
+                  {session?.status === 'queued' ? 'Queued...' : 'Initializing...'}
+                </>
+              )}
+            </span>
           </div>
         )}
       </div>

@@ -343,6 +343,36 @@
         throw new Error('Mock: session spawn not available in UI tests');
       },
       kill: async function () {},
+      suspend: async function (taskId) {
+        var session = sessions.find(function (s) { return s.taskId === taskId; });
+        if (session) {
+          session.status = 'suspended';
+        }
+        var task = tasks.find(function (t) { return t.id === taskId; });
+        if (task) {
+          task.session_id = null;
+          task.updated_at = now();
+        }
+      },
+      resume: async function (taskId) {
+        var newSession = {
+          id: uuid(),
+          taskId: taskId,
+          pid: Math.floor(Math.random() * 10000),
+          status: 'running',
+          shell: 'bash',
+          cwd: '/mock/path',
+          startedAt: now(),
+          exitCode: null,
+        };
+        sessions.push(newSession);
+        var task = tasks.find(function (t) { return t.id === taskId; });
+        if (task) {
+          task.session_id = newSession.id;
+          task.updated_at = now();
+        }
+        return newSession;
+      },
       write: async function () {},
       resize: async function () {},
       list: async function () {

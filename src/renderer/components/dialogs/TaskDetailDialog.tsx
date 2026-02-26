@@ -1,5 +1,5 @@
 import React, { useState, useLayoutEffect, useRef, useEffect } from 'react';
-import { X, Trash2, Pencil, Loader2, ExternalLink, ArrowRightLeft, ChevronRight, MoreHorizontal, Archive } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, ExternalLink, ArrowRightLeft, ChevronRight, MoreHorizontal, Archive, Power, Play } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { getSwimlaneIcon } from '../../utils/swimlane-icons';
@@ -23,12 +23,15 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
   const unarchiveTask = useBoardStore((s) => s.unarchiveTask);
   const swimlanes = useBoardStore((s) => s.swimlanes);
   const killSession = useSessionStore((s) => s.killSession);
+  const suspendSession = useSessionStore((s) => s.suspendSession);
+  const resumeSession = useSessionStore((s) => s.resumeSession);
   const sessions = useSessionStore((s) => s.sessions);
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
   const [isEditing, setIsEditing] = useState(false);
   const [showKebabMenu, setShowKebabMenu] = useState(false);
   const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [dontAskAgain, setDontAskAgain] = useState(false);
   const skipDeleteConfirm = useConfigStore((s) => s.config.skipDeleteConfirm);
@@ -75,10 +78,46 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
   };
 
   const setDialogSessionId = useSessionStore((s) => s.setDialogSessionId);
+  const loadBoard = useBoardStore((s) => s.loadBoard);
   const sessionActivity = useSessionStore((s) => s.sessionActivity);
   const session = task.session_id ? sessions.find((s) => s.id === task.session_id) : null;
   const activity = task.session_id ? sessionActivity[task.session_id] : undefined;
   const isThinking = session?.status === 'running' && activity !== 'idle';
+
+  const sessionUsage = useSessionStore((s) => s.sessionUsage);
+
+  // For toggle: find session by taskId (includes suspended sessions)
+  const taskSession = sessions.find((s) => s.taskId === task.id);
+  const canToggle = taskSession && (taskSession.status === 'running' || taskSession.status === 'queued' || taskSession.status === 'suspended');
+  const isSessionActive = taskSession?.status === 'running' || taskSession?.status === 'queued';
+  const isSuspended = taskSession?.status === 'suspended';
+
+  // Use large dialog when there's an active session OR a suspended one
+  const hasSessionContext = !!session || !!isSuspended || toggling;
+
+  // Usage data for the suspended placeholder (may come from the old session id)
+  const taskUsage = taskSession ? sessionUsage[taskSession.id] : undefined;
+
+  const handleToggle = async () => {
+    if (!canToggle || toggling) return;
+    setToggling(true);
+    try {
+      if (isSessionActive) {
+        await suspendSession(task.id);
+      } else {
+        await resumeSession(task.id);
+      }
+      await loadBoard();
+    } catch (err) {
+      console.error('Toggle session failed:', err);
+      useToastStore.getState().addToast({
+        message: `Failed to ${isSessionActive ? 'suspend' : 'resume'} session`,
+        variant: 'warning',
+      });
+    } finally {
+      setToggling(false);
+    }
+  };
 
   // Register this session with the store so the bottom panel unmounts its
   // TerminalTab BEFORE any terminal effects fire. useLayoutEffect runs
@@ -138,16 +177,26 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
 
   const customHeader = (
     <div className="flex items-center gap-3 px-4 py-3">
-      {/* Status indicator */}
-      {session && (
-        isThinking ? (
-          <Loader2 size={14} className="text-green-400 animate-spin flex-shrink-0" />
+      {/* Power toggle */}
+      {canToggle && (
+        toggling ? (
+          <Loader2 size={14} className="text-zinc-400 animate-spin flex-shrink-0" />
         ) : (
-          <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-            session.status === 'running' ? 'bg-green-400' :
-            session.status === 'queued' ? 'bg-yellow-400' :
-            'bg-zinc-400'
-          }`} />
+          <button
+            onClick={handleToggle}
+            className={`p-1.5 rounded-full transition-colors flex-shrink-0 ${
+              isSessionActive
+                ? 'text-green-400 hover:bg-green-400/10'
+                : 'text-zinc-500 hover:bg-zinc-700 hover:text-zinc-300'
+            }`}
+            title={isSessionActive ? 'Suspend session' : 'Resume session'}
+          >
+            {isSessionActive && isThinking ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <Power size={14} />
+            )}
+          </button>
         )
       )}
 
@@ -317,7 +366,7 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
       onClose={onClose}
       header={customHeader}
       rawBody
-      className={session ? 'w-[90vw] h-[85vh]' : 'w-[480px] max-h-[80vh]'}
+      className={hasSessionContext ? 'w-[90vw] h-[85vh]' : 'w-[480px] max-h-[80vh]'}
       backdropClassName="p-6"
     >
         {/* Description (collapsible when terminal is present) */}
@@ -333,7 +382,7 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
           </div>
         )}
 
-        {!isEditing && task.description && !session && (
+        {!isEditing && task.description && !hasSessionContext && (
           <div className="px-4 py-3 border-b border-zinc-700 flex-shrink-0">
             <p className="text-sm text-zinc-400 whitespace-pre-wrap">{task.description}</p>
           </div>
@@ -365,7 +414,7 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
           </div>
         )}
 
-        {/* Terminal or empty state */}
+        {/* Terminal, suspended placeholder, or empty state */}
         {session ? (
           <>
             <div className="flex-1 min-h-0 relative">
@@ -375,6 +424,21 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
             </div>
             <ContextBar sessionId={session.id} />
           </>
+        ) : isSuspended || toggling ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-zinc-900/50">
+            <button
+              onClick={handleToggle}
+              disabled={toggling}
+              className="flex items-center gap-2.5 px-6 py-3 rounded-lg border border-blue-500/40 text-base text-blue-400 hover:bg-blue-500/15 hover:text-blue-300 transition-colors disabled:opacity-50"
+            >
+              {toggling ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Play size={14} />
+              )}
+              Resume session
+            </button>
+          </div>
         ) : (
           !isEditing && !task.description && (
             <div className="flex-1 flex items-center justify-center text-zinc-600 text-sm p-8">

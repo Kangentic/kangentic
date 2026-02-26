@@ -140,6 +140,6 @@ export function TerminalTab({ sessionId, active }: TerminalTabProps) {
   }, [active, fit, focus]);
 
   return (
-    <div ref={terminalRef} className="h-full w-full" />
+    <div ref={terminalRef} className="h-full w-full bg-[#18181b]" />
   );
 }

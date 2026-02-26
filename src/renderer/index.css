@@ -63,6 +63,19 @@
   z-index: 0;
 }
 
+/* xterm: fill parent height so scrollbar is flush with bottom edge.
+   xterm.js creates a .xterm child div that is content-sized (rows * cellHeight)
+   rather than filling its container, leaving a gap at the bottom. */
+.xterm {
+  height: 100%;
+}
+
+/* Match the viewport background to the terminal theme so leftover pixels
+   below the last rendered row blend in (xterm.css defaults to #000). */
+.xterm .xterm-viewport {
+  background-color: #18181b !important;
+}
+
 /* Terminal panel resize handle */
 .resize-handle {
   cursor: ns-resize;

@@ -634,6 +634,85 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.SESSION_GET_USAGE, () => sessionManager.getUsageCache());
   ipcMain.handle(IPC.SESSION_GET_ACTIVITY, () => sessionManager.getActivityCache());
 
+  // === Session Suspend / Resume ===
+  ipcMain.handle(IPC.SESSION_SUSPEND, async (_, taskId: string) => {
+    const { tasks } = getProjectRepos();
+    const task = tasks.getById(taskId);
+    if (!task) throw new Error(`Task ${taskId} not found`);
+
+    if (!task.session_id) return; // nothing to suspend
+
+    const db = getProjectDb(currentProjectId!);
+    const sessionRepo = new SessionRepository(db);
+
+    // Mark session record as suspended in DB
+    const record = sessionRepo.getLatestForTask(task.id);
+    if (record && record.claude_session_id
+        && (record.status === 'running' || record.status === 'exited')) {
+      sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: new Date().toISOString() });
+    }
+
+    // Kill PTY but preserve session files
+    sessionManager.suspend(task.session_id);
+
+    // Clear task's active session reference
+    tasks.update({ id: task.id, session_id: null });
+  });
+
+  ipcMain.handle(IPC.SESSION_RESUME, async (_, taskId: string) => {
+    const { tasks, actions } = getProjectRepos();
+    const task = tasks.getById(taskId);
+    if (!task) throw new Error(`Task ${taskId} not found`);
+
+    // Guard: don't resume if already has an active session
+    if (task.session_id) throw new Error(`Task ${taskId} already has an active session`);
+
+    // Create worktree if needed
+    if (!task.worktree_path && currentProjectPath) {
+      const config = configManager.getEffectiveConfig(currentProjectPath);
+      if (config.git.worktreesEnabled && WorktreeManager.isGitRepo(currentProjectPath)) {
+        try {
+          const wm = new WorktreeManager(currentProjectPath);
+          const { worktreePath, branchName } = await wm.createWorktree(
+            task.id, task.title, config.git.defaultBaseBranch, config.git.copyFiles,
+          );
+          tasks.update({ id: task.id, worktree_path: worktreePath, branch_name: branchName });
+          Object.assign(task, tasks.getById(task.id));
+        } catch (err) {
+          console.error('Worktree creation failed during session resume:', err);
+        }
+      }
+    }
+
+    const db = getProjectDb(currentProjectId!);
+    const sessionRepo = new SessionRepository(db);
+
+    const engine = new TransitionEngine(
+      sessionManager, actions, tasks, claudeDetector, commandBuilder,
+      () => {
+        const config = configManager.getEffectiveConfig(currentProjectPath || undefined);
+        return {
+          permissionMode: config.claude.permissionMode,
+          claudePath: config.claude.cliPath,
+          projectPath: currentProjectPath,
+          gitConfig: config.git,
+        };
+      },
+      sessionRepo,
+    );
+
+    await engine.resumeSuspendedSession(task);
+
+    // Re-read task to get the new session_id
+    const updated = tasks.getById(taskId);
+    if (!updated?.session_id) throw new Error('Session resume failed — no session_id on task');
+
+    // Return the new session object
+    const newSession = sessionManager.getSession(updated.session_id);
+    if (!newSession) throw new Error('Session resume failed — session not in manager');
+    return newSession;
+  });
+
   // Forward PTY events to renderer (guard against destroyed window during shutdown)
   sessionManager.on('data', (sessionId: string, data: string) => {
     if (!mainWindow.isDestroyed()) {

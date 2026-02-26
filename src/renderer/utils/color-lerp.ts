@@ -1,9 +1,10 @@
-/** Interpolate between color stops: green(0%) → yellow(50%) → red(75-100%). */
+/** Interpolate between color stops: green(0-75%) → yellow(95%) → amber(98%) → orange(100%). */
 const STOPS: [number, [number, number, number]][] = [
-  [0,   [16, 185, 129]],   // emerald-500
-  [50,  [234, 179, 8]],    // yellow-500
-  [75,  [239, 68, 68]],    // red-500
-  [100, [239, 68, 68]],    // red-500 (clamp)
+  [0,   [74, 222, 128]],   // green-400
+  [75,  [74, 222, 128]],   // green-400 (hold green)
+  [95,  [234, 179, 8]],    // yellow-500
+  [98,  [245, 158, 11]],   // amber-500
+  [100, [249, 115, 22]],   // orange-500 (clamp)
 ];
 
 export function getProgressColor(pct: number): string {

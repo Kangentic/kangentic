@@ -10,10 +10,11 @@ const ALL_SESSIONS_TAB = '__all__';
 
 interface TerminalPanelProps {
   collapsed?: boolean;
+  showContent?: boolean;
   onToggleCollapse?: () => void;
 }
 
-export function TerminalPanel({ collapsed = false, onToggleCollapse }: TerminalPanelProps) {
+export function TerminalPanel({ collapsed = false, showContent = true, onToggleCollapse }: TerminalPanelProps) {
   const sessions = useSessionStore((s) => s.sessions);
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
@@ -89,7 +90,7 @@ export function TerminalPanel({ collapsed = false, onToggleCollapse }: TerminalP
                   : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
               }`}
             >
-              <Layers size={10} />
+              <Layers size={12} />
               All
             </button>
           )}
@@ -131,8 +132,8 @@ export function TerminalPanel({ collapsed = false, onToggleCollapse }: TerminalP
         )}
       </div>
 
-      {/* Terminal panes + context bar — hidden when collapsed */}
-      {!collapsed && (
+      {/* Terminal panes + context bar — hidden after collapse animation completes */}
+      {showContent && (
         <>
           {/* Terminal panes — only the active one is positioned; rest are display:none.
               Sessions owned by the detail dialog are unmounted to avoid two xterm

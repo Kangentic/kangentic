@@ -28,7 +28,7 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
 
   return (
     <div
-      className="h-7 bg-zinc-900/80 border-t border-zinc-700 flex items-center px-3 gap-2 text-xs flex-shrink-0"
+      className="h-8 bg-zinc-900/80 border-t border-zinc-700 flex items-center px-3 gap-2 text-xs flex-shrink-0"
       data-testid="usage-bar"
     >
       {!compact && (
@@ -39,21 +39,20 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
           )}
         </span>
       )}
-      <span className={`${pill} text-blue-400`}>{modelName}</span>
+      <span className={`${pill} text-zinc-400`}>{modelName}</span>
+      <span className={`${pill} text-zinc-400 tabular-nums`}>${usage.cost.totalCostUsd.toFixed(2)}</span>
+
+      <div className="w-px h-3.5 bg-zinc-700 flex-shrink-0" />
 
       <div className="flex items-center gap-2 flex-1 min-w-0">
-        <div className="w-32 h-1.5 bg-zinc-700 rounded-full overflow-hidden flex-shrink-0">
+        <div className="flex-1 h-1.5 bg-zinc-700 rounded-full overflow-hidden">
           <div
             className="h-full rounded-full transition-all duration-300"
             style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: progressColor }}
           />
         </div>
-        <span className="tabular-nums transition-colors duration-300" style={{ color: progressColor }}>{pct}%</span>
+        <span className="tabular-nums text-zinc-500 whitespace-nowrap transition-colors duration-300">{pct}% context</span>
       </div>
-
-      <span className="text-zinc-500 tabular-nums whitespace-nowrap">
-        ${usage.cost.totalCostUsd.toFixed(2)}
-      </span>
     </div>
   );
 }

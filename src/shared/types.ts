@@ -352,6 +352,8 @@ export interface ElectronAPI {
   sessions: {
     spawn: (input: SpawnSessionInput) => Promise<Session>;
     kill: (sessionId: string) => Promise<void>;
+    suspend: (taskId: string) => Promise<void>;
+    resume: (taskId: string) => Promise<Session>;
     write: (sessionId: string, data: string) => Promise<void>;
     resize: (sessionId: string, cols: number, rows: number) => Promise<void>;
     list: () => Promise<Session[]>;

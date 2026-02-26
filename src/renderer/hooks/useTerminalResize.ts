@@ -2,11 +2,14 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import type { AppConfig } from '../../shared/types';
 
 const MIN_HEIGHT = 100;
+export const COLLAPSED_HEIGHT = 36;
 
 export interface TerminalResizeState {
   height: number;
   collapsed: boolean;
   isResizing: boolean;
+  showContent: boolean;
+  ready: boolean;
   contentColRef: React.RefObject<HTMLDivElement | null>;
   onToggleCollapse: () => void;
   onResizeStart: (e: React.MouseEvent) => void;
@@ -16,10 +19,14 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
   const [height, setHeight] = useState(config.terminal.panelHeight);
   const [collapsed, setCollapsed] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
+  const [showContent, setShowContent] = useState(true);
+  const [ready, setReady] = useState(false);
 
   const latestHeightRef = useRef(height);
   const availableHeightRef = useRef(0);
   const contentColRef = useRef<HTMLDivElement>(null);
+  const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Sync from config on load
   useEffect(() => {
@@ -29,6 +36,19 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
       latestHeightRef.current = saved;
     }
   }, [config]);
+
+  // Enable transitions after first frame to prevent animation on mount
+  useEffect(() => {
+    requestAnimationFrame(() => setReady(true));
+  }, []);
+
+  // Clean up timers on unmount
+  useEffect(() => {
+    return () => {
+      if (contentTimerRef.current) clearTimeout(contentTimerRef.current);
+      if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
+    };
+  }, []);
 
   const getMaxHeight = useCallback(() => {
     return Math.floor(availableHeightRef.current / 2) - 4;
@@ -65,10 +85,33 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
   }, [clampHeight]);
 
   const onToggleCollapse = useCallback(() => {
+    if (contentTimerRef.current) {
+      clearTimeout(contentTimerRef.current);
+      contentTimerRef.current = null;
+    }
+    if (resizeTimerRef.current) {
+      clearTimeout(resizeTimerRef.current);
+      resizeTimerRef.current = null;
+    }
+
     setCollapsed((prev) => {
-      requestAnimationFrame(() => {
+      if (prev) {
+        // Expanding: show content immediately so it renders while height grows
+        setShowContent(true);
+      } else {
+        // Collapsing: delay hiding content until animation completes
+        contentTimerRef.current = setTimeout(() => {
+          setShowContent(false);
+          contentTimerRef.current = null;
+        }, 200);
+      }
+
+      // Dispatch resize after animation completes
+      resizeTimerRef.current = setTimeout(() => {
         window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
-      });
+        resizeTimerRef.current = null;
+      }, 220);
+
       return !prev;
     });
   }, []);
@@ -110,5 +153,5 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
     document.addEventListener('mouseup', onMouseUp);
   }, [height, config.terminal, clampHeight]);
 
-  return { height, collapsed, isResizing, contentColRef, onToggleCollapse, onResizeStart };
+  return { height, collapsed, isResizing, showContent, ready, contentColRef, onToggleCollapse, onResizeStart };
 }

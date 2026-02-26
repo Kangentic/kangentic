@@ -47,6 +47,11 @@ export function App() {
   // Listen for session exit events
   useEffect(() => {
     const cleanup = window.electronAPI.sessions.onExit((sessionId, exitCode) => {
+      // If the session was already suspended, skip — the async PTY exit
+      // event would overwrite the 'suspended' status set by suspendSession()
+      const currentSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+      if (currentSession?.status === 'suspended') return;
+
       updateSessionStatus(sessionId, { status: 'exited', exitCode });
       // Find task associated with this session for the toast message
       const task = useBoardStore.getState().tasks.find((t) => t.session_id === sessionId);

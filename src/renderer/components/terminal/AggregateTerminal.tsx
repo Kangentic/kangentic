@@ -119,6 +119,6 @@ export function AggregateTerminal({ active, sessionIds, taskIdMap }: AggregateTe
   }, [active, fit, focus]);
 
   return (
-    <div ref={terminalRef} className="h-full w-full" />
+    <div ref={terminalRef} className="h-full w-full bg-[#18181b]" />
   );
 }

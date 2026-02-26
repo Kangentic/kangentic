@@ -9,7 +9,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { ToastContainer } from './ToastContainer';
 import { useSidebarResize } from '../../hooks/useSidebarResize';
-import { useTerminalResize } from '../../hooks/useTerminalResize';
+import { useTerminalResize, COLLAPSED_HEIGHT } from '../../hooks/useTerminalResize';
 
 export function AppLayout() {
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
@@ -70,11 +70,14 @@ export function AppLayout() {
 
               {/* Terminal panel */}
               <div
-                style={terminal.collapsed ? undefined : { height: terminal.height }}
-                className={`flex-shrink-0 ${terminal.isResizing || sidebar.isResizing ? 'pointer-events-none' : ''}`}
+                style={{ height: terminal.collapsed ? COLLAPSED_HEIGHT : terminal.height }}
+                className={`flex-shrink-0 overflow-hidden ${
+                  terminal.ready && !terminal.isResizing ? 'transition-[height] duration-200 ease-in-out' : ''
+                } ${terminal.isResizing || sidebar.isResizing ? 'pointer-events-none' : ''}`}
               >
                 <TerminalPanel
                   collapsed={terminal.collapsed}
+                  showContent={terminal.showContent}
                   onToggleCollapse={terminal.onToggleCollapse}
                 />
               </div>
