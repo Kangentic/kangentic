@@ -1,5 +1,5 @@
 import React from 'react';
-import { Terminal, ListTodo } from 'lucide-react';
+import { SquareTerminal, ClipboardCheck } from 'lucide-react';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useBoardStore } from '../../stores/board-store';
@@ -27,26 +27,22 @@ export function StatusBar() {
   return (
     <div className="h-9 bg-zinc-900 border-t border-zinc-700 flex items-center px-3 text-xs text-zinc-500 select-none flex-shrink-0">
       {currentProject && (
-        <>
-          <div className="flex items-center gap-4">
-            <span className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-800" data-testid="session-count">
-              <Terminal size={14} className={activeSessions > 0 ? 'text-green-400' : 'text-zinc-500'} />
-              <span className={activeSessions > 0 ? 'text-green-400' : ''}>
-                {activeSessions} active
-              </span>
-              {queued > 0 && <span className="text-yellow-400">({queued} queued)</span>}
+        <div className="flex items-center gap-4">
+          <span className="flex items-center gap-1.5" data-testid="session-count">
+            <SquareTerminal size={12} className={activeSessions > 0 ? 'text-green-400' : 'text-zinc-500'} />
+            <span className={activeSessions > 0 ? 'text-green-400' : ''}>
+              {activeSessions} agents
             </span>
-            <span className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-800" data-testid="task-count">
-              <ListTodo size={14} />
-              {activeTasks} tasks
-            </span>
-          </div>
-
-          <div className="flex-1" />
-        </>
+            {queued > 0 && <span className="text-yellow-400">({queued} queued)</span>}
+          </span>
+          <span className="flex items-center gap-1.5" data-testid="task-count">
+            <ClipboardCheck size={12} />
+            {activeTasks} tasks
+          </span>
+        </div>
       )}
 
-      {!currentProject && <div className="flex-1" />}
+      <div className="flex-1" />
 
       <div className="flex items-center gap-4">
         {claudeInfo && (
