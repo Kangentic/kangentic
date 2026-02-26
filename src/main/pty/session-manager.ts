@@ -265,6 +265,22 @@ export class SessionManager extends EventEmitter {
     }
   }
 
+  /**
+   * Fully remove a session from all internal maps: kill the PTY, clean up
+   * session files, and delete from sessions/usage/activity caches.
+   * Used during project deletion to prevent cross-project bleed.
+   */
+  remove(sessionId: string): void {
+    this.kill(sessionId);
+    const session = this.sessions.get(sessionId);
+    if (session) {
+      this.cleanupSessionFiles(session);
+    }
+    this.sessions.delete(sessionId);
+    this.usageCache.delete(sessionId);
+    this.activityCache.delete(sessionId);
+  }
+
   kill(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session?.pty) {

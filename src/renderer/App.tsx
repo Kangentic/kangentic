@@ -38,6 +38,9 @@ export function App() {
     if (currentProject) {
       loadBoard();
       useSessionStore.getState().loadSessions();
+    } else {
+      useBoardStore.setState({ tasks: [], swimlanes: [], archivedTasks: [] });
+      useSessionStore.setState({ sessions: [], activeSessionId: null, sessionUsage: {}, sessionActivity: {} });
     }
   }, [currentProject]);
 

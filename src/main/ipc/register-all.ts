@@ -167,7 +167,7 @@ async function cleanupProject(projectId: string, projectPath: string): Promise<v
 
   for (const task of allTasks) {
     if (task.session_id) {
-      try { sessionManager.kill(task.session_id); } catch { /* may already be dead */ }
+      try { sessionManager.remove(task.session_id); } catch { /* may already be dead */ }
     }
   }
 
@@ -197,10 +197,23 @@ async function cleanupProject(projectId: string, projectPath: string): Promise<v
     } catch { /* best effort */ }
   }
 
-  // 4. Close the project DB connection before deleting files
+  // 4. Remove empty .claude/ directory if it only contained our hooks file.
+  //    stripActivityHooks deletes settings.local.json, but on Windows the file
+  //    may still be pending delete when rmdirSync runs. Use rmSync with retries
+  //    and only remove if no user files (CLAUDE.md, settings.json, etc.) exist.
+  const claudeDir = path.join(projectPath, '.claude');
+  try {
+    const entries = fs.readdirSync(claudeDir);
+    const isOnlyOurs = entries.every((e) => e === 'settings.local.json');
+    if (entries.length === 0 || isOnlyOurs) {
+      fs.rmSync(claudeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+    }
+  } catch { /* may not exist or not readable — skip */ }
+
+  // 5. Close the project DB connection before deleting files
   closeProjectDb(projectId);
 
-  // 5. Remove our `.kangentic/` entry from .gitignore (delete file if it becomes empty)
+  // 6. Remove our `.kangentic/` entry from .gitignore (delete file if it becomes empty)
   try {
     const gitignorePath = path.join(projectPath, '.gitignore');
     if (fs.existsSync(gitignorePath)) {
@@ -217,7 +230,7 @@ async function cleanupProject(projectId: string, projectPath: string): Promise<v
     }
   } catch { /* non-fatal */ }
 
-  // 6. Remove .kangentic/ directory (ours entirely)
+  // 7. Remove .kangentic/ directory (ours entirely)
   const kangenticDir = path.join(projectPath, '.kangentic');
   if (fs.existsSync(kangenticDir)) {
     try {
@@ -227,13 +240,13 @@ async function cleanupProject(projectId: string, projectPath: string): Promise<v
     }
   }
 
-  // 6. Delete the per-project database file from app data
+  // 8. Delete the per-project database file from app data
   const dbPath = PATHS.projectDb(projectId);
   try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }
   try { fs.unlinkSync(dbPath + '-wal'); } catch { /* may not exist */ }
   try { fs.unlinkSync(dbPath + '-shm'); } catch { /* may not exist */ }
 
-  // 7. Clear current project if this was the active one
+  // 9. Clear current project if this was the active one
   if (currentProjectId === projectId) {
     currentProjectId = null;
     currentProjectPath = null;

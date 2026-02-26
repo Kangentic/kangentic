@@ -125,6 +125,8 @@ export function stripActivityHooks(dir: string): void {
 
     if (Object.keys(settings).length === 0) {
       fs.unlinkSync(p);
+      // Remove the .claude/ directory if it's now empty (we may have created it)
+      try { fs.rmdirSync(path.dirname(p)); } catch { /* not empty or already gone */ }
     } else {
       const output = JSON.stringify(settings, null, 2);
       JSON.parse(output); // verify round-trip integrity
