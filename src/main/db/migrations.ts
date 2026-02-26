@@ -153,6 +153,13 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE tasks ADD COLUMN archived_at TEXT DEFAULT NULL');
   }
 
+  // Migration: add 'base_branch' column for per-task base branch override
+  const hasBaseBranchColumn = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
+    .some((col) => col.name === 'base_branch');
+  if (!hasBaseBranchColumn) {
+    db.exec('ALTER TABLE tasks ADD COLUMN base_branch TEXT DEFAULT NULL');
+  }
+
   // Migration: drop FK on from_swimlane_id to allow wildcard '*' source.
   // SQLite requires table recreation to remove a constraint.
   const fkInfo = db.prepare("PRAGMA foreign_key_list('swimlane_transitions')").all() as Array<{ from: string; table: string }>;

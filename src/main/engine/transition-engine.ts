@@ -286,7 +286,7 @@ export class TransitionEngine {
     if (!WorktreeManager.isGitRepo(appConfig.projectPath)) return;
 
     const wm = new WorktreeManager(appConfig.projectPath);
-    const baseBranch = config.baseBranch || appConfig.gitConfig.defaultBaseBranch;
+    const baseBranch = task.base_branch || config.baseBranch || appConfig.gitConfig.defaultBaseBranch;
     const copyFiles = config.copyFiles || appConfig.gitConfig.copyFiles;
 
     const { worktreePath, branchName } = await wm.createWorktree(

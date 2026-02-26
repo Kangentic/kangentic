@@ -22,6 +22,7 @@ export interface Task {
   branch_name: string | null;
   pr_number: number | null;
   pr_url: string | null;
+  base_branch: string | null;
   archived_at: string | null;
   created_at: string;
   updated_at: string;
@@ -237,6 +238,7 @@ export interface TaskCreateInput {
   title: string;
   description: string;
   swimlane_id: string;
+  baseBranch?: string;
 }
 
 export interface TaskUpdateInput {
@@ -251,6 +253,7 @@ export interface TaskUpdateInput {
   branch_name?: string | null;
   pr_number?: number | null;
   pr_url?: string | null;
+  base_branch?: string | null;
 }
 
 export interface TaskMoveInput {

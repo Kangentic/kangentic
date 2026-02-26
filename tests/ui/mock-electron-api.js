@@ -191,6 +191,7 @@
           branch_name: null,
           pr_number: null,
           pr_url: null,
+          base_branch: input.baseBranch || null,
           archived_at: null,
           created_at: now(),
           updated_at: now(),

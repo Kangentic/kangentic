@@ -19,6 +19,14 @@ import { WorktreeManager } from '../git/worktree-manager';
 import { stripActivityHooks } from '../agent/hook-manager';
 import { getProjectDb, closeProjectDb } from '../db/database';
 import { PATHS } from '../config/paths';
+import type { AppConfig } from '../../shared/types';
+
+/**
+ * Resolve the base branch for worktree creation: task override > config default > 'main'.
+ */
+function resolveBaseBranch(task: { base_branch?: string | null }, config: AppConfig): string {
+  return task.base_branch || config.git.defaultBaseBranch || 'main';
+}
 
 /**
  * Ensure `.kangentic/` is listed in the project's `.gitignore`.
@@ -439,7 +447,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
         try {
           const wm = new WorktreeManager(currentProjectPath);
           const { worktreePath, branchName } = await wm.createWorktree(
-            task.id, task.title, config.git.defaultBaseBranch, config.git.copyFiles,
+            task.id, task.title, resolveBaseBranch(task, config), config.git.copyFiles,
           );
           tasks.update({ id: task.id, worktree_path: worktreePath, branch_name: branchName });
           const updated = tasks.getById(task.id);
@@ -514,7 +522,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
         try {
           const wm = new WorktreeManager(currentProjectPath);
           const { worktreePath, branchName } = await wm.createWorktree(
-            task.id, task.title, config.git.defaultBaseBranch, config.git.copyFiles,
+            task.id, task.title, resolveBaseBranch(task, config), config.git.copyFiles,
           );
           tasks.update({ id: task.id, worktree_path: worktreePath, branch_name: branchName });
           Object.assign(task, tasks.getById(task.id));
@@ -681,7 +689,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
         try {
           const wm = new WorktreeManager(currentProjectPath);
           const { worktreePath, branchName } = await wm.createWorktree(
-            task.id, task.title, config.git.defaultBaseBranch, config.git.copyFiles,
+            task.id, task.title, resolveBaseBranch(task, config), config.git.copyFiles,
           );
           tasks.update({ id: task.id, worktree_path: worktreePath, branch_name: branchName });
           Object.assign(task, tasks.getById(task.id));

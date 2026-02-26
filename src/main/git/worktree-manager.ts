@@ -53,8 +53,17 @@ export class WorktreeManager {
       throw new Error(`Cannot create worktrees directory at ${worktreesDir}: ${(err as Error).message}`);
     }
 
+    // Fetch the latest from origin so worktrees start from up-to-date code
+    let startPoint = baseBranch;
+    try {
+      await this.git.raw(['fetch', 'origin', baseBranch]);
+      startPoint = `origin/${baseBranch}`;
+    } catch {
+      // No remote, branch not on remote, or network unavailable — use local branch
+    }
+
     // Create worktree with a new branch
-    await this.git.raw(['worktree', 'add', '-b', branchName, worktreePath, baseBranch]);
+    await this.git.raw(['worktree', 'add', '-b', branchName, worktreePath, startPoint]);
 
     // Copy specified files into the worktree
     for (const file of copyFiles) {
