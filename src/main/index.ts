@@ -149,6 +149,16 @@ const createWindow = () => {
   // live PTY sessions before the renderer is notified.
   mainWindow.webContents.on('did-finish-load', async () => {
     const cwd = getCwdArg();
+
+    // Set window title to include worktree name so the taskbar entry
+    // is distinguishable from the main project window.
+    if (cwd && mainWindow) {
+      const worktreeMatch = cwd.replace(/\\/g, '/').match(/\.kangentic\/worktrees\/([^/]+)/);
+      if (worktreeMatch) {
+        mainWindow.setTitle(`Kangentic — ${worktreeMatch[1]}`);
+      }
+    }
+
     if (cwd && mainWindow) {
       try {
         const project = await openProjectByPath(cwd);

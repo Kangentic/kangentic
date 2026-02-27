@@ -15,6 +15,10 @@ export function TitleBar({ sidebarOpen, onToggleSidebar }: TitleBarProps) {
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
 
+  const isWorktree = currentProject?.path
+    ? currentProject.path.replace(/\\/g, '/').includes('.kangentic/worktrees/')
+    : false;
+
   return (
     <div className="h-10 bg-zinc-900 border-b border-zinc-700 flex items-center px-3 select-none flex-shrink-0"
          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
@@ -35,6 +39,9 @@ export function TitleBar({ sidebarOpen, onToggleSidebar }: TitleBarProps) {
         {currentProject && (
           <span className="ml-2 text-zinc-500">
             &mdash; {currentProject.name}
+            {isWorktree && (
+              <span className="ml-1.5 text-xs text-amber-500/70">(worktree)</span>
+            )}
           </span>
         )}
       </div>

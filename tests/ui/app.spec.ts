@@ -303,3 +303,21 @@ test.describe('Session & Column Details', () => {
     await page.waitForTimeout(300);
   });
 });
+
+test.describe('Worktree Title Bar', () => {
+  test('no worktree badge for normal project path', async () => {
+    // The project created earlier has a normal path (/mock/projects/...)
+    await expect(page.locator('text=(worktree)')).not.toBeVisible();
+  });
+
+  test('worktree badge appears for worktree project path', async () => {
+    // Create a project whose path contains .kangentic/worktrees/
+    await page.evaluate(() => {
+      (window as any).__mockFolderPath = '/mock/project/.kangentic/worktrees/my-feature-abc12345';
+    });
+    await page.locator('button[title="Open folder as project"]').click();
+    await waitForBoard(page);
+
+    await expect(page.locator('text=(worktree)')).toBeVisible();
+  });
+});
