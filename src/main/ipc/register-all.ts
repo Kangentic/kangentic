@@ -29,9 +29,9 @@ function resolveBaseBranch(task: { base_branch?: string | null }, config: AppCon
 }
 
 /**
- * Ensure `.kangentic/` is listed in the project's `.gitignore`.
- * Fully wrapped in try-catch — a read-only project directory or
- * permission issue must never prevent the app from opening.
+ * Ensure `.kangentic/` and `.claude/settings.local.json` are listed in the
+ * project's `.gitignore`.  Fully wrapped in try-catch — a read-only project
+ * directory or permission issue must never prevent the app from opening.
  */
 function ensureGitignore(projectPath: string): void {
   if (!WorktreeManager.isGitRepo(projectPath)) return;
@@ -44,14 +44,26 @@ function ensureGitignore(projectPath: string): void {
       // No .gitignore yet — we'll create one
     }
 
+    // 1. Ensure .kangentic/ is ignored
     const lines = content.split('\n');
-    const alreadyIgnored = lines.some(
+    const kangenticIgnored = lines.some(
       (l) => l.trim() === '.kangentic' || l.trim() === '.kangentic/',
     );
-    if (alreadyIgnored) return;
+    if (!kangenticIgnored) {
+      const separator = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
+      content = content + separator + '.kangentic/\n';
+      fs.writeFileSync(gitignorePath, content);
+    }
 
-    const separator = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
-    fs.writeFileSync(gitignorePath, content + separator + '.kangentic/\n');
+    // 2. Ensure .claude/settings.local.json is ignored
+    const linesAfter = content.split('\n');
+    const settingsIgnored = linesAfter.some(
+      (l) => l.trim() === '.claude/settings.local.json',
+    );
+    if (!settingsIgnored) {
+      const separator = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
+      fs.writeFileSync(gitignorePath, content + separator + '.claude/settings.local.json\n');
+    }
   } catch (err) {
     // Non-fatal: log and continue. Project may be read-only or on a network drive.
     console.warn(`Could not update .gitignore at ${projectPath}:`, err);
@@ -233,7 +245,8 @@ async function cleanupProject(projectId: string, projectPath: string): Promise<v
     if (fs.existsSync(gitignorePath)) {
       const content = fs.readFileSync(gitignorePath, 'utf-8');
       const filtered = content.split('\n').filter(
-        (l) => l.trim() !== '.kangentic' && l.trim() !== '.kangentic/',
+        (l) => l.trim() !== '.kangentic' && l.trim() !== '.kangentic/'
+          && l.trim() !== '.claude/settings.local.json',
       );
       const newContent = filtered.join('\n');
       if (newContent.replace(/\s/g, '').length === 0) {
