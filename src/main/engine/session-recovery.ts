@@ -10,7 +10,7 @@ import { SessionManager } from '../pty/session-manager';
 import { ClaudeDetector } from '../agent/claude-detector';
 import { CommandBuilder } from '../agent/command-builder';
 import { ConfigManager } from '../config/config-manager';
-import type { SessionRecord, ActionConfig } from '../../shared/types';
+import type { SessionRecord, ActionConfig, Task } from '../../shared/types';
 import { ensureWorktreeTrust } from '../agent/trust-manager';
 
 // ---------------------------------------------------------------------------
@@ -147,6 +147,49 @@ export async function recoverSessions(
       .map(l => l.id),
   );
 
+  // --- Pre-filter: batch-resolve tasks and partition records ---
+  // Fetch all tasks in one query instead of N individual getById calls.
+  // Tasks that are archived will be absent from the map and treated as deleted.
+  const allTasks = taskRepo.list();
+  const taskMap = new Map(allTasks.map(t => [t.id, t]));
+
+  const toProcess: Array<{ record: SessionRecord; task: Task }> = [];
+  let skipped = 0;
+
+  for (const record of toRecover) {
+    if (liveTaskIds.has(record.task_id)) {
+      skipped++;
+      continue;
+    }
+
+    const task = taskMap.get(record.task_id);
+    if (!task) {
+      sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+      skipped++;
+      continue;
+    }
+
+    if (excludedLaneIds.has(task.swimlane_id)) {
+      if (record.status !== 'suspended') {
+        sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+      }
+      skipped++;
+      continue;
+    }
+
+    toProcess.push({ record, task });
+  }
+
+  // Early exit: nothing to actually recover
+  if (toProcess.length === 0) {
+    if (skipped > 0) {
+      console.log(
+        `Session recovery: skipped ${skipped} of ${toRecover.length} task(s) — all in Backlog/Done or deleted`,
+      );
+    }
+    return;
+  }
+
   // Cache transitions and actions for prompt lookup during recovery
   const allTransitions = actionRepo.listTransitions();
   const allActions = actionRepo.list();
@@ -157,54 +200,16 @@ export async function recoverSessions(
   if (!claude.found || !claude.path) {
     console.warn(
       'Session recovery: Claude CLI not found — skipping',
-      toRecover.length,
+      toProcess.length,
       'session(s)',
     );
     return;
   }
 
   let recovered = 0;
-  let skipped = 0;
 
-  for (const record of toRecover) {
+  for (const { record, task } of toProcess) {
     try {
-      // --- Guard: task already has a live PTY session ---
-      // Skip if the task is already being served by an active PTY process
-      // (e.g. re-entrant call from Vite hot-reload or duplicate PROJECT_OPEN).
-      if (liveTaskIds.has(record.task_id)) {
-        skipped++;
-        continue;
-      }
-
-      // --- Guard: task must still exist ---
-      const task = taskRepo.getById(record.task_id);
-      if (!task) {
-        console.log(
-          `Session recovery: task ${record.task_id} deleted — marking exited`,
-        );
-        sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
-        skipped++;
-        continue;
-      }
-
-      // --- Guard: task must NOT be in Backlog or Done ---
-      // Tasks in Backlog/Done should not have active agents. Preserve suspended
-      // records for future resume; mark orphaned records as exited.
-      if (excludedLaneIds.has(task.swimlane_id)) {
-        if (record.status === 'suspended') {
-          console.log(
-            `Session recovery: task ${record.task_id} in Backlog/Done — preserving suspended status for future resume`,
-          );
-        } else {
-          console.log(
-            `Session recovery: task ${record.task_id} in Backlog/Done — marking exited`,
-          );
-          sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
-        }
-        skipped++;
-        continue;
-      }
-
       // --- Guard: CWD must still exist ---
       if (!fs.existsSync(record.cwd)) {
         // Clear stale worktree_path so reconcileSessions can pick up the task
