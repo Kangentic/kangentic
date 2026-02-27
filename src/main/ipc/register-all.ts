@@ -167,7 +167,7 @@ async function cleanupTaskResources(
  *
  * Does NOT touch the `.claude/` directory, git branches, or any user data.
  */
-async function cleanupProject(projectId: string, projectPath: string): Promise<void> {
+export async function cleanupProject(projectId: string, projectPath: string): Promise<void> {
   // Guard: project path must exist
   if (!fs.existsSync(projectPath)) {
     console.warn(`[PROJECT_DELETE] Project path does not exist: ${projectPath} — skipping filesystem cleanup`);
@@ -282,6 +282,30 @@ async function cleanupProject(projectId: string, projectPath: string): Promise<v
   }
 
   console.log(`[PROJECT_DELETE] Cleaned up project at ${projectPath}`);
+}
+
+/**
+ * Delete a project record from the global index DB.
+ */
+export function deleteProjectFromIndex(id: string): void {
+  projectRepo.delete(id);
+}
+
+/**
+ * Prune stale worktree-based projects whose paths no longer exist on disk.
+ * Catches leftovers from crashed/force-killed preview instances.
+ */
+export async function pruneStaleWorktreeProjects(): Promise<void> {
+  const projects = projectRepo.list();
+  for (const project of projects) {
+    const normalized = project.path.replace(/\\/g, '/');
+    if (!normalized.includes('.kangentic/worktrees/')) continue;
+    if (fs.existsSync(project.path)) continue;
+
+    console.log(`[PRUNE] Removing stale worktree project: ${project.name} (${project.path})`);
+    await cleanupProject(project.id, project.path);
+    projectRepo.delete(project.id);
+  }
 }
 
 export function registerAllIpc(mainWindow: BrowserWindow): void {

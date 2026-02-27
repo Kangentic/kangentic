@@ -86,6 +86,7 @@ async function start() {
   if (ephemeral) {
     const userDataDir = path.join(path.resolve(targetDir), '.kangentic', 'electron-data');
     electronArgs.push(`--user-data-dir=${userDataDir}`);
+    electronArgs.push('--ephemeral');
   }
 
   electronProc = spawn(electronExe, electronArgs, {

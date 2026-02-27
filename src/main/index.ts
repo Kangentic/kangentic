@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, session } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { registerAllIpc, getSessionManager, getCurrentProjectId, openProjectByPath } from './ipc/register-all';
+import { registerAllIpc, getSessionManager, getCurrentProjectId, openProjectByPath, cleanupProject, deleteProjectFromIndex, pruneStaleWorktreeProjects } from './ipc/register-all';
 import { closeAll, getProjectDb } from './db/database';
 import { SessionRepository } from './db/repositories/session-repository';
 import { IPC } from '../shared/ipc-channels';
@@ -37,6 +37,8 @@ for (const arg of process.argv) {
     break;
   }
 }
+
+const isEphemeral = process.argv.includes('--ephemeral');
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -181,6 +183,16 @@ app.whenReady().then(async () => {
     }
   }
 
+  // Prune stale worktree projects from crashed/force-killed preview instances.
+  // Only runs in the main app — preview instances skip this.
+  if (!isEphemeral) {
+    try {
+      await pruneStaleWorktreeProjects();
+    } catch (err) {
+      console.error('Failed to prune stale worktree projects:', err);
+    }
+  }
+
   createWindow();
 });
 
@@ -229,6 +241,20 @@ async function shutdownSessions(): Promise<void> {
   closeAll();
 }
 
+async function shutdownEphemeral(): Promise<void> {
+  const sessionManager = getSessionManager();
+  sessionManager.killAll();
+
+  const projectId = getCurrentProjectId();
+  const cwd = getCwdArg();
+  if (projectId && cwd) {
+    await cleanupProject(projectId, cwd);
+    deleteProjectFromIndex(projectId);
+  }
+
+  closeAll();
+}
+
 let isShuttingDown = false;
 
 app.on('before-quit', (event) => {
@@ -237,7 +263,8 @@ app.on('before-quit', (event) => {
 
   // Delay quit until async shutdown completes
   event.preventDefault();
-  shutdownSessions().finally(() => {
+  const shutdown = isEphemeral ? shutdownEphemeral() : shutdownSessions();
+  shutdown.finally(() => {
     app.exit(0);
   });
 });
@@ -247,7 +274,8 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     if (isShuttingDown) return;
     isShuttingDown = true;
-    shutdownSessions().finally(() => {
+    const shutdown = isEphemeral ? shutdownEphemeral() : shutdownSessions();
+    shutdown.finally(() => {
       process.exit(0);
     });
   });
