@@ -153,6 +153,7 @@ export function injectEventHooks(
       ...filterEventHooks(existingHooks.PreToolUse),
       { matcher: '', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" tool_start` }] },
       { matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" idle` }] },
+      { matcher: 'ExitPlanMode', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" idle` }] },
     ],
     PostToolUse: [
       ...filterEventHooks(existingHooks.PostToolUse),

@@ -50,7 +50,7 @@ describe('hook-manager', () => {
     injectEventHooks(tmpDir, EVENT_BRIDGE, EVENTS_PATH);
 
     const settings = readSettings();
-    expect(settings.hooks.PreToolUse).toHaveLength(2);
+    expect(settings.hooks.PreToolUse).toHaveLength(3);
     expect(settings.hooks.PostToolUse).toHaveLength(1);
     expect(settings.hooks.UserPromptSubmit).toHaveLength(1);
     expect(settings.hooks.Stop).toHaveLength(1);
@@ -62,6 +62,10 @@ describe('hook-manager', () => {
     expect(settings.hooks.PreToolUse[1].matcher).toBe('AskUserQuestion');
     expect(settings.hooks.PreToolUse[1].hooks[0].command).toContain('event-bridge');
     expect(settings.hooks.PreToolUse[1].hooks[0].command).toContain('idle');
+    // Third entry: ExitPlanMode → idle
+    expect(settings.hooks.PreToolUse[2].matcher).toBe('ExitPlanMode');
+    expect(settings.hooks.PreToolUse[2].hooks[0].command).toContain('event-bridge');
+    expect(settings.hooks.PreToolUse[2].hooks[0].command).toContain('idle');
   });
 
   it('injectActivityHooks preserves event-bridge hooks', () => {
@@ -79,12 +83,12 @@ describe('hook-manager', () => {
     expect(upsCommands.some((c: string) => c.includes('event-bridge'))).toBe(true);
     expect(upsCommands.some((c: string) => c.includes('activity-bridge'))).toBe(true);
 
-    // PreToolUse should have event-bridge entries (2) + activity-bridge AskUserQuestion (1)
-    expect(settings.hooks.PreToolUse).toHaveLength(3);
+    // PreToolUse should have event-bridge entries (3) + activity-bridge AskUserQuestion (1)
+    expect(settings.hooks.PreToolUse).toHaveLength(4);
     const ptuCommands = settings.hooks.PreToolUse.map(
       (e: any) => e.hooks[0].command,
     );
-    expect(ptuCommands.filter((c: string) => c.includes('event-bridge'))).toHaveLength(2);
+    expect(ptuCommands.filter((c: string) => c.includes('event-bridge'))).toHaveLength(3);
     expect(ptuCommands.filter((c: string) => c.includes('activity-bridge'))).toHaveLength(1);
   });
 
@@ -101,13 +105,13 @@ describe('hook-manager', () => {
     expect(stopCommands.some((c: string) => c.includes('activity-bridge'))).toBe(true);
     expect(stopCommands.some((c: string) => c.includes('event-bridge'))).toBe(true);
 
-    // PreToolUse should have activity-bridge AskUserQuestion (1) + event-bridge entries (2)
-    expect(settings.hooks.PreToolUse).toHaveLength(3);
+    // PreToolUse should have activity-bridge AskUserQuestion (1) + event-bridge entries (3)
+    expect(settings.hooks.PreToolUse).toHaveLength(4);
     const ptuCommands = settings.hooks.PreToolUse.map(
       (e: any) => e.hooks[0].command,
     );
     expect(ptuCommands.filter((c: string) => c.includes('activity-bridge'))).toHaveLength(1);
-    expect(ptuCommands.filter((c: string) => c.includes('event-bridge'))).toHaveLength(2);
+    expect(ptuCommands.filter((c: string) => c.includes('event-bridge'))).toHaveLength(3);
   });
 
   it('injectActivityHooks preserves user hooks', () => {

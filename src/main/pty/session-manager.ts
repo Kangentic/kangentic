@@ -620,6 +620,17 @@ export class SessionManager extends EventEmitter {
             const event = JSON.parse(line) as SessionEvent;
             events.push(event);
             this.emit('event', session.id, event);
+
+            // Derive activity state from events — more reliable than
+            // the separate activity-bridge because the event-bridge
+            // fires for ALL tools (blank PreToolUse matcher).
+            if (event.type === 'tool_start' || event.type === 'prompt') {
+              this.activityCache.set(session.id, 'thinking');
+              this.emit('activity', session.id, 'thinking');
+            } else if (event.type === 'idle') {
+              this.activityCache.set(session.id, 'idle');
+              this.emit('activity', session.id, 'idle');
+            }
           } catch {
             // Malformed line — skip
           }

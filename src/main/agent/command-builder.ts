@@ -187,6 +187,7 @@ export class CommandBuilder {
           ...(merged.hooks.PreToolUse || existingHooks.PreToolUse || []),
           { matcher: '', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" tool_start` }] },
           { matcher: 'AskUserQuestion', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" idle` }] },
+          { matcher: 'ExitPlanMode', hooks: [{ type: 'command', command: `node "${eventBridge}" "${eventsPath}" idle` }] },
         ];
         merged.hooks.PostToolUse = [
           ...(merged.hooks.PostToolUse || existingHooks.PostToolUse || []),
