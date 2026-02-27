@@ -42,6 +42,8 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const nextIdRef = useRef(0);
 
+  const isDirty = title.trim() !== '' || description.trim() !== '' || attachments.length > 0;
+
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
@@ -176,6 +178,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
       <form onSubmit={handleSubmit}>
         <BaseDialog
           onClose={onClose}
+          preventBackdropClose={isDirty}
           title="New Task"
           icon={<Plus size={14} className="text-zinc-400" />}
           className="w-[640px]"
@@ -214,6 +217,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
             <div className="relative">
               <textarea
                 ref={textareaRef}
+                data-testid="task-description"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 onPaste={handlePaste}

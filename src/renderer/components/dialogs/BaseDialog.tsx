@@ -21,6 +21,9 @@ interface BaseDialogProps {
   // Body
   rawBody?: boolean;              // skip px-4 py-4 wrapper, render children directly
 
+  // Behavior
+  preventBackdropClose?: boolean; // When true, clicking the backdrop does not close the dialog
+
   // Container
   className?: string;
   zIndex?: string;
@@ -35,6 +38,7 @@ export function BaseDialog({
   headerRight,
   header,
   footer,
+  preventBackdropClose,
   rawBody,
   className = 'w-[400px]',
   zIndex = 'z-50',
@@ -80,7 +84,7 @@ export function BaseDialog({
       onAnimationEnd={handleBackdropAnimationEnd}
       onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
       onMouseUp={(e) => {
-        if (e.target === e.currentTarget && backdropMouseDown.current) requestClose();
+        if (e.target === e.currentTarget && backdropMouseDown.current && !preventBackdropClose) requestClose();
         backdropMouseDown.current = false;
       }}
     >

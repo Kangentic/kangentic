@@ -169,7 +169,7 @@ export async function createTask(
   await titleInput.fill(title);
 
   if (description) {
-    const descInput = page.locator('textarea[placeholder="Description (optional)"]');
+    const descInput = page.locator('[data-testid="task-description"]');
     await descInput.fill(description);
   }
 
