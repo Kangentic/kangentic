@@ -2,7 +2,9 @@ import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
-const VITE_URL = 'http://localhost:5173';
+const isWorktree = __dirname.replace(/\\/g, '/').includes('.kangentic/worktrees/');
+const VITE_PORT = process.env.VITE_PORT || (isWorktree ? '5174' : '5173');
+const VITE_URL = `http://localhost:${VITE_PORT}`;
 
 /**
  * Launch a headless Chromium page with the electronAPI mock injected.
@@ -71,7 +73,7 @@ export async function createTask(
   await titleInput.fill(title);
 
   if (description) {
-    const descInput = page.locator('textarea[placeholder="Description (optional)"]');
+    const descInput = page.locator('textarea').first();
     await descInput.fill(description);
   }
 

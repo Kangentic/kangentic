@@ -11,6 +11,7 @@
   let archivedTasks = [];
   let actions = [];
   let sessions = [];
+  let attachments = [];
   let currentProjectId = null;
 
   let config = {
@@ -116,6 +117,7 @@
           archivedTasks = [];
           actions = [];
           sessions = [];
+          attachments = [];
         }
       },
       open: async function (id) {
@@ -179,8 +181,9 @@
         var sameColumn = tasks.filter(function (t) {
           return t.swimlane_id === input.swimlane_id;
         });
+        var taskId = uuid();
         var task = {
-          id: uuid(),
+          id: taskId,
           title: input.title,
           description: input.description || '',
           swimlane_id: input.swimlane_id,
@@ -197,6 +200,20 @@
           updated_at: now(),
         };
         tasks.push(task);
+        // Process pending attachments
+        if (input.pendingAttachments) {
+          input.pendingAttachments.forEach(function (att) {
+            attachments.push({
+              id: uuid(),
+              task_id: taskId,
+              filename: att.filename,
+              file_path: '/mock/attachments/' + att.filename,
+              media_type: att.media_type,
+              size_bytes: att.data ? att.data.length : 0,
+              created_at: now(),
+            });
+          });
+        }
         return task;
       },
       update: async function (input) {
@@ -224,6 +241,9 @@
         });
         archivedTasks = archivedTasks.filter(function (t) {
           return t.id !== id;
+        });
+        attachments = attachments.filter(function (a) {
+          return a.task_id !== id;
         });
       },
       move: async function (input) {
@@ -255,6 +275,38 @@
         archivedTasks.splice(idx, 1);
         tasks.push(task);
         return task;
+      },
+    },
+
+    attachments: {
+      list: async function (taskId) {
+        return attachments.filter(function (a) {
+          return a.task_id === taskId;
+        });
+      },
+      add: async function (input) {
+        var attachment = {
+          id: uuid(),
+          task_id: input.task_id,
+          filename: input.filename,
+          file_path: '/mock/attachments/' + input.filename,
+          media_type: input.media_type,
+          size_bytes: input.data ? input.data.length : 0,
+          created_at: now(),
+        };
+        attachments.push(attachment);
+        return attachment;
+      },
+      remove: async function (id) {
+        attachments = attachments.filter(function (a) {
+          return a.id !== id;
+        });
+      },
+      getDataUrl: async function (id) {
+        var att = attachments.find(function (a) { return a.id === id; });
+        if (!att) throw new Error('Attachment not found: ' + id);
+        // Return a 1x1 transparent PNG as a data URL for testing
+        return 'data:' + att.media_type + ';base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
       },
     },
 

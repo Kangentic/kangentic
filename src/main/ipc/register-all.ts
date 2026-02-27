@@ -14,6 +14,7 @@ import { ShellResolver } from '../pty/shell-resolver';
 import { TransitionEngine } from '../engine/transition-engine';
 import { CommandBuilder } from '../agent/command-builder';
 import { SessionRepository } from '../db/repositories/session-repository';
+import { AttachmentRepository } from '../db/repositories/attachment-repository';
 import { recoverSessions, reconcileSessions, pruneOrphanedWorktrees } from '../engine/session-recovery';
 import { WorktreeManager } from '../git/worktree-manager';
 import { stripActivityHooks } from '../agent/hook-manager';
@@ -81,13 +82,14 @@ const claudeDetector = new ClaudeDetector();
 const shellResolver = new ShellResolver();
 const commandBuilder = new CommandBuilder();
 
-function getProjectRepos(): { tasks: TaskRepository; swimlanes: SwimlaneRepository; actions: ActionRepository } {
+function getProjectRepos(): { tasks: TaskRepository; swimlanes: SwimlaneRepository; actions: ActionRepository; attachments: AttachmentRepository } {
   if (!currentProjectId) throw new Error('No project is currently open');
   const db = getProjectDb(currentProjectId);
   return {
     tasks: new TaskRepository(db),
     swimlanes: new SwimlaneRepository(db),
     actions: new ActionRepository(db),
+    attachments: new AttachmentRepository(db),
   };
 }
 
@@ -348,8 +350,18 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   });
 
   ipcMain.handle(IPC.TASK_CREATE, (_, input) => {
-    const { tasks } = getProjectRepos();
-    return tasks.create(input);
+    const { tasks, attachments } = getProjectRepos();
+    const { pendingAttachments, ...taskInput } = input;
+    const task = tasks.create(taskInput);
+
+    // Save any pending attachments from the dialog
+    if (pendingAttachments?.length && currentProjectPath) {
+      for (const att of pendingAttachments) {
+        attachments.add(currentProjectPath, task.id, att.filename, att.data, att.media_type);
+      }
+    }
+
+    return task;
   });
 
   ipcMain.handle(IPC.TASK_UPDATE, async (_, input) => {
@@ -388,14 +400,17 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   });
 
   ipcMain.handle(IPC.TASK_DELETE, async (_, id) => {
-    const { tasks } = getProjectRepos();
+    const { tasks, attachments } = getProjectRepos();
     const task = tasks.getById(id);
-    if (task) await cleanupTaskResources(task, tasks);
+    if (task) {
+      attachments.deleteByTaskId(id);
+      await cleanupTaskResources(task, tasks);
+    }
     tasks.delete(id);
   });
 
   ipcMain.handle(IPC.TASK_MOVE, async (_, input) => {
-    const { tasks, actions, swimlanes } = getProjectRepos();
+    const { tasks, actions, swimlanes, attachments } = getProjectRepos();
     const task = tasks.getById(input.taskId);
     if (!task) throw new Error(`Task ${input.taskId} not found`);
 
@@ -484,6 +499,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
         };
       },
       sessionRepo,
+      attachments,
     );
 
     try {
@@ -513,7 +529,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   });
 
   ipcMain.handle(IPC.TASK_UNARCHIVE, async (_, input: { id: string; targetSwimlaneId: string }) => {
-    const { tasks, swimlanes, actions } = getProjectRepos();
+    const { tasks, swimlanes, actions, attachments: attachmentRepo } = getProjectRepos();
 
     // Determine position at end of target lane
     const laneTasks = tasks.list(input.targetSwimlaneId);
@@ -563,6 +579,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
             };
           },
           sessionRepo,
+          attachmentRepo,
         );
 
         try {
@@ -586,6 +603,31 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     }
 
     return tasks.getById(input.id);
+  });
+
+  // === Attachments ===
+  ipcMain.handle(IPC.ATTACHMENT_LIST, (_, taskId: string) => {
+    const { attachments } = getProjectRepos();
+    return attachments.list(taskId);
+  });
+
+  ipcMain.handle(IPC.ATTACHMENT_ADD, (_, input: { task_id: string; filename: string; data: string; media_type: string }) => {
+    if (!currentProjectPath) throw new Error('No project open');
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    const dataSize = Buffer.byteLength(input.data, 'base64');
+    if (dataSize > maxSize) throw new Error(`Attachment exceeds 10MB limit (${(dataSize / 1024 / 1024).toFixed(1)}MB)`);
+    const { attachments } = getProjectRepos();
+    return attachments.add(currentProjectPath, input.task_id, input.filename, input.data, input.media_type);
+  });
+
+  ipcMain.handle(IPC.ATTACHMENT_REMOVE, (_, id: string) => {
+    const { attachments } = getProjectRepos();
+    attachments.remove(id);
+  });
+
+  ipcMain.handle(IPC.ATTACHMENT_GET_DATA_URL, (_, id: string) => {
+    const { attachments } = getProjectRepos();
+    return attachments.getDataUrl(id);
   });
 
   // === Swimlanes ===
@@ -688,7 +730,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   });
 
   ipcMain.handle(IPC.SESSION_RESUME, async (_, taskId: string) => {
-    const { tasks, actions } = getProjectRepos();
+    const { tasks, actions, attachments: attachmentRepo } = getProjectRepos();
     const task = tasks.getById(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
 
@@ -727,6 +769,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
         };
       },
       sessionRepo,
+      attachmentRepo,
     );
 
     await engine.resumeSuspendedSession(task);

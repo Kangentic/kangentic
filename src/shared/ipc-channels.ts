@@ -17,6 +17,12 @@ export const IPC = {
   TASK_LIST_ARCHIVED: 'task:list-archived',
   TASK_UNARCHIVE: 'task:unarchive',
 
+  // Attachments
+  ATTACHMENT_LIST: 'attachment:list',
+  ATTACHMENT_ADD: 'attachment:add',
+  ATTACHMENT_REMOVE: 'attachment:remove',
+  ATTACHMENT_GET_DATA_URL: 'attachment:getDataUrl',
+
   // Swimlanes
   SWIMLANE_LIST: 'swimlane:list',
   SWIMLANE_CREATE: 'swimlane:create',

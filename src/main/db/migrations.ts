@@ -207,6 +207,41 @@ export function runProjectMigrations(db: Database.Database): void {
     }
   }
 
+  // Migration: create task_attachments table for image/file attachments
+  const hasAttachmentsTable = (db.prepare(
+    "SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name='task_attachments'"
+  ).get() as { c: number }).c > 0;
+  if (!hasAttachmentsTable) {
+    db.exec(`
+      CREATE TABLE task_attachments (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        filename TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        media_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_task_attachments_task_id ON task_attachments(task_id);
+    `);
+  }
+
+  // Data migration: append {{attachments}} to spawn_agent promptTemplates that lack it
+  const spawnActions = db.prepare(
+    "SELECT id, config_json FROM actions WHERE type = 'spawn_agent'"
+  ).all() as Array<{ id: string; config_json: string }>;
+
+  for (const action of spawnActions) {
+    try {
+      const config = JSON.parse(action.config_json);
+      if (config.promptTemplate && !config.promptTemplate.includes('{{attachments}}')) {
+        config.promptTemplate = config.promptTemplate + '{{attachments}}';
+        db.prepare('UPDATE actions SET config_json = ? WHERE id = ?')
+          .run(JSON.stringify(config), action.id);
+      }
+    } catch { /* skip malformed config */ }
+  }
+
   // Data migration: update spawn_agent actions that still use 'dangerously-skip'
   // permission mode to omit it (falling through to app default: project-settings).
   const agentActions = db.prepare(
@@ -243,7 +278,7 @@ function seedActionsAndTransitions(db: Database.Database, now: string): void {
     'spawn_agent',
     JSON.stringify({
       agent: 'claude',
-      promptTemplate: 'Task: {{title}}\n\n{{description}}',
+      promptTemplate: 'Task: {{title}}\n\n{{description}}{{attachments}}',
       permissionMode: 'plan-mode',
     }),
     now,
@@ -257,7 +292,7 @@ function seedActionsAndTransitions(db: Database.Database, now: string): void {
     'spawn_agent',
     JSON.stringify({
       agent: 'claude',
-      promptTemplate: 'Task: {{title}}\n\n{{description}}',
+      promptTemplate: 'Task: {{title}}\n\n{{description}}{{attachments}}',
     }),
     now,
   );

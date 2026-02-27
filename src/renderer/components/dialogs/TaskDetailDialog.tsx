@@ -1,5 +1,5 @@
-import React, { useState, useLayoutEffect, useRef, useEffect } from 'react';
-import { X, Trash2, Pencil, Loader2, ExternalLink, ArrowRightLeft, ChevronRight, MoreHorizontal, Archive, CirclePause, CirclePlay, Play } from 'lucide-react';
+import React, { useState, useLayoutEffect, useRef, useEffect, useCallback } from 'react';
+import { X, Trash2, Pencil, Loader2, ExternalLink, ArrowRightLeft, ChevronRight, MoreHorizontal, Archive, CirclePause, CirclePlay, Play, Image } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { getSwimlaneIcon } from '../../utils/swimlane-icons';
@@ -9,7 +9,20 @@ import { BaseDialog } from './BaseDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { useToastStore } from '../../stores/toast-store';
 import { useConfigStore } from '../../stores/config-store';
-import type { Task } from '../../../shared/types';
+import type { Task, TaskAttachment } from '../../../shared/types';
+
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+
+const MEDIA_TYPE_EXT: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+};
+
+interface AttachmentWithPreview extends TaskAttachment {
+  previewUrl?: string;
+}
 
 interface TaskDetailDialogProps {
   task: Task;
@@ -38,7 +51,129 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
   const updateConfig = useConfigStore((s) => s.updateConfig);
   const kebabMenuRef = useRef<HTMLDivElement>(null);
 
+  // Attachment state
+  const [savedAttachments, setSavedAttachments] = useState<AttachmentWithPreview[]>([]);
+  const [previewAttachment, setPreviewAttachment] = useState<{ url: string; filename: string } | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
   const isArchived = task.archived_at !== null;
+
+  // Load attachments on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await window.electronAPI.attachments.list(task.id);
+        if (cancelled) return;
+        // Load preview data URLs for each attachment
+        const withPreviews = await Promise.all(
+          list.map(async (att) => {
+            try {
+              const previewUrl = await window.electronAPI.attachments.getDataUrl(att.id);
+              return { ...att, previewUrl };
+            } catch {
+              return { ...att, previewUrl: undefined };
+            }
+          }),
+        );
+        if (!cancelled) setSavedAttachments(withPreviews);
+      } catch {
+        // No attachments API (e.g. in tests) — ignore
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [task.id]);
+
+  const addImageFile = useCallback(async (file: File, filenameOverride?: string) => {
+    if (file.size > MAX_IMAGE_SIZE) {
+      useToastStore.getState().addToast({
+        message: `Image "${file.name}" exceeds 10MB limit`,
+        variant: 'warning',
+      });
+      return;
+    }
+    if (!file.type.startsWith('image/')) return;
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(',')[1];
+      const filename = filenameOverride || file.name;
+      try {
+        const attachment = await window.electronAPI.attachments.add({
+          task_id: task.id,
+          filename,
+          data: base64,
+          media_type: file.type,
+        });
+        const previewUrl = await window.electronAPI.attachments.getDataUrl(attachment.id);
+        setSavedAttachments((prev) => [...prev, { ...attachment, previewUrl }]);
+      } catch (err) {
+        console.error('Failed to add attachment:', err);
+      }
+    };
+    reader.readAsDataURL(file);
+  }, [task.id]);
+
+  const removeAttachment = useCallback(async (id: string) => {
+    try {
+      await window.electronAPI.attachments.remove(id);
+      setSavedAttachments((prev) => prev.filter((a) => a.id !== id));
+    } catch (err) {
+      console.error('Failed to remove attachment:', err);
+    }
+  }, []);
+
+  const handleAttachmentPaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+        const ext = MEDIA_TYPE_EXT[file.type] || '.png';
+        const count = savedAttachments.filter((a) => a.filename.startsWith('pasted-image-')).length;
+        const name = `pasted-image-${count + 1}${ext}`;
+        addImageFile(file, name);
+      }
+    }
+  }, [savedAttachments, addImageFile]);
+
+  const handleAttachmentDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleAttachmentDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleAttachmentDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const files = e.dataTransfer?.files;
+    if (!files) return;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.type.startsWith('image/')) {
+        addImageFile(file);
+      }
+    }
+  }, [addImageFile]);
+
+  const handlePreview = useCallback(async (att: AttachmentWithPreview) => {
+    if (att.previewUrl) {
+      setPreviewAttachment({ url: att.previewUrl, filename: att.filename });
+    }
+  }, []);
 
   // Close kebab menu on click outside
   useEffect(() => {
@@ -184,6 +319,38 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
       variant: 'info',
     });
   };
+
+  // Thumbnail strip component (shared between edit and view modes)
+  const thumbnailStrip = savedAttachments.length > 0 && (
+    <div className="flex gap-2.5 overflow-x-auto pb-1" data-testid="attachment-thumbnails">
+      {savedAttachments.map((att) => (
+        <div
+          key={att.id}
+          className="relative flex-shrink-0 w-24 h-24 rounded-md border border-zinc-600 overflow-hidden group cursor-pointer"
+          onClick={() => handlePreview(att)}
+        >
+          {att.previewUrl && (
+            <img
+              src={att.previewUrl}
+              alt={att.filename}
+              className="w-full h-full object-cover"
+            />
+          )}
+          {isEditing && (
+            <button
+              onClick={(e) => { e.stopPropagation(); removeAttachment(att.id); }}
+              className="absolute top-0 right-0 p-1 bg-black/70 text-white rounded-bl opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              <X size={14} />
+            </button>
+          )}
+          <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-1 py-0.5 text-[9px] text-zinc-300 truncate opacity-0 group-hover:opacity-100 transition-opacity">
+            {att.filename}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 
   const customHeader = (
     <div className="flex items-center gap-3 px-4 py-3">
@@ -395,29 +562,58 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
   }
 
   return (
-    <BaseDialog
-      onClose={onClose}
-      header={customHeader}
-      rawBody
-      className={hasSessionContext ? 'w-[90vw] h-[85vh]' : 'w-[480px] max-h-[80vh]'}
-      backdropClassName="p-6"
-    >
-        {/* Description (collapsible when terminal is present) */}
+    <>
+      <BaseDialog
+        onClose={onClose}
+        header={customHeader}
+        rawBody
+        className={hasSessionContext ? 'w-[90vw] h-[85vh]' : 'w-[480px] max-h-[80vh]'}
+        backdropClassName="p-6"
+      >
+        {/* Description edit mode with drag/drop support */}
         {isEditing && (
-          <div className="px-4 py-3 border-b border-zinc-700 flex-shrink-0">
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-              placeholder="Description"
-              className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-blue-500 resize-none"
-            />
+          <div
+            className="px-4 py-3 border-b border-zinc-700 flex-shrink-0 relative space-y-2"
+            onDragOver={handleAttachmentDragOver}
+            onDragLeave={handleAttachmentDragLeave}
+            onDrop={handleAttachmentDrop}
+          >
+            <div className="relative">
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                onPaste={handleAttachmentPaste}
+                rows={3}
+                className="w-full bg-zinc-900 border border-zinc-600 rounded px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-blue-500 resize-y min-h-[80px] max-h-[300px]"
+              />
+              {!description && (
+                <div className="absolute inset-0 flex flex-col pointer-events-none px-3 py-2">
+                  <span className="text-sm text-zinc-500">Description</span>
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="flex flex-col items-center gap-1.5 border border-dashed border-zinc-700 rounded-lg px-5 py-3">
+                      <Image size={18} className="text-zinc-600" />
+                      <span className="text-xs text-zinc-600">Paste or drop images here</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            {thumbnailStrip}
+            {isDragOver && (
+              <div className="absolute inset-0 bg-blue-500/10 border-2 border-dashed border-blue-500 rounded-lg flex items-center justify-center z-10 pointer-events-none">
+                <span className="text-sm text-blue-400 font-medium">Drop images here</span>
+              </div>
+            )}
           </div>
         )}
 
-        {!isEditing && task.description && !hasSessionContext && (
-          <div className="px-4 py-3 border-b border-zinc-700 flex-shrink-0">
-            <p className="text-sm text-zinc-400 whitespace-pre-wrap">{task.description}</p>
+        {/* Description view mode with attachment thumbnails */}
+        {!isEditing && (task.description || savedAttachments.length > 0) && !hasSessionContext && (
+          <div className="px-4 py-3 border-b border-zinc-700 flex-shrink-0 space-y-2">
+            {task.description && (
+              <p className="text-sm text-zinc-400 whitespace-pre-wrap">{task.description}</p>
+            )}
+            {thumbnailStrip}
           </div>
         )}
 
@@ -473,12 +669,35 @@ export function TaskDetailDialog({ task, onClose }: TaskDetailDialogProps) {
             </button>
           </div>
         ) : (
-          !isEditing && !task.description && (
+          !isEditing && !task.description && savedAttachments.length === 0 && (
             <div className="flex-1 flex items-center justify-center text-zinc-600 text-sm p-8">
               No active session. Drag this task to a column with a transition to start one.
             </div>
           )
         )}
       </BaseDialog>
+
+      {/* Full-size preview overlay */}
+      {previewAttachment && (
+        <div
+          className="fixed inset-0 bg-black/80 flex flex-col items-center justify-center z-[60]"
+          onClick={() => setPreviewAttachment(null)}
+        >
+          <button
+            className="absolute top-4 right-4 p-2 text-zinc-400 hover:text-zinc-200 transition-colors"
+            onClick={() => setPreviewAttachment(null)}
+          >
+            <X size={24} />
+          </button>
+          <img
+            src={previewAttachment.url}
+            alt={previewAttachment.filename}
+            className="max-w-[90vw] max-h-[85vh] object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <p className="mt-2 text-sm text-zinc-400">{previewAttachment.filename}</p>
+        </div>
+      )}
+    </>
   );
 }

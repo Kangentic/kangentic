@@ -10,6 +10,7 @@ import { ensureWorktreeTrust } from '../agent/trust-manager';
 import type { ActionRepository } from '../db/repositories/action-repository';
 import type { TaskRepository } from '../db/repositories/task-repository';
 import type { SessionRepository } from '../db/repositories/session-repository';
+import type { AttachmentRepository } from '../db/repositories/attachment-repository';
 
 export class TransitionEngine {
   constructor(
@@ -20,6 +21,7 @@ export class TransitionEngine {
     private commandBuilder: CommandBuilder,
     private getConfig: () => { permissionMode: string; claudePath: string | null; projectPath: string | null; gitConfig: AppConfig['git'] },
     private sessionRepo?: SessionRepository,
+    private attachmentRepo?: AttachmentRepository,
   ) {}
 
   /**
@@ -27,12 +29,16 @@ export class TransitionEngine {
    * Backlog/Done into a non-agent column (no spawn_agent transition fires).
    */
   async resumeSuspendedSession(task: Task): Promise<void> {
+    const attachmentPaths = this.attachmentRepo?.getPathsForTask(task.id) ?? [];
     await this.executeSpawnAgent({}, task, {
       title: task.title,
       description: task.description,
       taskId: task.id,
       worktreePath: task.worktree_path || '',
       branchName: task.branch_name || '',
+      attachments: attachmentPaths.length > 0
+        ? '\n\nAttached images for reference (use Read tool to view):\n' + attachmentPaths.map(p => `- ${p}`).join('\n')
+        : '',
     });
   }
 
@@ -56,12 +62,16 @@ export class TransitionEngine {
       console.error(`Failed to parse config for action ${action.id}:`, err);
       return; // skip action with malformed config
     }
+    const attachmentPaths = this.attachmentRepo?.getPathsForTask(task.id) ?? [];
     const templateVars: Record<string, string> = {
       title: task.title,
       description: task.description,
       taskId: task.id,
       worktreePath: task.worktree_path || '',
       branchName: task.branch_name || '',
+      attachments: attachmentPaths.length > 0
+        ? '\n\nAttached images for reference (use Read tool to view):\n' + attachmentPaths.map(p => `- ${p}`).join('\n')
+        : '',
     };
 
     switch (action.type) {

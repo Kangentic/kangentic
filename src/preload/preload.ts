@@ -27,6 +27,13 @@ const api: ElectronAPI = {
     unarchive: (input) => ipcRenderer.invoke(IPC.TASK_UNARCHIVE, input),
   },
 
+  attachments: {
+    list: (taskId: string) => ipcRenderer.invoke(IPC.ATTACHMENT_LIST, taskId),
+    add: (input: { task_id: string; filename: string; data: string; media_type: string }) => ipcRenderer.invoke(IPC.ATTACHMENT_ADD, input),
+    remove: (id: string) => ipcRenderer.invoke(IPC.ATTACHMENT_REMOVE, id),
+    getDataUrl: (id: string) => ipcRenderer.invoke(IPC.ATTACHMENT_GET_DATA_URL, id),
+  },
+
   swimlanes: {
     list: () => ipcRenderer.invoke(IPC.SWIMLANE_LIST),
     create: (input) => ipcRenderer.invoke(IPC.SWIMLANE_CREATE, input),

@@ -28,6 +28,16 @@ export interface Task {
   updated_at: string;
 }
 
+export interface TaskAttachment {
+  id: string;
+  task_id: string;
+  filename: string;
+  file_path: string;
+  media_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
 export type SwimlaneRole = 'backlog' | 'planning' | 'running' | 'done';
 
 export interface Swimlane {
@@ -239,6 +249,11 @@ export interface TaskCreateInput {
   description: string;
   swimlane_id: string;
   baseBranch?: string;
+  pendingAttachments?: Array<{
+    filename: string;
+    data: string; // base64
+    media_type: string;
+  }>;
 }
 
 export interface TaskUpdateInput {
@@ -335,6 +350,14 @@ export interface ElectronAPI {
     move: (input: TaskMoveInput) => Promise<void>;
     listArchived: () => Promise<Task[]>;
     unarchive: (input: TaskUnarchiveInput) => Promise<Task>;
+  };
+
+  // Attachments
+  attachments: {
+    list: (taskId: string) => Promise<TaskAttachment[]>;
+    add: (input: { task_id: string; filename: string; data: string; media_type: string }) => Promise<TaskAttachment>;
+    remove: (id: string) => Promise<void>;
+    getDataUrl: (id: string) => Promise<string>;
   };
 
   // Swimlanes
