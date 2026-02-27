@@ -34,6 +34,7 @@ let mainCtx = null;
 let preloadCtx = null;
 let restartTimer = null;
 let isRestarting = false;
+let startupComplete = false;
 
 async function start() {
   // 1. Start Vite dev server using JS API
@@ -72,6 +73,7 @@ async function start() {
       let firstBuild = true;
       build.onEnd(result => {
         if (firstBuild) { firstBuild = false; return; }
+        if (!startupComplete) return;
         if (result.errors.length > 0) {
           console.log('[dev] Build errors — Electron keeps running with previous code');
           return;
@@ -118,6 +120,7 @@ async function start() {
   for (const rel of bridgeFiles) {
     const absPath = path.join(projectDir, rel);
     fs.watch(absPath, { persistent: false }, () => {
+      if (!startupComplete) return;
       try {
         fs.copyFileSync(absPath, path.join(buildDir, path.basename(rel)));
         console.log(`[dev] Bridge script changed: ${path.basename(rel)} — restarting Electron...`);
@@ -131,6 +134,11 @@ async function start() {
 
   // 4. Launch Electron
   launchElectron();
+
+  // Grace period: ignore spurious filesystem events from the initial build/copy.
+  // esbuild watch and fs.watch on Windows fire duplicate events immediately after
+  // setup — suppress them until the dust settles.
+  setTimeout(() => { startupComplete = true; }, 2000);
 }
 
 function launchElectron() {
@@ -156,7 +164,9 @@ function launchElectron() {
     if (code === 75) {
       // Graceful restart — respawn with fresh code (already rebuilt by esbuild watch)
       console.log('[dev] Restarting Electron...');
+      startupComplete = false;
       launchElectron();
+      setTimeout(() => { startupComplete = true; }, 2000);
     } else if (code === 0) {
       // Normal exit (user closed the window)
       console.log('[dev] Electron exited normally');
