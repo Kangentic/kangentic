@@ -1,5 +1,5 @@
 import React, { useState, useLayoutEffect, useRef, useEffect, useCallback } from 'react';
-import { X, Trash2, Pencil, Loader2, ExternalLink, ArrowRightLeft, ChevronRight, MoreHorizontal, Archive, CirclePause, CirclePlay, Play, Image } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, ExternalLink, ArrowRightLeft, ChevronRight, MoreHorizontal, Archive, CirclePause, CirclePlay, Play, Image, Clock } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { getSwimlaneIcon } from '../../utils/swimlane-icons';
@@ -29,6 +29,29 @@ interface TaskDetailDialogProps {
   task: Task;
   onClose: () => void;
   initialEdit?: boolean;
+}
+
+function QueuedPlaceholder({ sessionId }: { sessionId: string | null }) {
+  const queuePos = useSessionStore((s) => sessionId ? s.getQueuePosition(sessionId) : null);
+  const runningCount = useSessionStore((s) => s.getRunningCount());
+  const maxConcurrent = useConfigStore((s) => s.config.claude.maxConcurrentSessions);
+
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center gap-4 bg-surface/50">
+      <Clock size={36} className="text-fg-disabled" />
+      <div className="flex flex-col items-center gap-1.5">
+        <span className="text-base text-fg-muted font-medium">Waiting in queue</span>
+        {queuePos && (
+          <span className="text-sm text-fg-faint">
+            Position {queuePos.position} of {queuePos.total}
+          </span>
+        )}
+        <span className="text-xs text-fg-disabled">
+          {runningCount} / {maxConcurrent} agent slots in use
+        </span>
+      </div>
+    </div>
+  );
 }
 
 export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialogProps) {
@@ -725,8 +748,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
           </div>
         )}
 
-        {/* Terminal, suspended placeholder, or empty state */}
-        {session ? (
+        {/* Terminal, queued placeholder, suspended placeholder, or empty state */}
+        {session && displayState.kind !== 'queued' ? (
           <>
             <div className="flex-1 min-h-0 relative">
               <div className="absolute inset-0">
@@ -739,6 +762,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             </div>
             <ContextBar sessionId={session.id} />
           </>
+        ) : displayState.kind === 'queued' ? (
+          <QueuedPlaceholder sessionId={task.session_id} />
         ) : isSuspended || toggling ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-surface/50">
             <button

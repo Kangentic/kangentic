@@ -29,6 +29,7 @@ interface SessionStore {
 
   getRunningCount: () => number;
   getQueuedCount: () => number;
+  getQueuePosition: (sessionId: string) => { position: number; total: number } | null;
 }
 
 export const useSessionStore = create<SessionStore>((set, get) => ({
@@ -144,4 +145,12 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
   getRunningCount: () => get().sessions.filter((s) => s.status === 'running').length,
   getQueuedCount: () => get().sessions.filter((s) => s.status === 'queued').length,
+  getQueuePosition: (sessionId) => {
+    const queued = get().sessions
+      .filter((s) => s.status === 'queued')
+      .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+    const idx = queued.findIndex((s) => s.id === sessionId);
+    if (idx === -1) return null;
+    return { position: idx + 1, total: queued.length };
+  },
 }));
