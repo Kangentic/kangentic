@@ -43,7 +43,7 @@ function setupCreateWorktreeMocks(options: {
   const {
     commandsExist = true,
     skillsExist = false,
-    trackedCommands = ['.claude/commands/add-update-tests.md', '.claude/commands/merge-back.md'],
+    trackedCommands = ['.claude/commands/test.md', '.claude/commands/merge-back.md'],
     trackedSkills = [],
     skipWorktreeThrows = false,
   } = options;
@@ -82,7 +82,7 @@ describe('WorktreeManager — hideWorktreeDir', () => {
   });
 
   it('marks tracked files as skip-worktree before deleting', async () => {
-    const tracked = ['.claude/commands/add-update-tests.md', '.claude/commands/merge-back.md'];
+    const tracked = ['.claude/commands/test.md', '.claude/commands/merge-back.md'];
     setupCreateWorktreeMocks({ trackedCommands: tracked });
 
     const mgr = new WorktreeManager('/project');
@@ -94,7 +94,7 @@ describe('WorktreeManager — hideWorktreeDir', () => {
     // Verify update-index was called with the tracked files
     expect(mockWorktreeGit.raw).toHaveBeenCalledWith([
       'update-index', '--skip-worktree', '--',
-      '.claude/commands/add-update-tests.md',
+      '.claude/commands/test.md',
       '.claude/commands/merge-back.md',
     ]);
 

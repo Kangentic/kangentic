@@ -151,5 +151,5 @@ Three test tiers — prefer **unit tests** for pure logic, **UI tests** for anyt
 - Prefer editing existing files over creating new ones
 - Use `data-testid` and `data-swimlane-name` attributes for test selectors
 - All dialogs use global `useEffect` Escape key listener
-- When adding or updating tests, use the `/add-update-tests` command to ensure correct tier classification
+- When adding or updating tests, use the `/test` command to ensure correct tier classification
 - **No `any` types** — never use `any` in new code. Use proper types from `src/shared/types.ts`, `unknown` with type guards, or generic constraints. The `/code-review` command will flag `any` usage. Existing `any` casts should be replaced when touching the file.
