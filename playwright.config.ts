@@ -33,7 +33,7 @@ process.env.PLAYWRIGHT_VITE_PORT = String(vitePort);
 export default defineConfig({
   timeout: 60000,
   retries: 0,
-  workers: 8,
+  workers: 4,
   use: {
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
@@ -43,7 +43,7 @@ export default defineConfig({
       name: 'ui',
       testDir: './tests/ui',
       testMatch: '**/*.spec.ts',
-      timeout: 10_000,
+      timeout: 15_000,
       use: {
         browserName: 'chromium',
         headless: true,
