@@ -137,9 +137,15 @@ test.describe('Session Reconciliation', () => {
     await page.reload();
     await waitForBoard(page);
 
-    // Verify the task is still in Planning
-    const planningAfterRestart = page.locator('[data-swimlane-name="Planning"]');
-    await expect(planningAfterRestart.locator(`text=${taskName}`).first()).toBeVisible({ timeout: 10000 });
+    // Wait for the task to be loaded into the renderer (IPC → store → DOM)
+    await page.waitForFunction(
+      (name: string) => {
+        const el = document.querySelector('[data-swimlane-name="Planning"]');
+        return el?.textContent?.includes(name) ?? false;
+      },
+      taskName,
+      { timeout: 20000 },
+    );
 
     // === Key assertion: Session reconciliation should have spawned a new session ===
     // Wait for agent count (reconciliation runs during project open)

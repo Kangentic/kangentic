@@ -328,8 +328,7 @@ export function deleteProjectFromIndex(id: string): void {
 export async function pruneStaleWorktreeProjects(): Promise<void> {
   const projects = projectRepo.list();
   for (const project of projects) {
-    const normalized = project.path.replace(/\\/g, '/');
-    if (!normalized.includes('.kangentic/worktrees/')) continue;
+    if (!WorktreeManager.isInsideWorktree(project.path)) continue;
 
     console.log(`[PRUNE] Removing ephemeral preview project: ${project.name} (${project.path})`);
 

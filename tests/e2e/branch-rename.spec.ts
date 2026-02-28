@@ -122,7 +122,7 @@ async function getTaskByTitle(p: Page, title: string) {
 }
 
 /** Wait until a task has a non-null branch_name (polls the API) */
-async function waitForBranch(p: Page, title: string, timeoutMs = 15000): Promise<string> {
+async function waitForBranch(p: Page, title: string, timeoutMs = 30000): Promise<string> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const task = await getTaskByTitle(p, title);

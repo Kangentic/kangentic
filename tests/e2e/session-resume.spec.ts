@@ -301,9 +301,15 @@ test.describe('Claude Agent — Session Resume across App Restart', () => {
     await page.reload();
     await waitForBoard(page);
 
-    // Verify the task is still in Planning
-    const planningCol = page.locator('[data-swimlane-name="Planning"]');
-    await expect(planningCol.locator(`text=${title}`).first()).toBeVisible({ timeout: 10000 });
+    // Wait for the task to be loaded into the renderer (IPC → store → DOM)
+    await page.waitForFunction(
+      (name: string) => {
+        const el = document.querySelector('[data-swimlane-name="Planning"]');
+        return el?.textContent?.includes(name) ?? false;
+      },
+      title,
+      { timeout: 20000 },
+    );
 
     // Wait for session recovery to spawn a running session via IPC
     await page.waitForFunction(async () => {

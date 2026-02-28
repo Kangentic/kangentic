@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Hoisted mock functions we need to control and assert on
-const { mockList, mockDelete, mockExistsSync, mockCloseProjectDb } = vi.hoisted(() => ({
-  mockList: vi.fn((): any[] => []),
+const { mockList, mockDelete, mockExistsSync, mockCloseProjectDb, mockIsInsideWorktree } = vi.hoisted(() => ({
+  mockList: vi.fn((): unknown[] => []),
   mockDelete: vi.fn(),
   mockExistsSync: vi.fn((): boolean => true),
   mockCloseProjectDb: vi.fn(),
+  mockIsInsideWorktree: vi.fn((): boolean => false),
 }));
 
 // --- Mock leaf-level native modules ---
@@ -125,6 +126,7 @@ vi.mock('../../src/main/git/worktree-manager', () => {
     removeBranch = vi.fn();
     renameBranch = vi.fn();
     static isGitRepo = vi.fn(() => false);
+    static isInsideWorktree = mockIsInsideWorktree;
   }
   return { WorktreeManager: MockWorktreeManager };
 });
@@ -151,8 +153,9 @@ describe('pruneStaleWorktreeProjects', () => {
 
   it('prunes worktree projects regardless of path existence', async () => {
     mockList.mockReturnValue([
-      { id: 'proj-1', name: 'stale-preview', path: 'C:\\repo\\.kangentic\\worktrees\\my-feature-abc123' },
+      { id: 'proj-1', name: 'stale-preview', path: '/repo/my-worktree' },
     ]);
+    mockIsInsideWorktree.mockReturnValue(true);
 
     await pruneStaleWorktreeProjects();
 
@@ -162,8 +165,9 @@ describe('pruneStaleWorktreeProjects', () => {
 
   it('skips non-worktree projects', async () => {
     mockList.mockReturnValue([
-      { id: 'proj-3', name: 'normal-project', path: 'C:\\Users\\dev\\my-app' },
+      { id: 'proj-3', name: 'normal-project', path: '/home/dev/my-app' },
     ]);
+    mockIsInsideWorktree.mockReturnValue(false);
 
     await pruneStaleWorktreeProjects();
 
@@ -183,9 +187,12 @@ describe('pruneStaleWorktreeProjects', () => {
   it('prunes all worktree projects but preserves normal projects', async () => {
     mockList.mockReturnValue([
       { id: 'normal', name: 'normal', path: '/home/user/project' },
-      { id: 'stale', name: 'stale', path: '/repo/.kangentic/worktrees/gone-feature' },
-      { id: 'alive', name: 'alive', path: '/repo/.kangentic/worktrees/still-here' },
+      { id: 'stale', name: 'stale', path: '/repo/worktree-a' },
+      { id: 'alive', name: 'alive', path: '/repo/worktree-b' },
     ]);
+    mockIsInsideWorktree.mockImplementation((p: string) =>
+      p === '/repo/worktree-a' || p === '/repo/worktree-b'
+    );
 
     await pruneStaleWorktreeProjects();
 

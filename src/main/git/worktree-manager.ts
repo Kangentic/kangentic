@@ -27,9 +27,14 @@ export class WorktreeManager {
     return fs.existsSync(path.join(projectPath, '.git'));
   }
 
-  /** Check whether the project path is itself inside a .kangentic/worktrees/ directory (preview mode). */
+  /** Check whether the project path is a git worktree (has `.git` as a file, not a directory). */
   static isInsideWorktree(projectPath: string): boolean {
-    return projectPath.replace(/\\/g, '/').includes('.kangentic/worktrees/');
+    const dotGit = path.join(projectPath, '.git');
+    try {
+      return fs.statSync(dotGit).isFile();
+    } catch {
+      return false;
+    }
   }
 
   /**
