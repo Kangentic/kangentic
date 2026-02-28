@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Bot, Check, ChevronDown, CircleAlert, GitBranch, Palette, SlidersHorizontal, Terminal, X } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
-import type { PermissionStrategy, ThemeMode } from '../../../shared/types';
+import type { PermissionMode, ThemeMode } from '../../../shared/types';
 import { NAMED_THEMES } from '../../../shared/types';
 
 type Phase = 'entering' | 'visible' | 'exiting';
@@ -179,8 +179,8 @@ export function SettingsPanel() {
               <>
                 <SettingRow label="Permissions" description="How Claude handles tool approvals">
                   <Select
-                    value={config.claude.permissionStrategy}
-                    onChange={(e) => updateConfig({ claude: { ...config.claude, permissionStrategy: e.target.value as PermissionStrategy } })}
+                    value={config.claude.permissionMode}
+                    onChange={(e) => updateConfig({ claude: { ...config.claude, permissionMode: e.target.value as PermissionMode } })}
                   >
                     <option value="project-settings">Allowlist (default)</option>
                     <option value="dangerously-skip">Bypass Permissions</option>

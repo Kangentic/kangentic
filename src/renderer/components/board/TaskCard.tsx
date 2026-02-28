@@ -89,7 +89,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         </div>
 
         {showDetail && (
-          <TaskDetailDialog task={task} onClose={() => setShowDetail(false)} initialEdit={!taskSession && !task.archived_at} />
+          <TaskDetailDialog task={task} onClose={() => setShowDetail(false)} initialEdit={displayState.kind === 'none' && !task.archived_at} />
         )}
       </>
     );
@@ -195,7 +195,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
       </div>
 
       {showDetail && (
-        <TaskDetailDialog task={task} onClose={() => setShowDetail(false)} initialEdit={!taskSession && !task.archived_at} />
+        <TaskDetailDialog task={task} onClose={() => setShowDetail(false)} initialEdit={displayState.kind === 'none' && !task.archived_at} />
       )}
     </>
   );

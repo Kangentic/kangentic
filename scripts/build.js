@@ -1,3 +1,4 @@
+const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const esbuild = require('esbuild');
@@ -19,6 +20,10 @@ const esbuildCommon = {
 };
 
 async function build() {
+  console.log('[build] Running tsc --noEmit type check...');
+  execSync('npx tsc --noEmit', { cwd: projectDir, stdio: 'inherit' });
+  console.log('[build] Type check passed');
+
   console.log('[build] Building renderer with Vite...');
   const { build: viteBuild } = await import('vite');
   await viteBuild({

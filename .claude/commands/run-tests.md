@@ -4,8 +4,9 @@ Run all test suites and report results.
 
 ## Instructions
 
-1. **Build first** — run `npm run build` (required for Electron E2E tests).
-2. Then run all three test projects **in parallel** since they are independent:
+1. **Type-check first** — run `npm run typecheck`. If it fails, report the type errors and stop — do not proceed to build or tests.
+2. **Build** — run `npm run build` (required for Electron E2E tests).
+3. Then run all three test projects **in parallel** since they are independent:
    - **Vitest unit tests** — `npm run test:unit`
    - **Playwright UI tests** — `npx playwright test --project=ui`
    - **Playwright Electron tests** — `npx playwright test --project=electron`

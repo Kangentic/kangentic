@@ -12,6 +12,10 @@ Merge the current worktree branch back into the source branch via rebase and dir
 
 Report the branch name, source branch, and working tree status before proceeding.
 
+## Step 0 — Type Check
+
+Run `npm run typecheck` in the worktree. If it fails, report the type errors and stop — do not proceed with the merge. Type errors must be fixed before merging back.
+
 ## Step 1 — Commit Changes
 
 If there are uncommitted changes (non-empty `git status --porcelain` output):

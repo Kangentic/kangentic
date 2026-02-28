@@ -4,10 +4,11 @@ Review the current git changes (staged and unstaged) for quality, correctness, a
 
 ## Instructions
 
-1. Run `git diff` and `git diff --staged` to identify all changed files and hunks.
-2. For each changed file, read the full file to understand the surrounding context.
-3. Analyze every change against the criteria below.
-4. Output a structured review grouped by file, with `file:line` references for each finding.
+1. Run `npm run typecheck` to check for type errors. Any type errors are **highest-priority findings** — they represent potential runtime crashes. Include them in the review output even if they are in files not touched by the current diff.
+2. Run `git diff` and `git diff --staged` to identify all changed files and hunks.
+3. For each changed file, read the full file to understand the surrounding context.
+4. Analyze every change against the criteria below.
+5. Output a structured review grouped by file, with `file:line` references for each finding.
 
 ## Review Criteria
 
