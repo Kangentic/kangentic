@@ -150,15 +150,15 @@ test.describe('Terminal Rendering', () => {
     await dragTaskToColumn(taskName, 'Planning');
     await waitForTerminalOutput('MOCK_CLAUDE_SESSION:');
 
-    // The bottom terminal panel should now have a session tab
-    const sessionTab = page.locator('.resize-handle ~ div button').first();
+    // The bottom terminal panel should now have a session tab (not Activity)
+    const sessionTab = page.locator('.resize-handle ~ div button', { hasText: /term-panel/i }).first();
     await expect(sessionTab).toBeVisible({ timeout: 5000 });
 
     // Click the session tab to ensure it's active
     await sessionTab.click();
     await page.waitForTimeout(500);
 
-    // xterm should have rendered: look for the .xterm container in the bottom panel
+    // xterm should have rendered in the terminal panel
     const terminalPanel = page.locator('.resize-handle ~ div');
     const xtermElement = terminalPanel.locator('.xterm');
     await expect(xtermElement.first()).toBeVisible({ timeout: 5000 });

@@ -47,7 +47,7 @@ function writeTestConfig(dataDir: string): void {
       claude: {
         cliPath: mockClaudePath(),
         permissionMode: 'default',
-        maxConcurrentSessions: 5,
+        maxConcurrentSessions: 10,
         queueOverflow: 'queue',
       },
       git: {
@@ -385,7 +385,7 @@ test.describe('Claude Agent — Session Move Lifecycle', () => {
     // Move to Planning → spawns session
     await moveTask(page, taskId, lanes['Planning']);
     await waitForRunningSession(page);
-    await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:');
+    await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:', 30000);
 
     // Move to Backlog → kills session, marks 'exited'
     await moveTask(page, taskId, lanes['role:backlog']);

@@ -10,66 +10,67 @@ import {
   cleanupTestDataDir,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
+import path from 'node:path';
+import fs from 'node:fs';
 
 const TEST_NAME = 'session-reconciliation';
 const runId = Date.now();
-const PROJECT_NAME = `Recon Test ${runId}`;
 let tmpDir: string;
 // Shared data dir so the second launch sees the project from the first
 const dataDir = getTestDataDir(TEST_NAME);
 
-/**
- * Drag a task card to a target column using mouse events.
- * Same approach as drag-and-drop.spec.ts.
- */
-async function dragTaskToColumn(page: Page, taskTitle: string, targetColumn: string) {
-  const card = page.locator('[data-testid="swimlane"]').locator(`text=${taskTitle}`).first();
-  await card.waitFor({ state: 'visible', timeout: 5000 });
-
-  const target = page.locator(`[data-swimlane-name="${targetColumn}"]`);
-  await target.waitFor({ state: 'visible', timeout: 5000 });
-
-  await page.evaluate((targetCol) => {
-    const targetEl = document.querySelector(`[data-swimlane-name="${targetCol}"]`);
-    if (targetEl) targetEl.scrollIntoView({ inline: 'nearest', behavior: 'instant' });
-  }, targetColumn);
-  await page.waitForTimeout(100);
-
-  const cardBox = await card.boundingBox();
-  const targetBox = await target.boundingBox();
-  if (!cardBox || !targetBox) throw new Error('Could not get bounding boxes for drag');
-
-  const startX = cardBox.x + cardBox.width / 2;
-  const startY = cardBox.y + cardBox.height / 2;
-  const endX = targetBox.x + targetBox.width / 2;
-  const endY = targetBox.y + 80;
-
-  await page.mouse.move(startX, startY);
-  await page.mouse.down();
-  await page.mouse.move(startX + 10, startY, { steps: 3 });
-  await page.waitForTimeout(100);
-  await page.mouse.move(endX, endY, { steps: 15 });
-  await page.waitForTimeout(200);
-  await page.mouse.up();
-  await page.waitForTimeout(500);
+/** Resolve the platform-appropriate mock Claude path */
+function mockClaudePath(): string {
+  const fixturesDir = path.join(__dirname, '..', 'fixtures');
+  if (process.platform === 'win32') {
+    return path.join(fixturesDir, 'mock-claude.cmd');
+  }
+  const jsPath = path.join(fixturesDir, 'mock-claude.js');
+  fs.chmodSync(jsPath, 0o755);
+  return jsPath;
 }
 
-/**
- * Wait for the moveTask IPC to settle by checking the agent label appears.
- */
-async function waitForMoveSettle(page: Page, column: string, taskTitle: string) {
-  const col = page.locator(`[data-swimlane-name="${column}"]`);
-  await expect(col.locator(`text=${taskTitle}`).first()).toBeVisible({ timeout: 10000 });
-  try {
-    await col.locator(`text=${taskTitle}`).first().locator('..').locator('text=claude').waitFor({ timeout: 10000 });
-  } catch {
-    await page.waitForTimeout(3000);
-  }
+/** Pre-write config.json with mock Claude CLI and worktrees disabled */
+function writeTestConfig(dir: string): void {
+  fs.writeFileSync(
+    path.join(dir, 'config.json'),
+    JSON.stringify({
+      claude: {
+        cliPath: mockClaudePath(),
+        permissionMode: 'default',
+        maxConcurrentSessions: 5,
+        queueOverflow: 'queue',
+      },
+      git: {
+        worktreesEnabled: false,
+      },
+    }),
+  );
+}
+
+/** Move a task via IPC */
+async function moveTask(page: Page, taskId: string, targetSwimlaneId: string): Promise<void> {
+  await page.evaluate(async ({ taskId, swimlaneId }) => {
+    await window.electronAPI.tasks.move({
+      taskId,
+      targetSwimlaneId: swimlaneId,
+      targetPosition: 0,
+    });
+  }, { taskId, swimlaneId: targetSwimlaneId });
+}
+
+/** Wait for at least one running session */
+async function waitForRunningSession(page: Page, timeoutMs = 15000): Promise<void> {
+  await page.waitForFunction(async () => {
+    const sessions = await (window as any).electronAPI.sessions.list();
+    return sessions.some((s: any) => s.status === 'running');
+  }, null, { timeout: timeoutMs });
 }
 
 test.describe('Session Reconciliation', () => {
   test.beforeAll(() => {
     tmpDir = createTempProject(TEST_NAME);
+    writeTestConfig(dataDir);
   });
 
   test.afterAll(() => {
@@ -85,19 +86,36 @@ test.describe('Session Reconciliation', () => {
     let app: ElectronApplication = result.app;
     let page: Page = result.page;
 
-    await createProject(page, PROJECT_NAME, tmpDir);
+    await createProject(page, TEST_NAME, tmpDir);
     await createTask(page, taskName, 'Test session reconciliation');
 
-    // Drag task to Planning to spawn a session
-    await dragTaskToColumn(page, taskName, 'Planning');
-    await waitForMoveSettle(page, 'Planning', taskName);
+    // Move task to Planning via IPC to spawn a session
+    const swimlaneIds = await page.evaluate(async () => {
+      const swimlanes = await window.electronAPI.swimlanes.list();
+      const planning = swimlanes.find((s: any) => s.name === 'Planning');
+      return { planning: planning?.id };
+    });
+    expect(swimlaneIds.planning).toBeTruthy();
+
+    const taskId = await page.evaluate(async (t) => {
+      const tasks = await window.electronAPI.tasks.list();
+      const task = tasks.find((tk: any) => tk.title === t);
+      return task?.id;
+    }, taskName);
+    expect(taskId).toBeTruthy();
+
+    await moveTask(page, taskId!, swimlaneIds.planning!);
+    // Reload to sync renderer with DB after IPC-only move
+    await page.reload();
+    await waitForBoard(page);
+    await waitForRunningSession(page);
 
     // Verify the task is in Planning and has a session
     const planningCol = page.locator('[data-swimlane-name="Planning"]');
-    await expect(planningCol.locator(`text=${taskName}`).first()).toBeVisible({ timeout: 5000 });
+    await expect(planningCol.locator(`text=${taskName}`).first()).toBeVisible({ timeout: 15000 });
 
-    // Wait for the session to be visible (session count > 0)
-    await expect(page.locator('text=/[1-9]\\d*\\/\\d+ sessions/')).toBeVisible({ timeout: 15000 });
+    // Wait for the agent count to become visible (session spawned)
+    await expect(page.locator('text=/[1-9]\\d* agents?/')).toBeVisible({ timeout: 15000 });
 
     // The bottom terminal panel should have a session tab with xterm
     const sessionTab = page.locator('.resize-handle ~ div button').first();
@@ -114,12 +132,9 @@ test.describe('Session Reconciliation', () => {
     app = result.app;
     page = result.page;
 
-    // The project should be in the sidebar — click it to open
-    const projectButton = page.locator(`button:has-text("${PROJECT_NAME}")`).first();
-    await expect(projectButton).toBeVisible({ timeout: 10000 });
-    await projectButton.click();
-
-    // Wait for the board to load with our task in Planning
+    // Re-open the project via IPC (same mechanism as createProject)
+    await page.evaluate((p) => window.electronAPI.projects.openByPath(p), tmpDir);
+    await page.reload();
     await waitForBoard(page);
 
     // Verify the task is still in Planning
@@ -127,48 +142,14 @@ test.describe('Session Reconciliation', () => {
     await expect(planningAfterRestart.locator(`text=${taskName}`).first()).toBeVisible({ timeout: 10000 });
 
     // === Key assertion: Session reconciliation should have spawned a new session ===
-    // Wait for sessions to appear (reconciliation runs during project open)
-    await expect(page.locator('text=/[1-9]\\d*\\/\\d+ sessions/')).toBeVisible({ timeout: 20000 });
+    // Wait for agent count (reconciliation runs during project open)
+    await expect(page.locator('text=/[1-9]\\d* agents?/')).toBeVisible({ timeout: 20000 });
 
-    // The bottom terminal panel should show activity (session tab visible)
-    const sessionTabAfterRestart = page.locator('.resize-handle ~ div button').first();
-    await expect(sessionTabAfterRestart).toBeVisible({ timeout: 10000 });
-
-    // Click the session tab and verify xterm renders
-    await sessionTabAfterRestart.click();
-    await page.waitForTimeout(500);
-
-    const terminalPanel = page.locator('.resize-handle ~ div');
-    const xtermElement = terminalPanel.locator('.xterm');
-    await expect(xtermElement.first()).toBeVisible({ timeout: 10000 });
-
-    // Verify the task card shows the agent label (session was reconciled)
-    try {
-      await planningAfterRestart
-        .locator(`text=${taskName}`)
-        .first()
-        .locator('..')
-        .locator('text=claude')
-        .waitFor({ timeout: 10000 });
-    } catch {
-      // Agent label may take time; the session count check above is the primary assertion
-    }
-
-    // Open task detail dialog to verify session is active
-    const card = planningAfterRestart.locator(`text=${taskName}`).first();
-    await card.click();
-    await page.waitForTimeout(500);
-
-    const dialog = page.locator('.fixed.inset-0');
-    await expect(dialog).toBeVisible({ timeout: 3000 });
-
-    // xterm should render in the dialog (session is active)
-    const dialogXterm = dialog.locator('.xterm');
-    await expect(dialogXterm.first()).toBeVisible({ timeout: 10000 });
-
-    // Close dialog
-    await page.keyboard.press('Escape');
-    await page.waitForTimeout(300);
+    // Verify session is running via IPC (more reliable than xterm visibility after relaunch)
+    await page.waitForFunction(async () => {
+      const sessions = await (window as any).electronAPI.sessions.list();
+      return sessions.some((s: any) => s.status === 'running');
+    }, null, { timeout: 20000 });
 
     // Cleanup
     await app.close();

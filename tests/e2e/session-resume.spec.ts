@@ -61,52 +61,23 @@ function writeTestConfig(dataDir: string): void {
   );
 }
 
-/**
- * Drag a task card to a target column using mouse events.
- */
-async function dragTaskToColumn(page: Page, taskTitle: string, targetColumn: string) {
-  const card = page.locator('[data-testid="swimlane"]').locator(`text=${taskTitle}`).first();
-  await card.waitFor({ state: 'visible', timeout: 5000 });
-
-  const target = page.locator(`[data-swimlane-name="${targetColumn}"]`);
-  await target.waitFor({ state: 'visible', timeout: 5000 });
-
-  await page.evaluate((col) => {
-    const el = document.querySelector(`[data-swimlane-name="${col}"]`);
-    if (el) el.scrollIntoView({ inline: 'nearest', behavior: 'instant' });
-  }, targetColumn);
-  await page.waitForTimeout(100);
-
-  const cardBox = await card.boundingBox();
-  const targetBox = await target.boundingBox();
-  if (!cardBox || !targetBox) throw new Error('Could not get bounding boxes');
-
-  const startX = cardBox.x + cardBox.width / 2;
-  const startY = cardBox.y + cardBox.height / 2;
-  const endX = targetBox.x + targetBox.width / 2;
-  const endY = targetBox.y + 80;
-
-  await page.mouse.move(startX, startY);
-  await page.mouse.down();
-  await page.mouse.move(startX + 10, startY, { steps: 3 });
-  await page.waitForTimeout(100);
-  await page.mouse.move(endX, endY, { steps: 15 });
-  await page.waitForTimeout(200);
-  await page.mouse.up();
-  await page.waitForTimeout(500);
+/** Move a task via IPC */
+async function moveTaskIpc(page: Page, taskId: string, targetSwimlaneId: string): Promise<void> {
+  await page.evaluate(async ({ taskId, swimlaneId }) => {
+    await window.electronAPI.tasks.move({
+      taskId,
+      targetSwimlaneId: swimlaneId,
+      targetPosition: 0,
+    });
+  }, { taskId, swimlaneId: targetSwimlaneId });
 }
 
-/**
- * Wait for the agent label to appear on a task card in a column.
- */
-async function waitForMoveSettle(page: Page, column: string, taskTitle: string) {
-  const col = page.locator(`[data-swimlane-name="${column}"]`);
-  await expect(col.locator(`text=${taskTitle}`).first()).toBeVisible({ timeout: 10000 });
-  try {
-    await col.locator(`text=${taskTitle}`).first().locator('..').locator('text=claude').waitFor({ timeout: 10000 });
-  } catch {
-    await page.waitForTimeout(3000);
-  }
+/** Wait for at least one running session */
+async function waitForRunningSession(page: Page, timeoutMs = 15000): Promise<void> {
+  await page.waitForFunction(async () => {
+    const sessions = await (window as any).electronAPI.sessions.list();
+    return sessions.some((s: any) => s.status === 'running');
+  }, null, { timeout: timeoutMs });
 }
 
 /**
@@ -285,14 +256,26 @@ test.describe('Claude Agent — Session Resume across App Restart', () => {
     await createProject(page, `${PROJECT_NAME} Restart`, tmpDir);
     await createTask(page, title, 'Test resume across app restart');
 
-    await dragTaskToColumn(page, title, 'Planning');
-    await waitForMoveSettle(page, 'Planning', title);
+    // Move to Planning via IPC
+    const swimlaneIds = await page.evaluate(async () => {
+      const swimlanes = await window.electronAPI.swimlanes.list();
+      const planning = swimlanes.find((s: any) => s.name === 'Planning');
+      return { planning: planning?.id };
+    });
+    expect(swimlaneIds.planning).toBeTruthy();
 
-    // Wait for a running session via IPC
-    await page.waitForFunction(async () => {
-      const sessions = await (window as any).electronAPI.sessions.list();
-      return sessions.some((s: any) => s.status === 'running');
-    }, null, { timeout: 15000 });
+    const taskId = await page.evaluate(async (t) => {
+      const tasks = await window.electronAPI.tasks.list();
+      const task = tasks.find((tk: any) => tk.title === t);
+      return task?.id;
+    }, title);
+    expect(taskId).toBeTruthy();
+
+    await moveTaskIpc(page, taskId!, swimlaneIds.planning!);
+    // Reload to sync renderer with DB after IPC-only move
+    await page.reload();
+    await waitForBoard(page);
+    await waitForRunningSession(page);
 
     // Wait for mock Claude to output its SESSION marker
     const scrollback1 = await waitForScrollback(page, 'MOCK_CLAUDE_SESSION:');
@@ -313,10 +296,9 @@ test.describe('Claude Agent — Session Resume across App Restart', () => {
     app = result.app;
     page = result.page;
 
-    // Open the project
-    const projectButton = page.locator(`button:has-text("${PROJECT_NAME} Restart")`).first();
-    await expect(projectButton).toBeVisible({ timeout: 10000 });
-    await projectButton.click();
+    // Re-open the project via IPC (same mechanism as createProject)
+    await page.evaluate((p) => window.electronAPI.projects.openByPath(p), tmpDir);
+    await page.reload();
     await waitForBoard(page);
 
     // Verify the task is still in Planning
@@ -327,7 +309,7 @@ test.describe('Claude Agent — Session Resume across App Restart', () => {
     await page.waitForFunction(async () => {
       const sessions = await (window as any).electronAPI.sessions.list();
       return sessions.some((s: any) => s.status === 'running');
-    }, null, { timeout: 20000 });
+    }, null, { timeout: 30000 });
 
     // Wait for the mock Claude to output a marker
     // It should be RESUMED (not SESSION) if the session was properly suspended

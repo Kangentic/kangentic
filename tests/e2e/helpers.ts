@@ -10,10 +10,12 @@ const TEST_DATA_ROOT = path.join(__dirname, '..', '.test-data');
 
 /**
  * Get an isolated data directory for a specific test suite.
- * Ensures the directory exists and returns its absolute path.
+ * Removes stale data from previous runs, then recreates the directory.
  */
 export function getTestDataDir(suiteName: string): string {
   const dir = path.join(TEST_DATA_ROOT, suiteName);
+  // Remove stale data (global DB, configs) from previous runs
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -30,17 +32,15 @@ export function cleanupTestDataDir(suiteName: string): void {
   }
 }
 
-// Temp project directory for tests
+// Temp project directory for tests — always starts fresh
 export function createTempProject(testName: string): string {
   const tmpDir = path.join(__dirname, '..', '.tmp', testName);
+  // Remove stale data from previous runs to avoid session saturation
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
   fs.mkdirSync(tmpDir, { recursive: true });
   // Initialize a git repo so worktrees can work
-  try {
-    execSync('git init', { cwd: tmpDir, stdio: 'ignore' });
-    execSync('git commit --allow-empty -m "init"', { cwd: tmpDir, stdio: 'ignore' });
-  } catch {
-    // May already exist
-  }
+  execSync('git init', { cwd: tmpDir, stdio: 'ignore' });
+  execSync('git commit --allow-empty -m "init"', { cwd: tmpDir, stdio: 'ignore' });
   return tmpDir;
 }
 

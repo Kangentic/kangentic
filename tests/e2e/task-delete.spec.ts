@@ -220,6 +220,17 @@ test.describe('Task Delete', () => {
     const titleA = `QueueSlot ${runId}`;
     const titleB = `QueueWait ${runId}`;
 
+    // Kill all existing sessions from previous tests before lowering concurrency
+    await page.evaluate(async () => {
+      const sessions = await window.electronAPI.sessions.list();
+      for (const s of sessions) {
+        if (s.status === 'running' || s.status === 'queued') {
+          await window.electronAPI.sessions.kill(s.id);
+        }
+      }
+    });
+    await page.waitForTimeout(500);
+
     // Lower max concurrent to 1 so the second move queues
     await page.evaluate(async () => {
       const cfg = await window.electronAPI.config.get();
@@ -340,8 +351,13 @@ test.describe('Task Delete', () => {
     await card.click();
     await page.waitForTimeout(300);
 
-    // Open kebab menu and click Archive
+    // Dialog opens in edit mode for no-session tasks — click Cancel to switch to view mode
     const dialog = page.locator('.fixed.inset-0');
+    const cancelBtn = dialog.locator('button:has-text("Cancel")');
+    await cancelBtn.click();
+    await page.waitForTimeout(200);
+
+    // Now in view mode — kebab Actions button is visible
     await clickKebabAction(dialog, 'Archive');
     await page.waitForTimeout(500);
 

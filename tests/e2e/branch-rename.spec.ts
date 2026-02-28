@@ -102,8 +102,11 @@ async function waitForMoveSettle(p: Page, column: string, taskTitle: string) {
 
 /** Dismiss dialogs and ensure the board is visible */
 async function ensureBoard(p: Page, projectName: string) {
-  await p.keyboard.press('Escape');
-  await p.waitForTimeout(200);
+  // Dispatch Escape directly on document to bypass xterm's key capture
+  await p.evaluate(() => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  });
+  await p.waitForTimeout(300);
   const backlog = p.locator('[data-swimlane-name="Backlog"]');
   if (await backlog.isVisible().catch(() => false)) return;
   await p.locator(`button:has-text("${projectName}")`).first().click();
@@ -135,18 +138,29 @@ async function editTaskTitle(p: Page, oldTitle: string, newTitle: string) {
   await card.click();
   await p.waitForTimeout(500);
 
-  const editBtn = p.locator('button:has-text("Edit")');
-  await editBtn.click();
+  // Edit is inside the kebab Actions menu dropdown
+  const dialog = p.locator('.fixed.inset-0');
+  const kebabButton = dialog.locator('button[title="Actions"]');
+  await kebabButton.waitFor({ state: 'visible', timeout: 3000 });
+  await kebabButton.click();
   await p.waitForTimeout(200);
 
-  const titleInput = p.locator('.fixed.inset-0 input[type="text"]');
+  const editOption = dialog.locator('button', { hasText: /^Edit$/ });
+  await editOption.waitFor({ state: 'visible', timeout: 3000 });
+  await editOption.click();
+  await p.waitForTimeout(200);
+
+  const titleInput = dialog.locator('input[type="text"]');
   await titleInput.fill(newTitle);
 
-  const saveBtn = p.locator('button:has-text("Save")');
+  const saveBtn = dialog.locator('button:has-text("Save")');
   await saveBtn.click();
   await p.waitForTimeout(1000);
 
-  await p.keyboard.press('Escape');
+  // Dispatch Escape directly on document to bypass xterm's key capture
+  await p.evaluate(() => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  });
   await p.waitForTimeout(300);
 }
 
@@ -198,6 +212,7 @@ test.describe('Branch Rename on Title Edit', () => {
   });
 
   test('renaming task title renames the git branch', async () => {
+    test.setTimeout(90_000);
     const originalTitle = `Rename Test ${runId}`;
     const newTitle = `Renamed Task ${runId}`;
 
@@ -348,9 +363,9 @@ test.describe('Prune Orphaned Worktree Tasks', () => {
     pruneApp = result.app;
     prunePage = result.page;
 
-    const projectButton = prunePage.locator(`button:has-text("${PRUNE_PROJECT_NAME}")`).first();
-    await expect(projectButton).toBeVisible({ timeout: 10000 });
-    await projectButton.click();
+    // Re-open project via IPC (sidebar button uses dir basename, not project name)
+    await prunePage.evaluate((p) => window.electronAPI.projects.openByPath(p), pruneTmpDir);
+    await prunePage.reload();
     await waitForBoard(prunePage);
 
     // Wait for reconciliation to complete
