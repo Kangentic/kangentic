@@ -55,7 +55,7 @@ Run: `git rebase origin/<sourceBranch>`
    - **Abort entirely** — `git rebase --abort` and stop the merge-back process
 3. If resolving conflicts: read each conflicting file, use `Edit` to resolve the conflict markers, stage the file, and continue the rebase. Repeat until all conflicts are resolved.
 
-**After rebase (or merge) completes:** Rebase can restore `.claude/commands/` and `.claude/skills/` directories that were deleted at worktree creation. Delete them again to prevent duplicate command discovery:
+**After rebase (or merge) completes:** Rebase can restore `.claude/commands/` and `.claude/skills/` directories that sparse-checkout excludes. Delete them to prevent duplicate command/skill discovery:
 - `rm -rf <worktreePath>/.claude/commands`
 - `rm -rf <worktreePath>/.claude/skills`
 

@@ -41,14 +41,14 @@ The chosen base branch is stored in the worktree's git config as `kangentic.base
 
 ## Sparse-Checkout
 
-Worktrees exclude `.claude/commands/` from checkout using sparse-checkout in `--no-cone` mode:
+Worktrees exclude `.claude/commands/` and `.claude/skills/` from checkout using sparse-checkout in `--no-cone` mode:
 
 ```
 git sparse-checkout init --no-cone
-git sparse-checkout set '/*' '!/.claude/commands/'
+git sparse-checkout set '/*' '!/.claude/commands/' '!/.claude/skills/'
 ```
 
-This means worktrees get all files including `.claude/settings.json` (so Claude resolves permissions naturally), but exclude `.claude/commands/` to prevent duplicate slash commands. `.claude/settings.local.json` is untracked (gitignored), so it's not present in worktrees from checkout — writes to it (from Kangentic hooks or Claude's "always allow") are invisible to git.
+This means worktrees get all files including `.claude/settings.json` (so Claude resolves permissions naturally), but exclude `.claude/commands/` and `.claude/skills/` to prevent duplicate slash command and skill discovery. `.claude/settings.local.json` is untracked (gitignored), so it's not present in worktrees from checkout — writes to it (from Kangentic hooks or Claude's "always allow") are invisible to git.
 
 Sparse-checkout was chosen over `skip-worktree` because skip-worktree flags get lost during rebase and merge operations. Sparse-checkout survives all git operations.
 
@@ -167,7 +167,7 @@ App reopened
 
 ## Safety
 
-- **No git contamination** — `.claude/commands/` excluded from worktrees via sparse-checkout. `.claude/settings.json` is present (from git). `settings.local.json` is untracked and gitignored, so hook injection and "always allow" writes are invisible to git. Hooks delivered via worktree's `settings.local.json` (worktrees) or `--settings` flag (main repo).
+- **No git contamination** — `.claude/commands/` and `.claude/skills/` excluded from worktrees via sparse-checkout. `.claude/settings.json` is present (from git). `settings.local.json` is untracked and gitignored, so hook injection and "always allow" writes are invisible to git. Hooks delivered via worktree's `settings.local.json` (worktrees) or `--settings` flag (main repo).
 - **Hook identification** — two-marker pattern (`.kangentic` + bridge name) prevents touching user hooks.
 - **Backup on strip** — `stripActivityHooks()` backs up settings before modification, restores on failure.
 - **Orphan dedup** — on session resume, old PTY is killed and its file paths nulled before new PTY spawns. Prevents stale `onExit` handlers from deleting files the new session needs.
@@ -192,8 +192,8 @@ Uses real temp files with mocked `os.homedir()`.
 
 ### Worktree Manager (`worktree-manager.test.ts`)
 
-**Sparse-checkout** (`.claude/commands/` exclusion):
-- Initializes sparse-checkout with `--no-cone` and excludes `.claude/commands/`
+**Sparse-checkout** (`.claude/commands/` and `.claude/skills/` exclusion):
+- Initializes sparse-checkout with `--no-cone` and excludes `.claude/commands/` and `.claude/skills/`
 - Sparse-checkout runs before `copyFiles`
 - Skips `.claude/` entries in `copyFiles`
 - No `skip-worktree` or `update-index` calls
