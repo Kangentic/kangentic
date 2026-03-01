@@ -104,8 +104,8 @@ All runtime data lives under `<project>/.kangentic/` (auto-added to `.gitignore`
 - `worktrees/<slug>/` — git worktree checkouts
 
 ### Database
-- Global DB (`~/.kangentic/kangentic.db`) for projects list
-- Per-project DB (`<project>/.kangentic/project.db`) for tasks, swimlanes, actions, sessions
+- Global DB (`<configDir>/index.db`) for projects list — configDir is `%APPDATA%/kangentic/` (Win), `~/Library/Application Support/kangentic/` (Mac), `~/.config/kangentic/` (Linux)
+- Per-project DB (`<configDir>/projects/<projectId>.db`) for tasks, swimlanes, actions, sessions
 - Migrations run automatically on open
 
 ### Testing
@@ -123,7 +123,7 @@ Three test tiers — prefer **unit tests** for pure logic, **UI tests** for anyt
 - `mock-electron-api.js` injects a full in-memory mock of `window.electronAPI` via `addInitScript()`
 - Covers: app launch, project CRUD, task CRUD, drag-and-drop, column management
 - No build step needed — runs against Vite HMR directly
-- ~13 seconds for 23 tests
+- ~13 seconds for 72 tests
 
 #### E2E tests (`tests/e2e/`) — real Electron, opens windows
 - Run with `npx playwright test --project=electron`

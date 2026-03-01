@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { toForwardSlash, quoteArg } from '../../shared/paths';
 import type { PermissionMode, Task } from '../../shared/types';
-import { injectActivityHooks, injectEventHooks } from './hook-manager';
 
 /** Hook entry in Claude Code's settings.json. */
 interface ClaudeHookEntry {
@@ -41,6 +40,25 @@ export function interpolateTemplate(template: string, vars: Record<string, strin
     result = result.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
   }
   return result;
+}
+
+/**
+ * Merge hook arrays per event type. Local hooks come after project hooks;
+ * Kangentic hooks are appended last by the caller.
+ */
+function mergeHookArrays(
+  base: Record<string, ClaudeHookEntry[]> | undefined,
+  overlay: Record<string, ClaudeHookEntry[]> | undefined,
+): Record<string, ClaudeHookEntry[]> {
+  if (!base && !overlay) return {};
+  if (!base) return { ...overlay! };
+  if (!overlay) return { ...base };
+
+  const merged: Record<string, ClaudeHookEntry[]> = { ...base };
+  for (const [event, entries] of Object.entries(overlay)) {
+    merged[event] = [...(merged[event] || []), ...entries];
+  }
+  return merged;
 }
 
 export class CommandBuilder {
@@ -136,7 +154,7 @@ export class CommandBuilder {
   private createMergedSettings(options: CommandOptions): string {
     const projectRoot = options.projectRoot || options.cwd;
 
-    // Read existing project settings
+    // Read existing project settings (committed, shared)
     let existingSettings: ClaudeSettings = {};
     const projectSettingsPath = path.join(projectRoot, '.claude', 'settings.json');
     try {
@@ -144,6 +162,22 @@ export class CommandBuilder {
       existingSettings = JSON.parse(raw);
     } catch {
       // No existing settings — start fresh
+    }
+
+    // Also read local settings (gitignored, personal).
+    // Local overrides project, matching Claude's own precedence.
+    const localSettingsPath = path.join(projectRoot, '.claude', 'settings.local.json');
+    try {
+      const raw = fs.readFileSync(localSettingsPath, 'utf-8');
+      const localSettings: ClaudeSettings = JSON.parse(raw);
+      const { hooks: localHooks, ...localRest } = localSettings;
+      existingSettings = {
+        ...existingSettings,
+        ...localRest,
+        hooks: mergeHookArrays(existingSettings.hooks, localHooks),
+      };
+    } catch {
+      // No local settings
     }
 
     // Build the bridge command. In production, status-bridge.js is copied
@@ -245,16 +279,6 @@ export class CommandBuilder {
     }
     const mergedPath = path.join(sessionDir, 'settings.json');
     fs.writeFileSync(mergedPath, JSON.stringify(merged, null, 2));
-
-    // Also write hooks to <cwd>/.claude/settings.local.json so Claude Code
-    // picks them up from its standard settings hierarchy. The --settings flag
-    // may not load hooks in all Claude Code versions.
-    if (activityPath) {
-      injectActivityHooks(options.cwd, activityBridge, activityPath);
-    }
-    if (eventsPath) {
-      injectEventHooks(options.cwd, eventBridge, eventsPath);
-    }
 
     return mergedPath;
   }

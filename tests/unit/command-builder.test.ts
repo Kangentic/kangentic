@@ -16,7 +16,7 @@ import {
   convertWindowsExePath,
   sanitizeForPty,
 } from '../../src/shared/paths';
-import { interpolateTemplate } from '../../src/main/agent/command-builder';
+import { interpolateTemplate, CommandBuilder } from '../../src/main/agent/command-builder';
 import { slugify } from '../../src/shared/slugify';
 
 // ── Inline test-only helper (deliberately simplified, omits merged settings / hooks) ──
@@ -532,6 +532,113 @@ describe('Merged Settings (statusLine)', () => {
 
     expect(typeof merged.statusLine).toBe('object');
     expect(typeof merged.statusLine).not.toBe('string');
+  });
+});
+
+describe('Merged Settings — Local Settings Merge', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kgnt-cmd-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('merges user hooks from .claude/settings.local.json into session settings', () => {
+    // Set up project with both settings.json and settings.local.json
+    const claudeDir = path.join(tmpDir, '.claude');
+    fs.mkdirSync(claudeDir, { recursive: true });
+
+    // Project settings with a user hook
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
+      permissions: { allow: ['Read'] },
+      hooks: {
+        PreToolUse: [
+          { matcher: '', hooks: [{ type: 'command', command: 'echo project-hook' }] },
+        ],
+      },
+    }));
+
+    // Local settings with a different user hook
+    fs.writeFileSync(path.join(claudeDir, 'settings.local.json'), JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          { matcher: 'Bash', hooks: [{ type: 'command', command: 'echo local-hook' }] },
+        ],
+        Stop: [
+          { matcher: '', hooks: [{ type: 'command', command: 'echo local-stop' }] },
+        ],
+      },
+    }));
+
+    const builder = new CommandBuilder();
+
+    // Create a status output path so createMergedSettings runs
+    const statusOutput = path.join(tmpDir, '.kangentic', 'sessions', 'test-sess', 'status.json');
+    fs.mkdirSync(path.dirname(statusOutput), { recursive: true });
+
+    builder.buildClaudeCommand({
+      claudePath: '/usr/bin/claude',
+      taskId: 'test-task-id',
+      cwd: tmpDir,
+      permissionMode: 'default',
+      sessionId: 'test-sess',
+      statusOutputPath: statusOutput,
+      activityOutputPath: path.join(tmpDir, '.kangentic', 'sessions', 'test-sess', 'activity.json'),
+    });
+
+    // Read the merged settings file
+    const mergedPath = path.join(tmpDir, '.kangentic', 'sessions', 'test-sess', 'settings.json');
+    const merged = JSON.parse(fs.readFileSync(mergedPath, 'utf-8'));
+
+    // Project hook should be present
+    const preToolUseCommands = merged.hooks.PreToolUse
+      .flatMap((e: { hooks: Array<{ command: string }> }) => e.hooks.map((h: { command: string }) => h.command));
+    expect(preToolUseCommands).toContain('echo project-hook');
+
+    // Local hook should also be present
+    expect(preToolUseCommands).toContain('echo local-hook');
+
+    // Local Stop hook should be present
+    const stopCommands = merged.hooks.Stop
+      .flatMap((e: { hooks: Array<{ command: string }> }) => e.hooks.map((h: { command: string }) => h.command));
+    expect(stopCommands).toContain('echo local-stop');
+
+    // Project permissions should be preserved
+    expect(merged.permissions).toEqual({ allow: ['Read'] });
+  });
+
+  it('does not write to .claude/settings.local.json in cwd', () => {
+    // Set up a "worktree" cwd separate from projectRoot
+    const worktreeDir = path.join(tmpDir, 'worktree');
+    fs.mkdirSync(worktreeDir, { recursive: true });
+
+    // Project root has settings
+    const claudeDir = path.join(tmpDir, '.claude');
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({}));
+
+    const builder = new CommandBuilder();
+
+    const statusOutput = path.join(tmpDir, '.kangentic', 'sessions', 'test-sess', 'status.json');
+    fs.mkdirSync(path.dirname(statusOutput), { recursive: true });
+
+    builder.buildClaudeCommand({
+      claudePath: '/usr/bin/claude',
+      taskId: 'test-task-id',
+      cwd: worktreeDir,
+      projectRoot: tmpDir,
+      permissionMode: 'default',
+      sessionId: 'test-sess',
+      statusOutputPath: statusOutput,
+      activityOutputPath: path.join(tmpDir, '.kangentic', 'sessions', 'test-sess', 'activity.json'),
+      eventsOutputPath: path.join(tmpDir, '.kangentic', 'sessions', 'test-sess', 'events.jsonl'),
+    });
+
+    // .claude/settings.local.json should NOT be created in the worktree cwd
+    expect(fs.existsSync(path.join(worktreeDir, '.claude', 'settings.local.json'))).toBe(false);
   });
 });
 

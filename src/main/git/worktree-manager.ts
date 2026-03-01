@@ -73,36 +73,22 @@ export class WorktreeManager {
       // Non-fatal — merge-back falls back to 'main'
     }
 
-    // Claude Code discovers commands and skills by walking up from cwd,
-    // so the worktree copies produce duplicates in the autocomplete list.
-    // Setting skip-worktree before deleting prevents git status from
-    // reporting them as missing (which would block rebase/merge-back).
-    await WorktreeManager.hideWorktreeDir(worktreePath, '.claude/commands');
-    await WorktreeManager.hideWorktreeDir(worktreePath, '.claude/skills');
+    // Exclude .claude/ from worktree via sparse-checkout.
+    // Unlike skip-worktree, this survives rebase/merge/checkout —
+    // no git contamination risk regardless of user's merge strategy.
+    await wtGit.raw(['sparse-checkout', 'init', '--no-cone']);
+    await wtGit.raw(['sparse-checkout', 'set', '/*', '!/.claude/']);
 
-    // Copy specified files into the worktree
-    const copiedClaudeFiles: string[] = [];
+    // Copy specified files into the worktree (skip .claude/ entries —
+    // sparse-checkout excludes the directory, and all settings/hooks
+    // are delivered via --settings flag)
     for (const file of copyFiles) {
+      if (file.startsWith('.claude/') || file.startsWith('.claude\\')) continue;
       const src = path.join(this.projectPath, file);
       const dest = path.join(worktreePath, file);
       if (fs.existsSync(src)) {
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.copyFileSync(src, dest);
-        // Track .claude/ files so we can mark them skip-worktree
-        if (file.startsWith('.claude/') || file.startsWith('.claude\\')) {
-          copiedClaudeFiles.push(file.replace(/\\/g, '/'));
-        }
-      }
-    }
-
-    // Mark copied .claude/ files as skip-worktree so hook injection
-    // (e.g. settings.local.json writes) doesn't dirty the worktree index
-    if (copiedClaudeFiles.length > 0) {
-      const wtGit = simpleGit(worktreePath);
-      try {
-        await wtGit.raw(['update-index', '--skip-worktree', '--', ...copiedClaudeFiles]);
-      } catch {
-        // Non-fatal — worst case, files appear as modified in git status
       }
     }
 
@@ -138,11 +124,29 @@ export class WorktreeManager {
     if (!fs.existsSync(worktreePath)) return;
     try {
       await this.git.raw(['worktree', 'remove', worktreePath, '--force']);
+      return;
     } catch {
-      // Corrupted worktree (missing .git file) — remove manually and prune
-      fs.rmSync(worktreePath, { recursive: true, force: true });
-      await this.git.raw(['worktree', 'prune']);
+      // git worktree remove failed — fall through to manual removal
     }
+
+    // On Windows the PTY process may still hold file handles for a short time
+    // after being killed. Retry rmSync with increasing delays to let handles
+    // release before giving up.
+    const delays = [200, 500, 1500];
+    for (const delay of delays) {
+      await new Promise(resolve => setTimeout(resolve, delay));
+      try {
+        fs.rmSync(worktreePath, { recursive: true, force: true });
+        await this.git.raw(['worktree', 'prune']);
+        return;
+      } catch {
+        // EPERM — retry after next delay
+      }
+    }
+
+    // All retries exhausted — prune what we can, log the stale path
+    try { await this.git.raw(['worktree', 'prune']); } catch { /* best effort */ }
+    console.warn(`[WorktreeManager] Could not remove worktree after retries: ${worktreePath}`);
   }
 
   async removeBranch(branchName: string): Promise<void> {
@@ -162,39 +166,4 @@ export class WorktreeManager {
     return worktrees;
   }
 
-  /**
-   * Mark all tracked files under a relative directory as skip-worktree,
-   * then delete the directory from disk.  This hides the files from
-   * `git status` so they don't block rebase/merge.
-   *
-   * Called at worktree creation and can be re-called after rebase/merge
-   * to re-clean directories that git restored.
-   */
-  static async hideWorktreeDir(worktreePath: string, relDir: string): Promise<void> {
-    const absDir = path.join(worktreePath, relDir);
-    if (!fs.existsSync(absDir)) return;
-
-    const wtGit = simpleGit(worktreePath);
-    try {
-      const lsOutput = await wtGit.raw(['ls-files', relDir]);
-      const trackedFiles = lsOutput.split('\n').filter(Boolean);
-      if (trackedFiles.length > 0) {
-        await wtGit.raw(['update-index', '--skip-worktree', '--', ...trackedFiles]);
-      }
-    } catch (err) {
-      // skip-worktree failed — fall through to delete anyway; only
-      // consequence is git status will show files as deleted.
-      console.warn(`skip-worktree failed for ${relDir}`, err);
-    }
-    fs.rmSync(absDir, { recursive: true, force: true });
-  }
-
-  /**
-   * Re-hide .claude/commands and .claude/skills in a worktree.
-   * Call after rebase or merge to clean up directories that git restored.
-   */
-  static async rehideClaudeDirs(worktreePath: string): Promise<void> {
-    await WorktreeManager.hideWorktreeDir(worktreePath, '.claude/commands');
-    await WorktreeManager.hideWorktreeDir(worktreePath, '.claude/skills');
-  }
 }

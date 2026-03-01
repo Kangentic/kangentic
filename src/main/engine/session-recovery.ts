@@ -52,6 +52,33 @@ export function pruneOrphanedWorktrees(
     taskRepo.delete(task.id);
     pruned++;
   }
+
+  // Second pass: remove stale worktree directories not referenced by any task.
+  // This catches directories left behind when rmSync fails with EPERM (Windows
+  // file handle timing) and the task's worktree_path was already nulled in the DB.
+  const referencedPaths = new Set(
+    taskRepo.list()
+      .map(t => t.worktree_path)
+      .filter(Boolean),
+  );
+  try {
+    for (const entry of fs.readdirSync(worktreesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const dirPath = path.join(worktreesDir, entry.name);
+      if (referencedPaths.has(dirPath)) continue;
+
+      console.log(`[PRUNE] Removing orphaned worktree directory: ${entry.name}`);
+      try {
+        fs.rmSync(dirPath, { recursive: true, force: true });
+      } catch (err) {
+        console.warn(`[PRUNE] Could not remove orphaned worktree directory ${entry.name}:`, (err as Error).message);
+      }
+      pruned++;
+    }
+  } catch {
+    // readdirSync failed — non-fatal
+  }
+
   return pruned;
 }
 

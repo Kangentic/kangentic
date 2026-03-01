@@ -26,13 +26,6 @@ export class ConfigManager {
       this.save(this.config);
     }
 
-    // One-time migration: propagate .claude/settings.local.json into worktree copyFiles
-    const settingsLocal = '.claude/settings.local.json';
-    if (!this.config.git.copyFiles.includes(settingsLocal)) {
-      this.config.git.copyFiles.push(settingsLocal);
-      this.save(this.config);
-    }
-
     return this.config;
   }
 
