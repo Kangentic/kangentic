@@ -204,3 +204,43 @@ describe('WorktreeManager — hideWorktreeDir', () => {
     );
   });
 });
+
+describe('WorktreeManager — rehideClaudeDirs', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('re-hides commands and skills after rebase restores them', async () => {
+    const worktreePath = '/project/.kangentic/worktrees/my-task-abcd1234';
+
+    vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
+      const s = String(p);
+      return s.endsWith('commands') || s.endsWith('skills');
+    });
+
+    mockWorktreeGit.raw.mockImplementation(async (args: string[]) => {
+      if (args[0] === 'ls-files') {
+        if (args[1] === '.claude/commands') return '.claude/commands/merge-back.md';
+        if (args[1] === '.claude/skills') return '';
+      }
+      return '';
+    });
+
+    await WorktreeManager.rehideClaudeDirs(worktreePath);
+
+    // skip-worktree set on the restored file
+    expect(mockWorktreeGit.raw).toHaveBeenCalledWith([
+      'update-index', '--skip-worktree', '--', '.claude/commands/merge-back.md',
+    ]);
+
+    // Both directories deleted
+    expect(fs.rmSync).toHaveBeenCalledWith(
+      expect.stringContaining('commands'),
+      { recursive: true, force: true },
+    );
+    expect(fs.rmSync).toHaveBeenCalledWith(
+      expect.stringContaining('skills'),
+      { recursive: true, force: true },
+    );
+  });
+});

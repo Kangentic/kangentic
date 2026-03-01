@@ -32,8 +32,12 @@ some-command 2>/dev/null            # WRONG — stderr redirection
 
 **Correct alternatives:**
 ```
-git -C /some/path status             # Use git -C for git commands in other dirs
+git -C /some/path status             # CORRECT — git -C for git commands in other dirs
+git -C /some/path log --oneline -5   # CORRECT — never cd && git
+npm run typecheck                    # CORRECT — run from cwd, or use --prefix
 ```
+
+**Git specifically: ALWAYS use `git -C <path>` instead of `cd <path> && git ...`.** The `cd && git` pattern triggers a Claude Code security prompt that cannot be bypassed. `git -C` is the only correct way to run git in another directory.
 
 **This rule applies everywhere: main sessions, subagents, worktree agents, commands, and skills. No exceptions.**
 

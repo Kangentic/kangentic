@@ -4,6 +4,8 @@ Review the current git changes (staged and unstaged) for quality, correctness, a
 
 ## Instructions
 
+All commands below run from the **current working directory** — never use `cd <path> && git ...` (triggers an unbypasable security prompt). If the CWD is a worktree, git operates on it automatically.
+
 1. Run `npm run typecheck` to check for type errors. Any type errors are **highest-priority findings** — they represent potential runtime crashes. Include them in the review output even if they are in files not touched by the current diff.
 2. Run `git diff` and `git diff --staged` to identify all changed files and hunks.
 3. For each changed file, read the full file to understand the surrounding context.
@@ -75,3 +77,5 @@ End with:
 ## Allowed Tools
 
 Only use `Read` and `Bash` (for git commands) during this review. Always run commands from the project root directory — no chained commands (`&&`, `||`, `|`, `;`).
+
+**CRITICAL: Use `git -C <path>` for all git commands in other directories.** Never use `cd <path> && git ...` — the `cd && git` pattern triggers an unbypasable Claude Code security prompt.

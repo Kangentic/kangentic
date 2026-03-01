@@ -9,6 +9,8 @@ Merge the current worktree branch back into the source branch via rebase and dir
 
 ## Pre-flight Checks
 
+All git commands below run from the **current working directory** — never use `cd <path> && git ...` (triggers an unbypasable security prompt). The only exception is Step 6 which uses `git -C <projectRoot>` to target the main repo.
+
 1. Verify the current working directory is inside a Kangentic worktree (path contains `.kangentic/worktrees/`). If not, warn the user and stop.
 2. Get the current branch name: `git rev-parse --abbrev-ref HEAD`
 3. Determine the project root by walking up from the worktree path — the project root is two directories above `.kangentic/worktrees/<slug>/` (i.e., strip `.kangentic/worktrees/<slug>` from the worktree path).
@@ -52,6 +54,10 @@ Run: `git rebase origin/<sourceBranch>`
    - **Abort and merge instead** — `git rebase --abort` then `git merge origin/<sourceBranch>` (creates a merge commit)
    - **Abort entirely** — `git rebase --abort` and stop the merge-back process
 3. If resolving conflicts: read each conflicting file, use `Edit` to resolve the conflict markers, stage the file, and continue the rebase. Repeat until all conflicts are resolved.
+
+**After rebase (or merge) completes:** Rebase can restore `.claude/commands/` and `.claude/skills/` directories that were deleted at worktree creation. Delete them again to prevent duplicate command discovery:
+- `rm -rf <worktreePath>/.claude/commands`
+- `rm -rf <worktreePath>/.claude/skills`
 
 ## Step 4 — Push to Source Branch
 

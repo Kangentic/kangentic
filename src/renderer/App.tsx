@@ -45,56 +45,59 @@ export function App() {
     }
   }, [currentProject]);
 
-  // Listen for session status transitions (queued → running)
+  // Listen for IPC session events.
+  // Guard with optional chaining: during Vite HMR full reloads, the preload
+  // bridge may not be fully re-injected when useEffect fires.
   useEffect(() => {
-    const cleanup = window.electronAPI.sessions.onStatus((sessionId, status) => {
-      updateSessionStatus(sessionId, { status });
-    });
-    return cleanup;
-  }, []);
+    const cleanups: (() => void)[] = [];
+    const sessions = window.electronAPI?.sessions;
+    if (!sessions) return;
 
-  // Listen for session exit events
-  useEffect(() => {
-    const cleanup = window.electronAPI.sessions.onExit((sessionId, exitCode) => {
-      // If the session was already suspended, skip — the async PTY exit
-      // event would overwrite the 'suspended' status set by suspendSession()
-      const currentSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
-      if (currentSession?.status === 'suspended') return;
+    // Session status transitions (queued → running)
+    if (sessions.onStatus) {
+      cleanups.push(sessions.onStatus((sessionId, status) => {
+        updateSessionStatus(sessionId, { status });
+      }));
+    }
 
-      updateSessionStatus(sessionId, { status: 'exited', exitCode });
-      // Find task associated with this session for the toast message
-      const task = useBoardStore.getState().tasks.find((t) => t.session_id === sessionId);
-      const label = task ? `"${task.title}"` : sessionId.slice(0, 8);
-      useToastStore.getState().addToast({
-        message: `Session ended for ${label} (exit ${exitCode})`,
-        variant: exitCode === 0 ? 'info' : 'warning',
-      });
-    });
-    return cleanup;
-  }, []);
+    // Session exit events
+    if (sessions.onExit) {
+      cleanups.push(sessions.onExit((sessionId, exitCode) => {
+        const currentSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+        if (currentSession?.status === 'suspended') return;
 
-  // Listen for session usage data updates
-  useEffect(() => {
-    const cleanup = window.electronAPI.sessions.onUsage((sessionId, data) => {
-      updateUsage(sessionId, data);
-    });
-    return cleanup;
-  }, []);
+        updateSessionStatus(sessionId, { status: 'exited', exitCode });
+        const task = useBoardStore.getState().tasks.find((t) => t.session_id === sessionId);
+        const label = task ? `"${task.title}"` : sessionId.slice(0, 8);
+        useToastStore.getState().addToast({
+          message: `Session ended for ${label} (exit ${exitCode})`,
+          variant: exitCode === 0 ? 'info' : 'warning',
+        });
+      }));
+    }
 
-  // Listen for session activity state changes (thinking/idle)
-  useEffect(() => {
-    const cleanup = window.electronAPI.sessions.onActivity((sessionId, state) => {
-      updateActivity(sessionId, state);
-    });
-    return cleanup;
-  }, []);
+    // Session usage data
+    if (sessions.onUsage) {
+      cleanups.push(sessions.onUsage((sessionId, data) => {
+        updateUsage(sessionId, data);
+      }));
+    }
 
-  // Listen for session events (tool calls, idle, prompt — activity log)
-  useEffect(() => {
-    const cleanup = window.electronAPI.sessions.onEvent((sessionId, event) => {
-      addEvent(sessionId, event);
-    });
-    return cleanup;
+    // Session activity state (thinking/idle)
+    if (sessions.onActivity) {
+      cleanups.push(sessions.onActivity((sessionId, state) => {
+        updateActivity(sessionId, state);
+      }));
+    }
+
+    // Session events (tool calls, idle, prompt — activity log)
+    if (sessions.onEvent) {
+      cleanups.push(sessions.onEvent((sessionId, event) => {
+        addEvent(sessionId, event);
+      }));
+    }
+
+    return () => cleanups.forEach((fn) => fn());
   }, []);
 
   return <AppLayout />;

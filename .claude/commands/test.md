@@ -20,6 +20,8 @@ Unified command for running tests, auditing coverage, and writing missing tests.
 
 ### Step 1 — Detect branch and changed files
 
+All git commands below run from the **current working directory** (no `cd` needed). If the CWD is already a worktree, git will operate on it automatically.
+
 1. Run `git rev-parse --abbrev-ref HEAD` to get the current branch.
 2. If the branch is `main`, treat this as a **Full Run** — run ALL tiers and skip to Step 2 with tiers = `[unit, ui, e2e]`.
 3. Otherwise, determine the base branch:
@@ -49,7 +51,26 @@ Apply these rules to every changed file. Collect the **union** of all matched ti
 
 If **no tiers** are selected (docs-only change), report "No testable changes detected" and stop.
 
-### Step 3 — Execute
+### Step 3 — Plan summary
+
+Before running anything, output a short summary so the user knows what will happen:
+
+```
+### Test Plan
+
+Branch: `<branch>` | Base: `<base>` | Changed: N files
+Selected tiers: Unit, UI, E2E (or whichever subset)
+
+| Tier | Why |
+|------|-----|
+| Unit | tests/unit/foo.test.ts changed |
+| UI   | src/renderer/components/Bar.tsx changed |
+| E2E  | src/main/engine/baz.ts changed |
+```
+
+Keep the "Why" column to one short reason per tier (the most significant changed file or pattern that triggered it). Then proceed immediately — no need to wait for confirmation.
+
+### Step 4 — Execute
 
 1. **Typecheck first** — run `npm run typecheck`. If it fails, report type errors and **stop**. Do not proceed to build or tests.
 2. Launch tiers in parallel, respecting dependencies:
@@ -58,6 +79,34 @@ If **no tiers** are selected (docs-only change), report "No testable changes det
    - **Build** (`npm run build`) — start immediately, but **only if E2E is in the selected tiers**.
    - **E2E tests** (`npx playwright test --project=electron`) — wait for build to complete, then start.
 3. If only unit and/or UI are selected, skip the build entirely.
+
+### Step 5 — Coverage gap analysis
+
+After all tests complete and results are reported, analyze changed files for test coverage gaps:
+
+1. For each changed file from Step 1, identify new or modified functions/components/modules.
+2. Search existing test files (`tests/unit/`, `tests/ui/`, `tests/e2e/`) for tests that reference those functions or components.
+3. Use judgment to filter out changes that **don't warrant tests**:
+   - Trivial one-line changes (renames, typo fixes, string changes)
+   - Pure styling/CSS/Tailwind class changes
+   - Type-only changes (interface additions, type narrowing) unless they affect runtime behavior
+   - Config/constant changes with no branching logic
+   - Boilerplate wiring (adding an IPC channel that just delegates to an existing function)
+4. Only recommend tests for changes that have **meaningful logic, branching, error handling, or user-facing behavior** worth validating.
+5. Append a **Coverage Gaps** section after the results table:
+
+```
+### Coverage Gaps
+
+| File | What to test | Tier | Existing coverage |
+|------|-------------|------|-------------------|
+| src/renderer/components/Foo.tsx | FooDialog open/close + validation | UI | None |
+| src/main/engine/bar.ts | executeAction error path | Unit | Partial (happy path only) |
+
+Run `/test write` to auto-generate these.
+```
+
+If all changes are covered or don't warrant new tests, output: `No coverage gaps — all changes are tested or trivial.`
 
 ---
 
@@ -192,46 +241,40 @@ Read these for context when auditing or writing tests:
 
 ## Reporting Format
 
-After test execution, present results in this format:
+After test execution, present results in this format. **Never use emojis** — they render as broken boxes in the terminal. Use plain text only.
 
 ```
 ## Test Results
 
-### Branch Context
-- Branch: `<branch-name>`
-- Base: `<base-branch>`
-- Changed files: <N> files
-- Selected tiers: <list> (skipped <tier> — <reason>)
+Branch: `<branch-name>` | Base: `<base-branch>` | Changed: N files
+Selected: Unit, UI (skipped E2E — no main process changes)
 
-### Per-Tier Results
+| Tier | Status  | Passed | Failed | Duration |
+|------|---------|--------|--------|----------|
+| Unit | PASS    | 92     | 0      | 3.9s     |
+| UI   | PASS    | 72     | 0      | 20.1s    |
+| E2E  | skipped | —      | —      | —        |
 
-#### Unit Tests
-- Status: PASS / FAIL / SKIPPED
-- Passed: N | Failed: N | Skipped: N
-- Duration: Xs
+All green. No regressions.
+```
 
-#### UI Tests
-- Status: PASS / FAIL / SKIPPED
-- Passed: N | Failed: N | Skipped: N
-- Duration: Xs
+**Rules for the table:**
+- Only include tiers that were selected or explicitly skipped. Use `PASS`, `FAIL`, or `skipped` in the Status column — never emojis.
+- Skipped tiers show `—` for numeric columns.
+- Omit the Skipped count column (Playwright skips are rare and noisy).
+- If all tiers pass, end with: `All green. No regressions.`
 
-#### E2E Tests
-- Status: PASS / FAIL / SKIPPED
-- Passed: N | Failed: N | Skipped: N
-- Duration: Xs
+**On failures, add after the table:**
 
-### Failure Details
-(For each failure: file:line, test name, error message, likely cause based on changed files)
+```
+### Failures
 
-### Summary Table
-| Tier | Status | Passed | Failed | Skipped | Duration |
-|------|--------|--------|--------|---------|----------|
-| Unit | ✅/❌ | N | N | N | Xs |
-| UI | ✅/❌ | N | N | N | Xs |
-| E2E | ✅/❌/⏭️ | N | N | N | Xs |
+1. `tests/ui/app.spec.ts:42` — "can create a task in Backlog"
+   Error: expected 'visible' but got 'hidden'
+   Likely cause: TaskCard render change in src/renderer/components/TaskCard.tsx
 
-### Fix Recommendations
-(For each failure: which changed file to investigate, what the error indicates)
+### Recommendations
+- Investigate <file> — <what the error indicates>
 ```
 
 ---
@@ -239,6 +282,7 @@ After test execution, present results in this format:
 ## Rules
 
 - **No chained commands.** Do not use `&&`, `||`, `|`, `;`, or stderr redirection. Each command runs in its own Bash tool call.
+- **No `cd && git`.** Never use `cd <path> && git ...` — this triggers an unbypasable Claude Code security prompt. All git commands run from the current working directory (which is already the correct repo/worktree). If you must target a different directory, use `git -C <path>`.
 - **Parallel execution.** Launch independent tiers concurrently using parallel tool calls or background tasks. Unit and UI tests never depend on the build step.
 - **Build only when needed.** Only run `npm run build` when E2E tests are selected.
 - **Typecheck is a gate.** Always typecheck first. If it fails, stop immediately.
