@@ -36,10 +36,10 @@ If there are uncommitted changes (non-empty `git status --porcelain` output):
 2. If the user provided a commit message with the command (e.g., `/merge-back added new e2e tests`), use that text as the commit message.
 3. Otherwise, read the full diff (`git diff`), draft a concise commit message summarizing the changes.
 4. Stage changes: `git add -A`
-5. Write the commit message to `COMMIT_MSG.tmp` in CWD using the **Write tool**.
-   **Important:** Write the file AFTER `git add -A` so it is not staged.
-   Then commit: `git commit -F COMMIT_MSG.tmp`
-   Then clean up: `rm COMMIT_MSG.tmp`
+5. Get the system temp directory: `node -p "require('os').tmpdir()"`
+   Write the commit message to `<tmpdir>/COMMIT_MSG.tmp` using the **Write tool**.
+   Then commit: `git commit -F <tmpdir>/COMMIT_MSG.tmp`
+   No cleanup needed — the file is outside the repository.
    **Never write to `.git/`** — in worktrees `.git` is a file, not a directory.
    **Never use `$(...)` or backtick command substitution** — triggers a safety prompt.
 
