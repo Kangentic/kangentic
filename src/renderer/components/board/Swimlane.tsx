@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { GripVertical } from 'lucide-react';
+import { GripVertical, Pencil } from 'lucide-react';
 import { TaskCard } from './TaskCard';
 import { NewTaskDialog } from '../dialogs/NewTaskDialog';
 import { EditColumnDialog } from '../dialogs/EditColumnDialog';
@@ -85,7 +85,20 @@ export function Swimlane({ swimlane, tasks, dragHandleProps, isDropTarget }: Swi
           {swimlane.name}
         </span>
 
-        <span className="text-xs text-fg-faint tabular-nums">{tasks.length}</span>
+        <span className="bg-surface-hover/40 rounded-full px-1.5 text-xs text-fg-faint tabular-nums leading-5">{tasks.length}</span>
+
+        <button
+          type="button"
+          data-testid="edit-column-btn"
+          aria-label={`Edit ${swimlane.name} column`}
+          onClick={(e: React.MouseEvent) => {
+            e.stopPropagation();
+            setShowEditColumn(true);
+          }}
+          className="flex-shrink-0 p-0.5 text-fg-disabled hover:text-fg-muted transition-colors"
+        >
+          <Pencil size={12} />
+        </button>
       </div>
 
       {/* Task list */}

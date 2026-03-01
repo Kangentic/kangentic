@@ -82,7 +82,7 @@ export function DoneSwimlane({ swimlane, tasks }: DoneSwimlaneProps) {
       />
 
       {/* Column header */}
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left hover:bg-surface-hover/30 transition-colors group">
+      <div className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left hover:bg-surface-hover/30 transition-colors">
         {(() => {
           const Icon = getSwimlaneIcon(swimlane);
           return Icon ? (
@@ -105,12 +105,19 @@ export function DoneSwimlane({ swimlane, tasks }: DoneSwimlaneProps) {
           </span>
         </button>
 
+        <span className="bg-surface-hover/40 rounded-full px-1.5 text-xs text-fg-faint tabular-nums leading-5">{tasks.length}</span>
+
         <button
           type="button"
-          onClick={() => setShowEditColumn(true)}
-          className="flex-shrink-0"
+          data-testid="edit-column-btn"
+          aria-label={`Edit ${swimlane.name} column`}
+          onClick={(e: React.MouseEvent) => {
+            e.stopPropagation();
+            setShowEditColumn(true);
+          }}
+          className="flex-shrink-0 p-0.5 text-fg-disabled hover:text-fg-muted transition-colors"
         >
-          <Pencil size={12} className="text-fg-disabled group-hover:text-fg-muted transition-colors" />
+          <Pencil size={12} />
         </button>
       </div>
 

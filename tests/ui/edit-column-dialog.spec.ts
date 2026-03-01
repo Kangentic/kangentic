@@ -123,6 +123,20 @@ test.describe('EditColumnDialog', () => {
     await closeDialog();
   });
 
+  test('pencil button opens edit dialog on custom column', async () => {
+    const column = page.locator('[data-swimlane-name="Code Review"]');
+    await column.locator('[data-testid="edit-column-btn"]').click();
+    await expect(page.locator('text=Edit Column')).toBeVisible({ timeout: 3000 });
+    await closeDialog();
+  });
+
+  test('pencil button opens edit dialog on Done column', async () => {
+    const column = page.locator('[data-swimlane-name="Done"]');
+    await column.locator('[data-testid="edit-column-btn"]').click();
+    await expect(page.locator('text=Edit Column')).toBeVisible({ timeout: 3000 });
+    await closeDialog();
+  });
+
   test('save persists permission_strategy and auto_spawn changes', async () => {
     await openEditDialog('Code Review');
 
