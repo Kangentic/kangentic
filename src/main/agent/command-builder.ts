@@ -3,7 +3,7 @@ import path from 'node:path';
 import { toForwardSlash, quoteArg } from '../../shared/paths';
 import { buildEventHooks } from './hook-manager';
 import type { ClaudeHookEntry } from './hook-manager';
-import type { PermissionMode, Task } from '../../shared/types';
+import type { PermissionMode } from '../../shared/types';
 
 /** Subset of Claude Code settings.json that we read/write. */
 interface ClaudeSettings {
@@ -97,35 +97,22 @@ export class CommandBuilder {
     switch (options.permissionMode) {
       case 'bypass-permissions':
         parts.push('--dangerously-skip-permissions');
-        if (mergedSettingsPath) {
-          parts.push('--settings', quoteArg(toForwardSlash(mergedSettingsPath)));
-        }
-        break;
-      case 'default':
-        if (mergedSettingsPath) {
-          parts.push('--settings', quoteArg(toForwardSlash(mergedSettingsPath)));
-        }
-        // When mergedSettingsPath is null (worktree with hooks written to
-        // settings.local.json), no --settings flag needed — Claude resolves
-        // settings.json from the worktree's .claude/ directory naturally.
         break;
       case 'plan':
         parts.push('--permission-mode', 'plan');
-        if (mergedSettingsPath) {
-          parts.push('--settings', quoteArg(toForwardSlash(mergedSettingsPath)));
-        }
         break;
       case 'acceptEdits':
         parts.push('--permission-mode', 'acceptEdits');
-        if (mergedSettingsPath) {
-          parts.push('--settings', quoteArg(toForwardSlash(mergedSettingsPath)));
-        }
         break;
+      case 'default':
       case 'manual':
-        if (mergedSettingsPath) {
-          parts.push('--settings', quoteArg(toForwardSlash(mergedSettingsPath)));
-        }
         break;
+    }
+
+    // --settings flag: all sessions (main repo and worktree) use a merged
+    // settings file in the session directory
+    if (mergedSettingsPath) {
+      parts.push('--settings', quoteArg(toForwardSlash(mergedSettingsPath)));
     }
 
     // Session: --resume for existing conversations, --session-id for new ones
@@ -160,64 +147,71 @@ export class CommandBuilder {
 
   /**
    * Create a merged Claude settings file that includes the statusLine config
-   * pointing to our bridge script. Reads the project's existing settings.json
-   * (if any) and deep-merges the statusLine key.
+   * and event-bridge hooks. Reads the project's settings.json and
+   * settings.local.json, deep-merges them, injects our hooks, and writes to
+   * the session directory.
    *
-   * For worktrees (cwd !== projectRoot): writes hooks to the worktree's
-   * `.claude/settings.local.json` so Claude resolves settings naturally.
-   * Returns `null` (no `--settings` flag needed).
-   *
-   * For main repo: writes to session directory and returns the path
-   * (used with `--settings` flag).
+   * All sessions (main repo and worktree) use `--settings` pointing to
+   * `.kangentic/sessions/<sessionId>/settings.json`. For worktrees, we also
+   * read the worktree's `.claude/settings.local.json` to capture "always
+   * allow" permission grants written by Claude during the session.
    */
-  private createMergedSettings(options: CommandOptions): string | null {
+  private createMergedSettings(options: CommandOptions): string {
     const isWorktree = options.projectRoot != null && options.cwd !== options.projectRoot;
     const projectRoot = options.projectRoot || options.cwd;
 
-    // Base settings depend on context:
-    // - Worktree: only settings.local.json (Claude reads settings.json from
-    //   the worktree's .claude/ directory via sparse-checkout)
-    // - Main repo: full merge of settings.json + settings.local.json (the
-    //   --settings flag replaces settings.json, so we must include everything)
+    // 1. Read project settings (committed, shared)
     let baseSettings: ClaudeSettings = {};
+    const projectSettingsPath = path.join(projectRoot, '.claude', 'settings.json');
+    try {
+      const raw = fs.readFileSync(projectSettingsPath, 'utf-8');
+      baseSettings = JSON.parse(raw);
+    } catch {
+      // No existing settings — start fresh
+    }
 
+    // 2. Deep-merge local settings from project root (gitignored, personal)
+    const localSettingsPath = path.join(projectRoot, '.claude', 'settings.local.json');
+    try {
+      const raw = fs.readFileSync(localSettingsPath, 'utf-8');
+      const localSettings: ClaudeSettings = JSON.parse(raw);
+      const { hooks: localHooks, permissions: localPerms, ...localRest } = localSettings;
+      const mergedPerms = mergePermissions(
+        baseSettings.permissions as { allow?: string[]; deny?: string[] } | undefined,
+        localPerms as { allow?: string[]; deny?: string[] } | undefined,
+      );
+      baseSettings = {
+        ...baseSettings,
+        ...localRest,
+        hooks: mergeHookArrays(baseSettings.hooks, localHooks),
+        ...(mergedPerms ? { permissions: mergedPerms } : {}),
+      };
+    } catch {
+      // No local settings
+    }
+
+    // 3. For worktrees: merge permissions from the worktree's settings.local.json.
+    //    Claude writes "always allow" grants here during sessions. Without reading
+    //    this on resume, grants would be lost since --settings (CLI precedence)
+    //    overrides the local layer. We only merge permissions, not hooks (which
+    //    are either empty or stale leftovers from before this unified approach).
     if (isWorktree) {
-      // Only read the user's local settings from the project root
-      const localSettingsPath = path.join(projectRoot, '.claude', 'settings.local.json');
+      const wtLocalPath = path.join(options.cwd, '.claude', 'settings.local.json');
       try {
-        const raw = fs.readFileSync(localSettingsPath, 'utf-8');
-        baseSettings = JSON.parse(raw);
+        const raw = fs.readFileSync(wtLocalPath, 'utf-8');
+        const wtLocal: ClaudeSettings = JSON.parse(raw);
+        const wtPerms = wtLocal.permissions as { allow?: string[]; deny?: string[] } | undefined;
+        if (wtPerms) {
+          const mergedPerms = mergePermissions(
+            baseSettings.permissions as { allow?: string[]; deny?: string[] } | undefined,
+            wtPerms,
+          );
+          if (mergedPerms) {
+            baseSettings = { ...baseSettings, permissions: mergedPerms };
+          }
+        }
       } catch {
-        // No local settings — start fresh
-      }
-    } else {
-      // Read project settings (committed, shared)
-      const projectSettingsPath = path.join(projectRoot, '.claude', 'settings.json');
-      try {
-        const raw = fs.readFileSync(projectSettingsPath, 'utf-8');
-        baseSettings = JSON.parse(raw);
-      } catch {
-        // No existing settings — start fresh
-      }
-
-      // Deep-merge local settings (gitignored, personal)
-      const localSettingsPath = path.join(projectRoot, '.claude', 'settings.local.json');
-      try {
-        const raw = fs.readFileSync(localSettingsPath, 'utf-8');
-        const localSettings: ClaudeSettings = JSON.parse(raw);
-        const { hooks: localHooks, permissions: localPerms, ...localRest } = localSettings;
-        const mergedPerms = mergePermissions(
-          baseSettings.permissions as { allow?: string[]; deny?: string[] } | undefined,
-          localPerms as { allow?: string[]; deny?: string[] } | undefined,
-        );
-        baseSettings = {
-          ...baseSettings,
-          ...localRest,
-          hooks: mergeHookArrays(baseSettings.hooks, localHooks),
-          ...(mergedPerms ? { permissions: mergedPerms } : {}),
-        };
-      } catch {
-        // No local settings
+        // No worktree local settings (first run or no grants yet)
       }
     }
 
@@ -242,7 +236,7 @@ export class CommandBuilder {
       merged.hooks = buildEventHooks(eventBridge, eventsPath, baseSettings.hooks || {});
     }
 
-    // Write to .kangentic/sessions/<sessionId>/settings.json (for session recovery reference)
+    // Write to .kangentic/sessions/<sessionId>/settings.json (used with --settings flag)
     const sessionDir = path.join(projectRoot, '.kangentic', 'sessions', options.sessionId || options.taskId);
     try {
       fs.mkdirSync(sessionDir, { recursive: true });
@@ -252,18 +246,6 @@ export class CommandBuilder {
     }
     const mergedPath = path.join(sessionDir, 'settings.json');
     fs.writeFileSync(mergedPath, JSON.stringify(merged, null, 2));
-
-    if (isWorktree) {
-      // Write hooks to the worktree's .claude/settings.local.json so Claude
-      // resolves settings naturally (settings.json from git + local overrides).
-      const wtClaudeDir = path.join(options.cwd, '.claude');
-      fs.mkdirSync(wtClaudeDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(wtClaudeDir, 'settings.local.json'),
-        JSON.stringify(merged, null, 2),
-      );
-      return null; // no --settings flag needed
-    }
 
     return mergedPath;
   }

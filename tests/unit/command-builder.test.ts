@@ -739,7 +739,7 @@ describe('Merged Settings — Local Settings Merge', () => {
     expect(merged.permissions.allow).toHaveLength(7); // no duplicates
   });
 
-  it('writes hooks to worktree .claude/settings.local.json when cwd differs from projectRoot', () => {
+  it('writes merged settings to session directory for worktree sessions (not to worktree .claude/)', () => {
     // Set up a "worktree" cwd separate from projectRoot
     const worktreeDir = path.join(tmpDir, 'worktree');
     fs.mkdirSync(worktreeDir, { recursive: true });
@@ -751,12 +751,17 @@ describe('Merged Settings — Local Settings Merge', () => {
       permissions: { allow: ['Read'] },
     }));
 
+    // Project root has local settings with extra permissions
+    fs.writeFileSync(path.join(claudeDir, 'settings.local.json'), JSON.stringify({
+      permissions: { allow: ['Bash(test:*)'] },
+    }));
+
     const builder = new CommandBuilder();
 
     const statusOutput = path.join(tmpDir, '.kangentic', 'sessions', 'test-sess', 'status.json');
     fs.mkdirSync(path.dirname(statusOutput), { recursive: true });
 
-    builder.buildClaudeCommand({
+    const cmd = builder.buildClaudeCommand({
       claudePath: '/usr/bin/claude',
       taskId: 'test-task-id',
       cwd: worktreeDir,
@@ -767,19 +772,26 @@ describe('Merged Settings — Local Settings Merge', () => {
       eventsOutputPath: path.join(tmpDir, '.kangentic', 'sessions', 'test-sess', 'events.jsonl'),
     });
 
-    // .claude/settings.local.json SHOULD be created in the worktree cwd
-    const wtLocalPath = path.join(worktreeDir, '.claude', 'settings.local.json');
-    expect(fs.existsSync(wtLocalPath)).toBe(true);
+    // --settings flag SHOULD be present for worktree sessions
+    expect(cmd).toContain('--settings');
 
-    // Verify it contains hooks but NOT project permissions (Claude reads
-    // settings.json from the worktree's .claude/ directly via sparse-checkout)
-    const wtLocal = JSON.parse(fs.readFileSync(wtLocalPath, 'utf-8'));
-    expect(wtLocal.statusLine).toBeDefined();
-    expect(wtLocal.statusLine.type).toBe('command');
-    expect(wtLocal.permissions).toBeUndefined();
+    // Session settings file should exist
+    const mergedPath = path.join(tmpDir, '.kangentic', 'sessions', 'test-sess', 'settings.json');
+    expect(fs.existsSync(mergedPath)).toBe(true);
+
+    // Merged file should include project root's settings.json + settings.local.json permissions
+    const merged = JSON.parse(fs.readFileSync(mergedPath, 'utf-8'));
+    expect(merged.permissions.allow).toContain('Read');
+    expect(merged.permissions.allow).toContain('Bash(test:*)');
+    expect(merged.statusLine).toBeDefined();
+    expect(merged.statusLine.type).toBe('command');
+
+    // .claude/settings.local.json should NOT be created in the worktree
+    const wtLocalPath = path.join(worktreeDir, '.claude', 'settings.local.json');
+    expect(fs.existsSync(wtLocalPath)).toBe(false);
   });
 
-  it('does not include --settings flag for worktree scenarios', () => {
+  it('includes --settings flag for worktree scenarios', () => {
     const worktreeDir = path.join(tmpDir, 'worktree');
     fs.mkdirSync(worktreeDir, { recursive: true });
 
@@ -802,8 +814,8 @@ describe('Merged Settings — Local Settings Merge', () => {
       statusOutputPath: statusOutput,
     });
 
-    // No --settings flag — Claude resolves from worktree's .claude/ naturally
-    expect(cmd).not.toContain('--settings');
+    // --settings flag should be present for all sessions (including worktrees)
+    expect(cmd).toContain('--settings');
   });
 
   it('still writes to session directory and uses --settings for main repo', () => {
@@ -837,7 +849,7 @@ describe('Merged Settings — Local Settings Merge', () => {
     expect(fs.existsSync(path.join(tmpDir, '.claude', 'settings.local.json'))).toBe(false);
   });
 
-  it('creates .claude/ directory in worktree if needed', () => {
+  it('does not create .claude/ directory in worktree (hooks delivered via --settings)', () => {
     const worktreeDir = path.join(tmpDir, 'worktree-no-claude');
     fs.mkdirSync(worktreeDir, { recursive: true });
     // No .claude/ dir in worktree
@@ -861,9 +873,52 @@ describe('Merged Settings — Local Settings Merge', () => {
       statusOutputPath: statusOutput,
     });
 
-    // .claude/ directory should have been created
-    expect(fs.existsSync(path.join(worktreeDir, '.claude'))).toBe(true);
-    expect(fs.existsSync(path.join(worktreeDir, '.claude', 'settings.local.json'))).toBe(true);
+    // .claude/ directory should NOT be created — hooks are delivered via --settings
+    expect(fs.existsSync(path.join(worktreeDir, '.claude'))).toBe(false);
+  });
+
+  it('merges "always allow" permission grants from worktree settings.local.json on resume', () => {
+    // Set up project root with settings
+    const claudeDir = path.join(tmpDir, '.claude');
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(path.join(claudeDir, 'settings.json'), JSON.stringify({
+      permissions: { allow: ['Read', 'Glob'] },
+    }));
+
+    // Set up worktree with "always allow" grants written by Claude during a previous session
+    const worktreeDir = path.join(tmpDir, 'worktree-with-grants');
+    fs.mkdirSync(worktreeDir, { recursive: true });
+    const wtClaudeDir = path.join(worktreeDir, '.claude');
+    fs.mkdirSync(wtClaudeDir, { recursive: true });
+    fs.writeFileSync(path.join(wtClaudeDir, 'settings.local.json'), JSON.stringify({
+      permissions: { allow: ['Bash(npm test:*)', 'Edit'] },
+    }));
+
+    const builder = new CommandBuilder();
+    const statusOutput = path.join(tmpDir, '.kangentic', 'sessions', 'grant-sess', 'status.json');
+    fs.mkdirSync(path.dirname(statusOutput), { recursive: true });
+
+    builder.buildClaudeCommand({
+      claudePath: '/usr/bin/claude',
+      taskId: 'grant-task',
+      cwd: worktreeDir,
+      projectRoot: tmpDir,
+      permissionMode: 'default',
+      sessionId: 'grant-sess',
+      statusOutputPath: statusOutput,
+    });
+
+    // Read the merged settings file
+    const mergedPath = path.join(tmpDir, '.kangentic', 'sessions', 'grant-sess', 'settings.json');
+    const merged = JSON.parse(fs.readFileSync(mergedPath, 'utf-8'));
+
+    // Project root permissions should be present
+    expect(merged.permissions.allow).toContain('Read');
+    expect(merged.permissions.allow).toContain('Glob');
+
+    // Worktree "always allow" grants should be merged in
+    expect(merged.permissions.allow).toContain('Bash(npm test:*)');
+    expect(merged.permissions.allow).toContain('Edit');
   });
 });
 

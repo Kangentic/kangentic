@@ -264,8 +264,9 @@ export async function cleanupProject(projectId: string, projectPath: string): Pr
     }
   }
 
-  // 3. Strip our hooks from .claude/settings.local.json
-  //    (project root and any worktree dirs that may still exist)
+  // 3. Strip our hooks from .claude/settings.local.json (legacy cleanup —
+  //    new sessions use --settings and don't write to settings.local.json,
+  //    but existing worktrees from before the change may still have our hooks)
   stripKangenticHooks(projectPath);
   const worktreesDir = path.join(projectPath, '.kangentic', 'worktrees');
   if (fs.existsSync(worktreesDir)) {

@@ -71,17 +71,16 @@ Activity state (thinking/idle) is derived from event types in the events pipelin
 
 ### Settings Merge
 
-For each session, a merged settings file is built at `.kangentic/sessions/<sessionId>/settings.json`:
+All sessions (main repo and worktree) use a unified approach. For each session, a merged settings file is built at `.kangentic/sessions/<sessionId>/settings.json` and passed via `--settings`:
 
-1. Read `.claude/settings.json` (committed, shared)
-2. Read `.claude/settings.local.json` (gitignored, personal)
-3. Deep-merge hooks from both layers
+1. Read `.claude/settings.json` from project root (committed, shared)
+2. Deep-merge `.claude/settings.local.json` from project root (gitignored, personal)
+3. For worktrees: merge permissions from the worktree's `.claude/settings.local.json` (captures "always allow" grants — hooks are skipped since they may be stale leftovers from before the unified approach)
 4. Inject bridge commands into appropriate hook points
 5. Write merged file to session directory
+6. Pass `--settings <mergedSettingsPath>` to the CLI
 
-**Main repo sessions:** pass `--settings <mergedSettingsPath>` to the CLI.
-
-**Worktree sessions:** write the merged settings to `<worktree>/.claude/settings.local.json` instead. Claude resolves `settings.json` from the worktree's `.claude/` directory (present via sparse-checkout) and picks up hooks from `settings.local.json` naturally. No `--settings` flag needed. When users hit "always allow" on a permission prompt, Claude writes to `settings.local.json` in the worktree — this file is properly gitignored and does not leak into `git status`.
+All Kangentic artifacts stay in `.kangentic/` — nothing is written to `.claude/settings.local.json`. When users hit "always allow" on a permission prompt, Claude writes to `settings.local.json` in the CWD (worktree or project root). These grants are read back on session resume (step 3) so they persist across restarts.
 
 ### Hook Identification
 
@@ -167,7 +166,7 @@ App reopened
 
 ## Safety
 
-- **No git contamination** — `.claude/commands/` and `.claude/skills/` excluded from worktrees via sparse-checkout. `.claude/settings.json` is present (from git). `settings.local.json` is untracked and gitignored, so hook injection and "always allow" writes are invisible to git. Hooks delivered via worktree's `settings.local.json` (worktrees) or `--settings` flag (main repo).
+- **No git contamination** — `.claude/commands/` and `.claude/skills/` excluded from worktrees via sparse-checkout. `.claude/settings.json` is present (from git). `settings.local.json` is untracked and gitignored. Hooks are delivered via `--settings` flag for all sessions (main repo and worktree) — Kangentic never writes to `.claude/settings.local.json`.
 - **Hook identification** — two-marker pattern (`.kangentic` + bridge name) prevents touching user hooks.
 - **Backup on strip** — `stripKangenticHooks()` backs up settings before modification, restores on failure.
 - **Orphan dedup** — on session resume, old PTY is killed and its file paths nulled before new PTY spawns. Prevents stale `onExit` handlers from deleting files the new session needs.

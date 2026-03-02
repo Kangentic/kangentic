@@ -108,28 +108,16 @@ Matcher priority: Claude Code evaluates specific matchers before blank matchers.
 
 ## Hook Injection
 
-Two code paths inject event-bridge hooks, depending on whether the session runs in a worktree or the main repo.
+All sessions (main repo and worktree) use a single code path in `CommandBuilder.createMergedSettings()` (`src/main/agent/command-builder.ts`):
 
-### Main Repo Sessions
+1. Reads `.claude/settings.json` from project root (committed, shared)
+2. Deep-merges `.claude/settings.local.json` from project root (personal)
+3. For worktrees: merges permissions from the worktree's `.claude/settings.local.json` (captures "always allow" grants)
+4. Appends event-bridge entries to each hook point
+5. Writes merged settings to `.kangentic/sessions/<id>/settings.json`
+6. Passes `--settings <path>` to the Claude CLI
 
-`CommandBuilder.createMergedSettings()` in `src/main/agent/command-builder.ts`:
-
-1. Reads `.claude/settings.json` and `.claude/settings.local.json`
-2. Deep-merges hooks from both
-3. Appends event-bridge entries to each hook point
-4. Writes merged settings to `.kangentic/sessions/<id>/settings.json`
-5. Passes `--settings <path>` to the Claude CLI
-
-### Worktree Sessions
-
-`injectEventHooks()` in `src/main/agent/hook-manager.ts`:
-
-1. Reads the worktree's `.claude/settings.local.json` (or creates it)
-2. Filters out stale event-bridge entries from previous sessions
-3. Appends fresh event-bridge entries
-4. Writes back to `.claude/settings.local.json`
-
-Claude resolves `settings.json` from the worktree's `.claude/` directory (present via sparse-checkout) and picks up hooks from `settings.local.json` naturally. No `--settings` flag needed.
+All Kangentic artifacts stay in `.kangentic/` — nothing is written to `.claude/settings.local.json`.
 
 ## Hook Cleanup
 

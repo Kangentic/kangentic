@@ -120,7 +120,7 @@ export class WorktreeManager {
 
     // Copy specified files into the worktree (skip .claude/ entries —
     // sparse-checkout keeps .claude/ but excludes commands/, and hooks
-    // are delivered via settings.local.json in the worktree)
+    // are delivered via --settings flag pointing to session directory)
     for (const file of copyFiles) {
       if (file.startsWith('.claude/') || file.startsWith('.claude\\')) continue;
       const src = path.join(this.projectPath, file);

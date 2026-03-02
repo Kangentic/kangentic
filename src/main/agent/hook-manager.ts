@@ -79,6 +79,12 @@ export function buildEventHooks(
  * `.claude/settings.local.json` at the given directory. Preserves all
  * other user hooks and settings.
  *
+ * @deprecated Since the unified --settings approach, Kangentic no longer
+ * writes hooks to `.claude/settings.local.json`. This function is kept
+ * for backward compatibility — existing worktrees created before the
+ * change may still have our hooks in their settings.local.json.
+ * Called by `cleanupProject()` during project deletion.
+ *
  * Safety guarantees:
  * - Only removes entries matching a known bridge AND `.kangentic`
  * - Backs up the original file before any modification
