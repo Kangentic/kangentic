@@ -216,14 +216,14 @@ export const EventTypeActivity: Record<EventType, ActivityState | null> = {
   [EventType.ToolStart]: 'thinking',
   [EventType.Prompt]: 'thinking',
   [EventType.SubagentStart]: 'thinking',
-  [EventType.SubagentStop]: 'thinking',
   [EventType.Compact]: 'thinking',
   [EventType.WorktreeCreate]: 'thinking',
-  [EventType.Notification]: 'thinking',
   // → idle (agent waiting)
   [EventType.Idle]: 'idle',
   [EventType.Interrupted]: 'idle',
   // → null (no state change, log-only)
+  [EventType.Notification]: null,
+  [EventType.SubagentStop]: null,
   [EventType.ToolEnd]: null,
   [EventType.SessionStart]: null,
   [EventType.SessionEnd]: null,

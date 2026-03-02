@@ -39,6 +39,7 @@ export class SessionManager extends EventEmitter {
   private configuredShell: string | null = null;
   private usageCache = new Map<string, SessionUsage>();
   private activityCache = new Map<string, ActivityState>();
+  private subagentDepth = new Map<string, number>();
   private eventCache = new Map<string, SessionEvent[]>();
 
   constructor() {
@@ -249,6 +250,7 @@ export class SessionManager extends EventEmitter {
     // The "Initializing..." bar on the task card handles the visual
     // feedback during startup (before usage data arrives).
     this.activityCache.set(id, 'idle');
+    this.subagentDepth.delete(id);
     this.emit('activity', id, 'idle');
 
     // Batched data output (~60fps)
@@ -331,6 +333,7 @@ export class SessionManager extends EventEmitter {
     this.sessions.delete(sessionId);
     this.usageCache.delete(sessionId);
     this.activityCache.delete(sessionId);
+    this.subagentDepth.delete(sessionId);
     this.eventCache.delete(sessionId);
   }
 
@@ -379,6 +382,9 @@ export class SessionManager extends EventEmitter {
 
     // Synthetic session_end before we kill — Claude Code's hook won't fire
     this.emitSessionEnd(sessionId);
+
+    // Clear subagent depth — session is no longer active
+    this.subagentDepth.delete(sessionId);
 
     // Mark suspended BEFORE killing so the async onExit handler preserves it
     session.status = 'suspended';
@@ -597,12 +603,41 @@ export class SessionManager extends EventEmitter {
               this.emit('plan-exit', session.id);
             }
 
+            // Track subagent nesting depth so we can distinguish main-agent
+            // tool events from subagent tool events during idle state.
+            if (event.type === EventType.SubagentStart) {
+              const currentDepth = this.subagentDepth.get(session.id) || 0;
+              this.subagentDepth.set(session.id, currentDepth + 1);
+            } else if (event.type === EventType.SubagentStop) {
+              const currentDepth = this.subagentDepth.get(session.id) || 0;
+              this.subagentDepth.set(session.id, Math.max(0, currentDepth - 1));
+            }
+
             // Derive activity state from events via declarative lookup.
             // Only emit when state actually changes (dedup defense-in-depth
             // against multiple hooks firing the same state, e.g. Stop +
             // PermissionRequest both emitting idle).
             const newActivity = EventTypeActivity[event.type];
             if (newActivity && this.activityCache.get(session.id) !== newActivity) {
+              // Subagent-aware transition guard: when transitioning from
+              // idle → thinking, suppress the transition if it's caused by
+              // a subagent's tool event (not the main agent resuming).
+              // - `prompt` always transitions (user responded)
+              // - `subagent_start` always transitions (main agent spawning)
+              // - depth 0 means no subagents, so the tool_start is from the
+              //   main agent resuming after permission approval
+              // - depth > 0 means subagents are running and this tool_start
+              //   is likely from a subagent, not the main agent
+              const currentActivity = this.activityCache.get(session.id);
+              const depth = this.subagentDepth.get(session.id) || 0;
+              if (currentActivity === 'idle' && newActivity === 'thinking'
+                  && event.type !== EventType.Prompt
+                  && event.type !== EventType.SubagentStart
+                  && depth > 0) {
+                // Suppress: subagent tool event while main agent is idle
+                continue;
+              }
+
               this.activityCache.set(session.id, newActivity);
               this.emit('activity', session.id, newActivity);
             }

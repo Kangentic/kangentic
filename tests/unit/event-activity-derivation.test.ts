@@ -9,15 +9,15 @@
  *   tool_start      → thinking
  *   prompt          → thinking
  *   subagent_start  → thinking
- *   subagent_stop   → thinking
  *   compact         → thinking
  *   worktree_create → thinking
  *   idle            → idle
  *   interrupted     → idle
+ *   notification    → no change (informational, fires unpredictably)
+ *   subagent_stop   → no change (subagent finishing ≠ main agent active)
  *   tool_end        → no change
  *   session_start   → no change
  *   session_end     → no change
- *   notification    → thinking
  *   teammate_idle   → no change
  *   task_completed  → no change
  *   config_change   → no change
@@ -440,15 +440,22 @@ describe('Event-derived activity state', () => {
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
   });
 
-  it('subagent_stop event emits thinking activity', async () => {
+  it('subagent_stop event does not change activity state', async () => {
     const { session, eventsPath } = await spawnWithEvents();
-    const states = collectActivity(manager, session.id);
 
+    // Set thinking first so we can verify no change
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    const statesAfter = collectActivity(manager, session.id);
+
+    // subagent_stop is log-only — should NOT change activity
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStop, detail: 'Explore' });
     await waitForWatcher();
 
-    expect(states).toContain('thinking');
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    expect(statesAfter).toHaveLength(0);
   });
 
   it('compact event emits thinking activity', async () => {
@@ -492,15 +499,22 @@ describe('Event-derived activity state', () => {
     expect(statesAfter).toHaveLength(0);
   });
 
-  it('notification event emits thinking activity', async () => {
+  it('notification event does not change activity state', async () => {
     const { session, eventsPath } = await spawnWithEvents();
-    const states = collectActivity(manager, session.id);
 
+    // Set thinking first so we can verify no change
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    const statesAfter = collectActivity(manager, session.id);
+
+    // Notification is informational — should NOT change activity
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Notification, detail: 'Context getting full' });
     await waitForWatcher();
 
-    expect(states).toContain('thinking');
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    expect(statesAfter).toHaveLength(0);
   });
 
   it('teammate_idle does not change activity state', async () => {
@@ -565,5 +579,110 @@ describe('Event-derived activity state', () => {
 
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
     expect(statesAfter).toHaveLength(0);
+  });
+
+  // --- Subagent-aware transition guard tests ---
+
+  it('idle is not overridden by subagent tool_start', async () => {
+    const { session, eventsPath } = await spawnWithEvents();
+    const states = collectActivity(manager, session.id);
+
+    // 1. Agent starts working → thinking
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // 2. Subagent starts (depth → 1)
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
+    await waitForWatcher();
+
+    // 3. Permission request fires → idle
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // 4. Subagent fires tool_start while main agent is idle — should be suppressed
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+
+    // Still idle — subagent tool_start was suppressed
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+    expect(states).toEqual(['thinking', 'idle']);
+  });
+
+  it('idle transitions to thinking when subagents finish and main agent resumes', async () => {
+    const { session, eventsPath } = await spawnWithEvents();
+    const states = collectActivity(manager, session.id);
+
+    // 1. Agent working → thinking
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
+    await waitForWatcher();
+
+    // 2. Subagent starts (depth → 1)
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
+    await waitForWatcher();
+
+    // 3. Permission request → idle
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // 4. Subagent finishes (depth → 0)
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStop, detail: 'Explore' });
+    await waitForWatcher();
+
+    // 5. Main agent resumes with tool_start — now allowed (depth 0)
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Edit' });
+    await waitForWatcher();
+
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    expect(states).toEqual(['thinking', 'idle', 'thinking']);
+  });
+
+  it('prompt always overrides idle regardless of subagent depth', async () => {
+    const { session, eventsPath } = await spawnWithEvents();
+    const states = collectActivity(manager, session.id);
+
+    // 1. Agent working → thinking
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
+    await waitForWatcher();
+
+    // 2. Subagent starts (depth → 1)
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.SubagentStart, detail: 'Explore' });
+    await waitForWatcher();
+
+    // 3. Permission request → idle
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // 4. User sends a new message → prompt always transitions regardless of depth
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Prompt });
+    await waitForWatcher();
+
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    expect(states).toEqual(['thinking', 'idle', 'thinking']);
+  });
+
+  it('notification after idle does not change state', async () => {
+    const { session, eventsPath } = await spawnWithEvents();
+    const states = collectActivity(manager, session.id);
+
+    // 1. Agent working → thinking
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+
+    // 2. Permission request → idle
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // 3. Notification fires while idle — should NOT flip back to thinking
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Notification, detail: 'Context getting full' });
+    await waitForWatcher();
+
+    // Still idle — notification is log-only
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+    expect(states).toEqual(['thinking', 'idle']);
   });
 });
