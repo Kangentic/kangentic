@@ -54,11 +54,11 @@ export function BaseDialog({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') requestClose();
+      if (e.key === 'Escape' && !preventBackdropClose) requestClose();
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [requestClose]);
+  }, [requestClose, preventBackdropClose]);
 
   const backdropMouseDown = useRef(false);
 

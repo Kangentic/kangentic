@@ -52,7 +52,8 @@ test.describe('New Task Dialog Layout', () => {
     const textarea = page.locator('textarea');
     await textarea.fill('hello');
     await expect(page.locator('text=Paste or drop images here')).not.toBeVisible();
-    await page.keyboard.press('Escape');
+    // Form is dirty (title filled) — Escape is blocked, use Cancel button
+    await page.locator('button:has-text("Cancel")').click();
   });
 
   test('shows image count next to thumbnails', async () => {
@@ -75,7 +76,8 @@ test.describe('New Task Dialog Layout', () => {
 
     await page.waitForTimeout(500);
     await expect(page.locator('text=1 image')).toBeVisible();
-    await page.keyboard.press('Escape');
+    // Form is dirty (image attached) — Escape is blocked, use Cancel button
+    await page.locator('button:has-text("Cancel")').click();
   });
 });
 
@@ -115,7 +117,8 @@ test.describe('Image Attachments', () => {
     const images = thumbnails.locator('img');
     expect(await images.count()).toBeGreaterThanOrEqual(1);
 
-    await page.keyboard.press('Escape');
+    // Form is dirty (image attached) — Escape is blocked, use Cancel button
+    await page.locator('button:has-text("Cancel")').click();
   });
 
   test('delete thumbnail removes it', async () => {
@@ -157,7 +160,8 @@ test.describe('Image Attachments', () => {
     // Thumbnails container should disappear (no attachments)
     await expect(thumbnails).not.toBeVisible();
 
-    await page.keyboard.press('Escape');
+    // After deleting the only attachment the form is clean — but use Cancel for safety
+    await page.locator('button:has-text("Cancel")').click();
   });
 
   test('create task with attachments passes pendingAttachments', async () => {
@@ -235,5 +239,40 @@ test.describe('Image Attachments', () => {
     await expect(dropOverlay).not.toBeVisible();
 
     await page.keyboard.press('Escape');
+  });
+});
+
+test.describe('Escape Key Protection', () => {
+  test('escape does not close dialog when form is dirty', async () => {
+    await openNewTaskDialog();
+    const titleInput = page.locator('input[placeholder="Task title"]');
+    await titleInput.fill('Some task title');
+
+    // Escape should NOT close the dialog because the form is dirty
+    await page.keyboard.press('Escape');
+    await expect(titleInput).toBeVisible();
+
+    // Clean up via Cancel button
+    await page.locator('button:has-text("Cancel")').click();
+  });
+
+  test('escape closes dialog when form is clean', async () => {
+    await openNewTaskDialog();
+    const titleInput = page.locator('input[placeholder="Task title"]');
+    await expect(titleInput).toBeVisible();
+
+    // Escape should close the dialog because the form is clean
+    await page.keyboard.press('Escape');
+    await expect(titleInput).not.toBeVisible();
+  });
+
+  test('escape closes dialog when description is whitespace-only', async () => {
+    await openNewTaskDialog();
+    const textarea = page.locator('textarea');
+    await textarea.fill('   ');
+
+    // Whitespace-only description is not dirty (isDirty uses trim())
+    await page.keyboard.press('Escape');
+    await expect(textarea).not.toBeVisible();
   });
 });

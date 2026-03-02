@@ -59,6 +59,19 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Close image preview on Escape (capture phase — fires before BaseDialog's handler)
+  useEffect(() => {
+    if (!previewAttachment) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setPreviewAttachment(null);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown, true);
+    return () => document.removeEventListener('keydown', handleKeyDown, true);
+  }, [previewAttachment]);
+
   // Auto-expand textarea as user types
   useEffect(() => {
     const el = textareaRef.current;
