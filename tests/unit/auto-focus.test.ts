@@ -107,24 +107,24 @@ describe('resolveAutoFocusTarget', () => {
       })).toBe('B');
     });
 
-    it('falls back to Activity tab when no other session is idle', () => {
+    it('stays on current tab when no other session is idle', () => {
       expect(resolveAutoFocusTarget({
         sessionId: 'A',
         newState: 'thinking',
         currentActiveSessionId: 'A',
         sessionActivity: { A: 'thinking', B: 'thinking' },
         sessions: [makeSession('A'), makeSession('B')],
-      })).toBe(ACTIVITY_TAB);
+      })).toBeNull();
     });
 
-    it('falls back to Activity tab when sole session goes thinking', () => {
+    it('stays on current tab when sole session goes thinking', () => {
       expect(resolveAutoFocusTarget({
         sessionId: 'A',
         newState: 'thinking',
         currentActiveSessionId: 'A',
         sessionActivity: { A: 'thinking' },
         sessions: [makeSession('A')],
-      })).toBe(ACTIVITY_TAB);
+      })).toBeNull();
     });
 
     it('does nothing when a non-viewed session goes to thinking', () => {

@@ -11,7 +11,7 @@ interface AutoFocusInput {
 
 /**
  * Given a session activity change, determine whether the bottom panel should
- * auto-switch to a different tab. Returns the target session ID (or ACTIVITY_TAB),
+ * auto-switch to a different tab. Returns the target session ID to switch to,
  * or null if no switch is needed.
  */
 export function resolveAutoFocusTarget(input: AutoFocusInput): string | null {
@@ -39,7 +39,7 @@ export function resolveAutoFocusTarget(input: AutoFocusInput): string | null {
     const otherIdle = sessions.find(
       (s) => s.id !== sessionId && s.status === 'running' && sessionActivity[s.id] === 'idle',
     );
-    return otherIdle?.id ?? ACTIVITY_TAB;
+    return otherIdle?.id ?? null;
   }
 
   return null;
