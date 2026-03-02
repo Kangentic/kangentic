@@ -101,6 +101,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   const effectiveWorktree = useWorktree ?? worktreesEnabled;
   const [textareaFocused, setTextareaFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const [toggling, setToggling] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [dontAskAgain, setDontAskAgain] = useState(false);
@@ -337,6 +338,13 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 800)}px`;
   }, [description, isEditing, hasSessionContext]);
+
+  // Focus title input when entering no-session edit mode
+  useEffect(() => {
+    if (isEditing && !hasSessionContext) {
+      titleInputRef.current?.focus();
+    }
+  }, [isEditing, hasSessionContext]);
 
   const handleToggle = async () => {
     if (!canToggle || toggling) return;
@@ -698,8 +706,10 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
     <>
       <BaseDialog
         onClose={onClose}
-        header={customHeader}
-        rawBody
+        {...(isEditing && !hasSessionContext
+          ? { title: 'Edit Task', icon: <Pencil size={14} className="text-fg-muted" /> }
+          : { header: customHeader, rawBody: true }
+        )}
         className={dialogSizeClass}
         backdropClassName="p-6"
         testId="task-detail-dialog"
@@ -731,8 +741,65 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
           </div>
         ) : undefined}
       >
-        {/* Description edit mode with drag/drop support */}
-        {isEditing && (
+        {/* No-session edit mode — mirrors NewTaskDialog layout exactly */}
+        {isEditing && !hasSessionContext && (
+          <div
+            className="space-y-3 relative"
+            onDragOver={handleAttachmentDragOver}
+            onDragLeave={handleAttachmentDragLeave}
+            onDrop={handleAttachmentDrop}
+          >
+            <input
+              ref={titleInputRef}
+              type="text"
+              placeholder="Task title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full bg-surface border border-edge-input rounded px-3 py-2 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
+            />
+            <div className="relative">
+              <textarea
+                ref={textareaRef}
+                data-testid="task-description"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                onPaste={handleAttachmentPaste}
+                onFocus={() => setTextareaFocused(true)}
+                onBlur={() => setTextareaFocused(false)}
+                className="w-full bg-surface border border-edge-input rounded px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent min-h-[200px] max-h-[800px] resize-y overflow-y-auto"
+              />
+              {!description && (
+                <div className={`absolute inset-0 flex flex-col pointer-events-none px-3 py-2 transition-opacity duration-200 ${textareaFocused ? 'opacity-100' : 'opacity-40'}`}>
+                  <span className="text-sm text-fg-faint">Describe the task for the agent...</span>
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="flex flex-col items-center gap-1.5 border border-dashed border-edge rounded-lg px-6 py-4">
+                      <Image size={20} className="text-fg-disabled" />
+                      <span className="text-xs text-fg-disabled">Paste or drop images here</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            {thumbnailStrip}
+            <div className="flex items-center gap-2">
+              <BranchPicker value={baseBranch} defaultBranch={defaultBaseBranch || 'main'} onChange={setBaseBranch} />
+              {!task.worktree_path && (
+                <>
+                  <div className="w-px h-5 bg-edge-input" />
+                  <WorktreeChip enabled={effectiveWorktree} onToggle={() => setUseWorktree(effectiveWorktree ? false : true)} />
+                </>
+              )}
+            </div>
+            {isDragOver && (
+              <div className="absolute inset-0 bg-accent/10 border-2 border-dashed border-accent rounded-lg flex items-center justify-center z-10 pointer-events-none">
+                <span className="text-sm text-accent-fg font-medium">Drop images here</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Description edit mode with drag/drop support (with-session only) */}
+        {isEditing && hasSessionContext && (
           <div
             className="px-4 py-3 border-b border-edge flex-shrink-0 relative space-y-2"
             onDragOver={handleAttachmentDragOver}
@@ -740,65 +807,26 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             onDrop={handleAttachmentDrop}
           >
             <div className="relative">
-              {hasSessionContext ? (
-                /* Compact textarea for tasks with an active/suspended session */
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  onPaste={handleAttachmentPaste}
-                  rows={3}
-                  className="w-full bg-surface border border-edge-input rounded px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent resize-y min-h-[80px] max-h-[300px]"
-                />
-              ) : (
-                /* Premium textarea for no-session tasks — matches NewTaskDialog */
-                <textarea
-                  ref={textareaRef}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  onPaste={handleAttachmentPaste}
-                  onFocus={() => setTextareaFocused(true)}
-                  onBlur={() => setTextareaFocused(false)}
-                  className="w-full bg-surface border border-edge-input rounded px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent min-h-[200px] max-h-[800px] resize-y overflow-y-auto"
-                />
-              )}
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                onPaste={handleAttachmentPaste}
+                rows={3}
+                className="w-full bg-surface border border-edge-input rounded px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent resize-y min-h-[80px] max-h-[300px]"
+              />
               {!description && (
-                hasSessionContext ? (
-                  <div className="absolute inset-0 flex flex-col pointer-events-none px-3 py-2">
-                    <span className="text-sm text-fg-faint">Description</span>
-                    <div className="flex-1 flex items-center justify-center">
-                      <div className="flex flex-col items-center gap-1.5 border border-dashed border-edge rounded-lg px-5 py-3">
-                        <Image size={18} className="text-fg-disabled" />
-                        <span className="text-xs text-fg-disabled">Paste or drop images here</span>
-                      </div>
+                <div className="absolute inset-0 flex flex-col pointer-events-none px-3 py-2">
+                  <span className="text-sm text-fg-faint">Description</span>
+                  <div className="flex-1 flex items-center justify-center">
+                    <div className="flex flex-col items-center gap-1.5 border border-dashed border-edge rounded-lg px-5 py-3">
+                      <Image size={18} className="text-fg-disabled" />
+                      <span className="text-xs text-fg-disabled">Paste or drop images here</span>
                     </div>
                   </div>
-                ) : (
-                  <div className={`absolute inset-0 flex flex-col pointer-events-none px-3 py-2 transition-opacity duration-200 ${textareaFocused ? 'opacity-100' : 'opacity-40'}`}>
-                    <span className="text-sm text-fg-faint">Describe the task for the agent...</span>
-                    <div className="flex-1 flex items-center justify-center">
-                      <div className="flex flex-col items-center gap-1.5 border border-dashed border-edge rounded-lg px-6 py-4">
-                        <Image size={20} className="text-fg-disabled" />
-                        <span className="text-xs text-fg-disabled">Paste or drop images here</span>
-                      </div>
-                    </div>
-                  </div>
-                )
+                </div>
               )}
             </div>
             {thumbnailStrip}
-
-            {/* Base branch picker + worktree toggle (no-session edit only) */}
-            {!hasSessionContext && (
-              <div className="flex items-center gap-2">
-                <BranchPicker value={baseBranch} defaultBranch={defaultBaseBranch || 'main'} onChange={setBaseBranch} />
-                {!task.worktree_path && (
-                  <>
-                    <div className="w-px h-5 bg-edge-input" />
-                    <WorktreeChip enabled={effectiveWorktree} onToggle={() => setUseWorktree(effectiveWorktree ? false : true)} />
-                  </>
-                )}
-              </div>
-            )}
 
             {isDragOver && (
               <div className="absolute inset-0 bg-accent/10 border-2 border-dashed border-accent rounded-lg flex items-center justify-center z-10 pointer-events-none">
