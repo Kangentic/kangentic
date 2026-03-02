@@ -115,6 +115,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   const [isDragOver, setIsDragOver] = useState(false);
 
   const isArchived = task.archived_at !== null;
+  const currentSwimlane = swimlanes.find((s) => s.id === task.swimlane_id);
+  const isInBacklog = currentSwimlane?.role === 'backlog';
 
   // Load attachments on mount
   useEffect(() => {
@@ -501,7 +503,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
       )}
 
       {/* Actions */}
-      {isEditing ? (
+      {isEditing && hasSessionContext ? (
         <>
           <button
             onClick={handleCancel}
@@ -516,7 +518,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             Save
           </button>
         </>
-      ) : (
+      ) : !isEditing ? (
         <div className="relative flex-shrink-0" ref={kebabMenuRef}>
           <button
             onClick={() => { setShowKebabMenu(!showKebabMenu); setShowMoveSubmenu(false); }}
@@ -629,7 +631,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             </div>
           )}
         </div>
-      )}
+      ) : null}
 
       {/* Divider + Close */}
       <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
@@ -678,6 +680,33 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
         className={dialogSizeClass}
         backdropClassName="p-6"
         testId="task-detail-dialog"
+        footer={isEditing && !hasSessionContext ? (
+          <div className={`flex ${isInBacklog ? 'justify-between' : 'justify-end'} items-center`}>
+            {isInBacklog && (
+              <button
+                onClick={() => skipDeleteConfirm ? handleDelete() : setConfirmDelete(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-fg-faint hover:text-red-400 hover:bg-red-400/10 rounded transition-colors"
+              >
+                <Trash2 size={14} />
+                Delete
+              </button>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleCancel}
+                className="px-3 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                className="px-3 py-1.5 text-xs bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        ) : undefined}
       >
         {/* Description edit mode with drag/drop support */}
         {isEditing && (
