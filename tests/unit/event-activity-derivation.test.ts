@@ -276,9 +276,15 @@ describe('Event-derived activity state', () => {
 
   it('AskUserQuestion answer: idle → tool_end (no change) → prompt → thinking', async () => {
     const { session, eventsPath } = await spawnWithEvents();
+
+    // Set thinking first so the idle transition is observable
+    appendEvent(eventsPath, { ts: Date.now(), type: 'tool_start', tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
     const states = collectActivity(manager, session.id);
 
-    // 1. AskUserQuestion PreToolUse → idle
+    // 1. Stop hook fires → idle (AskUserQuestion waiting for input)
     appendEvent(eventsPath, { ts: Date.now(), type: 'idle' });
     await waitForWatcher();
     expect(manager.getActivityCache()[session.id]).toBe('idle');
@@ -310,8 +316,84 @@ describe('Event-derived activity state', () => {
 
     // Final state should be idle (last event)
     expect(manager.getActivityCache()[session.id]).toBe('idle');
-    // Activity emissions: tool_start(thinking), tool_start(thinking), idle
-    // tool_end does NOT emit
-    expect(states).toEqual(['thinking', 'thinking', 'idle']);
+    // Activity emissions: tool_start(thinking), idle — dedup suppresses
+    // the second tool_start since state is already 'thinking'
+    expect(states).toEqual(['thinking', 'idle']);
+  });
+
+  it('consecutive idle events emit only one activity change', async () => {
+    const { session, eventsPath } = await spawnWithEvents();
+
+    // Set thinking first so we can verify transition to idle
+    appendEvent(eventsPath, { ts: Date.now(), type: 'tool_start', tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // Collect emissions after thinking is set
+    const states = collectActivity(manager, session.id);
+
+    // Write two idle events back-to-back (e.g. PermissionRequest + Stop both firing)
+    appendEvent(eventsPath, { ts: Date.now(), type: 'idle' });
+    appendEvent(eventsPath, { ts: Date.now() + 1, type: 'idle' });
+    await waitForWatcher();
+
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+    // Dedup: only one emission despite two idle events
+    expect(states).toEqual(['idle']);
+  });
+
+  it('tool_failure non-interrupt maps to tool_end (no activity change)', async () => {
+    const { session, eventsPath } = await spawnWithEvents();
+
+    // Set thinking via tool_start
+    appendEvent(eventsPath, { ts: Date.now(), type: 'tool_start', tool: 'Bash' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // Collect emissions AFTER tool_start processed
+    const states = collectActivity(manager, session.id);
+
+    // PostToolUseFailure non-interrupt: event-bridge converts to tool_end
+    // (tool error, not user Escape). Should NOT change activity state.
+    appendEvent(eventsPath, { ts: Date.now(), type: 'tool_end', tool: 'Bash' });
+    await waitForWatcher();
+
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    expect(states).toHaveLength(0);
+  });
+
+  it('interrupted then idle (mixed types) emits only one idle', async () => {
+    const { session, eventsPath } = await spawnWithEvents();
+
+    // Set thinking first
+    appendEvent(eventsPath, { ts: Date.now(), type: 'tool_start', tool: 'Bash' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    const states = collectActivity(manager, session.id);
+
+    // PostToolUseFailure(interrupt) fires interrupted, then Stop fires idle
+    // Both map to 'idle' — dedup should suppress the second emission
+    appendEvent(eventsPath, { ts: Date.now(), type: 'interrupted', tool: 'Bash' });
+    appendEvent(eventsPath, { ts: Date.now() + 1, type: 'idle' });
+    await waitForWatcher();
+
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+    // Only one emission despite two events mapping to idle
+    expect(states).toEqual(['idle']);
+  });
+
+  it('consecutive thinking events emit only one activity change', async () => {
+    const { session, eventsPath } = await spawnWithEvents();
+    const states = collectActivity(manager, session.id);
+
+    // Write two tool_start events back-to-back (rapid tool execution)
+    appendEvent(eventsPath, { ts: Date.now(), type: 'tool_start', tool: 'Read' });
+    appendEvent(eventsPath, { ts: Date.now() + 1, type: 'tool_start', tool: 'Grep' });
+    await waitForWatcher();
+
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+    // Dedup: only one emission despite two tool_start events
+    expect(states).toEqual(['thinking']);
   });
 });

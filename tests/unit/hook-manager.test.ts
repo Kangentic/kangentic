@@ -33,20 +33,21 @@ describe('hook-manager', () => {
     it('produces correct hook entries for all event types', () => {
       const hooks = buildEventHooks(EVENT_BRIDGE, EVENTS_PATH, {});
 
-      // PreToolUse: tool_start + AskUserQuestion idle + ExitPlanMode idle
-      expect(hooks.PreToolUse).toHaveLength(3);
+      // PreToolUse: tool_start only (blank matcher)
+      expect(hooks.PreToolUse).toHaveLength(1);
       expect(hooks.PreToolUse[0].matcher).toBe('');
       expect(hooks.PreToolUse[0].hooks[0].command).toContain('event-bridge');
       expect(hooks.PreToolUse[0].hooks[0].command).toContain('tool_start');
-      expect(hooks.PreToolUse[1].matcher).toBe('AskUserQuestion');
-      expect(hooks.PreToolUse[1].hooks[0].command).toContain('idle');
-      expect(hooks.PreToolUse[2].matcher).toBe('ExitPlanMode');
-      expect(hooks.PreToolUse[2].hooks[0].command).toContain('idle');
 
       // PostToolUse: tool_end
       expect(hooks.PostToolUse).toHaveLength(1);
       expect(hooks.PostToolUse[0].matcher).toBe('');
       expect(hooks.PostToolUse[0].hooks[0].command).toContain('tool_end');
+
+      // PostToolUseFailure: tool_failure
+      expect(hooks.PostToolUseFailure).toHaveLength(1);
+      expect(hooks.PostToolUseFailure[0].matcher).toBe('');
+      expect(hooks.PostToolUseFailure[0].hooks[0].command).toContain('tool_failure');
 
       // UserPromptSubmit: prompt
       expect(hooks.UserPromptSubmit).toHaveLength(1);
@@ -73,8 +74,8 @@ describe('hook-manager', () => {
 
       const hooks = buildEventHooks(EVENT_BRIDGE, EVENTS_PATH, existing);
 
-      // PreToolUse: 1 user + 3 event-bridge
-      expect(hooks.PreToolUse).toHaveLength(4);
+      // PreToolUse: 1 user + 1 event-bridge
+      expect(hooks.PreToolUse).toHaveLength(2);
       expect(hooks.PreToolUse[0].hooks[0].command).toBe('echo user-pretool');
 
       // UserPromptSubmit: 1 user + 1 event-bridge
@@ -104,6 +105,9 @@ describe('hook-manager', () => {
           PostToolUse: [
             { matcher: '', hooks: [{ type: 'command', command: `node "${EVENT_BRIDGE}" "${EVENTS_PATH}" tool_end` }] },
           ],
+          PostToolUseFailure: [
+            { matcher: '', hooks: [{ type: 'command', command: `node "${EVENT_BRIDGE}" "${EVENTS_PATH}" tool_failure` }] },
+          ],
         },
       };
       fs.writeFileSync(
@@ -119,9 +123,10 @@ describe('hook-manager', () => {
       expect((hooks.UserPromptSubmit[0] as { hooks: Array<{ command: string }> }).hooks[0].command).toBe('echo user-hook');
       expect(hooks.PreToolUse).toHaveLength(1);
       expect((hooks.PreToolUse[0] as { hooks: Array<{ command: string }> }).hooks[0].command).toBe('echo user-pretool');
-      // PermissionRequest and PostToolUse had only kangentic hooks — keys removed
+      // PermissionRequest, PostToolUse, PostToolUseFailure had only kangentic hooks — keys removed
       expect(hooks.PermissionRequest).toBeUndefined();
       expect(hooks.PostToolUse).toBeUndefined();
+      expect(hooks.PostToolUseFailure).toBeUndefined();
     });
 
     it('also removes legacy activity-bridge hooks', () => {

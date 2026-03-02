@@ -566,12 +566,19 @@ export class SessionManager extends EventEmitter {
 
             // Derive activity state from events — the event-bridge
             // fires for ALL tools via blank PreToolUse matcher.
+            // Only emit when state actually changes (dedup defense-in-depth
+            // against multiple hooks firing the same state, e.g. Stop +
+            // PermissionRequest both emitting idle).
             if (event.type === 'tool_start' || event.type === 'prompt') {
-              this.activityCache.set(session.id, 'thinking');
-              this.emit('activity', session.id, 'thinking');
+              if (this.activityCache.get(session.id) !== 'thinking') {
+                this.activityCache.set(session.id, 'thinking');
+                this.emit('activity', session.id, 'thinking');
+              }
             } else if (event.type === 'idle' || event.type === 'interrupted') {
-              this.activityCache.set(session.id, 'idle');
-              this.emit('activity', session.id, 'idle');
+              if (this.activityCache.get(session.id) !== 'idle') {
+                this.activityCache.set(session.id, 'idle');
+                this.emit('activity', session.id, 'idle');
+              }
             }
           }
         }
