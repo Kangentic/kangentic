@@ -24,6 +24,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
   const deleteProject = useProjectStore((s) => s.deleteProject);
   const sessions = useSessionStore((s) => s.sessions);
   const sessionActivity = useSessionStore((s) => s.sessionActivity);
+  const seenIdleSessions = useSessionStore((s) => s.seenIdleSessions);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
 
   const handleNewProject = async () => {
@@ -109,9 +110,11 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
           const thinkingCount = runningSessions.filter(
             (s) => sessionActivity[s.id] !== 'idle',
           ).length;
-          const idleCount = runningSessions.filter(
+          const idleSessions = runningSessions.filter(
             (s) => sessionActivity[s.id] === 'idle',
-          ).length;
+          );
+          const idleCount = idleSessions.length;
+          const hasUnseenIdle = idleSessions.some((s) => !seenIdleSessions[s.id]);
           return (
             <div
               key={project.id}
@@ -127,7 +130,12 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
             >
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <Folder size={14} className={`flex-shrink-0 ${isActive ? 'text-accent-fg' : 'text-fg-faint'}`} />
+                  <span className="relative flex-shrink-0">
+                    <Folder size={14} className={isActive ? 'text-accent-fg' : 'text-fg-faint'} />
+                    {!isActive && hasUnseenIdle && (
+                      <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400 animate-pulse-amber" />
+                    )}
+                  </span>
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{project.name}</div>
                     <div
@@ -151,7 +159,9 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
                     )}
                     {idleCount > 0 && (
                       <span
-                        className="flex items-center gap-1 text-xs tabular-nums text-amber-400"
+                        className={`flex items-center gap-1 text-xs tabular-nums ${
+                          hasUnseenIdle ? 'text-amber-400' : 'text-amber-400/50'
+                        } ${hasUnseenIdle ? 'rounded-full animate-pulse-amber' : ''}`}
                         title={`${idleCount} idle — needs attention`}
                       >
                         <Mail size={10} />

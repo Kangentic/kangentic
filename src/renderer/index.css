@@ -357,6 +357,17 @@
   animation: pulse-subtle 4s ease-out infinite;
 }
 
+/* Radiating amber pulse for unseen idle badges */
+@keyframes pulse-amber {
+  0% { box-shadow: 0 0 0 0px rgba(245, 158, 11, 0.5); }
+  50% { box-shadow: 0 0 0 4px rgba(245, 158, 11, 0); }
+  100% { box-shadow: 0 0 0 4px rgba(245, 158, 11, 0); }
+}
+
+.animate-pulse-amber {
+  animation: pulse-amber 2s ease-out infinite;
+}
+
 /* Brief brightness + scale pulse for live-updating values */
 @keyframes value-update {
   0%   { filter: brightness(1); transform: scale(1); }

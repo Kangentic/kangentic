@@ -89,4 +89,5 @@ export const IPC = {
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_MAXIMIZE: 'window:maximize',
   WINDOW_CLOSE: 'window:close',
+  WINDOW_FLASH_FRAME: 'window:flashFrame',
 } as const;

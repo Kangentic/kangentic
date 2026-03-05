@@ -45,6 +45,7 @@
     },
     skipDeleteConfirm: false,
     autoFocusIdleSession: true,
+    notifyIdleOnInactiveProject: true,
   };
 
   function uuid() {
@@ -585,6 +586,7 @@
       minimize: noop,
       maximize: noop,
       close: noop,
+      flashFrame: noop,
     },
   };
 

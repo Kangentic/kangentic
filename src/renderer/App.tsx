@@ -39,7 +39,9 @@ export function App() {
   useEffect(() => {
     if (currentProject) {
       loadBoard();
-      useSessionStore.getState().syncSessions();
+      useSessionStore.getState().syncSessions().then(() => {
+        useSessionStore.getState().markIdleSessionsSeen(currentProject.id);
+      });
     } else {
       useBoardStore.setState({ tasks: [], swimlanes: [], archivedTasks: [] });
       useSessionStore.setState({ activeSessionId: null });
@@ -94,21 +96,37 @@ export function App() {
       cleanups.push(sessions.onActivity((sessionId, state) => {
         updateActivity(sessionId, state);
 
-        // Auto-focus: switch the bottom panel to the most recently idle session
         const config = useConfigStore.getState().config;
+        const sessionStore = useSessionStore.getState();
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+
+        // Auto-focus: switch the bottom panel to the most recently idle session
         if (config.autoFocusIdleSession) {
-          const store = useSessionStore.getState();
-          const activeProjectId = useProjectStore.getState().currentProject?.id;
-          const projectSessions = store.sessions.filter((s) => s.projectId === activeProjectId);
+          const projectSessions = sessionStore.sessions.filter((s) => s.projectId === activeProjectId);
           const target = resolveAutoFocusTarget({
             sessionId,
             newState: state,
-            currentActiveSessionId: store.activeSessionId,
-            sessionActivity: store.sessionActivity,
+            currentActiveSessionId: sessionStore.activeSessionId,
+            sessionActivity: sessionStore.sessionActivity,
             sessions: projectSessions,
           });
           if (target !== null) {
-            store.setActiveSession(target);
+            sessionStore.setActiveSession(target);
+          }
+        }
+
+        // OS notification + taskbar flash for idle on non-active projects
+        if (state === 'idle' && config.notifyIdleOnInactiveProject) {
+          const session = sessionStore.sessions.find((s) => s.id === sessionId);
+          if (session && session.projectId !== activeProjectId) {
+            const project = useProjectStore.getState().projects.find((p) => p.id === session.projectId);
+            const projectName = project?.name ?? 'A project';
+            const task = useBoardStore.getState().tasks.find((t) => t.session_id === sessionId);
+            const taskLabel = task?.title ?? 'A task';
+            new Notification(`${projectName} — Idle`, {
+              body: `${taskLabel} needs attention`,
+            });
+            window.electronAPI.window.flashFrame(true);
           }
         }
       }));

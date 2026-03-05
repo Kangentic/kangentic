@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Project, ProjectCreateInput } from '../../shared/types';
+import { useSessionStore } from './session-store';
 
 interface ProjectStore {
   projects: Project[];
@@ -42,6 +43,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     await window.electronAPI.projects.open(id);
     const project = (await window.electronAPI.projects.list()).find((p) => p.id === id) || null;
     set({ currentProject: project });
+    useSessionStore.getState().markIdleSessionsSeen(id);
   },
 
   loadCurrent: async () => {

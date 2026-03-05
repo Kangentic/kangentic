@@ -12,6 +12,7 @@ interface SessionStore {
   sessionUsage: Record<string, SessionUsage>;
   sessionActivity: Record<string, ActivityState>;
   sessionEvents: Record<string, SessionEvent[]>;
+  seenIdleSessions: Record<string, boolean>;
 
   syncSessions: () => Promise<void>;
   spawnSession: (input: SpawnSessionInput) => Promise<Session>;
@@ -26,6 +27,7 @@ interface SessionStore {
   updateActivity: (sessionId: string, state: ActivityState) => void;
   addEvent: (sessionId: string, event: SessionEvent) => void;
   clearEvents: (sessionId: string) => void;
+  markIdleSessionsSeen: (projectId: string) => void;
 
   getRunningCount: () => number;
   getQueuedCount: () => number;
@@ -40,6 +42,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   sessionUsage: {},
   sessionActivity: {},
   sessionEvents: {},
+  seenIdleSessions: {},
 
   syncSessions: async () => {
     const freshSessions = await window.electronAPI.sessions.list();
@@ -136,9 +139,17 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   updateActivity: (sessionId, state) => {
-    set((s) => ({
-      sessionActivity: { ...s.sessionActivity, [sessionId]: state },
-    }));
+    set((s) => {
+      const updates: Partial<SessionStore> = {
+        sessionActivity: { ...s.sessionActivity, [sessionId]: state },
+      };
+      // When session resumes thinking, remove from seen so next idle is fresh
+      if (state === 'thinking') {
+        const { [sessionId]: _, ...rest } = s.seenIdleSessions;
+        updates.seenIdleSessions = rest;
+      }
+      return updates;
+    });
   },
 
   addEvent: (sessionId, event) => {
@@ -158,6 +169,19 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       const { [sessionId]: _, ...rest } = s.sessionEvents;
       return { sessionEvents: rest };
     });
+  },
+
+  markIdleSessionsSeen: (projectId) => {
+    const { sessions, sessionActivity, seenIdleSessions } = get();
+    const idleSessionIds = sessions
+      .filter((s) => s.projectId === projectId && s.status === 'running' && sessionActivity[s.id] === 'idle')
+      .map((s) => s.id);
+    if (idleSessionIds.length === 0) return;
+    const updated = { ...seenIdleSessions };
+    for (const id of idleSessionIds) {
+      updated[id] = true;
+    }
+    set({ seenIdleSessions: updated });
   },
 
   getRunningCount: () => get().sessions.filter((s) => s.status === 'running').length,

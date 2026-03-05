@@ -136,6 +136,7 @@ const api: ElectronAPI = {
     minimize: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
     maximize: () => ipcRenderer.send(IPC.WINDOW_MAXIMIZE),
     close: () => ipcRenderer.send(IPC.WINDOW_CLOSE),
+    flashFrame: (flash: boolean) => ipcRenderer.send(IPC.WINDOW_FLASH_FRAME, flash),
   },
 };
 

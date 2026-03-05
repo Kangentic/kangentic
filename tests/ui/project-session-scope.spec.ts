@@ -372,6 +372,93 @@ test.describe('Project Session Scope', () => {
     }
   });
 
+  test('idle badge on non-active project has unseen pulse animation', async () => {
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+
+    try {
+      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Project Alpha is active — its idle badge should NOT pulse (markIdleSessionsSeen ran on open)
+      const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
+      const alphaIdleBadge = alphaRow.locator('span[title*="idle"]');
+      await expect(alphaIdleBadge).toBeVisible();
+      await expect(alphaIdleBadge).not.toHaveClass(/animate-pulse-amber/);
+
+      // Project Beta is non-active — its idle badge SHOULD pulse (unseen)
+      const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
+      const betaIdleBadge = betaRow.locator('span[title*="idle"]');
+      await expect(betaIdleBadge).toBeVisible();
+      await expect(betaIdleBadge).toHaveClass(/animate-pulse-amber/);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('switching to project dims idle badge (marks seen)', async () => {
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+
+    try {
+      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Beta idle badge starts with pulse (unseen)
+      const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
+      const betaIdleBadge = betaRow.locator('span[title*="idle"]');
+      await expect(betaIdleBadge).toHaveClass(/animate-pulse-amber/);
+
+      // Switch to Project Beta — this marks its idle sessions as seen
+      await betaRow.click();
+      await page.waitForTimeout(500);
+
+      // Badge should now be dimmed (no pulse)
+      await expect(betaIdleBadge).not.toHaveClass(/animate-pulse-amber/);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('notification dot appears on folder icon for non-active project with unseen idle', async () => {
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+
+    try {
+      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Project Beta (non-active) should have amber notification dot near folder icon
+      const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
+      const betaDot = betaRow.locator('span.bg-amber-400.rounded-full.w-2.h-2');
+      await expect(betaDot).toBeVisible();
+
+      // Project Alpha (active) should NOT have the dot
+      const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
+      const alphaDot = alphaRow.locator('span.bg-amber-400.rounded-full.w-2.h-2');
+      await expect(alphaDot).not.toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('notification dot disappears after switching to project', async () => {
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+
+    try {
+      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
+      const betaDot = betaRow.locator('span.bg-amber-400.rounded-full.w-2.h-2');
+
+      // Dot is visible before switching
+      await expect(betaDot).toBeVisible();
+
+      // Switch to Beta
+      await betaRow.click();
+      await page.waitForTimeout(500);
+
+      // Dot disappears (Beta is now active + sessions are seen)
+      await expect(betaDot).not.toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('sessions persist across project switch and reappear when switching back', async () => {
     const { browser, page } = await launchWithState(twoProjectPreConfig());
 

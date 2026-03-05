@@ -340,6 +340,7 @@ export interface AppConfig {
 
   skipDeleteConfirm: boolean;
   autoFocusIdleSession: boolean;
+  notifyIdleOnInactiveProject: boolean;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -371,6 +372,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   skipDeleteConfirm: false,
   autoFocusIdleSession: true,
+  notifyIdleOnInactiveProject: true,
 };
 
 // === IPC API Types ===
@@ -584,6 +586,7 @@ export interface ElectronAPI {
     minimize: () => void;
     maximize: () => void;
     close: () => void;
+    flashFrame: (flash: boolean) => void;
   };
 }
 

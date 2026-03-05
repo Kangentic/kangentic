@@ -1018,6 +1018,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     }
   });
   ipcMain.on(IPC.WINDOW_CLOSE, () => mainWindow.close());
+  ipcMain.on(IPC.WINDOW_FLASH_FRAME, (_event, flash: boolean) => mainWindow.flashFrame(flash));
 }
 
 export function getSessionManager(): SessionManager {
