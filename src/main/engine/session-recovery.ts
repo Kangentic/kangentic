@@ -50,7 +50,7 @@ export function pruneOrphanedWorktrees(
     if (fs.existsSync(task.worktree_path)) continue; // Worktree still exists
     if (activeTaskIds.has(task.id)) continue;         // Safety check
 
-    console.log(`[PRUNE] Deleting orphaned task "${task.title}" (${task.id.slice(0, 8)}) — worktree missing`);
+    console.log(`[PRUNE] Deleting orphaned task "${task.title}" (${task.id.slice(0, 8)}) -- worktree missing`);
     sessionRepo.deleteByTaskId(task.id);
     taskRepo.delete(task.id);
     pruned++;
@@ -284,7 +284,7 @@ export async function recoverSessions(
   if (toProcess.length === 0) {
     if (skipped > 0) {
       console.log(
-        `Session recovery: skipped ${skipped} of ${toRecover.length} task(s) — all in non-auto-spawn columns or deleted`,
+        `Session recovery: skipped ${skipped} of ${toRecover.length} task(s) -- all in non-auto-spawn columns or deleted`,
       );
     }
     return;
@@ -368,7 +368,7 @@ export async function recoverSessions(
           try {
             actionConfig = JSON.parse(action.config_json) as ActionConfig;
           } catch {
-            console.error(`Session recovery: malformed config for action ${action.id} — using defaults`);
+            console.error(`Session recovery: malformed config for action ${action.id} -- using defaults`);
           }
         }
 
@@ -536,7 +536,7 @@ export async function reconcileSessions(
             try {
               actionConfig = JSON.parse(action.config_json);
             } catch {
-              console.error(`Session reconciliation: malformed config for action ${action.id} — using defaults`);
+              console.error(`Session reconciliation: malformed config for action ${action.id} -- using defaults`);
             }
           }
         }
@@ -548,7 +548,7 @@ export async function reconcileSessions(
 
         // Guard: CWD must still exist — fall back to projectPath if worktree was deleted
         if (task.worktree_path && !fs.existsSync(task.worktree_path)) {
-          console.log(`Session reconciliation: worktree missing for task ${task.id} — falling back to project path`);
+          console.log(`Session reconciliation: worktree missing for task ${task.id} -- falling back to project path`);
           taskRepo.update({ id: task.id, worktree_path: null, branch_name: null });
           cwd = projectPath;
         }

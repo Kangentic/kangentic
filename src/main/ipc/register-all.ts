@@ -222,7 +222,7 @@ async function cleanupTaskResources(
 export async function cleanupProject(projectId: string, projectPath: string): Promise<void> {
   // Guard: project path must exist
   if (!fs.existsSync(projectPath)) {
-    console.warn(`[PROJECT_DELETE] Project path does not exist: ${projectPath} — skipping filesystem cleanup`);
+    console.warn(`[PROJECT_DELETE] Project path does not exist: ${projectPath} -- skipping filesystem cleanup`);
     closeProjectDb(projectId);
     const dbPath = PATHS.projectDb(projectId);
     try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }
@@ -474,9 +474,9 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
       const isThinking = taskSession && activityCache[taskSession.id] === 'thinking';
 
       if (isThinking) {
-        console.log(`[TASK_UPDATE] Skipping branch rename — task ${input.id.slice(0, 8)} agent is thinking`);
+        console.log(`[TASK_UPDATE] Skipping branch rename -- task ${input.id.slice(0, 8)} agent is thinking`);
       } else if (!fs.existsSync(existing.worktree_path)) {
-        console.log(`[TASK_UPDATE] Skipping branch rename — worktree path missing: ${existing.worktree_path}`);
+        console.log(`[TASK_UPDATE] Skipping branch rename -- worktree path missing: ${existing.worktree_path}`);
       } else {
         const wm = new WorktreeManager(currentProjectPath);
         const newBranchName = await wm.renameBranch(
@@ -589,7 +589,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
         const interpolated = commandBuilder.interpolateTemplate(toLane.auto_command, vars);
         commandInjector.schedule(task.id, task.session_id, interpolated, { freshlySpawned: false });
       }
-      console.log(`[TASK_MOVE] Task ${task.id.slice(0, 8)} already has active session — skipping transitions`);
+      console.log(`[TASK_MOVE] Task ${task.id.slice(0, 8)} already has active session -- skipping transitions`);
       return;
     }
 

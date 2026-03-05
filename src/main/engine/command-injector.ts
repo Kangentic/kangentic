@@ -51,7 +51,7 @@ export class CommandInjector {
     // Check if session exists and has a live PTY
     const session = this.sessionManager.getSession(sessionId);
     if (!session) {
-      console.log(`[AUTO_COMMAND] No session ${sessionId.slice(0, 8)} — skipping`);
+      console.log(`[AUTO_COMMAND] No session ${sessionId.slice(0, 8)} -- skipping`);
       return;
     }
 
@@ -102,7 +102,7 @@ export class CommandInjector {
     let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
     // Hard timeout: ultimate safety net
     const hardTimer = setTimeout(() => {
-      console.warn(`[AUTO_COMMAND] Hard timeout (${timeoutMs}ms) for task ${taskId.slice(0, 8)} — cancelling`);
+      console.warn(`[AUTO_COMMAND] Hard timeout (${timeoutMs}ms) for task ${taskId.slice(0, 8)} -- cancelling`);
       this.cancel(taskId);
     }, timeoutMs);
 
@@ -110,7 +110,7 @@ export class CommandInjector {
       if (fallbackTimer) return;
       fallbackTimer = setTimeout(() => {
         if (!this.pending.has(taskId)) return;
-        console.log(`[AUTO_COMMAND] 30s fallback for task ${taskId.slice(0, 8)} — injecting`);
+        console.log(`[AUTO_COMMAND] 30s fallback for task ${taskId.slice(0, 8)} -- injecting`);
         detachAndDeliver();
       }, 30_000);
     };
@@ -152,7 +152,7 @@ export class CommandInjector {
       if (evtSessionId !== sessionId) return;
       if (!this.pending.has(taskId)) return;
 
-      console.log(`[AUTO_COMMAND] Session ${sessionId.slice(0, 8)} exited — cancelling injection for task ${taskId.slice(0, 8)}`);
+      console.log(`[AUTO_COMMAND] Session ${sessionId.slice(0, 8)} exited -- cancelling injection for task ${taskId.slice(0, 8)}`);
       this.cancel(taskId);
     };
 
