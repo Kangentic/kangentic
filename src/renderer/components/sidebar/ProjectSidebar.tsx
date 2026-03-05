@@ -138,11 +138,17 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
                       <span className="truncate font-medium">{project.name}</span>
                       {idleCount > 0 ? (
                         <span
-                          className={`flex items-center gap-1 text-xs tabular-nums flex-shrink-0 rounded-full ${
-                            hasUnseenIdle ? 'text-amber-400 animate-pulse-amber' : 'text-amber-400/50'
+                          className={`flex items-center gap-1 text-xs tabular-nums flex-shrink-0 ${
+                            hasUnseenIdle ? 'text-amber-400' : 'text-amber-400/50'
                           }`}
                           title={`${idleCount} idle — needs attention`}
                         >
+                          {hasUnseenIdle && (
+                            <span className="relative flex-shrink-0 w-1.5 h-1.5">
+                              <span className="absolute inset-0 rounded-full bg-amber-400 animate-pulse-amber" />
+                              <span className="absolute inset-0 rounded-full bg-amber-400" />
+                            </span>
+                          )}
                           <Mail size={10} />
                           {idleCount}
                         </span>

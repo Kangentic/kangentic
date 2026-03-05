@@ -383,13 +383,13 @@ test.describe('Project Session Scope', () => {
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
       const alphaIdleBadge = alphaRow.locator('span[title*="idle"]');
       await expect(alphaIdleBadge).toBeVisible();
-      await expect(alphaIdleBadge).not.toHaveClass(/animate-pulse-amber/);
+      await expect(alphaIdleBadge.locator('.animate-pulse-amber')).toHaveCount(0);
 
       // Project Beta is non-active — shows pulsing idle badge (unseen)
       const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
       const betaIdleBadge = betaRow.locator('span[title*="idle"]');
       await expect(betaIdleBadge).toBeVisible();
-      await expect(betaIdleBadge).toHaveClass(/animate-pulse-amber/);
+      await expect(betaIdleBadge.locator('.animate-pulse-amber')).toHaveCount(1);
     } finally {
       await browser.close();
     }
@@ -405,7 +405,7 @@ test.describe('Project Session Scope', () => {
       const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
       const betaIdleBadge = betaRow.locator('span[title*="idle"]');
       await expect(betaIdleBadge).toBeVisible();
-      await expect(betaIdleBadge).toHaveClass(/animate-pulse-amber/);
+      await expect(betaIdleBadge.locator('.animate-pulse-amber')).toHaveCount(1);
 
       // Switch to Project Beta — this marks its idle sessions as seen
       await betaRow.click();
@@ -413,7 +413,7 @@ test.describe('Project Session Scope', () => {
 
       // Badge still visible but no longer pulsing (seen)
       await expect(betaIdleBadge).toBeVisible();
-      await expect(betaIdleBadge).not.toHaveClass(/animate-pulse-amber/);
+      await expect(betaIdleBadge.locator('.animate-pulse-amber')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -429,13 +429,13 @@ test.describe('Project Session Scope', () => {
       const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
       const betaIdleBadge = betaRow.locator('span[title*="idle"]');
       await expect(betaIdleBadge).toBeVisible();
-      await expect(betaIdleBadge).toHaveClass(/animate-pulse-amber/);
+      await expect(betaIdleBadge.locator('.animate-pulse-amber')).toHaveCount(1);
 
       // Project Alpha (active) should have idle badge but NOT pulsing (seen)
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
       const alphaIdleBadge = alphaRow.locator('span[title*="idle"]');
       await expect(alphaIdleBadge).toBeVisible();
-      await expect(alphaIdleBadge).not.toHaveClass(/animate-pulse-amber/);
+      await expect(alphaIdleBadge.locator('.animate-pulse-amber')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -452,7 +452,7 @@ test.describe('Project Session Scope', () => {
 
       // Badge is pulsing before switching (unseen)
       await expect(betaIdleBadge).toBeVisible();
-      await expect(betaIdleBadge).toHaveClass(/animate-pulse-amber/);
+      await expect(betaIdleBadge.locator('.animate-pulse-amber')).toHaveCount(1);
 
       // Switch to Beta
       await betaRow.click();
@@ -460,7 +460,7 @@ test.describe('Project Session Scope', () => {
 
       // Badge still visible but pulse stops (seen)
       await expect(betaIdleBadge).toBeVisible();
-      await expect(betaIdleBadge).not.toHaveClass(/animate-pulse-amber/);
+      await expect(betaIdleBadge.locator('.animate-pulse-amber')).toHaveCount(0);
     } finally {
       await browser.close();
     }
