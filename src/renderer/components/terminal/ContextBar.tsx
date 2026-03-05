@@ -90,7 +90,7 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
             style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: progressColor }}
           />
         </div>
-        <span ref={pctRef} className="tabular-nums text-fg-faint whitespace-nowrap transition-colors duration-300" title={`${100 - pct}% remaining until compaction`}>{pct}% context</span>
+        <span ref={pctRef} className="tabular-nums text-fg-faint whitespace-nowrap transition-colors duration-300" title={`${100 - pct}% remaining`}>{pct}% context</span>
       </div>
     </div>
   );

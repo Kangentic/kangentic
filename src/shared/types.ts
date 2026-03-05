@@ -247,7 +247,7 @@ export interface SessionEvent {
 export interface SessionUsage {
   contextWindow: {
     usedPercentage: number;
-    usedTokens: number;           // total current context usage (all buckets)
+    usedTokens: number;           // total input tokens in context (excludes output)
     cacheTokens: number;          // cache_read + cache_creation
     totalInputTokens: number;
     totalOutputTokens: number;
