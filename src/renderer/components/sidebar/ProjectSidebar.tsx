@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Trash2, Plus, Folder, FolderOpen, Menu } from 'lucide-react';
+import { Trash2, Plus, Folder, FolderOpen, Menu, Loader2, Mail } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
+import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import type { Project } from '../../../shared/types';
@@ -21,6 +22,8 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
   const currentProject = useProjectStore((s) => s.currentProject);
   const openProject = useProjectStore((s) => s.openProject);
   const deleteProject = useProjectStore((s) => s.deleteProject);
+  const sessions = useSessionStore((s) => s.sessions);
+  const sessionActivity = useSessionStore((s) => s.sessionActivity);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
 
   const handleNewProject = async () => {
@@ -100,6 +103,15 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
       <div className="flex-1 overflow-y-auto">
         {projects.map((project) => {
           const isActive = currentProject?.id === project.id;
+          const runningSessions = sessions.filter(
+            (s) => s.projectId === project.id && s.status === 'running',
+          );
+          const thinkingCount = runningSessions.filter(
+            (s) => sessionActivity[s.id] !== 'idle',
+          ).length;
+          const idleCount = runningSessions.filter(
+            (s) => sessionActivity[s.id] === 'idle',
+          ).length;
           return (
             <div
               key={project.id}
@@ -126,6 +138,28 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
                     </div>
                   </div>
                 </div>
+                {(thinkingCount > 0 || idleCount > 0) && (
+                  <div className="flex items-center gap-1.5 flex-shrink-0 mr-1">
+                    {thinkingCount > 0 && (
+                      <span
+                        className="flex items-center gap-1 text-xs tabular-nums text-green-400"
+                        title={`${thinkingCount} thinking`}
+                      >
+                        <Loader2 size={10} className="animate-spin" />
+                        {thinkingCount}
+                      </span>
+                    )}
+                    {idleCount > 0 && (
+                      <span
+                        className="flex items-center gap-1 text-xs tabular-nums text-amber-400"
+                        title={`${idleCount} idle — needs attention`}
+                      >
+                        <Mail size={10} />
+                        {idleCount}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div className="flex items-center gap-0.5 flex-shrink-0">
                   <button
                     onClick={(e) => handleOpenInExplorer(e, project)}

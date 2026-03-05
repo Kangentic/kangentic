@@ -232,6 +232,146 @@ test.describe('Project Session Scope', () => {
     }
   });
 
+  test('sidebar shows idle badge for project with idle sessions', async () => {
+    // Default fixture has both sessions set to 'idle' activity
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+
+    try {
+      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Project Alpha row should show idle badge (1 idle session)
+      const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
+      const alphaIdleBadge = alphaRow.locator('span[title*="idle"]');
+      await expect(alphaIdleBadge).toBeVisible();
+      await expect(alphaIdleBadge).toContainText('1');
+
+      // Project Beta row should also show idle badge (1 idle session)
+      const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
+      const betaIdleBadge = betaRow.locator('span[title*="idle"]');
+      await expect(betaIdleBadge).toBeVisible();
+      await expect(betaIdleBadge).toContainText('1');
+
+      // Neither should show a thinking badge
+      await expect(alphaRow.locator('span[title*="thinking"]')).not.toBeVisible();
+      await expect(betaRow.locator('span[title*="thinking"]')).not.toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('sidebar shows thinking badge for project with thinking sessions', async () => {
+    // Override activity so Session A is thinking (not idle)
+    const preConfig = twoProjectPreConfig() + `
+      window.__mockPreConfigure(function (state) {
+        state.activityCache['${SESSION_A_ID}'] = 'thinking';
+      });
+    `;
+    const { browser, page } = await launchWithState(preConfig);
+
+    try {
+      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Project Alpha should show thinking badge, no idle badge
+      const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
+      await expect(alphaRow.locator('span[title*="thinking"]')).toBeVisible();
+      await expect(alphaRow.locator('span[title*="thinking"]')).toContainText('1');
+      await expect(alphaRow.locator('span[title*="idle"]')).not.toBeVisible();
+
+      // Project Beta still idle
+      const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
+      await expect(betaRow.locator('span[title*="idle"]')).toBeVisible();
+      await expect(betaRow.locator('span[title*="thinking"]')).not.toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('sidebar shows no badge for project with no running sessions', async () => {
+    // Add a third project with no sessions
+    const preConfig = twoProjectPreConfig() + `
+      window.__mockPreConfigure(function (state) {
+        var ts = new Date().toISOString();
+        state.projects.push({
+          id: 'proj-scope-c',
+          name: 'Project Gamma',
+          path: '/mock/project-gamma',
+          github_url: null,
+          default_agent: 'claude',
+          last_opened: ts,
+          created_at: ts,
+        });
+      });
+    `;
+    const { browser, page } = await launchWithState(preConfig);
+
+    try {
+      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Project Gamma has no sessions — no badges at all
+      const gammaRow = page.locator('[role="button"]:has-text("Project Gamma")');
+      await expect(gammaRow).toBeVisible();
+      await expect(gammaRow.locator('span[title*="thinking"]')).not.toBeVisible();
+      await expect(gammaRow.locator('span[title*="idle"]')).not.toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('sidebar shows both thinking and idle badges for mixed sessions', async () => {
+    // Add a second session to Project A (thinking) while first stays idle
+    const preConfig = twoProjectPreConfig() + `
+      window.__mockPreConfigure(function (state) {
+        var ts = new Date().toISOString();
+        state.sessions.push({
+          id: 'sess-scope-a2',
+          taskId: 'task-scope-a2',
+          projectId: '${PROJECT_A_ID}',
+          pid: 1003,
+          status: 'running',
+          shell: 'bash',
+          cwd: '/mock/project-alpha',
+          startedAt: ts,
+          exitCode: null,
+        });
+        state.activityCache['sess-scope-a2'] = 'thinking';
+        state.tasks.push({
+          id: 'task-scope-a2',
+          title: 'Alpha Task 2',
+          description: '',
+          swimlane_id: 'lane-scope-0',
+          position: 2,
+          agent: null,
+          session_id: 'sess-scope-a2',
+          worktree_path: null,
+          branch_name: null,
+          pr_number: null,
+          pr_url: null,
+          base_branch: null,
+          archived_at: null,
+          created_at: ts,
+          updated_at: ts,
+        });
+      });
+    `;
+    const { browser, page } = await launchWithState(preConfig);
+
+    try {
+      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Project Alpha should show both badges: 1 thinking + 1 idle
+      const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
+      const thinkingBadge = alphaRow.locator('span[title*="thinking"]');
+      const idleBadge = alphaRow.locator('span[title*="idle"]');
+
+      await expect(thinkingBadge).toBeVisible();
+      await expect(thinkingBadge).toContainText('1');
+      await expect(idleBadge).toBeVisible();
+      await expect(idleBadge).toContainText('1');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('sessions persist across project switch and reappear when switching back', async () => {
     const { browser, page } = await launchWithState(twoProjectPreConfig());
 
