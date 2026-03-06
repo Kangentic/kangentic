@@ -41,6 +41,7 @@ All database connections are opened with:
 | path | TEXT | NOT NULL | |
 | github_url | TEXT | | NULL |
 | default_agent | TEXT | NOT NULL | 'claude' |
+| position | INTEGER | NOT NULL | 0 |
 | last_opened | TEXT | NOT NULL | |
 | created_at | TEXT | NOT NULL | |
 
@@ -173,7 +174,7 @@ One repository class per table:
 - `ProjectRepository` -- operates on the global DB.
 - `TaskRepository`, `SwimlaneRepository`, `ActionRepository`, `SessionRepository`, `AttachmentRepository` -- operate on per-project DBs.
 
-All queries are synchronous (better-sqlite3). Transactions are used for position shifts (task move, swimlane reorder) to ensure consistent ordering.
+All queries are synchronous (better-sqlite3). Transactions are used for position shifts (task move, swimlane reorder, project reorder) to ensure consistent ordering.
 
 ## Connection Management
 

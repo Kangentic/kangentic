@@ -187,7 +187,7 @@ When the max concurrent sessions limit is reached, new sessions are queued autom
 
 ### Multi-Project
 
-The sidebar shows all your projects. Click to switch between them. Each project has its own board, columns, and sessions.
+The sidebar shows all your projects. Click to switch between them. Each project has its own board, columns, and sessions. Drag projects to reorder them -- the order persists across app restarts. New projects appear at the top.
 
 ### Idle Badges
 
