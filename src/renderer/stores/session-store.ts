@@ -14,10 +14,12 @@ interface SessionStore {
   sessionActivity: Record<string, ActivityState>;
   sessionEvents: Record<string, SessionEvent[]>;
   seenIdleSessions: Record<string, boolean>;
+  _pendingOpenTaskId: string | null;
   _syncGeneration: number;
 
   syncSessions: () => Promise<void>;
   _bumpSyncGeneration: () => number;
+  setPendingOpenTaskId: (id: string | null) => void;
   spawnSession: (input: SpawnSessionInput) => Promise<Session>;
   killSession: (id: string) => Promise<void>;
   suspendSession: (taskId: string) => Promise<void>;
@@ -46,7 +48,10 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   sessionActivity: {},
   sessionEvents: {},
   seenIdleSessions: {},
+  _pendingOpenTaskId: null,
   _syncGeneration: 0,
+
+  setPendingOpenTaskId: (id) => set({ _pendingOpenTaskId: id }),
 
   _bumpSyncGeneration: () => {
     const next = get()._syncGeneration + 1;

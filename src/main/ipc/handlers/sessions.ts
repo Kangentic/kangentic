@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { SessionRepository } from '../../db/repositories/session-repository';
+import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, ensureTaskWorktree, createTransitionEngine } from '../helpers';
 import { handleTaskMove } from './tasks';
@@ -105,7 +106,18 @@ export function registerSessionHandlers(context: IpcContext): void {
   context.sessionManager.on('activity', (sessionId: string, state: string) => {
     if (!context.mainWindow.isDestroyed()) {
       const projectId = context.sessionManager.getSessionProjectId(sessionId);
-      context.mainWindow.webContents.send(IPC.SESSION_ACTIVITY, sessionId, state, projectId);
+      const taskId = context.sessionManager.getSessionTaskId(sessionId);
+      let taskTitle: string | undefined;
+      if (taskId && projectId) {
+        try {
+          const db = getProjectDb(projectId);
+          const taskRepository = new TaskRepository(db);
+          taskTitle = taskRepository.getById(taskId)?.title;
+        } catch {
+          // Project DB may not exist yet -- skip title lookup
+        }
+      }
+      context.mainWindow.webContents.send(IPC.SESSION_ACTIVITY, sessionId, state, projectId, taskId, taskTitle);
     }
   });
 

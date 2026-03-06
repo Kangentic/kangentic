@@ -492,6 +492,11 @@ export class SessionManager extends EventEmitter {
     return this.sessions.get(sessionId)?.projectId;
   }
 
+  /** Return the taskId for a given session, or undefined if not found. */
+  getSessionTaskId(sessionId: string): string | undefined {
+    return this.sessions.get(sessionId)?.taskId;
+  }
+
   /**
    * Inject a synthetic session_end event into the event cache and emit it.
    * Claude Code's SessionEnd hook won't fire when we kill the PTY, so we

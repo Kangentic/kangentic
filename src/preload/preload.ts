@@ -94,7 +94,7 @@ const api: ElectronAPI = {
     },
     getActivity: (projectId?) => ipcRenderer.invoke(IPC.SESSION_GET_ACTIVITY, projectId),
     onActivity: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, state: ActivityState, projectId?: string) => callback(sessionId, state, projectId);
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, state: ActivityState, projectId?: string, taskId?: string, taskTitle?: string) => callback(sessionId, state, projectId, taskId, taskTitle);
       ipcRenderer.on(IPC.SESSION_ACTIVITY, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_ACTIVITY, handler);
     },

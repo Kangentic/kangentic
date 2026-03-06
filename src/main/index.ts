@@ -40,6 +40,9 @@ for (const arg of process.argv) {
   }
 }
 
+// Tell Windows to display "Kangentic" in notification toasts instead of "Electron"
+app.setAppUserModelId('com.kangentic.app');
+
 const isEphemeral = process.argv.includes('--ephemeral');
 
 let mainWindow: BrowserWindow | null = null;

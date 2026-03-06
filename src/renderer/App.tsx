@@ -66,8 +66,18 @@ export function App() {
       const generationBeforeSync = useSessionStore.getState()._syncGeneration;
       useSessionStore.getState().syncSessions().then(() => {
         // If project switched again while syncing, don't mark sessions seen
-        if (useSessionStore.getState()._syncGeneration !== generationBeforeSync) return;
+        if (useSessionStore.getState()._syncGeneration !== generationBeforeSync) {
+          useSessionStore.getState().setPendingOpenTaskId(null);
+          return;
+        }
         useSessionStore.getState().markIdleSessionsSeen(currentProject.id);
+
+        // Open task detail dialog if a notification click set a pending task ID
+        const pendingTaskId = useSessionStore.getState()._pendingOpenTaskId;
+        if (pendingTaskId) {
+          useSessionStore.getState().setPendingOpenTaskId(null);
+          useSessionStore.getState().setOpenTaskId(pendingTaskId);
+        }
       });
     } else {
       useBoardStore.setState({ tasks: [], swimlanes: [], archivedTasks: [] });
@@ -146,7 +156,7 @@ export function App() {
     // ALWAYS update activity (sidebar badges need cross-project data),
     // but only run auto-focus for current project.
     if (sessions.onActivity) {
-      cleanups.push(sessions.onActivity((sessionId, state, projectId) => {
+      cleanups.push(sessions.onActivity((sessionId, state, projectId, taskId, taskTitle) => {
         updateActivity(sessionId, state);
 
         const activeProjectId = useProjectStore.getState().currentProject?.id;
@@ -179,13 +189,12 @@ export function App() {
           if (session && session.projectId !== activeProjectId) {
             const project = useProjectStore.getState().projects.find((p) => p.id === session.projectId);
             const projectName = project?.name ?? 'A project';
-            const task = useBoardStore.getState().tasks.find((t) => t.session_id === sessionId);
-            const taskLabel = task?.title ?? 'A task';
+            const notificationTaskTitle = taskTitle ?? 'A task';
             window.electronAPI.notifications.show({
               title: `${projectName} -- Idle`,
-              body: `${taskLabel} needs attention`,
+              body: `${notificationTaskTitle} needs attention`,
               projectId: session.projectId,
-              taskId: task?.id ?? '',
+              taskId: taskId ?? '',
             });
             window.electronAPI.window.flashFrame(true);
           }
@@ -208,11 +217,15 @@ export function App() {
     const notifications = window.electronAPI?.notifications;
     if (notifications?.onClicked) {
       cleanups.push(notifications.onClicked((projectId, taskId) => {
-        useProjectStore.getState().openProject(projectId).then(() => {
-          if (taskId && useProjectStore.getState().currentProject?.id === projectId) {
-            useSessionStore.getState().setOpenTaskId(taskId);
+        const alreadyActive = useProjectStore.getState().currentProject?.id === projectId;
+        if (taskId && alreadyActive) {
+          useSessionStore.getState().setOpenTaskId(taskId);
+        } else {
+          if (taskId) {
+            useSessionStore.getState().setPendingOpenTaskId(taskId);
           }
-        });
+          useProjectStore.getState().openProject(projectId);
+        }
       }));
     }
 
