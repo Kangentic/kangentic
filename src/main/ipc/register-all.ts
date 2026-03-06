@@ -794,10 +794,13 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC.SESSION_RESIZE, (_, id, cols, rows) => sessionManager.resize(id, cols, rows));
   ipcMain.handle(IPC.SESSION_LIST, () => sessionManager.listSessions());
   ipcMain.handle(IPC.SESSION_GET_SCROLLBACK, (_, id) => sessionManager.getScrollback(id));
-  ipcMain.handle(IPC.SESSION_GET_USAGE, () => sessionManager.getUsageCache());
-  ipcMain.handle(IPC.SESSION_GET_ACTIVITY, () => sessionManager.getActivityCache());
+  ipcMain.handle(IPC.SESSION_GET_USAGE, (_, projectId?: string) =>
+    projectId ? sessionManager.getUsageCacheForProject(projectId) : sessionManager.getUsageCache());
+  ipcMain.handle(IPC.SESSION_GET_ACTIVITY, (_, projectId?: string) =>
+    projectId ? sessionManager.getActivityCacheForProject(projectId) : sessionManager.getActivityCache());
   ipcMain.handle(IPC.SESSION_GET_EVENTS, (_, sessionId: string) => sessionManager.getEventsForSession(sessionId));
-  ipcMain.handle(IPC.SESSION_GET_EVENTS_CACHE, () => sessionManager.getEventsCache());
+  ipcMain.handle(IPC.SESSION_GET_EVENTS_CACHE, (_, projectId?: string) =>
+    projectId ? sessionManager.getEventsCacheForProject(projectId) : sessionManager.getEventsCache());
 
   // === Session Suspend / Resume ===
   ipcMain.handle(IPC.SESSION_SUSPEND, async (_, taskId: string) => {
@@ -854,39 +857,46 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   });
 
   // Forward PTY events to renderer (guard against destroyed window during shutdown)
+  // Each event includes the session's projectId so the renderer can filter by project.
   sessionManager.on('data', (sessionId: string, data: string) => {
     if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC.SESSION_DATA, sessionId, data);
+      const projectId = sessionManager.getSessionProjectId(sessionId);
+      mainWindow.webContents.send(IPC.SESSION_DATA, sessionId, data, projectId);
     }
   });
 
-  sessionManager.on('usage', (sessionId: string, data: any) => {
+  sessionManager.on('usage', (sessionId: string, data: unknown) => {
     if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC.SESSION_USAGE, sessionId, data);
+      const projectId = sessionManager.getSessionProjectId(sessionId);
+      mainWindow.webContents.send(IPC.SESSION_USAGE, sessionId, data, projectId);
     }
   });
 
   sessionManager.on('activity', (sessionId: string, state: string) => {
     if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC.SESSION_ACTIVITY, sessionId, state);
+      const projectId = sessionManager.getSessionProjectId(sessionId);
+      mainWindow.webContents.send(IPC.SESSION_ACTIVITY, sessionId, state, projectId);
     }
   });
 
-  sessionManager.on('event', (sessionId: string, event: any) => {
+  sessionManager.on('event', (sessionId: string, event: unknown) => {
     if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC.SESSION_EVENT, sessionId, event);
+      const projectId = sessionManager.getSessionProjectId(sessionId);
+      mainWindow.webContents.send(IPC.SESSION_EVENT, sessionId, event, projectId);
     }
   });
 
   sessionManager.on('status', (sessionId: string, status: string) => {
     if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC.SESSION_STATUS, sessionId, status);
+      const projectId = sessionManager.getSessionProjectId(sessionId);
+      mainWindow.webContents.send(IPC.SESSION_STATUS, sessionId, status, projectId);
     }
   });
 
   sessionManager.on('exit', (sessionId: string, exitCode: number) => {
     if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC.SESSION_EXIT, sessionId, exitCode);
+      const projectId = sessionManager.getSessionProjectId(sessionId);
+      mainWindow.webContents.send(IPC.SESSION_EXIT, sessionId, exitCode, projectId);
     }
 
     // Persist exit status to session DB

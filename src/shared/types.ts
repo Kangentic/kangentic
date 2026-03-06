@@ -558,16 +558,16 @@ export interface ElectronAPI {
     resize: (sessionId: string, cols: number, rows: number) => Promise<void>;
     list: () => Promise<Session[]>;
     getScrollback: (sessionId: string) => Promise<string>;
-    getUsage: () => Promise<Record<string, SessionUsage>>;
-    onData: (callback: (sessionId: string, data: string) => void) => () => void;
-    onExit: (callback: (sessionId: string, exitCode: number) => void) => () => void;
-    onStatus: (callback: (sessionId: string, status: SessionStatus) => void) => () => void;
-    onUsage: (callback: (sessionId: string, data: SessionUsage) => void) => () => void;
-    getActivity: () => Promise<Record<string, ActivityState>>;
-    onActivity: (callback: (sessionId: string, state: ActivityState) => void) => () => void;
+    getUsage: (projectId?: string) => Promise<Record<string, SessionUsage>>;
+    onData: (callback: (sessionId: string, data: string, projectId?: string) => void) => () => void;
+    onExit: (callback: (sessionId: string, exitCode: number, projectId?: string) => void) => () => void;
+    onStatus: (callback: (sessionId: string, status: SessionStatus, projectId?: string) => void) => () => void;
+    onUsage: (callback: (sessionId: string, data: SessionUsage, projectId?: string) => void) => () => void;
+    getActivity: (projectId?: string) => Promise<Record<string, ActivityState>>;
+    onActivity: (callback: (sessionId: string, state: ActivityState, projectId?: string) => void) => () => void;
     getEvents: (sessionId: string) => Promise<SessionEvent[]>;
-    getEventsCache: () => Promise<Record<string, SessionEvent[]>>;
-    onEvent: (callback: (sessionId: string, event: SessionEvent) => void) => () => void;
+    getEventsCache: (projectId?: string) => Promise<Record<string, SessionEvent[]>>;
+    onEvent: (callback: (sessionId: string, event: SessionEvent, projectId?: string) => void) => () => void;
   };
 
   // Config

@@ -499,7 +499,7 @@
       getScrollback: async function () {
         return '';
       },
-      getUsage: async function () {
+      getUsage: async function (/* projectId */) {
         return {};
       },
       onData: function () {
@@ -514,7 +514,7 @@
       onUsage: function () {
         return noop;
       },
-      getActivity: async function () {
+      getActivity: async function (/* projectId */) {
         return Object.assign({}, activityCache);
       },
       onActivity: function () {
@@ -523,7 +523,7 @@
       getEvents: async function (sessionId) {
         return eventCache[sessionId] || [];
       },
-      getEventsCache: async function () {
+      getEventsCache: async function (/* projectId */) {
         return Object.assign({}, eventCache);
       },
       onEvent: function () {

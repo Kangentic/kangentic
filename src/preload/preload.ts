@@ -70,37 +70,37 @@ const api: ElectronAPI = {
     resize: (id, cols, rows) => ipcRenderer.invoke(IPC.SESSION_RESIZE, id, cols, rows),
     list: () => ipcRenderer.invoke(IPC.SESSION_LIST),
     getScrollback: (id) => ipcRenderer.invoke(IPC.SESSION_GET_SCROLLBACK, id),
-    getUsage: () => ipcRenderer.invoke(IPC.SESSION_GET_USAGE),
+    getUsage: (projectId?) => ipcRenderer.invoke(IPC.SESSION_GET_USAGE, projectId),
     onData: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: string) => callback(sessionId, data);
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: string, projectId?: string) => callback(sessionId, data, projectId);
       ipcRenderer.on(IPC.SESSION_DATA, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_DATA, handler);
     },
     onExit: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, exitCode: number) => callback(sessionId, exitCode);
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, exitCode: number, projectId?: string) => callback(sessionId, exitCode, projectId);
       ipcRenderer.on(IPC.SESSION_EXIT, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_EXIT, handler);
     },
     onStatus: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, status: SessionStatus) => callback(sessionId, status);
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, status: SessionStatus, projectId?: string) => callback(sessionId, status, projectId);
       ipcRenderer.on(IPC.SESSION_STATUS, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_STATUS, handler);
     },
     onUsage: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: SessionUsage) => callback(sessionId, data);
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: SessionUsage, projectId?: string) => callback(sessionId, data, projectId);
       ipcRenderer.on(IPC.SESSION_USAGE, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_USAGE, handler);
     },
-    getActivity: () => ipcRenderer.invoke(IPC.SESSION_GET_ACTIVITY),
+    getActivity: (projectId?) => ipcRenderer.invoke(IPC.SESSION_GET_ACTIVITY, projectId),
     onActivity: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, state: ActivityState) => callback(sessionId, state);
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, state: ActivityState, projectId?: string) => callback(sessionId, state, projectId);
       ipcRenderer.on(IPC.SESSION_ACTIVITY, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_ACTIVITY, handler);
     },
     getEvents: (sessionId) => ipcRenderer.invoke(IPC.SESSION_GET_EVENTS, sessionId),
-    getEventsCache: () => ipcRenderer.invoke(IPC.SESSION_GET_EVENTS_CACHE),
+    getEventsCache: (projectId?) => ipcRenderer.invoke(IPC.SESSION_GET_EVENTS_CACHE, projectId),
     onEvent: (callback) => {
-      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, event: SessionEvent) => callback(sessionId, event);
+      const handler = (_event: Electron.IpcRendererEvent, sessionId: string, event: SessionEvent, projectId?: string) => callback(sessionId, event, projectId);
       ipcRenderer.on(IPC.SESSION_EVENT, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_EVENT, handler);
     },

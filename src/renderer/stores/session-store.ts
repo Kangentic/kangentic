@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Session, SessionUsage, ActivityState, SessionEvent, SpawnSessionInput } from '../../shared/types';
+import { useProjectStore } from './project-store';
 
 const MAX_EVENTS_PER_SESSION = 500;
 
@@ -45,10 +46,16 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   seenIdleSessions: {},
 
   syncSessions: async () => {
+    const currentProjectId = useProjectStore.getState().currentProject?.id;
+
+    // Sessions list is always unscoped — sidebar needs cross-project data
     const freshSessions = await window.electronAPI.sessions.list();
-    const cachedUsage = await window.electronAPI.sessions.getUsage();
+
+    // Usage/events are scoped to current project; activity is unscoped
+    // because sidebar badges need cross-project activity data.
+    const cachedUsage = await window.electronAPI.sessions.getUsage(currentProjectId);
     const cachedActivity = await window.electronAPI.sessions.getActivity();
-    const cachedEvents = await window.electronAPI.sessions.getEventsCache();
+    const cachedEvents = await window.electronAPI.sessions.getEventsCache(currentProjectId);
 
     // Single snapshot of current store state — prevents interleaved reads
     // if a synchronous store update lands between multiple get() calls.

@@ -42,6 +42,14 @@ export function App() {
     if (currentProject) {
       loadBoard();
       loadConfig(); // Re-fetch effective config (global + project overrides)
+      // Clear per-view state before syncing — prevents stale data from the
+      // previous project leaking into the new project's terminal/events.
+      // Do NOT clear sessionActivity or sessions — sidebar badges need cross-project data.
+      useSessionStore.setState({
+        activeSessionId: null,
+        sessionUsage: {},
+        sessionEvents: {},
+      });
       useSessionStore.getState().syncSessions().then(() => {
         useSessionStore.getState().markIdleSessionsSeen(currentProject.id);
       });
@@ -62,7 +70,10 @@ export function App() {
     // Debounced re-sync: when an IPC event arrives for a session ID not yet in
     // the store (e.g. background sessions spawned by activateAllProjects before
     // the renderer had a chance to sync), schedule a full syncSessions() call.
-    const scheduleSyncIfUnknown = (sessionId: string) => {
+    // Skip if the event's projectId doesn't match the current project.
+    const scheduleSyncIfUnknown = (sessionId: string, projectId?: string) => {
+      const activeProjectId = useProjectStore.getState().currentProject?.id;
+      if (projectId && activeProjectId && projectId !== activeProjectId) return;
       const exists = useSessionStore.getState().sessions.some((s) => s.id === sessionId);
       if (exists) return;
       if (debouncedSyncRef.current) clearTimeout(debouncedSyncRef.current);
@@ -74,15 +85,15 @@ export function App() {
 
     // Session status transitions (queued → running)
     if (sessions.onStatus) {
-      cleanups.push(sessions.onStatus((sessionId, status) => {
-        scheduleSyncIfUnknown(sessionId);
+      cleanups.push(sessions.onStatus((sessionId, status, projectId) => {
+        scheduleSyncIfUnknown(sessionId, projectId);
         updateSessionStatus(sessionId, { status });
       }));
     }
 
     // Session exit events
     if (sessions.onExit) {
-      cleanups.push(sessions.onExit((sessionId, exitCode) => {
+      cleanups.push(sessions.onExit((sessionId, exitCode, projectId) => {
         const currentSession = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
         if (currentSession?.status === 'suspended') return;
 
@@ -90,7 +101,7 @@ export function App() {
 
         // Only show toast if exited session belongs to current project
         const activeProjectId = useProjectStore.getState().currentProject?.id;
-        if (currentSession?.projectId === activeProjectId) {
+        if ((projectId ?? currentSession?.projectId) === activeProjectId) {
           const task = useBoardStore.getState().tasks.find((t) => t.session_id === sessionId)
             ?? useBoardStore.getState().tasks.find((t) => t.id === currentSession?.taskId);
           const label = task ? `"${task.title}"` : sessionId.slice(0, 8);
@@ -102,25 +113,36 @@ export function App() {
       }));
     }
 
-    // Session usage data
+    // Session usage data — only update store for current project sessions
     if (sessions.onUsage) {
-      cleanups.push(sessions.onUsage((sessionId, data) => {
-        updateUsage(sessionId, data);
+      cleanups.push(sessions.onUsage((sessionId, data, projectId) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (!projectId || !activeProjectId || projectId === activeProjectId) {
+          updateUsage(sessionId, data);
+        }
       }));
     }
 
     // Session activity state (thinking/idle)
+    // ALWAYS update activity (sidebar badges need cross-project data),
+    // but only run auto-focus and scheduleSyncIfUnknown for current project.
     if (sessions.onActivity) {
-      cleanups.push(sessions.onActivity((sessionId, state) => {
-        scheduleSyncIfUnknown(sessionId);
+      cleanups.push(sessions.onActivity((sessionId, state, projectId) => {
         updateActivity(sessionId, state);
+
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        const isCurrentProject = !projectId || !activeProjectId || projectId === activeProjectId;
+
+        if (isCurrentProject) {
+          scheduleSyncIfUnknown(sessionId, projectId);
+        }
 
         const config = useConfigStore.getState().config;
         const sessionStore = useSessionStore.getState();
-        const activeProjectId = useProjectStore.getState().currentProject?.id;
 
         // Auto-focus: switch the bottom panel to the most recently idle session
-        if (config.autoFocusIdleSession) {
+        // (only for current project sessions)
+        if (isCurrentProject && config.autoFocusIdleSession) {
           const projectSessions = sessionStore.sessions.filter((s) => s.projectId === activeProjectId);
           const target = resolveAutoFocusTarget({
             sessionId,
@@ -152,9 +174,13 @@ export function App() {
     }
 
     // Session events (tool calls, idle, prompt — activity log)
+    // Only add events for current project sessions
     if (sessions.onEvent) {
-      cleanups.push(sessions.onEvent((sessionId, event) => {
-        addEvent(sessionId, event);
+      cleanups.push(sessions.onEvent((sessionId, event, projectId) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (!projectId || !activeProjectId || projectId === activeProjectId) {
+          addEvent(sessionId, event);
+        }
       }));
     }
 

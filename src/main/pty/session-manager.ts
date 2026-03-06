@@ -451,6 +451,47 @@ export class SessionManager extends EventEmitter {
     return result;
   }
 
+  /** Return cached usage data filtered to a specific project. */
+  getUsageCacheForProject(projectId: string): Record<string, SessionUsage> {
+    const result: Record<string, SessionUsage> = {};
+    for (const [id, usage] of this.usageCache) {
+      const session = this.sessions.get(id);
+      if (session?.projectId === projectId) {
+        result[id] = usage;
+      }
+    }
+    return result;
+  }
+
+  /** Return cached activity state filtered to a specific project. */
+  getActivityCacheForProject(projectId: string): Record<string, ActivityState> {
+    const result: Record<string, ActivityState> = {};
+    for (const [id, state] of this.activityCache) {
+      const session = this.sessions.get(id);
+      if (session?.projectId === projectId) {
+        result[id] = state;
+      }
+    }
+    return result;
+  }
+
+  /** Return cached events filtered to a specific project. */
+  getEventsCacheForProject(projectId: string): Record<string, SessionEvent[]> {
+    const result: Record<string, SessionEvent[]> = {};
+    for (const [id, events] of this.eventCache) {
+      const session = this.sessions.get(id);
+      if (session?.projectId === projectId) {
+        result[id] = events;
+      }
+    }
+    return result;
+  }
+
+  /** Return the projectId for a given session, or undefined if not found. */
+  getSessionProjectId(sessionId: string): string | undefined {
+    return this.sessions.get(sessionId)?.projectId;
+  }
+
   /**
    * Inject a synthetic session_end event into the event cache and emit it.
    * Claude Code's SessionEnd hook won't fire when we kill the PTY, so we
