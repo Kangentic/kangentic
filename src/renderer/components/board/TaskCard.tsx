@@ -117,7 +117,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
       >
         <div className="flex items-center gap-1.5">
           {isIdle && (
-            <Mail size={14} className="text-fg-muted shrink-0" />
+            <Mail size={14} className="text-amber-400 shrink-0" />
           )}
           {isThinking && (
             <Loader2 size={14} className="text-emerald-400 animate-spin shrink-0" />
