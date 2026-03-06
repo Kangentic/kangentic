@@ -349,3 +349,14 @@ On project open (`src/main/engine/session-recovery.ts`):
 - **Terminal ownership handoff** — one xterm instance per session at a time prevents duplicate resize calls that corrupt TUI output
 - **Output batching** — 16ms flush interval prevents per-character IPC overhead
 - **Scrollback cap** — 512KB prevents unbounded memory growth
+
+## See Also
+
+- [Session Lifecycle](session-lifecycle.md) — Full state machine, spawn flow, queue, crash recovery
+- [Claude Integration](claude-integration.md) — Command building, settings merge, hooks, trust management
+- [Transition Engine](transition-engine.md) — Action types, templates, priority rules
+- [Database](database.md) — Full schema reference, migrations, repository pattern
+- [Configuration](configuration.md) — Config cascade, all settings keys
+- [Cross-Platform](cross-platform.md) — Shell resolution, path handling, packaging
+- [Activity Detection](activity-detection.md) — Event pipeline, thinking/idle state derivation
+- [Worktree Strategy](worktree-strategy.md) — Branch naming, sparse-checkout, hook delivery

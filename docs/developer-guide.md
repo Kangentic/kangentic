@@ -218,6 +218,19 @@ npm run test:unit                 # Unit (separate runner)
 | `MAIN_WINDOW_VITE_DEV_SERVER_URL` | Dev | Injected by esbuild, points Electron to Vite |
 | `MAIN_WINDOW_VITE_NAME` | Build | Forge renderer name (`main_window`) |
 
+## Further Reading
+
+- [Architecture](architecture.md) — Process model, data flow, IPC channels, stores
+- [Session Lifecycle](session-lifecycle.md) — State machine, spawn flow, queue, suspend, resume
+- [Transition Engine](transition-engine.md) — Action types, templates, execution flow
+- [Database](database.md) — Full schema reference, migrations, connection management
+- [Claude Integration](claude-integration.md) — CLI detection, command building, hooks, trust
+- [Configuration](configuration.md) — Config cascade, all settings keys, permission modes
+- [Cross-Platform](cross-platform.md) — Shell resolution, path handling, packaging, fuses
+- [Activity Detection](activity-detection.md) — Event pipeline, thinking/idle state
+- [Worktree Strategy](worktree-strategy.md) — Branch naming, sparse-checkout, hook delivery
+- [User Guide](user-guide.md) — End-user feature walkthrough
+
 ## Packaging
 
 Electron Forge handles platform-specific packaging via `forge.config.ts`:

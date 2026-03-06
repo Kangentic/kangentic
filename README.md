@@ -102,6 +102,23 @@ npm run test:headed  # Run with visible window
 
 Tests use a mock Claude CLI (`tests/fixtures/mock-claude`) for CI. Test data is isolated via `KANGENTIC_DATA_DIR` so tests never touch user data.
 
+## Documentation
+
+Full documentation in [`docs/`](docs/README.md):
+
+- [Overview](docs/overview.md) -- Product overview and key features
+- [User Guide](docs/user-guide.md) -- End-user walkthrough
+- [Architecture](docs/architecture.md) -- Process model, data flow, IPC channels
+- [Developer Guide](docs/developer-guide.md) -- Setup, build, testing, conventions
+- [Session Lifecycle](docs/session-lifecycle.md) -- State machine, spawn, queue, resume
+- [Configuration](docs/configuration.md) -- All settings keys and config cascade
+- [Claude Integration](docs/claude-integration.md) -- CLI commands, hooks, trust
+- [Transition Engine](docs/transition-engine.md) -- Action types and execution flow
+- [Database](docs/database.md) -- Schema, migrations, repository pattern
+- [Cross-Platform](docs/cross-platform.md) -- Shell resolution, packaging, fuses
+- [Worktree Strategy](docs/worktree-strategy.md) -- Branch naming, sparse-checkout
+- [Activity Detection](docs/activity-detection.md) -- Event pipeline, thinking/idle state
+
 ## License
 
 MIT
