@@ -19,6 +19,19 @@ export function runGlobalMigrations(db: Database.Database): void {
     );
   `);
 
+  // Migration: add 'position' column for explicit project ordering
+  const hasPositionColumn = (db.pragma('table_info(projects)') as Array<{ name: string }>)
+    .some((col) => col.name === 'position');
+  if (!hasPositionColumn) {
+    db.exec('ALTER TABLE projects ADD COLUMN position INTEGER NOT NULL DEFAULT 0');
+    // Backfill: assign positions based on current last_opened DESC order (preserves visual order)
+    const rows = db.prepare('SELECT id FROM projects ORDER BY last_opened DESC').all() as Array<{ id: string }>;
+    const stmt = db.prepare('UPDATE projects SET position = ? WHERE id = ?');
+    rows.forEach((row, index) => {
+      stmt.run(index, row.id);
+    });
+  }
+
 }
 
 export function runProjectMigrations(db: Database.Database): void {

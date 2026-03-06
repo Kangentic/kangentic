@@ -11,6 +11,7 @@ interface ProjectStore {
   createProject: (input: ProjectCreateInput) => Promise<Project>;
   deleteProject: (id: string) => Promise<void>;
   openProject: (id: string) => Promise<void>;
+  reorderProjects: (ids: string[]) => Promise<void>;
   loadCurrent: () => Promise<void>;
 }
 
@@ -41,9 +42,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   openProject: async (id) => {
     await window.electronAPI.projects.open(id);
-    const project = (await window.electronAPI.projects.list()).find((p) => p.id === id) || null;
+    const project = get().projects.find((p) => p.id === id) || await window.electronAPI.projects.getCurrent();
     set({ currentProject: project });
     useSessionStore.getState().markIdleSessionsSeen(id);
+  },
+
+  reorderProjects: async (ids) => {
+    // Optimistic update: reorder projects array to match ids order
+    const { projects } = get();
+    const projectById = new Map(projects.map((p) => [p.id, p]));
+    const reordered = ids.map((id) => projectById.get(id)).filter((p): p is Project => p !== undefined);
+    set({ projects: reordered });
+    try {
+      await window.electronAPI.projects.reorder(ids);
+    } catch {
+      // Rollback on error
+      await get().loadProjects();
+    }
   },
 
   loadCurrent: async () => {

@@ -5,7 +5,7 @@ import type { Project, ProjectCreateInput } from '../../../shared/types';
 export class ProjectRepository {
   list(): Project[] {
     const db = getGlobalDb();
-    return db.prepare('SELECT * FROM projects ORDER BY last_opened DESC').all() as Project[];
+    return db.prepare('SELECT * FROM projects ORDER BY position ASC').all() as Project[];
   }
 
   getById(id: string): Project | undefined {
@@ -23,12 +23,18 @@ export class ProjectRepository {
       path: input.path,
       github_url: input.github_url || null,
       default_agent: 'claude',
+      position: 0,
       last_opened: now,
       created_at: now,
     };
-    db.prepare(
-      'INSERT INTO projects (id, name, path, github_url, default_agent, last_opened, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(project.id, project.name, project.path, project.github_url, project.default_agent, project.last_opened, project.created_at);
+    const tx = db.transaction(() => {
+      // Shift all existing projects down to make room at position 0
+      db.prepare('UPDATE projects SET position = position + 1').run();
+      db.prepare(
+        'INSERT INTO projects (id, name, path, github_url, default_agent, position, last_opened, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(project.id, project.name, project.path, project.github_url, project.default_agent, project.position, project.last_opened, project.created_at);
+    });
+    tx();
     return project;
   }
 
@@ -39,6 +45,26 @@ export class ProjectRepository {
 
   delete(id: string): void {
     const db = getGlobalDb();
-    db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+    const tx = db.transaction(() => {
+      db.prepare('DELETE FROM projects WHERE id = ?').run(id);
+      // Reindex positions to keep them contiguous (0..N-1)
+      const remaining = db.prepare('SELECT id FROM projects ORDER BY position ASC').all() as Array<{ id: string }>;
+      const stmt = db.prepare('UPDATE projects SET position = ? WHERE id = ?');
+      remaining.forEach((row, index) => {
+        stmt.run(index, row.id);
+      });
+    });
+    tx();
+  }
+
+  reorder(ids: string[]): void {
+    const db = getGlobalDb();
+    const tx = db.transaction(() => {
+      const stmt = db.prepare('UPDATE projects SET position = ? WHERE id = ?');
+      ids.forEach((id, index) => {
+        stmt.run(index, id);
+      });
+    });
+    tx();
   }
 }

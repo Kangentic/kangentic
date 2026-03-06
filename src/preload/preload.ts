@@ -10,6 +10,7 @@ const api: ElectronAPI = {
     open: (id) => ipcRenderer.invoke(IPC.PROJECT_OPEN, id),
     getCurrent: () => ipcRenderer.invoke(IPC.PROJECT_GET_CURRENT),
     openByPath: (path: string) => ipcRenderer.invoke(IPC.PROJECT_OPEN_BY_PATH, path),
+    reorder: (ids: string[]) => ipcRenderer.invoke(IPC.PROJECT_REORDER, ids),
     onAutoOpened: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, project: Project) => callback(project);
       ipcRenderer.on(IPC.PROJECT_AUTO_OPENED, handler);

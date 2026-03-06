@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
-import { Trash2, Plus, Folder, FolderOpen, Menu, Loader2, Mail } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { Trash2, Plus, GripVertical, Folder, FolderOpen, Menu, Loader2, Mail } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
@@ -13,6 +16,113 @@ function shortenPath(fullPath: string): string {
   return '.../' + parts.slice(-3).join('/');
 }
 
+interface SortableProjectItemProps {
+  project: Project;
+  isActive: boolean;
+  thinkingCount: number;
+  idleCount: number;
+  onSelect: (id: string) => void;
+  onOpenInExplorer: (e: React.MouseEvent, project: Project) => void;
+  onDeleteClick: (e: React.MouseEvent, project: Project) => void;
+}
+
+function SortableProjectItem({
+  project,
+  isActive,
+  thinkingCount,
+  idleCount,
+  onSelect,
+  onOpenInExplorer,
+  onDeleteClick,
+}: SortableProjectItemProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: project.id });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition: transition || undefined,
+    opacity: isDragging ? 0.4 : 1,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(project.id)}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect(project.id); }}
+      className={`group w-full text-left px-3 py-2 text-sm transition-colors border-l-2 cursor-pointer outline-none ${
+        isActive
+          ? 'border-accent bg-surface-hover text-fg'
+          : 'border-transparent text-fg-muted hover:bg-surface-hover/50 hover:text-fg-secondary'
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="flex-shrink-0">
+            <Folder size={14} className={`${isActive ? 'text-accent-fg' : 'text-fg-faint'} group-hover:hidden`} />
+            <GripVertical size={14} className={`${isActive ? 'text-accent-fg' : 'text-fg-faint'} hidden group-hover:block cursor-grab`} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate font-medium">{project.name}</span>
+              {idleCount > 0 && (
+                <span
+                  className="flex items-center gap-1 text-xs tabular-nums flex-shrink-0 text-amber-400"
+                  title={`${idleCount} idle -- needs attention`}
+                >
+                  <Mail size={10} />
+                  {idleCount}
+                </span>
+              )}
+              {thinkingCount > 0 && (
+                <span
+                  className="flex items-center gap-1 text-xs tabular-nums text-green-400 flex-shrink-0"
+                  title={`${thinkingCount} thinking`}
+                >
+                  <Loader2 size={10} className="animate-spin" />
+                  {thinkingCount}
+                </span>
+              )}
+            </div>
+            <div
+              className="truncate text-xs text-fg-faint mt-0.5"
+              title={project.path}
+            >
+              {shortenPath(project.path)}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-0.5 flex-shrink-0">
+          <button
+            onClick={(e) => onOpenInExplorer(e, project)}
+            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-full text-fg-disabled hover:text-fg-tertiary hover:bg-edge-input/50 transition-all"
+            title="Open in file explorer"
+          >
+            <FolderOpen size={14} />
+          </button>
+          <button
+            onClick={(e) => onDeleteClick(e, project)}
+            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-full text-fg-disabled hover:text-red-400 hover:bg-red-400/10 transition-all"
+            title="Delete project"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface ProjectSidebarProps {
   onToggleSidebar?: () => void;
 }
@@ -22,6 +132,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
   const currentProject = useProjectStore((s) => s.currentProject);
   const openProject = useProjectStore((s) => s.openProject);
   const deleteProject = useProjectStore((s) => s.deleteProject);
+  const reorderProjects = useProjectStore((s) => s.reorderProjects);
   const sessions = useSessionStore((s) => s.sessions);
   const sessionActivity = useSessionStore((s) => s.sessionActivity);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
@@ -73,6 +184,20 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
     });
   };
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = projects.findIndex((p) => p.id === active.id);
+    const newIndex = projects.findIndex((p) => p.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = arrayMove(projects, oldIndex, newIndex);
+    reorderProjects(reordered.map((p) => p.id));
+  }, [projects, reorderProjects]);
+
   return (
     <div className="w-full h-full bg-surface-raised flex flex-col flex-shrink-0">
       <div className="px-3 pt-3 pb-2 border-b border-edge">
@@ -101,85 +226,34 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        {projects.map((project) => {
-          const isActive = currentProject?.id === project.id;
-          const runningSessions = sessions.filter(
-            (s) => s.projectId === project.id && s.status === 'running',
-          );
-          const thinkingCount = runningSessions.filter(
-            (s) => sessionActivity[s.id] !== 'idle',
-          ).length;
-          const idleCount = runningSessions.filter(
-            (s) => sessionActivity[s.id] === 'idle',
-          ).length;
-          return (
-            <div
-              key={project.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => openProject(project.id)}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') openProject(project.id); }}
-              className={`group w-full text-left px-3 py-2 text-sm transition-colors border-l-2 cursor-pointer ${
-                isActive
-                  ? 'border-accent bg-surface-hover text-fg'
-                  : 'border-transparent text-fg-muted hover:bg-surface-hover/50 hover:text-fg-secondary'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <span className="flex-shrink-0">
-                    <Folder size={14} className={isActive ? 'text-accent-fg' : 'text-fg-faint'} />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate font-medium">{project.name}</span>
-                      {idleCount > 0 && (
-                        <span
-                          className="flex items-center gap-1 text-xs tabular-nums flex-shrink-0 text-amber-400"
-                          title={`${idleCount} idle -- needs attention`}
-                        >
-                          <Mail size={10} />
-                          {idleCount}
-                        </span>
-                      )}
-                      {thinkingCount > 0 && (
-                        <span
-                          className="flex items-center gap-1 text-xs tabular-nums text-green-400 flex-shrink-0"
-                          title={`${thinkingCount} thinking`}
-                        >
-                          <Loader2 size={10} className="animate-spin" />
-                          {thinkingCount}
-                        </span>
-                      )}
-                    </div>
-                    <div
-                      className="truncate text-xs text-fg-faint mt-0.5"
-                      title={project.path}
-                    >
-                      {shortenPath(project.path)}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-0.5 flex-shrink-0">
-                  <button
-                    onClick={(e) => handleOpenInExplorer(e, project)}
-                    className="opacity-0 group-hover:opacity-100 p-1.5 rounded-full text-fg-disabled hover:text-fg-tertiary hover:bg-edge-input/50 transition-all"
-                    title="Open in file explorer"
-                  >
-                    <FolderOpen size={14} />
-                  </button>
-                  <button
-                    onClick={(e) => handleDeleteClick(e, project)}
-                    className="opacity-0 group-hover:opacity-100 p-1.5 rounded-full text-fg-disabled hover:text-red-400 hover:bg-red-400/10 transition-all"
-                    title="Delete project"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={projects.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+            {projects.map((project) => {
+              const isActive = currentProject?.id === project.id;
+              const runningSessions = sessions.filter(
+                (s) => s.projectId === project.id && s.status === 'running',
+              );
+              const thinkingCount = runningSessions.filter(
+                (s) => sessionActivity[s.id] !== 'idle',
+              ).length;
+              const idleCount = runningSessions.filter(
+                (s) => sessionActivity[s.id] === 'idle',
+              ).length;
+              return (
+                <SortableProjectItem
+                  key={project.id}
+                  project={project}
+                  isActive={isActive}
+                  thinkingCount={thinkingCount}
+                  idleCount={idleCount}
+                  onSelect={openProject}
+                  onOpenInExplorer={handleOpenInExplorer}
+                  onDeleteClick={handleDeleteClick}
+                />
+              );
+            })}
+          </SortableContext>
+        </DndContext>
         {projects.length === 0 && (
           <div className="p-6 text-center">
             <Folder size={32} className="mx-auto text-fg-disabled mb-2" />

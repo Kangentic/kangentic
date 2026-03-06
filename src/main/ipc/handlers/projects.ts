@@ -305,6 +305,10 @@ export function registerProjectHandlers(context: IpcContext): void {
     return context.projectRepo.getById(context.currentProjectId) || null;
   });
 
+  ipcMain.handle(IPC.PROJECT_REORDER, (_, ids: string[]) => {
+    context.projectRepo.reorder(ids);
+  });
+
   ipcMain.handle(IPC.PROJECT_OPEN_BY_PATH, async (_, projectPath: string) => {
     return openProjectByPath(context, projectPath);
   });

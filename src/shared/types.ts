@@ -6,6 +6,7 @@ export interface Project {
   path: string;
   github_url: string | null;
   default_agent: string;
+  position: number;
   last_opened: string;
   created_at: string;
 }
@@ -508,6 +509,7 @@ export interface ElectronAPI {
     open: (id: string) => Promise<void>;
     getCurrent: () => Promise<Project | null>;
     openByPath: (path: string) => Promise<Project>;
+    reorder: (ids: string[]) => Promise<void>;
     onAutoOpened: (callback: (project: Project) => void) => () => void;
   };
 

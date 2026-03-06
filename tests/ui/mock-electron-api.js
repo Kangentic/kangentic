@@ -96,15 +96,18 @@
   window.electronAPI = {
     projects: {
       list: async function () {
-        return projects;
+        return projects.slice().sort(function (a, b) { return a.position - b.position; });
       },
       create: async function (input) {
+        // Shift existing projects down
+        projects.forEach(function (p) { p.position = p.position + 1; });
         var project = {
           id: uuid(),
           name: input.name,
           path: input.path,
           github_url: input.github_url || null,
           default_agent: 'claude',
+          position: 0,
           last_opened: now(),
           created_at: now(),
         };
@@ -115,6 +118,9 @@
         projects = projects.filter(function (p) {
           return p.id !== id;
         });
+        // Reindex positions to keep contiguous
+        projects.sort(function (a, b) { return a.position - b.position; });
+        projects.forEach(function (p, i) { p.position = i; });
         if (currentProjectId === id) {
           currentProjectId = null;
           tasks = [];
@@ -161,12 +167,15 @@
           currentProjectId = existing.id;
           return existing;
         }
+        // Shift existing projects down
+        projects.forEach(function (p) { p.position = p.position + 1; });
         var project = {
           id: uuid(),
           name: name,
           path: projectPath,
           github_url: null,
           default_agent: 'claude',
+          position: 0,
           last_opened: now(),
           created_at: now(),
         };
@@ -184,6 +193,14 @@
           }
         }
         return project;
+      },
+      reorder: async function (ids) {
+        ids.forEach(function (id, i) {
+          var idx = projects.findIndex(function (p) {
+            return p.id === id;
+          });
+          if (idx >= 0) projects[idx].position = i;
+        });
       },
       onAutoOpened: function () {
         return noop;
