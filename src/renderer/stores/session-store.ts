@@ -90,7 +90,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   spawnSession: async (input) => {
     const session = await window.electronAPI.sessions.spawn(input);
     set((s) => ({
-      sessions: [...s.sessions.filter((sess) => sess.id !== session.id), session],
+      sessions: [...s.sessions.filter((sess) => sess.id !== session.id && sess.taskId !== session.taskId), session],
       activeSessionId: session.id,
     }));
     return session;

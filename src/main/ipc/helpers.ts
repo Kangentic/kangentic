@@ -1,0 +1,205 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { TaskRepository } from '../db/repositories/task-repository';
+import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
+import { ActionRepository } from '../db/repositories/action-repository';
+import { AttachmentRepository } from '../db/repositories/attachment-repository';
+import { SessionRepository } from '../db/repositories/session-repository';
+import { TransitionEngine } from '../engine/transition-engine';
+import { WorktreeManager, isGitRepo, isFileTracked } from '../git/worktree-manager';
+import { getProjectDb } from '../db/database';
+import type { Task } from '../../shared/types';
+import type { IpcContext } from './ipc-context';
+
+/**
+ * Ensure `.kangentic/` and `.claude/settings.local.json` are listed in the
+ * project's `.gitignore`.  Fully wrapped in try-catch — a read-only project
+ * directory or permission issue must never prevent the app from opening.
+ */
+export function ensureGitignore(projectPath: string): void {
+  if (!isGitRepo(projectPath)) return;
+  try {
+    const gitignorePath = path.join(projectPath, '.gitignore');
+    let content = '';
+    try {
+      content = fs.readFileSync(gitignorePath, 'utf-8');
+    } catch {
+      // No .gitignore yet — we'll create one
+    }
+
+    // 1. Ensure .kangentic/ is ignored
+    const lines = content.split('\n');
+    const kangenticIgnored = lines.some(
+      (l) => l.trim() === '.kangentic' || l.trim() === '.kangentic/',
+    );
+    if (!kangenticIgnored) {
+      const separator = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
+      content = content + separator + '.kangentic/\n';
+      fs.writeFileSync(gitignorePath, content);
+    }
+
+    // 2. Ensure .claude/settings.local.json is ignored — but only if the project
+    //    hasn't intentionally committed it (e.g. to accumulate permission allowlists).
+    const linesAfter = content.split('\n');
+    const settingsIgnored = linesAfter.some(
+      (l) => l.trim() === '.claude/settings.local.json',
+    );
+    if (!settingsIgnored) {
+      const settingsTracked = isFileTracked(projectPath, '.claude/settings.local.json');
+      if (!settingsTracked) {
+        const separator = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
+        fs.writeFileSync(gitignorePath, content + separator + '.claude/settings.local.json\n');
+      }
+    }
+  } catch (err) {
+    // Non-fatal: log and continue. Project may be read-only or on a network drive.
+    console.warn(`Could not update .gitignore at ${projectPath}:`, err);
+  }
+}
+
+/** Build template variables for auto-command interpolation. */
+export function buildAutoCommandVars(task: Task): Record<string, string> {
+  return {
+    title: task.title,
+    description: task.description,
+    taskId: task.id,
+    worktreePath: task.worktree_path || '',
+    branchName: task.branch_name || '',
+  };
+}
+
+/**
+ * Create a worktree for a task if needed and update the DB + task object in place.
+ * No-ops silently when worktrees are disabled, project isn't a git repo, etc.
+ */
+export async function ensureTaskWorktree(context: IpcContext, task: Task, tasks: TaskRepository, projectPath?: string | null): Promise<void> {
+  const resolvedProjectPath = projectPath ?? context.currentProjectPath;
+  if (!resolvedProjectPath) return;
+  try {
+    const config = context.configManager.getEffectiveConfig(resolvedProjectPath);
+    const worktreeManager = new WorktreeManager(resolvedProjectPath);
+    const result = await worktreeManager.ensureWorktree(task, config.git);
+    if (result) {
+      tasks.update({ id: task.id, worktree_path: result.worktreePath, branch_name: result.branchName });
+      Object.assign(task, tasks.getById(task.id));
+    }
+  } catch (err) {
+    console.error('Worktree creation failed:', err);
+  }
+}
+
+/** Create a TransitionEngine wired to explicit project context (not singletons). */
+export function createTransitionEngine(
+  context: IpcContext,
+  actions: ActionRepository,
+  tasks: TaskRepository,
+  sessionRepo: SessionRepository,
+  attachments: AttachmentRepository,
+  projectId: string,
+  projectPath: string | null,
+): TransitionEngine {
+  return new TransitionEngine(
+    context.sessionManager, actions, tasks, context.claudeDetector, context.commandBuilder,
+    () => {
+      const config = context.configManager.getEffectiveConfig(projectPath || undefined);
+      return {
+        permissionMode: config.claude.permissionMode,
+        claudePath: config.claude.cliPath,
+        projectPath,
+        projectId,
+        gitConfig: config.git,
+      };
+    },
+    sessionRepo,
+    attachments,
+  );
+}
+
+export function getProjectRepos(context: IpcContext, projectId?: string | null): { tasks: TaskRepository; swimlanes: SwimlaneRepository; actions: ActionRepository; attachments: AttachmentRepository } {
+  const resolvedProjectId = projectId ?? context.currentProjectId;
+  if (!resolvedProjectId) throw new Error('No project is currently open');
+  const db = getProjectDb(resolvedProjectId);
+  return {
+    tasks: new TaskRepository(db),
+    swimlanes: new SwimlaneRepository(db),
+    actions: new ActionRepository(db),
+    attachments: new AttachmentRepository(db),
+  };
+}
+
+/**
+ * Kill the PTY session and wipe session records for a task.
+ * Preserves the worktree and branch so code is not lost.
+ *
+ * Used by TASK_MOVE → Backlog ("shelve this task").
+ */
+export async function cleanupTaskSession(
+  context: IpcContext,
+  task: { id: string; session_id: string | null; worktree_path: string | null; branch_name: string | null },
+  tasks: TaskRepository,
+  projectId?: string | null,
+  projectPath?: string | null,
+): Promise<void> {
+  const resolvedProjectId = projectId ?? context.currentProjectId;
+  const resolvedProjectPath = projectPath ?? context.currentProjectPath;
+
+  // Kill active PTY session
+  if (task.session_id) {
+    try { context.sessionManager.remove(task.session_id); } catch { /* may already be dead */ }
+    tasks.update({ id: task.id, session_id: null });
+  }
+
+  // Remove session DB records + directories from disk
+  if (resolvedProjectId) {
+    const db = getProjectDb(resolvedProjectId);
+    const sessionRepo = new SessionRepository(db);
+
+    // Best-effort disk cleanup (non-fatal — DB records are the source of truth)
+    if (resolvedProjectPath) {
+      const records = db.prepare(
+        'SELECT claude_session_id FROM sessions WHERE task_id = ? AND claude_session_id IS NOT NULL'
+      ).all(task.id) as Array<{ claude_session_id: string }>;
+      for (const { claude_session_id } of records) {
+        const sessionDir = path.join(resolvedProjectPath, '.kangentic', 'sessions', claude_session_id);
+        try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch { /* may not exist */ }
+      }
+    }
+
+    // Always delete DB records — this must succeed for task DELETE to pass FK check
+    sessionRepo.deleteByTaskId(task.id);
+  }
+}
+
+/**
+ * Full cleanup: kill session, remove worktree + branch, wipe session records.
+ *
+ * Used by TASK_DELETE (permanent removal).
+ */
+export async function cleanupTaskResources(
+  context: IpcContext,
+  task: { id: string; session_id: string | null; worktree_path: string | null; branch_name: string | null },
+  tasks: TaskRepository,
+  projectId?: string | null,
+  projectPath?: string | null,
+): Promise<void> {
+  await cleanupTaskSession(context, task, tasks, projectId, projectPath);
+
+  const resolvedProjectPath = projectPath ?? context.currentProjectPath;
+
+  // Remove worktree + branch
+  if (task.worktree_path && resolvedProjectPath) {
+    try {
+      const worktreeManager = new WorktreeManager(resolvedProjectPath);
+      await worktreeManager.removeWorktree(task.worktree_path);
+      if (task.branch_name) {
+        const config = context.configManager.getEffectiveConfig(resolvedProjectPath);
+        if (config.git.autoCleanup) {
+          await worktreeManager.removeBranch(task.branch_name);
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to clean up worktree for task ${task.id.slice(0, 8)}:`, err);
+    }
+    tasks.update({ id: task.id, worktree_path: null, branch_name: null });
+  }
+}

@@ -1,0 +1,206 @@
+import { ipcMain } from 'electron';
+import { IPC } from '../../../shared/ipc-channels';
+import { SessionRepository } from '../../db/repositories/session-repository';
+import { getProjectDb } from '../../db/database';
+import { getProjectRepos, ensureTaskWorktree, createTransitionEngine } from '../helpers';
+import { handleTaskMove } from './tasks';
+import type { IpcContext } from '../ipc-context';
+
+export function registerSessionHandlers(context: IpcContext): void {
+  // === Sessions ===
+  ipcMain.handle(IPC.SESSION_SPAWN, (_, input) => {
+    if (!context.currentProjectId) throw new Error('Cannot spawn session: no project is currently open');
+    return context.sessionManager.spawn({ ...input, projectId: context.currentProjectId });
+  });
+  ipcMain.handle(IPC.SESSION_KILL, (_, id) => context.sessionManager.kill(id));
+  ipcMain.handle(IPC.SESSION_WRITE, (_, id, data) => context.sessionManager.write(id, data));
+  ipcMain.handle(IPC.SESSION_RESIZE, (_, id, cols, rows) => context.sessionManager.resize(id, cols, rows));
+  ipcMain.handle(IPC.SESSION_LIST, () => context.sessionManager.listSessions());
+  ipcMain.handle(IPC.SESSION_GET_SCROLLBACK, (_, id) => context.sessionManager.getScrollback(id));
+  ipcMain.handle(IPC.SESSION_GET_USAGE, (_, projectId?: string) =>
+    projectId ? context.sessionManager.getUsageCacheForProject(projectId) : context.sessionManager.getUsageCache());
+  ipcMain.handle(IPC.SESSION_GET_ACTIVITY, (_, projectId?: string) =>
+    projectId ? context.sessionManager.getActivityCacheForProject(projectId) : context.sessionManager.getActivityCache());
+  ipcMain.handle(IPC.SESSION_GET_EVENTS, (_, sessionId: string) => context.sessionManager.getEventsForSession(sessionId));
+  ipcMain.handle(IPC.SESSION_GET_EVENTS_CACHE, (_, projectId?: string) =>
+    projectId ? context.sessionManager.getEventsCacheForProject(projectId) : context.sessionManager.getEventsCache());
+
+  // === Session Suspend / Resume ===
+  ipcMain.handle(IPC.SESSION_SUSPEND, async (_, taskId: string) => {
+    const resolvedProjectId = context.currentProjectId;
+    if (!resolvedProjectId) throw new Error('No project is currently open');
+
+    const { tasks } = getProjectRepos(context, resolvedProjectId);
+    const task = tasks.getById(taskId);
+    if (!task) throw new Error(`Task ${taskId} not found`);
+
+    if (!task.session_id) return; // nothing to suspend
+
+    const db = getProjectDb(resolvedProjectId);
+    const sessionRepo = new SessionRepository(db);
+
+    // Mark session record as suspended in DB
+    const record = sessionRepo.getLatestForTask(task.id);
+    if (record && record.claude_session_id
+        && (record.status === 'running' || record.status === 'exited')) {
+      sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: new Date().toISOString() });
+    }
+
+    // Kill PTY but preserve session files
+    context.sessionManager.suspend(task.session_id);
+
+    // Clear task's active session reference
+    tasks.update({ id: task.id, session_id: null });
+  });
+
+  ipcMain.handle(IPC.SESSION_RESUME, async (_, taskId: string) => {
+    const resolvedProjectId = context.currentProjectId;
+    const resolvedProjectPath = context.currentProjectPath;
+    if (!resolvedProjectId) throw new Error('No project is currently open');
+
+    const { tasks, actions, swimlanes, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
+    const task = tasks.getById(taskId);
+    if (!task) throw new Error(`Task ${taskId} not found`);
+
+    // Guard: don't resume if already has an active session
+    if (task.session_id) throw new Error(`Task ${taskId} already has an active session`);
+
+    const lane = swimlanes.getById(task.swimlane_id);
+
+    // Create worktree if needed
+    await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+
+    const db = getProjectDb(resolvedProjectId);
+    const sessionRepo = new SessionRepository(db);
+    const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
+
+    await engine.resumeSuspendedSession(task, lane?.permission_strategy);
+
+    // Re-read task to get the new session_id
+    const updated = tasks.getById(taskId);
+    if (!updated?.session_id) throw new Error('Session resume failed — no session_id on task');
+
+    // Return the new session object
+    const newSession = context.sessionManager.getSession(updated.session_id);
+    if (!newSession) throw new Error('Session resume failed — session not in manager');
+    return newSession;
+  });
+
+  // Forward PTY events to renderer (guard against destroyed window during shutdown)
+  // Each event includes the session's projectId so the renderer can filter by project.
+  context.sessionManager.on('data', (sessionId: string, data: string) => {
+    if (!context.mainWindow.isDestroyed()) {
+      const projectId = context.sessionManager.getSessionProjectId(sessionId);
+      context.mainWindow.webContents.send(IPC.SESSION_DATA, sessionId, data, projectId);
+    }
+  });
+
+  context.sessionManager.on('usage', (sessionId: string, data: unknown) => {
+    if (!context.mainWindow.isDestroyed()) {
+      const projectId = context.sessionManager.getSessionProjectId(sessionId);
+      context.mainWindow.webContents.send(IPC.SESSION_USAGE, sessionId, data, projectId);
+    }
+  });
+
+  context.sessionManager.on('activity', (sessionId: string, state: string) => {
+    if (!context.mainWindow.isDestroyed()) {
+      const projectId = context.sessionManager.getSessionProjectId(sessionId);
+      context.mainWindow.webContents.send(IPC.SESSION_ACTIVITY, sessionId, state, projectId);
+    }
+  });
+
+  context.sessionManager.on('event', (sessionId: string, event: unknown) => {
+    if (!context.mainWindow.isDestroyed()) {
+      const projectId = context.sessionManager.getSessionProjectId(sessionId);
+      context.mainWindow.webContents.send(IPC.SESSION_EVENT, sessionId, event, projectId);
+    }
+  });
+
+  context.sessionManager.on('status', (sessionId: string, status: string) => {
+    if (!context.mainWindow.isDestroyed()) {
+      const projectId = context.sessionManager.getSessionProjectId(sessionId);
+      context.mainWindow.webContents.send(IPC.SESSION_STATUS, sessionId, status, projectId);
+    }
+  });
+
+  context.sessionManager.on('exit', (sessionId: string, exitCode: number) => {
+    const resolvedProjectId = context.sessionManager.getSessionProjectId(sessionId);
+
+    if (!context.mainWindow.isDestroyed()) {
+      context.mainWindow.webContents.send(IPC.SESSION_EXIT, sessionId, exitCode, resolvedProjectId);
+    }
+
+    // Persist exit status to session DB — use the session's own projectId
+    // so we write to the correct DB even if the user switched projects.
+    if (resolvedProjectId) {
+      try {
+        const db = getProjectDb(resolvedProjectId);
+        const sessionRepo = new SessionRepository(db);
+        // Look up by task ID from the in-memory session.
+        // Only mark 'running' records as 'exited' — never overwrite
+        // 'suspended' status, which is set by TASK_MOVE before the
+        // async onExit fires and is needed for resume on re-entry.
+        let updated = false;
+        const session = context.sessionManager.getSession(sessionId);
+        if (session) {
+          const record = sessionRepo.getLatestForTask(session.taskId);
+          if (record && record.status === 'running') {
+            sessionRepo.updateStatus(record.id, 'exited', {
+              exit_code: exitCode,
+              exited_at: new Date().toISOString(),
+            });
+            updated = true;
+          }
+        }
+        // Fallback: try matching by claude_session_id only if taskId lookup didn't find it
+        if (!updated) {
+          const byClaudeId = db.prepare(
+            `SELECT id FROM sessions WHERE claude_session_id = ? AND status = 'running' LIMIT 1`
+          ).get(sessionId) as { id: string } | undefined;
+          if (byClaudeId) {
+            sessionRepo.updateStatus(byClaudeId.id, 'exited', {
+              exit_code: exitCode,
+              exited_at: new Date().toISOString(),
+            });
+          }
+        }
+      } catch {
+        // DB may be closed during shutdown
+      }
+    }
+  });
+
+  // Auto-move task when agent exits plan mode (ExitPlanMode tool)
+  context.sessionManager.on('plan-exit', async (sessionId: string) => {
+    // Use the session's own projectId — not the singleton, which may have
+    // changed if the user switched projects while the agent was running.
+    const resolvedProjectId = context.sessionManager.getSessionProjectId(sessionId);
+    if (!resolvedProjectId) return;
+    try {
+      const session = context.sessionManager.getSession(sessionId);
+      if (!session) return;
+
+      const project = context.projectRepo.getById(resolvedProjectId);
+      const resolvedProjectPath = project?.path ?? null;
+      const { tasks, swimlanes } = getProjectRepos(context, resolvedProjectId);
+      const task = tasks.getBySessionId(sessionId);
+      if (!task) return;
+
+      const lane = swimlanes.getById(task.swimlane_id);
+      if (!lane?.plan_exit_target_id) return;
+
+      const target = swimlanes.getById(lane.plan_exit_target_id);
+      if (!target) return;
+
+      const position = tasks.list(target.id).length;
+      await handleTaskMove(context, { taskId: task.id, targetSwimlaneId: target.id, targetPosition: position }, resolvedProjectId, resolvedProjectPath);
+
+      if (!context.mainWindow.isDestroyed()) {
+        context.mainWindow.webContents.send(IPC.TASK_AUTO_MOVED, task.id, target.id, task.title);
+      }
+      console.log(`[plan-exit] Auto-moved "${task.title}" -> "${target.name}"`);
+    } catch (err) {
+      console.error('[plan-exit] Auto-move failed:', err);
+    }
+  });
+}
