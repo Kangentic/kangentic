@@ -39,19 +39,15 @@ export function Swimlane({ swimlane, tasks, dragHandleProps, isDropTarget }: Swi
         isDropTarget ? 'ring-2 ring-accent/40' : isSystemColumn ? 'ring-1 ring-edge/50' : ''
       } ${isSystemColumn ? 'bg-surface-raised/70' : 'bg-surface-raised/50'}`}
     >
-      {/* Accent bar for system columns */}
-      {isSystemColumn && (
-        <div
-          className="h-0.5 rounded-t-lg"
-          style={{ backgroundColor: swimlane.color }}
-        />
-      )}
+      {/* Accent bar */}
+      <div
+        className="h-0.5 rounded-t-lg"
+        style={{ backgroundColor: swimlane.color }}
+      />
 
       {/* Column header */}
       <div
-        className={`px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left hover:bg-surface-hover/30 transition-colors cursor-pointer ${
-          isSystemColumn ? '' : 'rounded-t-lg'
-        }`}
+        className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left hover:bg-surface-hover/30 transition-colors cursor-pointer"
         onClick={() => setShowEditColumn(true)}
       >
         {/* Drag handle for custom columns */}
