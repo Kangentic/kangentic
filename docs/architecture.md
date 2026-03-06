@@ -93,16 +93,16 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `session:resize` | invoke | Resize PTY (cols/rows) |
 | `session:list` | invoke | Fetch all sessions |
 | `session:getScrollback` | invoke | Get terminal scrollback buffer |
-| `session:getUsage` | invoke | Fetch all session usage (tokens, cost) |
-| `session:getActivity` | invoke | Fetch all activity state (thinking/idle) |
+| `session:getUsage` | invoke | Fetch session usage (tokens, cost). Optional `projectId` scopes to one project. |
+| `session:getActivity` | invoke | Fetch activity state (thinking/idle). Optional `projectId` scopes to one project. |
 | `session:getEvents` | invoke | Fetch activity log events for one session |
-| `session:getEventsCache` | invoke | Fetch all cached event arrays |
-| `session:data` | on | Terminal output available |
-| `session:exit` | on | Session exited |
-| `session:status` | on | Session status changed |
-| `session:usage` | on | Usage data updated |
-| `session:activity` | on | Activity state changed |
-| `session:event` | on | Structured event (tool_start/tool_end/idle) |
+| `session:getEventsCache` | invoke | Fetch cached event arrays. Optional `projectId` scopes to one project. |
+| `session:data` | on | Terminal output available (includes `projectId`) |
+| `session:exit` | on | Session exited (includes `projectId`) |
+| `session:status` | on | Session status changed (includes `projectId`) |
+| `session:usage` | on | Usage data updated (includes `projectId`) |
+| `session:activity` | on | Activity state changed (includes `projectId`) |
+| `session:event` | on | Structured event (includes `projectId`) |
 
 ### Config (4 channels)
 | Channel | Pattern | Purpose |
@@ -270,7 +270,8 @@ State: `tasks`, `swimlanes`, `archivedTasks`, `loading`, `completingTask`, `rece
 State: `sessions`, `activeSessionId`, `openTaskId`, `dialogSessionId`, `sessionUsage`, `sessionActivity`, `sessionEvents`
 
 - **Terminal ownership handoff** — `dialogSessionId` ensures the bottom panel and task detail dialog never render xterm simultaneously. When the dialog opens, the panel unmounts its xterm. On close, the panel recreates from scrollback.
-- **Cache restoration** — `syncSessions()` fetches usage/activity/events from main process memory, surviving renderer reloads (Vite HMR).
+- **Cache restoration** — `syncSessions()` fetches usage/activity/events from main process memory, surviving renderer reloads (Vite HMR). Usage and events are scoped to the current project; activity is fetched unscoped so sidebar badges work across all projects.
+- **Project switch cleanup** — On project switch, `activeSessionId`, `sessionUsage`, and `sessionEvents` are cleared before re-syncing. `sessionActivity` and `sessions` are preserved for sidebar badge rendering.
 - **Event capping** — max 500 events per session to bound DOM size in ActivityLog.
 - **Queue position** — `getQueuePosition()` returns 1-indexed position sorted by startedAt.
 
