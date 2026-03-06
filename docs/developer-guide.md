@@ -46,7 +46,15 @@ src/
     git/
       worktree-manager.ts  # Worktree creation, sparse-checkout, cleanup
     ipc/
-      register-all.ts      # All IPC handlers (~1400 lines)
+      register-all.ts      # Thin orchestrator, creates IpcContext, re-exports
+      ipc-context.ts       # Shared IpcContext interface
+      helpers.ts           # Shared helper functions (ensureGitignore, getProjectRepos, etc.)
+      handlers/
+        projects.ts        # PROJECT_* handlers, cleanupProject, openProjectByPath
+        tasks.ts           # TASK_* handlers, handleTaskMove
+        sessions.ts        # SESSION_* handlers, PTY event listeners
+        board.ts           # Swimlane, Action, Transition, Attachment CRUD
+        system.ts          # Config, Claude, Shell, Git, Dialog, Window, Notifications
     pty/                   # Terminal session management
       session-manager.ts   # PTY spawn, output streaming, file watchers, queue
       session-queue.ts     # Concurrency limiter with reentrancy-safe promotion
@@ -171,7 +179,7 @@ npm run test:unit                 # Unit (separate runner)
 ### New IPC Channel
 
 1. Add channel constant to `src/shared/ipc-channels.ts`
-2. Add handler in `src/main/ipc/register-all.ts`
+2. Add handler in the appropriate `src/main/ipc/handlers/*.ts` module
 3. Add method to `ElectronAPI` interface in `src/shared/types.ts`
 4. Add bridge method in `src/preload/preload.ts`
 5. Call from renderer via `window.electronAPI.domain.method()`
