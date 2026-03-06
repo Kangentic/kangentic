@@ -93,4 +93,8 @@ export const IPC = {
   WINDOW_MAXIMIZE: 'window:maximize',
   WINDOW_CLOSE: 'window:close',
   WINDOW_FLASH_FRAME: 'window:flashFrame',
+
+  // Notifications
+  NOTIFICATION_SHOW: 'notification:show',
+  NOTIFICATION_CLICKED: 'notification:clicked',
 } as const;

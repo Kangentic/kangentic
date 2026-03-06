@@ -16,6 +16,7 @@ const config: ForgeConfig = {
     name: 'Kangentic',
     executableName: 'kangentic',
     icon: './resources/icon',
+    extraResource: ['./resources/icon.png'],
   },
   rebuildConfig: {
     // node-pty ships NAPI prebuilt binaries that work across Node/Electron

@@ -490,6 +490,13 @@ export interface SpawnSessionInput {
   eventsOutputPath?: string; // path for the event bridge JSONL file (activity log)
 }
 
+export interface NotificationInput {
+  title: string;
+  body: string;
+  projectId: string;
+  taskId: string;
+}
+
 // === Preload API (exposed to renderer via contextBridge) ===
 
 export interface ElectronAPI {
@@ -602,6 +609,12 @@ export interface ElectronAPI {
   // Dialog
   dialog: {
     selectFolder: () => Promise<string | null>;
+  };
+
+  // Notifications
+  notifications: {
+    show: (input: NotificationInput) => void;
+    onClicked: (callback: (projectId: string, taskId: string) => void) => () => void;
   };
 
   // Window controls

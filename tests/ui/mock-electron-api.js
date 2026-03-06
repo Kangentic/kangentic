@@ -589,6 +589,13 @@
       },
     },
 
+    notifications: {
+      show: noop,
+      onClicked: function () {
+        return noop;
+      },
+    },
+
     window: {
       minimize: noop,
       maximize: noop,

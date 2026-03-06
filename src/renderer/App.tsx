@@ -164,8 +164,11 @@ export function App() {
             const projectName = project?.name ?? 'A project';
             const task = useBoardStore.getState().tasks.find((t) => t.session_id === sessionId);
             const taskLabel = task?.title ?? 'A task';
-            new Notification(`${projectName} — Idle`, {
+            window.electronAPI.notifications.show({
+              title: `${projectName} — Idle`,
               body: `${taskLabel} needs attention`,
+              projectId: session.projectId,
+              taskId: task?.id ?? '',
             });
             window.electronAPI.window.flashFrame(true);
           }
@@ -181,6 +184,18 @@ export function App() {
         if (!projectId || !activeProjectId || projectId === activeProjectId) {
           addEvent(sessionId, event);
         }
+      }));
+    }
+
+    // Notification clicked — switch project and open task detail
+    const notifications = window.electronAPI?.notifications;
+    if (notifications?.onClicked) {
+      cleanups.push(notifications.onClicked((projectId, taskId) => {
+        useProjectStore.getState().openProject(projectId).then(() => {
+          if (taskId && useProjectStore.getState().currentProject?.id === projectId) {
+            useSessionStore.getState().setOpenTaskId(taskId);
+          }
+        });
       }));
     }
 

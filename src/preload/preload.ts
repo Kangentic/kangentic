@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, Project, SessionStatus, SessionUsage, ActivityState, SessionEvent } from '../shared/types';
+import type { ElectronAPI, NotificationInput, Project, SessionStatus, SessionUsage, ActivityState, SessionEvent } from '../shared/types';
 
 const api: ElectronAPI = {
   projects: {
@@ -133,6 +133,15 @@ const api: ElectronAPI = {
 
   dialog: {
     selectFolder: () => ipcRenderer.invoke(IPC.DIALOG_SELECT_FOLDER),
+  },
+
+  notifications: {
+    show: (input: NotificationInput) => ipcRenderer.send(IPC.NOTIFICATION_SHOW, input),
+    onClicked: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId: string, taskId: string) => callback(projectId, taskId);
+      ipcRenderer.on(IPC.NOTIFICATION_CLICKED, handler);
+      return () => ipcRenderer.removeListener(IPC.NOTIFICATION_CLICKED, handler);
+    },
   },
 
   window: {

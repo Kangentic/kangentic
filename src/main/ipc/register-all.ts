@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { ipcMain, BrowserWindow, dialog, shell } from 'electron';
+import { ipcMain, BrowserWindow, Notification, app, dialog, shell } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
 import { ProjectRepository } from '../db/repositories/project-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
@@ -20,7 +20,7 @@ import { WorktreeManager, isGitRepo, isInsideWorktree, isKangenticWorktree, isFi
 import { stripKangenticHooks } from '../agent/hook-manager';
 import { getProjectDb, closeProjectDb } from '../db/database';
 import { PATHS } from '../config/paths';
-import type { Task } from '../../shared/types';
+import type { NotificationInput, Task } from '../../shared/types';
 
 /**
  * Ensure `.kangentic/` and `.claude/settings.local.json` are listed in the
@@ -1042,6 +1042,27 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   });
   ipcMain.on(IPC.WINDOW_CLOSE, () => mainWindow.close());
   ipcMain.on(IPC.WINDOW_FLASH_FRAME, (_event, flash: boolean) => mainWindow.flashFrame(flash));
+
+  // === Notifications ===
+  ipcMain.on(IPC.NOTIFICATION_SHOW, (_event, input: NotificationInput) => {
+    const iconPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'icon.png')
+      : path.join(app.getAppPath(), 'resources', 'icon.png');
+
+    const notification = new Notification({
+      title: input.title,
+      body: input.body,
+      icon: iconPath,
+    });
+
+    notification.on('click', () => {
+      mainWindow.show();
+      mainWindow.focus();
+      mainWindow.webContents.send(IPC.NOTIFICATION_CLICKED, input.projectId, input.taskId);
+    });
+
+    notification.show();
+  });
 }
 
 /**
