@@ -5,11 +5,22 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   release:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos-arm64
+          - os: macos-13
+            platform: macos-x64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -21,6 +32,48 @@ jobs:
           cache: npm
 
       - run: npm ci
+
+      # Extract changelog section for this version to use as release body.
+      # Looks for the ## [vX.Y.Z] header and captures everything until the next ## header.
+      - name: Extract changelog
+        id: changelog
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          SECTION=$(awk "/^## \\[v${VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
+          if [ -z "$SECTION" ]; then
+            SECTION="Release ${TAG}"
+          fi
+          {
+            echo "body<<CHANGELOG_EOF"
+            echo "$SECTION"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # macOS code signing and notarization
+      - name: Set macOS signing env
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.APPLE_IDENTITY }}" ]; then
+            echo "APPLE_IDENTITY=${{ secrets.APPLE_IDENTITY }}" >> $GITHUB_ENV
+            echo "APPLE_ID=${{ secrets.APPLE_ID }}" >> $GITHUB_ENV
+            echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}" >> $GITHUB_ENV
+            echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> $GITHUB_ENV
+          fi
+
+      # Windows code signing (Authenticode)
+      # Decodes the base64-encoded .pfx certificate from secrets to a temp file
+      - name: Decode Windows certificate
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}" ]; then
+            echo "${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}" | base64 -d > "${RUNNER_TEMP}/cert.pfx"
+            echo "WINDOWS_CERTIFICATE_FILE=${RUNNER_TEMP}/cert.pfx" >> $GITHUB_ENV
+            echo "WINDOWS_CERTIFICATE_PASSWORD=${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}" >> $GITHUB_ENV
+          fi
 
       - run: npm run publish
         env:

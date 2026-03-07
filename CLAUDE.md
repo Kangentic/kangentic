@@ -53,6 +53,9 @@ npm run typecheck                    # CORRECT — run from cwd, or use --prefix
 ## Project Structure
 
 ```
+packages/
+  launcher/       # Public npm package ("kangentic") -- thin npx installer
+    bin/          # kangentic.js launcher script
 src/
   main/           # Electron main process
     agent/        # Claude CLI detection & command building

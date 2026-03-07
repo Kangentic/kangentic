@@ -6,12 +6,15 @@ Kangentic is a cross-platform desktop Kanban for Claude Code agents. Drag tasks 
 
 | Audience | Start with |
 |----------|-----------|
-| New user | [User Guide](user-guide.md) |
+| New user | [Installation](installation.md) |
 | Evaluating the product | [Overview](overview.md) |
 | Contributing code | [Developer Guide](developer-guide.md) |
 | Understanding the system | [Architecture](architecture.md) |
 
 ## Reference
+
+### Getting Started
+- [Installation](installation.md) -- Download, prerequisites, platform-specific setup, troubleshooting
 
 ### Product
 - [Overview](overview.md) -- What Kangentic is, key features, positioning
@@ -31,4 +34,5 @@ Kangentic is a cross-platform desktop Kanban for Claude Code agents. Drag tasks 
 ### Operations
 - [Configuration](configuration.md) -- Config cascade, all settings keys, permission modes
 - [Cross-Platform](cross-platform.md) -- Shell resolution, path handling, packaging, security fuses
+- [Deployment](deployment.md) -- Release pipeline, code signing, auto-update, npx launcher
 - [Developer Guide](developer-guide.md) -- Setup, build system, testing, conventions

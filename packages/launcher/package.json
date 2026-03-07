@@ -1,0 +1,31 @@
+{
+  "name": "kangentic",
+  "version": "0.1.0",
+  "description": "Install and launch Kangentic -- visual agent orchestration for Claude Code",
+  "bin": {
+    "kangentic": "./bin/kangentic.js"
+  },
+  "repository": "https://github.com/Kangentic/kangentic",
+  "keywords": [
+    "kangentic",
+    "kanban",
+    "claude",
+    "claude-code",
+    "agent",
+    "electron",
+    "desktop"
+  ],
+  "author": {
+    "name": "Kangentic",
+    "url": "https://github.com/Kangentic"
+  },
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/",
+    "LICENSE",
+    "README.md"
+  ]
+}

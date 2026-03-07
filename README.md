@@ -35,25 +35,39 @@ One board to manage all your Claude Code agents. Drag tasks to spawn sessions, s
   <img src="resources/kanban-demo.png" alt="Kangentic Kanban Board" width="800" />
 </p>
 
-## Quick Start
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) 20+
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and on PATH
-
-### Install
+## Install
 
 ```bash
 npx kangentic
 ```
 
-### CLI
+One command to download, install, and launch. After the first run, auto-updates handle everything (Windows and macOS).
+
+Or download directly from [GitHub Releases](https://github.com/Kangentic/kangentic/releases/latest):
+
+| Platform | Download |
+|----------|----------|
+| Windows | [Kangentic Setup.exe](https://github.com/Kangentic/kangentic/releases/latest) |
+| macOS | [Kangentic.dmg](https://github.com/Kangentic/kangentic/releases/latest) |
+| Linux | [.deb](https://github.com/Kangentic/kangentic/releases/latest) / [.rpm](https://github.com/Kangentic/kangentic/releases/latest) |
+
+See the [Installation Guide](docs/installation.md) for detailed instructions, prerequisites, and troubleshooting.
+
+### Prerequisites
+
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and on PATH
+- [Git 2.25+](https://git-scm.com/) for worktree support
+
+### From Source
 
 ```bash
-kgnt open            # Open the current directory
-kgnt open /path/to   # Open a specific project path
+git clone https://github.com/Kangentic/kangentic.git
+cd kangentic
+npm install
+npm run dev
 ```
+
+Requires Node.js 20+ and C++ build tools for native modules. See [Installation Guide](docs/installation.md#from-source) for details.
 
 ## Documentation
 

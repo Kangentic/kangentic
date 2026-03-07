@@ -9,6 +9,9 @@
   "main": ".vite/build/index.js",
   "repository": "https://github.com/Kangentic/kangentic",
   "private": true,
+  "workspaces": [
+    "packages/launcher"
+  ],
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",

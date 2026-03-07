@@ -17,6 +17,15 @@ const config: ForgeConfig = {
     executableName: 'kangentic',
     icon: './resources/icon',
     extraResource: ['./resources/icon.png', './resources/icon.ico'],
+    ...(process.env.APPLE_IDENTITY ? {
+      osxSign: {},
+      osxNotarize: {
+        tool: 'notarytool',
+        appleId: process.env.APPLE_ID!,
+        appleIdPassword: process.env.APPLE_PASSWORD!,
+        teamId: process.env.APPLE_TEAM_ID!,
+      },
+    } : {}),
   },
   rebuildConfig: {
     // node-pty ships NAPI prebuilt binaries that work across Node/Electron
@@ -29,6 +38,10 @@ const config: ForgeConfig = {
       name: 'Kangentic',
       setupIcon: './resources/icon.ico',
       setupAppId: 'com.kangentic.app',
+      ...(process.env.WINDOWS_CERTIFICATE_FILE ? {
+        certificateFile: process.env.WINDOWS_CERTIFICATE_FILE,
+        certificatePassword: process.env.WINDOWS_CERTIFICATE_PASSWORD,
+      } : {}),
     }),
     new MakerDMG({
       name: 'Kangentic',
