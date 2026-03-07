@@ -13,11 +13,47 @@ import { windowsSign } from './windowsSign';
 
 const config: ForgeConfig = {
   packagerConfig: {
-    asar: true,
+    asar: {
+      unpack: '**/node-pty/prebuilds/**',
+    },
     name: 'Kangentic',
     executableName: 'kangentic',
     icon: './resources/icon',
     extraResource: ['./resources/icon.png', './resources/icon.ico'],
+    ignore: (file: string) => {
+      if (!file) return false;
+
+      // Allow Vite build output and package.json
+      if (file.startsWith('/.vite') || file.startsWith('/package.json')) return false;
+
+      // Whitelist only native modules that can't be bundled by Vite
+      if (file.startsWith('/node_modules')) {
+        const allowedModules = ['better-sqlite3', 'bindings', 'file-uri-to-path', 'node-pty'];
+        const segments = file.split('/');
+        // segments: ['', 'node_modules', '<module>', ...]
+        const moduleName = segments[2];
+        if (!moduleName) return false; // bare /node_modules dir
+        if (!allowedModules.includes(moduleName)) return true; // block unlisted modules
+
+        // Strip C++ source, build scripts, and cross-platform prebuilds from allowed modules
+        const subPath = segments.slice(3).join('/');
+        if (moduleName === 'node-pty') {
+          if (/^(src|scripts|deps|third_party)(\/|$)/.test(subPath)) return true;
+          const currentPlatformArch = `${process.platform}-${process.arch}`;
+          const prebuildMatch = subPath.match(/^prebuilds\/([^/]+)/);
+          if (prebuildMatch && prebuildMatch[1] !== currentPlatformArch) return true;
+        }
+        if (moduleName === 'better-sqlite3') {
+          if (/^(src|deps)(\/|$)/.test(subPath)) return true;
+          if (subPath === 'binding.gyp') return true;
+        }
+
+        return false;
+      }
+
+      // Block everything else (src, tests, configs, etc.)
+      return true;
+    },
     ...(process.env.AZURE_CODE_SIGNING_DLIB ? { windowsSign } : {}),
     ...(process.env.APPLE_IDENTITY ? {
       osxSign: {},

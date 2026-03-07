@@ -18,7 +18,8 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // Handle Squirrel.Windows lifecycle events (install/update/uninstall shortcuts)
-if (require('electron-squirrel-startup')) app.quit();
+import squirrelStartup from 'electron-squirrel-startup';
+if (squirrelStartup) app.quit();
 
 // Auto-update from GitHub Releases (Squirrel on Windows, autoUpdater on macOS)
 import { updateElectronApp } from 'update-electron-app';
@@ -70,9 +71,10 @@ function resolveBackgroundColor(): string {
 const createWindow = () => {
   const isTest = process.env.NODE_ENV === 'test';
 
+  const iconFilename = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
   const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'icon.png')
-    : path.join(app.getAppPath(), 'resources', 'icon.png');
+    ? path.join(process.resourcesPath, iconFilename)
+    : path.join(app.getAppPath(), 'resources', iconFilename);
 
   mainWindow = new BrowserWindow({
     icon: iconPath,
