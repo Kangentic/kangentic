@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import rendererOptimizeDeps from './scripts/renderer-optimize-deps.json';
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
@@ -16,6 +17,9 @@ export default defineConfig({
       // full page reload, which loses all React state.
       ignored: ['**/.kangentic/**'],
     },
+  },
+  optimizeDeps: {
+    include: rendererOptimizeDeps,
   },
   build: {
     // Electron loads from disk, so large chunks are not a performance concern.

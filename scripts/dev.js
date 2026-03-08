@@ -2,6 +2,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const esbuild = require('esbuild');
+const rendererOptimizeDeps = require('./renderer-optimize-deps.json');
 
 const projectDir = path.resolve(__dirname, '..');
 
@@ -56,6 +57,9 @@ async function start() {
       resolve: {
         alias: { '@shared': '/src/shared' },
         preserveSymlinks: true,
+      },
+      optimizeDeps: {
+        include: rendererOptimizeDeps,
       },
       server: { port, strictPort: true, watch: { ignored: ignoreDirs } },
     });
