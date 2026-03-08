@@ -702,18 +702,15 @@ export class SessionManager extends EventEmitter {
             //   main agent resuming after permission approval
             // - depth > 0 means subagents are running and this tool_start
             //   is likely from a subagent, not the main agent
-            // Permission idle bypasses suppression via `permissionIdle` flag --
-            // the first event after approval proves the CLI unblocked.
+            // Permission idle is also suppressed at depth > 0 -- recovery
+            // happens naturally when depth returns to 0 (SubagentStop).
             const currentActivity = this.activityCache.get(session.id);
             const depth = this.subagentDepth.get(session.id) || 0;
             if (currentActivity === 'idle' && newActivity === 'thinking'
                 && event.type !== EventType.Prompt
                 && event.type !== EventType.SubagentStart
-                && depth > 0
-                && !this.permissionIdle.get(session.id)) {
+                && depth > 0) {
               // Suppress: subagent tool event while main agent is idle
-              // Exception: permissionIdle bypass -- the first event after a
-              // permission approval proves the CLI unblocked, so allow it
               continue;
             }
 

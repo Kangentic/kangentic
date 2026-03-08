@@ -73,22 +73,31 @@ async function start() {
   console.timeEnd('[dev] vite createServer');
   console.log(`[dev] Vite dev server running at http://localhost:${port}`);
 
-  // 2. Build main + preload with esbuild
+  // 2. Build main + preload with esbuild, and warm up Vite's renderer
+  //    module graph in parallel. transformRequest forces Vite's dependency
+  //    optimizer to complete before Electron loads the page, preventing
+  //    the renderer from blocking on mid-load re-optimization.
   console.time('[dev] esbuild');
+  console.time('[dev] warmup');
   await Promise.all([
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/main/index.ts')],
-      outfile: path.join(projectDir, '.vite/build/index.js'),
+    Promise.all([
+      esbuild.build({
+        ...esbuildCommon,
+        entryPoints: [path.join(projectDir, 'src/main/index.ts')],
+        outfile: path.join(projectDir, '.vite/build/index.js'),
+      }),
+      esbuild.build({
+        ...esbuildCommon,
+        entryPoints: [path.join(projectDir, 'src/preload/preload.ts')],
+        outfile: path.join(projectDir, '.vite/build/preload.js'),
+      }),
+    ]).then(() => {
+      console.timeEnd('[dev] esbuild');
+      console.log('[dev] Main + preload built');
     }),
-    esbuild.build({
-      ...esbuildCommon,
-      entryPoints: [path.join(projectDir, 'src/preload/preload.ts')],
-      outfile: path.join(projectDir, '.vite/build/preload.js'),
-    }),
+    viteServer.transformRequest('/src/renderer/index.tsx')
+      .finally(() => console.timeEnd('[dev] warmup')),
   ]);
-  console.timeEnd('[dev] esbuild');
-  console.log('[dev] Main + preload built');
 
   // 3. Launch Electron
   const positionalArgs = process.argv.slice(2).filter(a => !a.startsWith('--'));
