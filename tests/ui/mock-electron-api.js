@@ -46,6 +46,8 @@
     skipDeleteConfirm: false,
     autoFocusIdleSession: true,
     notifyIdleOnInactiveProject: true,
+    activateAllProjectsOnStartup: true,
+    skipDefaultsSyncConfirm: false,
   };
 
   function uuid() {
@@ -566,6 +568,9 @@
         return null;
       },
       setProjectOverridesByPath: async function () {},
+      syncDefaultToProjects: async function () {
+        return 0;
+      },
     },
 
     claude: {

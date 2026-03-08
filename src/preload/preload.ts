@@ -115,6 +115,7 @@ const api: ElectronAPI = {
     setProjectOverrides: (overrides) => ipcRenderer.invoke(IPC.CONFIG_SET_PROJECT, overrides),
     getProjectOverridesByPath: (projectPath) => ipcRenderer.invoke(IPC.CONFIG_GET_PROJECT_BY_PATH, projectPath),
     setProjectOverridesByPath: (projectPath, overrides) => ipcRenderer.invoke(IPC.CONFIG_SET_PROJECT_BY_PATH, projectPath, overrides),
+    syncDefaultToProjects: (partial) => ipcRenderer.invoke(IPC.CONFIG_SYNC_DEFAULT_TO_PROJECTS, partial),
   },
 
   claude: {

@@ -71,6 +71,7 @@ export const IPC = {
   CONFIG_SET_PROJECT: 'config:setProject',
   CONFIG_GET_PROJECT_BY_PATH: 'config:getProjectByPath',
   CONFIG_SET_PROJECT_BY_PATH: 'config:setProjectByPath',
+  CONFIG_SYNC_DEFAULT_TO_PROJECTS: 'config:syncDefaultToProjects',
 
   // Claude
   CLAUDE_DETECT: 'claude:detect',

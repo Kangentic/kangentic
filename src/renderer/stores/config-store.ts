@@ -3,12 +3,10 @@ import type { AppConfig, DeepPartial } from '../../shared/types';
 import { DEFAULT_CONFIG } from '../../shared/types';
 import { deepEqual, deepMergeConfig, getNestedValue, hasNestedKey, removeNestedKey } from '../../shared/object-utils';
 
-/** Extract the version number from the raw string (e.g. "2.1.50 (Claude Code)" → "2.1.50"). */
+/** Extract the version number from the raw string (e.g. "2.1.50 (Claude Code)" -> "2.1.50"). */
 function parseClaudeVersion(version: string | null): string | null {
   return version?.replace(/\s*\(.*\)/, '') || null;
 }
-
-export type SettingsScope = 'global' | 'project';
 
 interface ConfigStore {
   // -- App config --
@@ -24,20 +22,28 @@ interface ConfigStore {
   claudeVersionNumber: string | null;
   detectClaude: () => Promise<void>;
 
-  // -- Settings panel UI --
+  // -- App Settings panel UI --
   settingsOpen: boolean;
-  settingsInitialTab: string | null;
-  settingsScope: SettingsScope;
-  settingsScopeProjectPath: string | null;
-  projectOverrides: DeepPartial<AppConfig> | null;
   setSettingsOpen: (open: boolean) => void;
-  openSettingsTab: (tab: string) => void;
-  setSettingsScope: (scope: SettingsScope, projectPath?: string) => void;
+
+  // -- Project Settings panel UI --
+  projectSettingsOpen: boolean;
+  projectSettingsPath: string | null;
+  projectSettingsProjectName: string | null;
+  openProjectSettings: (projectPath: string, projectName: string) => void;
+  setProjectSettingsOpen: (open: boolean) => void;
+
+  // -- Project overrides --
+  projectOverrides: DeepPartial<AppConfig> | null;
   loadProjectOverrides: () => Promise<void>;
   updateProjectOverride: (partial: DeepPartial<AppConfig>) => Promise<void>;
   removeProjectOverride: (keyPath: string) => Promise<void>;
   resetAllProjectOverrides: () => Promise<void>;
   isOverridden: (keyPath: string) => boolean;
+
+  // -- Sync defaults --
+  skipDefaultsSyncConfirm: boolean;
+  setSkipDefaultsSyncConfirm: (skip: boolean) => void;
 }
 
 /** Fetch both effective and global configs from main process. */
@@ -57,60 +63,79 @@ export const useConfigStore = create<ConfigStore>((set, get) => ({
   claudeVersionNumber: null,
   loading: false,
   settingsOpen: false,
-  settingsInitialTab: null,
-  settingsScope: 'global',
-  settingsScopeProjectPath: null,
+  projectSettingsOpen: false,
+  projectSettingsPath: null,
+  projectSettingsProjectName: null,
   projectOverrides: null,
+  skipDefaultsSyncConfirm: DEFAULT_CONFIG.skipDefaultsSyncConfirm,
 
   loadConfig: async () => {
     set({ loading: true });
-    set({ ...await refreshConfigs(), loading: false });
+    const configs = await refreshConfigs();
+    set({ ...configs, loading: false, skipDefaultsSyncConfirm: configs.globalConfig.skipDefaultsSyncConfirm });
   },
 
   updateConfig: async (partial) => {
     await window.electronAPI.config.set(partial);
-    set(await refreshConfigs());
+    const configs = await refreshConfigs();
+    set({ ...configs, skipDefaultsSyncConfirm: configs.globalConfig.skipDefaultsSyncConfirm });
   },
 
   detectClaude: async () => {
     const claudeInfo = await window.electronAPI.claude.detect();
-    const ver = parseClaudeVersion(claudeInfo?.version ?? null);
+    const version = parseClaudeVersion(claudeInfo?.version ?? null);
     set({
       claudeInfo,
-      claudeVersionLabel: ver ? `Claude Code | v${ver}` : 'Claude Code',
-      claudeVersionNumber: ver,
+      claudeVersionLabel: version ? `Claude Code | v${version}` : 'Claude Code',
+      claudeVersionNumber: version,
     });
   },
 
-  setSettingsOpen: (open) => set({
-    settingsOpen: open,
-    ...(!open && { settingsInitialTab: null, settingsScope: 'global', settingsScopeProjectPath: null }),
-  }),
-  openSettingsTab: (tab) => set({ settingsOpen: true, settingsInitialTab: tab }),
+  setSettingsOpen: (open) => set({ settingsOpen: open }),
 
-  setSettingsScope: (scope, projectPath) => {
-    const resolvedPath = scope === 'project' ? (projectPath ?? null) : null;
-    set({ settingsScope: scope, settingsScopeProjectPath: resolvedPath, projectOverrides: null });
-    if (scope === 'project') {
-      get().loadProjectOverrides();
+  // -- Project settings --
+  openProjectSettings: (projectPath, projectName) => {
+    set({
+      projectSettingsOpen: true,
+      projectSettingsPath: projectPath,
+      projectSettingsProjectName: projectName,
+      projectOverrides: null,
+    });
+    // Load overrides asynchronously
+    window.electronAPI.config.getProjectOverridesByPath(projectPath).then((overrides) => {
+      // Only apply if the path hasn't changed during the async call
+      if (get().projectSettingsPath === projectPath) {
+        set({ projectOverrides: overrides });
+      }
+    });
+  },
+
+  setProjectSettingsOpen: (open) => {
+    if (!open) {
+      set({
+        projectSettingsOpen: false,
+        projectSettingsPath: null,
+        projectSettingsProjectName: null,
+        projectOverrides: null,
+      });
+      // Re-fetch effective config in case overrides changed
+      refreshConfigs().then((configs) => set(configs));
     } else {
-      // Re-fetch global config to pick up any changes made in project scope
-      window.electronAPI.config.getGlobal().then((globalConfig) => set({ globalConfig }));
+      set({ projectSettingsOpen: open });
     }
   },
 
   loadProjectOverrides: async () => {
-    const projectPath = get().settingsScopeProjectPath;
+    const projectPath = get().projectSettingsPath;
     if (!projectPath) return;
     const overrides = await window.electronAPI.config.getProjectOverridesByPath(projectPath);
-    // Only apply if the scope hasn't changed during the async call
-    if (get().settingsScopeProjectPath === projectPath) {
+    if (get().projectSettingsPath === projectPath) {
       set({ projectOverrides: overrides });
     }
   },
 
   updateProjectOverride: async (partial) => {
-    const projectPath = get().settingsScopeProjectPath;
+    const projectPath = get().projectSettingsPath;
     if (!projectPath) return;
     const current = get().projectOverrides || {};
     const merged = deepMergeConfig(current, partial as Record<string, unknown>) as DeepPartial<AppConfig>;
@@ -120,7 +145,7 @@ export const useConfigStore = create<ConfigStore>((set, get) => ({
   },
 
   removeProjectOverride: async (keyPath) => {
-    const projectPath = get().settingsScopeProjectPath;
+    const projectPath = get().projectSettingsPath;
     if (!projectPath) return;
     const current = get().projectOverrides;
     if (!current) return;
@@ -133,14 +158,12 @@ export const useConfigStore = create<ConfigStore>((set, get) => ({
   },
 
   resetAllProjectOverrides: async () => {
-    const projectPath = get().settingsScopeProjectPath;
+    const projectPath = get().projectSettingsPath;
     if (!projectPath) return;
     await window.electronAPI.config.setProjectOverridesByPath(projectPath, {});
     set({ projectOverrides: {}, config: { ...get().globalConfig } });
   },
 
-  // Re-renders rely on `projectOverrides` being selected as state in the consuming
-  // component (SettingsPanel), which triggers re-render when overrides change.
   isOverridden: (keyPath) => {
     const overrides = get().projectOverrides;
     if (!overrides) return false;
@@ -149,16 +172,23 @@ export const useConfigStore = create<ConfigStore>((set, get) => ({
     const globalValue = getNestedValue(get().globalConfig, keyPath);
     return !deepEqual(overrideValue, globalValue);
   },
+
+  // -- Sync defaults --
+  setSkipDefaultsSyncConfirm: (skip) => {
+    set({ skipDefaultsSyncConfirm: skip });
+    // Persist to global config
+    window.electronAPI.config.set({ skipDefaultsSyncConfirm: skip });
+  },
 }));
 
-// Sync resolved theme → localStorage + <html> class whenever it changes.
+// Sync resolved theme -> localStorage + <html> class whenever it changes.
 // Runs outside React render so the DOM is always in sync, including for
 // the FOUC-prevention script on next load.
 useConfigStore.subscribe((state, prevState) => {
   if (state.config.theme !== prevState.config.theme) {
     try { localStorage.setItem('kng-resolved-theme', state.config.theme); } catch {}
-    const cl = document.documentElement.classList;
-    cl.forEach(c => { if (c.startsWith('theme-')) cl.remove(c); });
-    if (state.config.theme !== 'dark') cl.add(`theme-${state.config.theme}`);
+    const classList = document.documentElement.classList;
+    classList.forEach(className => { if (className.startsWith('theme-')) classList.remove(className); });
+    if (state.config.theme !== 'dark') classList.add(`theme-${state.config.theme}`);
   }
 });

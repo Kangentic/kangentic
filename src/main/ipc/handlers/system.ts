@@ -2,6 +2,7 @@ import { ipcMain, Notification, dialog, shell, nativeImage, type NativeImage } f
 import { IPC } from '../../../shared/ipc-channels';
 import { WorktreeManager, isGitRepo } from '../../git/worktree-manager';
 import { resolveIconPath } from '../../index';
+import { deepMergeConfig } from '../../../shared/object-utils';
 import type { NotificationInput } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
@@ -46,6 +47,18 @@ export function registerSystemHandlers(context: IpcContext): void {
     const known = context.projectRepo.list().some((p) => p.path === projectPath);
     if (!known) throw new Error('Unknown project path');
     context.configManager.saveProjectOverrides(projectPath, overrides);
+  });
+
+  ipcMain.handle(IPC.CONFIG_SYNC_DEFAULT_TO_PROJECTS, (_, partial) => {
+    const projects = context.projectRepo.list();
+    let updatedCount = 0;
+    for (const project of projects) {
+      const existing = context.configManager.loadProjectOverrides(project.path) || {};
+      const merged = deepMergeConfig(existing, partial as Record<string, unknown>);
+      context.configManager.saveProjectOverrides(project.path, merged);
+      updatedCount++;
+    }
+    return updatedCount;
   });
 
   // === Claude ===

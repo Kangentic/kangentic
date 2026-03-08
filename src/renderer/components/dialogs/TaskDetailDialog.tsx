@@ -49,7 +49,7 @@ function QueuedPlaceholder({ sessionId }: { sessionId: string | null }) {
     return pos ? pos.total : 0;
   });
 
-  const openSettingsTab = useConfigStore((s) => s.openSettingsTab);
+  const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
 
   return (
     <div className="flex-1 flex flex-col bg-surface/50">
@@ -69,7 +69,7 @@ function QueuedPlaceholder({ sessionId }: { sessionId: string | null }) {
       </div>
       <div className="px-4 py-2.5 border-t border-edge">
         <button
-          onClick={() => openSettingsTab('agent')}
+          onClick={() => setSettingsOpen(true)}
           className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs text-fg-faint bg-surface-hover/50 hover:bg-surface-hover hover:text-fg-tertiary transition-colors"
         >
           {runningCount} / {maxConcurrent} agent slots in use

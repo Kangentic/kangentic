@@ -348,20 +348,8 @@ export interface AppConfig {
   autoFocusIdleSession: boolean;
   notifyIdleOnInactiveProject: boolean;
   activateAllProjectsOnStartup: boolean;
+  skipDefaultsSyncConfirm: boolean;
 }
-
-/** Setting paths that cannot be overridden per-project (global-only). */
-export const GLOBAL_ONLY_PATHS = new Set([
-  'claude.maxConcurrentSessions',
-  'claude.queueOverflow',
-  'claude.cliPath',
-  'sidebarVisible',
-  'boardLayout',
-  'sidebar.width',
-  'terminal.panelHeight',
-  'terminal.showPreview',
-  'activateAllProjectsOnStartup',
-]);
 
 export const DEFAULT_CONFIG: AppConfig = {
   theme: 'dark',
@@ -394,6 +382,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   autoFocusIdleSession: true,
   notifyIdleOnInactiveProject: true,
   activateAllProjectsOnStartup: true,
+  skipDefaultsSyncConfirm: false,
 };
 
 // === IPC API Types ===
@@ -588,6 +577,7 @@ export interface ElectronAPI {
     setProjectOverrides: (overrides: DeepPartial<AppConfig>) => Promise<void>;
     getProjectOverridesByPath: (projectPath: string) => Promise<DeepPartial<AppConfig> | null>;
     setProjectOverridesByPath: (projectPath: string, overrides: DeepPartial<AppConfig>) => Promise<void>;
+    syncDefaultToProjects: (partial: DeepPartial<AppConfig>) => Promise<number>;
   };
 
   // Claude detection

@@ -2,8 +2,9 @@ import React, { useState, useCallback } from 'react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Trash2, Plus, GripVertical, Folder, FolderOpen, Menu, Loader2, Mail } from 'lucide-react';
+import { Trash2, Plus, GripVertical, Folder, FolderOpen, Menu, Loader2, Mail, Settings } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
+import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -22,6 +23,7 @@ interface SortableProjectItemProps {
   thinkingCount: number;
   idleCount: number;
   onSelect: (id: string) => void;
+  onOpenSettings: (e: React.MouseEvent, project: Project) => void;
   onOpenInExplorer: (e: React.MouseEvent, project: Project) => void;
   onDeleteClick: (e: React.MouseEvent, project: Project) => void;
 }
@@ -32,6 +34,7 @@ function SortableProjectItem({
   thinkingCount,
   idleCount,
   onSelect,
+  onOpenSettings,
   onOpenInExplorer,
   onDeleteClick,
 }: SortableProjectItemProps) {
@@ -111,6 +114,14 @@ function SortableProjectItem({
             <FolderOpen size={14} />
           </button>
           <button
+            onClick={(e) => onOpenSettings(e, project)}
+            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-full text-fg-disabled hover:text-fg-tertiary hover:bg-edge-input/50 transition-all"
+            title="Project settings"
+            data-testid={`project-settings-${project.id}`}
+          >
+            <Settings size={14} />
+          </button>
+          <button
             onClick={(e) => onDeleteClick(e, project)}
             className="opacity-0 group-hover:opacity-100 p-1.5 rounded-full text-fg-disabled hover:text-red-400 hover:bg-red-400/10 transition-all"
             title="Delete project"
@@ -135,6 +146,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
   const reorderProjects = useProjectStore((s) => s.reorderProjects);
   const sessions = useSessionStore((s) => s.sessions);
   const sessionActivity = useSessionStore((s) => s.sessionActivity);
+  const openProjectSettings = useConfigStore((state) => state.openProjectSettings);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
 
   const openProjectByPath = useProjectStore((s) => s.openProjectByPath);
@@ -151,6 +163,11 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
       message: wasExisting ? `Opened project "${project.name}"` : `Created project "${project.name}"`,
       variant: 'info',
     });
+  };
+
+  const handleOpenSettings = (event: React.MouseEvent, project: Project) => {
+    event.stopPropagation();
+    openProjectSettings(project.path, project.name);
   };
 
   const handleOpenInExplorer = (e: React.MouseEvent, project: Project) => {
@@ -237,6 +254,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
                   thinkingCount={thinkingCount}
                   idleCount={idleCount}
                   onSelect={openProject}
+                  onOpenSettings={handleOpenSettings}
                   onOpenInExplorer={handleOpenInExplorer}
                   onDeleteClick={handleDeleteClick}
                 />

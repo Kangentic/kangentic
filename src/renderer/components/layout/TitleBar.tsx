@@ -54,7 +54,7 @@ export function TitleBar({ sidebarOpen, onToggleSidebar }: TitleBarProps) {
           className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
             settingsOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
           }`}
-          title="Settings"
+          title="App Settings"
         >
           <Settings size={20} />
         </button>
