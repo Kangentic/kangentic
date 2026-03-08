@@ -7,7 +7,7 @@ describe('ClaudeStatusParser', () => {
   // computeContextPercentage
   // -------------------------------------------------------------------------
   describe('computeContextPercentage', () => {
-    it('returns used_percentage directly when available', () => {
+    it('computes from raw tokens using floor division when current_usage available', () => {
       const pct = ClaudeStatusParser.computeContextPercentage({
         current_usage: {
           input_tokens: 5000,
@@ -16,10 +16,10 @@ describe('ClaudeStatusParser', () => {
           cache_read_input_tokens: 1000,
         },
         context_window_size: 100_000,
-        used_percentage: 50,
+        used_percentage: 50, // ignored when current_usage is present
       });
-      // used_percentage returned directly (input-only, no output addition, no scaling)
-      expect(pct).toBe(50);
+      // (5000+1000+1000)/100000*100 = 7 (floor)
+      expect(pct).toBe(7);
     });
 
     it('caps at 100 when input tokens exceed window size', () => {
@@ -32,7 +32,7 @@ describe('ClaudeStatusParser', () => {
         },
         context_window_size: 100_000,
       });
-      // No used_percentage → fallback: (80000+10000+20000)/100000*100 = 110 → capped at 100
+      // (80000+10000+20000)/100000*100 = 110 -- capped at 100
       expect(pct).toBe(100);
     });
 
@@ -53,7 +53,7 @@ describe('ClaudeStatusParser', () => {
       expect(pct).toBe(37);
     });
 
-    it('returns used_percentage when context_window_size is 0', () => {
+    it('falls back to used_percentage when context_window_size is 0', () => {
       const pct = ClaudeStatusParser.computeContextPercentage({
         current_usage: {
           input_tokens: 5000,
@@ -62,6 +62,7 @@ describe('ClaudeStatusParser', () => {
         used_percentage: 60,
         context_window_size: 0,
       });
+      // windowSize=0 prevents token computation, falls back to used_percentage
       expect(pct).toBe(60);
     });
 
@@ -73,7 +74,7 @@ describe('ClaudeStatusParser', () => {
       expect(ClaudeStatusParser.computeContextPercentage(undefined)).toBe(0);
     });
 
-    it('defaults missing token fields to 0 in fallback path', () => {
+    it('defaults missing token fields to 0', () => {
       const pct = ClaudeStatusParser.computeContextPercentage({
         current_usage: {
           input_tokens: 10_000,
@@ -81,12 +82,11 @@ describe('ClaudeStatusParser', () => {
         },
         context_window_size: 100_000,
       });
-      // Fallback (no used_percentage): input-only = 10000/100000*100 = 10
+      // input-only = 10000/100000*100 = 10
       expect(pct).toBe(10);
     });
 
-    it('ignores output tokens -- uses used_percentage directly', () => {
-      // used_percentage is input-only per Claude Code docs
+    it('ignores output tokens -- uses input tokens only', () => {
       const pct = ClaudeStatusParser.computeContextPercentage({
         current_usage: {
           input_tokens: 60_000,
@@ -94,29 +94,29 @@ describe('ClaudeStatusParser', () => {
           cache_creation_input_tokens: 0,
           cache_read_input_tokens: 0,
         },
-        used_percentage: 75,
+        used_percentage: 75, // ignored when current_usage present
         context_window_size: 80_000,
       });
+      // (60000+0+0)/80000*100 = 75 (floor)
       expect(pct).toBe(75);
     });
 
-    it('used_percentage accounts for cached system prompt not in token buckets', () => {
-      // used_percentage=40 includes cached system prompt; token fields only sum to 15%
+    it('uses floor division to match Claude Code TUI display', () => {
+      // Real-world scenario: 20.9485% should floor to 20, not round to 21
       const pct = ClaudeStatusParser.computeContextPercentage({
         current_usage: {
-          input_tokens: 15_000,
-          output_tokens: 5_000,
-          cache_creation_input_tokens: 0,
-          cache_read_input_tokens: 0,
+          input_tokens: 3,
+          cache_creation_input_tokens: 11_165,
+          cache_read_input_tokens: 30_729,
         },
-        used_percentage: 40,
-        context_window_size: 100_000,
+        used_percentage: 21, // Claude JSON uses Math.round -- would be 21
+        context_window_size: 200_000,
       });
-      // Returns used_percentage directly
-      expect(pct).toBe(40);
+      // (3+11165+30729)/200000*100 = 20.9485 -- floor to 20
+      expect(pct).toBe(20);
     });
 
-    it('returns used_percentage directly for near-full sessions', () => {
+    it('computes from tokens for near-full sessions', () => {
       const pct = ClaudeStatusParser.computeContextPercentage({
         current_usage: {
           input_tokens: 120_000,
@@ -127,10 +127,11 @@ describe('ClaudeStatusParser', () => {
         used_percentage: 82,
         context_window_size: 200_000,
       });
-      expect(pct).toBe(82);
+      // (120000+0+0)/200000*100 = 60 (floor)
+      expect(pct).toBe(60);
     });
 
-    it('returns 95 for used_percentage=95 (no scaling to 100)', () => {
+    it('returns 95 for used_percentage=95 when no current_usage', () => {
       const pct = ClaudeStatusParser.computeContextPercentage({
         used_percentage: 95,
         context_window_size: 200_000,
@@ -138,7 +139,7 @@ describe('ClaudeStatusParser', () => {
       expect(pct).toBe(95);
     });
 
-    it('returns 15 for used_percentage=15 (fresh session)', () => {
+    it('returns 15 for used_percentage=15 when no current_usage', () => {
       const pct = ClaudeStatusParser.computeContextPercentage({
         used_percentage: 15,
         context_window_size: 200_000,
@@ -154,7 +155,7 @@ describe('ClaudeStatusParser', () => {
       expect(pct).toBe(100);
     });
 
-    it('fallback path uses input tokens only (excludes output)', () => {
+    it('uses input tokens only (excludes output) in token computation', () => {
       const pct = ClaudeStatusParser.computeContextPercentage({
         current_usage: {
           input_tokens: 170_000,
@@ -164,7 +165,7 @@ describe('ClaudeStatusParser', () => {
         },
         context_window_size: 200_000,
       });
-      // No used_percentage → fallback: input-only = 170000/200000*100 = 85
+      // input-only = 170000/200000*100 = 85
       expect(pct).toBe(85);
     });
   });
@@ -198,12 +199,12 @@ describe('ClaudeStatusParser', () => {
       });
       const usage = ClaudeStatusParser.parseStatus(raw);
       expect(usage).not.toBeNull();
-      // used_percentage returned directly
-      expect(usage!.contextWindow.usedPercentage).toBe(20);
-      // usedTokens: inputFromPct(20%*200k=40000) -- no output added
-      expect(usage!.contextWindow.usedTokens).toBe(40_000);
-      // cacheTokens: inputFromPct(40000) - input_tokens(20000) = 20000
-      expect(usage!.contextWindow.cacheTokens).toBe(20_000);
+      // Computed from tokens: (20000+1000+4000)/200000*100 = 12 (floor)
+      expect(usage!.contextWindow.usedPercentage).toBe(12);
+      // usedTokens: raw sum of input token buckets
+      expect(usage!.contextWindow.usedTokens).toBe(25_000);
+      // cacheTokens: cache_creation + cache_read
+      expect(usage!.contextWindow.cacheTokens).toBe(5_000);
       expect(usage!.contextWindow.totalInputTokens).toBe(20_000);
       expect(usage!.contextWindow.totalOutputTokens).toBe(5_000);
       expect(usage!.contextWindow.contextWindowSize).toBe(200_000);

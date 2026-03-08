@@ -23,33 +23,37 @@ export class ClaudeStatusParser {
   /**
    * Compute context window usage as a percentage.
    *
-   * Claude Code's `used_percentage` is based on input tokens only
-   * (input_tokens + cache_creation_input_tokens + cache_read_input_tokens).
-   * It does NOT include output_tokens. We return it directly -- no scaling.
+   * Claude Code's TUI displays context percentage using integer floor division
+   * (equivalent to `tokens * 100 / windowSize` in bash integer arithmetic).
+   * However, the JSON `used_percentage` field uses Math.round, which can be
+   * 1% higher than the TUI display. To match Claude Code's visible output,
+   * we always compute from raw token counts when available using Math.floor.
    *
    * Two tiers:
-   * 1. **Primary** (`used_percentage` > 0): return it directly.
-   * 2. **Fallback** (no `used_percentage`, has `current_usage`): compute
-   *    input-only `(input + cache_creation + cache_read) / window * 100`.
+   * 1. **Primary** (has `current_usage` + `context_window_size`): compute
+   *    input-only percentage via floor division -- matches Claude Code's TUI.
+   * 2. **Fallback** (`used_percentage` only, no tokens): return it directly.
    */
   static computeContextPercentage(contextWindow: StatusContextWindow | null | undefined): number {
     if (!contextWindow) return 0;
 
-    const usedPercentage = contextWindow.used_percentage ?? 0;
-
-    if (usedPercentage > 0) {
-      return Math.min(100, usedPercentage);
-    }
-
     const usage = contextWindow.current_usage;
     const windowSize = contextWindow.context_window_size ?? 0;
 
+    // Primary: compute from raw tokens using floor division to match Claude
+    // Code's TUI display (bash integer arithmetic: tokens * 100 / size).
     if (usage && windowSize > 0) {
       const input = usage.input_tokens ?? 0;
       const cacheCreation = usage.cache_creation_input_tokens ?? 0;
       const cacheRead = usage.cache_read_input_tokens ?? 0;
       const totalInput = input + cacheCreation + cacheRead;
-      return Math.min(100, (totalInput / windowSize) * 100);
+      return Math.min(100, Math.floor((totalInput / windowSize) * 100));
+    }
+
+    // Fallback: use pre-rounded used_percentage when tokens aren't available
+    const usedPercentage = contextWindow.used_percentage ?? 0;
+    if (usedPercentage > 0) {
+      return Math.min(100, usedPercentage);
     }
 
     return 0;
@@ -83,23 +87,23 @@ export class ClaudeStatusParser {
       const inputTokens = (cu?.input_tokens as number) ?? 0;
       const windowSize = (cw?.context_window_size as number) ?? 0;
 
-      // Input-only token computation, matching computeContextPercentage:
+      // Input-only token computation -- always use raw token sums when
+      // available for exact counts. Only estimate from used_percentage
+      // when current_usage is missing (e.g. very early status updates).
       const rawUsedPercentage = (cw?.used_percentage as number) ?? 0;
       let usedTokens: number;
       let cacheTokens: number;
-      if (cu && windowSize > 0 && rawUsedPercentage > 0) {
-        // Primary: used_percentage covers all input tokens (excludes output)
-        const inputFromPct = Math.round((rawUsedPercentage / 100) * windowSize);
-        usedTokens = inputFromPct;
-        cacheTokens = Math.max(0, inputFromPct - inputTokens);
-      } else if (cu) {
-        // Fallback: sum input token buckets only (no output)
+      if (cu) {
+        // Primary: sum input token buckets directly (no output tokens)
         usedTokens = inputTokens + cacheCreation + cacheRead;
         cacheTokens = cacheCreation + cacheRead;
-      } else {
-        // Last resort: estimate from used_percentage alone
+      } else if (rawUsedPercentage > 0 && windowSize > 0) {
+        // Fallback: estimate from used_percentage when no current_usage
         usedTokens = Math.round((rawUsedPercentage / 100) * windowSize);
         cacheTokens = usedTokens; // without current_usage, all context is system/cache
+      } else {
+        usedTokens = 0;
+        cacheTokens = 0;
       }
 
       const modelId = (model?.id as string) ?? '';
