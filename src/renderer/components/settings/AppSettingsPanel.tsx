@@ -14,8 +14,8 @@ const APP_TABS: SettingsTabDefinition[] = [
   { id: 'terminal', label: 'Terminal', icon: Terminal },
   { id: 'agent', label: 'Agent', icon: Bot },
   { id: 'git', label: 'Git', icon: GitBranch },
-  { id: 'behavior', label: 'Behavior', icon: SlidersHorizontal },
-  { id: 'privacy', label: 'Privacy', icon: Shield, separator: true },
+  { id: 'behavior', label: 'Behavior', icon: SlidersHorizontal, separator: true },
+  { id: 'privacy', label: 'Privacy', icon: Shield },
 ];
 
 export function AppSettingsPanel() {
