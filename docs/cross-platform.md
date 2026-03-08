@@ -56,6 +56,10 @@ Adaptations applied in `SessionManager.doSpawn()` and `adaptCommandForShell()`:
 
 The custom `packagerConfig.ignore` in `forge.config.ts` overrides the Forge VitePlugin's default (which only allows `/.vite`). It whitelists `better-sqlite3`, `node-pty`, `bindings`, and `file-uri-to-path` while stripping build artifacts and non-current-platform prebuilds to reduce bundle size.
 
+### Bridge Script Unpacking
+
+Bridge scripts (`event-bridge.js`, `status-bridge.js`) are executed by Claude Code hooks in a separate `node` process outside Electron. Plain Node.js cannot read files inside asar archives, so `asar.unpackDir` extracts `.vite/build/` to `app.asar.unpacked/`. The `resolveBridgeScript()` function in `command-builder.ts` rewrites `app.asar` to `app.asar.unpacked` in resolved paths when running in a packaged build.
+
 ## Config Directory Locations
 
 | Platform | Default Path |
