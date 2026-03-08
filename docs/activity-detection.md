@@ -106,6 +106,7 @@ Two guards protect against incorrect state transitions when subagents are runnin
 | Event is `prompt` | **Allow** | User responded -- always reliable |
 | Event is `subagent_start` | **Allow** | Main agent spawning -- always reliable |
 | Subagent depth = 0 | **Allow** | No subagents running, so this `tool_start` is from the main agent |
+| `lastIdleWasPermission` flag set | **Allow** | Idle was caused by a permission prompt -- first tool event after approval should recover to thinking |
 | Subagent depth > 0 | **Suppress** | The `tool_start` is likely from a still-running subagent |
 
 **Guard 2: thinking → idle suppression** (prevents main agent Stop from showing idle while subagents work)
@@ -122,12 +123,13 @@ Two guards protect against incorrect state transitions when subagents are runnin
 - On `subagent_stop`, if depth reaches 0 and the flag is set, emit idle
 - The flag is cleared when the main agent resumes thinking (`prompt`, `subagent_start`, or `tool_start` at depth 0)
 - Permission idles (`detail: 'permission'`) also clear the pending flag to prevent stale deferred idles after approval
+- Permission idles set a `lastIdleWasPermission` flag so Guard 1 allows the next tool event to recover to thinking (the flag is cleared once thinking is restored)
 
 ### Scenarios
 
-1. **Permission prompt + subagents running:** Permission idle bypasses Guard 2 → card shows idle immediately. Subagent `tool_start` events are suppressed by Guard 1 → card stays idle (correct)
+1. **Permission prompt + subagents running:** Permission idle bypasses Guard 2 → card shows idle immediately. Next `tool_start` after permission recovers to thinking via `lastIdleWasPermission` flag (correct)
 2. **Permission approved + subagents finished:** Next `tool_start` transitions to thinking (correct)
-3. **Permission approved + subagents still running:** Stays idle briefly until subagents finish, then next `tool_start` transitions (conservative but correct -- better idle than false active)
+3. **Permission approved + subagents still running:** First `tool_start` recovers to thinking (flag allows it). Subsequent normal idles are deferred by Guard 2 as usual (correct)
 4. **User sends new message:** `prompt` always transitions regardless of depth (correct)
 5. **Main agent spawns subagent then fires Stop:** Idle suppressed, card stays thinking while subagent works (correct)
 6. **Last subagent finishes after deferred idle:** Card transitions to idle when depth reaches 0 (correct)
