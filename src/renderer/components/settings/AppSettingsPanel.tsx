@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bot, Check, CircleAlert, GitBranch, Globe, Palette, Shield, SlidersHorizontal, Terminal } from 'lucide-react';
+import { Bot, Check, CircleAlert, GitBranch, Globe, Palette, ShieldAlert, ShieldCheck, SlidersHorizontal, Terminal } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -15,7 +15,7 @@ const APP_TABS: SettingsTabDefinition[] = [
   { id: 'agent', label: 'Agent', icon: Bot },
   { id: 'git', label: 'Git', icon: GitBranch },
   { id: 'behavior', label: 'Behavior', icon: SlidersHorizontal, separator: true },
-  { id: 'privacy', label: 'Privacy', icon: Shield },
+  { id: 'privacy', label: 'Privacy', icon: ShieldCheck },
 ];
 
 export function AppSettingsPanel() {
@@ -224,14 +224,36 @@ export function AppSettingsPanel() {
 
       {/* ── Privacy ── */}
       {activeTab === 'privacy' && (
-        <div className="space-y-3">
-          <p className="text-sm text-fg-secondary leading-relaxed">
-            Kangentic collects anonymous usage statistics to improve the product.
-            No personal data is collected.
+        <div className="space-y-4">
+          <div className="inline-flex items-center gap-2 rounded-full bg-surface-hover px-3.5 py-1.5">
+            <ShieldAlert className="size-5 text-fg-muted shrink-0" />
+            <span className="text-[1em] text-fg-secondary">Anonymous analytics only -- no personal data collected.</span>
+          </div>
+
+          <SectionHeader label="What We Collect" />
+          <ul className="list-disc list-inside text-sm text-fg-muted space-y-1 ml-1">
+            <li>App launches, platform, and architecture</li>
+            <li>Task and project creation counts</li>
+            <li>Agent session starts, exit codes, and duration</li>
+          </ul>
+
+          <SectionHeader label="What We Don't Collect" />
+          <ul className="list-disc list-inside text-sm text-fg-muted space-y-1 ml-1">
+            <li>Task titles, descriptions, or any user-generated content</li>
+            <li>File paths, project names, or code</li>
+            <li>Usernames, emails, or any personally identifiable information</li>
+          </ul>
+
+          <SectionHeader label="How It Works" />
+          <p className="text-sm text-fg-muted leading-relaxed">
+            Analytics are powered by Aptabase, a privacy-first platform.
+            No cookies or persistent identifiers. IP addresses are used
+            for geographic lookup only, then discarded. GDPR-compliant by design.
           </p>
-          <p className="text-xs text-fg-muted leading-relaxed">
-            Set <code className="text-fg-secondary font-mono">KANGENTIC_TELEMETRY=0</code> as
-            an environment variable to opt out.
+
+          <SectionHeader label="How to Opt Out" />
+          <p className="text-sm text-fg-muted leading-relaxed">
+            Set <code className="font-mono">KANGENTIC_TELEMETRY=0</code> as an environment variable to disable analytics.
           </p>
         </div>
       )}
