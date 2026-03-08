@@ -28,17 +28,40 @@ function requireContext(): IpcContext {
 }
 
 export function registerAllIpc(mainWindow: BrowserWindow): void {
+  // Eagerly create SessionManager + CommandInjector (lightweight, needed early)
   const sessionManager = new SessionManager();
   const commandInjector = new CommandInjector(sessionManager);
 
+  // Lazy-initialize heavy objects on first access
+  let projectRepo: ProjectRepository | null = null;
+  let configManager: ConfigManager | null = null;
+  let claudeDetector: ClaudeDetector | null = null;
+  let shellResolver: ShellResolver | null = null;
+  let commandBuilder: CommandBuilder | null = null;
+
   context = {
     mainWindow,
-    projectRepo: new ProjectRepository(),
+    get projectRepo() {
+      if (!projectRepo) projectRepo = new ProjectRepository();
+      return projectRepo;
+    },
     sessionManager,
-    configManager: new ConfigManager(),
-    claudeDetector: new ClaudeDetector(),
-    shellResolver: new ShellResolver(),
-    commandBuilder: new CommandBuilder(),
+    get configManager() {
+      if (!configManager) configManager = new ConfigManager();
+      return configManager;
+    },
+    get claudeDetector() {
+      if (!claudeDetector) claudeDetector = new ClaudeDetector();
+      return claudeDetector;
+    },
+    get shellResolver() {
+      if (!shellResolver) shellResolver = new ShellResolver();
+      return shellResolver;
+    },
+    get commandBuilder() {
+      if (!commandBuilder) commandBuilder = new CommandBuilder();
+      return commandBuilder;
+    },
     commandInjector,
     currentProjectId: null,
     currentProjectPath: null,

@@ -1,5 +1,8 @@
 import which from 'which';
-import { execSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 interface ClaudeInfo {
   found: boolean;
@@ -17,10 +20,10 @@ export class ClaudeDetector {
       const claudePath = overridePath || await which('claude');
       let version: string | null = null;
       try {
-        version = execSync(`"${claudePath}" --version`, {
+        const { stdout } = await execFileAsync(claudePath, ['--version'], {
           timeout: 5000,
-          encoding: 'utf-8',
-        }).trim();
+        });
+        version = stdout.trim();
       } catch { /* version detection failed */ }
 
       this.cached = { found: true, path: claudePath, version };

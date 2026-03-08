@@ -509,6 +509,15 @@ export async function reconcileSessions(
       .map((s) => s.taskId),
   );
 
+  // Detect Claude CLI once before the loop
+  const claude = await claudeDetector.detect(config.claude.cliPath);
+  if (!claude.found || !claude.path) {
+    console.warn(
+      'Session reconciliation: Claude CLI not found -- skipping all tasks',
+    );
+    return;
+  }
+
   // Cache transitions and actions for building commands
   const allTransitions = actionRepo.listTransitions();
   const allActions = actionRepo.list();
@@ -562,14 +571,6 @@ export async function reconcileSessions(
         // Pre-populate trust for worktree paths
         if (cwd !== projectPath) {
           ensureWorktreeTrust(cwd);
-        }
-
-        const claude = await claudeDetector.detect(config.claude.cliPath);
-        if (!claude.found || !claude.path) {
-          console.warn(
-            `Session reconciliation: Claude CLI not found -- skipping task ${task.id}`,
-          );
-          continue;
         }
 
         // Generate a Claude session ID upfront so recovery can resume

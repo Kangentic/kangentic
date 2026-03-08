@@ -5,9 +5,10 @@ import os from 'node:os';
 import { registerAllIpc, getSessionManager, getCommandInjector, getCurrentProjectId, openProjectByPath, cleanupProject, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects } from './ipc/register-all';
 import { closeAll, getProjectDb } from './db/database';
 import { SessionRepository } from './db/repositories/session-repository';
-import { ConfigManager } from './config/config-manager';
 import { IPC } from '../shared/ipc-channels';
 import { THEME_BACKGROUNDS } from '../shared/types';
+import type { ThemeMode } from '../shared/types';
+import { PATHS } from './config/paths';
 
 // Global error handlers -- keep the app running through transient IPC/PTY errors
 process.on('uncaughtException', (err) => {
@@ -60,12 +61,15 @@ function getCwdArg(): string | null {
 
 function resolveBackgroundColor(): string {
   try {
-    const cm = new ConfigManager();
-    const config = cm.load();
-    return THEME_BACKGROUNDS[config.theme] ?? '#18181b';
+    const raw = fs.readFileSync(PATHS.configFile, 'utf-8');
+    const theme = (JSON.parse(raw) as { theme?: ThemeMode }).theme;
+    if (theme && theme in THEME_BACKGROUNDS) {
+      return THEME_BACKGROUNDS[theme];
+    }
   } catch {
-    return '#18181b';
+    // Config file missing or malformed -- use default
   }
+  return '#18181b';
 }
 
 export function resolveIconPath(): string {
@@ -73,6 +77,24 @@ export function resolveIconPath(): string {
   return app.isPackaged
     ? path.join(process.resourcesPath, iconFilename)
     : path.join(app.getAppPath(), 'resources', iconFilename);
+}
+
+function loadReactDevTools(): void {
+  const reactDevToolsId = 'fmkadmapgofadopljbjfkapdkoienihi';
+  const extensionDir = path.join(
+    os.homedir(),
+    'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Default', 'Extensions',
+    reactDevToolsId,
+  );
+  if (!fs.existsSync(extensionDir)) return;
+
+  const versions = fs.readdirSync(extensionDir).sort();
+  const latest = versions[versions.length - 1];
+  if (!latest) return;
+
+  session.defaultSession.extensions.loadExtension(path.join(extensionDir, latest))
+    .then(() => console.log('React DevTools loaded'))
+    .catch((err) => console.log('Failed to load React DevTools:', err));
 }
 
 const createWindow = () => {
@@ -209,30 +231,23 @@ const createWindow = () => {
   });
 };
 
-app.whenReady().then(async () => {
-  // Load React DevTools extension in development
-  if (!app.isPackaged) {
-    try {
-      const reactDevToolsId = 'fmkadmapgofadopljbjfkapdkoienihi';
-      const extDir = path.join(
-        os.homedir(),
-        'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Default', 'Extensions',
-        reactDevToolsId,
-      );
-      if (fs.existsSync(extDir)) {
-        const versions = fs.readdirSync(extDir).sort();
-        const latest = versions[versions.length - 1];
-        if (latest) {
-          await session.defaultSession.extensions.loadExtension(path.join(extDir, latest));
-          console.log('React DevTools loaded');
-        }
-      }
-    } catch (err) {
-      console.log('Failed to load React DevTools:', err);
-    }
-  }
+// Replace the default application menu with a minimal one.
+// The app uses a custom React titlebar, so the full default menu is wasted work.
+// macOS needs an Edit submenu to enable Cmd+C/V/A clipboard shortcuts in the renderer;
+// Windows/Linux don't need any menu at all.
+Menu.setApplicationMenu(
+  process.platform === 'darwin'
+    ? Menu.buildFromTemplate([{ role: 'editMenu' }])
+    : null,
+);
 
+app.whenReady().then(async () => {
   createWindow();
+
+  // Load React DevTools extension in development (fire-and-forget, after window is visible)
+  if (!app.isPackaged) {
+    loadReactDevTools();
+  }
 
   // Prune stale worktree projects from crashed/force-killed preview instances.
   // Only runs in the main app during development -- preview is a dev-only feature.
