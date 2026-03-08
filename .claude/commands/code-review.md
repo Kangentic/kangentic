@@ -1,3 +1,8 @@
+---
+description: Review git changes for quality and conventions
+allowed-tools: Read, Glob, Grep, Bash(git:*), Bash(npm:*)
+---
+
 # Code Review
 
 Review the current git changes (staged and unstaged) for quality, correctness, and project conventions.

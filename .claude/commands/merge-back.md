@@ -1,3 +1,9 @@
+---
+description: Commit, rebase, and push changes to source branch
+allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*)
+argument-hint: [commit message]
+---
+
 # Merge Back
 
 Safely commit, rebase, and push changes. Works from both worktrees and the main repo.
@@ -6,6 +12,8 @@ Safely commit, rebase, and push changes. Works from both worktrees and the main 
 
 - `/merge-back` — auto-generates a commit message from the diff
 - `/merge-back added new e2e tests` — uses the provided text as the commit message
+
+**User-provided commit message (if any):** $ARGUMENTS
 
 ## Pre-flight Checks
 
@@ -33,7 +41,7 @@ Run `npm run typecheck`. If it fails, report the type errors and stop — do not
 If there are uncommitted changes (non-empty `git status --porcelain` output):
 
 1. Show the user `git status` and `git diff --stat` for a summary of changes.
-2. If the user provided a commit message with the command (e.g., `/merge-back added new e2e tests`), use that text as the commit message.
+2. If `$ARGUMENTS` is non-empty, use it as the commit message.
 3. Otherwise, read the full diff (`git diff`), draft a concise commit message summarizing the changes.
 4. Stage changes: `git add -A`
 5. Write the commit message using the **Write tool** to the relative path `.kangentic/COMMIT_MSG.tmp` (resolved from CWD — do NOT resolve an absolute path, do NOT use the system temp directory, do NOT use `os.tmpdir()`).
@@ -113,8 +121,6 @@ The project root (determined in pre-flight step 3) always has the source branch 
 
 If this fails (e.g., non-fast-forward divergence), report the warning but do not treat it as a fatal error — the remote is already updated.
 
-## Allowed Tools
-
-Use `Read`, `Glob`, `Grep`, `Bash` (for `git` and `npm` commands), `Write` (for commit message temp files), `Edit` (for conflict resolution), and `AskUserQuestion`.
+## Rules
 
 **CRITICAL: No chained commands.** Every Bash call must contain exactly ONE command. Never use `&&`, `||`, `|`, or `;`. For git commands in another directory, use `git -C <path>` — never `cd <path> && git ...`.

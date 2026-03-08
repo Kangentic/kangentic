@@ -1,3 +1,9 @@
+---
+description: Scaffold a new IPC endpoint across all 7 layers
+allowed-tools: Read, Glob, Grep, Edit, Bash(npm:*)
+argument-hint: <channel-name> <description>
+---
+
 # Add IPC Endpoint
 
 Scaffold a new IPC endpoint across all 7 layers of the IPC bridge.
@@ -5,6 +11,8 @@ Scaffold a new IPC endpoint across all 7 layers of the IPC bridge.
 **Usage:** `/add-ipc-endpoint <channel-name> <description>`
 
 Example: `/add-ipc-endpoint TASK_DUPLICATE Duplicate an existing task with a new ID`
+
+**Arguments:** $ARGUMENTS
 
 ## Instructions
 

@@ -1,3 +1,8 @@
+---
+description: Open dev server for previewing live code changes
+allowed-tools: Bash(node:*), Bash(npm:*)
+---
+
 # Preview
 
 Open a new terminal window running a Kangentic dev server for previewing live code changes in the current worktree.

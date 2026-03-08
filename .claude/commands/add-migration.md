@@ -1,3 +1,9 @@
+---
+description: Add a new database migration
+allowed-tools: Read, Glob, Grep, Edit, Bash(npm:*)
+argument-hint: <description>
+---
+
 # Add Migration
 
 Add a new database migration to the project, following the established idempotent migration pattern.
@@ -5,6 +11,8 @@ Add a new database migration to the project, following the established idempoten
 **Usage:** `/add-migration <description>`
 
 Example: `/add-migration Add priority column to tasks table`
+
+**Arguments:** $ARGUMENTS
 
 ## Instructions
 

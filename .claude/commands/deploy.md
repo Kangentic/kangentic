@@ -1,3 +1,9 @@
+---
+description: Version bump, changelog, tag, and push release
+allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*)
+argument-hint: <patch|minor|major>
+---
+
 # Deploy
 
 Release pipeline: version bump, changelog generation, git tag, and push to trigger the release workflow.
@@ -7,6 +13,8 @@ Release pipeline: version bump, changelog generation, git tag, and push to trigg
 - `/deploy patch` -- bump 0.1.0 to 0.1.1
 - `/deploy minor` -- bump 0.1.0 to 0.2.0
 - `/deploy major` -- bump 0.1.0 to 1.0.0
+
+**Release type:** $ARGUMENTS
 
 This command does NOT use `/merge-back`. The deploy flow is fundamentally different: no rebase, creates tags, and pushes to main directly.
 

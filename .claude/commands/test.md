@@ -1,3 +1,9 @@
+---
+description: Run tests, audit coverage, or write missing tests
+allowed-tools: Read, Glob, Grep, Edit, Write, Bash(npm:*), Bash(npx:*), Bash(git:*)
+argument-hint: [all|audit|write|unit|ui|e2e]
+---
+
 # Test — Unified Smart Test Runner
 
 Unified command for running tests, auditing coverage, and writing missing tests.
@@ -13,6 +19,8 @@ Unified command for running tests, auditing coverage, and writing missing tests.
 | `unit` | **Unit Only** | Run unit tests only |
 | `ui` | **UI Only** | Run UI tests only |
 | `e2e` | **E2E Only** | Build + run E2E tests only |
+
+**Selected mode:** $ARGUMENTS
 
 ---
 

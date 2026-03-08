@@ -1,3 +1,9 @@
+---
+description: Plan and implement a full-stack feature
+allowed-tools: Read, Glob, Grep, Edit, Write, Bash(npm:*), Bash(npx:*)
+argument-hint: <feature-name> <description>
+---
+
 # Scaffold Feature
 
 Plan and implement a full-stack feature across all layers of the Kangentic architecture.
@@ -5,6 +11,8 @@ Plan and implement a full-stack feature across all layers of the Kangentic archi
 **Usage:** `/scaffold-feature <feature-name> <description>`
 
 Example: `/scaffold-feature task-labels Add colored labels to tasks for categorization`
+
+**Arguments:** $ARGUMENTS
 
 ## Instructions
 
