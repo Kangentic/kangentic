@@ -1,20 +1,26 @@
 name: Build
 
+# DISABLED: Previously ran `npm run make` on 4 OS runners per push/PR, which
+# hung for ~7 hours on Windows and exhausted all GitHub Actions credits.
+# To re-enable, uncomment the push/pull_request triggers below.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+#   push:
+#     branches: [main]
+#   pull_request:
+#     branches: [main]
 
 permissions:
   contents: read
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest, macos-13]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -26,10 +32,8 @@ jobs:
 
       - run: npm ci
 
-      - run: npm run make
+      - run: npm run build
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: build-${{ matrix.os }}
-          path: out/make/**/*
-          if-no-files-found: error
+      - run: npm run typecheck
+
+      - run: npm run test:unit
