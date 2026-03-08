@@ -4,14 +4,11 @@ This guide walks through all features of Kangentic from a user's perspective.
 
 ## First Launch
 
-When you first open Kangentic, you'll see an empty project list. Click **New Project** to get started:
+When you first open Kangentic with no existing projects, a welcome screen greets you with an **Open a Project** button. Click it to select a project folder and get started.
 
-1. Enter a project name
-2. Select the project directory (the root of your git repository)
-3. Optionally add a GitHub URL
-4. Click Create
+On subsequent launches, Kangentic automatically re-opens the last activated project so you pick up right where you left off. If you launch with the `--cwd` flag, that path takes priority.
 
-Kangentic initializes a `.kangentic/` directory inside your project (auto-added to `.gitignore`) and creates a board with default columns.
+When a project is opened, Kangentic initializes a `.kangentic/` directory inside the project folder (auto-added to `.gitignore`) and creates a board with default columns.
 
 ## Default Columns
 
