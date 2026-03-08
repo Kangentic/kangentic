@@ -7,7 +7,7 @@ describe('ClaudeStatusParser', () => {
   // computeContextPercentage
   // -------------------------------------------------------------------------
   describe('computeContextPercentage', () => {
-    it('computes from raw tokens using floor division when current_usage available', () => {
+    it('computes from raw tokens using Math.round when current_usage available', () => {
       const pct = ClaudeStatusParser.computeContextPercentage({
         current_usage: {
           input_tokens: 5000,
@@ -18,7 +18,7 @@ describe('ClaudeStatusParser', () => {
         context_window_size: 100_000,
         used_percentage: 50, // ignored when current_usage is present
       });
-      // (5000+1000+1000)/100000*100 = 7 (floor)
+      // (5000+1000+1000)/100000*100 = 7 (exact)
       expect(pct).toBe(7);
     });
 
@@ -97,23 +97,23 @@ describe('ClaudeStatusParser', () => {
         used_percentage: 75, // ignored when current_usage present
         context_window_size: 80_000,
       });
-      // (60000+0+0)/80000*100 = 75 (floor)
+      // (60000+0+0)/80000*100 = 75 (exact)
       expect(pct).toBe(75);
     });
 
-    it('uses floor division to match Claude Code TUI display', () => {
-      // Real-world scenario: 20.9485% should floor to 20, not round to 21
+    it('uses Math.round to match Claude Code used_percentage', () => {
+      // Real-world scenario: 20.9485% should round to 21
       const pct = ClaudeStatusParser.computeContextPercentage({
         current_usage: {
           input_tokens: 3,
           cache_creation_input_tokens: 11_165,
           cache_read_input_tokens: 30_729,
         },
-        used_percentage: 21, // Claude JSON uses Math.round -- would be 21
+        used_percentage: 21, // Claude JSON uses Math.round -- 21
         context_window_size: 200_000,
       });
-      // (3+11165+30729)/200000*100 = 20.9485 -- floor to 20
-      expect(pct).toBe(20);
+      // (3+11165+30729)/200000*100 = 20.9485 -- round to 21
+      expect(pct).toBe(21);
     });
 
     it('computes from tokens for near-full sessions', () => {
@@ -199,8 +199,8 @@ describe('ClaudeStatusParser', () => {
       });
       const usage = ClaudeStatusParser.parseStatus(raw);
       expect(usage).not.toBeNull();
-      // Computed from tokens: (20000+1000+4000)/200000*100 = 12 (floor)
-      expect(usage!.contextWindow.usedPercentage).toBe(12);
+      // Computed from tokens: (20000+1000+4000)/200000*100 = 12.5 (round to 13)
+      expect(usage!.contextWindow.usedPercentage).toBe(13);
       // usedTokens: raw sum of input token buckets
       expect(usage!.contextWindow.usedTokens).toBe(25_000);
       // cacheTokens: cache_creation + cache_read

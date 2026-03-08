@@ -71,11 +71,13 @@ export function App() {
       // Clear all per-project view state before syncing -- prevents stale data
       // from the previous project leaking into the new project's terminal/events.
       // Do NOT clear sessionActivity or sessions -- sidebar badges need cross-project data.
+      // Do NOT clear sessionUsage -- eagerly clearing causes a flash-to-0% on HMR
+      // remount. Stale keys from the old project are harmless (components only
+      // render current-project sessions) and get replaced by syncSessions().
       useSessionStore.setState({
         activeSessionId: null,
         dialogSessionId: null,
         openTaskId: null,
-        sessionUsage: {},
         sessionEvents: {},
       });
 

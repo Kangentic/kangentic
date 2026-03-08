@@ -152,7 +152,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           switch (displayState.kind) {
             case 'running': {
               if (!displayState.usage) return null;
-              const pct = Math.floor(displayState.usage.contextWindow.usedPercentage);
+              const pct = Math.round(displayState.usage.contextWindow.usedPercentage);
               const progressColor = getProgressColor(pct);
               return (
                 <div className="mt-2 pt-2 border-t border-edge" data-testid="usage-bar">

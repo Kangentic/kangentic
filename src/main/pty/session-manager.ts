@@ -292,8 +292,13 @@ export class SessionManager extends EventEmitter {
       session.exitCode = exitCode;
       session.pty = null;
 
-      // Stop the usage watcher and clean up status/settings files
-      this.cleanupSessionFiles(session);
+      // Close watchers but preserve session files on disk -- they are needed
+      // for crash recovery (startUsageWatcher reads status.json on resume).
+      // Files are cleaned up by pruneStaleResources(), remove(), or killAll().
+      session.statusFileWatcher?.close();
+      session.statusFileWatcher = null;
+      session.eventsFileWatcher?.close();
+      session.eventsFileWatcher = null;
 
       this.emit('exit', id, exitCode);
       this.sessionQueue.notifySlotFreed();

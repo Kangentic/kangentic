@@ -31,12 +31,12 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
   const outputTokens = usage?.contextWindow.totalOutputTokens;
   const tokenKey = `${inputTokens}-${outputTokens}`;
   const tokenRef = useValuePulse(tokenKey);
-  const pctRef = useValuePulse(usage ? Math.floor(usage.contextWindow.usedPercentage) : 0);
+  const pctRef = useValuePulse(usage ? Math.round(usage.contextWindow.usedPercentage) : 0);
   const fractionRef = useValuePulse(usage?.contextWindow.usedTokens);
 
   if (!usage) return null;
 
-  const pct = Math.floor(usage.contextWindow.usedPercentage);
+  const pct = Math.round(usage.contextWindow.usedPercentage);
   const progressColor = getProgressColor(pct);
 
   const modelName = usage.model.displayName || 'Claude';

@@ -23,15 +23,13 @@ export class ClaudeStatusParser {
   /**
    * Compute context window usage as a percentage.
    *
-   * Claude Code's TUI displays context percentage using integer floor division
-   * (equivalent to `tokens * 100 / windowSize` in bash integer arithmetic).
-   * However, the JSON `used_percentage` field uses Math.round, which can be
-   * 1% higher than the TUI display. To match Claude Code's visible output,
-   * we always compute from raw token counts when available using Math.floor.
+   * Claude Code's `used_percentage` field uses Math.round internally.
+   * We match that behavior: compute from raw token counts when available
+   * using Math.round, falling back to the pre-rounded `used_percentage`.
    *
    * Two tiers:
    * 1. **Primary** (has `current_usage` + `context_window_size`): compute
-   *    input-only percentage via floor division -- matches Claude Code's TUI.
+   *    input-only percentage via Math.round -- matches Claude Code's JSON.
    * 2. **Fallback** (`used_percentage` only, no tokens): return it directly.
    */
   static computeContextPercentage(contextWindow: StatusContextWindow | null | undefined): number {
@@ -40,14 +38,14 @@ export class ClaudeStatusParser {
     const usage = contextWindow.current_usage;
     const windowSize = contextWindow.context_window_size ?? 0;
 
-    // Primary: compute from raw tokens using floor division to match Claude
-    // Code's TUI display (bash integer arithmetic: tokens * 100 / size).
+    // Primary: compute from raw tokens using Math.round to match Claude
+    // Code's used_percentage field.
     if (usage && windowSize > 0) {
       const input = usage.input_tokens ?? 0;
       const cacheCreation = usage.cache_creation_input_tokens ?? 0;
       const cacheRead = usage.cache_read_input_tokens ?? 0;
       const totalInput = input + cacheCreation + cacheRead;
-      return Math.min(100, Math.floor((totalInput / windowSize) * 100));
+      return Math.min(100, Math.round((totalInput / windowSize) * 100));
     }
 
     // Fallback: use pre-rounded used_percentage when tokens aren't available
