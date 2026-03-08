@@ -192,7 +192,7 @@ When an agent goes idle (waiting for input or stopped) on a non-active project, 
 
 ### Desktop Notifications
 
-When an agent goes idle on a non-active project, a native OS notification appears with the task name as the title and the project name as the body. The OS toast header automatically displays the Kangentic icon and app name. Clicking the notification brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. Configurable via `notifyIdleOnInactiveProject`.
+Native OS notifications fire when an agent needs attention and the user can't already see it -- either the window is minimized/unfocused, or a different project is active. Events that trigger notifications: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking a notification brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second per-session cooldown prevents repeated notifications from the same agent. Configurable via `notifyIdleOnInactiveProject`.
 
 ## CLI
 

@@ -119,7 +119,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `notification:show` | send | Show native OS notification (task name + project name) |
 | `notification:clicked` | on | User clicked a notification (includes projectId, taskId) |
 
-### Claude, Shell, Dialog, Window (8 channels)
+### Claude, Shell, Dialog, Window (9 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `claude:detect` | invoke | Detect Claude CLI (path, version) |
@@ -130,6 +130,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `window:minimize` | send | Minimize window |
 | `window:maximize` | send | Maximize/restore window |
 | `window:close` | send | Close window |
+| `window:isFocused` | invoke | Check if window has focus (for notification gating) |
 
 ## Database
 

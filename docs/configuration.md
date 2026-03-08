@@ -52,7 +52,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `boardLayout` | `'horizontal'` \| `'vertical'` | `'horizontal'` | Board scroll direction. Global-only. |
 | `skipDeleteConfirm` | boolean | `false` | Skip confirmation dialog on task delete |
 | `autoFocusIdleSession` | boolean | `true` | Auto-switch to session tab when agent goes idle |
-| `notifyIdleOnInactiveProject` | boolean | `true` | Show native OS notification and flash taskbar when an agent goes idle on a non-active project. Clicking the notification switches to the project and opens the task detail dialog. |
+| `notifyIdleOnInactiveProject` | boolean | `true` | Show native OS notifications when agents need attention on non-visible projects (idle, permission-blocked, crash, plan completion). Clicking the notification switches to the project and opens the task detail dialog. 10s per-session cooldown. |
 | `activateAllProjectsOnStartup` | boolean | `true` | Open all projects on app launch (not just the last one). Global-only. |
 
 ### terminal.*
