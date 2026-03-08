@@ -314,7 +314,21 @@ export async function recoverSessions(
     return;
   }
 
-  let recovered = 0;
+  // --- Preparation pass (synchronous): build spawn inputs ---
+  interface SpawnInput {
+    record: SessionRecord;
+    task: Task;
+    command: string;
+    cwd: string;
+    claudeSessionId: string;
+    canResume: boolean;
+    prompt: string | undefined;
+    permissionMode: string;
+    statusOutputPath: string;
+    eventsOutputPath: string;
+  }
+
+  const spawnInputs: SpawnInput[] = [];
 
   for (const { record, task } of toProcess) {
     try {
@@ -343,11 +357,6 @@ export async function recoverSessions(
       const permissionMode = taskLane?.permission_strategy ?? config.claude.permissionMode;
 
       // Decide whether to resume or start fresh.
-      // Both SUSPENDED (clean shutdown) and ORPHANED (crash) sessions can
-      // attempt --resume as long as the claude_session_id is known -- the
-      // JSONL file is usually intact. If the file is missing or corrupt,
-      // Claude CLI will error and the session exits; reconciliation will
-      // create a fresh one on the next app launch.
       const canResume = (record.status === 'suspended' || record.status === 'orphaned')
         && !!record.claude_session_id;
 
@@ -355,14 +364,11 @@ export async function recoverSessions(
       let claudeSessionId: string;
 
       if (canResume) {
-        // Resume existing Claude conversation -- no extra prompt needed
         claudeSessionId = record.claude_session_id!;
         prompt = undefined;
       } else {
-        // Fresh session (orphaned or no prior session ID)
         claudeSessionId = randomUUID();
 
-        // Find the spawn_agent action that targets this task's lane
         const incomingTransition = allTransitions.find(
           (t) =>
             t.to_swimlane_id === task.swimlane_id &&
@@ -399,12 +405,7 @@ export async function recoverSessions(
 
       // Ensure the per-session directory exists
       const sessionDir = path.join(projectPath, '.kangentic', 'sessions', claudeSessionId);
-      try {
-        fs.mkdirSync(sessionDir, { recursive: true });
-      } catch (err) {
-        console.error(`Failed to create session directory: ${sessionDir}`, err);
-        throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`);
-      }
+      fs.mkdirSync(sessionDir, { recursive: true });
       const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 
       const command = commandBuilder.buildClaudeCommand({
@@ -420,28 +421,56 @@ export async function recoverSessions(
         eventsOutputPath,
       });
 
-      // Spawn a new PTY
-      const newSession = await sessionManager.spawn({
-        taskId: task.id,
-        projectId,
-        command,
-        cwd: record.cwd,
-        statusOutputPath,
-        eventsOutputPath,
+      spawnInputs.push({
+        record, task, command, cwd: record.cwd,
+        claudeSessionId, canResume, prompt, permissionMode,
+        statusOutputPath, eventsOutputPath,
       });
+    } catch (err) {
+      console.error(
+        `Session recovery: preparation failed for session ${record.id} (task ${record.task_id}):`,
+        err,
+      );
+      try {
+        sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+      } catch (updateErr) {
+        console.error(`Failed to mark session ${record.id} as exited:`, updateErr);
+      }
+    }
+  }
 
-      // Mark old record as exited
-      sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+  // --- Spawn pass (parallel): fire all spawns concurrently ---
+  const spawnResults = await Promise.allSettled(
+    spawnInputs.map(async (input) => {
+      const newSession = await sessionManager.spawn({
+        taskId: input.task.id,
+        projectId,
+        command: input.command,
+        cwd: input.cwd,
+        statusOutputPath: input.statusOutputPath,
+        eventsOutputPath: input.eventsOutputPath,
+      });
+      return { input, newSession };
+    }),
+  );
 
-      // Insert new record for the resumed session
+  // --- DB update pass (sequential): process results ---
+  let recovered = 0;
+  for (let resultIndex = 0; resultIndex < spawnResults.length; resultIndex++) {
+    const result = spawnResults[resultIndex];
+    if (result.status === 'fulfilled') {
+      const { input, newSession } = result.value;
+
+      sessionRepo.updateStatus(input.record.id, 'exited', { exited_at: now });
+
       sessionRepo.insert({
-        task_id: task.id,
+        task_id: input.task.id,
         session_type: 'claude_agent',
-        claude_session_id: claudeSessionId,
-        command,
-        cwd: record.cwd,
-        permission_mode: permissionMode,
-        prompt: prompt ?? null,
+        claude_session_id: input.claudeSessionId,
+        command: input.command,
+        cwd: input.cwd,
+        permission_mode: input.permissionMode,
+        prompt: input.prompt ?? null,
         status: 'running',
         exit_code: null,
         started_at: now,
@@ -449,22 +478,22 @@ export async function recoverSessions(
         exited_at: null,
       });
 
-      // Update the task's session_id to point to the new PTY
       taskRepo.update({
-        id: task.id,
+        id: input.task.id,
         session_id: newSession.id,
       });
 
       recovered++;
-    } catch (err) {
+    } else {
+      const input = spawnInputs[resultIndex];
       console.error(
-        `Session recovery failed for session ${record.id} (task ${record.task_id}):`,
-        err,
+        `Session recovery failed for session ${input.record.id} (task ${input.record.task_id}):`,
+        result.reason,
       );
       try {
-        sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+        sessionRepo.updateStatus(input.record.id, 'exited', { exited_at: now });
       } catch (updateErr) {
-        console.error(`Failed to mark session ${record.id} as exited:`, updateErr);
+        console.error(`Failed to mark session ${input.record.id} as exited:`, updateErr);
       }
     }
   }
@@ -537,7 +566,21 @@ export async function reconcileSessions(
   const allTransitions = actionRepo.listTransitions();
   const allActions = actionRepo.list();
 
-  let reconciled = 0;
+  // --- Preparation pass (synchronous): collect spawn inputs ---
+  interface ReconcileSpawnInput {
+    task: Task;
+    command: string;
+    cwd: string;
+    claudeSessionId: string;
+    prompt: string | undefined;
+    permissionMode: string;
+    agent: string;
+    statusOutputPath: string;
+    eventsOutputPath: string;
+  }
+
+  const spawnInputs: ReconcileSpawnInput[] = [];
+
   for (const lane of activeLanes) {
     const tasks = taskRepo.list(lane.id);
     for (const task of tasks) {
@@ -608,12 +651,7 @@ export async function reconcileSessions(
 
         // Ensure the per-session directory exists
         const sessionDir = path.join(projectPath, '.kangentic', 'sessions', claudeSessionId);
-        try {
-          fs.mkdirSync(sessionDir, { recursive: true });
-        } catch (err) {
-          console.error(`Failed to create session directory: ${sessionDir}`, err);
-          throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`);
-        }
+        fs.mkdirSync(sessionDir, { recursive: true });
         const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 
         const command = commandBuilder.buildClaudeCommand({
@@ -628,43 +666,71 @@ export async function reconcileSessions(
           eventsOutputPath,
         });
 
-        const session = await sessionManager.spawn({
-          taskId: task.id,
-          projectId,
-          command,
-          cwd,
-          statusOutputPath,
-          eventsOutputPath,
-        });
-
-        taskRepo.update({
-          id: task.id,
-          session_id: session.id,
+        spawnInputs.push({
+          task, command, cwd, claudeSessionId, prompt, permissionMode,
           agent: actionConfig?.agent || 'claude',
+          statusOutputPath, eventsOutputPath,
         });
-
-        sessionRepo.insert({
-          task_id: task.id,
-          session_type: 'claude_agent',
-          claude_session_id: claudeSessionId,
-          command,
-          cwd,
-          permission_mode: permissionMode,
-          prompt: prompt ?? null,
-          status: 'running',
-          exit_code: null,
-          started_at: new Date().toISOString(),
-          suspended_at: null,
-          exited_at: null,
-        });
-
-        reconciled++;
       } catch (err) {
         console.error(
-          `Session reconciliation failed for task ${task.id}:`,
+          `Session reconciliation: preparation failed for task ${task.id}:`,
           err,
         );
       }
+    }
+  }
+
+  // --- Spawn pass (parallel): fire all spawns concurrently ---
+  const spawnResults = await Promise.allSettled(
+    spawnInputs.map(async (input) => {
+      const newSession = await sessionManager.spawn({
+        taskId: input.task.id,
+        projectId,
+        command: input.command,
+        cwd: input.cwd,
+        statusOutputPath: input.statusOutputPath,
+        eventsOutputPath: input.eventsOutputPath,
+      });
+      return { input, newSession };
+    }),
+  );
+
+  // --- DB update pass (sequential): process results ---
+  let reconciled = 0;
+  const reconcileNow = new Date().toISOString();
+  for (let resultIndex = 0; resultIndex < spawnResults.length; resultIndex++) {
+    const result = spawnResults[resultIndex];
+    if (result.status === 'fulfilled') {
+      const { input, newSession } = result.value;
+
+      taskRepo.update({
+        id: input.task.id,
+        session_id: newSession.id,
+        agent: input.agent,
+      });
+
+      sessionRepo.insert({
+        task_id: input.task.id,
+        session_type: 'claude_agent',
+        claude_session_id: input.claudeSessionId,
+        command: input.command,
+        cwd: input.cwd,
+        permission_mode: input.permissionMode,
+        prompt: input.prompt ?? null,
+        status: 'running',
+        exit_code: null,
+        started_at: reconcileNow,
+        suspended_at: null,
+        exited_at: null,
+      });
+
+      reconciled++;
+    } else {
+      const input = spawnInputs[resultIndex];
+      console.error(
+        `Session reconciliation failed for task ${input.task.id}:`,
+        result.reason,
+      );
     }
   }
 

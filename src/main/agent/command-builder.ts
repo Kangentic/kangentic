@@ -90,6 +90,14 @@ function resolveBridgeScript(name: string): string {
 }
 
 export class CommandBuilder {
+  /** Cache of merged base settings (project + local) keyed by project root path. */
+  private projectSettingsCache = new Map<string, ClaudeSettings>();
+
+  /** Clear the cached project settings (e.g., when settings files change). */
+  clearSettingsCache(): void {
+    this.projectSettingsCache.clear();
+  }
+
   buildClaudeCommand(options: CommandOptions): string {
     const parts = [quoteArg(options.claudePath)];
 
@@ -152,20 +160,10 @@ export class CommandBuilder {
     return interpolateTemplate(template, vars);
   }
 
-  /**
-   * Create a merged Claude settings file that includes the statusLine config
-   * and event-bridge hooks. Reads the project's settings.json and
-   * settings.local.json, deep-merges them, injects our hooks, and writes to
-   * the session directory.
-   *
-   * All sessions (main repo and worktree) use `--settings` pointing to
-   * `.kangentic/sessions/<sessionId>/settings.json`. For worktrees, we also
-   * read the worktree's `.claude/settings.local.json` to capture "always
-   * allow" permission grants written by Claude during the session.
-   */
-  private createMergedSettings(options: CommandOptions): string {
-    const isWorktree = options.projectRoot != null && options.cwd !== options.projectRoot;
-    const projectRoot = options.projectRoot || options.cwd;
+  /** Read and merge project + local settings, with per-projectRoot caching. */
+  private readBaseSettings(projectRoot: string): ClaudeSettings {
+    const cached = this.projectSettingsCache.get(projectRoot);
+    if (cached) return structuredClone(cached);
 
     // 1. Read project settings (committed, shared)
     let baseSettings: ClaudeSettings = {};
@@ -196,6 +194,26 @@ export class CommandBuilder {
     } catch {
       // No local settings
     }
+
+    this.projectSettingsCache.set(projectRoot, baseSettings);
+    return structuredClone(baseSettings);
+  }
+
+  /**
+   * Create a merged Claude settings file that includes the statusLine config
+   * and event-bridge hooks. Deep-merges project + local settings (cached),
+   * injects our hooks, and writes to the session directory.
+   *
+   * All sessions (main repo and worktree) use `--settings` pointing to
+   * `.kangentic/sessions/<sessionId>/settings.json`. For worktrees, we also
+   * read the worktree's `.claude/settings.local.json` to capture "always
+   * allow" permission grants written by Claude during the session.
+   */
+  private createMergedSettings(options: CommandOptions): string {
+    const isWorktree = options.projectRoot != null && options.cwd !== options.projectRoot;
+    const projectRoot = options.projectRoot || options.cwd;
+
+    let baseSettings = this.readBaseSettings(projectRoot);
 
     // 3. For worktrees: merge permissions from the worktree's settings.local.json.
     //    Claude writes "always allow" grants here during sessions. Without reading

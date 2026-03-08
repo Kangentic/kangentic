@@ -1,3 +1,5 @@
+const PROCESS_START = performance.now();
+
 import { app, BrowserWindow, Menu, nativeImage, session } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -10,6 +12,10 @@ import { THEME_BACKGROUNDS } from '../shared/types';
 import type { ThemeMode } from '../shared/types';
 import { PATHS } from './config/paths';
 import { initAnalytics, trackEvent } from './analytics/analytics';
+import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
+
+initStartupTimer(PROCESS_START);
+mark('process_start');
 
 // Global error handlers -- keep the app running through transient IPC/PTY errors
 process.on('uncaughtException', (err) => {
@@ -113,7 +119,7 @@ function loadReactDevTools(): void {
 }
 
 const createWindow = () => {
-  if (!app.isPackaged) console.time('[startup] createWindow');
+  phase('createWindow');
   const isTest = process.env.NODE_ENV === 'test';
 
   const iconPath = resolveIconPath();
@@ -147,6 +153,7 @@ const createWindow = () => {
   }
 
   mainWindow.once('ready-to-show', () => {
+    mark('ready_to_show');
     if (!isTest) {
       mainWindow!.maximize();
     }
@@ -219,12 +226,13 @@ const createWindow = () => {
     mainWindow.loadFile(fs.existsSync(forgePath) ? forgePath : standalonePath);
   }
 
-  if (!app.isPackaged) console.timeEnd('[startup] createWindow');
+  endPhase('createWindow');
 
   // Once the renderer is ready, auto-open the project if --cwd was provided.
   // Await session recovery/reconciliation so tasks in agent columns have
   // live PTY sessions before the renderer is notified.
   mainWindow.webContents.on('did-finish-load', async () => {
+    mark('did_finish_load');
     const cwd = getCwdArg();
 
     // Set window title to include worktree name so the taskbar entry
@@ -238,12 +246,14 @@ const createWindow = () => {
 
     if (cwd && mainWindow) {
       try {
-        if (!app.isPackaged) console.time('[startup] openProjectByPath');
+        phase('openProjectByPath');
         const project = await openProjectByPath(cwd);
-        if (!app.isPackaged) console.timeEnd('[startup] openProjectByPath');
+        endPhase('openProjectByPath');
+        mark('project_opened');
+        finishStartupTimer();
         mainWindow.webContents.send(IPC.PROJECT_AUTO_OPENED, project);
       } catch (err) {
-        if (!app.isPackaged) console.timeEnd('[startup] openProjectByPath');
+        endPhase('openProjectByPath');
         console.error('Failed to auto-open project:', err);
       }
     }
@@ -253,14 +263,18 @@ const createWindow = () => {
       const lastProject = getLastOpenedProject();
       if (lastProject) {
         try {
-          if (!app.isPackaged) console.time('[startup] openProjectByPath');
+          phase('openProjectByPath');
           const project = await openProjectByPath(lastProject.path);
-          if (!app.isPackaged) console.timeEnd('[startup] openProjectByPath');
+          endPhase('openProjectByPath');
+          mark('project_opened');
+          finishStartupTimer();
           mainWindow.webContents.send(IPC.PROJECT_AUTO_OPENED, project);
         } catch (err) {
-          if (!app.isPackaged) console.timeEnd('[startup] openProjectByPath');
+          endPhase('openProjectByPath');
           console.error('Failed to auto-open last project:', err);
         }
+      } else {
+        finishStartupTimer();
       }
     }
 
@@ -268,10 +282,10 @@ const createWindow = () => {
     // Defer by 5 seconds so the primary project's recovery completes
     // without CPU/IO contention from all other projects.
     setTimeout(() => {
-      if (!app.isPackaged) console.time('[startup] activateAllProjects');
+      phase('activateAllProjects');
       activateAllProjects()
         .catch((err) => console.error('Failed to activate all projects:', err))
-        .finally(() => { if (!app.isPackaged) console.timeEnd('[startup] activateAllProjects'); });
+        .finally(() => { endPhase('activateAllProjects'); });
     }, 5000);
   });
 };
@@ -287,6 +301,7 @@ Menu.setApplicationMenu(
 );
 
 app.whenReady().then(async () => {
+  mark('app_ready');
   createWindow();
 
   // Fire app_launch event (analytics initialized before app.whenReady above).
@@ -303,10 +318,10 @@ app.whenReady().then(async () => {
   // Must run after createWindow() since pruneStaleWorktreeProjects uses IPC context
   // initialized by registerAllIpc() inside createWindow().
   if (!isEphemeral && !app.isPackaged) {
-    console.time('[startup] pruneStaleWorktreeProjects');
+    phase('pruneStaleWorktreeProjects');
     pruneStaleWorktreeProjects()
       .catch((err) => console.error('Failed to prune stale worktree projects:', err))
-      .finally(() => { console.timeEnd('[startup] pruneStaleWorktreeProjects'); });
+      .finally(() => { endPhase('pruneStaleWorktreeProjects'); });
   }
 });
 

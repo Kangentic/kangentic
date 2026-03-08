@@ -238,11 +238,11 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
   if (!config.activateAllProjectsOnStartup) return;
 
   const projects = context.projectRepo.list();
-  for (const project of projects) {
-    // Skip the currently active project -- it already ran recovery via PROJECT_OPEN
-    if (project.id === context.currentProjectId) continue;
+  const otherProjects = projects.filter(p => p.id !== context.currentProjectId);
+  if (otherProjects.length === 0) return;
 
-    try {
+  const results = await Promise.allSettled(
+    otherProjects.map(async (project) => {
       ensureGitignore(project.path);
       const db = getProjectDb(project.id);
       const taskRepo = new TaskRepository(db);
@@ -250,8 +250,12 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       pruneOrphanedWorktrees(project.path, taskRepo, sessionRepo, context.sessionManager);
       await recoverSessions(project.id, project.path, context.sessionManager, context.claudeDetector, context.commandBuilder, context.configManager);
       await reconcileSessions(project.id, project.path, context.sessionManager, context.claudeDetector, context.commandBuilder, context.configManager);
-    } catch (err) {
-      console.error(`Failed to activate project ${project.name}:`, err);
+    }),
+  );
+
+  for (let index = 0; index < results.length; index++) {
+    if (results[index].status === 'rejected') {
+      console.error(`Failed to activate project ${otherProjects[index].name}:`, (results[index] as PromiseRejectedResult).reason);
     }
   }
 }

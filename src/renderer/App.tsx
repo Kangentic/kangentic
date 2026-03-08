@@ -22,6 +22,9 @@ export function App() {
   const debouncedSyncRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    if (process.env.NODE_ENV !== 'production') {
+      performance.mark('renderer-mount-start');
+    }
     loadConfig();
     detectClaude();
     loadProjects();
@@ -29,13 +32,26 @@ export function App() {
     // The main process retains currentProjectId across renderer reloads.
     loadCurrent();
 
+    // Measure after first paint via requestAnimationFrame
+    let mountTimerRafId: number | undefined;
+    if (process.env.NODE_ENV !== 'production') {
+      mountTimerRafId = requestAnimationFrame(() => {
+        performance.mark('renderer-mount-end');
+        const measure = performance.measure('[renderer] mount', 'renderer-mount-start', 'renderer-mount-end');
+        console.log(`[renderer] mount: ${measure.duration.toFixed(0)}ms`);
+      });
+    }
+
     // Listen for auto-opened project (from --cwd CLI arg)
-    const cleanup = window.electronAPI.projects.onAutoOpened((project) => {
+    const cleanupAutoOpen = window.electronAPI.projects.onAutoOpened((project) => {
       useProjectStore.setState({ currentProject: project });
       // Refresh the project list to include the auto-opened project
       loadProjects();
     });
-    return cleanup;
+    return () => {
+      if (mountTimerRafId !== undefined) cancelAnimationFrame(mountTimerRafId);
+      cleanupAutoOpen();
+    };
   }, []);
 
   useEffect(() => {
