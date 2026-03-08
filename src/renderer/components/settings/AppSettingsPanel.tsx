@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bot, Check, CircleAlert, GitBranch, Globe, Palette, SlidersHorizontal, Terminal } from 'lucide-react';
+import { Bot, Check, CircleAlert, GitBranch, Globe, Palette, Shield, SlidersHorizontal, Terminal } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -14,7 +14,8 @@ const APP_TABS: SettingsTabDefinition[] = [
   { id: 'terminal', label: 'Terminal', icon: Terminal },
   { id: 'agent', label: 'Agent', icon: Bot },
   { id: 'git', label: 'Git', icon: GitBranch },
-  { id: 'behavior', label: 'Behavior', icon: SlidersHorizontal, separator: true },
+  { id: 'behavior', label: 'Behavior', icon: SlidersHorizontal },
+  { id: 'privacy', label: 'Privacy', icon: Shield, separator: true },
 ];
 
 export function AppSettingsPanel() {
@@ -218,12 +219,21 @@ export function AppSettingsPanel() {
               onChange={(value) => handleAppUpdate({ activateAllProjectsOnStartup: value })}
             />
           </SettingRow>
-          <SectionHeader label="Privacy" />
-          <p className="text-fg-muted text-xs leading-relaxed px-1">
-            Kangentic collects anonymous usage statistics to improve the product. No personal data is collected.
-            Set <code className="text-fg-secondary">KANGENTIC_TELEMETRY=0</code> to opt out.
-          </p>
         </>
+      )}
+
+      {/* ── Privacy ── */}
+      {activeTab === 'privacy' && (
+        <div className="space-y-3">
+          <p className="text-sm text-fg-secondary leading-relaxed">
+            Kangentic collects anonymous usage statistics to improve the product.
+            No personal data is collected.
+          </p>
+          <p className="text-xs text-fg-muted leading-relaxed">
+            Set <code className="text-fg-secondary font-mono">KANGENTIC_TELEMETRY=0</code> as
+            an environment variable to opt out.
+          </p>
+        </div>
       )}
 
       {/* ── Git ── */}
