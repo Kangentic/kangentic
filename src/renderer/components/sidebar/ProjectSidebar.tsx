@@ -72,8 +72,8 @@ function SortableProjectItem({
       <div className="flex items-center gap-2">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <span className="flex-shrink-0">
-            <Folder size={14} className={`${isActive ? 'text-accent-fg' : 'text-fg-faint'} group-hover:hidden`} />
-            <GripVertical size={14} className={`${isActive ? 'text-accent-fg' : 'text-fg-faint'} hidden group-hover:block cursor-grab`} />
+            <Folder size={16} className={`${isActive ? 'text-accent-fg' : 'text-fg-faint'} group-hover:hidden`} />
+            <GripVertical size={16} className={`${isActive ? 'text-accent-fg' : 'text-fg-faint'} hidden group-hover:block cursor-grab`} />
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
@@ -83,7 +83,7 @@ function SortableProjectItem({
                   className="flex items-center gap-1 text-xs tabular-nums flex-shrink-0 text-amber-400"
                   title={`${idleCount} idle -- needs attention`}
                 >
-                  <Mail size={10} />
+                  <Mail size={12} />
                   {idleCount}
                 </span>
               )}
@@ -92,7 +92,7 @@ function SortableProjectItem({
                   className="flex items-center gap-1 text-xs tabular-nums text-green-400 flex-shrink-0"
                   title={`${thinkingCount} thinking`}
                 >
-                  <Loader2 size={10} className="animate-spin" />
+                  <Loader2 size={12} className="animate-spin" />
                   {thinkingCount}
                 </span>
               )}
@@ -111,7 +111,7 @@ function SortableProjectItem({
             className="opacity-0 group-hover:opacity-100 p-1.5 rounded-full text-fg-disabled hover:text-fg-tertiary hover:bg-edge-input/50 transition-all"
             title="Open in file explorer"
           >
-            <FolderOpen size={14} />
+            <FolderOpen size={16} />
           </button>
           <button
             onClick={(e) => onOpenSettings(e, project)}
@@ -119,14 +119,14 @@ function SortableProjectItem({
             title="Project settings"
             data-testid={`project-settings-${project.id}`}
           >
-            <Settings size={14} />
+            <Settings size={16} />
           </button>
           <button
             onClick={(e) => onDeleteClick(e, project)}
             className="opacity-0 group-hover:opacity-100 p-1.5 rounded-full text-fg-disabled hover:text-red-400 hover:bg-red-400/10 transition-all"
             title="Delete project"
           >
-            <Trash2 size={14} />
+            <Trash2 size={16} />
           </button>
         </div>
       </div>
@@ -226,7 +226,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
             className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-accent/40 text-xs text-accent-fg hover:bg-accent/15 transition-colors"
             title="Open folder as project"
           >
-            <Plus size={12} />
+            <Plus size={14} />
             New
           </button>
         </div>
