@@ -77,6 +77,12 @@ Electron Forge handles platform-specific packaging via `forge.config.ts`:
 | Linux | Package | deb, rpm |
 | All | Archive | ZIP (fallback) |
 
+## Windows Taskbar Identity (AUMID)
+
+Windows resolves taskbar icons by matching the running window's AppUserModelID (AUMID) to a `.lnk` shortcut with the same AUMID. Squirrel generates AUMIDs in the format `com.squirrel.<makerName>.<exeName>`.
+
+Both `app.setAppUserModelId()` in `src/main/index.ts` and `setupAppId` in `forge.config.ts` must use `com.squirrel.Kangentic.kangentic` to match the Squirrel shortcut. A mismatch causes Windows to fall back to the Electron default icon and app name. Note: `BrowserWindow.setIcon()` does not control the Windows taskbar icon -- only the AUMID match does.
+
 ## Security Fuses
 
 Electron fuses enabled for production builds:
