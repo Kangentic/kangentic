@@ -1,4 +1,7 @@
 appId: com.kangentic.app
+electronLanguages:
+  - en-US
+removePackageScripts: true
 productName: Kangentic
 extraMetadata:
   description: Kangentic
@@ -18,10 +21,13 @@ files:
   - "!node_modules/better-sqlite3/{src,deps}/**"
   - "!node_modules/better-sqlite3/binding.gyp"
   - "!node_modules/node-pty/{src,scripts,deps,third_party}/**"
+  - "!**/*.map"
 
 asar: true
 asarUnpack:
   - "node_modules/node-pty/prebuilds/**"
+  - ".vite/build/event-bridge.js"
+  - ".vite/build/status-bridge.js"
 
 extraResources:
   - from: resources/icon.png

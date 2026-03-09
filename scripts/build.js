@@ -15,7 +15,7 @@ const esbuildCommon = {
     'MAIN_WINDOW_VITE_DEV_SERVER_URL': JSON.stringify(''),
     'MAIN_WINDOW_VITE_NAME': JSON.stringify('main_window'),
   },
-  sourcemap: true,
+  sourcemap: false,
   minify: true,
 };
 
