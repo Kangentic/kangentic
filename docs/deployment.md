@@ -20,7 +20,7 @@ This downloads the pre-built binary for your platform, installs it, and launches
 | macOS | `autoUpdater` via `update-electron-app` | Click "Restart to update" when prompted. Requires code signing -- see [macOS signing note](#macos-auto-update-requires-signing). |
 | Linux | None | Re-run `npx kangentic` or download from [GitHub Releases](https://github.com/Kangentic/kangentic/releases). |
 
-The app checks for updates hourly via `update-electron-app` (configured in `src/main/index.ts`), looking at published GitHub Releases.
+**Auto-update is currently disabled** -- no published GitHub releases exist yet. With zero releases, `update.electronjs.org` returns errors that cause Squirrel.Windows to phantom-relaunch the app and leave zombie processes. Re-enable in `src/main/index.ts` once the first GitHub Release is published. When enabled, the app will check for updates hourly.
 
 ### Install a Specific Version
 
@@ -86,7 +86,7 @@ Electron's `autoUpdater` on macOS only works with signed apps (Electron docs: "m
 
 ### Draft Releases Are Invisible to Auto-Updater
 
-`update-electron-app` only sees **published** releases. Draft releases are invisible to the auto-updater and to `npx kangentic`. The manual publish step is the review gate -- always verify artifacts before publishing.
+`update-electron-app` (when re-enabled) only sees **published** releases. Draft releases are invisible to the auto-updater and to `npx kangentic`. The manual publish step is the review gate -- always verify artifacts before publishing.
 
 ### GitHub Actions Workflows
 

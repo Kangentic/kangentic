@@ -39,13 +39,24 @@ if (process.platform === 'win32' && squirrelStartup) app.quit();
 
 // Auto-update from GitHub Releases (Squirrel on Windows, autoUpdater on macOS).
 // Linux has no Squirrel/autoUpdater backend -- users update via the launcher package.
-import { updateElectronApp } from 'update-electron-app';
-if (app.isPackaged && process.platform !== 'linux') {
-  updateElectronApp({
-    repo: 'Kangentic/kangentic',
-    updateInterval: '1 hour',
-  });
-}
+//
+// DISABLED: No published GitHub releases yet. With zero releases,
+// update.electronjs.org returns errors that cause Squirrel.Windows to
+// phantom-relaunch the app and leave zombie processes. Re-enable once
+// the first GitHub Release is published.
+//
+// When re-enabling, keep the --squirrel-firstrun guard -- Squirrel holds a
+// file lock after install, and checkForUpdates() during that window causes
+// the same phantom-relaunch behavior.
+//
+// import { updateElectronApp } from 'update-electron-app';
+// const isFirstRun = process.argv.includes('--squirrel-firstrun');
+// if (app.isPackaged && process.platform !== 'linux' && !isFirstRun) {
+//   updateElectronApp({
+//     repo: 'Kangentic/kangentic',
+//     updateInterval: '1 hour',
+//   });
+// }
 
 // Initialize anonymous analytics BEFORE app.whenReady() -- the SDK requires this
 // to register protocol schemes. The analytics module decides whether to activate
@@ -73,6 +84,23 @@ app.setAppUserModelId(
 
 const appLaunchTime = Date.now();
 const isEphemeral = process.argv.includes('--ephemeral');
+
+// Enforce single instance -- prevents Squirrel update restarts and manual
+// double-launches from spawning duplicate windows. Ephemeral instances
+// (worktree previews) skip this so they can coexist with the main app.
+if (!isEphemeral) {
+  const gotTheLock = app.requestSingleInstanceLock();
+  if (!gotTheLock) {
+    app.exit(0);
+  } else {
+    app.on('second-instance', () => {
+      if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+      }
+    });
+  }
+}
 
 let mainWindow: BrowserWindow | null = null;
 

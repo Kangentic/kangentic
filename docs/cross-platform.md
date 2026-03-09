@@ -101,7 +101,7 @@ The deb package declares `depends` on Electron's required system libraries (`lib
 
 ## Auto-Update Platform Guard
 
-Auto-update via `update-electron-app` is disabled on Linux (`process.platform !== 'linux'`). Linux has no Squirrel/autoUpdater backend -- users update via the launcher package (`npx kangentic`). Similarly, `electron-squirrel-startup` only calls `app.quit()` on Windows.
+Auto-update via `update-electron-app` is currently disabled on all platforms -- no published GitHub releases exist yet, and `update.electronjs.org` returns errors that cause Squirrel.Windows to phantom-relaunch the app and leave zombie processes. Once the first release is published, re-enable auto-update for Windows and macOS in `src/main/index.ts`. Linux will never use auto-update -- users update via the launcher package (`npx kangentic`). Similarly, `electron-squirrel-startup` only calls `app.quit()` on Windows.
 
 ## Security Fuses
 
