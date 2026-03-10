@@ -4,7 +4,8 @@ import type { AppConfig } from '../../shared/types';
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 400;
 const COLLAPSE_THRESHOLD = 200;
-const DEFAULT_WIDTH = 224;
+const DEFAULT_WIDTH = MAX_WIDTH;
+export const COLLAPSED_STRIP_WIDTH = 36; // matches w-9 Tailwind class
 const DRAG_DEAD_ZONE = 1; // any movement at all starts a drag; 0 movement = click toggle
 
 export interface SidebarResizeState {

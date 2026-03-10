@@ -85,7 +85,7 @@ export function StatusBar() {
           <span className="text-red-400">claude not found</span>
         )}
         {appVersion && (
-          <span className="px-2 py-1 rounded bg-surface-raised text-fg-faint">Kangentic v{appVersion}</span>
+          <span className="border border-edge rounded-full text-fg-muted px-2.5 py-0.5">v{appVersion}</span>
         )}
       </div>
     </div>
