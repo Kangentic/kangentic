@@ -120,7 +120,18 @@ async function start() {
     const userDataDir = path.join(resolvedTarget, '.kangentic', 'electron-data');
     electronArgs.push(`--user-data-dir=${userDataDir}`);
     electronArgs.push('--ephemeral');
-    spawnEnv = { ...process.env, KANGENTIC_DATA_DIR: path.join(resolvedTarget, '.kangentic', 'data') };
+    const dataDir = path.join(resolvedTarget, '.kangentic', 'data');
+    spawnEnv = { ...process.env, KANGENTIC_DATA_DIR: dataDir };
+
+    // Pre-seed config so ephemeral previews skip the first-run welcome overlay.
+    // --fresh explicitly wants the welcome screen, so only seed when not fresh.
+    if (!fresh) {
+      fs.mkdirSync(dataDir, { recursive: true });
+      const configFile = path.join(dataDir, 'config.json');
+      if (!fs.existsSync(configFile)) {
+        fs.writeFileSync(configFile, JSON.stringify({ hasCompletedFirstRun: true }, null, 2));
+      }
+    }
   }
 
   electronProc = spawn(electronExe, electronArgs, {

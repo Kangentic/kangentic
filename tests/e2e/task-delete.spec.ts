@@ -342,7 +342,7 @@ test.describe('Task Delete', () => {
     await page.waitForTimeout(300);
   });
 
-  test('archive task without session from detail dialog', async () => {
+  test('delete task without session from detail dialog', async () => {
     const title = `Remove NoSession ${runId}`;
     await createTask(page, title, 'No session');
 
@@ -351,26 +351,19 @@ test.describe('Task Delete', () => {
     await card.click();
     await page.waitForTimeout(300);
 
-    // Dialog opens in edit mode for no-session tasks -- click Cancel to switch to view mode
+    // Dialog opens in edit mode for no-session tasks -- Delete is in the footer
     const dialog = page.locator('.fixed.inset-0');
-    const cancelBtn = dialog.locator('button:has-text("Cancel")');
-    await cancelBtn.click();
+    await dialog.locator('button:has-text("Delete")').click();
     await page.waitForTimeout(200);
 
-    // Now in view mode -- kebab Actions button is visible
-    await clickKebabAction(dialog, 'Archive');
+    // Confirm deletion
+    await page.locator('text=This action cannot be undone.').waitFor({ state: 'visible', timeout: 3000 });
+    await page.locator('button:has-text("Delete")').click();
     await page.waitForTimeout(500);
 
     // Verify app is still alive and task is gone from board
     await waitForBoard(page);
     const taskCards = page.locator('[data-testid="swimlane"]').locator(`text=${title}`);
     await expect(taskCards).toHaveCount(0);
-
-    // Verify the task was archived
-    const taskArchived = await page.evaluate(async (t) => {
-      const archived = await window.electronAPI.tasks.listArchived();
-      return archived.some((tk: any) => tk.title === t);
-    }, title);
-    expect(taskArchived).toBe(true);
   });
 });

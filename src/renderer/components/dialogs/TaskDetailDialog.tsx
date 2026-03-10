@@ -319,11 +319,9 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
 
   // Use large dialog when there's an active session OR a suspended one
   const hasSessionContext = (displayState.kind !== 'none' && displayState.kind !== 'exited') || toggling;
-  const dialogSizeClass = hasSessionContext && !isQueued
-    ? 'w-[90vw] h-[85vh]'
-    : isQueued
-      ? 'w-[520px] h-[320px]'
-      : 'w-[640px] max-h-[80vh]';
+  const dialogSizeClass = isEditing || !hasSessionContext
+    ? (isQueued ? 'w-[520px] h-[320px]' : 'w-[640px] max-h-[80vh]')
+    : 'w-[90vw] h-[85vh]';
 
   // Auto-save and exit edit mode when a session appears
   const hadSessionContext = useRef(hasSessionContext);
@@ -341,21 +339,21 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
     hadSessionContext.current = hasSessionContext;
   }, [hasSessionContext, task.id, updateTask]);
 
-  // Auto-expand textarea for no-session edit mode
+  // Auto-expand textarea in edit mode (both with-session and no-session)
   useEffect(() => {
-    if (!isEditing || hasSessionContext) return;
+    if (!isEditing) return;
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 800)}px`;
-  }, [description, isEditing, hasSessionContext]);
+  }, [description, isEditing]);
 
-  // Focus title input when entering no-session edit mode
+  // Focus title input when entering edit mode
   useEffect(() => {
-    if (isEditing && !hasSessionContext) {
+    if (isEditing) {
       titleInputRef.current?.focus();
     }
-  }, [isEditing, hasSessionContext]);
+  }, [isEditing]);
 
   const handleToggle = async () => {
     if (!canToggle || toggling) return;
@@ -381,7 +379,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   // Capture-phase Escape listener: close dialog when mouse is outside content
   // (xterm swallows Escape in bubble phase, so we must use capture phase)
   useEffect(() => {
-    if (!hasSessionContext) return;
+    if (!hasSessionContext || isEditing) return;
     const handleEscapeCapture = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !mouseInsideDialog.current && !previewOpenRef.current) {
         e.stopPropagation();
@@ -390,7 +388,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
     };
     document.addEventListener('keydown', handleEscapeCapture, true);
     return () => document.removeEventListener('keydown', handleEscapeCapture, true);
-  }, [hasSessionContext, onClose]);
+  }, [hasSessionContext, isEditing, onClose]);
 
   // Refit terminal when session resumes (transitions to running)
   useEffect(() => {
@@ -426,6 +424,12 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   }, [session?.id, setDialogSessionId]);
 
   const handleCancel = () => {
+    // If opened directly into edit mode with no session, there's no view to
+    // fall back to -- just close the dialog entirely.
+    if (initialEdit && !session) {
+      onClose();
+      return;
+    }
     setTitle(task.title);
     setDescription(task.description);
     setBaseBranch(task.base_branch || '');
@@ -552,20 +556,10 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
       )}
 
       {/* Title */}
-      {isEditing ? (
-        <input
-          type="text"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          className="bg-surface border border-edge-input rounded px-2 py-1 text-sm text-fg focus:outline-none focus:border-accent flex-1 min-w-0"
-          autoFocus
-        />
-      ) : (
-        <h2 className="text-base font-semibold text-fg truncate min-w-0">{task.title}</h2>
-      )}
+      <h2 className="text-base font-semibold text-fg truncate min-w-0">{task.title}</h2>
 
-      {/* Open folder pill -- left-aligned after title */}
-      {!isEditing && (task.worktree_path || projectPath) && (
+      {/* Open folder pill */}
+      {(task.worktree_path || projectPath) && (
         <button
           onClick={() => window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!)}
           className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-surface-hover/50 text-xs text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
@@ -590,153 +584,136 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
       <div className="flex-1" />
 
       {/* Actions */}
-      {isEditing && hasSessionContext ? (
-        <>
-          <button
-            onClick={handleCancel}
-            className="px-3 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors flex-shrink-0"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSave}
-            className="px-3 py-1.5 text-xs bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors flex-shrink-0"
-          >
-            Save
-          </button>
-        </>
-      ) : !isEditing ? (
-        <div className="relative flex-shrink-0" ref={kebabMenuRef}>
-          <button
-            onClick={() => { setShowKebabMenu(!showKebabMenu); setShowMoveSubmenu(false); }}
-            className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors"
-            title="Actions"
-          >
-            <MoreHorizontal size={16} />
-          </button>
-          {showKebabMenu && (
-            <div className="absolute top-full right-0 mt-1 min-w-[170px] bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 py-1">
-              {/* Edit */}
+      <div className="relative flex-shrink-0" ref={kebabMenuRef}>
+        <button
+          onClick={() => { setShowKebabMenu(!showKebabMenu); setShowMoveSubmenu(false); }}
+          className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors"
+          title="Actions"
+        >
+          <MoreHorizontal size={16} />
+        </button>
+        {showKebabMenu && (
+          <div className="absolute top-full right-0 mt-1 min-w-[170px] bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 py-1">
+            {/* Edit */}
+            <button
+              onClick={() => { setShowKebabMenu(false); setShowMoveSubmenu(false); setIsEditing(true); }}
+              className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 text-fg-tertiary hover:bg-surface-hover hover:text-fg"
+            >
+              <Pencil size={14} />
+              Edit
+            </button>
+
+            {/* Open folder */}
+            {(task.worktree_path || projectPath) && (
               <button
-                onClick={() => { setShowKebabMenu(false); setShowMoveSubmenu(false); setIsEditing(true); }}
+                onClick={() => { setShowKebabMenu(false); setShowMoveSubmenu(false); window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!); }}
                 className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 text-fg-tertiary hover:bg-surface-hover hover:text-fg"
               >
-                <Pencil size={14} />
-                Edit
+                <FolderGit2 size={14} />
+                Open folder
               </button>
+            )}
 
-              {/* Open folder */}
-              {(task.worktree_path || projectPath) && (
-                <button
-                  onClick={() => { setShowKebabMenu(false); setShowMoveSubmenu(false); window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!); }}
-                  className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 text-fg-tertiary hover:bg-surface-hover hover:text-fg"
-                >
-                  <FolderGit2 size={14} />
-                  Open folder
-                </button>
-              )}
-
-              {/* View PR */}
-              {task.pr_url && (
-                <button
-                  onClick={() => { setShowKebabMenu(false); setShowMoveSubmenu(false); window.electronAPI.shell.openExternal(task.pr_url!); }}
-                  className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 text-fg-tertiary hover:bg-surface-hover hover:text-fg"
-                >
-                  <GitPullRequest size={14} />
-                  View PR #{task.pr_number}
-                </button>
-              )}
-
-              {/* Pause / Resume */}
-              {canToggle && (
-                <button
-                  onClick={() => { setShowKebabMenu(false); setShowMoveSubmenu(false); handleToggle(); }}
-                  disabled={toggling}
-                  className="w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2 disabled:opacity-50"
-                >
-                  {isSessionActive ? (
-                    <>
-                      <CirclePause size={14} />
-                      Pause session
-                    </>
-                  ) : (
-                    <>
-                      <CirclePlay size={14} />
-                      Resume session
-                    </>
-                  )}
-                </button>
-              )}
-
-              {/* Move to -- flyout submenu to the right */}
-              {moveTargets.length > 0 && (
-                <div
-                  className="relative"
-                  onMouseEnter={() => setShowMoveSubmenu(true)}
-                  onMouseLeave={() => setShowMoveSubmenu(false)}
-                >
-                  <button
-                    onClick={() => setShowMoveSubmenu(!showMoveSubmenu)}
-                    className={`w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2 ${showMoveSubmenu ? 'bg-surface-hover text-fg' : ''}`}
-                  >
-                    <ArrowRightLeft size={14} />
-                    <span className="flex-1">Move to</span>
-                    <ChevronRight size={14} />
-                  </button>
-                  {showMoveSubmenu && (
-                    <div className="absolute left-full top-0 -ml-px min-w-[150px] bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 py-1">
-                      {moveTargets.map((s) => (
-                        <button
-                          key={s.id}
-                          onClick={() => handleMoveTo(s.id)}
-                          className="w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2"
-                        >
-                          <span className="flex-shrink-0" style={{ color: s.color }}>
-                            {(() => {
-                              const Icon = getSwimlaneIcon(s);
-                              return Icon ? (
-                                <Icon size={14} strokeWidth={1.75} />
-                              ) : (
-                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
-                              );
-                            })()}
-                          </span>
-                          {s.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Divider */}
-              <div className="my-2 mx-2 border-t border-edge-input" />
-
-              {!isArchived && (
-                <button
-                  onClick={() => { setShowKebabMenu(false); setShowMoveSubmenu(false); handleArchive(); }}
-                  className="w-full text-left px-3 py-2 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2"
-                >
-                  <Archive size={14} />
-                  Archive
-                </button>
-              )}
-
-              {/* Danger zone divider -- only when both Archive and Delete are shown */}
-              {!isArchived && <div className="my-2 mx-2 border-t border-edge-input" />}
-
-              {/* Delete -- always available */}
+            {/* View PR */}
+            {task.pr_url && (
               <button
-                onClick={() => { setShowKebabMenu(false); setShowMoveSubmenu(false); skipDeleteConfirm ? handleDelete(false) : setConfirmDelete(true); }}
-                className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-400/10 hover:text-red-300 transition-colors flex items-center gap-2"
+                onClick={() => { setShowKebabMenu(false); setShowMoveSubmenu(false); window.electronAPI.shell.openExternal(task.pr_url!); }}
+                className="w-full text-left px-3 py-1.5 text-xs transition-colors flex items-center gap-2 text-fg-tertiary hover:bg-surface-hover hover:text-fg"
               >
-                <Trash2 size={14} />
-                Delete
+                <GitPullRequest size={14} />
+                View PR #{task.pr_number}
               </button>
-            </div>
-          )}
-        </div>
-      ) : null}
+            )}
+
+            {/* Pause / Resume */}
+            {canToggle && (
+              <button
+                onClick={() => { setShowKebabMenu(false); setShowMoveSubmenu(false); handleToggle(); }}
+                disabled={toggling}
+                className="w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2 disabled:opacity-50"
+              >
+                {isSessionActive ? (
+                  <>
+                    <CirclePause size={14} />
+                    Pause session
+                  </>
+                ) : (
+                  <>
+                    <CirclePlay size={14} />
+                    Resume session
+                  </>
+                )}
+              </button>
+            )}
+
+            {/* Move to -- flyout submenu to the right */}
+            {moveTargets.length > 0 && (
+              <div
+                className="relative"
+                onMouseEnter={() => setShowMoveSubmenu(true)}
+                onMouseLeave={() => setShowMoveSubmenu(false)}
+              >
+                <button
+                  onClick={() => setShowMoveSubmenu(!showMoveSubmenu)}
+                  className={`w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2 ${showMoveSubmenu ? 'bg-surface-hover text-fg' : ''}`}
+                >
+                  <ArrowRightLeft size={14} />
+                  <span className="flex-1">Move to</span>
+                  <ChevronRight size={14} />
+                </button>
+                {showMoveSubmenu && (
+                  <div className="absolute left-full top-0 -ml-px min-w-[150px] bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 py-1">
+                    {moveTargets.map((s) => (
+                      <button
+                        key={s.id}
+                        onClick={() => handleMoveTo(s.id)}
+                        className="w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2"
+                      >
+                        <span className="flex-shrink-0" style={{ color: s.color }}>
+                          {(() => {
+                            const Icon = getSwimlaneIcon(s);
+                            return Icon ? (
+                              <Icon size={14} strokeWidth={1.75} />
+                            ) : (
+                              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: s.color }} />
+                            );
+                          })()}
+                        </span>
+                        {s.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Divider */}
+            <div className="my-2 mx-2 border-t border-edge-input" />
+
+            {!isArchived && (
+              <button
+                onClick={() => { setShowKebabMenu(false); setShowMoveSubmenu(false); handleArchive(); }}
+                className="w-full text-left px-3 py-2 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors flex items-center gap-2"
+              >
+                <Archive size={14} />
+                Archive
+              </button>
+            )}
+
+            {/* Danger zone divider -- only when both Archive and Delete are shown */}
+            {!isArchived && <div className="my-2 mx-2 border-t border-edge-input" />}
+
+            {/* Delete -- always available */}
+            <button
+              onClick={() => { setShowKebabMenu(false); setShowMoveSubmenu(false); skipDeleteConfirm ? handleDelete(false) : setConfirmDelete(true); }}
+              className="w-full text-left px-3 py-2 text-xs text-red-400 hover:bg-red-400/10 hover:text-red-300 transition-colors flex items-center gap-2"
+            >
+              <Trash2 size={14} />
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Divider + Close */}
       <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
@@ -770,7 +747,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
     <>
       <BaseDialog
         onClose={onClose}
-        {...(isEditing && !hasSessionContext
+        {...(isEditing
           ? { title: 'Edit Task', icon: <Pencil size={14} className="text-fg-muted" /> }
           : { header: customHeader, rawBody: true }
         )}
@@ -779,7 +756,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
         className={dialogSizeClass}
         backdropClassName="p-6"
         testId="task-detail-dialog"
-        footer={isEditing && !hasSessionContext ? (
+        footer={isEditing ? (
           <div className={`flex ${isInBacklog ? 'justify-between' : 'justify-end'} items-center`}>
             {isInBacklog && (
               <button
@@ -807,8 +784,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
           </div>
         ) : undefined}
       >
-        {/* No-session edit mode -- mirrors NewTaskDialog layout exactly */}
-        {isEditing && !hasSessionContext && (
+        {/* Edit form -- unified for both with-session and no-session */}
+        {isEditing && (
           <div
             className="space-y-3 relative"
             onDragOver={handleAttachmentDragOver}
@@ -847,53 +824,13 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
               )}
             </div>
             {thumbnailStrip}
-            <div className="flex items-center gap-2">
-              <BranchPicker value={baseBranch} defaultBranch={defaultBaseBranch || 'main'} onChange={setBaseBranch} />
-              {!task.worktree_path && (
-                <>
-                  <div className="w-px h-5 bg-edge-input" />
-                  <WorktreeChip enabled={effectiveWorktree} onToggle={() => setUseWorktree(effectiveWorktree ? false : true)} />
-                </>
-              )}
-            </div>
-            {isDragOver && (
-              <div className="absolute inset-0 bg-accent/10 border-2 border-dashed border-accent rounded-lg flex items-center justify-center z-10 pointer-events-none">
-                <span className="text-sm text-accent-fg font-medium">Drop images here</span>
+            {!task.worktree_path && !hasSessionContext && (
+              <div className="flex items-center gap-2">
+                <BranchPicker value={baseBranch} defaultBranch={defaultBaseBranch || 'main'} onChange={setBaseBranch} />
+                <div className="w-px h-5 bg-edge-input" />
+                <WorktreeChip enabled={effectiveWorktree} onToggle={() => setUseWorktree(effectiveWorktree ? false : true)} />
               </div>
             )}
-          </div>
-        )}
-
-        {/* Description edit mode with drag/drop support (with-session only) */}
-        {isEditing && hasSessionContext && (
-          <div
-            className="px-4 py-3 border-b border-edge flex-shrink-0 relative space-y-2"
-            onDragOver={handleAttachmentDragOver}
-            onDragLeave={handleAttachmentDragLeave}
-            onDrop={handleAttachmentDrop}
-          >
-            <div className="relative">
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                onPaste={handleAttachmentPaste}
-                rows={3}
-                className="w-full bg-surface border border-edge-input rounded px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent resize-y min-h-[80px] max-h-[300px]"
-              />
-              {!description && (
-                <div className="absolute inset-0 flex flex-col pointer-events-none px-3 py-2">
-                  <span className="text-sm text-fg-faint">Description</span>
-                  <div className="flex-1 flex items-center justify-center">
-                    <div className="flex flex-col items-center gap-1.5 border border-dashed border-edge rounded-lg px-5 py-3">
-                      <Image size={18} className="text-fg-disabled" />
-                      <span className="text-xs text-fg-disabled">Paste or drop images here</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-            {thumbnailStrip}
-
             {isDragOver && (
               <div className="absolute inset-0 bg-accent/10 border-2 border-dashed border-accent rounded-lg flex items-center justify-center z-10 pointer-events-none">
                 <span className="text-sm text-accent-fg font-medium">Drop images here</span>
@@ -912,8 +849,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
           </div>
         )}
 
-        {/* Terminal, queued placeholder, suspended placeholder, or empty state */}
-        {session && displayState.kind !== 'queued' && displayState.kind !== 'suspended' ? (
+        {/* Terminal, queued placeholder, suspended placeholder, or empty state -- hidden during edit mode */}
+        {!isEditing && session && displayState.kind !== 'queued' && displayState.kind !== 'suspended' ? (
           <>
             <div className="flex-1 min-h-0 relative">
               <div className="absolute inset-0">
@@ -926,9 +863,9 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             </div>
             <ContextBar sessionId={session.id} />
           </>
-        ) : displayState.kind === 'queued' ? (
+        ) : !isEditing && displayState.kind === 'queued' ? (
           <QueuedPlaceholder sessionId={session?.id ?? null} />
-        ) : isSuspended || toggling ? (
+        ) : !isEditing && (isSuspended || toggling) ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-surface/50">
             <button
               onClick={handleToggle}

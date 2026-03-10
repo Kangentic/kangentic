@@ -179,56 +179,74 @@ test.describe('Task CRUD', () => {
     await expect(taskCard('Test Task Beta')).toBeVisible();
   });
 
-  test('can archive a task', async () => {
-    await taskCard('Test Task Beta').click();
-    await page.waitForTimeout(300);
+  test('can move a task to another column', async () => {
+    // Drag "Test Task Beta" from Backlog to Planning
+    const card = page.locator('[data-testid="swimlane"]').locator('text=Test Task Beta').first();
+    const planning = page.locator('[data-swimlane-name="Planning"]');
 
-    // Backlog tasks open in edit mode -- cancel to view mode first
-    await page.locator('button:has-text("Cancel")').click();
+    await planning.waitFor({ state: 'visible', timeout: 5000 });
+
+    // Scroll Planning column into view
+    await page.evaluate(() => {
+      const targetElement = document.querySelector('[data-swimlane-name="Planning"]');
+      if (targetElement) targetElement.scrollIntoView({ inline: 'nearest', behavior: 'instant' });
+    });
+    await page.waitForTimeout(100);
+
+    const cardBox = await card.boundingBox();
+    const targetBox = await planning.boundingBox();
+    if (!cardBox || !targetBox) throw new Error('Could not get bounding boxes for drag');
+
+    const startX = cardBox.x + cardBox.width / 2;
+    const startY = cardBox.y + cardBox.height / 2;
+    const endX = targetBox.x + targetBox.width / 2;
+    const endY = targetBox.y + 80;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+
+    // Move enough to activate @dnd-kit's PointerSensor (distance >= 5)
+    await page.mouse.move(startX + 10, startY, { steps: 3 });
+    await page.waitForTimeout(100);
+
+    // Move to target in steps
+    await page.mouse.move(endX, endY, { steps: 15 });
     await page.waitForTimeout(200);
 
-    // Open kebab menu, click Archive
-    await page.locator('button[title="Actions"]').click();
-    await page.waitForTimeout(200);
-    await page.locator('button:has-text("Archive")').click();
+    await page.mouse.up();
     await page.waitForTimeout(500);
 
-    // Task should no longer appear in the Backlog column
+    // Task should appear in Planning and be gone from Backlog
     const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    await expect(planning.locator('text=Test Task Beta').first()).toBeVisible({ timeout: 5000 });
     await expect(backlog.locator('text=Test Task Beta')).not.toBeVisible({ timeout: 3000 });
   });
 
   test('can delete a task', async () => {
-    // "Test Task Beta" was archived above -- it now lives in Done's Completed section
-    const doneColumn = page.locator('[data-swimlane-name="Done"]');
+    // Create a temp task to delete
+    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    await backlog.locator('text=+ Add task').click();
+    await page.locator('input[placeholder="Task title"]').fill('Task To Delete');
+    await page.locator('button:has-text("Create")').click();
+    await page.waitForTimeout(500);
 
-    // Expand the Completed section if not already visible
-    const archivedCard = doneColumn.locator('text=Test Task Beta');
-    if (!(await archivedCard.isVisible().catch(() => false))) {
-      await doneColumn.locator('button:has-text("Completed")').click();
-      await page.waitForTimeout(300);
-    }
-
-    // Click the archived task card to open its detail dialog
-    await archivedCard.click();
+    // Open the task (backlog tasks open in edit mode with Delete in footer)
+    await taskCard('Task To Delete').click();
     await page.waitForTimeout(300);
 
-    // Open kebab menu and click Delete (shown for archived tasks)
-    await page.locator('button[title="Actions"]').click();
-    await page.waitForTimeout(200);
     await page.locator('button:has-text("Delete")').click();
     await page.waitForTimeout(200);
 
-    // Confirm deletion in the ConfirmDialog (replaces the detail dialog)
+    // Confirm deletion in the ConfirmDialog
     await page.locator('text=This action cannot be undone.').waitFor({ state: 'visible', timeout: 3000 });
     await page.locator('button:has-text("Delete")').click();
     await page.waitForTimeout(500);
 
-    // Verify the task is gone from the Completed section
-    await expect(doneColumn.locator('text=Test Task Beta')).not.toBeVisible({ timeout: 3000 });
+    // Verify the task is gone from Backlog
+    await expect(backlog.locator('text=Task To Delete')).not.toBeVisible({ timeout: 3000 });
   });
 
-  test('kebab menu shows both Archive and Delete for non-archived task', async () => {
+  test('edit mode footer shows Delete for backlog task', async () => {
     // Create a fresh task for this test
     const backlog = page.locator('[data-swimlane-name="Backlog"]');
     await backlog.locator('text=+ Add task').click();
@@ -240,18 +258,11 @@ test.describe('Task CRUD', () => {
     await taskCard('Test Task Gamma').click();
     await page.waitForTimeout(300);
 
-    // Backlog tasks open in edit mode -- cancel to view mode first
-    await page.locator('button:has-text("Cancel")').click();
-    await page.waitForTimeout(200);
-
-    // Open kebab menu
-    await page.locator('button[title="Actions"]').click();
-    await page.waitForTimeout(200);
-
-    // Both Archive and Delete should be visible
-    const kebabMenu = page.locator('[data-testid="task-detail-dialog"]').locator('..');
-    await expect(kebabMenu.locator('button:has-text("Archive")')).toBeVisible();
-    await expect(kebabMenu.locator('button:has-text("Delete")')).toBeVisible();
+    // Backlog tasks open in edit mode with Delete in footer
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await expect(dialog.locator('button:has-text("Delete")')).toBeVisible();
+    await expect(dialog.locator('button:has-text("Save")')).toBeVisible();
+    await expect(dialog.locator('button:has-text("Cancel")')).toBeVisible();
   });
 
   test('can delete a non-archived task directly', async () => {
@@ -259,13 +270,7 @@ test.describe('Task CRUD', () => {
     await taskCard('Test Task Gamma').click();
     await page.waitForTimeout(300);
 
-    // Backlog tasks open in edit mode -- cancel to view mode first
-    await page.locator('button:has-text("Cancel")').click();
-    await page.waitForTimeout(200);
-
-    // Open kebab menu and click Delete
-    await page.locator('button[title="Actions"]').click();
-    await page.waitForTimeout(200);
+    // Backlog tasks open in edit mode -- Delete is in the footer
     await page.locator('button:has-text("Delete")').click();
     await page.waitForTimeout(200);
 
