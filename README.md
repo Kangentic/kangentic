@@ -12,9 +12,38 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="AGPL-3.0 License" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-brightgreen.svg" alt="Platform" />
   <a href="https://www.kangentic.com"><img src="https://img.shields.io/badge/website-kangentic.com-purple.svg" alt="Website" /></a>
+  <a href="https://github.com/Kangentic/kangentic/stargazers"><img src="https://img.shields.io/github/stars/Kangentic/kangentic?style=social" alt="GitHub Stars" /></a>
 </p>
 
----
+One board to manage all your Claude Code agents.
+
+<p align="center">
+  <img src="resources/kanban-demo.png" alt="Kangentic Kanban Board" width="800" />
+</p>
+
+## Setup
+
+Make sure you have [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and [Git 2.25+](https://git-scm.com/) installed, then:
+
+```bash
+npx kangentic
+```
+
+One command to download, install, and launch. After the first run, auto-updates handle everything.
+
+For more details, see the [Installation & Setup guide](https://www.kangentic.com/getting-started/).
+
+## Features
+
+Agent orchestration, real-time status, built-in terminals, git worktrees, session persistence, themes, and more.
+
+See the full feature list at [kangentic.com](https://www.kangentic.com/).
+
+## Documentation
+
+Get started at [kangentic.com/getting-started](https://www.kangentic.com/getting-started/).
+
+## Tech Stack
 
 <p align="center">
   <img src="https://img.shields.io/badge/Electron-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron" />
@@ -27,92 +56,11 @@
   <img src="https://img.shields.io/badge/Playwright-2EAD33?style=for-the-badge&logo=playwright&logoColor=white" alt="Playwright" />
 </p>
 
----
-
-One board to manage all your Claude Code agents. Drag tasks to spawn sessions, see real-time status, and ship work in parallel -- all from native terminals on your desktop.
-
-<p align="center">
-  <img src="resources/kanban-demo.png" alt="Kangentic Kanban Board" width="800" />
-</p>
-
-## Install
-
-```bash
-npx kangentic
-```
-
-One command to download, install, and launch. After the first run, auto-updates handle everything (Windows and macOS).
-
-Or download directly from [GitHub Releases](https://github.com/Kangentic/kangentic/releases/latest):
-
-| Platform | Download |
-|----------|----------|
-| Windows | [Kangentic Setup.exe](https://github.com/Kangentic/kangentic/releases/latest) |
-| macOS | [Kangentic.dmg](https://github.com/Kangentic/kangentic/releases/latest) |
-| Linux | [.deb](https://github.com/Kangentic/kangentic/releases/latest) / [.rpm](https://github.com/Kangentic/kangentic/releases/latest) |
-
-See the [Installation Guide](docs/installation.md) for detailed instructions, prerequisites, and troubleshooting.
-
-### Prerequisites
-
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and on PATH
-- [Git 2.25+](https://git-scm.com/) for worktree support
-
-### From Source
-
-```bash
-git clone https://github.com/Kangentic/kangentic.git
-cd kangentic
-npm install
-npm run dev
-```
-
-Requires Node.js 20+ and C++ build tools for native modules. See [Installation Guide](docs/installation.md#from-source) for details.
-
-## Documentation
-
-Full documentation at [kangentic.com/getting-started](https://www.kangentic.com/getting-started/) and in [`docs/`](docs/README.md).
-
-## Why Kangentic?
-
-AI coding agents can build features, fix bugs, and refactor entire modules autonomously. With git worktrees, you can run many of them in parallel and ship work at incredible speed.
-
-But there's a new bottleneck: **you.** Five agents across three projects -- which ones are stuck waiting for approval? Which one just finished? Which branch has conflicts? Juggling terminals and context-switching between agents is exhausting, and it's exactly where the speed advantage breaks down.
-
-**Kangentic is a command center for your coding agents.** One board shows every agent's status, output, and progress. Respond when needed, and let them work autonomously the rest of the time.
-
-## Features
-
-| | Feature | Description |
-|---|---|---|
-| 🎯 | **Agent Orchestration** | Drag tasks across your board to spawn, suspend, and resume Claude Code agents. Each card is a living agent session. |
-| 📡 | **Real-Time Status** | See which agents are thinking, idle, or waiting -- right on the card. Get desktop notifications when an agent needs your attention. |
-| 🖥️ | **Terminal & Activity Log** | A built-in terminal for every session, plus a structured activity log that shows what each agent is doing without the noise. |
-| ⚙️ | **Customizable Workflows** | Set permission modes, auto-commands, and transition actions per column. Build pipelines like Plan, Execute, Review automatically. |
-| 🌿 | **Git Worktrees** | Each agent runs in its own git worktree. Parallel development without branch conflicts, each with its own isolated working directory. |
-| 💾 | **Session Persistence** | Sessions survive restarts and crashes. Suspend to Done, resume later with full context -- pick up right where you left off, even across reboots. |
-| 🎨 | **Settings & Themes** | 10 built-in themes, global and per-project settings, and per-column customization for colors, icons, and behavior. |
-| 🖥️ | **Cross-Platform & Local** | Runs entirely on your desktop -- Windows, macOS, Linux, and WSL. No cloud service, no data leaves your machine. |
-| 🔓 | **Your Claude Code, Your Way** | No wrappers, no API proxies. Kangentic launches native Claude Code terminals -- your login, your subscription or API key. Just the real CLI. |
-
-## How It Works
-
-1. **Create a Task** -- Add a card with a title and prompt. Paste screenshots, choose a source branch, and toggle worktree isolation.
-2. **Drag to Run** -- Drag the card to any active column. Kangentic creates a worktree, picks the permission mode, and spawns a Claude Code agent automatically.
-3. **Agent Works** -- Monitor via the terminal, activity log, or card indicators. Drag between columns to inject auto-commands -- drag to Done to suspend and resume later.
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. All contributors must sign a [CLA](CLA.md) before their first PR can be merged.
 
 ## License
 
-Kangentic is open source under the [GNU Affero General Public License v3.0](LICENSE).
+[AGPL-3.0](LICENSE) -- if AGPL doesn't work for you, drop us a line at licensing@kangentic.com.
 
-For organizations that need a commercial license (e.g., to keep proprietary modifications private), contact licensing@kangentic.com for licensing options.
-
-Copyright (c) 2025-2026 VORPAHL LLC. All rights reserved.
-
-## Anything Else?
-
-Questions, feedback, or just want to say hi? Reach out at hello@kangentic.com.
