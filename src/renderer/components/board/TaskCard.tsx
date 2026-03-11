@@ -30,6 +30,8 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     if (openTaskId === task.id) {
       setShowDetail(true);
       setOpenTaskId(null);
+    } else if (openTaskId !== null) {
+      setShowDetail(false);
     }
   }, [openTaskId, task.id, setOpenTaskId]);
 
