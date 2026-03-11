@@ -1,13 +1,15 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Bell, Bot, Check, CircleAlert, GitBranch, Globe, Palette, ShieldAlert, ShieldCheck, SlidersHorizontal, Terminal } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
-import { SettingsPanelShell, SettingsPanelProvider, SectionHeader, SettingRow, Select, ToggleSwitch, CompactToggleList, INPUT_CLASS, useScopedUpdate } from './shared';
+import { SettingsPanelShell, SettingsPanelProvider, SectionHeader, SettingRow, Select, ToggleSwitch, CompactToggleList, INPUT_CLASS, useScopedUpdate, SearchTabGroupHeader, NoSearchResults } from './shared';
 import type { SettingsTabDefinition, SettingScope } from './shared';
 import type { AppConfig, DeepPartial, NotificationConfig, PermissionMode, ThemeMode } from '../../../shared/types';
 import { NAMED_THEMES } from '../../../shared/types';
 import { deepMergeConfig } from '../../../shared/object-utils';
+import { SETTINGS_REGISTRY, settingProps } from './settings-registry';
+import { SettingsSearchProvider, computeSearchResults } from './settings-search';
 
 /**
  * App Settings tab layout:
@@ -43,16 +45,16 @@ function notifyChannelValue(desktop: boolean, toast: boolean): string {
 }
 
 /** Reusable row for a notification event with a Desktop/Toast channel dropdown. */
-function NotifyChannelRow({ label, description, eventKey, config }: {
-  label: string;
-  description: string;
+function NotifyChannelRow({ eventKey, config, searchId }: {
   eventKey: NotifyEventKey;
   config: NotificationConfig;
+  searchId: string;
 }) {
   const updateGlobal = useScopedUpdate('global');
   const value = notifyChannelValue(config.desktop[eventKey], config.toasts[eventKey]);
+  const props = settingProps(searchId);
   return (
-    <SettingRow label={label} description={description} scope="global">
+    <SettingRow {...props}>
       <Select
         value={value}
         onChange={(event) => {
@@ -85,6 +87,7 @@ export function AppSettingsPanel() {
 
   const [shells, setShells] = useState<Array<{ name: string; path: string }>>([]);
   const [pendingSyncPartial, setPendingSyncPartial] = useState<DeepPartial<AppConfig> | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     window.electronAPI.shell.getAvailable().then(setShells).catch(() => {});
@@ -126,64 +129,101 @@ export function AppSettingsPanel() {
 
   const [activeTab, setActiveTab] = useState('appearance');
 
+  // Search computation
+  const searchResults = useMemo(
+    () => computeSearchResults(searchQuery, SETTINGS_REGISTRY),
+    [searchQuery],
+  );
+  const isSearching = searchQuery.trim().length > 0;
+
+  /** When clearing search, if results were in exactly one tab, switch to it. */
+  const handleSearchChange = useCallback((query: string) => {
+    if (!query && searchQuery) {
+      // Clearing search. If results were in exactly one tab, auto-switch.
+      const tabsWithMatches = Array.from(searchResults.tabMatchCounts.keys());
+      if (tabsWithMatches.length === 1) {
+        setActiveTab(tabsWithMatches[0]);
+      }
+    }
+    setSearchQuery(query);
+  }, [searchQuery, searchResults.tabMatchCounts]);
+
+  /** Ordered list of tabs that have search matches. */
+  const matchingTabs = useMemo(() => {
+    if (!isSearching) return [];
+    return APP_TABS.filter((tab) => (searchResults.tabMatchCounts.get(tab.id) || 0) > 0);
+  }, [isSearching, searchResults.tabMatchCounts]);
+
+  /** Clear search and navigate to a specific tab. */
+  const navigateToTab = useCallback((tabId: string) => {
+    setSearchQuery('');
+    setActiveTab(tabId);
+  }, []);
+
   return (
     <SettingsPanelProvider value={{ panelType: 'app', updateSetting }}>
-      <SettingsPanelShell
-        subtitle={
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-fg-faint/10 text-fg-muted text-xs">
-            <Globe size={14} />
-            Global
-          </span>
-        }
-        onClose={handleClose}
-        tabs={APP_TABS}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-      >
-        {/* ── Appearance ── */}
-        {activeTab === 'appearance' && (
-          <AppearanceTab displayConfig={displayConfig} />
-        )}
+      <SettingsSearchProvider query={searchQuery} matchingIds={searchResults.matchingIds}>
+        <SettingsPanelShell
+          subtitle={
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-fg-faint/10 text-fg-muted text-xs">
+              <Globe size={14} />
+              Global
+            </span>
+          }
+          onClose={handleClose}
+          tabs={APP_TABS}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          searchQuery={searchQuery}
+          onSearchChange={handleSearchChange}
+          tabMatchCounts={searchResults.tabMatchCounts}
+          isSearching={isSearching}
+        >
+          {isSearching ? (
+            // Search mode: render all matching tabs stacked
+            matchingTabs.length > 0 ? (
+              matchingTabs.map((tab, index) => (
+                <div key={tab.id}>
+                  <SearchTabGroupHeader tab={tab} first={index === 0} onNavigate={navigateToTab} />
+                  <div className="space-y-4">
+                    {tab.id === 'appearance' && <AppearanceTab displayConfig={displayConfig} />}
+                    {tab.id === 'terminal' && <TerminalTab displayConfig={displayConfig} shells={shells} />}
+                    {tab.id === 'agent' && <AgentTab displayConfig={displayConfig} globalConfig={globalConfig} claudeInfo={claudeInfo} />}
+                    {tab.id === 'git' && <GitTab displayConfig={displayConfig} />}
+                    {tab.id === 'behavior' && <BehaviorTab globalConfig={globalConfig} />}
+                    {tab.id === 'notifications' && <NotificationsTab globalConfig={globalConfig} />}
+                    {tab.id === 'privacy' && <PrivacyTab />}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <NoSearchResults query={searchQuery} />
+            )
+          ) : (
+            // Normal mode: single active tab
+            <>
+              {activeTab === 'appearance' && <AppearanceTab displayConfig={displayConfig} />}
+              {activeTab === 'terminal' && <TerminalTab displayConfig={displayConfig} shells={shells} />}
+              {activeTab === 'agent' && <AgentTab displayConfig={displayConfig} globalConfig={globalConfig} claudeInfo={claudeInfo} />}
+              {activeTab === 'behavior' && <BehaviorTab globalConfig={globalConfig} />}
+              {activeTab === 'notifications' && <NotificationsTab globalConfig={globalConfig} />}
+              {activeTab === 'privacy' && <PrivacyTab />}
+              {activeTab === 'git' && <GitTab displayConfig={displayConfig} />}
+            </>
+          )}
 
-        {/* ── Terminal ── */}
-        {activeTab === 'terminal' && (
-          <TerminalTab displayConfig={displayConfig} shells={shells} />
-        )}
-
-        {/* ── Agent ── */}
-        {activeTab === 'agent' && (
-          <AgentTab displayConfig={displayConfig} globalConfig={globalConfig} claudeInfo={claudeInfo} />
-        )}
-
-        {/* ── Behavior ── */}
-        {activeTab === 'behavior' && (
-          <BehaviorTab globalConfig={globalConfig} />
-        )}
-
-        {/* ── Notifications ── */}
-        {activeTab === 'notifications' && (
-          <NotificationsTab globalConfig={globalConfig} />
-        )}
-
-        {/* ── Privacy ── */}
-        {activeTab === 'privacy' && <PrivacyTab />}
-
-        {/* ── Git ── */}
-        {activeTab === 'git' && (
-          <GitTab displayConfig={displayConfig} />
-        )}
-
-        {/* Sync defaults confirmation */}
-        {pendingSyncPartial && (
-          <ConfirmDialog
-            title="Apply to all projects?"
-            message="Apply this change to all projects? New projects will use this setting by default."
-            confirmLabel="Apply to All"
-            onConfirm={handleSyncConfirm}
-            onCancel={handleSyncCancel}
-          />
-        )}
-      </SettingsPanelShell>
+          {/* Sync defaults confirmation */}
+          {pendingSyncPartial && (
+            <ConfirmDialog
+              title="Apply to all projects?"
+              message="Apply this change to all projects? New projects will use this setting by default."
+              confirmLabel="Apply to All"
+              onConfirm={handleSyncConfirm}
+              onCancel={handleSyncCancel}
+            />
+          )}
+        </SettingsPanelShell>
+      </SettingsSearchProvider>
     </SettingsPanelProvider>
   );
 }
@@ -193,7 +233,7 @@ export function AppSettingsPanel() {
 function AppearanceTab({ displayConfig }: { displayConfig: AppConfig }) {
   const updateProject = useScopedUpdate('project');
   return (
-    <SettingRow label="Theme" description="Color scheme for the interface" scope="project">
+    <SettingRow {...settingProps('theme')}>
       <Select
         value={displayConfig.theme}
         onChange={(event) => updateProject({ theme: event.target.value as ThemeMode })}
@@ -222,7 +262,7 @@ function TerminalTab({ displayConfig, shells }: { displayConfig: AppConfig; shel
   const updateGlobal = useScopedUpdate('global');
   return (
     <>
-      <SettingRow label="Shell" description="Terminal shell used for agent sessions" scope="project">
+      <SettingRow {...settingProps('terminal.shell')}>
         <Select
           value={displayConfig.terminal.shell || ''}
           onChange={(event) => updateProject({ terminal: { shell: event.target.value || null } })}
@@ -233,7 +273,7 @@ function TerminalTab({ displayConfig, shells }: { displayConfig: AppConfig; shel
           ))}
         </Select>
       </SettingRow>
-      <SettingRow label="Font Size" description="Terminal text size in pixels" scope="project">
+      <SettingRow {...settingProps('terminal.fontSize')}>
         <input
           type="number"
           value={displayConfig.terminal.fontSize}
@@ -243,7 +283,7 @@ function TerminalTab({ displayConfig, shells }: { displayConfig: AppConfig; shel
           className={INPUT_CLASS}
         />
       </SettingRow>
-      <SettingRow label="Font Family" description="CSS font-family for the terminal" scope="project">
+      <SettingRow {...settingProps('terminal.fontFamily')}>
         <input
           type="text"
           value={displayConfig.terminal.fontFamily}
@@ -251,7 +291,7 @@ function TerminalTab({ displayConfig, shells }: { displayConfig: AppConfig; shel
           className={INPUT_CLASS}
         />
       </SettingRow>
-      <SettingRow label="Scrollback Lines" description="Maximum lines kept in terminal buffer" scope="project">
+      <SettingRow {...settingProps('terminal.scrollbackLines')}>
         <input
           type="number"
           value={displayConfig.terminal.scrollbackLines}
@@ -262,7 +302,7 @@ function TerminalTab({ displayConfig, shells }: { displayConfig: AppConfig; shel
           className={INPUT_CLASS}
         />
       </SettingRow>
-      <SettingRow label="Cursor Style" description="Terminal cursor appearance" scope="project">
+      <SettingRow {...settingProps('terminal.cursorStyle')}>
         <Select
           value={displayConfig.terminal.cursorStyle}
           onChange={(event) => updateProject({ terminal: { cursorStyle: event.target.value as 'block' | 'underline' | 'bar' } })}
@@ -273,15 +313,22 @@ function TerminalTab({ displayConfig, shells }: { displayConfig: AppConfig; shel
         </Select>
       </SettingRow>
 
-      <SectionHeader label="Context Bar" />
+      <SectionHeader
+        label="Context Bar"
+        searchIds={[
+          'contextBar.showShell', 'contextBar.showVersion', 'contextBar.showModel',
+          'contextBar.showCost', 'contextBar.showTokens', 'contextBar.showContextFraction',
+          'contextBar.showProgressBar',
+        ]}
+      />
       <CompactToggleList scope="global" items={[
-        { label: 'Shell', description: 'Detected shell name', checked: displayConfig.contextBar.showShell, onChange: (value) => updateGlobal({ contextBar: { showShell: value } }) },
-        { label: 'Version', description: 'Claude Code version', checked: displayConfig.contextBar.showVersion, onChange: (value) => updateGlobal({ contextBar: { showVersion: value } }) },
-        { label: 'Model', description: 'Active model name', checked: displayConfig.contextBar.showModel, onChange: (value) => updateGlobal({ contextBar: { showModel: value } }) },
-        { label: 'Cost', description: 'Session API cost', checked: displayConfig.contextBar.showCost, onChange: (value) => updateGlobal({ contextBar: { showCost: value } }) },
-        { label: 'Token Counts', description: 'Input / output totals', checked: displayConfig.contextBar.showTokens, onChange: (value) => updateGlobal({ contextBar: { showTokens: value } }) },
-        { label: 'Context Window', description: 'Used / total tokens', checked: displayConfig.contextBar.showContextFraction, onChange: (value) => updateGlobal({ contextBar: { showContextFraction: value } }) },
-        { label: 'Progress Bar', description: 'Usage bar and percentage', checked: displayConfig.contextBar.showProgressBar, onChange: (value) => updateGlobal({ contextBar: { showProgressBar: value } }) },
+        { label: 'Shell', description: 'Detected shell name', checked: displayConfig.contextBar.showShell, onChange: (value) => updateGlobal({ contextBar: { showShell: value } }), searchId: 'contextBar.showShell' },
+        { label: 'Version', description: 'Claude Code version', checked: displayConfig.contextBar.showVersion, onChange: (value) => updateGlobal({ contextBar: { showVersion: value } }), searchId: 'contextBar.showVersion' },
+        { label: 'Model', description: 'Active model name', checked: displayConfig.contextBar.showModel, onChange: (value) => updateGlobal({ contextBar: { showModel: value } }), searchId: 'contextBar.showModel' },
+        { label: 'Cost', description: 'Session API cost', checked: displayConfig.contextBar.showCost, onChange: (value) => updateGlobal({ contextBar: { showCost: value } }), searchId: 'contextBar.showCost' },
+        { label: 'Token Counts', description: 'Input / output totals', checked: displayConfig.contextBar.showTokens, onChange: (value) => updateGlobal({ contextBar: { showTokens: value } }), searchId: 'contextBar.showTokens' },
+        { label: 'Context Window', description: 'Used / total tokens', checked: displayConfig.contextBar.showContextFraction, onChange: (value) => updateGlobal({ contextBar: { showContextFraction: value } }), searchId: 'contextBar.showContextFraction' },
+        { label: 'Progress Bar', description: 'Usage bar and percentage', checked: displayConfig.contextBar.showProgressBar, onChange: (value) => updateGlobal({ contextBar: { showProgressBar: value } }), searchId: 'contextBar.showProgressBar' },
       ]} />
     </>
   );
@@ -292,7 +339,7 @@ function AgentTab({ displayConfig, globalConfig, claudeInfo }: { displayConfig: 
   const updateProject = useScopedUpdate('project');
   return (
     <>
-      <SettingRow label="CLI Path" description="Path to Claude CLI binary (auto-detected if empty)" scope="global">
+      <SettingRow {...settingProps('claude.cliPath')}>
         <div className="relative">
           <input
             type="text"
@@ -310,7 +357,7 @@ function AgentTab({ displayConfig, globalConfig, claudeInfo }: { displayConfig: 
           )}
         </div>
       </SettingRow>
-      <SettingRow label="Max Concurrent Sessions" description="Limit how many agents can run at the same time" scope="global">
+      <SettingRow {...settingProps('claude.maxConcurrentSessions')}>
         <input
           type="number"
           value={globalConfig.claude.maxConcurrentSessions}
@@ -320,7 +367,7 @@ function AgentTab({ displayConfig, globalConfig, claudeInfo }: { displayConfig: 
           className={INPUT_CLASS}
         />
       </SettingRow>
-      <SettingRow label="When Max Sessions Reached" description="How new agent requests are handled when all slots are in use" scope="global">
+      <SettingRow {...settingProps('claude.queueOverflow')}>
         <Select
           value={globalConfig.claude.queueOverflow}
           onChange={(event) => updateGlobal({ claude: { queueOverflow: event.target.value as 'queue' | 'reject' } })}
@@ -329,7 +376,7 @@ function AgentTab({ displayConfig, globalConfig, claudeInfo }: { displayConfig: 
           <option value="reject">Reject</option>
         </Select>
       </SettingRow>
-      <SettingRow label="Idle Timeout (minutes)" description="Auto-suspend sessions after this many minutes idle. 0 to disable." scope="global">
+      <SettingRow {...settingProps('claude.idleTimeoutMinutes')}>
         <input
           type="number"
           value={globalConfig.claude.idleTimeoutMinutes}
@@ -339,7 +386,7 @@ function AgentTab({ displayConfig, globalConfig, claudeInfo }: { displayConfig: 
           className={INPUT_CLASS}
         />
       </SettingRow>
-      <SettingRow label="Permissions" description="How Claude handles tool approvals" scope="project">
+      <SettingRow {...settingProps('claude.permissionMode')}>
         <Select
           value={displayConfig.claude.permissionMode}
           onChange={(event) => updateProject({ claude: { permissionMode: event.target.value as PermissionMode } })}
@@ -357,25 +404,25 @@ function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
   return (
     <>
-      <SettingRow label="Skip Task Delete Confirmation" description="Delete tasks immediately without a confirmation dialog" scope="global">
+      <SettingRow {...settingProps('skipDeleteConfirm')}>
         <ToggleSwitch
           checked={globalConfig.skipDeleteConfirm}
           onChange={(value) => updateGlobal({ skipDeleteConfirm: value })}
         />
       </SettingRow>
-      <SettingRow label="Auto-Focus Idle Sessions" description="Automatically switch the bottom panel to the most recently idle session" scope="global">
+      <SettingRow {...settingProps('autoFocusIdleSession')}>
         <ToggleSwitch
           checked={globalConfig.autoFocusIdleSession}
           onChange={(value) => updateGlobal({ autoFocusIdleSession: value })}
         />
       </SettingRow>
-      <SettingRow label="Launch All Projects on Startup" description="Start agents across all projects on launch, not just the current open one" scope="global">
+      <SettingRow {...settingProps('activateAllProjectsOnStartup')}>
         <ToggleSwitch
           checked={globalConfig.activateAllProjectsOnStartup}
           onChange={(value) => updateGlobal({ activateAllProjectsOnStartup: value })}
         />
       </SettingRow>
-      <SettingRow label="Restore Window Position" description="Remember window size and position between launches" scope="global">
+      <SettingRow {...settingProps('restoreWindowPosition')}>
         <ToggleSwitch
           checked={globalConfig.restoreWindowPosition}
           onChange={(value) => updateGlobal({ restoreWindowPosition: value })}
@@ -390,19 +437,17 @@ function NotificationsTab({ globalConfig }: { globalConfig: AppConfig }) {
   return (
     <>
       <NotifyChannelRow
-        label="Agent Idle"
-        description="When an agent needs attention on a non-visible project"
         eventKey="onAgentIdle"
         config={globalConfig.notifications}
+        searchId="notifications.onAgentIdle"
       />
       <NotifyChannelRow
-        label="Plan Complete"
-        description="When a plan finishes and the task auto-moves"
         eventKey="onPlanComplete"
         config={globalConfig.notifications}
+        searchId="notifications.onPlanComplete"
       />
       <div className="border-t border-edge my-2" />
-      <SettingRow label="Toast Auto-Dismiss" description="How long toasts remain visible" scope="global">
+      <SettingRow {...settingProps('notifications.toasts.durationSeconds')}>
         <input
           type="number"
           value={globalConfig.notifications.toasts.durationSeconds}
@@ -412,7 +457,7 @@ function NotificationsTab({ globalConfig }: { globalConfig: AppConfig }) {
           className={INPUT_CLASS}
         />
       </SettingRow>
-      <SettingRow label="Max Visible Toasts" description="Maximum simultaneous toasts on screen" scope="global">
+      <SettingRow {...settingProps('notifications.toasts.maxCount')}>
         <input
           type="number"
           value={globalConfig.notifications.toasts.maxCount}
@@ -468,19 +513,19 @@ function GitTab({ displayConfig }: { displayConfig: AppConfig }) {
   const updateProject = useScopedUpdate('project');
   return (
     <>
-      <SettingRow label="Enable Worktrees" description="Create git worktrees for agent tasks" scope="project">
+      <SettingRow {...settingProps('git.worktreesEnabled')}>
         <ToggleSwitch
           checked={displayConfig.git.worktreesEnabled}
           onChange={(value) => updateProject({ git: { worktreesEnabled: value } })}
         />
       </SettingRow>
-      <SettingRow label="Auto-cleanup" description="Remove worktrees when tasks complete" scope="project">
+      <SettingRow {...settingProps('git.autoCleanup')}>
         <ToggleSwitch
           checked={displayConfig.git.autoCleanup}
           onChange={(value) => updateProject({ git: { autoCleanup: value } })}
         />
       </SettingRow>
-      <SettingRow label="Default Base Branch" description="Branch to create worktrees from" scope="project">
+      <SettingRow {...settingProps('git.defaultBaseBranch')}>
         <BranchPicker
           variant="input"
           value={displayConfig.git.defaultBaseBranch}
@@ -488,7 +533,7 @@ function GitTab({ displayConfig }: { displayConfig: AppConfig }) {
           onChange={(branch) => updateProject({ git: { defaultBaseBranch: branch } })}
         />
       </SettingRow>
-      <SettingRow label="Copy Files" description="Additional files copied into each worktree" scope="project">
+      <SettingRow {...settingProps('git.copyFiles')}>
         <input
           type="text"
           value={displayConfig.git.copyFiles.join(', ')}
@@ -500,7 +545,7 @@ function GitTab({ displayConfig }: { displayConfig: AppConfig }) {
           className={`${INPUT_CLASS} placeholder-fg-faint`}
         />
       </SettingRow>
-      <SettingRow label="Post-Worktree Script" description="Shell script to run after worktree creation" scope="project">
+      <SettingRow {...settingProps('git.initScript')}>
         <input
           type="text"
           value={displayConfig.git.initScript || ''}

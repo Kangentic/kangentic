@@ -124,7 +124,7 @@ Columns can only be deleted when empty (no tasks).
 
 ## Settings
 
-Open settings from the sidebar or title bar.
+Open settings from the sidebar or title bar. Use the search bar at the top of the panel to filter settings by keyword. Matching results are grouped by tab with match count badges. Press Ctrl+F (Cmd+F on macOS) to focus search, Escape to clear.
 
 ### Themes
 

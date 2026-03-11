@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronDown, RotateCcw, X } from 'lucide-react';
+import { ChevronDown, RotateCcw, Search, X } from 'lucide-react';
 import { useSettingsPanelContext } from './setting-scope';
+import { useSettingVisible, useSettingsSearch } from './settings-search';
 import type { SettingScope } from './setting-scope';
 
 // Re-export scope primitives so consumers can import everything from './shared'.
@@ -29,11 +30,16 @@ interface SettingsPanelShellProps {
   activeTab?: string;
   onTabChange?: (tabId: string) => void;
   footer?: React.ReactNode;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+  tabMatchCounts?: Map<string, number>;
+  isSearching?: boolean;
 }
 
-export function SettingsPanelShell({ subtitle, onClose, children, tabs, activeTab, onTabChange, footer }: SettingsPanelShellProps) {
+export function SettingsPanelShell({ subtitle, onClose, children, tabs, activeTab, onTabChange, footer, searchQuery, onSearchChange, tabMatchCounts, isSearching }: SettingsPanelShellProps) {
   const [phase, setPhase] = useState<Phase>('entering');
   const backdropMouseDown = useRef(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const requestClose = useCallback(() => {
     if (phase !== 'exiting') setPhase('exiting');
@@ -41,11 +47,24 @@ export function SettingsPanelShell({ subtitle, onClose, children, tabs, activeTa
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') requestClose();
+      // Ctrl+F / Cmd+F focuses search input
+      if ((event.ctrlKey || event.metaKey) && event.key === 'f' && onSearchChange) {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+      if (event.key === 'Escape') {
+        // If searching, clear search first instead of closing
+        if (isSearching && onSearchChange) {
+          onSearchChange('');
+          return;
+        }
+        requestClose();
+      }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [requestClose]);
+  }, [requestClose, isSearching, onSearchChange]);
 
   const handleBackdropAnimationEnd = () => {
     if (phase === 'entering') setPhase('visible');
@@ -94,6 +113,32 @@ export function SettingsPanelShell({ subtitle, onClose, children, tabs, activeTa
           </button>
         </div>
 
+        {/* Search bar */}
+        {onSearchChange && (
+          <div className="flex-shrink-0 px-6 py-3 border-b border-edge">
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-fg-faint pointer-events-none" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery || ''}
+                onChange={(event) => onSearchChange(event.target.value)}
+                placeholder="Search settings..."
+                data-testid="settings-search"
+                className="w-full bg-surface-hover border border-edge-input rounded pl-9 pr-9 py-1.5 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => onSearchChange('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 text-fg-faint hover:text-fg-tertiary rounded transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Content */}
         {tabs && activeTab && onTabChange ? (
           <div className="flex-1 flex overflow-hidden">
@@ -102,19 +147,28 @@ export function SettingsPanelShell({ subtitle, onClose, children, tabs, activeTa
               {tabs.map((tab) => {
                 const Icon = tab.icon;
                 const isActive = tab.id === activeTab;
+                const matchCount = isSearching && tabMatchCounts ? tabMatchCounts.get(tab.id) : undefined;
+                const hasNoMatches = isSearching && (matchCount === undefined || matchCount === 0);
                 return (
                   <React.Fragment key={tab.id}>
                     {tab.separator && <div className="my-1.5 mx-4 border-t border-edge" />}
                     <button
-                      onClick={() => onTabChange(tab.id)}
+                      onClick={() => { if (!hasNoMatches) onTabChange(tab.id); }}
                       className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${
-                        isActive
-                          ? 'text-fg bg-surface-hover font-medium'
-                          : 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover/50'
+                        hasNoMatches
+                          ? 'opacity-40 cursor-default text-fg-muted'
+                          : isActive
+                            ? 'text-fg bg-surface-hover font-medium'
+                            : 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover/50'
                       }`}
                     >
-                      <Icon size={16} className={isActive ? 'text-accent' : ''} />
-                      {tab.label}
+                      <Icon size={16} className={isActive && !hasNoMatches ? 'text-accent' : ''} />
+                      <span className="flex-1 text-left">{tab.label}</span>
+                      {isSearching && matchCount !== undefined && matchCount > 0 && (
+                        <span className="text-xs text-fg-faint bg-surface-hover rounded-full px-1.5 py-0.5 min-w-[1.25rem] text-center">
+                          {matchCount}
+                        </span>
+                      )}
                     </button>
                   </React.Fragment>
                 );
@@ -125,7 +179,7 @@ export function SettingsPanelShell({ subtitle, onClose, children, tabs, activeTa
               <div className="flex-1 overflow-y-auto px-6 py-6 space-y-4">
                 {children}
               </div>
-              {footer && (
+              {footer && !isSearching && (
                 <div className="flex-shrink-0 px-6 py-4 border-t border-edge">
                   {footer}
                 </div>
@@ -142,6 +196,36 @@ export function SettingsPanelShell({ subtitle, onClose, children, tabs, activeTa
   );
 }
 
+/* ── Search Tab Group Header ── */
+
+/** Tab icon + name as a section divider in search results mode. */
+export function SearchTabGroupHeader({ tab, first, onNavigate }: { tab: SettingsTabDefinition; first?: boolean; onNavigate?: (tabId: string) => void }) {
+  const Icon = tab.icon;
+  return (
+    <div className={first ? 'pb-3' : 'pt-4 pb-3 mt-4 -mx-6 px-6 border-t border-edge'}>
+      <button
+        onClick={() => onNavigate?.(tab.id)}
+        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-accent/10 hover:bg-accent/20 transition-colors cursor-pointer"
+      >
+        <Icon size={16} className="text-accent" />
+        <span className="text-sm font-semibold text-accent">{tab.label}</span>
+      </button>
+    </div>
+  );
+}
+
+/* ── No Search Results ── */
+
+export function NoSearchResults({ query }: { query: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-16 text-center">
+      <Search size={32} className="text-fg-disabled mb-3" />
+      <p className="text-sm text-fg-muted">No settings found for &ldquo;{query}&rdquo;</p>
+      <p className="text-xs text-fg-faint mt-1">Try a different search term</p>
+    </div>
+  );
+}
+
 /* ── Section Header ── */
 
 interface SectionHeaderProps {
@@ -149,9 +233,19 @@ interface SectionHeaderProps {
   description?: string;
   /** Adds a stronger top border for visual separation (e.g. Project Defaults). */
   prominent?: boolean;
+  /** Setting IDs in this section. When searching, hides if none match. */
+  searchIds?: string[];
 }
 
-export function SectionHeader({ label, description, prominent }: SectionHeaderProps) {
+export function SectionHeader({ label, description, prominent, searchIds }: SectionHeaderProps) {
+  const { isSearching, matchingIds } = useSettingsSearch();
+
+  // When searching with searchIds, hide if none of the listed IDs match.
+  if (isSearching && searchIds && searchIds.length > 0) {
+    const anyVisible = searchIds.some((id) => matchingIds.has(id));
+    if (!anyVisible) return null;
+  }
+
   return (
     <div className={prominent ? 'pt-4 mt-4 border-t-2 border-edge' : 'pt-3 mt-2'}>
       <h3 className="text-xs font-semibold uppercase tracking-wider text-fg-faint">{label}</h3>
@@ -172,13 +266,19 @@ interface SettingRowProps {
   onReset?: () => void;
   /** Muted placeholder text for the inherited default value. */
   inheritedHint?: string;
+  /** Registry ID for search filtering. */
+  searchId?: string;
 }
 
-export function SettingRow({ label, description, children, scope, isOverridden, onReset, inheritedHint }: SettingRowProps) {
+export function SettingRow({ label, description, children, scope, isOverridden, onReset, inheritedHint, searchId }: SettingRowProps) {
   const { panelType } = useSettingsPanelContext();
+  const visible = useSettingVisible(searchId);
 
   // Global-only settings are hidden in the project panel.
   if (scope === 'global' && panelType === 'project') return null;
+
+  // Search filtering.
+  if (!visible) return null;
 
   return (
     <div className="space-y-1.5">
@@ -250,6 +350,8 @@ export interface CompactToggleItem {
   description?: string;
   checked: boolean;
   onChange: (value: boolean) => void;
+  /** Registry ID for search filtering. */
+  searchId?: string;
 }
 
 /**
@@ -259,12 +361,20 @@ export interface CompactToggleItem {
  */
 export function CompactToggleList({ items, scope }: { items: CompactToggleItem[]; scope?: SettingScope }) {
   const { panelType } = useSettingsPanelContext();
+  const { isSearching, matchingIds } = useSettingsSearch();
 
   if (scope === 'global' && panelType === 'project') return null;
 
+  // When searching, filter items to those with matching searchIds.
+  const visibleItems = isSearching
+    ? items.filter((item) => !item.searchId || matchingIds.has(item.searchId))
+    : items;
+
+  if (visibleItems.length === 0) return null;
+
   return (
     <div className="space-y-1">
-      {items.map((item) => (
+      {visibleItems.map((item) => (
         <div key={item.label} className="flex items-center justify-between gap-4 py-1.5">
           <div className="min-w-0">
             <div className="text-sm text-fg-secondary leading-tight">{item.label}</div>

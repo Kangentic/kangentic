@@ -22,8 +22,17 @@ async function openAppSettings() {
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
 }
 
-/** Close any open settings panel via Escape. */
+/** Close any open settings panel via Escape. Clears search first if active. */
 async function closeSettings() {
+  // If search has text, first Escape clears it; press again to close.
+  const searchInput = page.getByTestId('settings-search');
+  if (await searchInput.isVisible().catch(() => false)) {
+    const searchValue = await searchInput.inputValue().catch(() => '');
+    if (searchValue) {
+      await page.keyboard.press('Escape');
+      await expect(searchInput).toHaveValue('', { timeout: 1000 });
+    }
+  }
   await page.keyboard.press('Escape');
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'hidden', timeout: 2000 });
 }
@@ -228,5 +237,138 @@ test.describe('Project Settings Panel', () => {
     await page.keyboard.press('Escape');
     await header.waitFor({ state: 'hidden', timeout: 2000 });
     await expect(header).not.toBeVisible({ timeout: 2000 });
+  });
+});
+
+test.describe('Settings Search', () => {
+  test('search bar is visible in App Settings', async () => {
+    await openAppSettings();
+    await expect(page.getByTestId('settings-search')).toBeVisible();
+    await closeSettings();
+  });
+
+  test('searching "font" shows Font Size and Font Family from Terminal tab', async () => {
+    await openAppSettings();
+    const searchInput = page.getByTestId('settings-search');
+    await searchInput.fill('font');
+
+    // Should show Terminal tab group header and font settings
+    await expect(page.getByText('Font Size', { exact: true })).toBeVisible();
+    await expect(page.getByText('Font Family', { exact: true })).toBeVisible();
+
+    // Should NOT show unrelated settings like Theme
+    await expect(page.getByText('Color scheme for the interface')).not.toBeVisible();
+
+    await closeSettings();
+  });
+
+  test('searching "context bar" shows context bar toggles', async () => {
+    await openAppSettings();
+    const searchInput = page.getByTestId('settings-search');
+    await searchInput.fill('context bar');
+
+    // Context bar toggles should be visible
+    await expect(page.getByText('Detected shell name')).toBeVisible();
+    await expect(page.getByText('Claude Code version')).toBeVisible();
+    await expect(page.getByText('Usage bar and percentage')).toBeVisible();
+
+    await closeSettings();
+  });
+
+  test('searching "theme" shows appearance theme setting', async () => {
+    await openAppSettings();
+    const searchInput = page.getByTestId('settings-search');
+    await searchInput.fill('theme');
+
+    await expect(page.getByText('Color scheme for the interface')).toBeVisible();
+
+    // Should NOT show terminal settings
+    await expect(page.getByText('Terminal text size in pixels')).not.toBeVisible();
+
+    await closeSettings();
+  });
+
+  test('searching "worktree" shows git worktree settings', async () => {
+    await openAppSettings();
+    const searchInput = page.getByTestId('settings-search');
+    await searchInput.fill('worktree');
+
+    await expect(page.getByText('Enable Worktrees')).toBeVisible();
+    await expect(page.getByText('Auto-cleanup')).toBeVisible();
+
+    await closeSettings();
+  });
+
+  test('searching nonsense shows empty state', async () => {
+    await openAppSettings();
+    const searchInput = page.getByTestId('settings-search');
+    await searchInput.fill('xyznonexistent');
+
+    await expect(page.getByText('No settings found')).toBeVisible();
+
+    await closeSettings();
+  });
+
+  test('clearing search returns to normal tab view', async () => {
+    await openAppSettings();
+    const searchInput = page.getByTestId('settings-search');
+
+    // Search for something
+    await searchInput.fill('font');
+    await expect(page.getByText('Font Size', { exact: true })).toBeVisible();
+
+    // Clear search
+    await searchInput.fill('');
+
+    // Should return to normal view (Appearance tab is default but font search
+    // was in Terminal only, so auto-switch should land on Terminal)
+    await expect(page.getByText('Terminal shell used for agent sessions')).toBeVisible();
+
+    await closeSettings();
+  });
+
+  test('Escape clears search before closing panel', async () => {
+    await openAppSettings();
+    const searchInput = page.getByTestId('settings-search');
+    await searchInput.fill('font');
+
+    // First Escape should clear search, not close panel
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('settings-search')).toHaveValue('');
+    await expect(page.locator('h2:has-text("Settings")')).toBeVisible();
+
+    // Second Escape closes panel
+    await closeSettings();
+  });
+
+  test('zero-match tabs are dimmed during search', async () => {
+    await openAppSettings();
+    const searchInput = page.getByTestId('settings-search');
+    await searchInput.fill('theme');
+
+    // Appearance sidebar tab should have a match count badge (name includes count)
+    const appearanceTab = page.getByRole('button', { name: 'Appearance 1' });
+    await expect(appearanceTab).not.toHaveClass(/opacity-40/);
+
+    // Terminal sidebar tab should be dimmed (no matches for "theme")
+    const terminalTab = page.getByRole('button', { name: 'Terminal' }).first();
+    await expect(terminalTab).toHaveClass(/opacity-40/);
+
+    await closeSettings();
+  });
+
+  test('search works in Project Settings panel', async () => {
+    const projectRow = page.locator('[role="button"]').filter({ hasText: 'Settings Test' }).first();
+    await projectRow.hover();
+    await page.locator('button[title="Project settings"]').first().click();
+    await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
+
+    const searchInput = page.getByTestId('settings-search');
+    await expect(searchInput).toBeVisible();
+
+    await searchInput.fill('worktree');
+    await expect(page.getByText('Enable Worktrees')).toBeVisible();
+
+    await closeSettings();
   });
 });
