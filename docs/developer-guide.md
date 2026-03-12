@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Node.js 20+
+- Node.js 22+
 - Git 2.25+ (worktree support)
 - Platform-specific:
   - **Windows:** Visual Studio Build Tools (for better-sqlite3 native compilation)

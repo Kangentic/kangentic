@@ -83,7 +83,7 @@ Kangentic is an **agent orchestration desktop app** -- a visual control surface 
 
 | Layer        | Technology                                      |
 | ------------ | ----------------------------------------------- |
-| Runtime      | Electron 40, Node 20                            |
+| Runtime      | Electron 40, Node 22                            |
 | Frontend     | React 19, Zustand, Tailwind CSS 4, Lucide icons |
 | Backend      | better-sqlite3, node-pty, simple-git             |
 | Build        | Vite (renderer), esbuild (main), electron-builder |

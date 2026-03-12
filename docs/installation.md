@@ -88,7 +88,7 @@ npm run dev
 ```
 
 Requires:
-- Node.js 20+
+- Node.js 22+
 - C++ build tools for native modules (better-sqlite3, node-pty)
   - **Windows:** `npm install -g windows-build-tools` or install Visual Studio Build Tools
   - **macOS:** Xcode Command Line Tools (`xcode-select --install`)
