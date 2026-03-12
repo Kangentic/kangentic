@@ -145,8 +145,8 @@ Task deleted
   → Branch deleted (if config.git.autoCleanup)
 
 App closed
-  → All sessions get Ctrl+C then /exit (graceful, 2s timeout)
-  → Force-kill remaining PTYs
+  → All sessions marked suspended in DB (synchronous)
+  → PTYs force-killed immediately (no graceful shutdown window)
   → Session files persist
 
 App reopened
@@ -176,7 +176,7 @@ App reopened
 - **Backup on strip** -- `stripKangenticHooks()` backs up settings before modification, restores on failure.
 - **Orphan dedup** -- on session resume, old PTY is killed and its file paths nulled before new PTY spawns. Prevents stale `onExit` handlers from deleting files the new session needs.
 - **Trust pre-population** -- `ensureWorktreeTrust()` adds worktree paths to `~/.claude.json` so Claude Code doesn't prompt for trust on first run.
-- **Graceful shutdown** -- Ctrl+C → `/exit` → 2s wait → force-kill. Files persist for recovery on next launch.
+- **Synchronous shutdown** -- DB records marked suspended, PTYs force-killed immediately. No async graceful window. Files persist for recovery on next launch.
 
 ## Test Coverage
 

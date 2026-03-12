@@ -18,10 +18,10 @@ The config directory (`<configDir>`) is platform-specific:
 
 ## Settings Panels
 
-Settings are split into two panels with separate entry points. Both use a tabbed layout with a sidebar for navigation. A search bar at the top of each panel filters settings by keyword, showing results grouped by tab with match count badges on the sidebar.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left and the active settings pane on the right. A search bar at the top filters settings by keyword. Search uses multi-token matching (all tokens must appear in the setting name or description). Results are grouped by tab with match count badges on the sidebar; tabs with zero matches are dimmed. Press Ctrl+F (Cmd+F on macOS) to focus the search bar, Escape to clear the filter.
 
-- **App Settings** -- opened via the titlebar gear icon (labeled "Global"). Tabs: Appearance, Terminal, Agent, Git, Behavior, Notifications, Privacy. Contains app-wide settings and project defaults. Changes save immediately. Projects without explicit overrides inherit the new default automatically. New projects receive a snapshot of the current defaults at creation time so future global changes do not retroactively alter them.
-- **Project Settings** -- opened via the gear icon on each project row in the sidebar. Tabs: Appearance, Terminal, Agent, Git. Contains per-project overridable settings. Inherited defaults are shown as hints; overridden settings get a reset button. A "Reset All" footer appears when any overrides exist.
+- **App Settings** -- opened via the titlebar gear icon (labeled "Global"). Contains two scope tabs at the top: **Global** (app-wide defaults) and **Project** (per-project overrides for the active project). Sidebar tabs: Appearance, Terminal, Agent, Git, Behavior, Notifications, Privacy. The first four tabs (above the separator) are project-overridable and appear in both scopes. The last three (Behavior, Notifications, Privacy) are global-only. Changes save immediately. Projects without explicit overrides inherit the new default automatically. New projects receive a snapshot of the current defaults at creation time so future global changes do not retroactively alter them.
+- **Project Settings** -- opened via the gear icon on each project row in the sidebar. Tabs: Appearance, Terminal, Agent, Git (the project-overridable subset). Inherited defaults are shown as hints; overridden settings display a reset button. A "Reset All" footer appears when any overrides exist.
 
 ### App-Only Settings
 
@@ -31,6 +31,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `claude.cliPath`, `claude.maxConcurrentSessions`, `claude.queueOverflow`
 - `terminal.panelHeight`, `terminal.showPreview`
 - `skipDeleteConfirm`, `autoFocusIdleSession`, `activateAllProjectsOnStartup`, `restoreWindowPosition`
+- `contextBar.*` (all context bar visibility toggles)
 - `notifications.*` (all notification settings)
 - `claude.idleTimeoutMinutes`
 
@@ -114,6 +115,20 @@ The global App Settings "Permissions" dropdown only offers three choices: `defau
 | `notifications.toasts.maxCount` | number | `5` | Maximum simultaneous visible toasts (1-10) |
 | `notifications.cooldownSeconds` | number | `10` | Minimum wait between repeat desktop notifications per session |
 
+### contextBar.*
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `contextBar.showShell` | boolean | `true` | Show the shell name (e.g., pwsh, bash) in the context bar |
+| `contextBar.showVersion` | boolean | `true` | Show the Claude CLI version |
+| `contextBar.showModel` | boolean | `true` | Show the active model name (e.g., Claude Sonnet 4) |
+| `contextBar.showCost` | boolean | `true` | Show the cumulative session cost in dollars |
+| `contextBar.showTokens` | boolean | `true` | Show token usage (input + output) |
+| `contextBar.showContextFraction` | boolean | `true` | Show the context window usage percentage |
+| `contextBar.showProgressBar` | boolean | `true` | Show the context window progress bar |
+
+All context bar settings are global-only and cannot be overridden per-project.
+
 ### sidebar.*
 
 | Key | Type | Default | Description |
@@ -131,6 +146,81 @@ Each swimlane has its own overrides (stored in the per-project DB):
 | `auto_spawn` | boolean | true | Whether moving a task here spawns an agent |
 | `auto_command` | string \| null | null | Command injected into running session on task arrival |
 | `plan_exit_target_id` | string \| null | null | Target column when plan-mode agent exits |
+
+## Board Configuration
+
+Kangentic supports shareable board configuration via JSON files in the project root. This lets teams commit their column layout, colors, icons, actions, and transitions to version control so everyone works with the same board structure.
+
+### Two-File System
+
+- **`kangentic.json`** -- the team file. Committed to git and shared with all collaborators. Contains the canonical board layout.
+- **`kangentic.local.json`** -- the personal overrides file. Auto-added to `.gitignore`. Contains per-user customizations (colors, icons, extra columns) that merge on top of the team file.
+
+When both files exist, `kangentic.local.json` is merged over `kangentic.json` by matching columns, actions, and transitions by ID. Unmatched local entries are appended.
+
+### Auto-Export
+
+Every time a project is opened, Kangentic writes the current database state to `kangentic.json` in the project root. This ensures the team always has a current file to commit. If the file already exists and matches the DB state, no write occurs.
+
+### File Watching and Reconciliation
+
+Kangentic watches both `kangentic.json` and `kangentic.local.json` for changes. When a change is detected (e.g., a teammate pulls a new version), a reconciliation banner appears in the UI. The user can apply the changes or dismiss the banner. If `skipBoardConfigConfirm` is enabled, changes are applied automatically without the banner.
+
+Reconciliation matches columns by `id`:
+- **Matched columns** are updated with the new properties (name, color, icon, etc.)
+- **New columns** (present in file but not in DB) are created
+- **Removed columns** (present in DB but absent from the config file and the file has at least one column with an `id`) are handled as follows:
+  - If the column has tasks, it becomes a **ghost column** (marked `is_ghost: true`, hidden from the board but preserved so tasks are not lost)
+  - If the column is empty, it is deleted
+
+Ghost columns are invisible on the board but still exist in the database. Once all tasks are moved out of a ghost column, it is automatically deleted. This prevents data loss when a teammate removes a column that still holds your in-progress work.
+
+### File Structure
+
+```json
+{
+  "version": 1,
+  "columns": [
+    {
+      "id": "uuid",
+      "name": "Backlog",
+      "role": "backlog",
+      "icon": "inbox",
+      "color": "#6b7280",
+      "autoSpawn": false
+    },
+    {
+      "id": "uuid",
+      "name": "Executing",
+      "icon": "square-terminal",
+      "color": "#10b981",
+      "autoSpawn": true,
+      "permissionStrategy": "default",
+      "autoCommand": null
+    }
+  ],
+  "actions": [
+    {
+      "id": "uuid",
+      "name": "Start Agent",
+      "type": "spawn_agent",
+      "config": { "promptTemplate": "{{title}}{{description}}{{attachments}}" }
+    }
+  ],
+  "transitions": [
+    {
+      "from": "*",
+      "to": "uuid",
+      "actions": ["uuid"],
+      "executionOrder": [0]
+    }
+  ]
+}
+```
+
+### Hand-Written Configs
+
+Config files written by hand (without `id` fields on columns) are treated as additive only. Kangentic will create the specified columns but will not delete or ghost any existing columns. This allows safe experimentation without risking data loss.
 
 ## Permission Mode Resolution (Priority Order)
 

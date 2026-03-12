@@ -16,7 +16,13 @@ When a task moves from one column to another, the IPC handler (`task:move`) chec
 | 3 | Task has **active session** | If target requires a different permission mode or has `auto_command`, suspend and respawn with correct flags. Otherwise keep alive. |
 | 4 | Task has **no session** | Resume suspended session (with `auto_command` preloaded as resume prompt) OR create worktree (if enabled) + execute transition action chain |
 
-Transition action chains (priority 4) only fire when a task has no active session. Moving between active columns with the same permission mode and no `auto_command` keeps the agent running with no restart. When the permission mode differs or an `auto_command` is set, the session is suspended and resumed with the correct configuration.
+### Priority 3: Permission Mode Guard
+
+When a task with an active session moves to a column with a different `permission_strategy`, the session is suspended and a new session is resumed with the correct CLI flags. The same suspend-and-respawn occurs when the target column has an `auto_command`, even if the permission mode matches. During this transition, a shimmer overlay appears in the terminal UI while the new session starts.
+
+If the target column's permission mode matches the running session's mode and there is no `auto_command`, the session stays alive with no interruption.
+
+Transition action chains (priority 4) only fire when a task has no active session.
 
 ## Transition Lookup
 

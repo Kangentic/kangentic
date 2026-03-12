@@ -149,12 +149,6 @@ export class SwimlaneRepository {
     this.db.prepare('UPDATE swimlanes SET is_ghost = ? WHERE id = ?').run(isGhost ? 1 : 0, id);
   }
 
-  /** Clear the ghost flag on all ghost columns. Used to auto-heal after a bad reconcile. */
-  clearAllGhosts(): number {
-    const result = this.db.prepare('UPDATE swimlanes SET is_ghost = 0 WHERE is_ghost = 1').run();
-    return result.changes;
-  }
-
   /** Delete empty ghost columns. Returns number of ghosts removed. */
   deleteEmptyGhosts(): number {
     const ghosts = this.db.prepare('SELECT id FROM swimlanes WHERE is_ghost = 1').all() as Array<{ id: string }>;

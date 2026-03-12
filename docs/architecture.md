@@ -119,6 +119,14 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `config:setProjectByPath` | invoke | Update project overrides by filesystem path |
 | `config:syncDefaultToProjects` | invoke | Sync default config values to all project configs |
 
+### Board Config (4 channels)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `boardConfig:exists` | invoke | Check if `kangentic.json` exists for the active project |
+| `boardConfig:export` | invoke | Export current board state to `kangentic.json` (auto-runs on project open) |
+| `boardConfig:apply` | invoke | Apply pending config file changes (reconcile file into DB) |
+| `boardConfig:changed` | on | Event: `kangentic.json` or `kangentic.local.json` changed on disk |
+
 ### Notifications (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
@@ -197,7 +205,7 @@ Stores the project list. Tables:
 
 Created on project open. Stored in the global config directory (not inside the project). Tables:
 
-- **swimlanes** -- Kanban columns. Fields: id, name, role (`backlog`/`planning`/`done`/null), position, color, icon, is_archived, permission_strategy, auto_spawn, auto_command, created_at
+- **swimlanes** -- Kanban columns. Fields: id, name, role (`backlog`/`done`/null), position, color, icon, is_archived, permission_strategy, auto_spawn, auto_command, plan_exit_target_id, is_ghost, created_at
 - **tasks** -- Kanban cards. Fields: id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, base_branch, use_worktree, archived_at, created_at, updated_at
 - **actions** -- Executable steps. Types: `spawn_agent`, `send_command`, `run_script`, `kill_session`, `create_worktree`, `cleanup_worktree`, `webhook`. Config stored as JSON.
 - **swimlane_transitions** -- Maps lane pairs to action chains. Fields: from_swimlane_id (`*` = any), to_swimlane_id, action_id, execution_order
@@ -291,7 +299,10 @@ Shell-specific adaptations:
 | Flush interval | 16 ms | Output batching (~60fps) |
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
-| Graceful shutdown | 2000 ms | Max wait for `/exit` on app close |
+| Graceful shutdown | 2000 ms | `suspendAll()` timeout (exists in code but NOT used during app quit; synchronous shutdown kills PTYs immediately) |
+| Idle timeout check | 60000 ms | Polling interval for `checkIdleTimeouts()` |
+| Stale thinking threshold | 45000 ms | If no activity signal for 45s while in "thinking" state, emit synthetic idle event |
+| Stale thinking check | 15000 ms | How often the stale thinking timer polls |
 
 ## Session Queue
 

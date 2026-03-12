@@ -195,6 +195,9 @@ Sessions from non-active projects must not interfere with the active project's t
 | Event debounce | 50 ms | Event log + activity state watch |
 | Hard shutdown deadline | 6000 ms | Failsafe timer before force-killing process tree |
 | Command inject delay | 100 ms | Wait after PTY spawn before writing command |
+| Idle timeout check | 60000 ms | Polling interval for `checkIdleTimeouts()` (every 60s) |
+| Stale thinking threshold | 45000 ms | If no activity signal for 45s while in "thinking" state, emit synthetic idle event |
+| Stale thinking check | 15000 ms | How often the stale thinking timer polls |
 
 ## See Also
 

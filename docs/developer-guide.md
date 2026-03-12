@@ -31,6 +31,7 @@ src/
       event-bridge.js      # Hook script: appends tool events to events.jsonl
     config/
       config-manager.ts    # Three-tier config: global → project overrides → effective
+      board-config-manager.ts # Board config (kangentic.json) export, import, reconciliation
     db/                    # SQLite database layer
       database.ts          # DB initialization, WAL mode, connection caching
       migrations.ts        # Schema migrations (auto-run on open)

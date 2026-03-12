@@ -18,9 +18,13 @@ Kangentic replaces terminal tab chaos with a drag-and-drop board. Each task card
 
 Drag a task card into an active column to spawn a Claude Code agent. Drag it to Done to terminate the session. Drag it back to Backlog to suspend. Every column transition is an orchestration event.
 
+### Shareable Board Configuration
+
+Teams commit a `kangentic.json` file to share column layout, colors, icons, actions, and transitions across all collaborators. Personal overrides live in `kangentic.local.json` (auto-gitignored). Live file watching detects when a teammate pushes changes and offers to reconcile them into your board.
+
 ### Session Persistence
 
-Claude Code sessions survive application restarts. Kangentic uses `--resume` to reconnect to existing sessions, so agents pick up exactly where they left off -- no lost context, no repeated work.
+Claude Code sessions survive application restarts. Kangentic uses `--resume` to reconnect to existing sessions, so agents pick up exactly where they left off -- no lost context, no repeated work. Sessions paused manually by the user (via the pause button) stay paused on relaunch, respecting user intent. Only system-suspended sessions auto-resume.
 
 ### Git Worktrees
 
@@ -45,6 +49,14 @@ Embedded xterm.js terminals with WebGL acceleration, full scrollback, resize sup
 ### Activity Detection
 
 Real-time thinking and idle status indicators powered by Claude Code hooks. See at a glance which agents are actively working, which are waiting for input, and which are idle.
+
+### Configurable Context Bar
+
+The context bar below each terminal displays session metadata: shell, CLI version, model, cost, tokens, and context window usage. Each element can be toggled on or off in settings.
+
+### Settings Search
+
+A built-in search bar filters settings by keyword with multi-token matching, grouped results by tab, and match count badges. Find any setting instantly across all tabs.
 
 ### Multiple Themes
 

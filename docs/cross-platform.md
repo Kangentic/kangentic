@@ -41,7 +41,7 @@ Adaptations applied in `SessionManager.doSpawn()` and `adaptCommandForShell()`:
 ## Path Handling
 
 - `toForwardSlash()` -- normalizes backslashes to forward slashes for cross-platform CLI commands
-- `quoteArg(arg, shell?)` -- shell-aware quoting: single quotes for Unix-like shells (bash, zsh, WSL), double quotes for PowerShell/cmd. Falls back to platform detection when shell is omitted
+- `quoteArg(arg, shell?)` -- shell-aware quoting: single quotes for Unix-like shells (bash, zsh, WSL), double quotes for PowerShell/cmd. The shell parameter is explicitly passed in all spawn calls so quoting always matches the target shell. Falls back to platform detection when shell is omitted.
 - Git Bash: paths like `C:\Users\...` become `/c/Users/...`
 - WSL: paths like `C:\Users\...` become `/mnt/c/Users/...`
 - `adaptCommandForShell()` -- adds `& ` prefix for PowerShell commands

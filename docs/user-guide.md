@@ -42,8 +42,9 @@ Drag a task from Backlog to any active column (Planning, Executing, etc.). Kange
 
 - **Terminal panel** at the bottom shows the active session's terminal output
 - **Activity tab** shows structured events (tool calls, idle state) instead of raw terminal output
-- **Context bar** on task cards shows token usage and context window percentage
+- **Context bar** below the terminal shows session metadata (shell, model, cost, tokens, context usage). Each element is configurable.
 - **Thinking/idle indicator** on task cards shows whether the agent is actively working
+- **Shimmer overlay** -- when a session is starting or resuming (e.g., after a column move that triggers a permission mode change), a shimmer loading overlay appears over the terminal. It shows a context-aware label such as the auto_command name, "Resuming agent...", or "Starting agent...". Terminal output is suppressed behind the overlay until the session is ready.
 
 ### Move Between Active Columns
 
@@ -124,7 +125,16 @@ Columns can only be deleted when empty (no tasks).
 
 ## Settings
 
-Open settings from the sidebar or title bar. Use the search bar at the top of the panel to filter settings by keyword. Matching results are grouped by tab with match count badges. Press Ctrl+F (Cmd+F on macOS) to focus search, Escape to clear.
+Settings are accessed from two entry points:
+
+- **App Settings** -- click the gear icon in the title bar. This is the main settings panel with all app-wide and project-default settings.
+- **Project Settings** -- click the gear icon on a project row in the sidebar. This shows only the per-project overridable subset.
+
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. App Settings includes scope tabs (Global and Project) at the top. Project Settings shows inherited defaults as hints, with reset buttons on any overridden value and a "Reset All" footer when overrides exist.
+
+### Search
+
+A search bar at the top of each panel filters settings by keyword. Type multiple words to narrow results (all tokens must match). Results are grouped by tab with match count badges on the sidebar tabs. Tabs with zero matches are dimmed. Press Ctrl+F (Cmd+F on macOS) to focus the search bar, Escape to clear the filter.
 
 ### Themes
 
@@ -142,6 +152,20 @@ Choose from 10 themes:
 | Font Family | CSS font-family for the terminal |
 | Scrollback Lines | Maximum lines kept in terminal buffer (1000--100000, default 5000) |
 | Cursor Style | Terminal cursor appearance (block, underline, or bar) |
+
+### Context Bar
+
+The context bar is a status line displayed below the terminal showing session metadata. Each element can be individually toggled on or off in App Settings > Terminal.
+
+| Toggle | What it shows |
+|--------|--------------|
+| Shell | The active shell name (e.g., pwsh, bash, zsh) |
+| Version | Claude CLI version |
+| Model | Active model name (e.g., Claude Sonnet 4) |
+| Cost | Cumulative session cost in dollars |
+| Tokens | Token usage (input + output) |
+| Context Fraction | Context window usage as a percentage |
+| Progress Bar | Visual progress bar for context window usage |
 
 ### Agent Settings
 
@@ -183,6 +207,24 @@ These are global-only settings that apply to the entire app.
 | Auto-Focus Idle Sessions | Automatically switch the bottom panel to the most recently idle session |
 | Launch All Projects on Startup | Start agents across all projects on launch, not just the current one |
 | Restore Window Position | Remember window size and position between launches |
+
+## Board Configuration
+
+Kangentic can export your board layout to a `kangentic.json` file in the project root. Commit this file to git so your team shares the same column structure, actions, and transitions.
+
+### Sharing with Your Team
+
+When you open a project, Kangentic automatically writes `kangentic.json` with the current board state. Commit and push this file. When teammates pull it, Kangentic detects the change and shows a banner offering to apply the new configuration.
+
+### Personal Overrides
+
+Create a `kangentic.local.json` in the project root for personal customizations (column colors, icons, extra columns). This file is auto-added to `.gitignore` and merges on top of the team config.
+
+### Applying Changes
+
+When `kangentic.json` or `kangentic.local.json` changes on disk, a reconciliation banner appears at the top of the board. Click "Apply" to reconcile the file into your database, or dismiss to ignore. Enable `skipBoardConfigConfirm` in settings to apply changes automatically.
+
+If a teammate removes a column that still has your tasks, the column becomes a "ghost" (hidden but preserved). Once you move all tasks out of the ghost column, it is automatically deleted.
 
 ## Worktrees
 
@@ -243,6 +285,10 @@ Sessions survive app restarts. When you close Kangentic:
 3. On next launch, sessions are automatically resumed via `--resume` using the saved session ID
 
 Because Claude Code supports `--resume`, conversation context is fully preserved despite the hard kill. If the app crashes, orphaned sessions are detected and recovered on the next launch.
+
+### User-Paused Sessions
+
+Sessions paused manually by the user (via the pause button in the task detail dialog or kebab menu) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
 
 ## Keyboard Shortcuts
 
