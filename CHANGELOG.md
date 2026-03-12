@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.4.0] - 2026-03-12
+
+### Features
+- Add shareable board config via kangentic.json (bf48665)
+- Auto-export kangentic.json on project open and add ephemeral mode (be991a9)
+- Add permission mode guard and shimmer overlay for column transitions (d34002f)
+- Add search bar to settings panels (64e3585)
+- Persist user-paused sessions across app restarts (13864f7)
+- Add configurable context bar element visibility (894bd49)
+- Add 5 custom Claude Code agents for proactive validation (c29eca2)
+
+### Fixes
+- Detect stale thinking state after Ctrl+C interruption (2343a8e)
+- Close existing task detail dialog on notification click (03065f7)
+- Resolve intermittent UI test failures from Vite startup race (09eace9)
+- Show toast instead of inline error when deleting column with tasks (13b4f5f)
+- Use shell-aware quoting in quoteArg to prevent $var expansion (95f79f6)
+- Use same-permission columns in session survive E2E test (9364fcc)
+
+### Other
+- Unify settings panel with VS Code-style scope tabs (defdb58)
+- Remove sync dialog, snapshot defaults on project create (f427a2d)
+- Comprehensive documentation update for v0.4.0 (2916d35)
+
 ## [v0.3.1] - 2026-03-10
 
 ### Fixes
