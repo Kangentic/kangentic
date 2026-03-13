@@ -21,7 +21,7 @@
     "lint": "eslint --ext .ts,.tsx .",
     "test": "npx playwright test",
     "test:headed": "HEADED=1 npx playwright test",
-    "test:screenshots": "npx playwright test --grep Screenshots",
+
     "test:unit": "vitest run",
     "typecheck": "tsc --noEmit",
     "dev": "node scripts/dev.js",

@@ -89,16 +89,39 @@ export async function launchApp(options?: {
     args.push(`--cwd=${options.cwd}`);
   }
 
-  const app = await electron.launch({
-    args,
-    env: {
-      ...process.env,
-      NODE_ENV: 'test',
-      ELECTRON_DISABLE_GPU: '1',
-      KANGENTIC_DATA_DIR: dataDir,
-    },
-    colorScheme: 'dark',
-  });
+  // Retry electron.launch() with backoff -- Windows can transiently fail
+  // to attach the debugger pipe under resource pressure or AV scans.
+  const maxLaunchAttempts = 3;
+  const baseRetryDelayMs = 2000;
+  let app: ElectronApplication | undefined;
+  let lastLaunchError: Error | undefined;
+
+  for (let attempt = 1; attempt <= maxLaunchAttempts; attempt++) {
+    try {
+      app = await electron.launch({
+        args,
+        env: {
+          ...process.env,
+          NODE_ENV: 'test',
+          ELECTRON_DISABLE_GPU: '1',
+          KANGENTIC_DATA_DIR: dataDir,
+        },
+        colorScheme: 'dark',
+      });
+      break;
+    } catch (error) {
+      lastLaunchError = error as Error;
+      if (attempt < maxLaunchAttempts) {
+        const retryDelayMs = baseRetryDelayMs * attempt;
+        console.error(`electron.launch() attempt ${attempt} failed, retrying in ${retryDelayMs}ms: ${lastLaunchError.message}`);
+        await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+      }
+    }
+  }
+
+  if (!app) {
+    throw new Error(`electron.launch() failed after ${maxLaunchAttempts} attempts: ${lastLaunchError?.message}`);
+  }
 
   const page = await app.firstWindow();
 
@@ -110,8 +133,11 @@ export async function launchApp(options?: {
     if (headed) {
       win.maximize();
     } else {
-      // Ensure window is large enough for DnD tests even when not headed
+      // Ensure window is large enough for DnD tests even when not headed.
+      // Move off-screen so it doesn't steal focus or cover user's work.
+      // Drag tests use adjacent-only drags to avoid coordinate issues.
       win.setSize(1920, 1080);
+      win.setPosition(-2000, -2000);
     }
   }, isHeaded);
 
@@ -121,35 +147,6 @@ export async function launchApp(options?: {
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
   return { app, page };
-}
-
-// Screenshot helpers
-export async function takeScreenshot(page: Page, name: string): Promise<string> {
-  const dir = path.join(__dirname, '../screenshots');
-  fs.mkdirSync(dir, { recursive: true });
-  const screenshotPath = path.join(dir, `${name}.png`);
-  await page.screenshot({ path: screenshotPath, fullPage: true });
-  return screenshotPath;
-}
-
-export async function takeProductScreenshot(
-  page: Page,
-  name: string,
-  options?: { width?: number; height?: number },
-): Promise<string> {
-  const width = options?.width || 1400;
-  const height = options?.height || 900;
-
-  const window = await page.evaluate(() => {
-    return { width: window.innerWidth, height: window.innerHeight };
-  });
-
-  if (window.width !== width || window.height !== height) {
-    await page.setViewportSize({ width, height });
-    await page.waitForTimeout(500);
-  }
-
-  return takeScreenshot(page, name);
 }
 
 // Wait for the board to load (swimlanes visible)
@@ -187,7 +184,7 @@ export async function createTask(
     await descInput.fill(description);
   }
 
-  const createButton = page.locator('button:has-text("Create")');
+  const createButton = page.getByRole('button', { name: 'Create', exact: true });
   await createButton.click();
   await page.waitForTimeout(300);
 }

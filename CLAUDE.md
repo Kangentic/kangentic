@@ -82,7 +82,7 @@ scripts/          # Build and dev scripts
 - `npm start` — Start in development mode (Vite HMR + esbuild watch)
 - `npm run build` — Production build to `.vite/build/`
 - `npm test` — Run all Playwright E2E tests
-- `npm run test:screenshots` — Run screenshot capture tests only
+
 - `npm run package` — Package for distribution (unpacked directory)
 - `npm run make` — Build installer (NSIS on Windows, DMG on macOS, deb/rpm on Linux)
 

@@ -53,6 +53,8 @@ export default defineConfig({
       name: 'electron',
       testDir: './tests/e2e',
       testMatch: '**/*.spec.ts',
+      workers: 1,
+      retries: 1,
     },
   ],
   webServer: {
