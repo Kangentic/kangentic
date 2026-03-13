@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
 import type { BrowserWindow } from 'electron';
 import { FileWatcher } from '../pty/file-watcher';
@@ -36,6 +37,8 @@ export class BoardConfigManager {
   private localWatcher: FileWatcher | null = null;
   private isWritingBack = false;
   private writeBackDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastTeamContentHash: string | null = null;
+  private lastLocalContentHash: string | null = null;
 
   constructor(options?: { ephemeral?: boolean }) {
     this.isEphemeral = options?.ephemeral ?? false;
@@ -56,14 +59,14 @@ export class BoardConfigManager {
 
     this.teamWatcher = new FileWatcher({
       filePath: teamFilePath,
-      onChange: () => this.onFileChanged(projectId),
+      onChange: () => this.onFileChanged(projectId, 'team'),
       label: `kangentic.json [${projectId.slice(0, 8)}]`,
       debounceMs: 300,
     });
 
     this.localWatcher = new FileWatcher({
       filePath: localFilePath,
-      onChange: () => this.onFileChanged(projectId),
+      onChange: () => this.onFileChanged(projectId, 'local'),
       label: `kangentic.local.json [${projectId.slice(0, 8)}]`,
       debounceMs: 300,
     });
@@ -88,6 +91,8 @@ export class BoardConfigManager {
     this.activeProjectId = null;
     this.activeProjectPath = null;
     this.isWritingBack = false;
+    this.lastTeamContentHash = null;
+    this.lastLocalContentHash = null;
   }
 
   /** Check if kangentic.json exists for a given project path. */
@@ -492,6 +497,8 @@ export class BoardConfigManager {
       const content = JSON.stringify(boardConfig, null, 2) + os.EOL;
       fs.writeFileSync(tmpPath, content);
       fs.renameSync(tmpPath, teamFilePath);
+      // Store hash after successful write so watcher echo is suppressed even if isWritingBack expires
+      this.lastTeamContentHash = crypto.createHash('sha256').update(content).digest('hex');
     } catch (error) {
       console.warn('[BOARD_CONFIG] Write-back failed:', error);
     } finally {
@@ -515,16 +522,48 @@ export class BoardConfigManager {
   // --- Apply pending file change (called from renderer after user confirms) ---
 
   applyFileChange(projectId: string, projectPath: string): { warnings: string[] } {
-    return this.reconcile(projectId, projectPath);
+    const result = this.reconcile(projectId, projectPath);
+    // Update hashes to suppress echo events from the reconciled content
+    this.lastTeamContentHash = this.hashFileContent(path.join(projectPath, TEAM_FILE));
+    this.lastLocalContentHash = this.hashFileContent(path.join(projectPath, LOCAL_FILE));
+    return result;
   }
 
   // --- File change handler ---
 
-  private onFileChanged(projectId: string): void {
-    // Suppress write-back echo only for the active project
+  private hashFileContent(filePath: string): string | null {
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      return crypto.createHash('sha256').update(content).digest('hex');
+    } catch {
+      return null;
+    }
+  }
+
+  private onFileChanged(projectId: string, source: 'team' | 'local'): void {
+    // Fast path: suppress write-back echo for the active project
     if (this.isWritingBack && projectId === this.activeProjectId) return;
 
-    // Notify renderer that config file changed, including which project
+    if (!this.activeProjectPath) return;
+
+    // Content hash comparison: only notify if file content actually changed
+    const filePath = path.join(
+      this.activeProjectPath,
+      source === 'team' ? TEAM_FILE : LOCAL_FILE,
+    );
+    const currentHash = this.hashFileContent(filePath);
+    if (currentHash === null) return;
+
+    const lastHash = source === 'team' ? this.lastTeamContentHash : this.lastLocalContentHash;
+    if (currentHash === lastHash) return;
+
+    // Content actually changed: update stored hash and notify renderer
+    if (source === 'team') {
+      this.lastTeamContentHash = currentHash;
+    } else {
+      this.lastLocalContentHash = currentHash;
+    }
+
     this.sendChangedEvent(projectId);
   }
 
@@ -538,6 +577,13 @@ export class BoardConfigManager {
   initialReconcile(): string[] {
     if (!this.activeProjectId || !this.activeProjectPath) return [];
     const result = this.reconcile(this.activeProjectId, this.activeProjectPath);
+    // Seed content hashes so the first watcher event post-attach is compared correctly
+    this.lastTeamContentHash = this.hashFileContent(
+      path.join(this.activeProjectPath, TEAM_FILE),
+    );
+    this.lastLocalContentHash = this.hashFileContent(
+      path.join(this.activeProjectPath, LOCAL_FILE),
+    );
     return result.warnings;
   }
 }
