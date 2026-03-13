@@ -133,21 +133,23 @@ export class WorktreeManager {
       // Non-fatal -- merge-back falls back to 'main'
     }
 
-    // Exclude .claude/commands/, .claude/skills/, and .claude/agents/ from worktree
-    // via sparse-checkout. This prevents duplicate slash commands, skills, and agents
-    // while keeping .claude/settings.json (so Claude resolves permissions naturally)
-    // and allowing settings.local.json writes to be properly gitignored.
-    // Claude Code crawls up from the worktree CWD to the main repo's .claude/ directory.
+    // Exclude only .claude/commands/ from worktree via sparse-checkout.
+    // Commands walk up the directory tree from worktree CWD to the main repo's
+    // .claude/commands/, so excluding them prevents duplicate discovery.
+    // Skills and agents do NOT walk up. They are only discovered from the project
+    // root's .claude/ directory. Since the worktree is its own project root (has a
+    // .git file), skills and agents must be present in the worktree checkout.
+    // .claude/settings.json is kept so Claude resolves permissions naturally.
     // Requires git 2.25+; older versions (some Linux distros) skip gracefully.
     try {
       await wtGit.raw(['sparse-checkout', 'init', '--no-cone']);
-      await wtGit.raw(['sparse-checkout', 'set', '/*', '!/.claude/commands/', '!/.claude/skills/', '!/.claude/agents/']);
+      await wtGit.raw(['sparse-checkout', 'set', '/*', '!/.claude/commands/']);
     } catch (sparseError) {
       console.warn('[WORKTREE] Sparse-checkout not available (requires git 2.25+), skipping:', sparseError);
     }
 
     // Copy specified files into the worktree (skip .claude/ entries --
-    // sparse-checkout keeps .claude/ but excludes commands/, skills/, and agents/,
+    // sparse-checkout keeps .claude/ but excludes commands/,
     // and hooks are delivered via --settings flag pointing to session directory)
     for (const file of copyFiles) {
       if (file.startsWith('.claude/') || file.startsWith('.claude\\')) continue;

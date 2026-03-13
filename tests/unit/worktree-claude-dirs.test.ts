@@ -4,8 +4,9 @@
  * These tests create a real temp git repo with tracked `.claude/` files and
  * exercise WorktreeManager against real git operations (sparse-checkout,
  * status, staged changes, rebase). No mocks -- validates that sparse-checkout
- * correctly excludes `.claude/commands/`, `.claude/skills/`, and `.claude/agents/` from
- * worktree disk while keeping the rest of `.claude/` (settings.json, etc.) and survives git operations.
+ * correctly excludes `.claude/commands/` from worktree disk while keeping
+ * `.claude/skills/`, `.claude/agents/`, and the rest of `.claude/` (settings.json, etc.)
+ * and survives git operations.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
@@ -77,7 +78,7 @@ describe('Worktree .claude/ directory handling (sparse-checkout)', () => {
   const TASK_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const TASK_TITLE = 'Test Claude dirs';
 
-  it('.claude/commands/, .claude/skills/, and .claude/agents/ excluded from worktree disk via sparse-checkout', async () => {
+  it('.claude/commands/ excluded, .claude/skills/ and .claude/agents/ present in worktree', async () => {
     const mgr = new WorktreeManager(tmpDir);
     const { worktreePath } = await mgr.createWorktree(
       TASK_ID, TASK_TITLE, 'main',
@@ -85,12 +86,12 @@ describe('Worktree .claude/ directory handling (sparse-checkout)', () => {
 
     // .claude/ directory should exist (settings present from git)
     expect(fs.existsSync(path.join(worktreePath, '.claude'))).toBe(true);
-    // .claude/commands/ should NOT exist -- excluded by sparse-checkout
+    // .claude/commands/ should NOT exist -- excluded by sparse-checkout (commands walk up)
     expect(fs.existsSync(path.join(worktreePath, '.claude', 'commands'))).toBe(false);
-    // .claude/skills/ should NOT exist -- excluded by sparse-checkout
-    expect(fs.existsSync(path.join(worktreePath, '.claude', 'skills'))).toBe(false);
-    // .claude/agents/ should NOT exist -- excluded by sparse-checkout
-    expect(fs.existsSync(path.join(worktreePath, '.claude', 'agents'))).toBe(false);
+    // .claude/skills/ MUST exist -- skills do NOT walk up the directory tree
+    expect(fs.existsSync(path.join(worktreePath, '.claude', 'skills'))).toBe(true);
+    // .claude/agents/ MUST exist -- agents do NOT walk up the directory tree
+    expect(fs.existsSync(path.join(worktreePath, '.claude', 'agents'))).toBe(true);
     // Other .claude/ contents should exist
     expect(fs.existsSync(path.join(worktreePath, '.claude', 'settings.local.json'))).toBe(true);
   });
@@ -126,11 +127,12 @@ describe('Worktree .claude/ directory handling (sparse-checkout)', () => {
     // Rebase the worktree branch onto main
     wtGit(worktreePath, 'rebase main');
 
-    // .claude/commands/, .claude/skills/, and .claude/agents/ should STILL not exist on disk after rebase
+    // .claude/commands/ should STILL not exist on disk after rebase (excluded by sparse-checkout)
     expect(fs.existsSync(path.join(worktreePath, '.claude', 'commands'))).toBe(false);
-    expect(fs.existsSync(path.join(worktreePath, '.claude', 'skills'))).toBe(false);
-    expect(fs.existsSync(path.join(worktreePath, '.claude', 'agents'))).toBe(false);
-    // .claude/ itself should still exist (other files present)
+    // .claude/skills/ and .claude/agents/ should STILL exist after rebase
+    expect(fs.existsSync(path.join(worktreePath, '.claude', 'skills'))).toBe(true);
+    expect(fs.existsSync(path.join(worktreePath, '.claude', 'agents'))).toBe(true);
+    // .claude/ itself should still exist
     expect(fs.existsSync(path.join(worktreePath, '.claude'))).toBe(true);
 
     // git status should still be clean

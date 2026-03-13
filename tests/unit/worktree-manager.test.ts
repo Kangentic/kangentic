@@ -67,9 +67,10 @@ describe('WorktreeManager -- sparse-checkout', () => {
       'sparse-checkout', 'init', '--no-cone',
     ]);
 
-    // Verify sparse-checkout set was called to exclude .claude/commands/, .claude/skills/, and .claude/agents/
+    // Verify sparse-checkout set was called to exclude .claude/commands/ only
+    // (skills and agents do NOT walk up the directory tree, so they must stay in worktrees)
     expect(mockWorktreeGit.raw).toHaveBeenCalledWith([
-      'sparse-checkout', 'set', '/*', '!/.claude/commands/', '!/.claude/skills/', '!/.claude/agents/',
+      'sparse-checkout', 'set', '/*', '!/.claude/commands/',
     ]);
   });
 

@@ -41,18 +41,23 @@ The chosen base branch is stored in the worktree's git config as `kangentic.base
 
 ## Sparse-Checkout
 
-Worktrees exclude `.claude/commands/`, `.claude/skills/`, and `.claude/agents/` from checkout using sparse-checkout in `--no-cone` mode:
+Worktrees exclude only `.claude/commands/` from checkout using sparse-checkout in `--no-cone` mode:
 
 ```
 git sparse-checkout init --no-cone
-git sparse-checkout set '/*' '!/.claude/commands/' '!/.claude/skills/' '!/.claude/agents/'
+git sparse-checkout set '/*' '!/.claude/commands/'
 ```
 
-This means worktrees get all files including `.claude/settings.json` (so Claude resolves permissions naturally), but exclude `.claude/commands/`, `.claude/skills/`, and `.claude/agents/` to prevent duplicate slash command, skill, and agent discovery. `.claude/settings.local.json` is untracked (gitignored), so it's not present in worktrees from checkout -- writes to it (from Kangentic hooks or Claude's "always allow") are invisible to git.
+**Why only commands are excluded:** Claude Code's discovery behavior differs by artifact type:
+
+- **Commands** walk up the directory tree from the worktree CWD to the main repo's `.claude/commands/`. Excluding them from the worktree prevents duplicate discovery.
+- **Skills** and **agents** do NOT walk up. They are only discovered from the project root's `.claude/` directory. Since each worktree is its own project root (has a `.git` file), skills and agents must be present in the worktree checkout to be visible to the agent.
+
+Worktrees get all files including `.claude/settings.json` (so Claude resolves permissions naturally), `.claude/skills/`, and `.claude/agents/`. `.claude/settings.local.json` is untracked (gitignored), so it's not present in worktrees from checkout -- writes to it (from Kangentic hooks or Claude's "always allow") are invisible to git.
 
 Sparse-checkout was chosen over `skip-worktree` because skip-worktree flags get lost during rebase and merge operations. Sparse-checkout survives all git operations.
 
-Sparse-checkout requires git 2.25+. On older git versions (some Linux distros), the commands fail gracefully -- worktrees still work but `.claude/commands/`, `.claude/skills/`, and `.claude/agents/` will be present, which may cause duplicate discovery.
+Sparse-checkout requires git 2.25+. On older git versions (some Linux distros), the commands fail gracefully -- worktrees still work but `.claude/commands/` will be present, which may cause duplicate command discovery.
 
 ## Hook Delivery
 
@@ -171,7 +176,7 @@ App reopened
 
 ## Safety
 
-- **No git contamination** -- `.claude/commands/`, `.claude/skills/`, and `.claude/agents/` excluded from worktrees via sparse-checkout. `.claude/settings.json` is present (from git). `settings.local.json` is untracked and gitignored. Hooks are delivered via `--settings` flag for all sessions (main repo and worktree) -- Kangentic never writes to `.claude/settings.local.json`.
+- **No git contamination** -- `.claude/commands/` excluded from worktrees via sparse-checkout (commands walk up, so exclusion prevents duplicates). `.claude/skills/` and `.claude/agents/` are kept in worktrees (they do not walk up and must be present). `.claude/settings.json` is present (from git). `settings.local.json` is untracked and gitignored. Hooks are delivered via `--settings` flag for all sessions (main repo and worktree) -- Kangentic never writes to `.claude/settings.local.json`.
 - **Hook identification** -- two-marker pattern (`.kangentic` + bridge name) prevents touching user hooks.
 - **Backup on strip** -- `stripKangenticHooks()` backs up settings before modification, restores on failure.
 - **Orphan dedup** -- on session resume, old PTY is killed and its file paths nulled before new PTY spawns. Prevents stale `onExit` handlers from deleting files the new session needs.
@@ -196,8 +201,8 @@ Uses real temp files with mocked `os.homedir()`.
 
 ### Worktree Manager (`worktree-manager.test.ts`)
 
-**Sparse-checkout** (`.claude/commands/`, `.claude/skills/`, and `.claude/agents/` exclusion):
-- Initializes sparse-checkout with `--no-cone` and excludes `.claude/commands/`, `.claude/skills/`, and `.claude/agents/`
+**Sparse-checkout** (`.claude/commands/` exclusion):
+- Initializes sparse-checkout with `--no-cone` and excludes `.claude/commands/` only
 - Sparse-checkout runs before `copyFiles`
 - Skips `.claude/` entries in `copyFiles`
 - No `skip-worktree` or `update-index` calls
