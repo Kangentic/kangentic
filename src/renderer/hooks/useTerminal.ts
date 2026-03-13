@@ -48,6 +48,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const fitAddonRef = useRef<FitAddon | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const scrollbackPendingRef = useRef(false);
+  const isAtBottomRef = useRef(true);
   /** When true, onData writes are suppressed. Controlled by the caller
    *  (e.g. TerminalTab) to gate PTY output while a loading overlay is shown. */
   const suppressDataRef = useRef(false);
@@ -72,6 +73,11 @@ export function useTerminal(options: UseTerminalOptions) {
     terminal.loadAddon(fitAddon);
 
     terminal.open(terminalRef.current);
+
+    terminal.onScroll(() => {
+      const buffer = terminal.buffer.active;
+      isAtBottomRef.current = buffer.viewportY >= buffer.baseY;
+    });
 
     // Try WebGL renderer
     try {
@@ -118,6 +124,12 @@ export function useTerminal(options: UseTerminalOptions) {
         // and onResize fires to sync the PTY to the correct dimensions.
         if (fitAddonRef.current) {
           fitAddonRef.current.fit();
+        }
+        // Pin to bottom after scrollback replay -- the terminal should always
+        // start at the latest output when re-created (e.g. dialog handoff).
+        if (xtermRef.current) {
+          xtermRef.current.scrollToBottom();
+          isAtBottomRef.current = true;
         }
         scrollbackPendingRef.current = false;
         // Force an explicit resize to the PTY even if dimensions haven't
@@ -206,8 +218,12 @@ export function useTerminal(options: UseTerminalOptions) {
   // fit() only refits xterm visually. The debounced onResize callback
   // forwards dimensions to the PTY automatically when cols/rows change.
   const fit = useCallback(() => {
-    if (!fitAddonRef.current) return;
+    if (!fitAddonRef.current || !xtermRef.current) return;
+    const wasAtBottom = isAtBottomRef.current;
     fitAddonRef.current.fit();
+    if (wasAtBottom) {
+      xtermRef.current.scrollToBottom();
+    }
   }, []);
 
   const focus = useCallback(() => {
