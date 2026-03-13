@@ -46,7 +46,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
       [task.id],
     ),
   );
-  const hasCommand = !!(pendingCommandLabel ?? autoCommand);
+  const hasCommand = !!(pendingCommandLabel ?? (!isResuming && autoCommand));
   const initializingLabel = hasCommand ? 'Running command...'
     : isResuming ? 'Resuming...' : 'Initializing...';
 
