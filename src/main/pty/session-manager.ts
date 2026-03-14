@@ -117,6 +117,11 @@ export class SessionManager extends EventEmitter {
       const session = this.sessions.get(sessionId);
       if (!session || session.status !== 'running') continue;
 
+      // Skip sessions that haven't received usage data yet (still nucleating).
+      // During nucleation, Claude Code reads local context before making API calls.
+      // No hooks fire and no status.json exists, so the 45s threshold doesn't apply.
+      if (!this.usageCache.has(sessionId)) continue;
+
       const lastSignal = this.lastThinkingSignal.get(sessionId);
       if (lastSignal && (now - lastSignal) > STALE_THINKING_THRESHOLD_MS) {
         // If tools are in-flight, the agent is busy (not stale). Reset the

@@ -163,6 +163,7 @@ When idle is caused by a `PermissionRequest` (detail='permission'), a `permissio
 - A synthetic `idle` event with `detail: 'timeout'` is emitted to the activity log so the user can see why it went idle
 - Any subsequent event or usage update resets the 45-second timer
 - The timer only checks running sessions in the `thinking` state; idle sessions are ignored
+- **Nucleation guard:** Sessions that have never received usage data (no `usageCache` entry) are skipped by the stale timer. During nucleation, Claude Code reads local context before making API calls. No hooks fire and no `status.json` exists, so the 45s threshold would falsely trigger. Once the first API response arrives and `status.json` is written, the normal timer applies.
 
 ### Scenarios
 
@@ -179,6 +180,7 @@ When idle is caused by a `PermissionRequest` (detail='permission'), a `permissio
 11. **User presses Escape while subagents run:** `interrupted` always goes through, card shows idle immediately (correct)
 12. **Prompt fires while idle is deferred:** Pending flag cleared, no stale idle emitted when subagents finish (correct)
 13. **Nested subagents with deferred idle:** Idle only emits when ALL subagents finish (depth 0), not on intermediate stops (correct)
+14. **Long nucleation (no API call yet):** Session stays thinking throughout nucleation. Stale timer skipped because `usageCache` has no entry. Once first API response writes `status.json`, normal 45s timer applies (correct)
 
 ## Hook Configuration
 

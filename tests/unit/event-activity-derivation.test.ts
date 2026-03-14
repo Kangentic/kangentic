@@ -1391,8 +1391,11 @@ describe('Event-derived activity state', () => {
     });
 
     it('thinking with no signals for >45s transitions to idle', async () => {
-      const { session, eventsPath } = await spawnWithEventsFake();
+      const { session, eventsPath, statusPath } = await spawnWithEventsFake();
       const states = collectActivity(fakeManager, session.id);
+
+      // Populate usageCache so the stale timer applies (simulates post-nucleation)
+      triggerUsageUpdate(fakeManager, session.id, statusPath, 100, 50);
 
       // Transition to thinking via a complete tool cycle (start + end)
       appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
@@ -1408,8 +1411,11 @@ describe('Event-derived activity state', () => {
     });
 
     it('pending tool prevents stale thinking transition to idle', async () => {
-      const { session, eventsPath } = await spawnWithEventsFake();
+      const { session, eventsPath, statusPath } = await spawnWithEventsFake();
       const states = collectActivity(fakeManager, session.id);
+
+      // Populate usageCache so the stale timer applies (simulates post-nucleation)
+      triggerUsageUpdate(fakeManager, session.id, statusPath, 100, 50);
 
       // Start a long-running tool (no ToolEnd yet)
       appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Bash' });
@@ -1432,8 +1438,11 @@ describe('Event-derived activity state', () => {
     });
 
     it('event resets the stale thinking timer', async () => {
-      const { session, eventsPath } = await spawnWithEventsFake();
+      const { session, eventsPath, statusPath } = await spawnWithEventsFake();
       const states = collectActivity(fakeManager, session.id);
+
+      // Populate usageCache so the stale timer applies (simulates post-nucleation)
+      triggerUsageUpdate(fakeManager, session.id, statusPath, 100, 50);
 
       // Transition to thinking
       appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
@@ -1491,8 +1500,11 @@ describe('Event-derived activity state', () => {
     });
 
     it('normal thinking with steady signals stays thinking', async () => {
-      const { session, eventsPath } = await spawnWithEventsFake();
+      const { session, eventsPath, statusPath } = await spawnWithEventsFake();
       const states = collectActivity(fakeManager, session.id);
+
+      // Populate usageCache so the stale timer applies (simulates post-nucleation)
+      triggerUsageUpdate(fakeManager, session.id, statusPath, 100, 50);
 
       // Transition to thinking
       appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
@@ -1506,6 +1518,21 @@ describe('Event-derived activity state', () => {
       }
 
       // Should have stayed thinking throughout, no idle transitions
+      expect(fakeManager.getActivityCache()[session.id]).toBe('thinking');
+      expect(states).toEqual(['thinking']);
+    });
+
+    it('does not mark pre-usage sessions as stale during nucleation', async () => {
+      const { session, eventsPath } = await spawnWithEventsFake();
+      const states = collectActivity(fakeManager, session.id);
+
+      // Transition to thinking via prompt (simulates UserPromptSubmit during startup)
+      appendEvent(eventsPath, { ts: Date.now(), type: EventType.Prompt });
+      triggerEventRead(fakeManager, session.id);
+      expect(fakeManager.getActivityCache()[session.id]).toBe('thinking');
+
+      // Advance well past threshold -- should NOT go idle (no usage data yet = nucleating)
+      vi.advanceTimersByTime(120_000);
       expect(fakeManager.getActivityCache()[session.id]).toBe('thinking');
       expect(states).toEqual(['thinking']);
     });
