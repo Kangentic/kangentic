@@ -379,47 +379,33 @@
 @keyframes settings-panel-in  { from { transform: translateX(100%) } }
 @keyframes settings-panel-out { to   { transform: translateX(100%) } }
 
-/* ── Terminal loading overlay animations ── */
+/* ── Terminal loading overlay ── */
 
-/* Pulsing glow on the pill */
-@keyframes pill-glow {
-  0%, 100% {
-    box-shadow: 0 0 4px 0px color-mix(in srgb, var(--kng-accent) 40%, transparent);
-    border-color: color-mix(in srgb, var(--kng-accent) 20%, transparent);
-  }
-  50% {
-    box-shadow: 0 0 10px 1px color-mix(in srgb, var(--kng-accent) 50%, transparent);
-    border-color: color-mix(in srgb, var(--kng-accent) 35%, transparent);
-  }
-}
-
+/* Compositor-friendly glow: static box-shadow on ::before, animate opacity only.
+   Avoids paint-per-frame from animating box-shadow directly. */
 .terminal-overlay-glow {
-  animation: pill-glow 2s ease-in-out infinite;
-}
-
-/* Shimmer skeleton lines behind the pill */
-@keyframes shimmer-slide {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
-}
-
-.terminal-overlay-shimmer-line {
   position: relative;
-  overflow: hidden;
-  background: color-mix(in srgb, var(--kng-edge) 30%, transparent);
-  border-radius: 4px;
 }
 
-.terminal-overlay-shimmer-line::after {
+.terminal-overlay-glow::before {
   content: '';
   position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(in srgb, var(--kng-accent) 10%, transparent) 50%,
-    transparent 100%
-  );
-  animation: shimmer-slide 3s ease-in-out infinite;
+  inset: -1px;
+  border-radius: inherit;
+  box-shadow: 0 0 10px 1px color-mix(in srgb, var(--kng-accent) 50%, transparent);
+  border: 1px solid color-mix(in srgb, var(--kng-accent) 35%, transparent);
+  pointer-events: none;
+  animation: pill-glow-opacity 2s ease-in-out infinite;
+}
+
+@keyframes pill-glow-opacity {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+
+/* Pause animations during drag to reduce paint pressure */
+:has(.drag-overlay) .animate-pulse-subtle,
+:has(.drag-overlay) .animate-spin {
+  animation-play-state: paused;
 }
 

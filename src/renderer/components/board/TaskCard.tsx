@@ -20,13 +20,26 @@ interface TaskCardProps {
 
 const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete, summary }: TaskCardProps) {
   const [showDetail, setShowDetail] = useState(false);
-  const isHighlighted = useSessionStore((s) => {
-    const matched = s.sessions.find((sess) => sess.taskId === task.id);
-    return !!matched && matched.id === s.activeSessionId;
-  });
+
+  // Extract sessionId once -- all other selectors derive from this single .find()
+  const sessionId = useSessionStore(
+    useCallback(
+      (s: ReturnType<typeof useSessionStore.getState>) =>
+        s.sessions.find((session) => session.taskId === task.id)?.id,
+      [task.id],
+    ),
+  );
+  // Simple primitive comparison -- no array scan needed
+  const isHighlighted = useSessionStore(
+    useCallback(
+      (s: ReturnType<typeof useSessionStore.getState>) =>
+        !!sessionId && sessionId === s.activeSessionId,
+      [sessionId],
+    ),
+  );
   const openTaskId = useSessionStore((s) => s.openTaskId);
   const setOpenTaskId = useSessionStore((s) => s.setOpenTaskId);
-  const displayState = useSessionDisplayState(task);
+  const displayState = useSessionDisplayState(sessionId);
 
   // Derive contextual label for the initializing state (mirrors TerminalTab logic)
   const pendingCommandLabel = useSessionStore((s) => s.pendingCommandLabel[task.id] ?? null);
@@ -39,11 +52,12 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
       [task.swimlane_id],
     ),
   );
+  // Lookup by sessionId (already extracted) instead of re-scanning by taskId
   const isResuming = useSessionStore(
     useCallback(
       (s: ReturnType<typeof useSessionStore.getState>) =>
-        s.sessions.find((session) => session.taskId === task.id)?.resuming ?? false,
-      [task.id],
+        sessionId ? (s.sessions.find((session) => session.id === sessionId)?.resuming ?? false) : false,
+      [sessionId],
     ),
   );
   const hasCommand = !!(pendingCommandLabel ?? (!isResuming && autoCommand));
@@ -75,6 +89,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     transform: CSS.Transform.toString(transform) ?? 'translate3d(0, 0, 0)',
     transition: transition ?? 'transform 200ms ease',
     opacity: isDragging ? 0.4 : 1,
+    contain: 'layout style paint',
   };
 
   const handleClick = (e: React.MouseEvent) => {

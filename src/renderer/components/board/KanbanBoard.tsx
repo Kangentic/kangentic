@@ -556,7 +556,7 @@ export function KanbanBoard() {
           </div>
         </SortableContext>
 
-        <DragOverlay style={{ pointerEvents: 'none' }}>
+        <DragOverlay style={{ pointerEvents: 'none', willChange: 'transform' }}>
           {activeTask ? (
             <div className="drag-overlay" style={{ opacity: 0.9 }}>
               <TaskCard task={activeTask} isDragOverlay />

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { GripVertical, Pencil, Plus } from 'lucide-react';
@@ -18,7 +18,7 @@ export interface SwimlaneProps {
   isDropTarget?: boolean;
 }
 
-export function Swimlane({ swimlane, tasks, dragHandleProps, isDropTarget }: SwimlaneProps) {
+export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHandleProps, isDropTarget }: SwimlaneProps) {
   const [showNewTask, setShowNewTask] = useState(false);
   const [showEditColumn, setShowEditColumn] = useState(false);
   const { setNodeRef } = useDroppable({
@@ -169,4 +169,4 @@ export function Swimlane({ swimlane, tasks, dragHandleProps, isDropTarget }: Swi
       )}
     </div>
   );
-}
+});

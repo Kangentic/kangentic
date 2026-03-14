@@ -470,11 +470,11 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   // Targeted selector -- find by taskId (consistent with useSessionDisplayState).
   // task.session_id can be stale after HMR or optimistic moves; taskId is always reliable.
   const session = useSessionStore((s) =>
-    s.sessions.find((sess) => sess.taskId === task.id) ?? null
+    s.sessions.find((session) => session.taskId === task.id) ?? null
   );
 
-  // Centralized display state derivation
-  const displayState = useSessionDisplayState(task);
+  // Centralized display state derivation -- reuse session?.id to avoid redundant .find()
+  const displayState = useSessionDisplayState(session?.id);
   const isThinking = displayState.kind === 'running' && displayState.activity !== 'idle';
   const canToggle = displayState.kind === 'running' || displayState.kind === 'queued'
     || displayState.kind === 'initializing' || displayState.kind === 'suspended';

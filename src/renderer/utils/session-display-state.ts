@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useSessionStore } from '../stores/session-store';
-import type { Task, Session, SessionUsage, ActivityState, SessionDisplayState } from '../../shared/types';
+import type { Session, SessionUsage, ActivityState, SessionDisplayState } from '../../shared/types';
 
 /**
  * Pure derivation of display state from raw session data.
@@ -53,20 +53,32 @@ export function getSessionDisplayState(
 /**
  * React hook that derives SessionDisplayState from store data for a given task.
  * Subscribes to the minimal store slices needed to avoid unnecessary re-renders.
+ *
+ * Accepts an already-extracted sessionId to avoid redundant .find() calls.
+ * The caller is responsible for extracting sessionId from the store once.
  */
-export function useSessionDisplayState(task: Task): SessionDisplayState {
-  // Select only this task's session -- avoids re-rendering when unrelated sessions change.
-  // Zustand's Object.is check on the returned Session object is stable because the store
-  // replaces session objects only when their data actually changes.
-  const taskSession = useSessionStore((s) => s.sessions.find((sess) => sess.taskId === task.id));
-  const usage = useSessionStore((s) => {
-    const id = s.sessions.find((sess) => sess.taskId === task.id)?.id;
-    return id ? s.sessionUsage[id] : undefined;
-  });
-  const activity = useSessionStore((s) => {
-    const id = s.sessions.find((sess) => sess.taskId === task.id)?.id;
-    return id ? s.sessionActivity[id] : undefined;
-  });
+export function useSessionDisplayState(sessionId: string | undefined): SessionDisplayState {
+  const taskSession = useSessionStore(
+    useCallback(
+      (s: ReturnType<typeof useSessionStore.getState>) =>
+        s.sessions.find((session) => session.id === sessionId),
+      [sessionId],
+    ),
+  );
+  const usage = useSessionStore(
+    useCallback(
+      (s: ReturnType<typeof useSessionStore.getState>) =>
+        sessionId ? s.sessionUsage[sessionId] : undefined,
+      [sessionId],
+    ),
+  );
+  const activity = useSessionStore(
+    useCallback(
+      (s: ReturnType<typeof useSessionStore.getState>) =>
+        sessionId ? s.sessionActivity[sessionId] : undefined,
+      [sessionId],
+    ),
+  );
 
   return useMemo(
     () => getSessionDisplayState(taskSession, usage, activity),
