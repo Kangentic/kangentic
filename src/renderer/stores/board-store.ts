@@ -151,6 +151,16 @@ export const useBoardStore = create<BoardStore>((set, get) => ({
       return { tasks };
     });
 
+    // If the task is changing columns and the target has an auto_command, set
+    // pendingCommandLabel so the overlay shows the command name instead of
+    // generic "Resuming agent...". Skip within-column reorders.
+    const isColumnChange = prevTask?.swimlane_id !== input.targetSwimlaneId;
+    const targetLane = get().swimlanes.find((s) => s.id === input.targetSwimlaneId);
+    const targetAutoCommand = isColumnChange ? targetLane?.auto_command?.trim() : undefined;
+    if (targetAutoCommand && targetLane?.auto_spawn) {
+      useSessionStore.getState().setPendingCommandLabel(input.taskId, targetAutoCommand);
+    }
+
     try {
       await window.electronAPI.tasks.move(input);
       if (moveGeneration !== thisGen) return; // Skip stale reload
@@ -180,6 +190,9 @@ export const useBoardStore = create<BoardStore>((set, get) => ({
       }
     } catch (err) {
       if (moveGeneration !== thisGen) return; // Don't clobber newer state on error
+      if (targetAutoCommand) {
+        useSessionStore.getState().clearPendingCommandLabel(input.taskId);
+      }
       await get().loadBoard();
       useToastStore.getState().addToast({
         message: `Failed to move task: ${err instanceof Error ? err.message : 'Unknown error'}`,

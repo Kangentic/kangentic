@@ -7,6 +7,18 @@ import { ShimmerOverlay } from '../ShimmerOverlay';
 
 const FIT_DELAY_MS = 100;
 
+/** Priority: pending command (explicit transition/invoke) > resuming > auto_command > default. */
+function deriveOverlayLabel(
+  pendingCommandLabel: string | null,
+  isResuming: boolean,
+  autoCommand: string | null,
+): string {
+  if (pendingCommandLabel) return pendingCommandLabel;
+  if (isResuming) return 'Resuming agent...';
+  if (autoCommand) return autoCommand;
+  return 'Starting agent...';
+}
+
 interface TerminalTabProps {
   sessionId: string;
   taskId: string;
@@ -32,7 +44,7 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
     ),
   );
 
-  // Derive overlay label: pending command (manual invoke) > swimlane auto_command > resume state > generic fallback.
+  // Derive overlay label: pending command (set by moveTask or manual invoke) > resume state > swimlane auto_command > generic fallback.
   // pendingCommandLabel is keyed by taskId (a prop), so it resolves on the very first render
   // without waiting for syncSessions IPC. This prevents flicker during command invocations.
   const pendingCommandLabel = useSessionStore((s) => s.pendingCommandLabel[taskId] ?? null);
@@ -47,10 +59,7 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
       [sessionId],
     ),
   );
-  const overlayLabel = pendingCommandLabel
-    ?? autoCommand
-    ?? (isResuming ? 'Resuming agent...' : null)
-    ?? 'Starting agent...';
+  const overlayLabel = deriveOverlayLabel(pendingCommandLabel, isResuming, autoCommand);
 
   // Terminal is "ready" once startup noise has been cleared. Until then,
   // an overlay hides the raw command line and suppressDataRef prevents

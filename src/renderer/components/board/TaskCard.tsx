@@ -10,6 +10,16 @@ import { useSessionDisplayState } from '../../utils/session-display-state';
 import { getProgressColor } from '../../utils/color-lerp';
 import type { Task, SessionSummary } from '../../../shared/types';
 
+/** Priority: pending command (set by moveTask or manual invoke) > resuming > default. */
+function deriveInitializingLabel(
+  pendingCommandLabel: string | null,
+  isResuming: boolean,
+): string {
+  if (pendingCommandLabel) return 'Running command...';
+  if (isResuming) return 'Resuming...';
+  return 'Initializing...';
+}
+
 interface TaskCardProps {
   task: Task;
   isDragOverlay?: boolean;
@@ -60,9 +70,8 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
       [sessionId],
     ),
   );
-  const hasCommand = !!(pendingCommandLabel ?? autoCommand);
-  const initializingLabel = hasCommand ? 'Running command...'
-    : isResuming ? 'Resuming...' : 'Initializing...';
+  const hasCommand = !!pendingCommandLabel;
+  const initializingLabel = deriveInitializingLabel(pendingCommandLabel, isResuming);
 
   useEffect(() => {
     if (openTaskId === task.id) {
