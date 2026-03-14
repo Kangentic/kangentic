@@ -49,6 +49,7 @@ export function useTerminal(options: UseTerminalOptions) {
   const cleanupRef = useRef<(() => void) | null>(null);
   const scrollbackPendingRef = useRef(false);
   const isAtBottomRef = useRef(true);
+  const pendingFitRef = useRef(false);
   /** When true, onData writes are suppressed. Controlled by the caller
    *  (e.g. TerminalTab) to gate PTY output while a loading overlay is shown. */
   const suppressDataRef = useRef(false);
@@ -77,6 +78,17 @@ export function useTerminal(options: UseTerminalOptions) {
     terminal.onScroll(() => {
       const buffer = terminal.buffer.active;
       isAtBottomRef.current = buffer.viewportY >= buffer.baseY;
+
+      // Execute deferred fit when user scrolls back to bottom
+      if (isAtBottomRef.current && pendingFitRef.current) {
+        pendingFitRef.current = false;
+        requestAnimationFrame(() => {
+          if (fitAddonRef.current && xtermRef.current) {
+            fitAddonRef.current.fit();
+            xtermRef.current.scrollToBottom();
+          }
+        });
+      }
     });
 
     // Try WebGL renderer
@@ -219,25 +231,20 @@ export function useTerminal(options: UseTerminalOptions) {
   // forwards dimensions to the PTY automatically when cols/rows change.
   const fit = useCallback(() => {
     if (!fitAddonRef.current || !xtermRef.current) return;
-    const terminal = xtermRef.current;
-    const wasAtBottom = isAtBottomRef.current;
 
-    // Capture distance from bottom before reflow so we can restore position.
-    // Distance-from-bottom is reflow-stable: baseY may change when lines
-    // wrap/unwrap at a new column count, but the relative offset from the
-    // latest output remains semantically correct.
-    const buffer = terminal.buffer.active;
-    const distanceFromBottom = buffer.baseY - buffer.viewportY;
+    // When the user has scrolled up to read history, skip the refit.
+    // fitAddon.fit() triggers xterm's internal Buffer.resize() which
+    // modifies ydisp, and the deferred Viewport._sync() overwrites any
+    // scroll position we try to restore (xterm's _latestYDisp is not
+    // accessible via the public API). Instead, queue the fit for when
+    // the user scrolls back to the bottom.
+    if (!isAtBottomRef.current) {
+      pendingFitRef.current = true;
+      return;
+    }
 
     fitAddonRef.current.fit();
-
-    if (wasAtBottom) {
-      terminal.scrollToBottom();
-    } else if (distanceFromBottom > 0) {
-      const newBaseY = terminal.buffer.active.baseY;
-      const targetLine = Math.max(0, newBaseY - distanceFromBottom);
-      terminal.scrollToLine(targetLine);
-    }
+    xtermRef.current.scrollToBottom();
   }, []);
 
   const focus = useCallback(() => {
