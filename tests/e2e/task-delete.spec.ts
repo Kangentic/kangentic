@@ -168,9 +168,9 @@ test.describe('Task Delete', () => {
     // Verify the app is still alive (board is visible)
     await waitForBoard(page);
 
-    // Verify the task is gone from the board
-    const taskCards = page.locator('[data-testid="swimlane"]').locator(`text=${title}`);
-    await expect(taskCards).toHaveCount(0);
+    // Verify the task is gone from active columns (archived tasks appear in Done's "Completed" section)
+    const activeColumns = page.locator('[data-testid="swimlane"]:not([data-swimlane-name="Done"])');
+    await expect(activeColumns.locator(`text=${title}`)).toHaveCount(0);
 
     // Verify the task was archived (not deleted)
     const taskArchived = await page.evaluate(async (t) => {
@@ -211,9 +211,9 @@ test.describe('Task Delete', () => {
     // Verify app is still alive
     await waitForBoard(page);
 
-    // Verify task is gone from board
-    const taskCards = page.locator('[data-testid="swimlane"]').locator(`text=${title}`);
-    await expect(taskCards).toHaveCount(0);
+    // Verify task is gone from active columns (archived tasks appear in Done's "Completed" section)
+    const activeColumns = page.locator('[data-testid="swimlane"]:not([data-swimlane-name="Done"])');
+    await expect(activeColumns.locator(`text=${title}`)).toHaveCount(0);
   });
 
   test('delete task with queued session does not crash', async () => {

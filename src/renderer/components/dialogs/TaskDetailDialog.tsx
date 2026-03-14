@@ -1,4 +1,5 @@
 import React, { useState, useLayoutEffect, useRef, useEffect, useCallback, useMemo, type RefObject } from 'react';
+import { flushSync } from 'react-dom';
 import { X, Trash2, Pencil, Loader2, FolderGit2, FolderOpen, GitPullRequest, ArrowRightLeft, ChevronRight, ChevronLeft, MoreHorizontal, Archive, CirclePause, CirclePlay, Play, Image, Clock, SquareChevronRight, Search } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { SessionSummaryPanel } from './SessionSummaryPanel';
@@ -666,14 +667,21 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
     const doneLane = swimlanes.find((s) => s.role === 'done');
     if (!doneLane) return;
     const taskTitle = task.title;
-    // Close dialog and optimistically archive (no animation)
-    onClose();
-    archiveTask(task.id);
+    const taskId = task.id;
+    // Force-flush the dialog close so React unmounts the component tree
+    // before archiveTask mutates the Zustand store. Without flushSync,
+    // React 18 batches onClose() and archiveTask() together, and the
+    // concurrent reconciliation of an unmounting dialog against a
+    // modified store triggers "Rendered more hooks" errors.
+    flushSync(() => {
+      onClose();
+    });
+    archiveTask(taskId);
     // Persist via IPC -- TASK_MOVE to Done auto-archives in the DB
     const laneTasks = useBoardStore.getState().tasks.filter(
       (t) => t.swimlane_id === doneLane.id,
     );
-    await window.electronAPI.tasks.move({ taskId: task.id, targetSwimlaneId: doneLane.id, targetPosition: laneTasks.length });
+    await window.electronAPI.tasks.move({ taskId, targetSwimlaneId: doneLane.id, targetPosition: laneTasks.length });
     useToastStore.getState().addToast({
       message: `Archived "${taskTitle}"`,
       variant: 'info',
