@@ -92,7 +92,7 @@
   "shortcuts": [
     {
       "label": "TortoiseGit Commit",
-      "icon": "git-commit",
+      "icon": "git-commit-horizontal",
       "command": "TortoiseGitProc /command:commit /path:\"{{cwd}}\"",
       "display": "both",
       "id": "460b4921-4c86-45c3-be7a-b9397e98be02"

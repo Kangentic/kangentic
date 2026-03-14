@@ -33,7 +33,7 @@ const PRESETS: { label: string; action: Omit<ShortcutConfig, 'id'>; platform?: s
   { label: 'Fork', category: 'Git', action: { label: 'Fork', icon: 'git-fork', command: 'open -a Fork "{{cwd}}"' }, platform: 'darwin' },
   { label: 'GitKraken', category: 'Git', action: { label: 'GitKraken', icon: 'git-branch', command: 'gitkraken -p "{{cwd}}"' } },
   { label: 'TortoiseGit Log', category: 'Git', action: { label: 'TortoiseGit Log', icon: 'git-branch', command: 'TortoiseGitProc /command:log /path:"{{cwd}}"' }, platform: 'win32' },
-  { label: 'TortoiseGit Commit', category: 'Git', action: { label: 'TortoiseGit Commit', icon: 'git-commit', command: 'TortoiseGitProc /command:commit /path:"{{cwd}}"' }, platform: 'win32' },
+  { label: 'TortoiseGit Commit', category: 'Git', action: { label: 'TortoiseGit Commit', icon: 'git-commit-horizontal', command: 'TortoiseGitProc /command:commit /path:"{{cwd}}"' }, platform: 'win32' },
 
   // Files & Terminal (platform-specific)
   { label: 'File Explorer', category: 'Files & Terminal', action: { label: 'File Explorer', icon: 'folder-open', command: 'explorer "{{cwd}}"' }, platform: 'win32' },
