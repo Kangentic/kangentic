@@ -483,6 +483,17 @@ export class BoardConfigManager {
       (existing as BoardConfig)._modifiedBy = this.fingerprint;
     }
 
+    // Skip write if content hasn't meaningfully changed
+    const fileCheck = this.contentMatchesFile(filePath, existing);
+    if (fileCheck.matches) {
+      if (target === 'team') {
+        this.lastTeamContentHash = fileCheck.contentHash;
+      } else {
+        this.lastLocalContentHash = fileCheck.contentHash;
+      }
+      return;
+    }
+
     this.isWritingBack = true;
     try {
       const tmpPath = filePath + '.tmp.' + process.pid;
@@ -529,8 +540,6 @@ export class BoardConfigManager {
 
   private doWriteBack(): void {
     if (!this.activeProjectId || !this.activeProjectPath) return;
-
-    this.isWritingBack = true;
 
     try {
       const db = getProjectDb(this.activeProjectId);
@@ -609,8 +618,17 @@ export class BoardConfigManager {
       // Stamp fingerprint so the file watcher knows we wrote this
       boardConfig._modifiedBy = this.fingerprint;
 
-      // Atomic write: tmp file + rename
       const teamFilePath = path.join(this.activeProjectPath, TEAM_FILE);
+
+      // Skip write if content hasn't meaningfully changed
+      const fileCheck = this.contentMatchesFile(teamFilePath, boardConfig);
+      if (fileCheck.matches) {
+        this.lastTeamContentHash = fileCheck.contentHash;
+        return;
+      }
+
+      // Atomic write: tmp file + rename
+      this.isWritingBack = true;
       const tmpPath = teamFilePath + '.tmp.' + process.pid;
       const content = JSON.stringify(boardConfig, null, 2) + os.EOL;
       fs.writeFileSync(tmpPath, content);
@@ -621,9 +639,11 @@ export class BoardConfigManager {
       console.warn('[BOARD_CONFIG] Write-back failed:', error);
     } finally {
       // Keep isWritingBack true for a bit to suppress watcher re-entry
-      setTimeout(() => {
-        this.isWritingBack = false;
-      }, 1000);
+      if (this.isWritingBack) {
+        setTimeout(() => {
+          this.isWritingBack = false;
+        }, 1000);
+      }
     }
   }
 
@@ -648,6 +668,24 @@ export class BoardConfigManager {
   }
 
   // --- File change handler ---
+
+  /**
+   * Check if the serialized content matches what's already on disk,
+   * ignoring the _modifiedBy fingerprint field.
+   * Returns { matches, contentHash } so callers can seed the hash without a second read.
+   */
+  private contentMatchesFile(filePath: string, newConfig: Partial<BoardConfig>): { matches: boolean; contentHash: string | null } {
+    try {
+      const existingRaw = fs.readFileSync(filePath, 'utf-8');
+      const existingConfig = JSON.parse(existingRaw) as Partial<BoardConfig>;
+      const { _modifiedBy: _existingFingerprint, ...existingRest } = existingConfig as BoardConfig;
+      const { _modifiedBy: _newFingerprint, ...newRest } = newConfig as BoardConfig;
+      const contentHash = crypto.createHash('sha256').update(existingRaw).digest('hex');
+      return { matches: JSON.stringify(existingRest) === JSON.stringify(newRest), contentHash };
+    } catch {
+      return { matches: false, contentHash: null };
+    }
+  }
 
   private hashFileContent(filePath: string): string | null {
     try {
