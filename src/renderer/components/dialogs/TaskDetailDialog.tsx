@@ -677,11 +677,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
       }
     }
     await updateTask(payload);
-    if (!session) {
-      onClose();
-    } else {
-      setIsEditing(false);
-    }
+    onClose();
   };
 
   const archiveTask = useBoardStore((s) => s.archiveTask);
