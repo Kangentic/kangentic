@@ -212,6 +212,7 @@ export async function handleTaskMove(
       const record = sessionRepo.getLatestForTask(task.id);
       if (record && record.claude_session_id
           && (record.status === 'running' || record.status === 'exited')) {
+        captureSessionMetrics(context.sessionManager, sessionRepo, task.session_id, record.id);
         sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: new Date().toISOString(), suspended_by: 'system' });
       }
       context.sessionManager.suspend(task.session_id);
@@ -236,6 +237,7 @@ export async function handleTaskMove(
       const sessionRecord = sessionRepo.getLatestForTask(task.id);
       if (sessionRecord && sessionRecord.claude_session_id
           && (sessionRecord.status === 'running' || sessionRecord.status === 'exited')) {
+        captureSessionMetrics(context.sessionManager, sessionRepo, task.session_id, sessionRecord.id);
         sessionRepo.updateStatus(sessionRecord.id, 'suspended', {
           suspended_at: new Date().toISOString(),
         });
