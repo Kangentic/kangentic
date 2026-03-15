@@ -92,6 +92,11 @@ export function AppLayout() {
                 className={`flex-shrink-0 overflow-hidden ${
                   terminal.ready && !terminal.isResizing ? 'transition-[height] duration-200 ease-in-out' : ''
                 } ${terminal.isResizing || sidebar.isResizing ? 'pointer-events-none' : ''}`}
+                onTransitionEnd={(event) => {
+                  if (event.target === event.currentTarget && event.propertyName === 'height') {
+                    terminal.handleTransitionEnd();
+                  }
+                }}
               >
                 <TerminalPanel
                   collapsed={terminal.collapsed}

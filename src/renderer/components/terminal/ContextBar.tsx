@@ -123,7 +123,7 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <div className="flex-1 h-1.5 bg-surface-hover rounded-full overflow-hidden" title={barTooltip}>
             <div
-              className="h-full rounded-full transition-all duration-300"
+              className="h-full rounded-full transition-[width,background-color] duration-300"
               style={{ width: `${Math.min(pct, 100)}%`, backgroundColor: progressColor }}
             />
           </div>

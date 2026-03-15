@@ -66,7 +66,7 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
   // PTY output from accumulating in xterm behind the overlay.
   const [terminalReady, setTerminalReady] = useState(() => hasUsage);
 
-  const { terminalRef, initTerminal, fit, focus, scrollbackPending, suppressDataRef } = useTerminal({
+  const { terminalRef, initTerminal, fit, forceFit, focus, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
@@ -129,6 +129,20 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
     }
   }, [hasUsage, terminalReady, taskId, pendingCommandLabel]);
 
+  // When the overlay lifts (terminalReady transitions false -> true), reload
+  // scrollback from the PTY buffer. While the overlay was showing, all PTY
+  // output (including the TUI's initial full-screen draw) was suppressed.
+  // The PTY buffer still contains that output, so re-fetching it populates
+  // the terminal with the current TUI state.
+  const wasReadyRef = useRef(terminalReady);
+  useEffect(() => {
+    const wasReady = wasReadyRef.current;
+    wasReadyRef.current = terminalReady;
+    if (terminalReady && !wasReady && initialized.current) {
+      reloadScrollback();
+    }
+  }, [terminalReady, reloadScrollback]);
+
   // If session exits (Ctrl+C, crash, etc.) before usage arrives, clear the overlay
   // so the terminal isn't stuck behind the shimmer indefinitely.
   useEffect(() => {
@@ -173,7 +187,8 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
     // Calling fit() on every frame during a drag changes xterm's row count
     // repeatedly; each shrink pushes viewport lines into scrollback, and
     // if the 5000-line scrollback buffer is full the oldest lines are
-    // permanently evicted.  Deferring to mouseup avoids this.
+    // permanently evicted. Recovery after drag-end is handled by
+    // handlePanelResize (terminal-panel-resize event from onMouseUp).
     const handleDragStart = () => { draggingRef.current = true; };
     const handleDragEnd = () => { draggingRef.current = false; };
     window.addEventListener('terminal-panel-drag-start', handleDragStart);
@@ -190,7 +205,8 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
 
     let pendingRaf = 0;
     const observer = new ResizeObserver(() => {
-      if (!initialized.current || draggingRef.current) return;
+      if (!initialized.current) return;
+      if (draggingRef.current) return;
       if (pendingRaf) cancelAnimationFrame(pendingRaf);
       pendingRaf = requestAnimationFrame(() => {
         pendingRaf = 0;
@@ -201,6 +217,8 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
 
     // Refit after panel drag / resize events. Uses double-rAF so the fit
     // runs after React commits layout changes and the browser paints.
+    // forceFit bypasses the isAtBottomRef guard because panel expand/collapse
+    // and drag resize are deliberate layout changes that must refit.
     let panelRaf = 0;
     const handlePanelResize = () => {
       if (!initialized.current) return;
@@ -208,7 +226,7 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
       panelRaf = requestAnimationFrame(() => {
         panelRaf = requestAnimationFrame(() => {
           panelRaf = 0;
-          fit();
+          forceFit();
         });
       });
     };
@@ -224,7 +242,7 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
       window.removeEventListener('terminal-panel-drag-start', handleDragStart);
       window.removeEventListener('terminal-panel-drag-end', handleDragEnd);
     };
-  }, [active, fit, focus]);
+  }, [active, fit, forceFit, focus]);
 
   return (
     <div className="h-full w-full bg-surface relative">

@@ -13,20 +13,22 @@ export interface TerminalResizeState {
   contentColRef: React.RefObject<HTMLDivElement | null>;
   onToggleCollapse: () => void;
   onResizeStart: (e: React.MouseEvent) => void;
+  handleTransitionEnd: () => void;
 }
 
 export function useTerminalResize(config: AppConfig): TerminalResizeState {
   const [height, setHeight] = useState(config.terminal.panelHeight);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(config.terminal.panelCollapsed ?? false);
   const [isResizing, setIsResizing] = useState(false);
-  const [showContent, setShowContent] = useState(true);
+  const [showContent, setShowContent] = useState(!(config.terminal.panelCollapsed ?? false));
   const [ready, setReady] = useState(false);
 
   const latestHeightRef = useRef(height);
+  const terminalConfigRef = useRef(config.terminal);
+  terminalConfigRef.current = config.terminal;
   const availableHeightRef = useRef(0);
   const contentColRef = useRef<HTMLDivElement>(null);
   const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Sync from config on load
   useEffect(() => {
@@ -46,7 +48,6 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
   useEffect(() => {
     return () => {
       if (contentTimerRef.current) clearTimeout(contentTimerRef.current);
-      if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
     };
   }, []);
 
@@ -89,15 +90,13 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
       clearTimeout(contentTimerRef.current);
       contentTimerRef.current = null;
     }
-    if (resizeTimerRef.current) {
-      clearTimeout(resizeTimerRef.current);
-      resizeTimerRef.current = null;
-    }
-
     setCollapsed((prev) => {
+      const newCollapsed = !prev;
+
       if (prev) {
-        // Expanding: show content immediately so it renders while height grows
-        setShowContent(true);
+        // Expanding: DON'T show content yet. Wait for transitionend so
+        // TerminalTab initializes at the final container height.
+        // handleTransitionEnd will set showContent(true).
       } else {
         // Collapsing: delay hiding content until animation completes
         contentTimerRef.current = setTimeout(() => {
@@ -106,15 +105,23 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
         }, 200);
       }
 
-      // Dispatch resize after animation completes
-      resizeTimerRef.current = setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
-        resizeTimerRef.current = null;
-      }, 220);
+      // Persist collapsed state
+      window.electronAPI.config.set({
+        terminal: { ...terminalConfigRef.current, panelCollapsed: newCollapsed },
+      });
 
-      return !prev;
+      return newCollapsed;
     });
   }, []);
+
+  const handleTransitionEnd = useCallback(() => {
+    // When expanding, mount content NOW (container has final height).
+    if (!collapsed) {
+      setShowContent(true);
+    }
+    // Always dispatch resize for forceFit.
+    window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
+  }, [collapsed]);
 
   const onResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -137,15 +144,24 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
     const onMouseUp = () => {
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
-      setIsResizing(false);
+      // Do NOT setIsResizing(false) yet. Keeps transition class OFF so no
+      // CSS animation can corrupt fitAddon.fit() measurements.
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
       window.electronAPI.config.set({
         terminal: { ...config.terminal, panelHeight: latestHeightRef.current },
       });
       window.dispatchEvent(new CustomEvent('terminal-panel-drag-end'));
+      // Dispatch synchronously. handlePanelResize schedules double-rAF then forceFit.
+      window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
+      // Re-enable transitions AFTER forceFit measures stable dimensions.
+      // forceFit runs at double-rAF (frame N+2). Wait until frame N+3.
       requestAnimationFrame(() => {
-        window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            setIsResizing(false);
+          });
+        });
       });
     };
 
@@ -153,5 +169,5 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
     document.addEventListener('mouseup', onMouseUp);
   }, [height, config.terminal, clampHeight]);
 
-  return { height, collapsed, isResizing, showContent, ready, contentColRef, onToggleCollapse, onResizeStart };
+  return { height, collapsed, isResizing, showContent, ready, contentColRef, onToggleCollapse, onResizeStart, handleTransitionEnd };
 }

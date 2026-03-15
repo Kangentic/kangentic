@@ -49,7 +49,6 @@ export function useTerminal(options: UseTerminalOptions) {
   const cleanupRef = useRef<(() => void) | null>(null);
   const scrollbackPendingRef = useRef(false);
   const isAtBottomRef = useRef(true);
-  const pendingFitRef = useRef(false);
   /** When true, onData writes are suppressed. Controlled by the caller
    *  (e.g. TerminalTab) to gate PTY output while a loading overlay is shown. */
   const suppressDataRef = useRef(false);
@@ -78,17 +77,6 @@ export function useTerminal(options: UseTerminalOptions) {
     terminal.onScroll(() => {
       const buffer = terminal.buffer.active;
       isAtBottomRef.current = buffer.viewportY >= buffer.baseY;
-
-      // Execute deferred fit when user scrolls back to bottom
-      if (isAtBottomRef.current && pendingFitRef.current) {
-        pendingFitRef.current = false;
-        requestAnimationFrame(() => {
-          if (fitAddonRef.current && xtermRef.current) {
-            fitAddonRef.current.fit();
-            xtermRef.current.scrollToBottom();
-          }
-        });
-      }
     });
 
     // Try WebGL renderer
@@ -129,29 +117,38 @@ export function useTerminal(options: UseTerminalOptions) {
       scrollbackPendingRef.current = true;
       const suppressScrollback = suppressDataRef.current;
       window.electronAPI.sessions.getScrollback(options.sessionId).then((scrollback) => {
-        if (scrollback && xtermRef.current && !suppressScrollback) {
-          xtermRef.current.write(scrollback);
-        }
-        // Now fit -- xterm reflows all content to the actual container size,
-        // and onResize fires to sync the PTY to the correct dimensions.
-        if (fitAddonRef.current) {
-          fitAddonRef.current.fit();
-        }
-        // Pin to bottom after scrollback replay -- the terminal should always
-        // start at the latest output when re-created (e.g. dialog handoff).
-        if (xtermRef.current) {
-          xtermRef.current.scrollToBottom();
-          isAtBottomRef.current = true;
-        }
-        scrollbackPendingRef.current = false;
-        // Force an explicit resize to the PTY even if dimensions haven't
-        // changed, so the running process (Claude Code's TUI) re-renders.
-        requestAnimationFrame(() => {
-          if (xtermRef.current && options.sessionId) {
-            const { cols, rows } = xtermRef.current;
-            window.electronAPI.sessions.resize(options.sessionId, cols, rows);
+        // xterm.write() is async (queued). Post-write logic (fit, scroll,
+        // PTY resize) must run inside the write callback so it executes
+        // AFTER xterm processes the data. Otherwise scrollToBottom() runs
+        // on an empty buffer, and the later onScroll from the processed
+        // write sets isAtBottomRef = false, blocking subsequent fit() calls
+        // from ResizeObserver (e.g. after CSS panel-expand transitions).
+        const afterWrite = () => {
+          // Fit to actual container size; onResize fires to sync PTY.
+          if (fitAddonRef.current) {
+            fitAddonRef.current.fit();
           }
-        });
+          // Pin to bottom after scrollback replay -- terminal should always
+          // start at the latest output when re-created (e.g. dialog handoff).
+          if (xtermRef.current) {
+            xtermRef.current.scrollToBottom();
+            isAtBottomRef.current = true;
+          }
+          scrollbackPendingRef.current = false;
+          // Force an explicit resize to the PTY even if dimensions haven't
+          // changed, so the running process (Claude Code's TUI) re-renders.
+          requestAnimationFrame(() => {
+            if (xtermRef.current && options.sessionId) {
+              const { cols, rows } = xtermRef.current;
+              window.electronAPI.sessions.resize(options.sessionId, cols, rows);
+            }
+          });
+        };
+        if (scrollback && xtermRef.current && !suppressScrollback) {
+          xtermRef.current.write(scrollback, afterWrite);
+        } else {
+          afterWrite();
+        }
       });
     } else {
       // No session -- just fit immediately
@@ -231,21 +228,62 @@ export function useTerminal(options: UseTerminalOptions) {
   // forwards dimensions to the PTY automatically when cols/rows change.
   const fit = useCallback(() => {
     if (!fitAddonRef.current || !xtermRef.current) return;
-
-    // When the user has scrolled up to read history, skip the refit.
-    // fitAddon.fit() triggers xterm's internal Buffer.resize() which
-    // modifies ydisp, and the deferred Viewport._sync() overwrites any
-    // scroll position we try to restore (xterm's _latestYDisp is not
-    // accessible via the public API). Instead, queue the fit for when
-    // the user scrolls back to the bottom.
-    if (!isAtBottomRef.current) {
-      pendingFitRef.current = true;
-      return;
+    const wasAtBottom = isAtBottomRef.current;
+    fitAddonRef.current.fit();
+    if (wasAtBottom) {
+      xtermRef.current.scrollToBottom();
     }
+  }, []);
 
+  // Unconditional fit + scroll-to-bottom. Used for deliberate layout
+  // changes (panel expand/collapse, drag resize) where the terminal
+  // should refit and pin to the latest output.
+  const forceFit = useCallback(() => {
+    if (!fitAddonRef.current || !xtermRef.current) return;
+    // FitAddon.fit() has a same-dimension guard: if terminal.rows/cols
+    // already match the proposed dimensions, it skips resize entirely
+    // (no renderService.clear(), no terminal.resize(), no visual update).
+    // Always perturb rows so fit() sees a dimension mismatch and runs
+    // its full renderService.clear() + terminal.resize() path. This
+    // handles both same-dimension cases (where the guard would skip)
+    // and growing cases (where the WebGL canvas may not update without
+    // a clear). Both resize calls are synchronous and batch into one
+    // browser paint, so no visual flash occurs.
+    const dims = fitAddonRef.current.proposeDimensions();
+    if (dims && !isNaN(dims.cols) && !isNaN(dims.rows)) {
+      xtermRef.current.resize(dims.cols, Math.max(1, dims.rows - 1));
+    }
     fitAddonRef.current.fit();
     xtermRef.current.scrollToBottom();
+    isAtBottomRef.current = true;
   }, []);
+
+  // Re-fetch scrollback from the PTY and write it to xterm. Called when
+  // the loading overlay lifts so that suppressed TUI output is recovered.
+  const reloadScrollback = useCallback(() => {
+    if (!options.sessionId || !xtermRef.current) return;
+    scrollbackPendingRef.current = true;
+    window.electronAPI.sessions.getScrollback(options.sessionId).then((scrollback) => {
+      if (scrollback && xtermRef.current) {
+        xtermRef.current.write(scrollback, () => {
+          if (fitAddonRef.current) fitAddonRef.current.fit();
+          if (xtermRef.current) {
+            xtermRef.current.scrollToBottom();
+            isAtBottomRef.current = true;
+          }
+          scrollbackPendingRef.current = false;
+          requestAnimationFrame(() => {
+            if (xtermRef.current && options.sessionId) {
+              const { cols, rows } = xtermRef.current;
+              window.electronAPI.sessions.resize(options.sessionId, cols, rows);
+            }
+          });
+        });
+      } else {
+        scrollbackPendingRef.current = false;
+      }
+    });
+  }, [options.sessionId]);
 
   const focus = useCallback(() => {
     xtermRef.current?.focus();
@@ -255,7 +293,9 @@ export function useTerminal(options: UseTerminalOptions) {
     terminalRef,
     initTerminal,
     fit,
+    forceFit,
     focus,
+    reloadScrollback,
     scrollbackPending: scrollbackPendingRef,
     suppressDataRef,
   };

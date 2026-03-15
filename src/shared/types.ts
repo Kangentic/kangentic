@@ -372,6 +372,7 @@ export interface AppConfig {
     fontSize: number;
     showPreview: boolean;
     panelHeight: number; // persisted terminal panel height in px
+    panelCollapsed: boolean; // persisted collapsed state
     scrollbackLines: number;
     cursorStyle: 'block' | 'underline' | 'bar';
   };
@@ -428,6 +429,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     fontSize: 14,
     showPreview: false,
     panelHeight: 250,
+    panelCollapsed: false,
     scrollbackLines: 5000,
     cursorStyle: 'block',
   },

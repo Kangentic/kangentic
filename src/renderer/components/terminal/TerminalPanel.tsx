@@ -86,7 +86,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
     <div className="h-full flex flex-col bg-surface">
       {/* Tab bar */}
       <div className="flex items-center border-b border-edge flex-shrink-0">
-        <div className="flex items-center overflow-x-auto flex-1 min-w-0">
+        <div className="flex items-center overflow-x-auto flex-shrink min-w-0">
           {/* Activity tab -- visible when 1+ sessions */}
           {showActivityTab && (
             <button
@@ -128,6 +128,15 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
             );
           })}
         </div>
+
+        {/* Clickable spacer fills remaining tab bar space */}
+        {onToggleCollapse && (
+          <div
+            className="flex-1 self-stretch cursor-pointer hover:bg-surface-raised/30 transition-colors"
+            onClick={onToggleCollapse}
+            title={collapsed ? 'Expand terminal panel' : 'Collapse terminal panel'}
+          />
+        )}
 
         {/* Collapse / expand toggle */}
         {onToggleCollapse && (
