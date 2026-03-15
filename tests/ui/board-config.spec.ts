@@ -60,7 +60,7 @@ test.describe('Ghost Columns', () => {
     await expect(ghostColumn).toBeVisible();
 
     // "Add task" button should not exist inside ghost column
-    const addButton = ghostColumn.locator('text=+ Add task');
+    const addButton = ghostColumn.locator('text=Add task');
     await expect(addButton).toHaveCount(0);
 
     // "Removed from team config" text should be present

@@ -1,23 +1,16 @@
-import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Search, Pencil, ArrowDownToLine, ArrowUpDown } from 'lucide-react';
+import { Search, Pencil, ArrowDownToLine, Maximize2, ClipboardList } from 'lucide-react';
 import { TaskCard } from './TaskCard';
 import { EditColumnDialog } from '../dialogs/EditColumnDialog';
+import { CompletedTasksDialog } from '../dialogs/CompletedTasksDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { getSwimlaneIcon } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { Pill } from '../Pill';
 import type { Swimlane as SwimlaneType, Task, SessionSummary } from '../../../shared/types';
-
-type SortKey = 'date' | 'cost' | 'tokens' | 'duration';
-const SORT_OPTIONS: { key: SortKey; label: string }[] = [
-  { key: 'date', label: 'Date' },
-  { key: 'cost', label: 'Cost' },
-  { key: 'tokens', label: 'Tokens' },
-  { key: 'duration', label: 'Duration' },
-];
 
 export interface DoneSwimlaneProps {
   swimlane: SwimlaneType;
@@ -29,17 +22,15 @@ export function DoneSwimlane({ swimlane, tasks }: DoneSwimlaneProps) {
   const [search, setSearch] = useState('');
   const [showEditColumn, setShowEditColumn] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [sortKey, setSortKey] = useState<SortKey>('date');
-  const [showSortDropdown, setShowSortDropdown] = useState(false);
-  const sortDropdownRef = useRef<HTMLDivElement>(null);
+  const [showCompletedDialog, setShowCompletedDialog] = useState(false);
   const [summaries, setSummaries] = useState<Record<string, SessionSummary>>({});
 
-  const archivedTasks = useBoardStore((s) => s.archivedTasks);
-  const deleteArchivedTask = useBoardStore((s) => s.deleteArchivedTask);
-  const recentlyArchivedId = useBoardStore((s) => s.recentlyArchivedId);
-  const clearRecentlyArchived = useBoardStore((s) => s.clearRecentlyArchived);
-  const skipDeleteConfirm = useConfigStore((s) => s.config.skipDeleteConfirm);
-  const updateConfig = useConfigStore((s) => s.updateConfig);
+  const archivedTasks = useBoardStore((state) => state.archivedTasks);
+  const deleteArchivedTask = useBoardStore((state) => state.deleteArchivedTask);
+  const recentlyArchivedId = useBoardStore((state) => state.recentlyArchivedId);
+  const clearRecentlyArchived = useBoardStore((state) => state.clearRecentlyArchived);
+  const skipDeleteConfirm = useConfigStore((state) => state.config.skipDeleteConfirm);
+  const updateConfig = useConfigStore((state) => state.updateConfig);
 
   // Fetch batch summaries (always, not gated on expand)
   useEffect(() => {
@@ -54,18 +45,6 @@ export function DoneSwimlane({ swimlane, tasks }: DoneSwimlaneProps) {
     })();
     return () => { cancelled = true; };
   }, [archivedTasks.length]);
-
-  // Close sort dropdown on click outside
-  useEffect(() => {
-    if (!showSortDropdown) return;
-    const handleClick = (event: MouseEvent) => {
-      if (sortDropdownRef.current && !sortDropdownRef.current.contains(event.target as Node)) {
-        setShowSortDropdown(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick, true);
-    return () => document.removeEventListener('mousedown', handleClick, true);
-  }, [showSortDropdown]);
 
   const handleDeleteRequest = useCallback((taskId: string) => {
     if (skipDeleteConfirm) {
@@ -91,33 +70,12 @@ export function DoneSwimlane({ swimlane, tasks }: DoneSwimlaneProps) {
   });
 
   const filteredArchived = useMemo(() => {
-    let filtered = archivedTasks;
-    if (search.trim()) {
-      const query = search.toLowerCase();
-      filtered = filtered.filter(
-        (t) => t.title.toLowerCase().includes(query) || t.description.toLowerCase().includes(query),
-      );
-    }
-    if (sortKey === 'date') return filtered; // default order (archived_at DESC)
-    return [...filtered].sort((taskA, taskB) => {
-      const summaryA = summaries[taskA.id];
-      const summaryB = summaries[taskB.id];
-      // Tasks without summaries sort to bottom
-      if (!summaryA && !summaryB) return 0;
-      if (!summaryA) return 1;
-      if (!summaryB) return -1;
-      switch (sortKey) {
-        case 'cost': return summaryB.totalCostUsd - summaryA.totalCostUsd;
-        case 'tokens': return (summaryB.totalInputTokens + summaryB.totalOutputTokens) - (summaryA.totalInputTokens + summaryA.totalOutputTokens);
-        case 'duration': {
-          const durationA = summaryA.exitedAt ? new Date(summaryA.exitedAt).getTime() - new Date(summaryA.taskCreatedAt).getTime() : 0;
-          const durationB = summaryB.exitedAt ? new Date(summaryB.exitedAt).getTime() - new Date(summaryB.taskCreatedAt).getTime() : 0;
-          return durationB - durationA;
-        }
-        default: return 0;
-      }
-    });
-  }, [archivedTasks, search, sortKey, summaries]);
+    if (!search.trim()) return archivedTasks;
+    const query = search.toLowerCase();
+    return archivedTasks.filter(
+      (task) => task.title.toLowerCase().includes(query) || task.description.toLowerCase().includes(query),
+    );
+  }, [archivedTasks, search]);
 
   return (
     <div
@@ -203,56 +161,36 @@ export function DoneSwimlane({ swimlane, tasks }: DoneSwimlaneProps) {
       </div>
 
       {/* Completed tasks section -- always visible */}
-      <div className="flex-1 min-h-0 flex flex-col px-2 pb-2 border-t border-edge/50">
+      <div className="flex-1 min-h-0 flex flex-col gap-1 px-2 py-2 border-t border-edge/50">
         {/* Section header */}
-        <div className="pt-2.5 pb-1 px-0.5 flex-shrink-0">
-          <span className="text-sm font-medium text-fg-muted">
+        <button
+          type="button"
+          onClick={archivedTasks.length > 0 ? () => setShowCompletedDialog(true) : undefined}
+          disabled={archivedTasks.length === 0}
+          className={`py-2 px-2.5 flex-shrink-0 flex items-center justify-between rounded-md transition-colors w-full text-left border ${archivedTasks.length > 0 ? 'border-edge/30 bg-surface-hover/20 hover:bg-surface-hover/40 hover:border-edge/50 cursor-pointer group' : 'border-transparent'}`}
+          data-testid="expand-completed-btn"
+        >
+          <span className="flex items-center gap-1.5 text-sm font-medium text-fg-muted">
+            <ClipboardList size={14} />
             Completed ({archivedTasks.length})
           </span>
-        </div>
+          {archivedTasks.length > 0 && (
+            <Maximize2 size={14} className="text-fg-disabled group-hover:text-fg-muted transition-colors" />
+          )}
+        </button>
 
-        {/* Search + Sort row (only when 3+ archived tasks) */}
+        {/* Search row */}
         {archivedTasks.length > 0 && (
-          <div className="flex items-center gap-1.5 pb-1.5 flex-shrink-0">
-            <div className="relative flex-1">
-              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-fg-disabled" />
+          <div className="flex-shrink-0">
+            <div className="relative">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-disabled" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search..."
-                className="w-full bg-surface/50 border border-edge/50 rounded text-xs text-fg-tertiary placeholder-fg-disabled pl-7 pr-2 py-1.5 outline-none focus:border-edge-input"
+                className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg-tertiary placeholder-fg-disabled pl-8 pr-2 py-2 outline-none focus:border-edge-input"
               />
-            </div>
-            <div className="relative" ref={sortDropdownRef}>
-              <button
-                type="button"
-                onClick={() => setShowSortDropdown(!showSortDropdown)}
-                className="flex items-center gap-1 px-1.5 py-1.5 text-fg-disabled hover:text-fg-muted bg-surface/50 border border-edge/50 rounded text-xs transition-colors"
-                title={`Sort by ${SORT_OPTIONS.find((option) => option.key === sortKey)?.label}`}
-                data-testid="sort-dropdown-trigger"
-              >
-                <ArrowUpDown size={12} />
-              </button>
-              {showSortDropdown && (
-                <div className="absolute right-0 top-full mt-1 min-w-[100px] bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 py-1">
-                  {SORT_OPTIONS.map((option) => (
-                    <button
-                      key={option.key}
-                      type="button"
-                      onClick={() => { setSortKey(option.key); setShowSortDropdown(false); }}
-                      className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
-                        sortKey === option.key
-                          ? 'text-accent-fg bg-accent/10'
-                          : 'text-fg-tertiary hover:bg-surface-hover hover:text-fg'
-                      }`}
-                      data-testid={`sort-option-${option.key}`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              )}
             </div>
           </div>
         )}
@@ -307,6 +245,13 @@ export function DoneSwimlane({ swimlane, tasks }: DoneSwimlaneProps) {
         <EditColumnDialog
           swimlane={swimlane}
           onClose={() => setShowEditColumn(false)}
+        />
+      )}
+
+      {showCompletedDialog && (
+        <CompletedTasksDialog
+          onClose={() => setShowCompletedDialog(false)}
+          summaries={summaries}
         />
       )}
     </div>

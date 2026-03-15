@@ -127,7 +127,7 @@ test.describe('Task CRUD', () => {
 
   test('can create a task in Backlog', async () => {
     const backlog = page.locator('[data-swimlane-name="Backlog"]');
-    await backlog.locator('text=+ Add task').click();
+    await backlog.locator('text=Add task').click();
 
     await page.locator('input[placeholder="Task title"]').fill('Test Task Alpha');
     await page.locator('.fixed textarea').fill('Description for alpha task');
@@ -170,7 +170,7 @@ test.describe('Task CRUD', () => {
 
   test('can create a second task', async () => {
     const backlog = page.locator('[data-swimlane-name="Backlog"]');
-    await backlog.locator('text=+ Add task').click();
+    await backlog.locator('text=Add task').click();
 
     await page.locator('input[placeholder="Task title"]').fill('Test Task Beta');
     await page.locator('button:has-text("Create")').click();
@@ -227,7 +227,7 @@ test.describe('Task CRUD', () => {
   test('can delete a task', async () => {
     // Create a temp task to delete
     const backlog = page.locator('[data-swimlane-name="Backlog"]');
-    await backlog.locator('text=+ Add task').click();
+    await backlog.locator('text=Add task').click();
     await page.locator('input[placeholder="Task title"]').fill('Task To Delete');
     await page.locator('button:has-text("Create")').click();
     await expect(taskCard('Task To Delete')).toBeVisible({ timeout: 3000 });
@@ -249,7 +249,7 @@ test.describe('Task CRUD', () => {
   test('edit mode footer shows Delete for backlog task', async () => {
     // Create a fresh task for this test
     const backlog = page.locator('[data-swimlane-name="Backlog"]');
-    await backlog.locator('text=+ Add task').click();
+    await backlog.locator('text=Add task').click();
     await page.locator('input[placeholder="Task title"]').fill('Test Task Gamma');
     await page.locator('button:has-text("Create")').click();
     await expect(taskCard('Test Task Gamma')).toBeVisible({ timeout: 3000 });

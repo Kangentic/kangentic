@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { GripVertical, Pencil, Plus } from 'lucide-react';
+import { GripVertical, Pencil, Plus, ClipboardPlus } from 'lucide-react';
 import { TaskCard } from './TaskCard';
 import { NewTaskDialog } from '../dialogs/NewTaskDialog';
 import { EditColumnDialog } from '../dialogs/EditColumnDialog';
@@ -138,14 +138,14 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
 
       {/* Add task button (hidden for ghost columns) */}
       {!isGhost && (
-        <div className="p-2 border-t border-edge/50">
-          <button
-            onClick={() => setShowNewTask(true)}
-            className="w-full text-sm text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover/50 rounded px-2 py-1 transition-colors text-left"
-          >
-            + Add task
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setShowNewTask(true)}
+          className="flex items-center gap-1.5 px-3 py-2.5 border-t border-dashed border-edge/40 text-sm text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover/30 transition-colors w-full text-left cursor-pointer"
+        >
+          <ClipboardPlus size={16} />
+          Add task
+        </button>
       )}
       {isGhost && (
         <div className="px-3 py-2 border-t border-edge/50">

@@ -300,30 +300,6 @@ test.describe('Done Column', () => {
     }
   });
 
-  test('sort dropdown changes task order', async () => {
-    const { browser, page } = await launchWithState(
-      makePreConfig({ withSummary: true, extraArchivedTasks: 2 }),
-    );
-    try {
-      const doneColumn = page.locator('[data-swimlane-name="Done"]');
-      await doneColumn.waitFor({ state: 'visible', timeout: 10000 });
-
-      // Open sort dropdown
-      const sortTrigger = doneColumn.locator('[data-testid="sort-dropdown-trigger"]');
-      await sortTrigger.click();
-
-      // Select "Cost" sort
-      const costOption = page.locator('[data-testid="sort-option-cost"]');
-      await expect(costOption).toBeVisible();
-      await costOption.click();
-
-      // Dropdown should close
-      await expect(costOption).not.toBeVisible();
-    } finally {
-      await browser.close();
-    }
-  });
-
   test('empty state shows when no completed tasks exist', async () => {
     // No archived tasks, no extra tasks
     const preConfig = `

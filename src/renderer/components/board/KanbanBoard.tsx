@@ -543,7 +543,8 @@ export function KanbanBoard() {
         onDragCancel={handleDragCancel}
       >
         <SortableContext items={sortableColumnIds} strategy={horizontalListSortingStrategy}>
-          <div className="flex gap-4 h-full">
+          {/* Trailing pseudo-element ensures right-side scroll padding after the last column */}
+          <div className="flex gap-4 h-full after:content-[''] after:flex-shrink-0 after:w-px">
             {swimlanes.map((swimlane) => (
               <SortableSwimlane
                 key={swimlane.id}

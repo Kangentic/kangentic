@@ -90,7 +90,7 @@ export async function createTask(
   columnName: string = 'Backlog',
 ): Promise<void> {
   const column = page.locator(`[data-swimlane-name="${columnName}"]`);
-  const addButton = column.locator('text=+ Add task');
+  const addButton = column.locator('text=Add task');
   await addButton.click();
 
   const titleInput = page.locator('input[placeholder="Task title"]');

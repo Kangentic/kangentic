@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Plus } from 'lucide-react';
+import { LayersPlus } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useToastStore } from '../../stores/toast-store';
 
@@ -56,9 +56,9 @@ export function AddColumnButton() {
   return (
     <button
       onClick={() => setEditing(true)}
-      className="flex-shrink-0 w-72 h-fit bg-surface-raised/30 hover:bg-surface-raised/50 border border-dashed border-edge hover:border-edge-input rounded-lg p-4 flex items-center justify-center gap-2 text-fg-faint hover:text-fg-tertiary transition-colors"
+      className="flex-shrink-0 w-72 h-fit bg-surface-raised/30 hover:bg-surface-raised/50 border border-dashed border-edge/40 hover:border-edge/60 rounded-lg p-4 flex items-center justify-center gap-2 text-fg-faint hover:text-fg-tertiary transition-colors cursor-pointer"
     >
-      <Plus size={16} />
+      <LayersPlus size={16} />
       <span className="text-sm">Add column</span>
     </button>
   );

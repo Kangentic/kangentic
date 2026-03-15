@@ -2,26 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { DollarSign, Cpu, Wrench, CheckCircle2, XCircle, Hash, ArrowUp, ArrowDown, ArrowRight, Calendar, Clock, Hourglass, Fingerprint, GitBranch, FileCode, Copy, Check } from 'lucide-react';
 import { format, formatDistance } from 'date-fns';
 import { formatTokenCount } from '../../utils/format-tokens';
+import { formatDuration, formatCost } from '../../utils/format-session';
 import type { SessionSummary } from '../../../shared/types';
 
 interface SessionSummaryPanelProps {
   taskId: string;
-}
-
-function formatDuration(milliseconds: number): string {
-  const totalSeconds = Math.round(milliseconds / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
-}
-
-function formatCost(usd: number): string {
-  if (usd < 0.01) return '<$0.01';
-  return `$${usd.toFixed(2)}`;
 }
 
 function formatDateTime(iso: string): string {

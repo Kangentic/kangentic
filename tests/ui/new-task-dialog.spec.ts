@@ -20,7 +20,7 @@ test.afterAll(async () => {
 /** Open the New Task dialog in the Backlog column */
 async function openNewTaskDialog() {
   const column = page.locator('[data-swimlane-name="Backlog"]');
-  const addButton = column.locator('text=+ Add task');
+  const addButton = column.locator('text=Add task');
   await addButton.click();
   await page.locator('input[placeholder="Task title"]').waitFor({ state: 'visible' });
 }

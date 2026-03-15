@@ -173,7 +173,7 @@ export async function createTask(
 ): Promise<void> {
   // Find the correct column's Add task button (use data-swimlane-name for precision)
   const column = page.locator(`[data-swimlane-name="${columnName}"]`);
-  const addButton = column.locator('text=+ Add task');
+  const addButton = column.locator('text=Add task');
   await addButton.click();
 
   const titleInput = page.locator('input[placeholder="Task title"]');
