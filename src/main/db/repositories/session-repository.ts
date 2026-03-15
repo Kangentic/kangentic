@@ -189,47 +189,158 @@ export class SessionRepository {
     `).run(stats.linesAdded, stats.linesRemoved, stats.filesChanged, id);
   }
 
-  /** Get session summary for a task (latest session with metrics). Returns null if no metrics. */
+  /**
+   * Get session summary for a task, aggregated across all session records.
+   *
+   * Cumulative Claude metrics (cost, tokens, duration, model) come from the
+   * latest record (Claude's status.json accumulates across --resume cycles).
+   * Per-PTY metrics (tool calls, git stats) are summed across all records.
+   * Timeline uses task.created_at as the start time.
+   */
   getSummaryForTask(taskId: string): SessionSummary | null {
-    const record = this.db.prepare(
-      `SELECT * FROM sessions WHERE task_id = ? AND total_cost_usd IS NOT NULL ORDER BY started_at DESC LIMIT 1`
-    ).get(taskId) as SessionRecord | undefined;
-    if (!record) return null;
-    return this.recordToSummary(record);
+    const latestRecord = this.db.prepare(
+      `SELECT s.*, t.created_at AS task_created_at
+       FROM sessions s
+       JOIN tasks t ON t.id = s.task_id
+       WHERE s.task_id = ? AND s.total_cost_usd IS NOT NULL
+       ORDER BY s.started_at DESC LIMIT 1`
+    ).get(taskId) as (SessionRecord & { task_created_at: string }) | undefined;
+    if (!latestRecord) return null;
+
+    const aggregated = this.db.prepare(
+      `SELECT
+         COALESCE(SUM(tool_call_count), 0) AS total_tool_calls,
+         COALESCE(SUM(lines_added), 0) AS total_lines_added,
+         COALESCE(SUM(lines_removed), 0) AS total_lines_removed,
+         MAX(COALESCE(files_changed, 0)) AS max_files_changed,
+         MIN(started_at) AS earliest_started_at,
+         MAX(COALESCE(exited_at, suspended_at)) AS latest_ended_at
+       FROM sessions
+       WHERE task_id = ? AND total_cost_usd IS NOT NULL`
+    ).get(taskId) as {
+      total_tool_calls: number;
+      total_lines_added: number;
+      total_lines_removed: number;
+      max_files_changed: number;
+      earliest_started_at: string;
+      latest_ended_at: string | null;
+    };
+
+    return {
+      sessionId: latestRecord.claude_session_id ?? latestRecord.id,
+      totalCostUsd: latestRecord.total_cost_usd ?? 0,
+      totalInputTokens: latestRecord.total_input_tokens ?? 0,
+      totalOutputTokens: latestRecord.total_output_tokens ?? 0,
+      modelDisplayName: latestRecord.model_display_name ?? '',
+      durationMs: latestRecord.total_duration_ms ?? 0,
+      toolCallCount: aggregated.total_tool_calls,
+      linesAdded: aggregated.total_lines_added,
+      linesRemoved: aggregated.total_lines_removed,
+      filesChanged: aggregated.max_files_changed,
+      taskCreatedAt: latestRecord.task_created_at,
+      startedAt: aggregated.earliest_started_at,
+      exitedAt: aggregated.latest_ended_at,
+      exitCode: latestRecord.exit_code,
+    };
   }
 
-  /** Get summaries for all tasks that have metric data, keyed by task_id. */
+  /**
+   * Get summaries for all tasks that have metric data, keyed by task_id.
+   * Aggregates per-PTY metrics across all session records per task.
+   */
   listAllSummaries(): Record<string, SessionSummary> {
     const rows = this.db.prepare(
-      `SELECT * FROM sessions WHERE total_cost_usd IS NOT NULL ORDER BY started_at DESC`
-    ).all() as SessionRecord[];
+      `SELECT
+         s.task_id,
+         t.created_at AS task_created_at,
+         s.claude_session_id,
+         s.id AS record_id,
+         s.total_cost_usd,
+         s.total_input_tokens,
+         s.total_output_tokens,
+         s.model_display_name,
+         s.total_duration_ms,
+         s.exit_code,
+         s.started_at,
+         s.exited_at,
+         s.suspended_at,
+         s.tool_call_count,
+         s.lines_added,
+         s.lines_removed,
+         s.files_changed,
+         ROW_NUMBER() OVER (PARTITION BY s.task_id ORDER BY s.started_at DESC) AS row_num
+       FROM sessions s
+       JOIN tasks t ON t.id = s.task_id
+       WHERE s.total_cost_usd IS NOT NULL`
+    ).all() as Array<{
+      task_id: string;
+      task_created_at: string;
+      claude_session_id: string | null;
+      record_id: string;
+      total_cost_usd: number | null;
+      total_input_tokens: number | null;
+      total_output_tokens: number | null;
+      model_display_name: string | null;
+      total_duration_ms: number | null;
+      exit_code: number | null;
+      started_at: string;
+      exited_at: string | null;
+      suspended_at: string | null;
+      tool_call_count: number | null;
+      lines_added: number | null;
+      lines_removed: number | null;
+      files_changed: number | null;
+      row_num: number;
+    }>;
 
-    const result: Record<string, SessionSummary> = {};
+    // Group by task_id: latest record provides cumulative metrics, all records contribute to aggregates
+    const taskGroups = new Map<string, Array<typeof rows[number]>>();
     for (const row of rows) {
-      // Keep only the latest session per task (first seen wins since sorted DESC)
-      if (!result[row.task_id]) {
-        result[row.task_id] = this.recordToSummary(row);
+      const group = taskGroups.get(row.task_id);
+      if (group) {
+        group.push(row);
+      } else {
+        taskGroups.set(row.task_id, [row]);
       }
     }
-    return result;
-  }
 
-  private recordToSummary(record: SessionRecord): SessionSummary {
-    return {
-      sessionId: record.claude_session_id ?? record.id,
-      totalCostUsd: record.total_cost_usd ?? 0,
-      totalInputTokens: record.total_input_tokens ?? 0,
-      totalOutputTokens: record.total_output_tokens ?? 0,
-      modelDisplayName: record.model_display_name ?? '',
-      durationMs: record.total_duration_ms ?? 0,
-      toolCallCount: record.tool_call_count ?? 0,
-      linesAdded: record.lines_added ?? 0,
-      linesRemoved: record.lines_removed ?? 0,
-      filesChanged: record.files_changed ?? 0,
-      startedAt: record.started_at,
-      // Use suspended_at as fallback -- sessions moved to Done are suspended, not exited
-      exitedAt: record.exited_at ?? record.suspended_at,
-      exitCode: record.exit_code,
-    };
+    const result: Record<string, SessionSummary> = {};
+    for (const [taskId, group] of taskGroups) {
+      const latest = group.find((row) => row.row_num === 1)!;
+      let totalToolCalls = 0;
+      let totalLinesAdded = 0;
+      let totalLinesRemoved = 0;
+      let maxFilesChanged = 0;
+      let earliestStartedAt = latest.started_at;
+      let latestEndedAt: string | null = null;
+
+      for (const row of group) {
+        totalToolCalls += row.tool_call_count ?? 0;
+        totalLinesAdded += row.lines_added ?? 0;
+        totalLinesRemoved += row.lines_removed ?? 0;
+        maxFilesChanged = Math.max(maxFilesChanged, row.files_changed ?? 0);
+        if (row.started_at < earliestStartedAt) earliestStartedAt = row.started_at;
+        const endedAt = row.exited_at ?? row.suspended_at;
+        if (endedAt && (!latestEndedAt || endedAt > latestEndedAt)) latestEndedAt = endedAt;
+      }
+
+      result[taskId] = {
+        sessionId: latest.claude_session_id ?? latest.record_id,
+        totalCostUsd: latest.total_cost_usd ?? 0,
+        totalInputTokens: latest.total_input_tokens ?? 0,
+        totalOutputTokens: latest.total_output_tokens ?? 0,
+        modelDisplayName: latest.model_display_name ?? '',
+        durationMs: latest.total_duration_ms ?? 0,
+        toolCallCount: totalToolCalls,
+        linesAdded: totalLinesAdded,
+        linesRemoved: totalLinesRemoved,
+        filesChanged: maxFilesChanged,
+        taskCreatedAt: latest.task_created_at,
+        startedAt: earliestStartedAt,
+        exitedAt: latestEndedAt,
+        exitCode: latest.exit_code,
+      };
+    }
+    return result;
   }
 }

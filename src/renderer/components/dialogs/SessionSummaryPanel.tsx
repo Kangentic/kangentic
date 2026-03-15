@@ -95,33 +95,31 @@ export function SessionSummaryPanel({ taskId }: SessionSummaryPanelProps) {
     ),
   });
 
-  // Timeline row inline with the grid
-  if (summary.startedAt) {
-    const timelineValue = summary.exitedAt
-      ? null
-      : formatDateTime(summary.startedAt);
+  // Timeline: task creation -> completion (full lifecycle)
+  if (summary.taskCreatedAt) {
+    const timelineStart = formatDateTime(summary.taskCreatedAt);
     metricRows.push({
       icon: <Calendar size={13} />,
       label: 'Timeline',
-      value: timelineValue
-        ? <span className="text-fg-secondary tabular-nums">{timelineValue}</span>
-        : (
+      value: summary.exitedAt
+        ? (
           <span className="text-fg-secondary tabular-nums flex items-center gap-1.5">
-            {formatDateTime(summary.startedAt)}
+            {timelineStart}
             <ArrowRight size={10} className="text-fg-disabled" />
-            {formatDateTime(summary.exitedAt!)}
+            {formatDateTime(summary.exitedAt)}
           </span>
-        ),
+        )
+        : <span className="text-fg-secondary tabular-nums">{timelineStart}</span>,
     });
   }
 
-  if (summary.exitedAt) {
+  if (summary.exitedAt && summary.taskCreatedAt) {
     metricRows.push({
       icon: <Clock size={13} />,
       label: 'Duration',
       value: (
         <span className="text-fg-secondary tabular-nums font-medium">
-          {formatDistance(new Date(summary.startedAt), new Date(summary.exitedAt))}
+          {formatDistance(new Date(summary.taskCreatedAt), new Date(summary.exitedAt))}
         </span>
       ),
     });

@@ -171,6 +171,7 @@ export interface SessionSummary {
   linesAdded: number;
   linesRemoved: number;
   filesChanged: number;
+  taskCreatedAt: string;
   startedAt: string;
   exitedAt: string | null;
   exitCode: number | null;

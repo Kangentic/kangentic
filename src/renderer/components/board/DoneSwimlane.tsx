@@ -110,8 +110,8 @@ export function DoneSwimlane({ swimlane, tasks }: DoneSwimlaneProps) {
         case 'cost': return summaryB.totalCostUsd - summaryA.totalCostUsd;
         case 'tokens': return (summaryB.totalInputTokens + summaryB.totalOutputTokens) - (summaryA.totalInputTokens + summaryA.totalOutputTokens);
         case 'duration': {
-          const durationA = summaryA.exitedAt ? new Date(summaryA.exitedAt).getTime() - new Date(summaryA.startedAt).getTime() : 0;
-          const durationB = summaryB.exitedAt ? new Date(summaryB.exitedAt).getTime() - new Date(summaryB.startedAt).getTime() : 0;
+          const durationA = summaryA.exitedAt ? new Date(summaryA.exitedAt).getTime() - new Date(summaryA.taskCreatedAt).getTime() : 0;
+          const durationB = summaryB.exitedAt ? new Date(summaryB.exitedAt).getTime() - new Date(summaryB.taskCreatedAt).getTime() : 0;
           return durationB - durationA;
         }
         default: return 0;

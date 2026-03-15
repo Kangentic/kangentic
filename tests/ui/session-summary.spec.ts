@@ -53,6 +53,7 @@ function makePreConfig(options: {
         linesAdded: 469,
         linesRemoved: 181,
         filesChanged: 18,
+        taskCreatedAt: '2026-03-13T15:40:00.000Z',
         startedAt: '2026-03-13T15:44:00.000Z',
         exitedAt: '2026-03-13T15:45:00.000Z',
         exitCode: ${exitCode === null ? 'null' : exitCode},
@@ -95,8 +96,9 @@ function makePreConfig(options: {
           linesAdded: ${10 * (index + 1)},
           linesRemoved: ${5 * (index + 1)},
           filesChanged: ${index + 1},
+          taskCreatedAt: '2026-03-13T14:${String(50 + index).padStart(2, '0')}:00.000Z',
           startedAt: '2026-03-13T15:00:00.000Z',
-          exitedAt: '2026-03-13T15:0${index + 1}:00.000Z',
+          exitedAt: '2026-03-13T15:${String(index + 1).padStart(2, '0')}:00.000Z',
           exitCode: 0,
         };
       `;
