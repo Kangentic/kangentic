@@ -1,7 +1,7 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { Search, Pencil, ArrowDownToLine, Maximize2, ClipboardList } from 'lucide-react';
+import { Pencil, ArrowDownToLine, Maximize2, ClipboardList } from 'lucide-react';
 import { TaskCard } from './TaskCard';
 import { EditColumnDialog } from '../dialogs/EditColumnDialog';
 import { CompletedTasksDialog } from '../dialogs/CompletedTasksDialog';
@@ -10,7 +10,7 @@ import { getSwimlaneIcon } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { Pill } from '../Pill';
-import type { Swimlane as SwimlaneType, Task, SessionSummary } from '../../../shared/types';
+import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
 
 export interface DoneSwimlaneProps {
   swimlane: SwimlaneType;
@@ -18,12 +18,13 @@ export interface DoneSwimlaneProps {
   dragHandleProps?: Record<string, unknown>;
 }
 
+/** Max number of recent completed tasks to show inline in the Done column. */
+const MAX_INLINE_PREVIEW = 5;
+
 export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }: DoneSwimlaneProps) {
-  const [search, setSearch] = useState('');
   const [showEditColumn, setShowEditColumn] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [showCompletedDialog, setShowCompletedDialog] = useState(false);
-  const [summaries, setSummaries] = useState<Record<string, SessionSummary>>({});
 
   const archivedTasks = useBoardStore((state) => state.archivedTasks);
   const deleteArchivedTask = useBoardStore((state) => state.deleteArchivedTask);
@@ -31,20 +32,6 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
   const clearRecentlyArchived = useBoardStore((state) => state.clearRecentlyArchived);
   const skipDeleteConfirm = useConfigStore((state) => state.config.skipDeleteConfirm);
   const updateConfig = useConfigStore((state) => state.updateConfig);
-
-  // Fetch batch summaries (always, not gated on expand)
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const result = await window.electronAPI.sessions.listSummaries();
-        if (!cancelled) setSummaries(result);
-      } catch {
-        // Ignore errors (e.g. in tests)
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [archivedTasks.length]);
 
   const handleDeleteRequest = useCallback((taskId: string) => {
     if (skipDeleteConfirm) {
@@ -69,13 +56,11 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
     data: { type: 'swimlane' },
   });
 
-  const filteredArchived = useMemo(() => {
-    if (!search.trim()) return archivedTasks;
-    const query = search.toLowerCase();
-    return archivedTasks.filter(
-      (task) => task.title.toLowerCase().includes(query) || task.description.toLowerCase().includes(query),
-    );
-  }, [archivedTasks, search]);
+  const previewTasks = useMemo(
+    () => archivedTasks.slice(0, MAX_INLINE_PREVIEW),
+    [archivedTasks],
+  );
+  const hasMore = archivedTasks.length > MAX_INLINE_PREVIEW;
 
   return (
     <div
@@ -179,25 +164,9 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
           )}
         </button>
 
-        {/* Search row */}
-        {archivedTasks.length > 0 && (
-          <div className="flex-shrink-0">
-            <div className="relative">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-disabled" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search..."
-                className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg-tertiary placeholder-fg-disabled pl-8 pr-2 py-2 outline-none focus:border-edge-input"
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Archived task list -- scrollable */}
+        {/* Recent archived tasks (max 5) */}
         <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
-          {filteredArchived.map((task) => {
+          {previewTasks.map((task) => {
             const isGrowingIn = recentlyArchivedId === task.id;
             return isGrowingIn ? (
               <div
@@ -205,7 +174,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
                 className="grow-in"
                 onAnimationEnd={clearRecentlyArchived}
               >
-                <TaskCard task={task} compact onDelete={handleDeleteRequest} summary={summaries[task.id]} />
+                <TaskCard task={task} compact onDelete={handleDeleteRequest} />
               </div>
             ) : (
               <TaskCard
@@ -213,14 +182,20 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
                 task={task}
                 compact
                 onDelete={handleDeleteRequest}
-                summary={summaries[task.id]}
               />
             );
           })}
-          {filteredArchived.length === 0 && search && (
-            <div className="text-xs text-fg-disabled text-center py-2">No matches</div>
+          {hasMore && (
+            <button
+              type="button"
+              onClick={() => setShowCompletedDialog(true)}
+              className="w-full text-xs text-fg-muted hover:text-fg-secondary py-1.5 transition-colors"
+              data-testid="view-all-completed"
+            >
+              View all {archivedTasks.length} completed tasks
+            </button>
           )}
-          {filteredArchived.length === 0 && !search && (
+          {archivedTasks.length === 0 && (
             <div className="text-xs text-fg-disabled text-center py-3">No completed tasks yet</div>
           )}
         </div>
@@ -251,7 +226,6 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
       {showCompletedDialog && (
         <CompletedTasksDialog
           onClose={() => setShowCompletedDialog(false)}
-          summaries={summaries}
         />
       )}
     </div>

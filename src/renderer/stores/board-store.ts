@@ -45,6 +45,8 @@ interface BoardStore {
   archiveTask: (id: string) => void;
   unarchiveTask: (input: TaskUnarchiveInput) => Promise<void>;
   deleteArchivedTask: (id: string) => Promise<void>;
+  bulkDeleteArchivedTasks: (ids: string[]) => Promise<void>;
+  bulkUnarchiveTasks: (ids: string[], targetSwimlaneId: string) => Promise<void>;
 
   // Completion animation
   setCompletingTask: (task: CompletingTask | null) => void;
@@ -294,6 +296,60 @@ export const useBoardStore = create<BoardStore>((set, get) => ({
       set({ archivedTasks: prevArchived });
       useToastStore.getState().addToast({
         message: `Failed to delete task: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'error',
+      });
+    }
+  },
+
+  bulkDeleteArchivedTasks: async (ids) => {
+    const prevArchived = get().archivedTasks;
+    const idSet = new Set(ids);
+    // Optimistic removal
+    set((state) => ({
+      archivedTasks: state.archivedTasks.filter((task) => !idSet.has(task.id)),
+    }));
+    try {
+      await window.electronAPI.tasks.bulkDelete(ids);
+      // Clean up sessions
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.filter((session) => !idSet.has(session.taskId)),
+      }));
+    } catch (error) {
+      set({ archivedTasks: prevArchived });
+      useToastStore.getState().addToast({
+        message: `Failed to delete tasks: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        variant: 'error',
+      });
+    }
+  },
+
+  bulkUnarchiveTasks: async (ids, targetSwimlaneId) => {
+    const prevArchived = get().archivedTasks;
+    const idSet = new Set(ids);
+    // Optimistic removal from archived
+    set((state) => ({
+      archivedTasks: state.archivedTasks.filter((task) => !idSet.has(task.id)),
+    }));
+    try {
+      await window.electronAPI.tasks.bulkUnarchive(ids, targetSwimlaneId);
+      // Reload tasks and sessions
+      const [tasks, sessions] = await Promise.all([
+        window.electronAPI.tasks.list(),
+        window.electronAPI.sessions.list(),
+      ]);
+      set({ tasks });
+      useSessionStore.setState({ sessions });
+
+      const targetLane = get().swimlanes.find((lane) => lane.id === targetSwimlaneId);
+      useToastStore.getState().addToast({
+        message: `${ids.length} tasks restored to ${targetLane?.name || 'board'}`,
+        variant: 'success',
+      });
+    } catch (error) {
+      set({ archivedTasks: prevArchived });
+      await get().loadBoard();
+      useToastStore.getState().addToast({
+        message: `Failed to restore tasks: ${error instanceof Error ? error.message : 'Unknown error'}`,
         variant: 'error',
       });
     }

@@ -405,4 +405,68 @@ export function registerTaskHandlers(context: IpcContext): void {
 
     return tasks.getById(input.id);
   });
+
+  ipcMain.handle(IPC.TASK_BULK_DELETE, async (_, ids: string[]) => {
+    const resolvedProjectId = context.currentProjectId;
+    const resolvedProjectPath = context.currentProjectPath;
+    const { tasks, attachments } = getProjectRepos(context, resolvedProjectId);
+    for (const id of ids) {
+      const task = tasks.getById(id);
+      if (task) {
+        attachments.deleteByTaskId(id);
+        await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
+      }
+      tasks.delete(id);
+    }
+  });
+
+  ipcMain.handle(IPC.TASK_BULK_UNARCHIVE, async (_, ids: string[], targetSwimlaneId: string) => {
+    const resolvedProjectId = context.currentProjectId;
+    const resolvedProjectPath = context.currentProjectPath;
+    if (!resolvedProjectId) throw new Error('No project is currently open');
+
+    const { tasks, swimlanes, actions, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
+    const toLane = swimlanes.getById(targetSwimlaneId);
+
+    for (const id of ids) {
+      const laneTasks = tasks.list(targetSwimlaneId);
+      const position = laneTasks.length;
+      const task = tasks.unarchive(id, targetSwimlaneId, position);
+
+      if (!toLane?.auto_spawn) continue;
+
+      await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+
+      if (resolvedProjectPath) {
+        const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
+        if (doneLane) {
+          const db = getProjectDb(resolvedProjectId);
+          const sessionRepo = new SessionRepository(db);
+          const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
+
+          try {
+            await engine.executeTransition(task, doneLane.id, targetSwimlaneId, toLane?.permission_mode);
+          } catch (error) {
+            console.error('[TASK_BULK_UNARCHIVE] Transition engine error:', error);
+          }
+
+          let finalTask = tasks.getById(task.id);
+          if (finalTask && !finalTask.session_id && toLane?.auto_spawn) {
+            try {
+              await engine.resumeSuspendedSession(finalTask, toLane.permission_mode);
+              finalTask = tasks.getById(task.id);
+            } catch (error) {
+              console.error('[TASK_BULK_UNARCHIVE] Failed to start session:', error);
+            }
+          }
+
+          if (finalTask?.session_id && toLane?.auto_command) {
+            const vars = buildAutoCommandVars(finalTask);
+            const interpolated = context.commandBuilder.interpolateTemplate(toLane.auto_command, vars);
+            context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
+          }
+        }
+      }
+    }
+  });
 }

@@ -155,8 +155,13 @@ test.describe('Task Delete', () => {
     await dragTaskToColumn(title, 'Code Review');
     await waitForSession(title);
 
+    // Wait for the renderer to reflect the session (status bar appears on the card)
+    // Without this, the dialog may open in edit mode instead of view mode
+    const codeReviewColumn = page.locator('[data-swimlane-name="Code Review"]');
+    await codeReviewColumn.locator('[data-testid="status-bar"]').waitFor({ state: 'visible', timeout: 10000 });
+
     // Click on the task card to open the detail dialog
-    const card = page.locator('[data-testid="swimlane"]').locator(`text=${title}`).first();
+    const card = codeReviewColumn.locator(`text=${title}`).first();
     await card.click();
     await page.waitForTimeout(500);
 

@@ -102,6 +102,7 @@
     }
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.13.22",
     "better-sqlite3": "^12.6.2",
     "bindings": "^1.5.0",
     "file-uri-to-path": "^1.0.0",

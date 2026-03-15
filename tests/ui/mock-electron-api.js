@@ -445,6 +445,29 @@
         tasks.push(task);
         return task;
       },
+      bulkDelete: async function (ids) {
+        for (var i = 0; i < ids.length; i++) {
+          var idx = archivedTasks.findIndex(function (t) { return t.id === ids[i]; });
+          if (idx >= 0) archivedTasks.splice(idx, 1);
+          var tIdx = tasks.findIndex(function (t) { return t.id === ids[i]; });
+          if (tIdx >= 0) tasks.splice(tIdx, 1);
+        }
+      },
+      bulkUnarchive: async function (ids, targetSwimlaneId) {
+        for (var i = 0; i < ids.length; i++) {
+          var idx = archivedTasks.findIndex(function (t) { return t.id === ids[i]; });
+          if (idx >= 0) {
+            var task = Object.assign({}, archivedTasks[idx], {
+              swimlane_id: targetSwimlaneId,
+              archived_at: null,
+              position: 0,
+              updated_at: now(),
+            });
+            archivedTasks.splice(idx, 1);
+            tasks.push(task);
+          }
+        }
+      },
     },
 
     attachments: {

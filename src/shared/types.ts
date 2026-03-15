@@ -671,6 +671,8 @@ export interface ElectronAPI {
     move: (input: TaskMoveInput) => Promise<void>;
     listArchived: () => Promise<Task[]>;
     unarchive: (input: TaskUnarchiveInput) => Promise<Task>;
+    bulkDelete: (ids: string[]) => Promise<void>;
+    bulkUnarchive: (ids: string[], targetSwimlaneId: string) => Promise<void>;
     onAutoMoved: (callback: (taskId: string, targetSwimlaneId: string, taskTitle: string, projectId?: string) => void) => () => void;
   };
 

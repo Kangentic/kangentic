@@ -1,4 +1,3 @@
-// git test change
 export const IPC = {
   // Projects
   PROJECT_LIST: 'project:list',
@@ -18,6 +17,8 @@ export const IPC = {
   TASK_MOVE: 'task:move',
   TASK_LIST_ARCHIVED: 'task:list-archived',
   TASK_UNARCHIVE: 'task:unarchive',
+  TASK_BULK_DELETE: 'task:bulk-delete',
+  TASK_BULK_UNARCHIVE: 'task:bulk-unarchive',
   TASK_AUTO_MOVED: 'task:autoMoved',
 
   // Attachments

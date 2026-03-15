@@ -276,25 +276,44 @@ test.describe('Done Column', () => {
     }
   });
 
-  test('search filters completed tasks', async () => {
+  test('shows max 5 recent tasks and "View all" link for more', async () => {
     const { browser, page } = await launchWithState(
-      makePreConfig({ withSummary: true, extraArchivedTasks: 2 }),
+      makePreConfig({ withSummary: true, extraArchivedTasks: 6 }),
     );
     try {
       const doneColumn = page.locator('[data-swimlane-name="Done"]');
       await doneColumn.waitFor({ state: 'visible', timeout: 10000 });
 
-      // Should show all 3 tasks initially
-      await expect(doneColumn).toContainText('Completed (3)');
+      // Should show count of all 7 tasks in header
+      await expect(doneColumn).toContainText('Completed (7)');
 
-      // Search for "Extra Task 1"
-      const searchInput = doneColumn.locator('input[placeholder="Search..."]');
-      await searchInput.fill('Extra Task 1');
+      // Only 5 compact cards should be visible inline
+      const compactCards = doneColumn.locator('[data-testid="compact-title"]');
+      await expect(compactCards).toHaveCount(5);
 
-      // Should filter to just that task (target title span to avoid matching description)
-      await expect(doneColumn.locator('[data-testid="compact-title"]', { hasText: 'Extra Task 1' })).toBeVisible();
-      await expect(doneColumn.locator('[data-testid="compact-title"]', { hasText: 'Extra Task 2' })).not.toBeVisible();
-      await expect(doneColumn.locator('[data-testid="compact-title"]', { hasText: 'Completed Test Task' })).not.toBeVisible();
+      // "View all" link should be visible
+      await expect(doneColumn.locator('[data-testid="view-all-completed"]')).toBeVisible();
+      await expect(doneColumn.locator('[data-testid="view-all-completed"]')).toContainText('View all 7 completed tasks');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('completed dialog opens from "View all" link', async () => {
+    const { browser, page } = await launchWithState(
+      makePreConfig({ withSummary: true, extraArchivedTasks: 6 }),
+    );
+    try {
+      const doneColumn = page.locator('[data-swimlane-name="Done"]');
+      await doneColumn.waitFor({ state: 'visible', timeout: 10000 });
+
+      // Click "View all" link
+      await doneColumn.locator('[data-testid="view-all-completed"]').click();
+
+      // Dialog should open with all tasks
+      const dialog = page.locator('[data-testid="completed-tasks-dialog"]');
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+      await expect(dialog).toContainText('Completed Tasks (7)');
     } finally {
       await browser.close();
     }
