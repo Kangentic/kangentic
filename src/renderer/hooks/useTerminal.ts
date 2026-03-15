@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
+import { FitAddon } from '../addons/fit-addon';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { cleanSelection } from '../utils/terminal-clipboard';
 import '@xterm/xterm/css/xterm.css';
@@ -235,29 +235,6 @@ export function useTerminal(options: UseTerminalOptions) {
     }
   }, []);
 
-  // Unconditional fit + scroll-to-bottom. Used for deliberate layout
-  // changes (panel expand/collapse, drag resize) where the terminal
-  // should refit and pin to the latest output.
-  const forceFit = useCallback(() => {
-    if (!fitAddonRef.current || !xtermRef.current) return;
-    // FitAddon.fit() has a same-dimension guard: if terminal.rows/cols
-    // already match the proposed dimensions, it skips resize entirely
-    // (no renderService.clear(), no terminal.resize(), no visual update).
-    // Always perturb rows so fit() sees a dimension mismatch and runs
-    // its full renderService.clear() + terminal.resize() path. This
-    // handles both same-dimension cases (where the guard would skip)
-    // and growing cases (where the WebGL canvas may not update without
-    // a clear). Both resize calls are synchronous and batch into one
-    // browser paint, so no visual flash occurs.
-    const dims = fitAddonRef.current.proposeDimensions();
-    if (dims && !isNaN(dims.cols) && !isNaN(dims.rows)) {
-      xtermRef.current.resize(dims.cols, Math.max(1, dims.rows - 1));
-    }
-    fitAddonRef.current.fit();
-    xtermRef.current.scrollToBottom();
-    isAtBottomRef.current = true;
-  }, []);
-
   // Re-fetch scrollback from the PTY and write it to xterm. Called when
   // the loading overlay lifts so that suppressed TUI output is recovered.
   const reloadScrollback = useCallback(() => {
@@ -293,7 +270,6 @@ export function useTerminal(options: UseTerminalOptions) {
     terminalRef,
     initTerminal,
     fit,
-    forceFit,
     focus,
     reloadScrollback,
     scrollbackPending: scrollbackPendingRef,

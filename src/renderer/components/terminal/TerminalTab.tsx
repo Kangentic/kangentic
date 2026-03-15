@@ -66,7 +66,7 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
   // PTY output from accumulating in xterm behind the overlay.
   const [terminalReady, setTerminalReady] = useState(() => hasUsage);
 
-  const { terminalRef, initTerminal, fit, forceFit, focus, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
+  const { terminalRef, initTerminal, fit, focus, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
@@ -78,7 +78,6 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
   suppressDataRef.current = !terminalReady;
 
   const initialized = useRef(false);
-  const draggingRef = useRef(false);
 
   // Init terminal once the container has real pixel dimensions.
   // The cleanup resets initialized so React StrictMode's
@@ -183,66 +182,41 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
       }
     }, FIT_DELAY_MS);
 
-    // Suppress fit() while the user drags the panel resize handle.
-    // Calling fit() on every frame during a drag changes xterm's row count
-    // repeatedly; each shrink pushes viewport lines into scrollback, and
-    // if the 5000-line scrollback buffer is full the oldest lines are
-    // permanently evicted. Recovery after drag-end is handled by
-    // handlePanelResize (terminal-panel-resize event from onMouseUp).
-    const handleDragStart = () => { draggingRef.current = true; };
-    const handleDragEnd = () => { draggingRef.current = false; };
-    window.addEventListener('terminal-panel-drag-start', handleDragStart);
-    window.addEventListener('terminal-panel-drag-end', handleDragEnd);
-
-    // Debounced re-fit on container resize via rAF coalescing
     const el = terminalRef.current;
     if (!el) return () => {
       cancelAnimationFrame(initRafId);
       clearTimeout(delayedFitId);
-      window.removeEventListener('terminal-panel-drag-start', handleDragStart);
-      window.removeEventListener('terminal-panel-drag-end', handleDragEnd);
     };
 
-    let pendingRaf = 0;
-    const observer = new ResizeObserver(() => {
+    // Unified debounced resize mechanism. One timer, two entry points:
+    // - ResizeObserver debounces at 200ms (handles drag without scrollback
+    //   eviction: timer resets every frame during drag, fires once after).
+    // - terminal-panel-resize event uses 50ms (faster for explicit triggers
+    //   like sidebar resize, dialog edit-mode toggle, drag mouseUp).
+    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefit = (delayMs: number) => {
       if (!initialized.current) return;
-      if (draggingRef.current) return;
-      if (pendingRaf) cancelAnimationFrame(pendingRaf);
-      pendingRaf = requestAnimationFrame(() => {
-        pendingRaf = 0;
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        resizeTimer = null;
         fit();
-      });
-    });
+      }, delayMs);
+    };
+
+    const observer = new ResizeObserver(() => scheduleRefit(200));
     observer.observe(el);
 
-    // Refit after panel drag / resize events. Uses double-rAF so the fit
-    // runs after React commits layout changes and the browser paints.
-    // forceFit bypasses the isAtBottomRef guard because panel expand/collapse
-    // and drag resize are deliberate layout changes that must refit.
-    let panelRaf = 0;
-    const handlePanelResize = () => {
-      if (!initialized.current) return;
-      if (panelRaf) cancelAnimationFrame(panelRaf);
-      panelRaf = requestAnimationFrame(() => {
-        panelRaf = requestAnimationFrame(() => {
-          panelRaf = 0;
-          forceFit();
-        });
-      });
-    };
+    const handlePanelResize = () => scheduleRefit(50);
     window.addEventListener('terminal-panel-resize', handlePanelResize);
 
     return () => {
       cancelAnimationFrame(initRafId);
       clearTimeout(delayedFitId);
-      if (pendingRaf) cancelAnimationFrame(pendingRaf);
-      if (panelRaf) cancelAnimationFrame(panelRaf);
+      if (resizeTimer) clearTimeout(resizeTimer);
       observer.disconnect();
       window.removeEventListener('terminal-panel-resize', handlePanelResize);
-      window.removeEventListener('terminal-panel-drag-start', handleDragStart);
-      window.removeEventListener('terminal-panel-drag-end', handleDragEnd);
     };
-  }, [active, fit, forceFit, focus]);
+  }, [active, fit, focus]);
 
   return (
     <div className="h-full w-full bg-surface relative">

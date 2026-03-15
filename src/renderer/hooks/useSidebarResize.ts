@@ -74,7 +74,6 @@ export function useSidebarResize(config: AppConfig): SidebarResizeState {
         isDragging = true;
         setIsResizing(true);
         document.body.style.cursor = 'col-resize';
-        window.dispatchEvent(new CustomEvent('terminal-panel-drag-start'));
       }
 
       const rawWidth = startWidth + (e.clientX - startX);
@@ -123,7 +122,6 @@ export function useSidebarResize(config: AppConfig): SidebarResizeState {
           sidebarVisible: true,
         });
       }
-      window.dispatchEvent(new CustomEvent('terminal-panel-drag-end'));
       requestAnimationFrame(() => {
         window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
       });

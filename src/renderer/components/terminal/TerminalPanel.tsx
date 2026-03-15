@@ -132,6 +132,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
         {/* Clickable spacer fills remaining tab bar space */}
         {onToggleCollapse && (
           <div
+            role="presentation"
             className="flex-1 self-stretch cursor-pointer hover:bg-surface-raised/30 transition-colors"
             onClick={onToggleCollapse}
             title={collapsed ? 'Expand terminal panel' : 'Collapse terminal panel'}
