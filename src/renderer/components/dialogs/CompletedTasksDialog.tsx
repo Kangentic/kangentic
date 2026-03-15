@@ -412,10 +412,10 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
       width: 'min-w-[280px]',
       sortValue: (row) => row.task.title.toLowerCase(),
       render: (row) => (
-        <div>
-          <div className="text-fg font-medium truncate max-w-[400px]">{row.task.title}</div>
+        <div className="min-w-0">
+          <div className="text-fg font-medium truncate">{row.task.title}</div>
           {row.task.description && (
-            <div className="text-xs text-fg-faint truncate max-w-[400px] mt-0.5">{row.task.description}</div>
+            <div className="text-xs text-fg-faint truncate mt-0.5">{row.task.description}</div>
           )}
         </div>
       ),
@@ -504,11 +504,11 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
       key: 'completed' as SortKey,
       label: 'Completed',
       align: 'right',
-      width: 'w-[120px]',
+      width: 'w-[140px]',
       sortValue: (row) => row.task.archived_at ?? row.task.updated_at,
       render: (row) =>
         row.task.archived_at ? (
-          <span className="text-fg-faint text-xs flex items-center justify-end">
+          <span className="text-fg-faint text-xs flex items-center justify-end whitespace-nowrap">
             <StalenessIndicator archivedAt={row.task.archived_at} />
             {formatDistanceToNow(new Date(row.task.archived_at), { addSuffix: true })}
           </span>
