@@ -182,6 +182,14 @@ export const useBoardStore = create<BoardStore>((set, get) => ({
       useSessionStore.getState().setPendingCommandLabel(input.taskId, targetAutoCommand);
     }
 
+    // Optimistically clear session for tasks moving to backlog
+    // (the backend will destroy the session during TASK_MOVE via cleanupTaskSession)
+    if (isColumnChange && targetLane?.role === 'backlog') {
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.filter((session) => session.taskId !== input.taskId),
+      }));
+    }
+
     try {
       await window.electronAPI.tasks.move(input);
       if (moveGeneration !== thisGen) return; // Skip stale reload

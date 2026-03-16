@@ -393,14 +393,15 @@ test.describe('Task Activity Indicators', () => {
       await expect(bottomBar.locator('.lucide-loader-circle')).not.toBeVisible();
     });
 
-    test('suspended task dialog shows wide layout with Resume button', async () => {
+    test('suspended task in backlog dialog hides Resume button', async () => {
       await page.locator('text=Test Initializing Task').first().click();
 
-      const resumeBtn = page.locator('text=Resume session');
-      await expect(resumeBtn).toBeVisible({ timeout: 5000 });
-
       const dialogPanel = page.locator('[data-testid="task-detail-dialog"]');
-      await expect(dialogPanel).toBeVisible();
+      await expect(dialogPanel).toBeVisible({ timeout: 5000 });
+
+      // Backlog tasks should not show a resume button
+      const resumeBtn = page.locator('text=Resume session');
+      await expect(resumeBtn).not.toBeVisible();
 
       await page.keyboard.press('Escape');
       await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 2000 });

@@ -479,8 +479,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   // Centralized display state derivation -- reuse session?.id to avoid redundant .find()
   const displayState = useSessionDisplayState(session?.id);
   const isThinking = displayState.kind === 'running' && displayState.activity !== 'idle';
-  const canToggle = displayState.kind === 'running' || displayState.kind === 'queued'
-    || displayState.kind === 'initializing' || displayState.kind === 'suspended';
+  const canToggle = !isInBacklog && (displayState.kind === 'running' || displayState.kind === 'queued'
+    || displayState.kind === 'initializing' || displayState.kind === 'suspended');
   const isSessionActive = displayState.kind === 'running' || displayState.kind === 'queued'
     || displayState.kind === 'initializing';
   const isQueued = displayState.kind === 'queued';
@@ -1279,7 +1279,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
           </>
         ) : !isEditing && displayState.kind === 'queued' ? (
           <QueuedPlaceholder sessionId={session?.id ?? null} />
-        ) : !isEditing && (isSuspended || toggling) && !isArchived ? (
+        ) : !isEditing && (isSuspended || toggling) && !isArchived && !isInBacklog ? (
           pendingCommandLabel ? (
             <div className="flex-1 min-h-0 relative">
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface">
