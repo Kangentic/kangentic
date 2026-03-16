@@ -252,7 +252,7 @@ function install(platformInfo, artifactPath) {
 
 // --- Launch ---
 
-function launch(platformInfo, targetDir, dataDir) {
+function launch(platformInfo, targetDir, dataDir, extraArgs) {
   const installPath = getInstallPath(platformInfo);
 
   if (!fs.existsSync(installPath)) {
@@ -269,6 +269,9 @@ function launch(platformInfo, targetDir, dataDir) {
   }
 
   const launchArgs = targetDir ? [`--cwd=${targetDir}`] : [];
+  if (extraArgs) {
+    launchArgs.push(...extraArgs);
+  }
 
   if (platformInfo.platform === 'win32') {
     const child = spawn(installPath, launchArgs, {
@@ -353,9 +356,26 @@ async function main() {
   // Determine target directory (first positional argument, skipping flags and their values)
   const targetDir = findTargetDir(arguments_);
 
+  // Check for --demo flag
+  const isDemo = arguments_.includes('--demo');
+
   // Resolve data directory: env var takes priority, then --data-dir flag
   const dataDirFlag = parseDataDir(arguments_);
-  const dataDir = process.env.KANGENTIC_DATA_DIR || dataDirFlag;
+  let dataDir = process.env.KANGENTIC_DATA_DIR || dataDirFlag;
+
+  // Demo mode: use an ephemeral temp data directory
+  if (isDemo && !dataDir) {
+    dataDir = path.join(os.tmpdir(), `kangentic-demo-${Date.now()}`);
+    fs.mkdirSync(dataDir, { recursive: true });
+    console.log('Demo mode: using temporary data directory');
+    console.log(`  ${dataDir}`);
+  }
+
+  // Extra args to pass to the launched app
+  const extraArgs = [];
+  if (isDemo) {
+    extraArgs.push('--ephemeral');
+  }
 
   // Detect platform
   const platformInfo = getPlatformInfo();
@@ -368,7 +388,7 @@ async function main() {
   // Check if already installed
   if (isInstalled(platformInfo)) {
     console.log(`Kangentic v${VERSION} is already installed.`);
-    launch(platformInfo, targetDir, dataDir);
+    launch(platformInfo, targetDir, dataDir, extraArgs);
     return;
   }
 
@@ -406,7 +426,7 @@ async function main() {
   }
 
   // Launch
-  launch(platformInfo, targetDir, dataDir);
+  launch(platformInfo, targetDir, dataDir, extraArgs);
 }
 
 main().catch((error) => {
