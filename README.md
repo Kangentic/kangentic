@@ -14,6 +14,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="AGPL-3.0 License" /></a>
   <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-brightgreen.svg?style=flat-square" alt="Platform" />
   <a href="https://www.kangentic.com"><img src="https://img.shields.io/badge/website-kangentic.com-purple.svg?style=flat-square" alt="Website" /></a>
+  <a href="https://www.youtube.com/watch?v=jviSrT47F0o"><img src="https://img.shields.io/badge/demo-YouTube-red.svg?style=flat-square&logo=youtube" alt="Demo Video" /></a>
   <a href="https://github.com/Kangentic/kangentic/stargazers"><img src="https://img.shields.io/github/stars/Kangentic/kangentic?style=social" alt="GitHub Stars" /></a>
 </p>
 
@@ -26,11 +27,9 @@
 <p align="center">
   <a href="https://www.kangentic.com"><img src="resources/kanban-demo.png" alt="Kangentic Kanban Board" width="800" /></a>
 </p>
-
 <p align="center">
-  <a href="https://www.youtube.com/watch?v=jviSrT47F0o"><img src="https://img.youtube.com/vi/jviSrT47F0o/maxresdefault.jpg" alt="Kangentic Demo Video" width="600" /></a>
+  <a href="https://www.youtube.com/watch?v=jviSrT47F0o"><img src="https://img.shields.io/badge/%E2%96%B6%20Watch%20Demo-YouTube-red.svg?style=for-the-badge&logo=youtube" alt="Watch Demo" /></a>
 </p>
-<p align="center"><a href="https://www.youtube.com/watch?v=jviSrT47F0o">Watch the demo</a></p>
 
 ## Features
 
