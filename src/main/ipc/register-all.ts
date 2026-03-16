@@ -96,6 +96,16 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   });
 }
 
+/**
+ * Update the mainWindow reference in the IPC context. Called when macOS
+ * recreates the window after all windows were closed (dock icon click).
+ * IPC handlers remain registered from the initial registerAllIpc() call.
+ */
+export function updateMainWindow(mainWindow: BrowserWindow): void {
+  if (!context) throw new Error('IPC not initialized. Call registerAllIpc first');
+  context.mainWindow = mainWindow;
+}
+
 // Thin wrappers -- same signatures as before, zero changes in index.ts
 export function getSessionManager(): SessionManager {
   return requireContext().sessionManager;

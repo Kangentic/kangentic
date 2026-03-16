@@ -60,7 +60,7 @@ export function useTerminal(options: UseTerminalOptions) {
     const xtermTheme = TERMINAL_THEME;
 
     const terminal = new Terminal({
-      fontFamily: options.fontFamily || 'Consolas, "Courier New", monospace',
+      fontFamily: options.fontFamily || 'Menlo, Consolas, "Courier New", monospace',
       fontSize: options.fontSize || 14,
       theme: xtermTheme,
       scrollback: options.scrollbackLines || 5000,

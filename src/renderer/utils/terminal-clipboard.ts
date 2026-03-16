@@ -41,8 +41,8 @@ export function enableTerminalClipboard(terminal: Terminal, el: HTMLElement): vo
     if (event.type !== 'keydown') return true;
 
     const isCopy =
-      (event.ctrlKey && event.key === 'c' && terminal.hasSelection()) ||
-      (event.ctrlKey && event.shiftKey && event.key === 'C');
+      ((event.ctrlKey || event.metaKey) && event.key === 'c' && terminal.hasSelection()) ||
+      ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'C');
 
     if (isCopy) {
       const selection = terminal.getSelection();

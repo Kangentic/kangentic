@@ -26,6 +26,11 @@ vi.mock('../../src/shared/paths', () => ({
   adaptCommandForShell: (cmd: string) => cmd,
 }));
 
+vi.mock('../../src/main/analytics/analytics', () => ({
+  trackEvent: vi.fn(),
+  sanitizeErrorMessage: (message: string) => message,
+}));
+
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
 

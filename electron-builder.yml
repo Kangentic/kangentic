@@ -60,6 +60,7 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
   strictVerify: false
+  minimumSystemVersion: "10.15"
   entitlements: build/entitlements.plist
   entitlementsInherit: build/entitlements.plist
 

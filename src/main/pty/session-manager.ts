@@ -8,6 +8,7 @@ import { FileWatcher } from './file-watcher';
 import { ClaudeStatusParser } from '../agent/claude-status-parser';
 import { adaptCommandForShell } from '../../shared/paths';
 import { EventType, EventTypeActivity, ClaudeTool } from '../../shared/types';
+import { trackEvent, sanitizeErrorMessage } from '../analytics/analytics';
 import type { Session, SessionStatus, SessionUsage, ActivityState, SessionEvent, SpawnSessionInput } from '../../shared/types';
 
 const MAX_SCROLLBACK = 512 * 1024; // 512KB per session
@@ -308,6 +309,13 @@ export class SessionManager extends EventEmitter {
         env: cleanEnv as Record<string, string>,
       });
     } catch (err) {
+      // Track PTY spawn failures in analytics (critical for macOS entitlement issues)
+      const spawnError = err instanceof Error ? err.message : String(err);
+      trackEvent('app_error', {
+        source: 'pty_spawn',
+        message: sanitizeErrorMessage(spawnError),
+      });
+
       // PTY spawn failed -- return a dead session so the renderer sees
       // a failed session instead of crashing the main process
       const failedSession: ManagedSession = {

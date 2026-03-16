@@ -65,7 +65,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `terminal.shell` | string \| null | `null` | Shell executable path. `null` = auto-detect. |
-| `terminal.fontFamily` | string | `'Consolas, "Courier New", monospace'` | Terminal font family |
+| `terminal.fontFamily` | string | `'Menlo, Consolas, "Courier New", monospace'` | Terminal font family |
 | `terminal.fontSize` | number | `14` | Terminal font size (px) |
 | `terminal.showPreview` | boolean | `false` | Show terminal preview in task cards. Global-only. |
 | `terminal.panelHeight` | number | `250` | Bottom panel height (px). Global-only. |

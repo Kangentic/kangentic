@@ -205,6 +205,11 @@ export function registerSystemHandlers(context: IpcContext): void {
   const activeNotifications = new Set<Notification>();
 
   ipcMain.on(IPC.NOTIFICATION_SHOW, (_event, input: NotificationInput) => {
+    if (!Notification.isSupported()) {
+      console.warn('[NOTIFICATION] Notifications not supported on this system');
+      return;
+    }
+
     const notification = new Notification({
       title: input.title,
       body: input.body,

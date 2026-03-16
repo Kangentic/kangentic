@@ -425,7 +425,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   boardLayout: 'horizontal',
   terminal: {
     shell: null,
-    fontFamily: 'Consolas, "Courier New", monospace',
+    fontFamily: 'Menlo, Consolas, "Courier New", monospace',
     fontSize: 14,
     showPreview: false,
     panelHeight: 250,

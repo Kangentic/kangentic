@@ -1,12 +1,14 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { IPC } from '../shared/ipc-channels';
+import { trackEvent, sanitizeErrorMessage } from './analytics/analytics';
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const INITIAL_DELAY_MS = 5000; // 5 seconds after launch
 
 let checkTimeout: ReturnType<typeof setTimeout> | null = null;
 let checkInterval: ReturnType<typeof setInterval> | null = null;
+let updaterWindow: BrowserWindow | null = null;
 
 /**
  * Initialize the auto-updater for packaged builds (Windows and macOS only).
@@ -14,6 +16,8 @@ let checkInterval: ReturnType<typeof setInterval> | null = null;
  */
 export function initUpdater(mainWindow: BrowserWindow): void {
   if (!app.isPackaged || process.platform === 'linux') return;
+
+  updaterWindow = mainWindow;
 
   // We control the download -- don't auto-download on check
   autoUpdater.autoDownload = false;
@@ -42,14 +46,18 @@ export function initUpdater(mainWindow: BrowserWindow): void {
   // When download completes, notify the renderer
   autoUpdater.on('update-downloaded', (info) => {
     console.log('[UPDATER] Update downloaded:', info.version);
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC.UPDATE_DOWNLOADED, { version: info.version });
+    if (updaterWindow && !updaterWindow.isDestroyed()) {
+      updaterWindow.webContents.send(IPC.UPDATE_DOWNLOADED, { version: info.version });
     }
   });
 
   // Log errors but never surface to user
   autoUpdater.on('error', (error) => {
     console.error('[UPDATER] Error:', error);
+    trackEvent('app_error', {
+      source: 'updater',
+      message: sanitizeErrorMessage(error.message),
+    });
   });
 
   // Schedule checks
@@ -66,6 +74,14 @@ export function initUpdater(mainWindow: BrowserWindow): void {
       });
     }, CHECK_INTERVAL_MS);
   }, INITIAL_DELAY_MS);
+}
+
+/**
+ * Update the window reference used by the auto-updater. Called when macOS
+ * recreates the window after all windows were closed (dock icon click).
+ */
+export function updateUpdaterWindow(mainWindow: BrowserWindow): void {
+  updaterWindow = mainWindow;
 }
 
 /**

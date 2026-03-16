@@ -4,7 +4,7 @@ import { app, BrowserWindow, Menu, nativeImage, screen, session } from 'electron
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { registerAllIpc, getSessionManager, getCommandInjector, getBoardConfigManager, getCurrentProjectId, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
+import { registerAllIpc, updateMainWindow, getSessionManager, getCommandInjector, getBoardConfigManager, getCurrentProjectId, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { closeAll, getProjectDb } from './db/database';
 import { SessionRepository } from './db/repositories/session-repository';
 import { IPC } from '../shared/ipc-channels';
@@ -40,7 +40,7 @@ process.on('unhandledRejection', (reason) => {
   }
 });
 
-import { initUpdater, stopUpdaterTimers } from './updater';
+import { initUpdater, updateUpdaterWindow, stopUpdaterTimers } from './updater';
 
 // Initialize anonymous analytics BEFORE app.whenReady() -- the SDK requires this
 // to register protocol schemes. The analytics module decides whether to activate
@@ -224,9 +224,6 @@ const createWindow = () => {
   mainWindow.on('move', saveBounds);
   mainWindow.on('resize', saveBounds);
 
-  // Register all IPC handlers
-  registerAllIpc(mainWindow);
-
   // Native right-click context menu (Copy / Paste / Select All).
   // xterm.js renders to canvas/WebGL -- standard DOM copy/selectAll don't
   // reach its content.  We use the right-click coordinates (captured before
@@ -362,7 +359,11 @@ const createWindow = () => {
 // Windows/Linux don't need any menu at all.
 Menu.setApplicationMenu(
   process.platform === 'darwin'
-    ? Menu.buildFromTemplate([{ role: 'editMenu' }])
+    ? Menu.buildFromTemplate([
+        { role: 'appMenu' },
+        { role: 'editMenu' },
+        { role: 'windowMenu' },
+      ])
     : null,
 );
 
@@ -376,6 +377,13 @@ app.whenReady().then(async () => {
   );
 
   createWindow();
+
+  // Register all IPC handlers exactly once. On macOS, closing all windows
+  // doesn't quit the app (dock behavior). Re-clicking the dock icon fires
+  // `activate` which recreates the window, but must NOT re-register handlers
+  // (ipcMain.handle throws on duplicate registration). The activate handler
+  // below calls updateMainWindow() instead.
+  registerAllIpc(mainWindow!);
   initUpdater(mainWindow!);
 
   // Fire app_launch event (analytics initialized before app.whenReady above).
@@ -389,8 +397,6 @@ app.whenReady().then(async () => {
 
   // Prune stale worktree projects from crashed/force-killed preview instances.
   // Only runs in the main app during development -- preview is a dev-only feature.
-  // Must run after createWindow() since pruneStaleWorktreeProjects uses IPC context
-  // initialized by registerAllIpc() inside createWindow().
   if (!isEphemeral && !app.isPackaged) {
     phase('pruneStaleWorktreeProjects');
     pruneStaleWorktreeProjects()
@@ -408,6 +414,11 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
+    // Update the IPC context and updater window references to the newly created
+    // window. IPC handlers are already registered from app.whenReady() and must
+    // not be re-registered (ipcMain.handle throws on duplicate registration).
+    updateMainWindow(mainWindow!);
+    updateUpdaterWindow(mainWindow!);
   }
 });
 
@@ -505,6 +516,14 @@ function startHardShutdownFailsafe(): void {
         );
       } catch {
         // taskkill may fail if process is already dying
+      }
+    } else {
+      // macOS/Linux: SIGKILL the process group to ensure child processes are cleaned up.
+      // Negative PID targets the entire process group, not just the main process.
+      try {
+        process.kill(-process.pid, 'SIGKILL');
+      } catch {
+        // Process may already be dying
       }
     }
     process.exit(1);

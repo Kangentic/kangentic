@@ -1,0 +1,83 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in Kangentic
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Ubuntu
+        - Fedora
+        - Other Linux
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Installation Method
+      options:
+        - npx kangentic (launcher)
+        - Built from source
+        - Downloaded release
+    validations:
+      required: true
+
+  - type: input
+    id: kangentic-version
+    attributes:
+      label: Kangentic Version
+      placeholder: e.g. 0.6.0
+    validations:
+      required: true
+
+  - type: input
+    id: claude-cli-version
+    attributes:
+      label: Claude Code CLI Version
+      placeholder: e.g. 1.0.16
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      placeholder: |
+        1. Open the app
+        2. Click on ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-vs-actual
+    attributes:
+      label: Expected vs Actual Behavior
+      placeholder: |
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or Logs
+      description: Paste any relevant screenshots, terminal output, or error messages.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Any other details that might help diagnose the issue.
+    validations:
+      required: false
