@@ -61,35 +61,13 @@ function isInstalled(platformInfo) {
   const installPath = getInstallPath(platformInfo);
   if (!fs.existsSync(installPath)) return false;
 
-  // On Windows, the exe existing is sufficient (NSIS install)
-  if (platformInfo.platform === 'win32') {
-    return true;
+  try {
+    const installedVersion = fs.readFileSync(getVersionMarkerPath(), 'utf-8').trim();
+    return installedVersion === VERSION;
+  } catch {
+    // Marker missing or unreadable. Force reinstall (idempotent).
+    return false;
   }
-
-  // On macOS, check the app bundle's version in Info.plist
-  if (platformInfo.platform === 'darwin') {
-    try {
-      const plistPath = path.join(installPath, 'Contents', 'Info.plist');
-      const plistContent = fs.readFileSync(plistPath, 'utf-8');
-      const versionMatch = plistContent.match(/<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/);
-      if (versionMatch && versionMatch[1] !== VERSION) return false;
-    } catch {
-      // Can't read plist, treat as not installed
-      return false;
-    }
-  }
-
-  // On Linux, check `kangentic --version` output
-  if (platformInfo.platform === 'linux') {
-    try {
-      const output = execFileSync(installPath, ['--version'], { encoding: 'utf-8', timeout: 5000 }).trim();
-      if (!output.includes(VERSION)) return false;
-    } catch {
-      // Can't check version, treat as installed (binary exists)
-    }
-  }
-
-  return true;
 }
 
 // --- Download URL construction ---
@@ -317,6 +295,20 @@ function getTempDir() {
   return tempDir;
 }
 
+// --- Version marker ---
+
+function getVersionMarkerPath() {
+  return path.join(getTempDir(), 'installed-version');
+}
+
+function writeVersionMarker() {
+  try {
+    fs.writeFileSync(getVersionMarkerPath(), VERSION + '\n', 'utf-8');
+  } catch {
+    console.warn('Warning: Could not write version marker file.');
+  }
+}
+
 // --- Main ---
 
 function parseDataDir(arguments_) {
@@ -356,8 +348,9 @@ async function main() {
   // Determine target directory (first positional argument, skipping flags and their values)
   const targetDir = findTargetDir(arguments_);
 
-  // Check for --demo flag
+  // Check for --demo and --force flags
   const isDemo = arguments_.includes('--demo');
+  const forceInstall = arguments_.includes('--force');
 
   // Resolve data directory: env var takes priority, then --data-dir flag
   const dataDirFlag = parseDataDir(arguments_);
@@ -386,7 +379,7 @@ async function main() {
   }
 
   // Check if already installed
-  if (isInstalled(platformInfo)) {
+  if (!forceInstall && isInstalled(platformInfo)) {
     console.log(`Kangentic v${VERSION} is already installed.`);
     launch(platformInfo, targetDir, dataDir, extraArgs);
     return;
@@ -412,6 +405,7 @@ async function main() {
   // Install
   try {
     install(platformInfo, artifactPath);
+    writeVersionMarker();
   } catch (error) {
     console.error(`\nInstallation failed: ${error.message}`);
     console.error(`\nTry installing manually. The downloaded file is at: ${artifactPath}`);
@@ -429,7 +423,13 @@ async function main() {
   launch(platformInfo, targetDir, dataDir, extraArgs);
 }
 
-main().catch((error) => {
-  console.error(`Unexpected error: ${error.message}`);
-  process.exit(1);
-});
+// Only auto-run when executed directly (not when required for testing)
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`Unexpected error: ${error.message}`);
+    process.exit(1);
+  });
+}
+
+// Exported for testing
+module.exports = { isInstalled, getVersionMarkerPath, writeVersionMarker, getInstallPath, getTempDir };
