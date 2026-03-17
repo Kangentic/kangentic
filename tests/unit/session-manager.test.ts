@@ -392,6 +392,119 @@ describe('PTY spawn failure', () => {
     expect(retrieved?.status).toBe('exited');
     expect(retrieved?.exitCode).toBe(-1);
   });
+
+  it('analytics includes diagnostic properties on spawn failure', async () => {
+    const { trackEvent } = await import('../../src/main/analytics/analytics');
+    const errnoError = new Error('posix_spawnp failed.') as NodeJS.ErrnoException;
+    errnoError.code = 'ENOENT';
+
+    vi.mocked(pty.spawn).mockImplementation(() => {
+      throw errnoError;
+    });
+
+    await manager.spawn({
+      taskId: 'task-fail-diag',
+      command: '',
+      cwd: tmpDir,
+    });
+
+    expect(trackEvent).toHaveBeenCalledWith('app_error', expect.objectContaining({
+      source: 'pty_spawn',
+      shell: expect.any(String),
+      cwdExists: expect.any(String),
+      shellExists: expect.any(String),
+      platform: process.platform,
+      arch: process.arch,
+    }));
+  });
+
+  it('falls back to home directory when CWD does not exist', async () => {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+
+    const nonExistentCwd = path.join(tmpDir, 'deleted-project');
+
+    await manager.spawn({
+      taskId: 'task-fail-cwd',
+      command: '',
+      cwd: nonExistentCwd,
+    });
+
+    const spawnCall = vi.mocked(pty.spawn).mock.calls[0];
+    expect(spawnCall[2]?.cwd).toBe(os.homedir());
+
+    // Clean up
+    manager.killAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  it('CWD fallback tracks separate analytics event', async () => {
+    const { trackEvent } = await import('../../src/main/analytics/analytics');
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+
+    const nonExistentCwd = path.join(tmpDir, 'missing-dir');
+
+    await manager.spawn({
+      taskId: 'task-fail-cwd-track',
+      command: '',
+      cwd: nonExistentCwd,
+    });
+
+    expect(trackEvent).toHaveBeenCalledWith('app_error', expect.objectContaining({
+      source: 'pty_spawn_cwd_missing',
+      message: 'CWD does not exist, falling back to home directory',
+      platform: process.platform,
+    }));
+
+    // Clean up
+    manager.killAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  it('analytics includes errno code when available', async () => {
+    const { trackEvent } = await import('../../src/main/analytics/analytics');
+    const errnoError = new Error('spawn EACCES') as NodeJS.ErrnoException;
+    errnoError.code = 'EACCES';
+    errnoError.errno = -13;
+
+    vi.mocked(pty.spawn).mockImplementation(() => {
+      throw errnoError;
+    });
+
+    await manager.spawn({
+      taskId: 'task-fail-errno',
+      command: '',
+      cwd: tmpDir,
+    });
+
+    expect(trackEvent).toHaveBeenCalledWith('app_error', expect.objectContaining({
+      source: 'pty_spawn',
+      errno: 'EACCES',
+    }));
+  });
+
+  it('session record reflects fallback CWD when directory does not exist', async () => {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+
+    const nonExistentCwd = path.join(tmpDir, 'gone-project');
+
+    const session = await manager.spawn({
+      taskId: 'task-fail-cwd-record',
+      command: '',
+      cwd: nonExistentCwd,
+    });
+
+    expect(session.cwd).toBe(os.homedir());
+
+    const retrieved = manager.getSession(session.id);
+    expect(retrieved?.cwd).toBe(os.homedir());
+
+    // Clean up
+    manager.killAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
 });
 
 // ---------------------------------------------------------------------------

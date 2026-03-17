@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import * as pty from 'node-pty';
 import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
@@ -298,21 +299,50 @@ export class SessionManager extends EventEmitter {
     // when Kangentic itself was launched from inside a Claude Code session.
     const { CLAUDECODE: _, ...cleanEnv } = { ...process.env, ...input.env };
 
+    // Validate CWD exists before spawning. If the project directory was
+    // deleted or moved, fall back to home directory (a session in ~ is
+    // strictly better than a dead session with exitCode: -1).
+    let effectiveCwd = input.cwd;
+    if (!fs.existsSync(input.cwd)) {
+      effectiveCwd = os.homedir();
+      trackEvent('app_error', {
+        source: 'pty_spawn_cwd_missing',
+        message: 'CWD does not exist, falling back to home directory',
+        platform: process.platform,
+      });
+    }
+
     let ptyProcess: pty.IPty;
     try {
       ptyProcess = pty.spawn(shellExe, shellArgs, {
         name: 'xterm-256color',
         cols: 120,
         rows: 30,
-        cwd: input.cwd,
+        cwd: effectiveCwd,
         env: cleanEnv as Record<string, string>,
       });
     } catch (err) {
-      // Track PTY spawn failures in analytics (critical for macOS entitlement issues)
+      // Track PTY spawn failures with full diagnostics
       const spawnError = err instanceof Error ? err.message : String(err);
+      const errnoCode = (err as NodeJS.ErrnoException).code || '';
+      const errnoNumber = (err as NodeJS.ErrnoException).errno ?? '';
+
+      // Check original CWD (not effectiveCwd) so the diagnostic reveals
+      // whether the fallback was triggered. existsSync doesn't throw for
+      // valid string args, so no try/catch needed.
+      const cwdExists = fs.existsSync(input.cwd);
+      const shellExists = fs.existsSync(shellExe);
+
       trackEvent('app_error', {
         source: 'pty_spawn',
         message: sanitizeErrorMessage(spawnError),
+        shell: shellExe,
+        shellArgs: shellArgs.join(' '),
+        cwdExists: String(cwdExists),
+        shellExists: String(shellExists),
+        errno: errnoCode || String(errnoNumber),
+        platform: process.platform,
+        arch: process.arch,
       });
 
       // PTY spawn failed -- return a dead session so the renderer sees
@@ -324,7 +354,7 @@ export class SessionManager extends EventEmitter {
         pty: null,
         status: 'exited',
         shell,
-        cwd: input.cwd,
+        cwd: effectiveCwd,
         startedAt: new Date().toISOString(),
         exitCode: -1,
         buffer: '',
@@ -359,7 +389,7 @@ export class SessionManager extends EventEmitter {
       pty: ptyProcess,
       status: 'running',
       shell,
-      cwd: input.cwd,
+      cwd: effectiveCwd,
       startedAt: new Date().toISOString(),
       exitCode: null,
       buffer: '',
