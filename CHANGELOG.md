@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.7.0] - 2026-03-16
+
+### Features
+- Add project grouping with collapsible sections in sidebar (303c9fa)
+- Add heartbeat event for session duration tracking (7912d6a)
+- Add Visual Studio preset for Windows keyboard shortcuts (2d68f5d)
+
+### Fixes
+- Checkout selected branch for non-worktree tasks (e7fcc01)
+- Prevent IPC double-registration crash and harden cross-platform support (e052be0)
+- Prevent session resume for tasks in the backlog (740f9f9)
+- Always pre-populate trust for agent cwd including demo mode (4529a12)
+
+### Other
+- Add YouTube demo badge and watch demo button to README (7e509a9)
+- Fix publish-npm job skipped on tag-triggered releases (81c911f)
+
 ## [v0.6.0] - 2026-03-15
 
 ### Features
