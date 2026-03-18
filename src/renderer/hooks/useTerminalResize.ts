@@ -73,9 +73,15 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
 
     availableHeightRef.current = el.getBoundingClientRect().height;
 
+    let previousHeight = availableHeightRef.current;
+
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        availableHeightRef.current = entry.contentRect.height;
+        const newHeight = entry.contentRect.height;
+        // Skip if only the width changed (e.g. sidebar open/close)
+        if (newHeight === previousHeight) return;
+        previousHeight = newHeight;
+        availableHeightRef.current = newHeight;
       }
       const clamped = clampHeight(latestHeightRef.current);
       if (clamped !== latestHeightRef.current) {
