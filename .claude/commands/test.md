@@ -15,7 +15,7 @@ Unified command for running tests, auditing coverage, and writing missing tests.
 | *(none)* | **Smart Run** | Detect branch, select relevant tiers, typecheck, build (if needed), run tests |
 | `all` | **Full Run** | Run all 3 tiers unconditionally |
 | `audit` | **Coverage Audit** | Analyze changes and report coverage gaps — no test execution |
-| `write` | **Write Tests** | Audit + implement missing tests (with user confirmation) |
+| `write` | **Write Tests** | Audit + implement missing tests |
 | `unit` | **Unit Only** | Run unit tests only |
 | `ui` | **UI Only** | Run UI tests only |
 | `e2e` | **E2E Only** | Build + run E2E tests only |
@@ -207,9 +207,9 @@ For each recommended test:
 
 ## Mode: Write Tests (`/test write`)
 
-Run the full Coverage Audit (above), then **ask for confirmation** before writing any test files.
+Run the full Coverage Audit (above), then immediately implement the identified tests. Do not ask for confirmation.
 
-After confirmation, implement the approved tests using correct project patterns:
+Implement the tests using correct project patterns:
 
 **Unit tests (`tests/unit/`):**
 - Use vitest (`describe`, `it`, `expect`)
@@ -305,4 +305,4 @@ All green. No regressions.
 
 - `Read`, `Glob`, `Grep` — for file exploration and audit phases
 - `Bash` — for `npm`, `npx`, and `git` commands only
-- `Edit`, `Write` — only during `write` mode, after user confirmation
+- `Edit`, `Write` — only during `write` mode
