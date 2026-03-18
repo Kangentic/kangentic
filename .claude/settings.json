@@ -45,6 +45,7 @@
       "Bash(gh api:*)",
       "Bash(gh workflow:*)",
       "Bash(gh release:*)",
+      "Bash(start:*)",
       "mcp__context7__resolve-library-id",
       "mcp__context7__query-docs",
       "WebSearch",
