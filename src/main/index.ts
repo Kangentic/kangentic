@@ -12,6 +12,7 @@ import { THEME_BACKGROUNDS } from '../shared/types';
 import type { AppConfig, ThemeMode } from '../shared/types';
 import { PATHS } from './config/paths';
 import { ConfigManager } from './config/config-manager';
+import { isShuttingDown, setShuttingDown } from './shutdown-state';
 const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage } from './analytics/analytics';
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
@@ -23,7 +24,7 @@ mark('process_start');
 // During shutdown, skip analytics calls to avoid new network requests that block exit.
 process.on('uncaughtException', (error) => {
   console.error('[APP] Uncaught exception:', error);
-  if (!isShuttingDown) {
+  if (!isShuttingDown()) {
     trackEvent('app_error', {
       source: 'uncaughtException',
       message: sanitizeErrorMessage(error.message),
@@ -32,7 +33,7 @@ process.on('uncaughtException', (error) => {
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[APP] Unhandled rejection:', reason);
-  if (!isShuttingDown) {
+  if (!isShuttingDown()) {
     trackEvent('app_error', {
       source: 'unhandledRejection',
       message: sanitizeErrorMessage(reason instanceof Error ? reason.message : String(reason)),
@@ -88,7 +89,6 @@ if (!isEphemeral) {
 
 let mainWindow: BrowserWindow | null = null;
 let activateAllProjectsTimer: ReturnType<typeof setTimeout> | null = null;
-let isShuttingDown = false;
 
 // Parse --cwd=<path> from command line args
 function getCwdArg(): string | null {
@@ -411,6 +411,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
+  if (isShuttingDown()) return;
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
     updateUpdaterWindow(mainWindow!);
@@ -478,6 +479,7 @@ function syncShutdownCleanup(): void {
     // (which sends /exit and waits up to 2s) to keep shutdown synchronous.
     // Sessions are resumable via --resume <claude_session_id> from the DB record.
     sessionManager.killAll();
+    sessionManager.dispose();
 
     // Ephemeral cleanup: delete project from index so it doesn't show on next launch.
     // The worktree directory cleanup (async) is skipped here -- pruneStaleWorktreeProjects()
@@ -526,8 +528,8 @@ function startHardShutdownFailsafe(): void {
 }
 
 app.on('before-quit', () => {
-  if (isShuttingDown) return;
-  isShuttingDown = true;
+  if (isShuttingDown()) return;
+  setShuttingDown();
 
   // Hard failsafe: if Electron's normal shutdown hangs, force-kill everything
   startHardShutdownFailsafe();
@@ -544,8 +546,8 @@ app.on('before-quit', () => {
 // Handle force-close (Ctrl+C / SIGINT / SIGTERM) which may not fire before-quit
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    if (isShuttingDown) return;
-    isShuttingDown = true;
+    if (isShuttingDown()) return;
+    setShuttingDown();
     startHardShutdownFailsafe();
     syncShutdownCleanup();
     process.exit(0);

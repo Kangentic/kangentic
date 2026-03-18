@@ -11,6 +11,7 @@ import { getProjectDb, closeProjectDb } from '../../db/database';
 import { PATHS } from '../../config/paths';
 import { ensureGitignore, getProjectRepos } from '../helpers';
 import { trackEvent } from '../../analytics/analytics';
+import { isShuttingDown } from '../../shutdown-state';
 import type { Project, Task, AppConfig } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import type { ProjectRepository } from '../../db/repositories/project-repository';
@@ -281,6 +282,8 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
  * the user navigates to a project board.
  */
 export async function activateAllProjects(context: IpcContext): Promise<void> {
+  if (isShuttingDown()) return;
+
   const config = context.configManager.load();
   if (!config.activateAllProjectsOnStartup) return;
 
@@ -290,6 +293,7 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
 
   const results = await Promise.allSettled(
     otherProjects.map(async (project) => {
+      if (isShuttingDown()) return;
       ensureGitignore(project.path);
       const db = getProjectDb(project.id);
       const taskRepo = new TaskRepository(db);

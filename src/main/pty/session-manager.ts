@@ -10,6 +10,7 @@ import { ClaudeStatusParser } from '../agent/claude-status-parser';
 import { adaptCommandForShell } from '../../shared/paths';
 import { EventType, EventTypeActivity, ClaudeTool } from '../../shared/types';
 import { trackEvent, sanitizeErrorMessage } from '../analytics/analytics';
+import { isShuttingDown } from '../shutdown-state';
 import { findSafeStartIndex } from './scrollback-utils';
 import type { Session, SessionStatus, SessionUsage, ActivityState, SessionEvent, SpawnSessionInput } from '../../shared/types';
 
@@ -187,6 +188,10 @@ export class SessionManager extends EventEmitter {
   }
 
   async spawn(input: SpawnSessionInput): Promise<Session> {
+    if (isShuttingDown()) {
+      throw new Error('Cannot spawn session during shutdown');
+    }
+
     if (this.sessionQueue.shouldQueue()) {
       // Return a queued placeholder immediately (don't block the caller).
       // SessionQueue will promote it to a running PTY when a slot opens.
@@ -222,6 +227,10 @@ export class SessionManager extends EventEmitter {
   }
 
   private async doSpawn(input: SpawnSessionInput): Promise<Session> {
+    if (isShuttingDown()) {
+      throw new Error('Cannot spawn session during shutdown');
+    }
+
     const shell = await this.getShell();
     const existing = input.taskId ? this.findByTaskId(input.taskId) : null;
 

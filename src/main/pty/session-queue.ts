@@ -1,4 +1,5 @@
 import type { SpawnSessionInput } from '../../shared/types';
+import { isShuttingDown } from '../shutdown-state';
 
 interface QueueEntry {
   input: SpawnSessionInput;
@@ -91,7 +92,7 @@ export class SessionQueue {
     try {
       do {
         this._dirty = false;
-        while (this.queue.length > 0 && this.getActiveCount() < this.maxConcurrent) {
+        while (this.queue.length > 0 && !isShuttingDown() && this.getActiveCount() < this.maxConcurrent) {
           const next = this.queue.shift()!;
           try {
             await this.spawner(next.input);

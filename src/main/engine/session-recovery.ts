@@ -12,6 +12,7 @@ import { CommandBuilder } from '../agent/command-builder';
 import { ConfigManager } from '../config/config-manager';
 import type { SessionRecord, ActionConfig, Task, PermissionMode } from '../../shared/types';
 import { ensureWorktreeTrust } from '../agent/trust-manager';
+import { isShuttingDown } from '../shutdown-state';
 import { sessionOutputPaths } from './session-paths';
 import { app } from 'electron';
 
@@ -179,6 +180,8 @@ export async function recoverSessions(
   commandBuilder: CommandBuilder,
   configManager: ConfigManager,
 ): Promise<void> {
+  if (isShuttingDown()) return;
+
   const timerLabel = `[startup] recoverSessions:${projectId.slice(0, 8)}`;
   if (!app.isPackaged) console.time(timerLabel);
   const db = getProjectDb(projectId);
@@ -410,6 +413,13 @@ export async function recoverSessions(
   }
 
   // --- Spawn pass (parallel): fire all spawns concurrently ---
+  // Re-check shutdown flag after the preparation pass (which may have awaited
+  // claudeDetector.detect and shell resolution). Avoids firing N spawns that
+  // would each individually throw and log errors against a closing DB.
+  if (isShuttingDown()) {
+    if (!app.isPackaged) console.timeEnd(timerLabel);
+    return;
+  }
   const spawnResults = await Promise.allSettled(
     spawnInputs.map(async (input) => {
       const newSession = await sessionManager.spawn({
@@ -497,6 +507,8 @@ export async function reconcileSessions(
   commandBuilder: CommandBuilder,
   configManager: ConfigManager,
 ): Promise<void> {
+  if (isShuttingDown()) return;
+
   const reconcileTimerLabel = `[startup] reconcileSessions:${projectId.slice(0, 8)}`;
   if (!app.isPackaged) console.time(reconcileTimerLabel);
   const db = getProjectDb(projectId);
@@ -647,6 +659,10 @@ export async function reconcileSessions(
   }
 
   // --- Spawn pass (parallel): fire all spawns concurrently ---
+  if (isShuttingDown()) {
+    if (!app.isPackaged) console.timeEnd(reconcileTimerLabel);
+    return;
+  }
   const spawnResults = await Promise.allSettled(
     spawnInputs.map(async (input) => {
       const newSession = await sessionManager.spawn({
