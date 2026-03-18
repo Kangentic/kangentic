@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.9.0] - 2026-03-18
+
+### Features
+- Convert commands to skills and add skills to palette (bd0abed)
+
+### Fixes
+- Prevent zombie processes by sharing shutdown flag across spawn paths (2eeab4f)
+- Prevent sidebar toggle from resizing bottom panel (4c292a9)
+
+### Other
+- Upgrade GitHub Actions to node24 versions (4d879ba)
+- Auto-open releases page after /release push (529fe31)
+
 ## [v0.8.0] - 2026-03-18
 
 ### Features
