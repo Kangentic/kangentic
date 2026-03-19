@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create, StateCreator } from 'zustand';
 import { arrayMove } from '@dnd-kit/sortable';
 import type { Task, Swimlane, TaskCreateInput, TaskUpdateInput, TaskMoveInput, TaskUnarchiveInput, SwimlaneCreateInput, SwimlaneUpdateInput, ShortcutConfig } from '../../shared/types';
 import { useConfigStore } from './config-store';
@@ -15,106 +15,87 @@ interface CompletingTask {
   startRect: { left: number; top: number; width: number; height: number };
 }
 
-interface BoardStore {
+// ---------------------------------------------------------------------------
+// Slice interfaces
+// ---------------------------------------------------------------------------
+
+interface TaskSlice {
   tasks: Task[];
-  swimlanes: Swimlane[];
-  archivedTasks: Task[];
-  shortcuts: (ShortcutConfig & { source: 'team' | 'local' })[];
-  loading: boolean;
-  searchQuery: string;
-  setSearchQuery: (query: string) => void;
-
-  // Board config warnings (shown as banner when kangentic.json has errors)
-  configWarnings: string[];
-  pendingConfigChange: string | null; // projectId that changed, or null
-
-  // Completion animation state
-  completingTask: CompletingTask | null;
-  recentlyArchivedId: string | null;
-
-  loadBoard: () => Promise<void>;
-  loadShortcuts: () => Promise<void>;
-
-  // Tasks
   createTask: (input: TaskCreateInput) => Promise<Task>;
   updateTask: (input: TaskUpdateInput) => Promise<Task>;
   deleteTask: (id: string) => Promise<void>;
   moveTask: (input: TaskMoveInput) => Promise<void>;
   getTasksBySwimlane: (swimlaneId: string) => Task[];
+  reorderTaskInColumn: (taskId: string, swimlaneId: string, activeId: string, overId: string) => Promise<void>;
+  updateAttachmentCount: (taskId: string, delta: number) => void;
+}
 
-  // Archive
+interface SwimlaneSlice {
+  swimlanes: Swimlane[];
+  createSwimlane: (input: SwimlaneCreateInput) => Promise<Swimlane>;
+  updateSwimlane: (input: SwimlaneUpdateInput) => Promise<Swimlane>;
+  deleteSwimlane: (id: string) => Promise<void>;
+  reorderSwimlanes: (ids: string[]) => Promise<void>;
+}
+
+interface ArchiveSlice {
+  archivedTasks: Task[];
   loadArchivedTasks: () => Promise<void>;
   archiveTask: (id: string) => void;
   unarchiveTask: (input: TaskUnarchiveInput) => Promise<void>;
   deleteArchivedTask: (id: string) => Promise<void>;
   bulkDeleteArchivedTasks: (ids: string[]) => Promise<void>;
   bulkUnarchiveTasks: (ids: string[], targetSwimlaneId: string) => Promise<void>;
+}
 
-  // Completion animation
+interface CompletionSlice {
+  completingTask: CompletingTask | null;
+  recentlyArchivedId: string | null;
   setCompletingTask: (task: CompletingTask | null) => void;
   finalizeCompletion: () => Promise<void>;
   clearRecentlyArchived: () => void;
+}
 
-  // Within-column reorder
-  reorderTaskInColumn: (taskId: string, swimlaneId: string, activeId: string, overId: string) => Promise<void>;
+interface SearchSlice {
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
+}
 
-  // Attachment count sync
-  updateAttachmentCount: (taskId: string, delta: number) => void;
-
-  // Swimlanes
-  createSwimlane: (input: SwimlaneCreateInput) => Promise<Swimlane>;
-  updateSwimlane: (input: SwimlaneUpdateInput) => Promise<Swimlane>;
-  deleteSwimlane: (id: string) => Promise<void>;
-  reorderSwimlanes: (ids: string[]) => Promise<void>;
-
-  // Config warnings
+interface BoardConfigSlice {
+  configWarnings: string[];
+  pendingConfigChange: string | null;
   setConfigWarnings: (warnings: string[]) => void;
   dismissConfigWarnings: () => void;
-
-  // Pending config change (file watcher detected external change)
   setPendingConfigChange: (projectId: string | null) => void;
   applyConfigChange: () => Promise<void>;
   dismissConfigChange: () => void;
 }
+
+interface BoardLifecycleSlice {
+  loading: boolean;
+  shortcuts: (ShortcutConfig & { source: 'team' | 'local' })[];
+  loadBoard: () => Promise<void>;
+  loadShortcuts: () => Promise<void>;
+}
+
+type BoardStore = TaskSlice & SwimlaneSlice & ArchiveSlice & CompletionSlice
+  & SearchSlice & BoardConfigSlice & BoardLifecycleSlice;
+
+// ---------------------------------------------------------------------------
+// Shared module-level state
+// ---------------------------------------------------------------------------
 
 /** Generation counter for stale reload protection.
  *  Each moveTask/reorderTaskInColumn increments before async work.
  *  After IPC completes, the reload is only applied if no newer move has started. */
 let moveGeneration = 0;
 
-export const useBoardStore = create<BoardStore>((set, get) => ({
+// ---------------------------------------------------------------------------
+// Slice creators
+// ---------------------------------------------------------------------------
+
+const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set, get) => ({
   tasks: [],
-  swimlanes: [],
-  archivedTasks: [],
-  shortcuts: [],
-  loading: false,
-  searchQuery: '',
-  setSearchQuery: (query) => set({ searchQuery: query }),
-  configWarnings: [],
-  pendingConfigChange: null,
-  completingTask: null,
-  recentlyArchivedId: null,
-  loadBoard: async () => {
-    set({ loading: true });
-    const [tasks, swimlanes, archivedTasks] = await Promise.all([
-      window.electronAPI.tasks.list(),
-      window.electronAPI.swimlanes.list(),
-      window.electronAPI.tasks.listArchived(),
-    ]);
-    set({ tasks, swimlanes, archivedTasks, loading: false });
-
-    // Load shortcuts separately (non-blocking)
-    get().loadShortcuts();
-  },
-
-  loadShortcuts: async () => {
-    try {
-      const shortcuts = await window.electronAPI.boardConfig.getShortcuts();
-      set({ shortcuts });
-    } catch {
-      // Non-fatal: shortcuts are optional
-    }
-  },
 
   createTask: async (input) => {
     const task = await window.electronAPI.tasks.create(input);
@@ -147,7 +128,7 @@ export const useBoardStore = create<BoardStore>((set, get) => ({
     }));
     // Remove ALL sessions for this task from the session store
     useSessionStore.setState((s) => ({
-      sessions: s.sessions.filter((sess) => sess.taskId !== id),
+      sessions: s.sessions.filter((session) => session.taskId !== id),
     }));
   },
 
@@ -236,6 +217,113 @@ export const useBoardStore = create<BoardStore>((set, get) => ({
       .sort((a, b) => a.position - b.position);
   },
 
+  reorderTaskInColumn: async (taskId, swimlaneId, activeId, overId) => {
+    if (activeId === overId) return;
+    const thisGen = ++moveGeneration;
+
+    // Compute indices from IDs
+    const laneTasks = get().tasks
+      .filter((t) => t.swimlane_id === swimlaneId)
+      .sort((a, b) => a.position - b.position);
+
+    const oldIndex = laneTasks.findIndex((t) => t.id === activeId);
+    const newIndex = laneTasks.findIndex((t) => t.id === overId);
+    if (oldIndex === -1 || newIndex === -1) {
+      await get().loadBoard();
+      return;
+    }
+
+    // Optimistic update: reorder tasks in store immediately so dnd-kit's
+    // transform release sees the correct DOM order (no snap-back).
+    const reordered = arrayMove([...laneTasks], oldIndex, newIndex);
+
+    const positionMap = new Map<string, number>();
+    reordered.forEach((t, i) => positionMap.set(t.id, i));
+
+    set((s) => ({
+      tasks: s.tasks.map((t) => {
+        const pos = positionMap.get(t.id);
+        return pos !== undefined ? { ...t, position: pos } : t;
+      }),
+    }));
+
+    try {
+      await window.electronAPI.tasks.move({
+        taskId,
+        targetSwimlaneId: swimlaneId,
+        targetPosition: newIndex,
+      });
+      if (moveGeneration !== thisGen) return; // Skip stale reload
+
+      // Lightweight reload -- only tasks (no session changes for same-column reorder)
+      const tasks = await window.electronAPI.tasks.list();
+      if (moveGeneration !== thisGen) return; // Skip stale reload
+      set({ tasks });
+    } catch (err) {
+      if (moveGeneration !== thisGen) return; // Don't clobber newer state on error
+      await get().loadBoard();
+      useToastStore.getState().addToast({
+        message: `Failed to reorder task: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'error',
+      });
+    }
+  },
+
+  updateAttachmentCount: (taskId, delta) => {
+    set((state) => ({
+      tasks: state.tasks.map((task) =>
+        task.id === taskId
+          ? { ...task, attachment_count: Math.max(0, task.attachment_count + delta) }
+          : task
+      ),
+    }));
+  },
+});
+
+const createSwimlaneSlice: StateCreator<BoardStore, [], [], SwimlaneSlice> = (set, get) => ({
+  swimlanes: [],
+
+  createSwimlane: async (input) => {
+    const swimlane = await window.electronAPI.swimlanes.create(input);
+    set((s) => ({ swimlanes: [...s.swimlanes, swimlane] }));
+    return swimlane;
+  },
+
+  updateSwimlane: async (input) => {
+    const swimlane = await window.electronAPI.swimlanes.update(input);
+    set((s) => ({ swimlanes: s.swimlanes.map((l) => (l.id === swimlane.id ? swimlane : l)) }));
+    return swimlane;
+  },
+
+  deleteSwimlane: async (id) => {
+    await window.electronAPI.swimlanes.delete(id);
+    set((s) => ({ swimlanes: s.swimlanes.filter((l) => l.id !== id) }));
+  },
+
+  reorderSwimlanes: async (ids) => {
+    // Optimistic update: reorder in store immediately so dnd-kit's
+    // transform release sees the correct DOM order (no snap-back).
+    set((s) => ({
+      swimlanes: ids.map((id, index) => {
+        const lane = s.swimlanes.find((l) => l.id === id)!;
+        return { ...lane, position: index };
+      }),
+    }));
+    try {
+      await window.electronAPI.swimlanes.reorder(ids);
+    } catch (err) {
+      await get().loadBoard();
+      useToastStore.getState().addToast({
+        message: `Failed to reorder columns: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'error',
+      });
+    }
+  },
+});
+
+const createArchiveSlice: StateCreator<BoardStore, [], [], ArchiveSlice> = (set, get) => ({
+  archivedTasks: [],
+
   loadArchivedTasks: async () => {
     const archivedTasks = await window.electronAPI.tasks.listArchived();
     set({ archivedTasks });
@@ -301,7 +389,7 @@ export const useBoardStore = create<BoardStore>((set, get) => ({
       await window.electronAPI.tasks.delete(id);
       // Also clean up sessions in session store
       useSessionStore.setState((s) => ({
-        sessions: s.sessions.filter((sess) => sess.taskId !== id),
+        sessions: s.sessions.filter((session) => session.taskId !== id),
       }));
     } catch (err) {
       // Revert optimistic removal so stale tasks don't reappear on next load
@@ -366,6 +454,11 @@ export const useBoardStore = create<BoardStore>((set, get) => ({
       });
     }
   },
+});
+
+const createCompletionSlice: StateCreator<BoardStore, [], [], CompletionSlice> = (set, get) => ({
+  completingTask: null,
+  recentlyArchivedId: null,
 
   setCompletingTask: (task) => {
     // If another task is already completing, finalize it immediately
@@ -408,105 +501,16 @@ export const useBoardStore = create<BoardStore>((set, get) => ({
   clearRecentlyArchived: () => {
     set({ recentlyArchivedId: null });
   },
+});
 
-  reorderTaskInColumn: async (taskId, swimlaneId, activeId, overId) => {
-    if (activeId === overId) return;
-    const thisGen = ++moveGeneration;
+const createSearchSlice: StateCreator<BoardStore, [], [], SearchSlice> = (set) => ({
+  searchQuery: '',
+  setSearchQuery: (query) => set({ searchQuery: query }),
+});
 
-    // Compute indices from IDs
-    const laneTasks = get().tasks
-      .filter((t) => t.swimlane_id === swimlaneId)
-      .sort((a, b) => a.position - b.position);
-
-    const oldIndex = laneTasks.findIndex((t) => t.id === activeId);
-    const newIndex = laneTasks.findIndex((t) => t.id === overId);
-    if (oldIndex === -1 || newIndex === -1) {
-      await get().loadBoard();
-      return;
-    }
-
-    // Optimistic update: reorder tasks in store immediately so dnd-kit's
-    // transform release sees the correct DOM order (no snap-back).
-    const reordered = arrayMove([...laneTasks], oldIndex, newIndex);
-
-    const positionMap = new Map<string, number>();
-    reordered.forEach((t, i) => positionMap.set(t.id, i));
-
-    set((s) => ({
-      tasks: s.tasks.map((t) => {
-        const pos = positionMap.get(t.id);
-        return pos !== undefined ? { ...t, position: pos } : t;
-      }),
-    }));
-
-    try {
-      await window.electronAPI.tasks.move({
-        taskId,
-        targetSwimlaneId: swimlaneId,
-        targetPosition: newIndex,
-      });
-      if (moveGeneration !== thisGen) return; // Skip stale reload
-
-      // Lightweight reload -- only tasks (no session changes for same-column reorder)
-      const tasks = await window.electronAPI.tasks.list();
-      if (moveGeneration !== thisGen) return; // Skip stale reload
-      set({ tasks });
-    } catch (err) {
-      if (moveGeneration !== thisGen) return; // Don't clobber newer state on error
-      await get().loadBoard();
-      useToastStore.getState().addToast({
-        message: `Failed to reorder task: ${err instanceof Error ? err.message : 'Unknown error'}`,
-        variant: 'error',
-      });
-    }
-  },
-
-  createSwimlane: async (input) => {
-    const swimlane = await window.electronAPI.swimlanes.create(input);
-    set((s) => ({ swimlanes: [...s.swimlanes, swimlane] }));
-    return swimlane;
-  },
-
-  updateSwimlane: async (input) => {
-    const swimlane = await window.electronAPI.swimlanes.update(input);
-    set((s) => ({ swimlanes: s.swimlanes.map((l) => (l.id === swimlane.id ? swimlane : l)) }));
-    return swimlane;
-  },
-
-  deleteSwimlane: async (id) => {
-    await window.electronAPI.swimlanes.delete(id);
-    set((s) => ({ swimlanes: s.swimlanes.filter((l) => l.id !== id) }));
-  },
-
-  updateAttachmentCount: (taskId, delta) => {
-    set((state) => ({
-      tasks: state.tasks.map((task) =>
-        task.id === taskId
-          ? { ...task, attachment_count: Math.max(0, task.attachment_count + delta) }
-          : task
-      ),
-    }));
-  },
-
-  reorderSwimlanes: async (ids) => {
-    // Optimistic update: reorder in store immediately so dnd-kit's
-    // transform release sees the correct DOM order (no snap-back).
-    set((s) => ({
-      swimlanes: ids.map((id, index) => {
-        const lane = s.swimlanes.find((l) => l.id === id)!;
-        return { ...lane, position: index };
-      }),
-    }));
-    try {
-      await window.electronAPI.swimlanes.reorder(ids);
-    } catch (err) {
-      await get().loadBoard();
-      useToastStore.getState().addToast({
-        message: `Failed to reorder columns: ${err instanceof Error ? err.message : 'Unknown error'}`,
-        variant: 'error',
-      });
-    }
-  },
+const createBoardConfigSlice: StateCreator<BoardStore, [], [], BoardConfigSlice> = (set, get) => ({
+  configWarnings: [],
+  pendingConfigChange: null,
 
   setConfigWarnings: (warnings) => {
     set({ configWarnings: warnings });
@@ -546,4 +550,45 @@ export const useBoardStore = create<BoardStore>((set, get) => ({
   dismissConfigChange: () => {
     set({ pendingConfigChange: null });
   },
+});
+
+const createBoardLifecycleSlice: StateCreator<BoardStore, [], [], BoardLifecycleSlice> = (set, get) => ({
+  loading: false,
+  shortcuts: [],
+
+  loadBoard: async () => {
+    set({ loading: true });
+    const [tasks, swimlanes, archivedTasks] = await Promise.all([
+      window.electronAPI.tasks.list(),
+      window.electronAPI.swimlanes.list(),
+      window.electronAPI.tasks.listArchived(),
+    ]);
+    set({ tasks, swimlanes, archivedTasks, loading: false });
+
+    // Load shortcuts separately (non-blocking)
+    get().loadShortcuts();
+  },
+
+  loadShortcuts: async () => {
+    try {
+      const shortcuts = await window.electronAPI.boardConfig.getShortcuts();
+      set({ shortcuts });
+    } catch {
+      // Non-fatal: shortcuts are optional
+    }
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Store composition
+// ---------------------------------------------------------------------------
+
+export const useBoardStore = create<BoardStore>((...args) => ({
+  ...createTaskSlice(...args),
+  ...createSwimlaneSlice(...args),
+  ...createArchiveSlice(...args),
+  ...createCompletionSlice(...args),
+  ...createSearchSlice(...args),
+  ...createBoardConfigSlice(...args),
+  ...createBoardLifecycleSlice(...args),
 }));
