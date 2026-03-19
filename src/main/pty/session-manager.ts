@@ -73,6 +73,7 @@ interface ManagedSession {
   statusFileWatcher: FileWatcher | null;
   eventsFileWatcher: FileWatcher | null;
   resuming: boolean;
+  lastCols: number;
 }
 
 export class SessionManager extends EventEmitter {
@@ -250,6 +251,7 @@ export class SessionManager extends EventEmitter {
         statusFileWatcher: null,
         eventsFileWatcher: null,
         resuming: false,
+        lastCols: 120,
       };
       this.sessions.set(id, session);
       this.sessionQueue.enqueue(input, id);
@@ -413,6 +415,7 @@ export class SessionManager extends EventEmitter {
         statusFileWatcher: null,
         eventsFileWatcher: null,
         resuming: input.resuming ?? false,
+        lastCols: 120,
       };
       this.sessions.set(id, failedSession);
       this.emit('exit', id, -1);
@@ -448,6 +451,7 @@ export class SessionManager extends EventEmitter {
       statusFileWatcher: null,
       eventsFileWatcher: null,
       resuming: input.resuming ?? false,
+      lastCols: 120,
     };
 
     this.sessions.set(id, session);
@@ -554,9 +558,27 @@ export class SessionManager extends EventEmitter {
 
   resize(sessionId: string, cols: number, rows: number): void {
     const session = this.sessions.get(sessionId);
-    if (session?.pty) {
-      session.pty.resize(cols, rows);
+    if (!session?.pty) return;
+
+    // Guard against NaN/Infinity from layout edge cases (e.g. getComputedStyle
+    // returning "" during unmount, yielding parseInt -> NaN)
+    if (!Number.isFinite(cols) || !Number.isFinite(rows)) return;
+
+    // Clamp to valid dimensions (node-pty throws on 0 or negative)
+    const clampedCols = Math.max(2, Math.floor(cols));
+    const clampedRows = Math.max(1, Math.floor(rows));
+
+    // When column width changes, the existing scrollback was generated at the
+    // old width. TUI escape sequences (absolute cursor positioning, colored
+    // bars) garble when replayed at a different width. Clear the stale buffer
+    // so the next scrollback replay starts fresh. Claude Code redraws via
+    // SIGWINCH within ~50-100ms.
+    if (clampedCols !== session.lastCols) {
+      session.scrollback = '';
     }
+    session.lastCols = clampedCols;
+
+    session.pty.resize(clampedCols, clampedRows);
   }
 
   /**

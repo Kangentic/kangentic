@@ -151,6 +151,130 @@ describe('Scrollback', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 2. Scrollback clearing on resize (width change)
+// ---------------------------------------------------------------------------
+
+describe('Scrollback clearing on resize', () => {
+  let manager: SessionManager;
+  let spawnedSessionId: string | null = null;
+
+  beforeEach(() => {
+    manager = new SessionManager();
+  });
+
+  afterEach(async () => {
+    if (spawnedSessionId) {
+      manager.suspend(spawnedSessionId);
+      spawnedSessionId = null;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  async function spawnSession() {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: 'task-resize-scroll',
+      command: '',
+      cwd: tmpDir,
+    });
+    spawnedSessionId = session.id;
+    return { session, ...mock };
+  }
+
+  it('preserves scrollback when cols stay the same', async () => {
+    const { session, feedData } = await spawnSession();
+
+    feedData('hello world');
+
+    // Resize with same cols as initial (120) but different rows
+    manager.resize(session.id, 120, 50);
+
+    const scrollback = manager.getScrollback(session.id);
+    expect(scrollback).toContain('hello world');
+  });
+
+  it('clears scrollback when cols change', async () => {
+    const { session, feedData } = await spawnSession();
+
+    feedData('hello world');
+
+    // Resize to different cols
+    manager.resize(session.id, 80, 24);
+
+    const scrollback = manager.getScrollback(session.id);
+    // getScrollback returns '' for empty scrollback
+    expect(scrollback).toBe('');
+  });
+
+  it('tracks lastCols correctly across multiple resizes', async () => {
+    const { session, feedData } = await spawnSession();
+
+    // Resize to 80 cols (clears scrollback from initial 120)
+    manager.resize(session.id, 80, 24);
+
+    // Feed new data at 80 cols
+    feedData('data at 80 cols');
+
+    // Resize to same 80 cols (should preserve)
+    manager.resize(session.id, 80, 30);
+    expect(manager.getScrollback(session.id)).toContain('data at 80 cols');
+
+    // Resize to different cols (should clear)
+    manager.resize(session.id, 100, 30);
+    expect(manager.getScrollback(session.id)).toBe('');
+  });
+
+  it('clamps cols to minimum of 2', async () => {
+    const { session, mockPty } = await spawnSession();
+
+    manager.resize(session.id, 0, 24);
+
+    // Should have been clamped to 2
+    expect(mockPty.resize).toHaveBeenCalledWith(2, 24);
+  });
+
+  it('clamps rows to minimum of 1', async () => {
+    const { session, mockPty } = await spawnSession();
+
+    manager.resize(session.id, 80, 0);
+
+    expect(mockPty.resize).toHaveBeenCalledWith(80, 1);
+  });
+
+  it('clamps negative values', async () => {
+    const { session, mockPty } = await spawnSession();
+
+    manager.resize(session.id, -10, -5);
+
+    expect(mockPty.resize).toHaveBeenCalledWith(2, 1);
+  });
+
+  it('floors fractional values', async () => {
+    const { session, mockPty } = await spawnSession();
+
+    manager.resize(session.id, 80.7, 24.9);
+
+    expect(mockPty.resize).toHaveBeenCalledWith(80, 24);
+  });
+
+  it('accumulates new scrollback after clearing', async () => {
+    const { session, feedData } = await spawnSession();
+
+    feedData('old data');
+
+    // Change cols to clear
+    manager.resize(session.id, 80, 24);
+    expect(manager.getScrollback(session.id)).toBe('');
+
+    // New data arrives at 80 cols
+    feedData('new data');
+    expect(manager.getScrollback(session.id)).toContain('new data');
+    expect(manager.getScrollback(session.id)).not.toContain('old data');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 3. Remove
 // ---------------------------------------------------------------------------
 
