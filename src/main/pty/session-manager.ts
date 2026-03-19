@@ -124,7 +124,7 @@ export class SessionManager extends EventEmitter {
         cwd: input.cwd,
         startedAt: new Date().toISOString(),
         exitCode: null,
-        resuming: false,
+        resuming: input.resuming ?? false,
       };
       this.sessions.set(id, session);
       this.sessionQueue.enqueue(input, id);
@@ -143,10 +143,12 @@ export class SessionManager extends EventEmitter {
     const shell = await this.getShell();
     const existing = input.taskId ? this.findByTaskId(input.taskId) : null;
 
-    // Always use a fresh UUID so the renderer treats respawns as new
-    // sessions (TerminalTab is keyed by session ID - a new ID forces a
-    // clean remount with the loading overlay and data suppression).
-    const id = uuidv4();
+    // For respawns (replacing a running/exited session), use a fresh UUID
+    // so the renderer treats it as a new session (TerminalTab is keyed by
+    // session ID - a new ID forces a clean remount with the loading overlay).
+    // For queue promotions (queued -> running), reuse the existing ID so the
+    // task DB reference (set when the queued placeholder was created) stays valid.
+    const id = (existing?.status === 'queued') ? existing.id : uuidv4();
 
     // Kill any existing PTY for this task to prevent orphaned processes
     // that would emit data with the same session ID (double output).

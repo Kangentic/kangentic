@@ -137,14 +137,10 @@ export function App() {
     const sessions = window.electronAPI?.sessions;
     if (!sessions) return;
 
-    // Debounced re-sync: when an IPC event arrives for a session ID not yet in
-    // the store (e.g. background sessions spawned by activateAllProjects before
-    // the renderer had a chance to sync), schedule a full syncSessions() call.
-    // Not project-scoped: syncSessions() fetches all sessions cross-project,
-    // and sidebar badges need background project sessions to appear immediately.
-    const scheduleSyncIfUnknown = (sessionId: string) => {
-      const exists = useSessionStore.getState().sessions.some((s) => s.id === sessionId);
-      if (exists) return;
+    // Debounced re-sync: coalesces multiple rapid events into a single
+    // syncSessions() call. Used when an IPC event reveals the store is
+    // stale (unknown session, or queued placeholder needs full properties).
+    const scheduleDebouncedSync = () => {
       if (debouncedSyncRef.current) clearTimeout(debouncedSyncRef.current);
       debouncedSyncRef.current = setTimeout(() => {
         useSessionStore.getState().syncSessions();
@@ -152,10 +148,23 @@ export function App() {
       }, 300);
     };
 
+    const scheduleSyncIfUnknown = (sessionId: string) => {
+      const exists = useSessionStore.getState().sessions.some((s) => s.id === sessionId);
+      if (exists) return;
+      scheduleDebouncedSync();
+    };
+
     // Session status transitions (queued → running)
     if (sessions.onStatus) {
       cleanups.push(sessions.onStatus((sessionId, status) => {
-        scheduleSyncIfUnknown(sessionId);
+        // For unknown sessions, sync to pick them up. For known sessions
+        // transitioning queued → running, also sync because the queued
+        // placeholder has stale properties (shell, pid, resuming) that
+        // only the backend can fill in.
+        const existing = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
+        if (!existing || (existing.status === 'queued' && status === 'running')) {
+          scheduleDebouncedSync();
+        }
         updateSessionStatus(sessionId, { status });
       }));
     }
