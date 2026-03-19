@@ -542,6 +542,37 @@ export class SessionManager extends EventEmitter {
     return this.sessions.get(sessionId)?.taskId;
   }
 
+  /**
+   * Register a suspended placeholder session for a task that was user-paused
+   * before app restart. The placeholder has no PTY but makes the renderer
+   * show "Paused" state and the "Resume session" button.
+   *
+   * Safe to call even if a session already exists for the task - doSpawn
+   * handles existing sessions by taskId (cleans up and replaces).
+   */
+  registerSuspendedPlaceholder(input: { taskId: string; projectId: string; cwd: string }): Session {
+    const id = uuidv4();
+    const session: ManagedSession = {
+      id,
+      taskId: input.taskId,
+      projectId: input.projectId,
+      pty: null,
+      status: 'suspended',
+      shell: '',
+      cwd: input.cwd,
+      startedAt: new Date().toISOString(),
+      exitCode: null,
+      resuming: false,
+    };
+    this.sessions.set(id, session);
+    return this.toSession(session);
+  }
+
+  /** Check whether a session (any status) already exists for a given task. */
+  hasSessionForTask(taskId: string): boolean {
+    return this.findByTaskId(taskId) !== undefined;
+  }
+
   private findByTaskId(taskId: string): ManagedSession | undefined {
     for (const session of this.sessions.values()) {
       if (session.taskId === taskId) return session;

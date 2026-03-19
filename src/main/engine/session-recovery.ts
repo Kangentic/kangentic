@@ -282,8 +282,16 @@ export async function recoverSessions(
       continue;
     }
 
-    // Skip user-paused sessions -- they should stay suspended until manually resumed
+    // Skip user-paused sessions -- they should stay suspended until manually resumed.
+    // Register a suspended placeholder so the renderer shows "Paused" state
+    // and the "Resume session" button. task.session_id stays null (cleared on
+    // suspend) so the SESSION_RESUME guard still passes when the user clicks resume.
     if (record.status === 'suspended' && record.suspended_by === 'user') {
+      sessionManager.registerSuspendedPlaceholder({
+        taskId: record.task_id,
+        projectId,
+        cwd: record.cwd,
+      });
       skipped++;
       continue;
     }
@@ -576,8 +584,19 @@ export async function reconcileSessions(
     for (const task of tasks) {
       if (activeTaskIds.has(task.id)) continue; // already has a session
 
-      // Skip tasks whose latest session was user-paused -- respect user intent
-      if (userPausedTaskIds.has(task.id)) continue;
+      // Skip tasks whose latest session was user-paused -- respect user intent.
+      // Register placeholder so renderer shows paused state (if not already registered).
+      if (userPausedTaskIds.has(task.id)) {
+        if (!sessionManager.hasSessionForTask(task.id)) {
+          const cwd = task.worktree_path || projectPath;
+          sessionManager.registerSuspendedPlaceholder({
+            taskId: task.id,
+            projectId,
+            cwd,
+          });
+        }
+        continue;
+      }
 
       try {
         // Find a spawn_agent transition that targets this lane (optional -- provides custom prompt)
