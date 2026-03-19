@@ -27,28 +27,22 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 |-----------|------|---------|
 | MCP Server | `src/main/agent/mcp-server.ts` | Stdio MCP server using official SDK. Bundled by esbuild into single JS file. |
 | Command Bridge | `src/main/agent/command-bridge.ts` | Watches commands.jsonl, processes commands via DB repositories, writes responses. |
-| Settings Injection | `src/main/agent/command-builder.ts` | Injects kangentic server into `.mcp.json` on session spawn. |
+| MCP Config Delivery | `src/main/agent/command-builder.ts` | Writes session `mcp.json` and adds `--mcp-config` flag to CLI command. |
 | Trust Manager | `src/main/agent/trust-manager.ts` | Pre-approves kangentic MCP server in `~/.claude.json`. |
 | Board Refresh | `src/main/ipc/handlers/sessions.ts` | Forwards task-created/updated events to renderer via IPC. |
 
 ### Discovery
 
-Claude Code discovers MCP servers from `.mcp.json` in the working directory. When Kangentic spawns a session:
+Claude Code supports a `--mcp-config` flag that accepts a path to a JSON file containing MCP server definitions. Kangentic uses this to deliver its MCP server config without modifying `.mcp.json` (which may be tracked in git). When Kangentic spawns a session:
 
-1. `CommandBuilder.createMergedSettings()` injects the kangentic server config into `.mcp.json` in the CWD
-2. `ensureMcpServerTrust()` adds "kangentic" to `enabledMcpjsonServers` in `~/.claude.json`
-3. Claude Code starts, reads `.mcp.json`, spawns `node mcp-server.js` as a child process
-4. Claude Code calls `tools/list` and discovers all kangentic tools
+1. `CommandBuilder.createMergedSettings()` writes the kangentic MCP server config to `.kangentic/sessions/<sessionId>/mcp.json`
+2. `CommandBuilder.buildClaudeCommand()` adds `--mcp-config <path>` to the CLI command
+3. `ensureMcpServerTrust()` adds "kangentic" to `enabledMcpjsonServers` in `~/.claude.json`
+4. Claude Code starts, reads both `.mcp.json` (user servers) and the `--mcp-config` file (kangentic), spawns `node mcp-server.js` as a child process
+5. Claude Code calls `tools/list` and discovers all kangentic tools
 
-### `.mcp.json` Safety
+This approach keeps `.mcp.json` completely untouched - no injection, no cleanup, no git noise. The `--mcp-config` flag is additive (not `--strict-mcp-config`), so user-configured servers like context7 continue to work normally.
 
-The `.mcp.json` file may contain user-configured servers (e.g. context7). Kangentic handles this safely:
-
-- **Injection** merges the kangentic entry, preserving all existing servers and top-level keys
-- **Cleanup** on session exit removes only the kangentic entry, restoring the original state
-- **Atomic writes** via temp file + rename prevent corruption on any platform
-- **Malformed JSON** is never overwritten - injection/cleanup is skipped with a warning
-- **File deletion** only happens if the file was effectively empty before injection
 
 ## Available Tools
 
@@ -157,8 +151,8 @@ The MCP server is enabled by default. To disable it for a specific project:
 **Settings > Agent > MCP Server** - toggle off "Allow agents to create tasks via MCP"
 
 When disabled:
-- No kangentic entry is injected into `.mcp.json` on session spawn
-- Any stale kangentic entry from a prior session is cleaned up
+- No `--mcp-config` flag is added to the CLI command
+- No session `mcp.json` is created
 - No CommandBridge is created for sessions
 
 Config key: `mcpServer.enabled` (boolean, default `true`)
@@ -213,8 +207,8 @@ Dependencies (`@modelcontextprotocol/sdk`, `zod`) are bundled inline - not shipp
 
 ### MCP tools not showing up
 
-1. Check the session's merged settings: `.kangentic/sessions/<sessionId>/settings.json` should NOT contain `mcpServers` (MCP servers are in `.mcp.json`, not settings)
-2. Check `.mcp.json` in the CWD (project root or worktree): should contain a `kangentic` entry under `mcpServers`
+1. Check the session's MCP config: `.kangentic/sessions/<sessionId>/mcp.json` should contain a `kangentic` entry under `mcpServers`
+2. Check the CLI command includes `--mcp-config` pointing to the session's `mcp.json`
 3. Check `~/.claude.json`: the project path should have `"kangentic"` in `enabledMcpjsonServers`
 4. Verify the bundled server exists: `.vite/build/mcp-server.js`
 5. Test the server manually: `node .vite/build/mcp-server.js test-cmd.jsonl test-resp` (should print "[mcp-server] Kangentic MCP server started" to stderr)

@@ -8,7 +8,6 @@ import { SessionQueue } from './session-queue';
 import { PtyBufferManager } from './pty-buffer-manager';
 import { SessionFileWatcher } from './session-file-watcher';
 import { UsageTracker } from './usage-tracker';
-import { cleanupMcpJson } from '../agent/command-builder';
 import { adaptCommandForShell } from '../../shared/paths';
 import { trackEvent, sanitizeErrorMessage } from '../analytics/analytics';
 import { isShuttingDown } from '../shutdown-state';
@@ -350,14 +349,6 @@ export class SessionManager extends EventEmitter {
       // Files are cleaned up by pruneStaleResources(), remove(), or killAll().
       this.fileWatcher.stopAll(id);
 
-      // Clean up kangentic entry from .mcp.json on normal exit
-      // (skip for suspended sessions - suspend() already cleaned up,
-      //  and skip for worktree sessions - ephemeral dir)
-      if (session.status !== 'suspended'
-          && !session.cwd.replace(/\\/g, '/').includes('.kangentic/worktrees/')) {
-        cleanupMcpJson(session.cwd);
-      }
-
       this.emit('exit', id, exitCode);
       this.sessionQueue.notifySlotFreed();
     });
@@ -440,12 +431,6 @@ export class SessionManager extends EventEmitter {
 
     // Close watchers - no longer need real-time updates
     this.fileWatcher.stopAll(sessionId);
-
-    // Clean up kangentic entry from .mcp.json (only for non-worktree sessions;
-    // worktree .mcp.json lives inside the ephemeral worktree dir)
-    if (!session.cwd.replace(/\\/g, '/').includes('.kangentic/worktrees/')) {
-      cleanupMcpJson(session.cwd);
-    }
 
     // Null out file paths BEFORE killing so the onExit handler's
     // cleanup skips file deletion - files persist for resume

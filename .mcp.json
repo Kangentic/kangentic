@@ -12,9 +12,9 @@
     "kangentic": {
       "command": "node",
       "args": [
-        "C:/Users/tyler/Documents/GitHub/kangentic/.kangentic/worktrees/expose-an-api-or-way-to-converse-with-kangentic-6968a419/.vite/build/mcp-server.js",
-        "C:/Users/tyler/Documents/GitHub/kangentic/.kangentic/worktrees/expose-an-api-or-way-to-converse-with-kangentic-6968a419/.kangentic/sessions/769dc040-c1f8-4adf-b016-9e92506c95b5/commands.jsonl",
-        "C:/Users/tyler/Documents/GitHub/kangentic/.kangentic/worktrees/expose-an-api-or-way-to-converse-with-kangentic-6968a419/.kangentic/sessions/769dc040-c1f8-4adf-b016-9e92506c95b5/responses"
+        "C:/Users/tyler/Documents/GitHub/kangentic/.vite/build/mcp-server.js",
+        "C:/Users/tyler/Documents/GitHub/kangentic/.kangentic/sessions/c533ed89-f72f-4639-9929-7a84b79a9221/commands.jsonl",
+        "C:/Users/tyler/Documents/GitHub/kangentic/.kangentic/sessions/c533ed89-f72f-4639-9929-7a84b79a9221/responses"
       ]
     }
   }
