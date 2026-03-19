@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import * as pty from 'node-pty';
 import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
@@ -13,6 +14,39 @@ import { trackEvent, sanitizeErrorMessage } from '../analytics/analytics';
 import { isShuttingDown } from '../shutdown-state';
 import { findSafeStartIndex } from './scrollback-utils';
 import type { Session, SessionStatus, SessionUsage, ActivityState, SessionEvent, SpawnSessionInput } from '../../shared/types';
+
+// On macOS, node-pty uses a spawn-helper binary via posix_spawn.
+// npm sometimes strips the execute bit from prebuilt binaries during install,
+// causing an opaque "posix_spawnp failed" error with no errno.
+function ensureSpawnHelperPermissions(): void {
+  if (process.platform !== 'darwin') return;
+
+  const packageRoot = path.dirname(require.resolve('node-pty/package.json'));
+  const candidates = [
+    path.join(packageRoot, 'build', 'Release', 'spawn-helper'),
+    path.join(packageRoot, 'prebuilds', `darwin-${process.arch}`, 'spawn-helper'),
+  ];
+
+  for (const helperPath of candidates) {
+    try {
+      fs.accessSync(helperPath, fs.constants.X_OK);
+    } catch (accessError) {
+      // File exists but isn't executable, or doesn't exist at all
+      try {
+        const stat = fs.statSync(helperPath);
+        fs.chmodSync(helperPath, stat.mode | 0o111);
+        console.log(`[PTY] fixed spawn-helper permissions: ${helperPath}`);
+      } catch (chmodError) {
+        if (chmodError instanceof Error && 'code' in chmodError
+            && (chmodError as NodeJS.ErrnoException).code !== 'ENOENT') {
+          console.warn(`[PTY] spawn-helper permission fix failed: ${chmodError}`);
+        }
+      }
+    }
+  }
+}
+
+ensureSpawnHelperPermissions();
 
 const MAX_SCROLLBACK = 512 * 1024; // 512KB per session
 const MAX_EVENTS_PER_SESSION = 500; // Cap rendered events in renderer
@@ -342,6 +376,8 @@ export class SessionManager extends EventEmitter {
       // valid string args, so no try/catch needed.
       const cwdExists = fs.existsSync(input.cwd);
       const shellExists = fs.existsSync(shellExe);
+
+      console.error(`[PTY] spawn failed session=${id.slice(0, 8)} task=${input.taskId.slice(0, 8)} shell=${shellExe} error=${spawnError} errno=${errnoCode || errnoNumber} cwdExists=${cwdExists} shellExists=${shellExists}`);
 
       trackEvent('app_error', {
         source: 'pty_spawn',
