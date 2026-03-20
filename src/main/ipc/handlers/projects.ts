@@ -37,6 +37,7 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     try { fs.unlinkSync(dbPath); } catch { /* may not exist */ }
     try { fs.unlinkSync(dbPath + '-wal'); } catch { /* may not exist */ }
     try { fs.unlinkSync(dbPath + '-shm'); } catch { /* may not exist */ }
+    WorktreeManager.clearQueue(projectPath);
     if (context.currentProjectId === projectId) {
       context.currentProjectId = null;
       context.currentProjectPath = null;
@@ -62,11 +63,11 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
 
   // 2. Cleanly detach git worktrees (keeps branches with user code intact)
   if (isGitRepo(projectPath)) {
+    const worktreeManager = new WorktreeManager(projectPath);
     for (const task of allTasks) {
       if (task.worktree_path && fs.existsSync(task.worktree_path)) {
         try {
-          const worktreeManager = new WorktreeManager(projectPath);
-          await worktreeManager.removeWorktree(task.worktree_path);
+          await worktreeManager.withLock(() => worktreeManager.removeWorktree(task.worktree_path!));
         } catch (err) {
           console.error(`[PROJECT_DELETE] Failed to detach worktree for task ${task.id.slice(0, 8)}:`, err);
         }
@@ -150,7 +151,8 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   try { fs.unlinkSync(dbPath + '-wal'); } catch { /* may not exist */ }
   try { fs.unlinkSync(dbPath + '-shm'); } catch { /* may not exist */ }
 
-  // 9. Clear current project if this was the active one
+  // 9. Clear git queue and current project state
+  WorktreeManager.clearQueue(projectPath);
   if (context.currentProjectId === projectId) {
     context.currentProjectId = null;
     context.currentProjectPath = null;

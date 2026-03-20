@@ -39,11 +39,23 @@ import { WorktreeManager, isGitRepo, isInsideWorktree, isKangenticWorktree } fro
 
 /** Set up mocks so createWorktree succeeds and reaches sparse-checkout / copyFiles. */
 function setupCreateWorktreeMocks() {
-  // fs.existsSync: always true (worktrees dir, copy sources)
-  vi.mocked(fs.existsSync).mockReturnValue(true);
+  // fs.existsSync: true for .git check and worktrees dir, false for stale worktree path check
+  vi.mocked(fs.existsSync).mockImplementation((checkPath: fs.PathLike) => {
+    // Stale worktree directory check: return false (no stale directory)
+    if (String(checkPath).includes('.kangentic') && String(checkPath).includes('worktrees') &&
+        !String(checkPath).endsWith('worktrees')) {
+      return false;
+    }
+    return true;
+  });
 
-  // Project-level git: fetch + worktree add
-  mockProjectGit.raw.mockResolvedValue('');
+  // Project-level git: rev-parse --verify should fail (branch doesn't exist yet)
+  mockProjectGit.raw.mockImplementation((args: string[]) => {
+    if (args[0] === 'rev-parse' && args[1] === '--verify') {
+      return Promise.reject(new Error('fatal: not a valid object name'));
+    }
+    return Promise.resolve('');
+  });
 
   // Worktree-level git: config, sparse-checkout
   mockWorktreeGit.raw.mockResolvedValue('');
@@ -154,7 +166,12 @@ describe('WorktreeManager -- fetch and base branch', () => {
 
   it('fetches from origin and uses origin/<baseBranch> as start point when fetch succeeds', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
-    mockProjectGit.raw.mockResolvedValue('');
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('not found'));
+      }
+      return Promise.resolve('');
+    });
     mockWorktreeGit.raw.mockResolvedValue('');
 
     const mgr = new WorktreeManager('/project');
@@ -175,12 +192,13 @@ describe('WorktreeManager -- fetch and base branch', () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     mockWorktreeGit.raw.mockResolvedValue('');
 
-    // Fetch rejects, worktree add resolves
-    let callCount = 0;
+    // Fetch rejects, rev-parse rejects (no existing branch), worktree add resolves
     mockProjectGit.raw.mockImplementation((args: string[]) => {
-      callCount++;
       if (args[0] === 'fetch') {
         return Promise.reject(new Error('fatal: no remote'));
+      }
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('not found'));
       }
       return Promise.resolve('');
     });
@@ -198,7 +216,12 @@ describe('WorktreeManager -- fetch and base branch', () => {
 
   it('stores kangentic.baseBranch in worktree git config', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
-    mockProjectGit.raw.mockResolvedValue('');
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('not found'));
+      }
+      return Promise.resolve('');
+    });
     mockWorktreeGit.raw.mockResolvedValue('');
 
     const mgr = new WorktreeManager('/project');
@@ -211,7 +234,12 @@ describe('WorktreeManager -- fetch and base branch', () => {
 
   it('kangentic.baseBranch config failure is non-fatal', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
-    mockProjectGit.raw.mockResolvedValue('');
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('not found'));
+      }
+      return Promise.resolve('');
+    });
 
     // Config call fails, sparse-checkout calls succeed
     mockWorktreeGit.raw.mockImplementation((args: string[]) => {
@@ -425,7 +453,12 @@ describe('WorktreeManager -- ensureWorktree', () => {
     // Default: isGitRepo returns true, isInsideWorktree returns false
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(fs.statSync).mockImplementation(() => { throw new Error('not a file'); });
-    mockProjectGit.raw.mockResolvedValue('');
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('not found'));
+      }
+      return Promise.resolve('');
+    });
     mockWorktreeGit.raw.mockResolvedValue('');
   });
 
@@ -525,5 +558,210 @@ describe('isKangenticWorktree', () => {
     expect(isKangenticWorktree(
       '/home/dev/kangentic/.kangentic/worktrees/my-branch/tests/.tmp/test-project',
     )).toBe(false);
+  });
+});
+
+// ── Stale branch recovery tests ───────────────────────────────────────────
+
+describe('WorktreeManager -- stale branch recovery', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockWorktreeGit.raw.mockResolvedValue('');
+  });
+
+  it('createWorktree reuses auto-generated branch that already exists', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+
+    // rev-parse succeeds (branch exists from failed cleanup), all others succeed
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      return Promise.resolve('');
+    });
+
+    const mgr = new WorktreeManager('/project');
+    const result = await mgr.createWorktree('abcd1234-0000', 'Test task');
+
+    expect(result.branchName).toBe('test-task-abcd1234');
+
+    // Should use 'worktree add <path> <branch>' (no -b flag)
+    const worktreeAddCall = mockProjectGit.raw.mock.calls.find(
+      (call: string[][]) => call[0]?.[0] === 'worktree' && call[0]?.[1] === 'add',
+    );
+    expect(worktreeAddCall).toBeDefined();
+    expect(worktreeAddCall![0]).toEqual([
+      'worktree', 'add',
+      expect.stringContaining('test-task-abcd1234'),
+      'test-task-abcd1234',
+    ]);
+    // Should NOT contain -b flag
+    expect(worktreeAddCall![0]).not.toContain('-b');
+  });
+
+  it('createWorktree prunes stale worktree metadata before checking branch', async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(false);
+    vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('not found'));
+      }
+      return Promise.resolve('');
+    });
+
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree('abcd1234-0000', 'Test task');
+
+    // worktree prune should be called before rev-parse
+    const calls = mockProjectGit.raw.mock.calls.map((call: string[][]) => call[0]);
+    const pruneIndex = calls.findIndex(
+      (args: string[]) => args[0] === 'worktree' && args[1] === 'prune',
+    );
+    const revParseIndex = calls.findIndex(
+      (args: string[]) => args[0] === 'rev-parse' && args[1] === '--verify',
+    );
+
+    expect(pruneIndex).toBeGreaterThanOrEqual(0);
+    expect(revParseIndex).toBeGreaterThan(pruneIndex);
+  });
+
+  it('createWorktree cleans up stale directory before git worktree add', async () => {
+    const stalePath = expect.stringContaining('test-task-abcd1234');
+
+    // existsSync: true for stale worktree path
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
+
+    mockProjectGit.raw.mockImplementation((args: string[]) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        return Promise.reject(new Error('not found'));
+      }
+      return Promise.resolve('');
+    });
+
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree('abcd1234-0000', 'Test task');
+
+    // rmSync should have been called with the stale worktree path
+    expect(fs.rmSync).toHaveBeenCalledWith(stalePath, { recursive: true, force: true });
+  });
+
+  it('pruneWorktrees calls git worktree prune', async () => {
+    mockProjectGit.raw.mockResolvedValue('');
+
+    const mgr = new WorktreeManager('/project');
+    await mgr.pruneWorktrees();
+
+    expect(mockProjectGit.raw).toHaveBeenCalledWith(['worktree', 'prune']);
+  });
+});
+
+// ── Serial queue tests ────────────────────────────────────────────────────
+
+describe('WorktreeManager -- serial queue', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    WorktreeManager.clearQueue('/project');
+    WorktreeManager.clearQueue('/other-project');
+  });
+
+  it('concurrent operations on same project execute sequentially', async () => {
+    const executionOrder: number[] = [];
+    let resolveFirst: () => void;
+    const firstBlocked = new Promise<void>(resolve => { resolveFirst = resolve; });
+
+    const operation1 = WorktreeManager.withGitLock('/project', async () => {
+      executionOrder.push(1);
+      await firstBlocked;
+      executionOrder.push(2);
+      return 'first';
+    });
+
+    const operation2 = WorktreeManager.withGitLock('/project', async () => {
+      executionOrder.push(3);
+      return 'second';
+    });
+
+    // operation2 should not start until operation1 finishes
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(executionOrder).toEqual([1]);
+
+    resolveFirst!();
+    const [result1, result2] = await Promise.all([operation1, operation2]);
+
+    expect(result1).toBe('first');
+    expect(result2).toBe('second');
+    expect(executionOrder).toEqual([1, 2, 3]);
+  });
+
+  it('concurrent operations on different projects execute in parallel', async () => {
+    const executionOrder: string[] = [];
+    let resolveA: () => void;
+    let resolveB: () => void;
+    const blockedA = new Promise<void>(resolve => { resolveA = resolve; });
+    const blockedB = new Promise<void>(resolve => { resolveB = resolve; });
+
+    const operationA = WorktreeManager.withGitLock('/project', async () => {
+      executionOrder.push('A-start');
+      await blockedA;
+      executionOrder.push('A-end');
+    });
+
+    const operationB = WorktreeManager.withGitLock('/other-project', async () => {
+      executionOrder.push('B-start');
+      await blockedB;
+      executionOrder.push('B-end');
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 10));
+    // Both should have started (different projects run independently)
+    expect(executionOrder).toContain('A-start');
+    expect(executionOrder).toContain('B-start');
+
+    resolveA!();
+    resolveB!();
+    await Promise.all([operationA, operationB]);
+  });
+
+  it('failed operation does not block subsequent operations', async () => {
+    const failingOperation = WorktreeManager.withGitLock('/project', async () => {
+      throw new Error('git failed');
+    });
+
+    await expect(failingOperation).rejects.toThrow('git failed');
+
+    // Next operation should still run
+    const result = await WorktreeManager.withGitLock('/project', async () => 'recovered');
+    expect(result).toBe('recovered');
+  });
+
+  it('clearQueue removes the project entry', async () => {
+    // Queue an operation to ensure the key exists
+    await WorktreeManager.withGitLock('/project', async () => 'done');
+
+    // clearQueue should not throw and subsequent operations should work
+    WorktreeManager.clearQueue('/project');
+
+    const result = await WorktreeManager.withGitLock('/project', async () => 'after-clear');
+    expect(result).toBe('after-clear');
+  });
+
+  it('withLock instance method uses the project path', async () => {
+    const manager = new WorktreeManager('/project');
+    const executionOrder: number[] = [];
+
+    const operation1 = manager.withLock(async () => {
+      executionOrder.push(1);
+      await new Promise(resolve => setTimeout(resolve, 10));
+      executionOrder.push(2);
+      return 'first';
+    });
+
+    const operation2 = manager.withLock(async () => {
+      executionOrder.push(3);
+      return 'second';
+    });
+
+    await Promise.all([operation1, operation2]);
+    expect(executionOrder).toEqual([1, 2, 3]);
   });
 });

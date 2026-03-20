@@ -319,7 +319,7 @@ export class TransitionEngine {
       copyFiles: config.copyFiles || appConfig.gitConfig.copyFiles,
     };
 
-    const result = await wm.ensureWorktree(task, gitConfig);
+    const result = await wm.withLock(() => wm.ensureWorktree(task, gitConfig));
     if (!result) return;
 
     this.taskRepo.update({
@@ -336,10 +336,12 @@ export class TransitionEngine {
     if (!appConfig.projectPath) return;
 
     const wm = new WorktreeManager(appConfig.projectPath);
-    await wm.removeWorktree(task.worktree_path);
-    if (appConfig.gitConfig.autoCleanup) {
-      await wm.removeBranch(task.branch_name);
-    }
+    await wm.withLock(async () => {
+      await wm.removeWorktree(task.worktree_path!);
+      if (appConfig.gitConfig.autoCleanup) {
+        await wm.removeBranch(task.branch_name!);
+      }
+    });
 
     this.taskRepo.update({
       id: task.id,

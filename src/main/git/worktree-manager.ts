@@ -125,6 +125,23 @@ function linkNodeModules(worktreePath: string, rootPath: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Per-project serial queue for git-mutating operations
+// ---------------------------------------------------------------------------
+
+/**
+ * Promise chain per project path. Each git-mutating call chains onto the
+ * previous promise so operations execute in FIFO order. Different projects
+ * run independently. This eliminates git lock contention that occurs when
+ * multiple worktree operations hit the same .git directory concurrently.
+ */
+const projectQueues = new Map<string, Promise<unknown>>();
+
+/** Normalize project path for use as a queue key (Windows is case-insensitive). */
+function queueKey(projectPath: string): string {
+  return process.platform === 'win32' ? projectPath.toLowerCase() : projectPath;
+}
+
+// ---------------------------------------------------------------------------
 // WorktreeManager class
 // ---------------------------------------------------------------------------
 
@@ -133,6 +150,33 @@ export class WorktreeManager {
 
   constructor(private projectPath: string, git?: SimpleGit) {
     this.git = git ?? simpleGit(projectPath);
+  }
+
+  /**
+   * Serialize a git-mutating operation on this project's queue.
+   * Operations on the same project execute in FIFO order; different
+   * projects run independently.
+   */
+  withLock<T>(operation: () => Promise<T>): Promise<T> {
+    return WorktreeManager.withGitLock(this.projectPath, operation);
+  }
+
+  /**
+   * Serialize a git-mutating operation on the given project's queue.
+   * A failed operation does not block subsequent ones.
+   */
+  static withGitLock<T>(projectPath: string, operation: () => Promise<T>): Promise<T> {
+    const key = queueKey(projectPath);
+    const previous = projectQueues.get(key) ?? Promise.resolve();
+    const result = previous.then(operation, () => operation());
+    // Store a caught version so unhandled rejections don't leak
+    projectQueues.set(key, result.catch(() => {}));
+    return result;
+  }
+
+  /** Remove the queue entry for a project (e.g. on project close/delete). */
+  static clearQueue(projectPath: string): void {
+    projectQueues.delete(queueKey(projectPath));
   }
 
   /**
@@ -159,6 +203,9 @@ export class WorktreeManager {
    * Create a worktree for a task. The worktree folder and branch are named
    * using a slug derived from the task title, with the taskId suffix to
    * guarantee uniqueness.
+   *
+   * Callers must wrap with `withLock()` to serialize concurrent operations
+   * on the same project and prevent git lock contention.
    */
   async createWorktree(
     taskId: string,
@@ -202,22 +249,31 @@ export class WorktreeManager {
       // No remote, branch not on remote, or network unavailable -- use local branch
     }
 
-    // Check if the branch already exists (relevant for custom branch names)
+    // Prune stale worktree metadata (e.g. from failed cleanup on Windows where
+    // PTY file handles prevented directory removal)
+    try { await this.git.raw(['worktree', 'prune']); } catch { /* best effort */ }
+
+    // Check if the branch already exists (stale branch from failed cleanup,
+    // or pre-existing custom branch)
     let branchExists = false;
-    if (customBranchName) {
-      try {
-        await this.git.raw(['rev-parse', '--verify', branchName]);
-        branchExists = true;
-      } catch {
-        // Branch does not exist -- will create it
-      }
+    try {
+      await this.git.raw(['rev-parse', '--verify', branchName]);
+      branchExists = true;
+    } catch {
+      // Branch does not exist -- will create it
     }
 
-    // Create worktree: attach to existing branch or create a new one
+    // Create worktree: attach to existing branch or create a new one.
+    // Callers must wrap with withLock() to serialize concurrent operations.
+    if (fs.existsSync(worktreePath)) {
+      try { fs.rmSync(worktreePath, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
     if (branchExists) {
       await this.git.raw(['worktree', 'add', worktreePath, branchName]);
+      console.log(`[WORKTREE] Created worktree (existing branch): ${branchName}`);
     } else {
       await this.git.raw(['worktree', 'add', '-b', branchName, worktreePath, startPoint]);
+      console.log(`[WORKTREE] Created worktree (new branch): ${branchName} from ${startPoint}`);
     }
 
     // Store the base branch in git config so agents can read it via
@@ -367,6 +423,10 @@ export class WorktreeManager {
     }
 
     await this.git.checkout(branchName);
+  }
+
+  async pruneWorktrees(): Promise<void> {
+    await this.git.raw(['worktree', 'prune']);
   }
 
   async listWorktrees(): Promise<string[]> {
