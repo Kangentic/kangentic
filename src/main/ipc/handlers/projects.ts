@@ -5,6 +5,8 @@ import { IPC } from '../../../shared/ipc-channels';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { recoverSessions, reconcileSessions, pruneOrphanedWorktrees } from '../../engine/session-recovery';
+import { cleanBacklogTaskResources } from '../../engine/backlog-cleanup';
+import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { WorktreeManager, isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../git/worktree-manager';
 import { stripKangenticHooks } from '../../agent/hook-manager';
 import { getProjectDb, closeProjectDb } from '../../db/database';
@@ -266,6 +268,10 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     const sessionRepo = new SessionRepository(db);
     pruneOrphanedWorktrees(project.path, taskRepo, sessionRepo, context.sessionManager);
 
+    // Clean stale resources (worktree dirs, branches, sessions) from backlog tasks
+    const swimlaneRepo = new SwimlaneRepository(db);
+    cleanBacklogTaskResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager);
+
     // Recover suspended/orphaned sessions, then reconcile missing ones.
     // Fire-and-forget: the board renders immediately with last-known task state;
     // sessions appear reactively as PTYs come online via existing IPC status events.
@@ -301,6 +307,8 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       const taskRepo = new TaskRepository(db);
       const sessionRepo = new SessionRepository(db);
       pruneOrphanedWorktrees(project.path, taskRepo, sessionRepo, context.sessionManager);
+      const swimlaneRepo = new SwimlaneRepository(db);
+      cleanBacklogTaskResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager);
       await recoverSessions(project.id, project.path, context.sessionManager, context.claudeDetector, context.commandBuilder, context.configManager);
       await reconcileSessions(project.id, project.path, context.sessionManager, context.claudeDetector, context.commandBuilder, context.configManager);
     }),
@@ -374,6 +382,10 @@ export function registerProjectHandlers(context: IpcContext): void {
       const taskRepo = new TaskRepository(db);
       const sessionRepo = new SessionRepository(db);
       pruneOrphanedWorktrees(project.path, taskRepo, sessionRepo, context.sessionManager);
+
+      // Clean stale resources (worktree dirs, branches, sessions) from backlog tasks
+      const swimlaneRepo = new SwimlaneRepository(db);
+      cleanBacklogTaskResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager);
 
       // Recover suspended/orphaned sessions, then reconcile missing ones.
       // Fire-and-forget: the board renders immediately with last-known task state;
