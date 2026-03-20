@@ -1105,3 +1105,81 @@ describe('Synthetic session_end', () => {
     spawnedSessionId = null; // already exited
   });
 });
+
+// ---------------------------------------------------------------------------
+// 14. Spawning Count (concurrent spawn slot reservation)
+// ---------------------------------------------------------------------------
+
+describe('Spawning count', () => {
+  let manager: SessionManager;
+
+  beforeEach(() => {
+    manager = new SessionManager();
+  });
+
+  afterEach(async () => {
+    manager.killAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  it('5 concurrent spawn calls with maxConcurrent=3 - exactly 3 running + 2 queued', async () => {
+    manager.setMaxConcurrent(3);
+
+    // Use a slow mock PTY that takes time to "spawn" so we can test concurrency
+    const mocks: ReturnType<typeof createMockPty>[] = [];
+    vi.mocked(pty.spawn).mockImplementation(() => {
+      const mock = createMockPty();
+      mocks.push(mock);
+      return mock.mockPty as unknown as pty.IPty;
+    });
+
+    const results = await Promise.all(
+      Array.from({ length: 5 }, (_, index) =>
+        manager.spawn({
+          taskId: `task-concurrent-${index}`,
+          command: '',
+          cwd: tmpDir,
+        }),
+      ),
+    );
+
+    const running = results.filter(session => session.status === 'running');
+    const queued = results.filter(session => session.status === 'queued');
+
+    expect(running).toHaveLength(3);
+    expect(queued).toHaveLength(2);
+  });
+
+  it('failed doSpawn decrements spawningCount and promotes queued session', async () => {
+    manager.setMaxConcurrent(1);
+
+    let spawnCallCount = 0;
+    vi.mocked(pty.spawn).mockImplementation(() => {
+      spawnCallCount++;
+      if (spawnCallCount === 1) {
+        // First spawn fails
+        throw new Error('spawn ENOENT');
+      }
+      // Subsequent spawns succeed
+      const mock = createMockPty();
+      return mock.mockPty as unknown as pty.IPty;
+    });
+
+    // First spawn will fail (but still occupy a slot temporarily)
+    const firstSession = await manager.spawn({
+      taskId: 'task-fail-slot',
+      command: '',
+      cwd: tmpDir,
+    });
+    expect(firstSession.status).toBe('exited');
+    expect(firstSession.exitCode).toBe(-1);
+
+    // Second spawn should NOT be queued since the failed spawn freed its slot
+    const secondSession = await manager.spawn({
+      taskId: 'task-after-fail',
+      command: '',
+      cwd: tmpDir,
+    });
+    expect(secondSession.status).toBe('running');
+  });
+});

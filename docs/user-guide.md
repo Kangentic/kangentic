@@ -87,6 +87,7 @@ Click a task card to open the detail dialog. From here you can:
 
 - Edit the task title and description
 - View and manage image attachments (drag-and-drop files onto the dialog, or paste from clipboard)
+- Right-click an attachment thumbnail to copy the image to clipboard
 - Click any attachment thumbnail to open a full-size preview modal (press Escape to close)
 - See the full terminal output (takes ownership from the bottom panel while open)
 - View session status, usage stats, and model info

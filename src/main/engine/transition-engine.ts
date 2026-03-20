@@ -132,8 +132,8 @@ export class TransitionEngine {
     // Pre-populate trust so the agent doesn't block on the trust dialog.
     // This covers both worktree paths and the main project path (important
     // for demo mode where the project has never been opened in Claude Code).
-    ensureWorktreeTrust(cwd);
-    ensureMcpServerTrust(cwd);
+    await ensureWorktreeTrust(cwd);
+    await ensureMcpServerTrust(cwd);
 
     // Check for a previous session to resume (only explicitly suspended sessions)
     const previousSession = this.sessionRepo?.getLatestForTask(task.id);

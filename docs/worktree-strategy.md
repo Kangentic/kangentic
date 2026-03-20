@@ -8,14 +8,16 @@ Each task gets its own git worktree so agents work in isolation. Multiple agents
 
 ### Branch Naming
 
-Format: `kanban/{slug}-{taskId8}`
+Format: `{slug}-{taskId8}`
 
-- `slug` -- slugified task title (lowercase, hyphens, truncated)
-- `taskId8` -- first 8 characters of the task UUID
+- `slug` - slugified task title (lowercase, hyphens, truncated)
+- `taskId8` - first 8 characters of the task UUID
 
-Example: `kanban/fix-auth-bug-a1b2c3d4`
+Example: `fix-auth-bug-a1b2c3d4`
 
 Worktree directory: `<project>/.kangentic/worktrees/{slug}-{taskId8}/`
+
+Custom branch names (set per-task) use the custom name as the branch, with a slugified folder name: `{slugifiedCustom}-{taskId8}/`.
 
 ### Base Branch Resolution
 
@@ -30,15 +32,24 @@ If the remote branch exists, the worktree branches from `origin/<baseBranch>`. O
 
 The chosen base branch is stored in the worktree's git config as `kangentic.baseBranch` so agents can read it without filesystem access.
 
+### Concurrency
+
+All git-mutating operations (create, remove, branch delete, prune, checkout, rename) are serialized per project via a promise-chain queue (`WorktreeManager.withGitLock`). Different projects run independently. This eliminates git lock contention when multiple tasks are dragged simultaneously.
+
 ### Creation Flow
 
 1. Create `.kangentic/worktrees/` directory
-2. `git fetch origin <baseBranch>`
-3. `git worktree add -b <branchName> <worktreePath> <startPoint>`
-4. `git config kangentic.baseBranch <baseBranch>` (in worktree)
-5. Set up sparse-checkout (see below)
-6. Copy optional files from repo root (configured via `config.git.copyFiles`)
-7. Pre-populate `~/.claude.json` trust entry for the worktree path
+2. `git fetch origin <baseBranch>` (best-effort, falls back to local branch)
+3. `git worktree prune` (clean up stale metadata from previous failed cleanups)
+4. Clean up stale worktree directory if it exists on disk
+5. Check if branch already exists (stale branch from failed cleanup, or custom branch)
+6. If branch exists: `git worktree add <worktreePath> <branchName>`
+7. If new branch: `git worktree add -b <branchName> <worktreePath> <startPoint>`
+8. `git config kangentic.baseBranch <baseBranch>` (in worktree)
+9. Set up sparse-checkout (see below)
+10. Copy optional files from repo root (configured via `config.git.copyFiles`)
+11. Create `node_modules` junction/symlink to root repo's `node_modules`
+12. Pre-populate `~/.claude.json` trust entry for the worktree path
 
 ## Sparse-Checkout
 
@@ -141,13 +152,12 @@ Task moved back from Done
   → Status: running
 
 Task moved to Backlog
-  → Session killed (not suspended -- no resume)
-  → Worktree preserved (code stays on disk)
+  → Full cleanup: session killed, worktree removed, branch deleted (if config.git.autoCleanup)
+  → DB references cleared (worktree_path, branch_name set to null)
+  → Next activation creates a fresh worktree and branch
 
 Task deleted
-  → Session killed
-  → Worktree removed
-  → Branch deleted (if config.git.autoCleanup)
+  → Full cleanup: session killed, worktree removed, branch deleted (if config.git.autoCleanup)
 
 App closed
   → All sessions marked suspended in DB (synchronous)
@@ -172,7 +182,7 @@ App reopened
 
 ### On Task Delete
 
-- **`cleanupTaskResources()`** -- Kills PTY, deletes session DB records, removes session directory, removes worktree, optionally deletes branch.
+- **`cleanupTaskResources()`** - Kills PTY, deletes session DB records, removes session directory, removes worktree (serialized via `withLock`), prunes stale worktree metadata, optionally deletes branch.
 
 ## Safety
 
@@ -220,6 +230,19 @@ Uses real temp files with mocked `os.homedir()`.
 - `removeWorktree` no-ops when path doesn't exist
 - `removeBranch` calls `git branch -D`
 - `removeBranch` silently handles missing branch
+
+**Stale branch recovery:**
+- `createWorktree` reuses auto-generated branch that already exists (no `-b` flag)
+- `createWorktree` prunes stale worktree metadata before checking branch
+- `createWorktree` cleans up stale directory before `git worktree add`
+- `pruneWorktrees` calls `git worktree prune`
+
+**Serial queue:**
+- Concurrent operations on same project execute sequentially
+- Concurrent operations on different projects execute in parallel
+- Failed operation does not block subsequent operations
+- `clearQueue` removes the project entry
+- `withLock` instance method uses the project path
 
 **listWorktrees:**
 - Parses `git worktree list --porcelain` output correctly

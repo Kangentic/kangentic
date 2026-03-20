@@ -3,6 +3,19 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { toForwardSlash } from '../../shared/paths';
 
+// Module-level promise chain serializing all ~/.claude.json access.
+// Both ensureWorktreeTrust and ensureMcpServerTrust target the same file,
+// so one lock covers both. Prevents concurrent read-modify-write races
+// when multiple tasks are spawned simultaneously.
+let claudeJsonLock: Promise<unknown> = Promise.resolve();
+
+function withClaudeJsonLock<T>(operation: () => T): Promise<T> {
+  const previous = claudeJsonLock;
+  const result = previous.then(operation, () => operation());
+  claudeJsonLock = result.catch(() => {});
+  return result;
+}
+
 /**
  * Pre-populate Claude Code's trust entry for a worktree path so the
  * "Is this a project you trust?" prompt is skipped when spawning an agent.
@@ -10,7 +23,11 @@ import { toForwardSlash } from '../../shared/paths';
  * Claude Code stores per-directory trust in ~/.claude.json under
  * `projects[<resolved-path>].hasTrustDialogAccepted`.
  */
-export function ensureWorktreeTrust(worktreePath: string): void {
+export async function ensureWorktreeTrust(worktreePath: string): Promise<void> {
+  return withClaudeJsonLock(() => ensureWorktreeTrustSync(worktreePath));
+}
+
+function ensureWorktreeTrustSync(worktreePath: string): void {
   const claudeJsonPath = path.join(os.homedir(), '.claude.json');
   const resolvedPath = toForwardSlash(path.resolve(worktreePath));
 
@@ -60,7 +77,11 @@ export function ensureWorktreeTrust(worktreePath: string): void {
  *
  * Called for all sessions (main repo and worktrees).
  */
-export function ensureMcpServerTrust(projectPath: string): void {
+export async function ensureMcpServerTrust(projectPath: string): Promise<void> {
+  return withClaudeJsonLock(() => ensureMcpServerTrustSync(projectPath));
+}
+
+function ensureMcpServerTrustSync(projectPath: string): void {
   const claudeJsonPath = path.join(os.homedir(), '.claude.json');
   const resolvedPath = toForwardSlash(path.resolve(projectPath));
 

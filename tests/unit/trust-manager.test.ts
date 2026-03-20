@@ -43,10 +43,10 @@ afterEach(() => {
 });
 
 describe('ensureWorktreeTrust', () => {
-  it('creates ~/.claude.json with trust entry when file does not exist', () => {
+  it('creates ~/.claude.json with trust entry when file does not exist', async () => {
     const wtPath = '/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234';
 
-    ensureWorktreeTrust(wtPath);
+    await ensureWorktreeTrust(wtPath);
 
     const data = readClaudeJson();
     expect(data.projects).toBeDefined();
@@ -58,11 +58,11 @@ describe('ensureWorktreeTrust', () => {
     expect(entries[0].hasTrustDialogAccepted).toBe(true);
   });
 
-  it('creates trust entry when file exists but has no projects key', () => {
+  it('creates trust entry when file exists but has no projects key', async () => {
     fs.writeFileSync(claudeJsonPath(), JSON.stringify({ someOtherKey: 42 }));
 
     const wtPath = '/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234';
-    ensureWorktreeTrust(wtPath);
+    await ensureWorktreeTrust(wtPath);
 
     const data = readClaudeJson();
     expect(data.someOtherKey).toBe(42); // preserved
@@ -72,25 +72,23 @@ describe('ensureWorktreeTrust', () => {
     expect(entries[0].hasTrustDialogAccepted).toBe(true);
   });
 
-  it('skips write if worktree is already trusted (idempotent)', () => {
+  it('skips write if worktree is already trusted (idempotent)', async () => {
     const wtPath = '/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234';
 
     // First call -- creates entry
-    ensureWorktreeTrust(wtPath);
-    const stat1 = fs.statSync(claudeJsonPath()).mtimeMs;
+    await ensureWorktreeTrust(wtPath);
 
-    // Tiny delay to ensure mtime would differ on write
     const data = readClaudeJson();
 
     // Second call -- should skip
-    ensureWorktreeTrust(wtPath);
+    await ensureWorktreeTrust(wtPath);
     const data2 = readClaudeJson();
 
     // Content should be identical
     expect(data2).toEqual(data);
   });
 
-  it('copies enabledMcpjsonServers from parent project entry', () => {
+  it('copies enabledMcpjsonServers from parent project entry', async () => {
     // The worktree path encodes the parent as everything before /.kangentic/worktrees/
     const parentPath = path.resolve('/projects/myrepo');
     const parentKey = parentPath.replace(/\\/g, '/');
@@ -108,7 +106,7 @@ describe('ensureWorktreeTrust', () => {
     };
     fs.writeFileSync(claudeJsonPath(), JSON.stringify(existing));
 
-    ensureWorktreeTrust(wtPath);
+    await ensureWorktreeTrust(wtPath);
 
     const data = readClaudeJson();
     const projects = data.projects as Record<string, Record<string, unknown>>;
@@ -123,7 +121,7 @@ describe('ensureWorktreeTrust', () => {
     expect(wtEntry.hasTrustDialogAccepted).toBe(true);
   });
 
-  it('uses empty array when parent has no MCP servers', () => {
+  it('uses empty array when parent has no MCP servers', async () => {
     const parentPath = path.resolve('/projects/myrepo');
     const parentKey = parentPath.replace(/\\/g, '/');
     const wtPath = path.join(parentPath, '.kangentic', 'worktrees', 'fix-bug-abcd1234');
@@ -138,7 +136,7 @@ describe('ensureWorktreeTrust', () => {
     };
     fs.writeFileSync(claudeJsonPath(), JSON.stringify(existing));
 
-    ensureWorktreeTrust(wtPath);
+    await ensureWorktreeTrust(wtPath);
 
     const data = readClaudeJson();
     const projects = data.projects as Record<string, Record<string, unknown>>;
@@ -149,7 +147,7 @@ describe('ensureWorktreeTrust', () => {
     expect(wtEntries[0][1].enabledMcpjsonServers).toEqual([]);
   });
 
-  it('preserves existing worktree entry fields while setting hasTrustDialogAccepted', () => {
+  it('preserves existing worktree entry fields while setting hasTrustDialogAccepted', async () => {
     const wtPath = '/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234';
     const resolvedKey = path.resolve(wtPath).replace(/\\/g, '/');
 
@@ -164,7 +162,7 @@ describe('ensureWorktreeTrust', () => {
     };
     fs.writeFileSync(claudeJsonPath(), JSON.stringify(existing));
 
-    ensureWorktreeTrust(wtPath);
+    await ensureWorktreeTrust(wtPath);
 
     const data = readClaudeJson();
     const projects = data.projects as Record<string, Record<string, unknown>>;
@@ -175,11 +173,11 @@ describe('ensureWorktreeTrust', () => {
     expect(entry.allowedTools).toEqual(['Bash', 'Read']);
   });
 
-  it('handles malformed JSON (treats as empty)', () => {
+  it('handles malformed JSON (treats as empty)', async () => {
     fs.writeFileSync(claudeJsonPath(), '{ this is not valid JSON !!!');
 
     const wtPath = '/projects/myrepo/.kangentic/worktrees/fix-bug-abcd1234';
-    ensureWorktreeTrust(wtPath);
+    await ensureWorktreeTrust(wtPath);
 
     // Should not throw, and should create a valid file
     const data = readClaudeJson();
@@ -191,9 +189,9 @@ describe('ensureWorktreeTrust', () => {
 });
 
 describe('ensureMcpServerTrust', () => {
-  it('adds kangentic to enabledMcpjsonServers when file does not exist', () => {
+  it('adds kangentic to enabledMcpjsonServers when file does not exist', async () => {
     const projectPath = '/projects/myrepo';
-    ensureMcpServerTrust(projectPath);
+    await ensureMcpServerTrust(projectPath);
 
     const data = readClaudeJson();
     const projects = data.projects as Record<string, Record<string, unknown>>;
@@ -202,7 +200,7 @@ describe('ensureMcpServerTrust', () => {
     expect(entries[0].enabledMcpjsonServers).toContain('kangentic');
   });
 
-  it('adds kangentic to existing enabledMcpjsonServers without duplicating', () => {
+  it('adds kangentic to existing enabledMcpjsonServers without duplicating', async () => {
     const projectPath = '/projects/myrepo';
     const resolvedKey = path.resolve(projectPath).replace(/\\/g, '/');
 
@@ -217,7 +215,7 @@ describe('ensureMcpServerTrust', () => {
     };
     fs.writeFileSync(claudeJsonPath(), JSON.stringify(existing));
 
-    ensureMcpServerTrust(projectPath);
+    await ensureMcpServerTrust(projectPath);
 
     const data = readClaudeJson();
     const projects = data.projects as Record<string, Record<string, unknown>>;
@@ -229,7 +227,7 @@ describe('ensureMcpServerTrust', () => {
     expect(servers.filter((server) => server === 'kangentic')).toHaveLength(1);
   });
 
-  it('is idempotent -- skips write if kangentic already present', () => {
+  it('is idempotent -- skips write if kangentic already present', async () => {
     const projectPath = '/projects/myrepo';
     const resolvedKey = path.resolve(projectPath).replace(/\\/g, '/');
 
@@ -245,7 +243,7 @@ describe('ensureMcpServerTrust', () => {
     // Record mtime before second call
     const statBefore = fs.statSync(claudeJsonPath()).mtimeMs;
 
-    ensureMcpServerTrust(projectPath);
+    await ensureMcpServerTrust(projectPath);
 
     // Content should be unchanged
     const data = readClaudeJson();
@@ -254,15 +252,103 @@ describe('ensureMcpServerTrust', () => {
     expect(servers).toEqual(['kangentic']);
   });
 
-  it('creates project entry when none exists', () => {
+  it('creates project entry when none exists', async () => {
     fs.writeFileSync(claudeJsonPath(), JSON.stringify({ projects: {} }));
 
     const projectPath = '/projects/brand-new';
-    ensureMcpServerTrust(projectPath);
+    await ensureMcpServerTrust(projectPath);
 
     const data = readClaudeJson();
     const projects = data.projects as Record<string, Record<string, unknown>>;
     const resolvedKey = path.resolve(projectPath).replace(/\\/g, '/');
     expect(projects[resolvedKey].enabledMcpjsonServers).toContain('kangentic');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Concurrent access (serialization via withClaudeJsonLock)
+// ---------------------------------------------------------------------------
+
+describe('Concurrent trust writes', () => {
+  it('5 concurrent ensureWorktreeTrust calls - all entries present', async () => {
+    const paths = Array.from({ length: 5 }, (_, index) =>
+      `/projects/myrepo/.kangentic/worktrees/task-${index}`,
+    );
+
+    await Promise.all(paths.map(worktreePath => ensureWorktreeTrust(worktreePath)));
+
+    const data = readClaudeJson();
+    const projects = data.projects as Record<string, Record<string, unknown>>;
+    const entries = Object.values(projects);
+
+    expect(entries).toHaveLength(5);
+    for (const entry of entries) {
+      expect(entry.hasTrustDialogAccepted).toBe(true);
+    }
+  });
+
+  it('5 concurrent ensureMcpServerTrust calls - all kangentic entries present', async () => {
+    const paths = Array.from({ length: 5 }, (_, index) =>
+      `/projects/repo-${index}`,
+    );
+
+    await Promise.all(paths.map(projectPath => ensureMcpServerTrust(projectPath)));
+
+    const data = readClaudeJson();
+    const projects = data.projects as Record<string, Record<string, unknown>>;
+    const entries = Object.values(projects);
+
+    expect(entries).toHaveLength(5);
+    for (const entry of entries) {
+      expect((entry.enabledMcpjsonServers as string[])).toContain('kangentic');
+    }
+  });
+
+  it('mixed concurrent trust + MCP calls - no entries lost', async () => {
+    const trustPaths = Array.from({ length: 3 }, (_, index) =>
+      `/projects/myrepo/.kangentic/worktrees/task-${index}`,
+    );
+    const mcpPaths = Array.from({ length: 3 }, (_, index) =>
+      `/projects/mcp-repo-${index}`,
+    );
+
+    await Promise.all([
+      ...trustPaths.map(worktreePath => ensureWorktreeTrust(worktreePath)),
+      ...mcpPaths.map(projectPath => ensureMcpServerTrust(projectPath)),
+    ]);
+
+    const data = readClaudeJson();
+    const projects = data.projects as Record<string, Record<string, unknown>>;
+    const entries = Object.entries(projects);
+
+    // Should have all 6 entries (3 trust + 3 MCP)
+    expect(entries).toHaveLength(6);
+
+    // Verify trust entries
+    const trustEntries = entries.filter(([key]) => key.includes('.kangentic/worktrees/'));
+    expect(trustEntries).toHaveLength(3);
+    for (const [, entry] of trustEntries) {
+      expect(entry.hasTrustDialogAccepted).toBe(true);
+    }
+
+    // Verify MCP entries
+    const mcpEntries = entries.filter(([key]) => key.includes('mcp-repo'));
+    expect(mcpEntries).toHaveLength(3);
+    for (const [, entry] of mcpEntries) {
+      expect((entry.enabledMcpjsonServers as string[])).toContain('kangentic');
+    }
+  });
+
+  it('already-trusted path returns early without write (idempotent)', async () => {
+    const worktreePath = '/projects/myrepo/.kangentic/worktrees/task-0';
+
+    await ensureWorktreeTrust(worktreePath);
+    const dataBefore = readClaudeJson();
+
+    // Second call should be a no-op
+    await ensureWorktreeTrust(worktreePath);
+    const dataAfter = readClaudeJson();
+
+    expect(dataAfter).toEqual(dataBefore);
   });
 });

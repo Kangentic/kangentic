@@ -12,10 +12,21 @@ interface ClaudeInfo {
 
 export class ClaudeDetector {
   private cached: ClaudeInfo | null = null;
+  private inflight: Promise<ClaudeInfo> | null = null;
 
   async detect(overridePath?: string | null): Promise<ClaudeInfo> {
     if (this.cached) return this.cached;
+    if (this.inflight) return this.inflight;
 
+    this.inflight = this.performDetection(overridePath);
+    try {
+      return await this.inflight;
+    } finally {
+      this.inflight = null;
+    }
+  }
+
+  private async performDetection(overridePath?: string | null): Promise<ClaudeInfo> {
     try {
       const claudePath = overridePath || await which('claude');
       let version: string | null = null;
@@ -36,5 +47,6 @@ export class ClaudeDetector {
 
   invalidateCache(): void {
     this.cached = null;
+    this.inflight = null;
   }
 }

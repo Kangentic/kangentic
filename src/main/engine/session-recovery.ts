@@ -359,8 +359,8 @@ export async function recoverSessions(
       }
 
       // Pre-populate trust so the agent doesn't block on the trust dialog
-      ensureWorktreeTrust(record.cwd);
-      ensureMcpServerTrust(record.cwd);
+      await ensureWorktreeTrust(record.cwd);
+      await ensureMcpServerTrust(record.cwd);
 
       // Resolution order: lane override → global config.
       // Use the task's current swimlane to resolve permission mode.
@@ -639,8 +639,8 @@ export async function reconcileSessions(
         }
 
         // Pre-populate trust so the agent doesn't block on the trust dialog
-        ensureWorktreeTrust(cwd);
-        ensureMcpServerTrust(cwd);
+        await ensureWorktreeTrust(cwd);
+        await ensureMcpServerTrust(cwd);
 
         // Generate a Claude session ID upfront so recovery can resume
         const claudeSessionId = randomUUID();

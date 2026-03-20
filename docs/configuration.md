@@ -280,6 +280,7 @@ Config files written by hand (without `id` fields on columns) are treated as add
 | `boardConfig:export` | Export current board state to `kangentic.json` (auto-runs on project open) |
 | `boardConfig:apply` | Apply pending config file changes (reconcile file into DB) |
 | `boardConfig:changed` | Event: `kangentic.json` or `kangentic.local.json` changed on disk |
+| `boardConfig:setDefaultBaseBranch` | Update the default base branch in `kangentic.json` |
 
 ## Environment Variables
 

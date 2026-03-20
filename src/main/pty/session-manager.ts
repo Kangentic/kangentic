@@ -93,8 +93,12 @@ export class SessionManager extends EventEmitter {
     return this.configuredShell || await this.shellResolver.getDefaultShell();
   }
 
+  // Tracks sessions currently inside doSpawn() but not yet stored in the
+  // sessions map. Included in activeCount so shouldQueue() sees the true load.
+  private spawningCount = 0;
+
   private get activeCount(): number {
-    let count = 0;
+    let count = this.spawningCount;
     for (const session of this.sessions.values()) {
       if (session.status === 'running') count++;
     }
@@ -132,7 +136,17 @@ export class SessionManager extends EventEmitter {
       return this.toSession(session);
     }
 
-    return this.doSpawn(input);
+    // Reserve a slot so concurrent spawn() calls see the correct count
+    this.spawningCount++;
+    try {
+      return await this.doSpawn(input);
+    } finally {
+      this.spawningCount--;
+      // Essential on failure path (doSpawn throws before onExit is registered).
+      // On success path this is a no-op absorbed by the reentrancy guard -
+      // the real promotion happens later in onExit when the PTY exits.
+      this.sessionQueue.notifySlotFreed();
+    }
   }
 
   private async doSpawn(input: SpawnSessionInput): Promise<Session> {
