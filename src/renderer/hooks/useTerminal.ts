@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '../addons/fit-addon';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { cleanSelection } from '../utils/terminal-clipboard';
+import { cleanSelection, enableTerminalClipboard } from '../utils/terminal-clipboard';
 import '@xterm/xterm/css/xterm.css';
 
 /** Delay before forwarding a resize to the PTY. Coalesces rapid resizes
@@ -76,6 +76,13 @@ export function useTerminal(options: UseTerminalOptions) {
     terminal.loadAddon(fitAddon);
 
     terminal.open(terminalRef.current);
+
+    // Enable Ctrl+C copy (when text selected) and Ctrl+V paste
+    enableTerminalClipboard(terminal, terminalRef.current, (text) => {
+      if (options.sessionId) {
+        window.electronAPI.sessions.write(options.sessionId, text);
+      }
+    });
 
     terminal.onScroll(() => {
       const buffer = terminal.buffer.active;

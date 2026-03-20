@@ -36,7 +36,11 @@ export function cleanSelection(raw: string, cols: number): string {
  *
  * Call after `terminal.open(el)`.
  */
-export function enableTerminalClipboard(terminal: Terminal, el: HTMLElement): void {
+export function enableTerminalClipboard(
+  terminal: Terminal,
+  el: HTMLElement,
+  onPaste: (text: string) => void,
+): void {
   terminal.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
 
@@ -53,8 +57,33 @@ export function enableTerminalClipboard(terminal: Terminal, el: HTMLElement): vo
       return false;
     }
 
+    // Ctrl+V / Cmd+V / Ctrl+Shift+V - paste from clipboard
+    const isPaste =
+      ((event.ctrlKey || event.metaKey) && event.key === 'v') ||
+      ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'V');
+
+    if (isPaste) {
+      navigator.clipboard.readText().then((text) => {
+        if (text) onPaste(text);
+      }).catch(() => { /* clipboard access denied */ });
+      return false;
+    }
+
     return true;
   });
+
+  // Suppress xterm's built-in paste handler to prevent double-paste.
+  // Our custom key handler above reads the clipboard and writes to the PTY
+  // directly. Without this, the browser's paste event also reaches xterm's
+  // internal textarea, causing xterm to send the pasted text through onData
+  // a second time.
+  const xtermTextarea = el.querySelector('.xterm-helper-textarea');
+  if (xtermTextarea) {
+    xtermTextarea.addEventListener('paste', (e) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }, true);
+  }
 
   // Right-click: allow the browser's native context menu (Copy, etc.)
   // xterm.js suppresses the contextmenu event by default.
