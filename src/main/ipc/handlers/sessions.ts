@@ -82,7 +82,12 @@ export function registerSessionHandlers(context: IpcContext): void {
     }
 
     // Create worktree if needed
-    await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+    try {
+      await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+    } catch (worktreeError) {
+      const message = worktreeError instanceof Error ? worktreeError.message : String(worktreeError);
+      throw new Error(`Worktree setup failed: ${message}`);
+    }
 
     const db = getProjectDb(resolvedProjectId);
     const sessionRepo = new SessionRepository(db);
@@ -265,7 +270,12 @@ export function registerSessionHandlers(context: IpcContext): void {
       const fullTask = tasks.getById(task.id);
       if (!fullTask) return;
 
-      await ensureTaskWorktree(context, fullTask, tasks, projectPath);
+      try {
+        await ensureTaskWorktree(context, fullTask, tasks, projectPath);
+      } catch (worktreeError) {
+        console.error('[MCP auto-spawn] Worktree creation failed:', worktreeError);
+        return;
+      }
 
       // Checkout branch for non-worktree tasks (may fail if another session is active)
       if (fullTask.base_branch && !fullTask.worktree_path) {

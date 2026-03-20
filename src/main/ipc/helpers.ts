@@ -82,21 +82,18 @@ export function buildAutoCommandVars(task: Task): Record<string, string> {
 
 /**
  * Create a worktree for a task if needed and update the DB + task object in place.
- * No-ops silently when worktrees are disabled, project isn't a git repo, etc.
+ * No-ops when worktrees are disabled or project isn't a git repo.
+ * Throws on worktree creation failure (e.g. duplicate branch).
  */
 export async function ensureTaskWorktree(context: IpcContext, task: Task, tasks: TaskRepository, projectPath?: string | null): Promise<void> {
   const resolvedProjectPath = projectPath ?? context.currentProjectPath;
   if (!resolvedProjectPath) return;
-  try {
-    const config = context.configManager.getEffectiveConfig(resolvedProjectPath);
-    const worktreeManager = new WorktreeManager(resolvedProjectPath);
-    const result = await worktreeManager.ensureWorktree(task, config.git);
-    if (result) {
-      tasks.update({ id: task.id, worktree_path: result.worktreePath, branch_name: result.branchName });
-      Object.assign(task, tasks.getById(task.id));
-    }
-  } catch (err) {
-    console.error('[WORKTREE] Creation failed:', err);
+  const config = context.configManager.getEffectiveConfig(resolvedProjectPath);
+  const worktreeManager = new WorktreeManager(resolvedProjectPath);
+  const result = await worktreeManager.ensureWorktree(task, config.git);
+  if (result) {
+    tasks.update({ id: task.id, worktree_path: result.worktreePath, branch_name: result.branchName });
+    Object.assign(task, tasks.getById(task.id));
   }
 }
 

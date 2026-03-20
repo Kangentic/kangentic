@@ -269,7 +269,22 @@ export async function handleTaskMove(
 
   // --- Priority 4: TASK HAS NO ACTIVE SESSION ---
   // Create worktree if worktrees are enabled and task doesn't have one yet.
-  await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+  // If worktree creation fails (e.g. duplicate branch), revert the task
+  // back to its original column so it doesn't get stuck without a session.
+  try {
+    await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+  } catch (error) {
+    // Revert: move task back to original column. The forward tasks.move() at
+    // line 153 compacted positions in the old swimlane; this reverse move
+    // re-expands at the original slot, restoring the prior ordering.
+    try {
+      tasks.move({ taskId: input.taskId, targetSwimlaneId: fromSwimlaneId, targetPosition: task.position });
+    } catch (revertError) {
+      console.error('[TASK_MOVE] Failed to revert task move:', revertError);
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Worktree setup failed: ${message}`);
+  }
 
   // Checkout the task's branch in the main repo (non-worktree tasks only).
   // Intentionally unguarded: if checkout fails, the error propagates to
@@ -371,7 +386,12 @@ export function registerTaskHandlers(context: IpcContext): void {
     // Auto-spawn: if target column has auto_spawn, start the agent
     const toLane = swimlanes.getById(task.swimlane_id);
     if (toLane?.auto_spawn && context.currentProjectPath && context.currentProjectId) {
-      await ensureTaskWorktree(context, task, tasks, context.currentProjectPath);
+      try {
+        await ensureTaskWorktree(context, task, tasks, context.currentProjectPath);
+      } catch (worktreeError) {
+        console.error('[TASK_CREATE] Worktree creation failed:', worktreeError);
+        return tasks.getById(task.id) ?? task;
+      }
 
       // Checkout the task's branch in the main repo (non-worktree tasks only).
       // If checkout fails, the task is still created but no agent is spawned.
@@ -495,7 +515,12 @@ export function registerTaskHandlers(context: IpcContext): void {
     }
 
     // Create worktree if needed (any non-backlog column gets an agent)
-    await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+    try {
+      await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+    } catch (worktreeError) {
+      console.error('[TASK_UNARCHIVE] Worktree creation failed:', worktreeError);
+      return tasks.getById(input.id);
+    }
 
     // Checkout the task's branch in the main repo (non-worktree tasks only).
     // If checkout fails, the task is still unarchived but no agent is spawned.
@@ -574,7 +599,12 @@ export function registerTaskHandlers(context: IpcContext): void {
 
       if (!toLane?.auto_spawn) continue;
 
-      await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+      try {
+        await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+      } catch (worktreeError) {
+        console.error(`[TASK_BULK_UNARCHIVE] Worktree creation failed for task ${id.slice(0, 8)}:`, worktreeError);
+        continue;
+      }
 
       // Checkout the task's branch in the main repo (non-worktree tasks only).
       // Catch per-task so one failure doesn't block the entire batch.
