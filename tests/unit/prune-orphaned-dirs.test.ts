@@ -66,12 +66,15 @@ vi.mock('../../src/main/agent/hook-manager', () => ({
   buildEventHooks: vi.fn(),
   stripKangenticHooks: vi.fn(),
 }));
+vi.mock('../../src/main/git/worktree-manager', () => ({
+  removeNodeModulesJunction: vi.fn(),
+}));
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
 vi.mock('simple-git', () => ({ default: vi.fn(() => ({})) }));
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn(), on: vi.fn() } }));
 
-import { pruneOrphanedWorktrees } from '../../src/main/engine/session-recovery';
+import { pruneOrphanedDirectories } from '../../src/main/engine/resource-cleanup';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -148,7 +151,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     });
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    pruneOrphanedWorktrees(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
     await runWithTimers();
 
     expect(mockRm).toHaveBeenCalledWith(
@@ -171,7 +174,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     });
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    pruneOrphanedWorktrees(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
     await runWithTimers();
 
     expect(mockRm).toHaveBeenCalledWith(
@@ -191,7 +194,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     });
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    pruneOrphanedWorktrees(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
     await runWithTimers();
 
     expect(mockRm).toHaveBeenCalledWith(
@@ -215,7 +218,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
       [TASKS_DIR]: [dirEntry('task-uuid-1')],
     });
 
-    pruneOrphanedWorktrees(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
     await runWithTimers();
 
     // None should be removed -- all referenced
@@ -235,13 +238,14 @@ describe('pruneStaleResources -- async background cleanup', () => {
       [TASKS_DIR]: [dirEntry('archived-uuid')],
     });
 
-    pruneOrphanedWorktrees(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
     await runWithTimers();
 
     expect(mockRm).not.toHaveBeenCalled();
   });
 
   it('retries rm on EPERM then succeeds', async () => {
+    vi.useRealTimers(); // Retry delays need real timers since function is awaited
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
     const sessionMgr = makeMockSessionManager();
@@ -260,8 +264,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    pruneOrphanedWorktrees(PROJECT, taskRepo, sessionRepo, sessionMgr);
-    await runWithTimers();
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
 
     expect(mockRm).toHaveBeenCalledTimes(2);
     expect(warnSpy).not.toHaveBeenCalled();
@@ -270,6 +273,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
   });
 
   it('logs warning when all retries fail', async () => {
+    vi.useRealTimers(); // Retry delays need real timers since function is awaited
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
     const sessionMgr = makeMockSessionManager();
@@ -282,11 +286,10 @@ describe('pruneStaleResources -- async background cleanup', () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    pruneOrphanedWorktrees(PROJECT, taskRepo, sessionRepo, sessionMgr);
-    await runWithTimers();
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
 
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Could not remove orphaned worktree directory locked-dir'),
+      expect.stringContaining('Could not remove orphaned worktree directory: locked-dir'),
     );
     logSpy.mockRestore();
     warnSpy.mockRestore();

@@ -167,7 +167,13 @@ export async function handleTaskMove(
   if (toLane?.role === 'backlog') {
     context.commandInjector.cancel(task.id);
     await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
-    console.log(`[TASK_MOVE] Full cleanup for task ${task.id.slice(0, 8)} (moved to Backlog, session + worktree + branch removed)`);
+    // Re-read the task to check if worktree_path was actually cleared
+    const updatedTask = tasks.getById(task.id);
+    if (updatedTask?.worktree_path) {
+      console.warn(`[TASK_MOVE] Partial cleanup for task ${task.id.slice(0, 8)} (moved to Backlog, session removed but worktree directory could not be deleted - will retry on next startup)`);
+    } else {
+      console.log(`[TASK_MOVE] Full cleanup for task ${task.id.slice(0, 8)} (moved to Backlog, session + worktree + branch removed)`);
+    }
     return;
   }
 

@@ -287,8 +287,9 @@ describe('WorktreeManager -- removal', () => {
     mockProjectGit.raw.mockResolvedValue('');
 
     const mgr = new WorktreeManager('/project');
-    await runWithTimers(mgr.removeWorktree('/project/.kangentic/worktrees/test-abcd1234'));
+    const result = await runWithTimers(mgr.removeWorktree('/project/.kangentic/worktrees/test-abcd1234'));
 
+    expect(result).toBe(true);
     expect(mockProjectGit.raw).toHaveBeenCalledWith([
       'worktree', 'remove', '/project/.kangentic/worktrees/test-abcd1234', '--force',
     ]);
@@ -325,11 +326,11 @@ describe('WorktreeManager -- removal', () => {
       return Promise.resolve('');
     });
 
-    // rmSync fails twice (EPERM), then succeeds on third attempt
+    // rmSync fails once (EPERM), then succeeds on second attempt
     let rmSyncCount = 0;
     vi.mocked(fs.rmSync).mockImplementation(() => {
       rmSyncCount++;
-      if (rmSyncCount < 3) {
+      if (rmSyncCount < 2) {
         const err = new Error('EPERM') as NodeJS.ErrnoException;
         err.code = 'EPERM';
         throw err;
@@ -339,8 +340,8 @@ describe('WorktreeManager -- removal', () => {
     const mgr = new WorktreeManager('/project');
     await runWithTimers(mgr.removeWorktree('/project/.kangentic/worktrees/test-abcd1234'));
 
-    // rmSync called 3 times (2 failures + 1 success)
-    expect(fs.rmSync).toHaveBeenCalledTimes(3);
+    // rmSync called 2 times (1 failure + 1 success)
+    expect(fs.rmSync).toHaveBeenCalledTimes(2);
     expect(mockProjectGit.raw).toHaveBeenCalledWith(['worktree', 'prune']);
   });
 
@@ -365,9 +366,12 @@ describe('WorktreeManager -- removal', () => {
     const mgr = new WorktreeManager('/project');
     const wtPath = '/project/.kangentic/worktrees/test-abcd1234';
 
-    // Should not throw -- logs warning instead
-    await runWithTimers(mgr.removeWorktree(wtPath));
+    // Should not throw -- logs warning and returns false
+    const result = await runWithTimers(mgr.removeWorktree(wtPath));
 
+    expect(result).toBe(false);
+    // 2 attempts (immediate + one 500ms retry)
+    expect(fs.rmSync).toHaveBeenCalledTimes(2);
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('Could not remove worktree after retries'),
     );

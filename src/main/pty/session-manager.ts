@@ -435,6 +435,45 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Wait for a session's PTY process to exit. Returns immediately if the
+   * process is already dead (pty is null) or the session doesn't exist.
+   *
+   * Uses the 'exit' event emitted by onExit (line 368) as the signal.
+   * Safety timeout (10s) prevents hanging if onExit never fires (conpty bug).
+   */
+  awaitExit(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    // Already dead or never spawned - resolve immediately
+    if (!session?.pty) return Promise.resolve();
+
+    return new Promise<void>((resolve) => {
+      const safetyTimeout = setTimeout(() => {
+        this.removeListener('exit', onExit);
+        console.warn(`[SessionManager] awaitExit safety timeout for session ${sessionId.slice(0, 8)} - process may still hold handles`);
+        resolve();
+      }, 10_000);
+
+      const onExit = (exitedSessionId: string) => {
+        if (exitedSessionId === sessionId) {
+          clearTimeout(safetyTimeout);
+          this.removeListener('exit', onExit);
+          resolve();
+        }
+      };
+
+      this.on('exit', onExit);
+
+      // Re-check after subscribing (process may have exited between the
+      // initial check and event registration)
+      if (!this.sessions.get(sessionId)?.pty) {
+        clearTimeout(safetyTimeout);
+        this.removeListener('exit', onExit);
+        resolve();
+      }
+    });
+  }
+
+  /**
    * Suspend a session: kill the PTY but preserve session files on disk
    * so the session can be resumed later (e.g. from archived/backlog state).
    *

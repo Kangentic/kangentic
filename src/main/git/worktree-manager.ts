@@ -86,16 +86,26 @@ function isJunction(targetPath: string): boolean {
  * and deletes the TARGET directory's contents (e.g. the main repo's node_modules).
  * This helper removes just the link itself using non-recursive rmSync.
  *
- * Exported so backlog-cleanup can use it before recursive worktree removal.
+ * Exported so resource-cleanup can use it before recursive worktree removal.
  */
-export function removeJunction(junctionPath: string): void {
+export function removeNodeModulesJunction(junctionPath: string): void {
   try {
-    const stat = fs.lstatSync(junctionPath);
-    if (stat.isSymbolicLink() || (process.platform === 'win32' && isJunction(junctionPath))) {
+    fs.lstatSync(junctionPath);
+    // Check Windows junction FIRST - lstatSync().isSymbolicLink() can return
+    // true for junctions on some Node.js/Windows versions, which would route
+    // to rmSync (fails with EISDIR on directory reparse points). rmdirSync
+    // calls RemoveDirectoryW which correctly removes the junction link.
+    if (process.platform === 'win32' && isJunction(junctionPath)) {
+      fs.rmdirSync(junctionPath);
+    } else {
+      // POSIX symlinks: rmSync works (they're file-like)
       fs.rmSync(junctionPath, { force: true });
     }
-  } catch {
-    // ENOENT - already gone, nothing to do
+  } catch (error) {
+    // ENOENT is expected (junction already gone)
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(`[WORKTREE] Failed to remove junction ${junctionPath}: ${(error as Error).message}`);
+    }
   }
 }
 
@@ -124,7 +134,7 @@ function linkNodeModules(worktreePath: string, rootPath: string): void {
       if (target === rootReal) return; // Already correct
       // Points elsewhere. Remove just the link (not recursive - avoids
       // traversing into the target and deleting the main repo's modules).
-      removeJunction(worktreeModules);
+      removeNodeModulesJunction(worktreeModules);
     } else {
       // Real directory (e.g. from a previous npm install). Remove it.
       fs.rmSync(worktreeModules, { recursive: true, force: true });
@@ -290,7 +300,10 @@ export class WorktreeManager {
     // instead of a single rmSync. On Windows, file handles from a recently
     // killed PTY may still be held, and rmSync fails with EPERM.
     if (fs.existsSync(worktreePath)) {
-      await this.removeWorktree(worktreePath);
+      const removed = await this.removeWorktree(worktreePath);
+      if (!removed) {
+        throw new Error(`Cannot create worktree: stale directory at ${worktreePath} could not be removed. A process may still hold file handles. Close any terminals or editors using this path and retry.`);
+      }
     }
     if (branchExists) {
       await this.git.raw(['worktree', 'add', worktreePath, branchName]);
@@ -370,37 +383,42 @@ export class WorktreeManager {
     }
   }
 
-  async removeWorktree(worktreePath: string): Promise<void> {
-    if (!fs.existsSync(worktreePath)) return;
+  async removeWorktree(worktreePath: string): Promise<boolean> {
+    if (!fs.existsSync(worktreePath)) return true;
+
+    // Remove node_modules junction BEFORE any recursive operation to prevent
+    // git worktree remove (or rmSync) from traversing the junction and
+    // deleting the main repo's node_modules.
+    removeNodeModulesJunction(path.join(worktreePath, 'node_modules'));
+
     try {
       await this.git.raw(['worktree', 'remove', worktreePath, '--force']);
-      return;
-    } catch {
-      // git worktree remove failed -- fall through to manual removal
+      return true;
+    } catch (error) {
+      console.log(`[WORKTREE] git worktree remove failed, falling back to manual removal: ${(error as Error).message}`);
     }
 
-    // On Windows the PTY process may still hold file handles for a short time
-    // after being killed. Retry rmSync with increasing delays to let handles
-    // release before giving up.
-    // Unlink node_modules junction BEFORE recursive removal to prevent
-    // fs.rmSync from traversing into the main repo's node_modules.
-    removeJunction(path.join(worktreePath, 'node_modules'));
-
-    const delays = [200, 500, 1500];
+    // Callers should have awaited process exit before calling removeWorktree,
+    // so handles should be released. Single attempt + one short NTFS flush
+    // retry (500ms) as a safety net.
+    const delays = [0, 500];
     for (const delay of delays) {
-      await new Promise(resolve => setTimeout(resolve, delay));
+      if (delay > 0) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
       try {
         fs.rmSync(worktreePath, { recursive: true, force: true });
         await this.git.raw(['worktree', 'prune']);
-        return;
-      } catch {
-        // EPERM -- retry after next delay
+        return true;
+      } catch (error) {
+        console.log(`[WORKTREE] rmSync retry failed (waited ${delay}ms): ${(error as Error).message}`);
       }
     }
 
-    // All retries exhausted -- prune what we can, log the stale path
+    // Both attempts exhausted - prune what we can, log the stale path
     try { await this.git.raw(['worktree', 'prune']); } catch { /* best effort */ }
     console.warn(`[WorktreeManager] Could not remove worktree after retries: ${worktreePath}`);
+    return false;
   }
 
   async removeBranch(branchName: string): Promise<void> {

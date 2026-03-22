@@ -335,18 +335,31 @@ export class TransitionEngine {
     const appConfig = this.getConfig();
     if (!appConfig.projectPath) return;
 
+    // Kill the PTY session and wait for process exit before removing the
+    // worktree directory. The PTY holds CWD + conpty handles that block
+    // directory removal on Windows.
+    if (task.session_id) {
+      this.sessionManager.kill(task.session_id);
+      await this.sessionManager.awaitExit(task.session_id);
+    }
+
     const wm = new WorktreeManager(appConfig.projectPath);
+    let removed = false;
     await wm.withLock(async () => {
-      await wm.removeWorktree(task.worktree_path!);
-      if (appConfig.gitConfig.autoCleanup) {
+      removed = await wm.removeWorktree(task.worktree_path!);
+      if (removed && appConfig.gitConfig.autoCleanup) {
         await wm.removeBranch(task.branch_name!);
       }
     });
 
-    this.taskRepo.update({
-      id: task.id,
-      worktree_path: null,
-      branch_name: null,
-    });
+    // Only clear DB fields if the directory was actually removed.
+    // Keeping them set allows resource-cleanup to retry on next startup.
+    if (removed) {
+      this.taskRepo.update({
+        id: task.id,
+        worktree_path: null,
+        branch_name: null,
+      });
+    }
   }
 }

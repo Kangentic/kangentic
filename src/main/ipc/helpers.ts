@@ -232,9 +232,15 @@ export async function cleanupTaskSession(
   const resolvedProjectId = projectId ?? context.currentProjectId;
   const resolvedProjectPath = projectPath ?? context.currentProjectPath;
 
-  // Kill active PTY session
+  // Kill active PTY session and wait for process exit before proceeding.
+  // The PTY process holds CWD + conpty handles on the worktree directory;
+  // awaiting exit ensures those handles are released before cleanup.
   if (task.session_id) {
-    try { context.sessionManager.remove(task.session_id); } catch { /* may already be dead */ }
+    try {
+      context.sessionManager.kill(task.session_id);
+      await context.sessionManager.awaitExit(task.session_id);
+      context.sessionManager.remove(task.session_id);
+    } catch { /* may already be dead */ }
     tasks.update({ id: task.id, session_id: null });
   }
 
@@ -277,11 +283,12 @@ export async function cleanupTaskResources(
 
   // Remove worktree + branch
   if (task.worktree_path && resolvedProjectPath) {
+    let removed = false;
     try {
       const worktreeManager = new WorktreeManager(resolvedProjectPath);
       await worktreeManager.withLock(async () => {
-        await worktreeManager.removeWorktree(task.worktree_path!);
-        if (task.branch_name) {
+        removed = await worktreeManager.removeWorktree(task.worktree_path!);
+        if (removed && task.branch_name) {
           const config = context.configManager.getEffectiveConfig(resolvedProjectPath);
           if (config.git.autoCleanup) {
             // Prune stale worktree metadata so git allows branch deletion
@@ -294,6 +301,10 @@ export async function cleanupTaskResources(
     } catch (err) {
       console.error(`[WORKTREE] Failed to clean up worktree for task ${task.id.slice(0, 8)}:`, err);
     }
-    tasks.update({ id: task.id, worktree_path: null, branch_name: null });
+    // Only clear DB fields if the directory was actually removed.
+    // Keeping them set allows resource-cleanup to retry on next startup.
+    if (removed) {
+      tasks.update({ id: task.id, worktree_path: null, branch_name: null });
+    }
   }
 }
