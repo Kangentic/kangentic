@@ -24,26 +24,36 @@ The dev server starts Vite (renderer HMR), esbuild (main/preload watch), and lau
 src/
   main/                    # Electron main process (Node.js)
     agent/                 # Claude CLI command building, bridge scripts, hook management
+      claude-detector.ts   # Locates Claude CLI on PATH, caches result
+      claude-status-parser.ts # Parses Claude status line output
+      command-bridge.ts    # File-based command queue between MCP server and Electron
       command-builder.ts   # Builds claude CLI invocations
+      git-detector.ts      # Detects git installation and version
       hook-manager.ts      # Injects/strips Kangentic hooks from Claude settings
+      mcp-server.ts        # Stdio MCP server for Claude Code agents
       trust-manager.ts     # Pre-populates ~/.claude.json trust entries for worktrees
       status-bridge.js     # Hook script: writes usage data to status.json
       event-bridge.js      # Hook script: appends tool events to events.jsonl
     config/
-      config-manager.ts    # Three-tier config: global → project overrides → effective
+      config-manager.ts    # Three-tier config: global -> project overrides -> effective
       board-config-manager.ts # Board config (kangentic.json) export, import, reconciliation
     db/                    # SQLite database layer
       database.ts          # DB initialization, WAL mode, connection caching
       migrations.ts        # Schema migrations (auto-run on open)
-      project-repository.ts
-      task-repository.ts
-      swimlane-repository.ts
-      action-repository.ts
-      session-repository.ts
-      attachment-repository.ts
+      repositories/        # One class per table, synchronous queries
+        action-repository.ts
+        attachment-repository.ts
+        project-group-repository.ts
+        project-repository.ts
+        session-repository.ts
+        swimlane-repository.ts
+        task-repository.ts
     engine/                # Transition engine and session recovery
-      transition-engine.ts # Executes action chains on swimlane transitions
+      command-injector.ts  # Deferred PTY command injection for auto_command
+      resource-cleanup.ts  # Task resource cleanup (session, worktree, files)
+      session-paths.ts     # Session directory path utilities
       session-recovery.ts  # Orphan detection, dedup, resume on app relaunch
+      transition-engine.ts # Executes action chains on swimlane transitions
     git/
       worktree-manager.ts  # Worktree creation, sparse-checkout, cleanup
     ipc/
@@ -51,15 +61,22 @@ src/
       ipc-context.ts       # Shared IpcContext interface
       helpers.ts           # Shared helper functions (ensureGitignore, getProjectRepos, etc.)
       handlers/
-        projects.ts        # PROJECT_* handlers, cleanupProject, openProjectByPath
-        tasks.ts           # TASK_* handlers, handleTaskMove
-        sessions.ts        # SESSION_* handlers, PTY event listeners
         board.ts           # Swimlane, Action, Transition, Attachment CRUD
+        projects.ts        # PROJECT_* handlers, cleanupProject, openProjectByPath
+        session-metrics.ts # Session summary and metrics aggregation
+        sessions.ts        # SESSION_* handlers, PTY event listeners
         system.ts          # Config, Claude, Shell, Git, Dialog, Window, Notifications
+        task-branch.ts     # TASK_SWITCH_BRANCH handler
+        task-crud.ts       # TASK_LIST, CREATE, UPDATE, DELETE, archive handlers
+        task-move.ts       # TASK_MOVE handler with priority rules
+        tasks.ts           # Task handler orchestrator, bulk operations
     pty/                   # Terminal session management
-      session-manager.ts   # PTY spawn, output streaming, file watchers, queue
+      pty-buffer-manager.ts # Output buffering, scrollback ring buffer (512KB)
+      session-file-watcher.ts # fs.watch for status.json and events.jsonl
+      session-manager.ts   # PTY spawn, output streaming, lifecycle
       session-queue.ts     # Concurrency limiter with reentrancy-safe promotion
       shell-resolver.ts    # Cross-platform shell detection
+      usage-tracker.ts     # Token usage, activity state, idle timeout, event capping
   preload/
     preload.ts             # Context bridge (window.electronAPI)
   renderer/                # React UI

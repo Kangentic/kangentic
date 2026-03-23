@@ -256,7 +256,7 @@ Individual tasks can opt in or out of worktrees regardless of the global setting
 
 ### Branch Naming
 
-Branches follow the pattern `kanban/{slug}-{taskId8}` (e.g., `kanban/fix-auth-bug-a1b2c3d4`).
+Branches follow the pattern `{slug}-{taskId8}` (e.g., `fix-auth-bug-a1b2c3d4`).
 
 ### Base Branch
 
