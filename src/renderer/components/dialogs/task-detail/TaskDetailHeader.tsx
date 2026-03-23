@@ -133,7 +133,7 @@ export function TaskDetailHeader({
 
       {/* Scrollable pills container - hidden for archived tasks */}
       {!isArchived ? (
-        <div className="flex-1 flex items-center gap-3 min-w-0 overflow-x-auto scrollbar-none">
+        <div className="flex-1 flex items-center gap-3 min-w-0">
           {/* Commands button */}
           {!isEditing && (
             <div className="relative flex-shrink-0" ref={commandButtonRef}>
