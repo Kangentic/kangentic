@@ -394,6 +394,10 @@ export function registerProjectHandlers(context: IpcContext): void {
     context.projectRepo.setGroup(projectId, groupId);
   });
 
+  ipcMain.handle(IPC.PROJECT_RENAME, (_, id: string, name: string) => {
+    return context.projectRepo.rename(id, name);
+  });
+
   ipcMain.handle(IPC.PROJECT_OPEN_BY_PATH, async (_, projectPath: string) => {
     return openProjectByPath(context, projectPath);
   });

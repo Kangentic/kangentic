@@ -302,6 +302,14 @@
           if (idx >= 0) projects[idx].position = i;
         });
       },
+      rename: async function (id, name) {
+        var idx = projects.findIndex(function (p) { return p.id === id; });
+        if (idx >= 0) {
+          projects[idx].name = name;
+          return Object.assign({}, projects[idx]);
+        }
+        throw new Error('Project not found: ' + id);
+      },
       setGroup: async function (projectId, groupId) {
         var idx = projects.findIndex(function (p) { return p.id === projectId; });
         if (idx >= 0) projects[idx].group_id = groupId;

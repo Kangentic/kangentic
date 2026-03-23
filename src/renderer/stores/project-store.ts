@@ -14,6 +14,7 @@ interface ProjectStore {
   openProject: (id: string) => Promise<void>;
   openProjectByPath: (folderPath: string) => Promise<Project>;
   reorderProjects: (ids: string[]) => Promise<void>;
+  renameProject: (id: string, name: string) => Promise<void>;
   setProjectGroup: (projectId: string, groupId: string | null) => Promise<void>;
   loadCurrent: () => Promise<void>;
 
@@ -92,6 +93,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       await window.electronAPI.projects.reorder(ids);
     } catch {
       // Rollback on error
+      await get().loadProjects();
+    }
+  },
+
+  renameProject: async (id, name) => {
+    // Optimistic update
+    set((state) => ({
+      projects: state.projects.map((project) =>
+        project.id === id ? { ...project, name } : project,
+      ),
+      currentProject: state.currentProject?.id === id
+        ? { ...state.currentProject, name }
+        : state.currentProject,
+    }));
+    try {
+      await window.electronAPI.projects.rename(id, name);
+    } catch {
       await get().loadProjects();
     }
   },

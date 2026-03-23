@@ -8,6 +8,7 @@ export const IPC = {
   PROJECT_OPEN_BY_PATH: 'project:openByPath',
   PROJECT_REORDER: 'project:reorder',
   PROJECT_SET_GROUP: 'project:setGroup',
+  PROJECT_RENAME: 'project:rename',
   PROJECT_AUTO_OPENED: 'project:autoOpened',
 
   // Project Groups

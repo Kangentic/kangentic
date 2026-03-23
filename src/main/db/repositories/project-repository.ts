@@ -65,6 +65,12 @@ export class ProjectRepository {
     tx();
   }
 
+  rename(id: string, name: string): Project {
+    const db = getGlobalDb();
+    db.prepare('UPDATE projects SET name = ? WHERE id = ?').run(name, id);
+    return db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Project;
+  }
+
   reorder(ids: string[]): void {
     const db = getGlobalDb();
     const tx = db.transaction(() => {

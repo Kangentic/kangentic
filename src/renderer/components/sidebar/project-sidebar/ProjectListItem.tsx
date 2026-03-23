@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
@@ -17,6 +17,7 @@ export function shortenPath(fullPath: string): string {
 export interface ProjectListItemProps {
   project: Project;
   isActive: boolean;
+  isRenaming: boolean;
   thinkingCount: number;
   idleCount: number;
   isGrouped: boolean;
@@ -25,11 +26,14 @@ export interface ProjectListItemProps {
   onOpenInExplorer: (e: React.MouseEvent, project: Project) => void;
   onDeleteClick: (e: React.MouseEvent, project: Project) => void;
   onContextMenu: (e: React.MouseEvent, project: Project) => void;
+  onRename: (id: string, name: string) => void;
+  onCancelRename: () => void;
 }
 
 export function ProjectListItem({
   project,
   isActive,
+  isRenaming,
   thinkingCount,
   idleCount,
   isGrouped,
@@ -38,6 +42,8 @@ export function ProjectListItem({
   onOpenInExplorer,
   onDeleteClick,
   onContextMenu,
+  onRename,
+  onCancelRename,
 }: ProjectListItemProps) {
   const {
     attributes,
@@ -48,11 +54,33 @@ export function ProjectListItem({
     isDragging,
   } = useSortable({ id: project.id });
 
+  const [editName, setEditName] = useState(project.name);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isRenaming && renameInputRef.current) {
+      setEditName(project.name);
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [isRenaming, project.name]);
+
+  const handleSubmitRename = () => {
+    const trimmed = editName.trim();
+    if (trimmed && trimmed !== project.name) {
+      onRename(project.id, trimmed);
+    } else {
+      onCancelRename();
+    }
+  };
+
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition: transition || undefined,
     opacity: isDragging ? 0.4 : 1,
   };
+
+  const actionOpacity = isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100';
 
   return (
     <div
@@ -81,7 +109,26 @@ export function ProjectListItem({
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className="truncate font-medium">{project.name}</span>
+              {isRenaming ? (
+                <input
+                  ref={renameInputRef}
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  onBlur={handleSubmitRename}
+                  onClick={(e) => e.stopPropagation()}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === 'Enter') handleSubmitRename();
+                    if (e.key === 'Escape') {
+                      setEditName(project.name);
+                      onCancelRename();
+                    }
+                  }}
+                  className="flex-1 min-w-0 text-sm font-medium bg-transparent border-b border-accent text-fg outline-none px-0.5"
+                />
+              ) : (
+                <span className="truncate font-medium">{project.name}</span>
+              )}
               {idleCount > 0 && (
                 <span
                   className="flex items-center gap-1 text-xs tabular-nums flex-shrink-0 text-amber-400"
@@ -112,14 +159,14 @@ export function ProjectListItem({
         <div className="flex items-center gap-0.5 flex-shrink-0">
           <button
             onClick={(e) => onOpenInExplorer(e, project)}
-            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-full text-fg-disabled hover:text-fg-tertiary hover:bg-edge-input/50 transition-all"
+            className={`${actionOpacity} p-1.5 rounded-full text-fg-disabled hover:text-fg-tertiary hover:bg-edge-input/50 transition-all`}
             title="Open in file explorer"
           >
             <FolderOpen size={16} />
           </button>
           <button
             onClick={(e) => onOpenSettings(e, project)}
-            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-full text-fg-disabled hover:text-fg-tertiary hover:bg-edge-input/50 transition-all"
+            className={`${actionOpacity} p-1.5 rounded-full text-fg-disabled hover:text-fg-tertiary hover:bg-edge-input/50 transition-all`}
             title="Project settings"
             data-testid={`project-settings-${project.id}`}
           >
@@ -127,7 +174,7 @@ export function ProjectListItem({
           </button>
           <button
             onClick={(e) => onDeleteClick(e, project)}
-            className="opacity-0 group-hover:opacity-100 p-1.5 rounded-full text-fg-disabled hover:text-red-400 hover:bg-red-400/10 transition-all"
+            className={`${actionOpacity} p-1.5 rounded-full text-fg-disabled hover:text-red-400 hover:bg-red-400/10 transition-all`}
             title="Delete project"
           >
             <Trash2 size={16} />

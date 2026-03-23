@@ -692,6 +692,7 @@ export interface ElectronAPI {
     open: (id: string) => Promise<void>;
     getCurrent: () => Promise<Project | null>;
     openByPath: (path: string) => Promise<Project>;
+    rename: (id: string, name: string) => Promise<Project>;
     reorder: (ids: string[]) => Promise<void>;
     setGroup: (projectId: string, groupId: string | null) => Promise<void>;
     onAutoOpened: (callback: (project: Project) => void) => () => void;

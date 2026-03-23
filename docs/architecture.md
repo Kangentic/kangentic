@@ -28,7 +28,7 @@ User drags task between columns
 
 All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src/preload/preload.ts` mirrors them as `window.electronAPI.*`.
 
-### Projects (9 channels)
+### Projects (10 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `project:list` | invoke | Fetch all projects (ordered by position) |
@@ -39,6 +39,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `project:openByPath` | invoke | Open project by filesystem path |
 | `project:reorder` | invoke | Reorder projects by ID array |
 | `project:setGroup` | invoke | Assign a project to a group (or clear group assignment) |
+| `project:rename` | invoke | Rename a project |
 | `project:autoOpened` | on | Event: project auto-opened on launch |
 
 ### Project Groups (6 channels)

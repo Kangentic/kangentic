@@ -46,12 +46,14 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
   const openProjectSettings = useConfigStore((state) => state.openProjectSettings);
   const openProjectByPath = useProjectStore((s) => s.openProjectByPath);
 
+  const renameProject = useProjectStore((s) => s.renameProject);
   const [projectToDelete, setProjectToDelete] = useState<Project | null>(null);
   const [groupToDelete, setGroupToDelete] = useState<ProjectGroup | null>(null);
   const [creatingGroup, setCreatingGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const newGroupInputRef = useRef<HTMLInputElement>(null);
   const [contextMenu, setContextMenu] = useState<{ position: { x: number; y: number }; project: Project } | null>(null);
+  const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
 
   const {
     sensors,
@@ -161,9 +163,13 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
   const handleContextMenu = useCallback((event: React.MouseEvent, project: Project) => {
     event.preventDefault();
     event.stopPropagation();
-    if (groups.length === 0) return;
     setContextMenu({ position: { x: event.clientX, y: event.clientY }, project });
-  }, [groups]);
+  }, []);
+
+  const handleRenameProject = useCallback((id: string, name: string) => {
+    renameProject(id, name);
+    setRenamingProjectId(null);
+  }, [renameProject]);
 
   const handleContextMenuMoveToGroup = useCallback((projectId: string, groupId: string) => {
     setProjectGroup(projectId, groupId);
@@ -189,6 +195,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
         key={project.id}
         project={project}
         isActive={isActive}
+        isRenaming={renamingProjectId === project.id}
         thinkingCount={thinkingCount}
         idleCount={idleCount}
         isGrouped={isGrouped}
@@ -197,6 +204,8 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
         onOpenInExplorer={handleOpenInExplorer}
         onDeleteClick={handleDeleteClick}
         onContextMenu={handleContextMenu}
+        onRename={handleRenameProject}
+        onCancelRename={() => setRenamingProjectId(null)}
       />
     );
   };
@@ -342,6 +351,10 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
           position={contextMenu.position}
           project={contextMenu.project}
           groups={sortedGroups}
+          onRename={(project) => setRenamingProjectId(project.id)}
+          onOpenInExplorer={(project) => window.electronAPI.shell.openPath(project.path)}
+          onOpenSettings={(project) => openProjectSettings(project.path, project.name)}
+          onDelete={(project) => setProjectToDelete(project)}
           onMoveToGroup={handleContextMenuMoveToGroup}
           onRemoveFromGroup={handleContextMenuRemoveFromGroup}
           onClose={() => setContextMenu(null)}
