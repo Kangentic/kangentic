@@ -205,6 +205,13 @@ export function App() {
       }));
     }
 
+    // Session first output (alternate screen buffer detected) -- lifts shimmer early
+    if (sessions.onFirstOutput) {
+      cleanups.push(sessions.onFirstOutput((sessionId) => {
+        useSessionStore.getState().markFirstOutput(sessionId);
+      }));
+    }
+
     // Session usage data -- only update store for current project sessions
     // Transient sessions (command terminal) always pass through regardless of projectId
     if (sessions.onUsage) {

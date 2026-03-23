@@ -66,6 +66,7 @@ export const IPC = {
   SESSION_LIST: 'session:list',
   SESSION_GET_SCROLLBACK: 'session:getScrollback',
   SESSION_DATA: 'session:data',
+  SESSION_FIRST_OUTPUT: 'session:firstOutput',
   SESSION_EXIT: 'session:exit',
   SESSION_USAGE: 'session:usage',
   SESSION_GET_USAGE: 'session:getUsage',

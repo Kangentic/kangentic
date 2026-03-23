@@ -36,6 +36,7 @@ export class SessionManager extends EventEmitter {
   private bufferManager: PtyBufferManager;
   private fileWatcher: SessionFileWatcher;
   private usageTracker: UsageTracker;
+  private firstOutputEmitted = new Set<string>();
 
   constructor() {
     super();
@@ -46,7 +47,16 @@ export class SessionManager extends EventEmitter {
     });
 
     this.bufferManager = new PtyBufferManager({
-      onFlush: (sessionId, data) => this.emit('data', sessionId, data),
+      onFlush: (sessionId, data) => {
+        // Detect alternate screen buffer activation (Claude Code's TUI entering
+        // full-screen mode) and emit a one-time event per session. This fires
+        // ~500ms-1.5s after spawn, much earlier than the status.json hook (~2-5s).
+        if (!this.firstOutputEmitted.has(sessionId) && data.includes('\x1b[?1049h')) {
+          this.firstOutputEmitted.add(sessionId);
+          this.emit('first-output', sessionId);
+        }
+        this.emit('data', sessionId, data);
+      },
     });
 
     this.usageTracker = new UsageTracker({
@@ -442,6 +452,7 @@ export class SessionManager extends EventEmitter {
     this.sessions.delete(sessionId);
     this.bufferManager.removeSession(sessionId);
     this.usageTracker.removeSession(sessionId);
+    this.firstOutputEmitted.delete(sessionId);
   }
 
   kill(sessionId: string): void {
@@ -762,5 +773,6 @@ export class SessionManager extends EventEmitter {
     }
     this.sessions.clear();
     this.sessionQueue.clear();
+    this.firstOutputEmitted.clear();
   }
 }

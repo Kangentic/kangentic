@@ -94,7 +94,7 @@ export function ShimmerOverlay({ label }: ShimmerOverlayProps) {
       </svg>
 
       {/* Glowing pill centered above shimmer lines */}
-      <div className="relative z-20 px-6 py-3 rounded-lg bg-accent/20 border border-accent/40 terminal-overlay-glow">
+      <div className="relative z-20 px-6 py-3 rounded-lg bg-surface border border-accent/40 terminal-overlay-glow">
         <span className="text-base text-accent-fg">{label}</span>
       </div>
     </div>

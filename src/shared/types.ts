@@ -780,6 +780,7 @@ export interface ElectronAPI {
     getScrollback: (sessionId: string) => Promise<string>;
     getUsage: (projectId?: string) => Promise<Record<string, SessionUsage>>;
     onData: (callback: (sessionId: string, data: string, projectId?: string) => void) => () => void;
+    onFirstOutput: (callback: (sessionId: string, projectId?: string) => void) => () => void;
     onExit: (callback: (sessionId: string, exitCode: number, projectId?: string) => void) => () => void;
     onStatus: (callback: (sessionId: string, session: Session, projectId?: string) => void) => () => void;
     onUsage: (callback: (sessionId: string, data: SessionUsage, projectId?: string) => void) => () => void;

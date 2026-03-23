@@ -42,12 +42,15 @@ export function CommandBarOverlay({ onClose }: CommandBarOverlayProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Wait for Claude Code to report usage data before mounting xterm.
-  // This ensures the scrollback buffer contains the clean TUI, not shell noise.
-  const hasSessionStarted = useSessionStore((state) => sessionId ? !!state.sessionUsage[sessionId] : false);
+  // Wait for Claude Code's TUI to activate (alternate screen buffer detected)
+  // or usage data to arrive before mounting xterm. This ensures the scrollback
+  // buffer contains the clean TUI, not shell noise.
+  const hasFirstOutput = useSessionStore((state) => sessionId ? !!state.sessionFirstOutput[sessionId] : false);
+  const hasUsage = useSessionStore((state) => sessionId ? !!state.sessionUsage[sessionId] : false);
+  const hasSessionStarted = hasFirstOutput || hasUsage;
   const [terminalReady, setTerminalReady] = useState(false);
 
-  // Lift shimmer when usage arrives (Claude Code is ready)
+  // Lift shimmer when TUI activates or usage arrives (Claude Code is ready)
   useEffect(() => {
     if (hasSessionStarted && !terminalReady) setTerminalReady(true);
   }, [hasSessionStarted, terminalReady]);

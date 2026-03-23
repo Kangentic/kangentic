@@ -27,6 +27,7 @@ interface TerminalTabProps {
 
 export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
   const config = useConfigStore((s) => s.config);
+  const hasFirstOutput = useSessionStore((s) => !!s.sessionFirstOutput[sessionId]);
   const hasUsage = useSessionStore((s) => !!s.sessionUsage[sessionId]);
 
   const isResuming = useSessionStore(
@@ -64,7 +65,7 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
   // Terminal is "ready" once startup noise has been cleared. Until then,
   // an overlay hides the raw command line and suppressDataRef prevents
   // PTY output from accumulating in xterm behind the overlay.
-  const [terminalReady, setTerminalReady] = useState(() => hasUsage);
+  const [terminalReady, setTerminalReady] = useState(() => hasFirstOutput || hasUsage);
 
   const { terminalRef, initTerminal, fit, focus, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
     sessionId,
@@ -116,17 +117,18 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
     };
   }, [initTerminal]);
 
-  // When usage arrives, lift the overlay and stop suppressing PTY data.
-  // No clear() needed: the fresh xterm (from remount) has no stale content,
-  // and suppressDataRef blocked all noise while the overlay was showing.
+  // Lift overlay when Claude Code's TUI activates the alternate screen buffer
+  // (first-output) or when usage data arrives (fallback). No clear() needed:
+  // the fresh xterm has no stale content, and suppressDataRef blocked all
+  // noise while the overlay was showing.
   useEffect(() => {
-    if (hasUsage && !terminalReady) {
+    if ((hasFirstOutput || hasUsage) && !terminalReady) {
       setTerminalReady(true);
       if (taskId && pendingCommandLabel) {
         useSessionStore.getState().clearPendingCommandLabel(taskId);
       }
     }
-  }, [hasUsage, terminalReady, taskId, pendingCommandLabel]);
+  }, [hasFirstOutput, hasUsage, terminalReady, taskId, pendingCommandLabel]);
 
   // When the overlay lifts (terminalReady transitions false -> true), reload
   // scrollback from the PTY buffer. While the overlay was showing, all PTY

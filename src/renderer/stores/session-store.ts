@@ -22,6 +22,8 @@ interface SessionStore {
   detailTaskId: string | null;
   dialogSessionId: string | null;
   sessionUsage: Record<string, SessionUsage>;
+  /** Tracks sessions whose PTY has activated the alternate screen buffer (TUI ready). */
+  sessionFirstOutput: Record<string, boolean>;
   sessionActivity: Record<string, ActivityState>;
   sessionEvents: Record<string, SessionEvent[]>;
   seenIdleSessions: Record<string, boolean>;
@@ -43,6 +45,7 @@ interface SessionStore {
   upsertSession: (session: Session) => void;
   updateSessionStatus: (id: string, updates: Partial<Session>) => void;
   updateUsage: (sessionId: string, data: SessionUsage) => void;
+  markFirstOutput: (sessionId: string) => void;
   updateActivity: (sessionId: string, state: ActivityState) => void;
   addEvent: (sessionId: string, event: SessionEvent) => void;
   clearEvents: (sessionId: string) => void;
@@ -67,6 +70,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   detailTaskId: null,
   dialogSessionId: null,
   sessionUsage: {},
+  sessionFirstOutput: {},
   sessionActivity: {},
   sessionEvents: {},
   seenIdleSessions: {},
@@ -216,6 +220,12 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   updateUsage: (sessionId, data) => {
     set((s) => ({
       sessionUsage: { ...s.sessionUsage, [sessionId]: data },
+    }));
+  },
+
+  markFirstOutput: (sessionId) => {
+    set((s) => ({
+      sessionFirstOutput: { ...s.sessionFirstOutput, [sessionId]: true },
     }));
   },
 

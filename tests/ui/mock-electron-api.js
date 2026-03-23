@@ -722,6 +722,9 @@
       onData: function () {
         return noop;
       },
+      onFirstOutput: function () {
+        return noop;
+      },
       onExit: function () {
         return noop;
       },

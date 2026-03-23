@@ -130,6 +130,13 @@ export function registerSessionHandlers(context: IpcContext): void {
     }
   });
 
+  context.sessionManager.on('first-output', (sessionId: string) => {
+    if (!context.mainWindow.isDestroyed()) {
+      const projectId = context.sessionManager.getSessionProjectId(sessionId);
+      context.mainWindow.webContents.send(IPC.SESSION_FIRST_OUTPUT, sessionId, projectId);
+    }
+  });
+
   context.sessionManager.on('usage', (sessionId: string, data: unknown) => {
     if (!context.mainWindow.isDestroyed()) {
       const projectId = context.sessionManager.getSessionProjectId(sessionId);

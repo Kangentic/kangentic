@@ -101,7 +101,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `transition:set` | invoke | Set action chain for lane A→B |
 | `transition:getFor` | invoke | Get transitions for lane pair (exact match, then wildcard) |
 
-### Sessions (23 channels)
+### Sessions (24 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -117,6 +117,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `session:getEvents` | invoke | Fetch activity log events for one session |
 | `session:getEventsCache` | invoke | Fetch cached event arrays. Optional `projectId` scopes to one project. |
 | `session:data` | on | Terminal output available (includes `projectId`) |
+| `session:firstOutput` | on | Alternate screen buffer detected - TUI ready (includes `projectId`) |
 | `session:exit` | on | Session exited (includes `projectId`) |
 | `session:status` | on | Session changed - pushes full `Session` object (includes `projectId`) |
 | `session:usage` | on | Usage data updated (includes `projectId`) |
