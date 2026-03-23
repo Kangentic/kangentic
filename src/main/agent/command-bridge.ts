@@ -791,6 +791,8 @@ export class CommandBridge {
     const taskId = params.taskId as string;
     const newTitle = params.title as string | null;
     const newDescription = params.description as string | null;
+    const newPrUrl = params.prUrl as string | null;
+    const newPrNumber = params.prNumber as number | null;
 
     if (!taskId) {
       return { success: false, error: 'taskId is required' };
@@ -806,8 +808,10 @@ export class CommandBridge {
     const updates: Record<string, unknown> = { id: taskId };
     if (newTitle !== null) updates.title = String(newTitle).slice(0, 200);
     if (newDescription !== null) updates.description = String(newDescription).slice(0, 10_000);
+    if (newPrUrl !== null) updates.pr_url = String(newPrUrl);
+    if (newPrNumber !== null) updates.pr_number = Number(newPrNumber);
 
-    const updated = taskRepo.update(updates as { id: string; title?: string; description?: string });
+    const updated = taskRepo.update(updates as { id: string; title?: string; description?: string; pr_url?: string; pr_number?: number });
 
     // Notify the main process so the board refreshes
     this.onTaskUpdated(updated);
@@ -815,11 +819,13 @@ export class CommandBridge {
     const changedFields: string[] = [];
     if (newTitle !== null) changedFields.push('title');
     if (newDescription !== null) changedFields.push('description');
+    if (newPrUrl !== null) changedFields.push('prUrl');
+    if (newPrNumber !== null) changedFields.push('prNumber');
 
     return {
       success: true,
       message: `Updated ${changedFields.join(' and ')} for "${updated.title}".`,
-      data: { id: updated.id, title: updated.title, description: updated.description },
+      data: { id: updated.id, title: updated.title, description: updated.description, prUrl: updated.pr_url, prNumber: updated.pr_number },
     };
   }
 

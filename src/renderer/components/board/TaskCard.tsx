@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Loader2, Trash2, CirclePause, Mail, Image, Images } from 'lucide-react';
+import { Loader2, Trash2, CirclePause, Mail, Image, Images, GitPullRequest } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { TaskDetailDialog } from '../dialogs/TaskDetailDialog';
 import { useSessionStore } from '../../stores/session-store';
@@ -163,9 +163,17 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
 
         {task.pr_url && (
           <div className="flex items-center gap-2 mt-1.5">
-            <span className="text-xs text-accent-fg">
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                window.electronAPI.shell.openExternal(task.pr_url!);
+              }}
+              className="text-xs text-accent-fg hover:underline flex items-center gap-1"
+              data-testid="task-card-pr-link"
+            >
+              <GitPullRequest size={12} />
               PR #{task.pr_number}
-            </span>
+            </button>
           </div>
         )}
 

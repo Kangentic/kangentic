@@ -79,6 +79,8 @@ export class TransitionEngine {
       taskId: task.id,
       worktreePath: task.worktree_path || '',
       branchName: task.branch_name || '',
+      prUrl: task.pr_url || '',
+      prNumber: task.pr_number ? String(task.pr_number) : '',
       attachments: attachmentPaths.length > 0
         ? `\n${attachmentPaths.join('\n')}`
         : '',

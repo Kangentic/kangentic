@@ -250,6 +250,7 @@ export type HookEvent = (typeof HookEvent)[keyof typeof HookEvent];
 
 /** Claude Code tool names we detect/react to. */
 export const ClaudeTool = {
+  Bash: 'Bash',
   ExitPlanMode: 'ExitPlanMode',
 } as const;
 export type ClaudeTool = (typeof ClaudeTool)[keyof typeof ClaudeTool];

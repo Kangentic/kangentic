@@ -427,17 +427,19 @@ server.registerTool(
 server.registerTool(
   'kangentic_update_task',
   {
-    description: 'Update an existing task\'s title or description. Find the task ID first with kangentic_find_task or kangentic_search_tasks.',
+    description: 'Update an existing task\'s title, description, or PR info. Find the task ID first with kangentic_find_task or kangentic_search_tasks.',
     inputSchema: {
       taskId: z.string().describe('Task ID to update.'),
       title: z.string().max(200).optional().describe('New task title (max 200 characters).'),
       description: z.string().max(10000).optional().describe('New task description (markdown). Replaces the entire description.'),
+      prUrl: z.string().url().optional().describe('Pull request URL (e.g. https://github.com/owner/repo/pull/123).'),
+      prNumber: z.number().int().positive().optional().describe('Pull request number.'),
     },
   },
-  async ({ taskId, title, description }) => {
-    if (!title && description === undefined) {
+  async ({ taskId, title, description, prUrl, prNumber }) => {
+    if (!title && description === undefined && prUrl === undefined && prNumber === undefined) {
       return {
-        content: [{ type: 'text' as const, text: 'Provide at least one field to update: title or description.' }],
+        content: [{ type: 'text' as const, text: 'Provide at least one field to update: title, description, prUrl, or prNumber.' }],
         isError: true,
       };
     }
@@ -446,6 +448,8 @@ server.registerTool(
         taskId,
         title: title ?? null,
         description: description ?? null,
+        prUrl: prUrl ?? null,
+        prNumber: prNumber ?? null,
       });
       if (!response.success) {
         return { content: [{ type: 'text' as const, text: `Failed to update task: ${response.error}` }], isError: true };

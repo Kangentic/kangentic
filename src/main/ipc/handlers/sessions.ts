@@ -347,6 +347,28 @@ export function registerSessionHandlers(context: IpcContext): void {
     }
   });
 
+  // Auto-link PR URL when agent runs a gh pr command
+  context.sessionManager.on('pr-detected', (sessionId: string, prUrl: string, prNumber: number) => {
+    const resolvedProjectId = context.sessionManager.getSessionProjectId(sessionId);
+    if (!resolvedProjectId) return;
+    try {
+      const { tasks } = getProjectRepos(context, resolvedProjectId);
+      const task = tasks.getBySessionId(sessionId);
+      if (!task) return;
+
+      // Update the task with the detected PR info
+      tasks.update({ id: task.id, pr_url: prUrl, pr_number: prNumber });
+      console.log(`[pr-detected] Linked PR #${prNumber} to "${task.title}": ${prUrl}`);
+
+      // Notify renderer so the board refreshes with the PR badge/pill
+      if (!context.mainWindow.isDestroyed()) {
+        context.mainWindow.webContents.send(IPC.TASK_UPDATED_BY_AGENT, task.id, task.title, resolvedProjectId);
+      }
+    } catch (error) {
+      console.error(`[pr-detected] Failed to link PR for session ${sessionId}:`, error);
+    }
+  });
+
   // Auto-move task when agent exits plan mode (ExitPlanMode tool)
   context.sessionManager.on('plan-exit', async (sessionId: string) => {
     // Use the session's own projectId -- not the singleton, which may have

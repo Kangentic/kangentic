@@ -47,6 +47,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
 
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
+  const [prUrl, setPrUrl] = useState(task.pr_url ?? '');
   const [isEditing, setIsEditing] = useState(!!initialEdit);
   const [toggling, setToggling] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -241,6 +242,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
     }
     setTitle(task.title);
     setDescription(task.description);
+    setPrUrl(task.pr_url ?? '');
     branchConfig.resetToTask();
     setIsEditing(false);
   };
@@ -264,6 +266,17 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
     await executeSave(branchChanged, worktreeChanged, enablingWorktree, trimmedBranch);
   };
 
+  /** Build pr_url/pr_number fields if the PR URL changed. */
+  const buildPrUrlFields = (): Pick<Parameters<typeof updateTask>[0], 'pr_url' | 'pr_number'> => {
+    const trimmedPrUrl = prUrl.trim();
+    if (trimmedPrUrl === (task.pr_url ?? '')) return {};
+    if (trimmedPrUrl) {
+      const prNumberMatch = trimmedPrUrl.match(/\/pull\/(\d+)/);
+      return { pr_url: trimmedPrUrl, pr_number: prNumberMatch ? parseInt(prNumberMatch[1], 10) : null };
+    }
+    return { pr_url: null, pr_number: null };
+  };
+
   const executeSave = async (
     branchChanged: boolean,
     worktreeChanged: boolean,
@@ -271,6 +284,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
     trimmedBranch: string,
   ) => {
     const needsSwitchBranch = (task.worktree_path && branchChanged) || enablingWorktree;
+    const prUrlFields = buildPrUrlFields();
 
     if (needsSwitchBranch) {
       try {
@@ -279,8 +293,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
           newBaseBranch: trimmedBranch,
           enableWorktree: enablingWorktree || undefined,
         });
-        if (title !== task.title || description !== task.description) {
-          await updateTask({ id: task.id, title, description });
+        if (title !== task.title || description !== task.description || prUrlFields.pr_url !== undefined) {
+          await updateTask({ id: task.id, title, description, ...prUrlFields });
         }
         await useBoardStore.getState().loadBoard();
       } catch (error) {
@@ -292,7 +306,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
         return;
       }
     } else {
-      const payload: Parameters<typeof updateTask>[0] = { id: task.id, title, description };
+      const payload: Parameters<typeof updateTask>[0] = { id: task.id, title, description, ...prUrlFields };
+
       if (!isSessionActive && !isArchived) {
         if (branchChanged) {
           payload.base_branch = trimmedBranch || null;
@@ -444,6 +459,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             setTitle={setTitle}
             description={description}
             setDescription={setDescription}
+            prUrl={prUrl}
+            setPrUrl={setPrUrl}
             attachments={attachments}
             branchConfig={branchConfig}
             isSessionActive={isSessionActive}

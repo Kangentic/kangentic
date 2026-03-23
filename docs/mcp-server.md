@@ -132,15 +132,17 @@ Get detailed column configuration: auto-spawn, permission mode, plan exit target
 
 ### kangentic_update_task
 
-Update a task's title or description.
+Update a task's title, description, or PR info.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID |
 | `title` | string | No | New title (max 200 chars) |
 | `description` | string | No | New description (max 10000 chars) |
+| `prUrl` | string | No | Pull request URL (e.g. `https://github.com/owner/repo/pull/123`) |
+| `prNumber` | number | No | Pull request number |
 
-At least one of `title` or `description` is required.
+At least one of `title`, `description`, `prUrl`, or `prNumber` is required.
 
 ## Configuration
 

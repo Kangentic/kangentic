@@ -97,7 +97,7 @@ Click a task card to open the detail dialog. From here you can:
 - Access the kebab menu (three-dot icon) for additional actions:
   - **Edit** -- switch to edit mode for title and description
   - **Open folder** -- open the worktree or project directory in your file manager
-  - **View PR** -- open the associated pull request (if one exists)
+  - **View PR** -- open the associated pull request. PR URLs are populated automatically when an agent runs `gh pr create` or `gh pr view` (GitHub), explicitly via the `kangentic_update_task` MCP tool (any platform), or manually through the PR URL field in edit mode. Also shown as a pill in the header bar and a clickable badge on the task card.
   - **Commands & Skills** -- submenu of available Claude Code commands and skills (same as the header popover)
   - **Pause / Resume session** -- manually suspend or resume the agent
   - **Move to** -- submenu listing all other columns as move targets

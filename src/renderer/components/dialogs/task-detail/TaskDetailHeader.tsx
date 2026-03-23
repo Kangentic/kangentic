@@ -184,6 +184,20 @@ export function TaskDetailHeader({
             </Pill>
           )}
 
+          {/* PR pill */}
+          {task.pr_url && (
+            <Pill
+              shape="square"
+              onClick={() => window.electronAPI.shell.openExternal(task.pr_url!)}
+              className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
+              title={task.pr_url}
+              data-testid="pr-pill"
+            >
+              <GitPullRequest size={14} />
+              PR #{task.pr_number}
+            </Pill>
+          )}
+
           {/* Shortcut header pills */}
           {headerShortcuts.map((action) => {
             const ActionIcon = ICON_REGISTRY.get(action.icon ?? 'zap') ?? Zap;

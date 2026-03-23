@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import { ClaudeStatusParser } from '../agent/claude-status-parser';
 import { EventType, EventTypeActivity, ClaudeTool } from '../../shared/types';
 import type { SessionUsage, ActivityState, SessionEvent } from '../../shared/types';
+import { matchesPRCommand } from './pr-connectors';
 
 const MAX_EVENTS_PER_SESSION = 500; // Cap rendered events in renderer
 const STALE_THINKING_THRESHOLD_MS = 45_000;
@@ -13,6 +14,7 @@ interface UsageTrackerCallbacks {
   onEvent(sessionId: string, event: SessionEvent): void;
   onIdleTimeout(sessionId: string): void;
   onPlanExit(sessionId: string): void;
+  onPRCandidate(sessionId: string): void;
   requestSuspend(sessionId: string): void;
   isSessionRunning(sessionId: string): boolean;
 }
@@ -29,6 +31,7 @@ export class UsageTracker {
   private subagentDepth = new Map<string, number>();
   private pendingToolCount = new Map<string, number>();
   private pendingIdleWhileSubagent = new Map<string, boolean>();
+  private pendingPRCommand = new Map<string, boolean>();
   private permissionIdle = new Map<string, boolean>();
   private idleTimestamp = new Map<string, number>();
   private lastThinkingSignal = new Map<string, number>();
@@ -225,6 +228,22 @@ export class UsageTracker {
             this.callbacks.onPlanExit(sessionId);
           }
 
+          // Detect GitHub PR commands -> scan scrollback on tool_end.
+          // On tool_start for Bash with a gh pr command, set a flag.
+          // On the corresponding tool_end, fire the callback so the
+          // session manager can scan scrollback for PR URLs.
+          if (event.type === EventType.ToolStart
+              && event.tool === ClaudeTool.Bash
+              && event.detail
+              && matchesPRCommand(event.detail)) {
+            this.pendingPRCommand.set(sessionId, true);
+          } else if (event.type === EventType.ToolEnd
+              && event.tool === ClaudeTool.Bash
+              && this.pendingPRCommand.get(sessionId)) {
+            this.pendingPRCommand.delete(sessionId);
+            this.callbacks.onPRCandidate(sessionId);
+          }
+
           // Track subagent nesting depth so we can distinguish main-agent
           // tool events from subagent tool events during idle state.
           if (event.type === EventType.SubagentStart) {
@@ -358,6 +377,7 @@ export class UsageTracker {
     this.subagentDepth.delete(sessionId);
     this.pendingToolCount.delete(sessionId);
     this.pendingIdleWhileSubagent.delete(sessionId);
+    this.pendingPRCommand.delete(sessionId);
     this.permissionIdle.delete(sessionId);
     this.idleTimestamp.delete(sessionId);
     this.lastThinkingSignal.delete(sessionId);

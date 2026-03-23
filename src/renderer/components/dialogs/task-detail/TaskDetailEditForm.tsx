@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Image, Info } from 'lucide-react';
+import { Image, Info, GitPullRequest } from 'lucide-react';
 import { BranchPicker } from '../BranchPicker';
 import { WorktreeChip } from '../WorktreeChip';
 import { AttachmentThumbnails } from './AttachmentThumbnails';
@@ -13,6 +13,8 @@ interface TaskDetailEditFormProps {
   setTitle: (title: string) => void;
   description: string;
   setDescription: (description: string) => void;
+  prUrl: string;
+  setPrUrl: (prUrl: string) => void;
   attachments: AttachmentsState;
   branchConfig: BranchConfigState;
   isSessionActive: boolean;
@@ -26,6 +28,8 @@ export function TaskDetailEditForm({
   setTitle,
   description,
   setDescription,
+  prUrl,
+  setPrUrl,
   attachments,
   branchConfig,
   isSessionActive,
@@ -93,6 +97,20 @@ export function TaskDetailEditForm({
         onPreview={attachments.handlePreview}
         onRemove={attachments.removeAttachment}
       />
+      <div>
+        <label className="text-[10px] text-fg-muted mb-1 flex items-center gap-1">
+          <GitPullRequest size={10} />
+          Pull Request URL
+        </label>
+        <input
+          type="url"
+          placeholder="https://github.com/owner/repo/pull/123"
+          value={prUrl}
+          onChange={(e) => setPrUrl(e.target.value)}
+          className="w-full bg-surface border border-edge-input rounded px-3 py-1.5 text-xs text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
+          data-testid="pr-url-input"
+        />
+      </div>
       {!isSessionActive && !isArchived && isInBacklog && (
         <div>
           <label className="text-[10px] text-fg-muted mb-1 block">Branch</label>

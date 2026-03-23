@@ -132,13 +132,15 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
       return mockTasks;
     }
     getById(id: string) { return mockTasks.find((task) => task.id === id); }
-    update(input: { id: string; title?: string; description?: string; branch_name?: string }) {
+    update(input: { id: string; title?: string; description?: string; branch_name?: string; pr_url?: string; pr_number?: number }) {
       const index = mockTasks.findIndex((task) => task.id === input.id);
       if (index === -1) throw new Error(`Task ${input.id} not found`);
       const updated = { ...mockTasks[index] };
       if (input.title !== undefined) updated.title = input.title;
       if (input.description !== undefined) updated.description = input.description;
       if (input.branch_name !== undefined) updated.branch_name = input.branch_name;
+      if (input.pr_url !== undefined) updated.pr_url = input.pr_url;
+      if (input.pr_number !== undefined) updated.pr_number = input.pr_number;
       updated.updated_at = new Date().toISOString();
       mockTasks[index] = updated;
       return updated;
@@ -391,6 +393,35 @@ describe('CommandBridge - update_task', () => {
     // Verify callback fired
     expect(updatedTasks).toHaveLength(1);
     expect(updatedTasks[0].title).toBe('New Title');
+  });
+
+  it('updates task prUrl and prNumber', () => {
+    const task = makeTask({ title: 'PR Task', swimlane_id: 'sw-backlog' });
+    mockTasks.push(task);
+
+    const updatedTasks: Task[] = [];
+    const bridge = createBridge({
+      onTaskUpdated: (updatedTask) => updatedTasks.push(updatedTask),
+    });
+    bridge.start();
+
+    const response = sendCommand(bridge, 'update_task', {
+      taskId: task.id,
+      prUrl: 'https://github.com/owner/repo/pull/42',
+      prNumber: 42,
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    expect(response.message).toContain('prUrl');
+    expect(response.message).toContain('prNumber');
+
+    expect(mockTasks.find((t) => t.id === task.id)?.pr_url).toBe('https://github.com/owner/repo/pull/42');
+    expect(mockTasks.find((t) => t.id === task.id)?.pr_number).toBe(42);
+
+    expect(response.data.prUrl).toBe('https://github.com/owner/repo/pull/42');
+    expect(response.data.prNumber).toBe(42);
   });
 
   it('returns error for non-existent task', () => {

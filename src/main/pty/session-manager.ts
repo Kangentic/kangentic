@@ -8,6 +8,7 @@ import { SessionQueue } from './session-queue';
 import { PtyBufferManager } from './pty-buffer-manager';
 import { SessionFileWatcher } from './session-file-watcher';
 import { UsageTracker } from './usage-tracker';
+import { detectPR } from './pr-connectors';
 import { adaptCommandForShell } from '../../shared/paths';
 import { trackEvent, sanitizeErrorMessage } from '../analytics/analytics';
 import { isShuttingDown } from '../shutdown-state';
@@ -57,6 +58,13 @@ export class SessionManager extends EventEmitter {
         if (session) this.emit('idle-timeout', sessionId, session.taskId, this.usageTracker.idleTimeoutMinutes);
       },
       onPlanExit: (sessionId) => this.emit('plan-exit', sessionId),
+      onPRCandidate: (sessionId) => {
+        const scrollback = this.bufferManager.getRawScrollback(sessionId);
+        const detected = detectPR(scrollback);
+        if (detected) {
+          this.emit('pr-detected', sessionId, detected.url, detected.number);
+        }
+      },
       requestSuspend: (sessionId) => this.suspend(sessionId),
       isSessionRunning: (sessionId) => this.sessions.get(sessionId)?.status === 'running',
     });

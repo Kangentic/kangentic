@@ -135,6 +135,17 @@ Create a PR from the worktree branch to the source branch:
 1. Check if a PR already exists: `gh pr view <branchName>`
 2. If it does, report the existing PR URL and proceed to Step 6 (merge it).
 
+## Step 5b -- Update Task with PR URL
+
+After the PR is created (or an existing PR is found), link it to the Kangentic task:
+
+1. Extract the PR URL from the `gh pr create` output (it prints the URL to stdout on success) or from `gh pr view` if the PR already existed.
+2. Parse the PR number from the URL (the numeric ID at the end of `/pull/<number>`).
+3. Find the current task using `kangentic_find_task` with the branch name from Step 0.
+4. If a task is found, call `kangentic_update_task` with the task ID, `prUrl`, and `prNumber`.
+
+If the task lookup or update fails, log the error but do not block - the PR was already created successfully. This step is best-effort alongside the automatic PR detection built into Kangentic.
+
 ## Step 6 -- Admin Merge
 
 Merge the PR immediately using admin privileges to bypass status check wait:
