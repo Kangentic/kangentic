@@ -204,6 +204,20 @@ const createWindow = () => {
     app.dock?.setIcon(iconImage);
   }
 
+  // Enable DevTools shortcuts in development (F12, Ctrl+Shift+I)
+  if (!app.isPackaged) {
+    mainWindow.webContents.on('before-input-event', (_event, input) => {
+      if (input.type === 'keyDown') {
+        const isF12 = input.key === 'F12';
+        const isCtrlShiftI =
+          input.control && input.shift && input.key.toLowerCase() === 'i';
+        if (isF12 || isCtrlShiftI) {
+          mainWindow?.webContents.toggleDevTools();
+        }
+      }
+    });
+  }
+
   mainWindow.once('ready-to-show', () => {
     mark('ready_to_show');
     if (!isTest && !savedBounds) {
