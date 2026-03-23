@@ -219,6 +219,7 @@ Listed in execution order within `runProjectMigrations()`:
 16. **`is_ghost` column on swimlanes** -- adds ghost column support for board config reconciliation. Ghost columns are columns removed from `kangentic.json` but still holding tasks.
 17. **Session metrics columns** -- adds `total_cost_usd`, `total_input_tokens`, `total_output_tokens`, `model_id`, `model_display_name`, `total_duration_ms`, `tool_call_count`, `lines_added`, `lines_removed`, `files_changed` to sessions for completed task summaries.
 18. **`permission_strategy` column renamed to `permission_mode`** -- renames the `permission_strategy` column to `permission_mode` on swimlanes. Migrates old values: `bypass-permissions` to `bypassPermissions`, removes `manual` (alias for `default`). Adds `dontAsk` as a new valid mode. Also removes `permissionMode` from action `config_json` (action-level override removed; resolution is now swimlane override then global setting).
+19. **Legacy `permission_mode` value normalization** -- unconditional data migration that runs on every DB open. Normalizes legacy values in both swimlanes and sessions: `project-settings` to `default`, `manual` to `default`, `dangerously-skip` to `bypassPermissions`, `bypass-permissions` to `bypassPermissions`. Ensures all records use the current `PermissionMode` union values regardless of when they were created.
 
 ### Key Migrations (Global DB)
 
@@ -241,6 +242,7 @@ Operates on the global DB. Uses `getGlobalDb()` internally -- no constructor arg
 | `create(input)` | Insert at position 0, shifting all existing projects down |
 | `getLastOpened()` | Most recently opened project (by `last_opened` DESC) |
 | `updateLastOpened(id)` | Set `last_opened` to now |
+| `rename(id, name)` | Rename a project |
 | `delete(id)` | Delete and reindex positions to keep them contiguous (0..N-1) |
 | `reorder(ids)` | Set positions from the ordered array of IDs |
 

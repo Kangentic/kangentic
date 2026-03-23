@@ -276,6 +276,8 @@ When the max concurrent sessions limit is reached, new sessions are queued autom
 
 The sidebar shows all your projects. Click to switch between them. Each project has its own board, columns, and sessions. Drag projects to reorder them -- the order persists across app restarts. New projects appear at the top.
 
+The selected project shows action buttons (Open, Settings, Delete) directly on the row. Right-click any project to open a context menu with Rename, Open in Explorer, Project Settings, and Delete. Inline rename is supported via the context menu - press Enter to save, Escape to cancel.
+
 ### Idle Badges
 
 When an agent goes idle (waiting for input or stopped) on a non-active project, the sidebar shows a badge. This helps you notice when agents need attention across projects.

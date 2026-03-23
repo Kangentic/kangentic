@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.10.0] - 2026-03-22
+
+### Features
+- Expose Kangentic board API via MCP server for Claude Code agents (c8f1c3b)
+- Add "Copy Image" to right-click context menu for image attachments (4b3072a)
+- Show action buttons on selected project and add context menu with rename (0915525)
+
+### Fixes
+- Restore F12 and Ctrl+Shift+I DevTools shortcuts in dev mode (40278e6)
+- Persist queued status in SessionRecord instead of lying about running (1792be1)
+- Escape PowerShell special characters in CLI prompts (032ac02)
+- Deterministic worktree cleanup with correct junction removal on Windows (3d99544)
+- Remove node_modules junction before recursive cleanup (9c155b6)
+- Auto-rebuild native modules after npm install (24bc64d)
+- Use full removeWorktree in createWorktree pre-cleanup (f965abb)
+- Clean stale worktree resources for backlog tasks on startup (514236a)
+- Serialize trust manager writes and reserve session slots during spawn (bab5184)
+- Enable Ctrl+C copy and Ctrl+V paste keyboard shortcuts (5f82374)
+- Move @aptabase/electron from devDependencies to dependencies (0c40aca)
+- Serialize git operations and recover stale branches on backlog move (085d6e4)
+- Drain buffer in getScrollback to prevent duplicate terminal history (f22f0cf)
+- Revert task move on duplicate branch detection (05c20c0)
+- Resolve aptabase module errors and fix stale unit tests (48eca32)
+- Register suspended placeholders for user-paused sessions on restart (8785177)
+- Reuse session ID on queue promotion to prevent stuck "Starting agent..." (77ce0d0)
+
+### Other
+- Push-based session sync to replace ad-hoc mechanisms (226f4d0)
+- Caller-owned session IDs to prevent queue ID mismatch (955908c)
+- Split tasks.ts handler into task-crud, task-move, task-branch (2d35a13)
+- Deliver MCP server via --mcp-config flag instead of .mcp.json injection (cfbd0f2)
+- Extract PtyBufferManager, SessionFileWatcher, UsageTracker from SessionManager (a3b6c2d)
+- Split board-store into Zustand slices (3d602e6)
+- Extract useBoardDragDrop and useBoardSearch hooks from KanbanBoard (66ef063)
+- Extract ProjectListItem, GroupHeader, and context menu from ProjectSidebar (160e12a)
+- Extract TaskDetailDialog into focused components and hooks (01f422a)
+- Rename "Commands & Skills" to "Commands" and auto-size kebab menu (57c2696)
+- Migrate ESLint 8 to 9, upgrade commitlint and minor deps (ca1ad07)
+- Add MCP server documentation and fix anchor gaps (76251df)
+- Update developer-guide structure and fix branch naming in user-guide (3672382)
+- Add gh issue permission to Claude settings (859bf62)
+
 ## [v0.9.1] - 2026-03-18
 
 ### Fixes
