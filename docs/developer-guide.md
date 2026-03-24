@@ -28,6 +28,15 @@ src/
       claude-status-parser.ts # Parses Claude status line output
       command-bridge.ts    # File-based command queue between MCP server and Electron
       command-builder.ts   # Builds claude CLI invocations
+      commands/            # Extracted command handlers (used by command-bridge)
+        types.ts           # CommandContext, CommandResponse, CommandHandler interfaces
+        column-resolver.ts # Shared column name -> swimlane lookup
+        task-commands.ts   # create_task, update_task
+        inventory-commands.ts # list_columns, list_tasks
+        search-commands.ts # search_tasks, find_task
+        analytics-commands.ts # get_task_stats, board_summary, session_history, column_detail
+        backlog-commands.ts # list_backlog, create_backlog_item, search_backlog, promote_backlog
+        index.ts           # Barrel + command handler registry
       git-detector.ts      # Detects git installation and version
       hook-manager.ts      # Injects/strips Kangentic hooks from Claude settings
       mcp-server.ts        # Stdio MCP server for Claude Code agents
@@ -39,7 +48,11 @@ src/
       board-config-manager.ts # Board config (kangentic.json) export, import, reconciliation
     db/                    # SQLite database layer
       database.ts          # DB initialization, WAL mode, connection caching
-      migrations.ts        # Schema migrations (auto-run on open)
+      migrations.ts        # Barrel re-export (auto-run on open)
+      migrations/
+        global-schema.ts   # Global DB schema + migrations
+        project-schema.ts  # Per-project DB schema + migrations
+        default-data.ts    # Default swimlanes, actions, transitions
       repositories/        # One class per table, synchronous queries
         action-repository.ts
         attachment-repository.ts

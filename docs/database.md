@@ -207,7 +207,7 @@ Indexes: `idx_backlog_position` on (position), `idx_backlog_external` on (extern
 
 ## Migration Strategy
 
-Migrations run automatically on database open via `runGlobalMigrations()` and `runProjectMigrations()` in `src/main/db/migrations.ts`. The strategy uses three approaches depending on the change:
+Migrations run automatically on database open via `runGlobalMigrations()` (from `src/main/db/migrations/global-schema.ts`) and `runProjectMigrations()` (from `src/main/db/migrations/project-schema.ts`). Default swimlane and action seeding lives in `src/main/db/migrations/default-data.ts`. The strategy uses three approaches depending on the change:
 
 - **Initial schema** uses `CREATE TABLE IF NOT EXISTS` so first-run and re-runs are idempotent.
 - **Incremental changes** use `ALTER TABLE ADD COLUMN` with existence checks via `PRAGMA table_info()` to avoid errors on already-migrated databases.

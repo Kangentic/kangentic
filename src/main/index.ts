@@ -1,21 +1,18 @@
 const PROCESS_START = performance.now();
 
-import { app, BrowserWindow, clipboard, Menu, nativeImage, screen, session } from 'electron';
+import { app, BrowserWindow, clipboard, Menu, nativeImage } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
-import os from 'node:os';
 import { registerAllIpc, getSessionManager, getCommandInjector, getBoardConfigManager, getCurrentProjectId, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
-import { closeAll, getProjectDb } from './db/database';
-import { SessionRepository } from './db/repositories/session-repository';
 import { IPC } from '../shared/ipc-channels';
-import { THEME_BACKGROUNDS } from '../shared/types';
-import type { AppConfig, ThemeMode } from '../shared/types';
-import { PATHS } from './config/paths';
 import { ConfigManager } from './config/config-manager';
 import { isShuttingDown, setShuttingDown } from './shutdown-state';
 const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage } from './analytics/analytics';
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
+import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds } from './window-utils';
+import { loadReactDevTools } from './devtools';
+import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 
 initStartupTimer(PROCESS_START);
 mark('process_start');
@@ -101,73 +98,8 @@ function getCwdArg(): string | null {
   return null;
 }
 
-function resolveBackgroundColor(): string {
-  try {
-    const raw = fs.readFileSync(PATHS.configFile, 'utf-8');
-    const theme = (JSON.parse(raw) as { theme?: ThemeMode }).theme;
-    if (theme && theme in THEME_BACKGROUNDS) {
-      return THEME_BACKGROUNDS[theme];
-    }
-  } catch {
-    // Config file missing or malformed -- use default
-  }
-  return '#18181b';
-}
-
-export function resolveIconPath(): string {
-  const iconFilename = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
-  return app.isPackaged
-    ? path.join(process.resourcesPath, iconFilename)
-    : path.join(app.getAppPath(), 'resources', iconFilename);
-}
-
-function loadReactDevTools(): void {
-  const reactDevToolsId = 'fmkadmapgofadopljbjfkapdkoienihi';
-  let chromeExtensionsBase: string;
-  switch (process.platform) {
-    case 'darwin':
-      chromeExtensionsBase = path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome', 'User Data', 'Default', 'Extensions');
-      break;
-    case 'linux':
-      chromeExtensionsBase = path.join(os.homedir(), '.config', 'google-chrome', 'Default', 'Extensions');
-      break;
-    default:
-      chromeExtensionsBase = path.join(os.homedir(), 'AppData', 'Local', 'Google', 'Chrome', 'User Data', 'Default', 'Extensions');
-      break;
-  }
-  const extensionDir = path.join(chromeExtensionsBase, reactDevToolsId);
-  if (!fs.existsSync(extensionDir)) return;
-
-  const versions = fs.readdirSync(extensionDir).sort();
-  const latest = versions[versions.length - 1];
-  if (!latest) return;
-
-  session.defaultSession.extensions.loadExtension(path.join(extensionDir, latest))
-    .then(() => console.log('[APP] React DevTools loaded'))
-    .catch((err) => console.log('[APP] Failed to load React DevTools:', err));
-}
-
-/** Read saved window bounds from config, with screen-boundary validation. */
-function resolveWindowBounds(): { x: number; y: number; width: number; height: number } | null {
-  try {
-    const raw = fs.readFileSync(PATHS.configFile, 'utf-8');
-    const config = JSON.parse(raw) as Partial<AppConfig>;
-    if (!config.restoreWindowPosition || !config.windowBounds) return null;
-    const { x, y, width, height } = config.windowBounds;
-    if (width < 400 || height < 300) return null;
-    // Verify the window overlaps at least one display (e.g. external monitor disconnected)
-    const displays = screen.getAllDisplays();
-    const overlapsDisplay = displays.some((display) => {
-      const { x: displayX, y: displayY, width: displayWidth, height: displayHeight } = display.bounds;
-      return x < displayX + displayWidth && x + width > displayX
-        && y < displayY + displayHeight && y + height > displayY;
-    });
-    if (!overlapsDisplay) return null;
-    return { x, y, width, height };
-  } catch {
-    return null;
-  }
-}
+// Re-export for external consumers (e.g. updater module)
+export { resolveIconPath } from './window-utils';
 
 const createWindow = () => {
   phase('createWindow');
@@ -488,114 +420,23 @@ app.on('activate', () => {
   }
 });
 
-const HARD_SHUTDOWN_DEADLINE_MS = 6000;
-
-/**
- * Synchronous shutdown: mark sessions as suspended in DB, kill PTYs, close DBs.
- *
- * CRITICAL: This must be fully synchronous. The previous approach used
- * event.preventDefault() + async shutdown + process.exit(), but that cancelled
- * Electron's normal quit flow. If the async chain stalled (analytics network
- * call, PTY wait, uncaught error), the app became a permanent zombie -- all
- * Chromium child processes (GPU, utility, crashpad) stayed alive because
- * Electron never reached its own cleanup. By doing only sync work and letting
- * the quit proceed, Electron's normal shutdown tears down all child processes.
- */
-function syncShutdownCleanup(): void {
-  // Clear pending timers that could fire during shutdown
-  if (activateAllProjectsTimer) {
-    clearTimeout(activateAllProjectsTimer);
-    activateAllProjectsTimer = null;
-  }
-  stopUpdaterTimers();
-
-  try {
-    // Close active project's file watchers before killing sessions
-    getBoardConfigManager().detach();
-
-    const sessionManager = getSessionManager();
-    getCommandInjector().cancelAll();
-
-    // Mark running DB records as 'suspended' so sessions can resume on next launch.
-    // This must happen BEFORE killAll() because killAll's onExit handlers could
-    // race and overwrite status to 'exited'.
-    const allSessions = sessionManager.listSessions();
-    const sessionsByProject = new Map<string, typeof allSessions>();
-    for (const session of allSessions) {
-      if (session.status === 'running' || session.status === 'queued') {
-        const existing = sessionsByProject.get(session.projectId) || [];
-        existing.push(session);
-        sessionsByProject.set(session.projectId, existing);
+/** Build the shutdown dependencies from current module-level state. */
+function getShutdownDependencies() {
+  return {
+    getSessionManager,
+    getBoardConfigManager,
+    getCommandInjector,
+    getCurrentProjectId,
+    deleteProjectFromIndex,
+    stopUpdaterTimers,
+    clearPendingTimers: () => {
+      if (activateAllProjectsTimer) {
+        clearTimeout(activateAllProjectsTimer);
+        activateAllProjectsTimer = null;
       }
-    }
-
-    for (const [projectId, sessions] of sessionsByProject) {
-      try {
-        const db = getProjectDb(projectId);
-        const sessionRepo = new SessionRepository(db);
-        const now = new Date().toISOString();
-        for (const session of sessions) {
-          const record = sessionRepo.getLatestForTask(session.taskId);
-          if (record && record.status === 'running') {
-            sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: now, suspended_by: 'system' });
-          }
-        }
-      } catch {
-        // DB may already be closing
-      }
-    }
-
-    // Kill all PTY sessions immediately. We skip the graceful suspendAll()
-    // (which sends /exit and waits up to 2s) to keep shutdown synchronous.
-    // Sessions are resumable via --resume <claude_session_id> from the DB record.
-    sessionManager.killAll();
-    sessionManager.dispose();
-
-    // Ephemeral cleanup: delete project from index so it doesn't show on next launch.
-    // The worktree directory cleanup (async) is skipped here -- pruneStaleWorktreeProjects()
-    // handles it on next launch of the main app.
-    if (isEphemeral) {
-      const projectId = getCurrentProjectId();
-      if (projectId) {
-        deleteProjectFromIndex(projectId);
-      }
-    }
-
-    closeAll();
-  } catch (error) {
-    console.error('[APP] Shutdown error:', error);
-  }
-}
-
-/**
- * Start the hard failsafe timer. If Electron's normal shutdown hangs (e.g.
- * GPU process won't terminate), this guarantees process termination. On Windows,
- * uses taskkill /T to kill the entire process tree including Chromium children.
- */
-function startHardShutdownFailsafe(): void {
-  setTimeout(() => {
-    console.error('[APP] Hard shutdown deadline reached -- forcing exit');
-    if (process.platform === 'win32') {
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        require('child_process').execSync(
-          `taskkill /PID ${process.pid} /T /F`,
-          { windowsHide: true, stdio: 'ignore' },
-        );
-      } catch {
-        // taskkill may fail if process is already dying
-      }
-    } else {
-      // macOS/Linux: SIGKILL the process group to ensure child processes are cleaned up.
-      // Negative PID targets the entire process group, not just the main process.
-      try {
-        process.kill(-process.pid, 'SIGKILL');
-      } catch {
-        // Process may already be dying
-      }
-    }
-    process.exit(1);
-  }, HARD_SHUTDOWN_DEADLINE_MS);
+    },
+    isEphemeral,
+  };
 }
 
 app.on('before-quit', () => {
@@ -605,13 +446,13 @@ app.on('before-quit', () => {
   // Hard failsafe: if Electron's normal shutdown hangs, force-kill everything
   startHardShutdownFailsafe();
 
-  // Fire-and-forget shutdown analytics (don't await -- must not block quit)
+  // Fire-and-forget shutdown analytics (don't await - must not block quit)
   const durationSeconds = Math.round((Date.now() - appLaunchTime) / 1000);
   trackEvent('app_close', { durationSeconds });
 
-  // Synchronous cleanup -- then let the quit proceed normally so Electron
+  // Synchronous cleanup - then let the quit proceed normally so Electron
   // tears down all Chromium child processes (GPU, utility, crashpad, etc.)
-  syncShutdownCleanup();
+  syncShutdownCleanup(getShutdownDependencies());
 });
 
 // Handle force-close (Ctrl+C / SIGINT / SIGTERM) which may not fire before-quit
@@ -620,7 +461,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     if (isShuttingDown()) return;
     setShuttingDown();
     startHardShutdownFailsafe();
-    syncShutdownCleanup();
+    syncShutdownCleanup(getShutdownDependencies());
     process.exit(0);
   });
 }
