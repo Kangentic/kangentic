@@ -155,7 +155,7 @@ test.describe('Claude Agent -- Config Changes During Active Sessions', () => {
     const taskB = `CfgChg B ${runId}`;
     const taskC = `CfgChg C ${runId}`;
 
-    // --- Step 1: Create 3 tasks in Backlog ---
+    // --- Step 1: Create 3 tasks in To Do ---
     await createTask(page, taskA, 'Config change test task A');
     await createTask(page, taskB, 'Config change test task B');
     await createTask(page, taskC, 'Config change test task C');

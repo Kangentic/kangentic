@@ -171,7 +171,7 @@ test.describe('Project Session Scope', () => {
     const { browser, page } = await launchWithState(twoProjectPreConfig());
 
     try {
-      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
       // Project A is active -- should see alpha-task tab, not beta-task
       const alphaTab = page.locator('button:has-text("alpha-task")');
@@ -188,7 +188,7 @@ test.describe('Project Session Scope', () => {
     const { browser, page } = await launchWithState(twoProjectPreConfig());
 
     try {
-      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
       // Project A active -- alpha-task visible
       await expect(page.locator('button:has-text("alpha-task")')).toBeVisible();
@@ -212,7 +212,7 @@ test.describe('Project Session Scope', () => {
     const { browser, page } = await launchWithState(twoProjectPreConfig({ withUsage: true }));
 
     try {
-      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
       // Project A is active -- status bar should show 1 agent (not 2)
       const sessionCount = page.locator('[data-testid="session-count"]');
@@ -239,7 +239,7 @@ test.describe('Project Session Scope', () => {
     const { browser, page } = await launchWithState(twoProjectPreConfig());
 
     try {
-      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
       // Project Alpha (active) should show idle mail+count badge
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
@@ -271,7 +271,7 @@ test.describe('Project Session Scope', () => {
     const { browser, page } = await launchWithState(preConfig);
 
     try {
-      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
       // Project Alpha should show thinking badge, no idle badge
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
@@ -308,7 +308,7 @@ test.describe('Project Session Scope', () => {
     const { browser, page } = await launchWithState(preConfig);
 
     try {
-      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
       // Project Gamma has no sessions -- no badges or dots at all
       const gammaRow = page.locator('[role="button"]:has-text("Project Gamma")');
@@ -359,7 +359,7 @@ test.describe('Project Session Scope', () => {
     const { browser, page } = await launchWithState(preConfig);
 
     try {
-      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
       // Project Alpha should show both idle and thinking badges side by side
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
@@ -379,7 +379,7 @@ test.describe('Project Session Scope', () => {
     const { browser, page } = await launchWithState(twoProjectPreConfig());
 
     try {
-      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
       // Project A -- alpha-task visible
       await expect(page.locator('button:has-text("alpha-task")')).toBeVisible();

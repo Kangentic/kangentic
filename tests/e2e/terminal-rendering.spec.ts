@@ -70,7 +70,7 @@ async function ensureBoard() {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   });
   await page.waitForTimeout(300);
-  const backlog = page.locator('[data-swimlane-name="Backlog"]');
+  const backlog = page.locator('[data-swimlane-name="To Do"]');
   if (await backlog.isVisible().catch(() => false)) return;
   await page.locator(`button:has-text("${PROJECT_NAME}")`).first().click();
   await waitForBoard(page);

@@ -1,3 +1,20 @@
+/**
+ * Return white or black text depending on the background color's luminance.
+ * Accepts hex colors like "#ff0000" or "#f00".
+ */
+export function contrastTextColor(hex: string): string {
+  const raw = hex.replace('#', '');
+  const full = raw.length === 3
+    ? raw[0] + raw[0] + raw[1] + raw[1] + raw[2] + raw[2]
+    : raw;
+  const r = parseInt(full.slice(0, 2), 16) / 255;
+  const g = parseInt(full.slice(2, 4), 16) / 255;
+  const b = parseInt(full.slice(4, 6), 16) / 255;
+  // Relative luminance (WCAG)
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return luminance > 0.45 ? '#000000' : '#ffffff';
+}
+
 /** Interpolate between color stops: green(0-75%) → yellow(95%) → amber(98%) → orange(100%). */
 const STOPS: [number, [number, number, number]][] = [
   [0,   [74, 222, 128]],   // green-400

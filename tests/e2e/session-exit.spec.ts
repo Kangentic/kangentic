@@ -87,7 +87,7 @@ test.describe('Claude Agent -- Session Exit Handling', () => {
     const swimlaneIds = await page.evaluate(async () => {
       const swimlanes = await window.electronAPI.swimlanes.list();
       const planning = swimlanes.find((s: any) => s.name === 'Planning');
-      const backlog = swimlanes.find((s: any) => s.name === 'Backlog');
+      const backlog = swimlanes.find((s: any) => s.name === 'To Do');
       return { planning: planning?.id, backlog: backlog?.id };
     });
     expect(swimlaneIds.planning).toBeTruthy();
@@ -122,7 +122,7 @@ test.describe('Claude Agent -- Session Exit Handling', () => {
     });
     expect(runningBefore).toBe(1);
 
-    // Move to Backlog → suspends and kills the session
+    // Move to To Do → suspends and kills the session
     await page.evaluate(async ({ taskId, swimlaneId }) => {
       await window.electronAPI.tasks.move({
         taskId,
@@ -154,7 +154,7 @@ test.describe('Claude Agent -- Session Exit Handling', () => {
     const swimlaneIds = await page.evaluate(async () => {
       const swimlanes = await window.electronAPI.swimlanes.list();
       const planning = swimlanes.find((s: any) => s.name === 'Planning');
-      const backlog = swimlanes.find((s: any) => s.name === 'Backlog');
+      const backlog = swimlanes.find((s: any) => s.name === 'To Do');
       return { planning: planning?.id, backlog: backlog?.id };
     });
     expect(swimlaneIds.planning).toBeTruthy();
@@ -199,7 +199,7 @@ test.describe('Claude Agent -- Session Exit Handling', () => {
       return window.electronAPI.sessions.getScrollback(s.id);
     }, taskId!);
 
-    // Move to Backlog (suspends session, kills PTY)
+    // Move to To Do (suspends session, kills PTY)
     await page.evaluate(async ({ taskId, swimlaneId }) => {
       await window.electronAPI.tasks.move({
         taskId,
@@ -249,7 +249,7 @@ test.describe('Claude Agent -- Session Exit Handling', () => {
     expect(newSession).toBeTruthy();
     expect(newSession.status).toBe('running');
 
-    // Backlog marks sessions as 'exited' (not 'suspended'), so re-entry
+    // To Do marks sessions as 'exited' (not 'suspended'), so re-entry
     // must spawn a FRESH session (MOCK_CLAUDE_SESSION), never a resumed one.
     // Poll until the marker appears in this task's scrollback.
     await page.waitForFunction(async (tid) => {

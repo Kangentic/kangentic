@@ -4,7 +4,7 @@
  * - Permission Mode dropdown (per-column override)
  * - Auto-spawn toggle (per-column agent auto-start)
  * - Plan exit target dropdown (for plan-mode columns)
- * - Locked state for system columns (Backlog, Done)
+ * - Locked state for system columns (To Do, Done)
  */
 import { test, expect } from '@playwright/test';
 import { launchPage, waitForBoard, createProject } from './helpers';
@@ -119,16 +119,16 @@ test.describe('EditColumnDialog', () => {
     expect(options).toContain('Nowhere -- stay in column');
     expect(options).toContain('Executing');
 
-    // Should not include current column, Backlog, or Done
+    // Should not include current column, To Do, or Done
     expect(options).not.toContain('Planning');
-    expect(options).not.toContain('Backlog');
+    expect(options).not.toContain('To Do');
     expect(options).not.toContain('Done');
 
     await closeDialog();
   });
 
-  test('Backlog column has auto-spawn locked OFF', async () => {
-    await openEditDialog('Backlog');
+  test('To Do column has auto-spawn locked OFF', async () => {
+    await openEditDialog('To Do');
 
     const toggle = page.locator('button[role="switch"]');
     await expect(toggle).toBeDisabled();

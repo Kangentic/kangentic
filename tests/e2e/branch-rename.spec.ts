@@ -107,7 +107,7 @@ async function ensureBoard(p: Page, projectName: string) {
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   });
   await p.waitForTimeout(300);
-  const backlog = p.locator('[data-swimlane-name="Backlog"]');
+  const backlog = p.locator('[data-swimlane-name="To Do"]');
   if (await backlog.isVisible().catch(() => false)) return;
   await p.locator(`button:has-text("${projectName}")`).first().click();
   await waitForBoard(p);

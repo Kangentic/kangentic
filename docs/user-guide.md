@@ -16,7 +16,7 @@ New projects start with seven columns:
 
 | Column | Role | Behavior |
 |--------|------|----------|
-| **Backlog** | backlog | Holding area. No agent runs here. Moving a task here kills its session. |
+| **To Do** | todo | Holding area. No agent runs here. Moving a task here kills its session. |
 | **Planning** | (plan mode) | Spawns Claude in plan mode. Agent creates a plan, then task auto-moves to Executing. |
 | **Executing** | (auto) | Spawns Claude in default permission mode. Agent works on the task. |
 | **Code Review** | (auto) | Agent keeps running. Can attach an auto-command for review prompts. |
@@ -32,7 +32,7 @@ Click the **+** button on any column header or use the "New Task" button. Enter 
 
 ### Spawn an Agent
 
-Drag a task from Backlog to any active column (Planning, Executing, etc.). Kangentic will:
+Drag a task from To Do to any active column (Planning, Executing, etc.). Kangentic will:
 
 1. Create a git worktree for the task (if worktrees are enabled)
 2. Spawn a Claude Code CLI session with the task title and description as the prompt
@@ -61,9 +61,9 @@ Drag to Done. The session is suspended (not destroyed), the task is archived, an
 
 Clicking a completed task opens a session summary showing: duration, model, cost, token usage, tool call count, files changed, and lines added/removed. The Done column also supports searching completed tasks by title and sorting by date, cost, tokens, or duration.
 
-### Return to Backlog
+### Return to To Do
 
-Drag to Backlog to kill the session. The worktree is preserved (code stays on disk), but the session is ended. If you drag back to an active column, a fresh session starts.
+Drag to To Do to kill the session. The worktree is preserved (code stays on disk), but the session is ended. If you drag back to an active column, a fresh session starts.
 
 ## Terminal Panel
 

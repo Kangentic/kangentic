@@ -17,9 +17,9 @@ test.afterAll(async () => {
   await browser?.close();
 });
 
-/** Open the New Task dialog in the Backlog column */
+/** Open the New Task dialog in the To Do column */
 async function openNewTaskDialog() {
-  const column = page.locator('[data-swimlane-name="Backlog"]');
+  const column = page.locator('[data-swimlane-name="To Do"]');
   const addButton = column.locator('text=Add task');
   await addButton.click();
   await page.locator('input[placeholder="Task title"]').waitFor({ state: 'visible' });

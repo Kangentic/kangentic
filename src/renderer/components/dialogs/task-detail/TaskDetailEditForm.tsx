@@ -19,7 +19,7 @@ interface TaskDetailEditFormProps {
   branchConfig: BranchConfigState;
   isSessionActive: boolean;
   isArchived: boolean;
-  isInBacklog: boolean;
+  isInTodo: boolean;
 }
 
 export function TaskDetailEditForm({
@@ -34,7 +34,7 @@ export function TaskDetailEditForm({
   branchConfig,
   isSessionActive,
   isArchived,
-  isInBacklog,
+  isInTodo,
 }: TaskDetailEditFormProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -111,7 +111,7 @@ export function TaskDetailEditForm({
           data-testid="pr-url-input"
         />
       </div>
-      {!isSessionActive && !isArchived && isInBacklog && (
+      {!isSessionActive && !isArchived && isInTodo && (
         <div>
           <label className="text-[10px] text-fg-muted mb-1 block">Branch</label>
           <div className="flex items-center gap-2">
@@ -139,7 +139,7 @@ export function TaskDetailEditForm({
           )}
         </div>
       )}
-      {!isSessionActive && !isArchived && !isInBacklog && (
+      {!isSessionActive && !isArchived && !isInTodo && (
         <div className="flex items-center gap-2">
           <BranchPicker value={branchConfig.baseBranch} defaultBranch={branchConfig.defaultBaseBranch || 'main'} onChange={branchConfig.setBaseBranch} />
           {!task.worktree_path && (

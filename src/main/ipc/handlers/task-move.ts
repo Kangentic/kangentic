@@ -102,9 +102,9 @@ export async function handleTaskMove(
   const toLane = swimlanes.getById(input.targetSwimlaneId);
 
   // Only send the full prompt template (title + description + attachments) when
-  // starting from backlog. Non-backlog sources are resuming previously-started
+  // starting from To Do. Non-To Do sources are resuming previously-started
   // work, so re-sending the original description would duplicate context.
-  const skipPromptTemplate = fromLane?.role !== 'backlog';
+  const skipPromptTemplate = fromLane?.role !== 'todo';
 
   // Move the task in the database
   tasks.move(input);
@@ -120,8 +120,8 @@ export async function handleTaskMove(
   const db = getProjectDb(resolvedProjectId);
   const sessionRepo = new SessionRepository(db);
 
-  // --- Priority 1: TARGET IS BACKLOG → full reset (kill session, remove worktree, delete branch) ---
-  if (toLane?.role === 'backlog') {
+  // --- Priority 1: TARGET IS TO DO → full reset (kill session, remove worktree, delete branch) ---
+  if (toLane?.role === 'todo') {
     context.commandInjector.cancel(task.id);
     await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
     // Re-read the task to check if worktree_path was actually cleared

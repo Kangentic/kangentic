@@ -3,26 +3,32 @@ import { TitleBar } from './TitleBar';
 import { StatusBar } from './StatusBar';
 import { ProjectSidebar } from '../sidebar/ProjectSidebar';
 import { KanbanBoard } from '../board/KanbanBoard';
+import { ViewToggle } from '../board/ViewToggle';
+import { BacklogView } from '../backlog/BacklogView';
 import { TerminalPanel } from '../terminal/TerminalPanel';
 import { SettingsPanel } from '../settings/SettingsPanel';
 import { CommandBarOverlay } from '../command-bar/CommandBarOverlay';
 import { WelcomeScreen } from './WelcomeScreen';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
+import { useBoardStore } from '../../stores/board-store';
 import { ToastContainer } from './ToastContainer';
 import { useSidebarResize, COLLAPSED_STRIP_WIDTH } from '../../hooks/useSidebarResize';
 import { useTerminalResize, COLLAPSED_HEIGHT } from '../../hooks/useTerminalResize';
 import { useCommandBar } from '../../hooks/useCommandBar';
+import { useViewToggle } from '../../hooks/useViewToggle';
 
 export function AppLayout() {
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
   const config = useConfigStore((s) => s.config);
   const currentProject = useProjectStore((s) => s.currentProject);
   const projects = useProjectStore((s) => s.projects);
+  const activeView = useBoardStore((s) => s.activeView);
 
   const sidebar = useSidebarResize(config);
   const terminal = useTerminalResize(config);
   const commandBar = useCommandBar();
+  useViewToggle();
 
   return (
     <div className="h-screen flex flex-col bg-surface">
@@ -79,36 +85,45 @@ export function AppLayout() {
         <div className="flex-1 flex flex-col min-w-0" ref={terminal.contentColRef}>
           {currentProject ? (
             <>
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <KanbanBoard />
-              </div>
+              <ViewToggle />
+              {activeView === 'board' ? (
+                <>
+                  <div className="flex-1 min-h-0 overflow-hidden">
+                    <KanbanBoard />
+                  </div>
 
-              {/* Resize handle -- hidden when collapsed */}
-              {!terminal.collapsed && (
-                <div
-                  className="resize-handle h-1 bg-edge flex-shrink-0 cursor-row-resize hover:bg-fg-faint transition-colors"
-                  onMouseDown={terminal.onResizeStart}
-                />
+                  {/* Resize handle -- hidden when collapsed */}
+                  {!terminal.collapsed && (
+                    <div
+                      className="resize-handle h-1 bg-edge flex-shrink-0 cursor-row-resize hover:bg-fg-faint transition-colors"
+                      onMouseDown={terminal.onResizeStart}
+                    />
+                  )}
+
+                  {/* Terminal panel */}
+                  <div
+                    style={{ height: terminal.collapsed ? COLLAPSED_HEIGHT : terminal.height }}
+                    className={`flex-shrink-0 overflow-hidden ${
+                      terminal.ready && !terminal.isResizing ? 'transition-[height] duration-200 ease-in-out' : ''
+                    } ${terminal.isResizing || sidebar.isResizing ? 'pointer-events-none' : ''}`}
+                    onTransitionEnd={(event) => {
+                      if (event.target === event.currentTarget && event.propertyName === 'height') {
+                        terminal.handleTransitionEnd();
+                      }
+                    }}
+                  >
+                    <TerminalPanel
+                      collapsed={terminal.collapsed}
+                      showContent={terminal.showContent}
+                      onToggleCollapse={terminal.onToggleCollapse}
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <BacklogView />
+                </div>
               )}
-
-              {/* Terminal panel */}
-              <div
-                style={{ height: terminal.collapsed ? COLLAPSED_HEIGHT : terminal.height }}
-                className={`flex-shrink-0 overflow-hidden ${
-                  terminal.ready && !terminal.isResizing ? 'transition-[height] duration-200 ease-in-out' : ''
-                } ${terminal.isResizing || sidebar.isResizing ? 'pointer-events-none' : ''}`}
-                onTransitionEnd={(event) => {
-                  if (event.target === event.currentTarget && event.propertyName === 'height') {
-                    terminal.handleTransitionEnd();
-                  }
-                }}
-              >
-                <TerminalPanel
-                  collapsed={terminal.collapsed}
-                  showContent={terminal.showContent}
-                  onToggleCollapse={terminal.onToggleCollapse}
-                />
-              </div>
             </>
           ) : projects.length === 0 ? (
             <WelcomeScreen />

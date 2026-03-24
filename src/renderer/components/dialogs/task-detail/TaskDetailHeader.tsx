@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, Trash2, Pencil, Loader2, FolderGit2, FolderOpen, GitPullRequest, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, FolderGit2, FolderOpen, GitPullRequest, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
 import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
@@ -21,6 +21,7 @@ interface TaskDetailHeaderProps {
   onToggle: () => void;
   onCommandSelect: (command: ClaudeCommand) => void;
   onArchive: () => void;
+  onSendToBacklog: () => void;
   onDelete: () => void;
   onMoveTo: (targetSwimlaneId: string) => void;
   moveTargets: Swimlane[];
@@ -43,6 +44,7 @@ export function TaskDetailHeader({
   onToggle,
   onCommandSelect,
   onArchive,
+  onSendToBacklog,
   onDelete,
   onMoveTo,
   moveTargets,
@@ -189,6 +191,7 @@ export function TaskDetailHeader({
             onToggle={onToggle}
             onCommandSelect={onCommandSelect}
             onArchive={onArchive}
+            onSendToBacklog={onSendToBacklog}
             onDelete={onDelete}
             onMoveTo={onMoveTo}
             moveTargets={moveTargets}
@@ -226,6 +229,7 @@ interface TaskDetailKebabItemsProps {
   onToggle: () => void;
   onCommandSelect: (command: ClaudeCommand) => void;
   onArchive: () => void;
+  onSendToBacklog: () => void;
   onDelete: () => void;
   onMoveTo: (targetSwimlaneId: string) => void;
   moveTargets: Swimlane[];
@@ -245,6 +249,7 @@ function TaskDetailKebabItems({
   onToggle,
   onCommandSelect,
   onArchive,
+  onSendToBacklog,
   onDelete,
   onMoveTo,
   moveTargets,
@@ -421,6 +426,15 @@ function TaskDetailKebabItems({
 
       {/* Divider before destructive actions */}
       <KebabMenuDivider />
+
+      {!isArchived && (
+        <KebabMenuItem
+          icon={<Inbox size={14} />}
+          label="Send to Backlog"
+          onClick={() => { closeAll(); onSendToBacklog(); }}
+          data-testid="send-to-backlog-btn"
+        />
+      )}
 
       {!isArchived && (
         <KebabMenuItem

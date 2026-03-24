@@ -9,7 +9,7 @@ import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { getSwimlaneIcon } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
-import { Pill } from '../Pill';
+import { CountBadge } from '../CountBadge';
 import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
 
 export interface DoneSwimlaneProps {
@@ -103,7 +103,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
           </span>
         </button>
 
-        <Pill size="sm" className="bg-surface-hover/40 text-fg-faint tabular-nums leading-5">{tasks.length}</Pill>
+        <CountBadge count={tasks.length} />
 
         <button
           type="button"

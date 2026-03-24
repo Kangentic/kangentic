@@ -85,7 +85,7 @@ test.describe('Claude Agent -- No False Resume on New Tasks', () => {
   });
 
   test('new task moved to Planning gets fresh session, not resume', async () => {
-    // Create a task in Backlog and move it to Planning via IPC
+    // Create a task in To Do and move it to Planning via IPC
     const title = `Fresh Session ${runId}`;
     await createTask(page, title, 'Should use --session-id, not --resume');
 

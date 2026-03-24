@@ -39,7 +39,7 @@ const SortableSwimlane = React.memo(function SortableSwimlane({ swimlane, tasks 
     data: { type: 'column' },
   });
 
-  const isDraggable = swimlane.role !== 'backlog';
+  const isDraggable = swimlane.role !== 'todo';
 
   const style: React.CSSProperties = {
     transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,

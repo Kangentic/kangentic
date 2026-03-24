@@ -1,10 +1,14 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState, useRef, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Loader2, Trash2, CirclePause, Mail, Image, Images, GitPullRequest } from 'lucide-react';
+import { Loader2, Trash2, CirclePause, Mail, Image, Images, GitPullRequest, Inbox } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { TaskDetailDialog } from '../dialogs/TaskDetailDialog';
+import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { useSessionStore } from '../../stores/session-store';
+import { useBacklogStore } from '../../stores/backlog-store';
+import { useConfigStore } from '../../stores/config-store';
+import { useToastStore } from '../../stores/toast-store';
 import { useSessionDisplayState } from '../../utils/session-display-state';
 import { getProgressColor } from '../../utils/color-lerp';
 import type { Task } from '../../../shared/types';
@@ -24,6 +28,50 @@ interface TaskCardProps {
   isDragOverlay?: boolean;
   compact?: boolean;
   onDelete?: (taskId: string) => void;
+}
+
+/** Inline context menu for task cards. */
+function TaskContextMenu({ position, onSendToBacklog, onClose }: {
+  position: { x: number; y: number };
+  onSendToBacklog: () => void;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        onClose();
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('mousedown', handleClick, true);
+    document.addEventListener('keydown', handleEscape, true);
+    return () => {
+      document.removeEventListener('mousedown', handleClick, true);
+      document.removeEventListener('keydown', handleEscape, true);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={menuRef}
+      className="fixed z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 min-w-[160px]"
+      style={{ left: position.x, top: position.y }}
+    >
+      <button
+        type="button"
+        onClick={onSendToBacklog}
+        className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
+        data-testid="context-send-to-backlog"
+      >
+        <Inbox size={14} />
+        Send to Backlog
+      </button>
+    </div>
+  );
 }
 
 const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete }: TaskCardProps) {
@@ -84,10 +132,31 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     contain: 'layout style paint',
   };
 
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [confirmSendToBacklog, setConfirmSendToBacklog] = useState(false);
+
   const handleClick = (e: React.MouseEvent) => {
     if (isDragOverlay) return;
     e.stopPropagation();
     setDetailTaskId(task.id);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    if (isDragOverlay || compact) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleSendToBacklog = async () => {
+    setContextMenu(null);
+    setConfirmSendToBacklog(false);
+    const taskTitle = task.title;
+    await useBacklogStore.getState().demoteTask({ taskId: task.id });
+    useToastStore.getState().addToast({
+      message: `Sent "${taskTitle}" to backlog`,
+      variant: 'info',
+    });
   };
 
   if (compact) {
@@ -145,6 +214,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         {...attributes}
         {...listeners}
         onClick={handleClick}
+        onContextMenu={handleContextMenu}
         data-task-id={task.id}
         className={`border rounded-md p-2.5 cursor-grab active:cursor-grabbing transition-colors bg-surface-raised ${
           isHighlighted ? 'border-[2px] border-fg-faint/60' : isIdle ? 'border-edge/40' : 'border-edge hover:border-edge-input'
@@ -252,6 +322,41 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
 
       {showDetail && (
         <TaskDetailDialog task={task} onClose={() => setDetailTaskId(null)} initialEdit={displayState.kind === 'none' && !task.archived_at} />
+      )}
+
+      {contextMenu && (
+        <TaskContextMenu
+          position={contextMenu}
+          onSendToBacklog={() => {
+            setContextMenu(null);
+            // Skip confirmation when non-destructive (no session, no worktree) or user opted out
+            const hasResources = !!task.session_id || !!task.worktree_path;
+            const skipConfirm = useConfigStore.getState().config.skipDeleteConfirm;
+            if (!hasResources || skipConfirm) {
+              handleSendToBacklog();
+            } else {
+              setConfirmSendToBacklog(true);
+            }
+          }}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {confirmSendToBacklog && (
+        <ConfirmDialog
+          title="Send to Backlog"
+          message={<>
+            <p>This will move &quot;{task.title}&quot; to the backlog and clean up its session and worktree.</p>
+            <p className="text-fg-muted mt-1">You can move it back to the board later.</p>
+          </>}
+          confirmLabel="Send to Backlog"
+          showDontAskAgain
+          onConfirm={(dontAskAgain) => {
+            if (dontAskAgain) useConfigStore.getState().updateConfig({ skipDeleteConfirm: true });
+            handleSendToBacklog();
+          }}
+          onCancel={() => setConfirmSendToBacklog(false)}
+        />
       )}
     </>
   );

@@ -196,18 +196,26 @@ export class BoardConfigManager {
       // Query existing lanes once. Used for both system column ID reuse and reconciliation.
       const existingLanes = swimlaneRepo.list();
 
-      const hasBacklog = config.columns.some((column) => column.role === 'backlog');
-      if (!hasBacklog) {
-        const existingBacklog = existingLanes.find((lane) => lane.role === 'backlog');
+      // Normalize legacy role: "backlog" → "todo" (backlog is now a separate view)
+      for (const column of config.columns) {
+        if (column.role === 'backlog' as SwimlaneRole) {
+          column.role = 'todo';
+          if (column.name === 'Backlog') column.name = 'To Do';
+        }
+      }
+
+      const hasTodo = config.columns.some((column) => column.role === 'todo');
+      if (!hasTodo) {
+        const existingTodo = existingLanes.find((lane) => lane.role === 'todo');
         config.columns.unshift({
-          id: existingBacklog?.id,
-          name: existingBacklog?.name ?? 'Backlog',
-          role: 'backlog',
+          id: existingTodo?.id,
+          name: existingTodo?.name ?? 'To Do',
+          role: 'todo',
           icon: 'layers',
           color: '#6b7280',
           autoSpawn: false,
         });
-        warnings.push('kangentic.json is missing a backlog column. Added default.');
+        warnings.push('kangentic.json is missing a To Do column. Added default.');
       }
 
       const hasDone = config.columns.some((column) => column.role === 'done');
@@ -225,12 +233,12 @@ export class BoardConfigManager {
         warnings.push('kangentic.json is missing a done column. Added default.');
       }
 
-      // Enforce position: backlog first, done last
-      const backlogIndex = config.columns.findIndex((column) => column.role === 'backlog');
-      if (backlogIndex > 0) {
-        const [backlogColumn] = config.columns.splice(backlogIndex, 1);
-        config.columns.unshift(backlogColumn);
-        warnings.push('Backlog column must be first. Position corrected.');
+      // Enforce position: To Do first, Done last
+      const todoIndex = config.columns.findIndex((column) => column.role === 'todo');
+      if (todoIndex > 0) {
+        const [todoColumn] = config.columns.splice(todoIndex, 1);
+        config.columns.unshift(todoColumn);
+        warnings.push('To Do column must be first. Position corrected.');
       }
 
       const doneIndex = config.columns.findIndex((column) => column.role === 'done');
@@ -250,7 +258,7 @@ export class BoardConfigManager {
         const existing = columnConfig.id ? existingById.get(columnConfig.id) : undefined;
 
         // Enforce system column constraints
-        const isBacklog = columnConfig.role === 'backlog';
+        const isTodo = columnConfig.role === 'todo';
         const isDone = columnConfig.role === 'done';
 
         if (existing) {
@@ -261,10 +269,10 @@ export class BoardConfigManager {
             color: columnConfig.color ?? existing.color,
             icon: columnConfig.icon ?? existing.icon,
             position: index,
-            is_archived: isDone ? true : (isBacklog ? false : (columnConfig.archived ?? existing.is_archived)),
+            is_archived: isDone ? true : (isTodo ? false : (columnConfig.archived ?? existing.is_archived)),
             is_ghost: false,
-            permission_mode: (isBacklog || isDone) ? null : (columnConfig.permissionMode ?? existing.permission_mode),
-            auto_spawn: (isBacklog || isDone) ? false : (columnConfig.autoSpawn ?? existing.auto_spawn),
+            permission_mode: (isTodo || isDone) ? null : (columnConfig.permissionMode ?? existing.permission_mode),
+            auto_spawn: (isTodo || isDone) ? false : (columnConfig.autoSpawn ?? existing.auto_spawn),
             auto_command: columnConfig.autoCommand ?? existing.auto_command,
           });
         } else {
@@ -275,10 +283,10 @@ export class BoardConfigManager {
             role: columnConfig.role as SwimlaneRole | undefined,
             color: columnConfig.color ?? '#3b82f6',
             icon: columnConfig.icon ?? null,
-            is_archived: isDone ? true : (isBacklog ? false : (columnConfig.archived ?? false)),
+            is_archived: isDone ? true : (isTodo ? false : (columnConfig.archived ?? false)),
             is_ghost: false,
-            permission_mode: (isBacklog || isDone) ? null : (columnConfig.permissionMode ?? null),
-            auto_spawn: (isBacklog || isDone) ? false : (columnConfig.autoSpawn ?? true),
+            permission_mode: (isTodo || isDone) ? null : (columnConfig.permissionMode ?? null),
+            auto_spawn: (isTodo || isDone) ? false : (columnConfig.autoSpawn ?? true),
             auto_command: columnConfig.autoCommand ?? null,
             position: index,
           });

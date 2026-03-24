@@ -11,7 +11,7 @@ import type { Task, SessionDisplayState } from '../../../../shared/types';
 interface TaskDetailBodyProps {
   task: Task;
   isArchived: boolean;
-  isInBacklog: boolean;
+  isInTodo: boolean;
   hasSessionContext: boolean;
   sessionId: string | null;
   displayKind: SessionDisplayState['kind'];
@@ -27,7 +27,7 @@ interface TaskDetailBodyProps {
 export function TaskDetailBody({
   task,
   isArchived,
-  isInBacklog,
+  isInTodo,
   hasSessionContext,
   sessionId,
   displayKind,
@@ -107,7 +107,7 @@ export function TaskDetailBody({
   }
 
   // Suspended or toggling
-  if ((isSuspended || toggling) && !isArchived && !isInBacklog) {
+  if ((isSuspended || toggling) && !isArchived && !isInTodo) {
     if (pendingCommandLabel) {
       return (
         <div className="flex-1 min-h-0 relative">

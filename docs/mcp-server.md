@@ -48,13 +48,13 @@ This approach keeps `.mcp.json` completely untouched - no injection, no cleanup,
 
 ### kangentic_create_task
 
-Create a new task on the board. Defaults to the Backlog column.
+Create a new task on the board. Defaults to the To Do column.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `title` | string | Yes | Task title (max 200 chars) |
 | `description` | string | No | Task description, supports markdown (max 10000 chars) |
-| `column` | string | No | Target column name (case-insensitive). Defaults to Backlog. |
+| `column` | string | No | Target column name (case-insensitive). Defaults to To Do. |
 | `branchName` | string | No | Custom git branch name |
 | `baseBranch` | string | No | Base branch for the task |
 | `useWorktree` | boolean | No | Whether to use a git worktree |
@@ -168,7 +168,7 @@ The `.claude/settings.json` file includes pre-approved permissions for all kange
 - **Project isolation** - each MCP server instance is scoped to one project via session-specific file paths
 - **Rate limiting** - maximum 50 task creations per session
 - **Input validation** - Zod schemas enforce title (200 chars) and description (10000 chars) limits at the protocol level; the CommandBridge validates again
-- **Column safety** - defaults to Backlog; creating in an auto_spawn column intentionally triggers agent spawn
+- **Column safety** - defaults to To Do; creating in an auto_spawn column intentionally triggers agent spawn
 - **No destructive operations** - read and create/update only; no delete or move (which could trigger agent spawns)
 - **Console safety** - MCP server uses `console.error()` only; stdout is reserved for JSON-RPC
 
@@ -190,7 +190,7 @@ Each line is a JSON object:
 `<project>/.kangentic/sessions/<sessionId>/responses/<requestId>.json`
 
 ```json
-{"success":true,"data":{"taskId":"...","title":"...","column":"Backlog"},"message":"Created task..."}
+{"success":true,"data":{"taskId":"...","title":"...","column":"To Do"},"message":"Created task..."}
 ```
 
 The MCP server polls for the response file (100ms interval, 10s timeout), reads it, and deletes it after processing.

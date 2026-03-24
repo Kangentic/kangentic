@@ -22,9 +22,9 @@ type DivAttrs = Omit<React.HTMLAttributes<HTMLDivElement>, keyof PillOwnProps>;
 type PillProps = PillOwnProps & (ButtonAttrs | SpanAttrs | DivAttrs);
 
 const SIZE_CLASSES: Record<PillSize, string> = {
-  sm: 'gap-1 px-1.5 py-0.5 text-xs',
-  md: 'gap-1.5 px-2.5 py-1 text-xs',
-  lg: 'gap-2 px-3.5 py-1.5 text-sm',
+  sm: 'gap-1 min-w-[32px] px-2.5 py-1 text-xs',
+  md: 'gap-1.5 min-w-[40px] px-3 py-1.5 text-xs',
+  lg: 'gap-2 min-w-[48px] px-4 py-2 text-sm',
 };
 
 const SHAPE_CLASSES: Record<PillShape, string> = {
@@ -46,7 +46,7 @@ export const Pill = React.memo(React.forwardRef<HTMLElement, PillProps>(function
   const isInteractive = as === 'button' || (!as && 'onClick' in rest && rest.onClick != null);
   const Element = as ?? (isInteractive ? 'button' : 'span');
 
-  const base = `inline-flex items-center select-none ${SIZE_CLASSES[size]} ${SHAPE_CLASSES[shape]}`;
+  const base = `inline-flex items-center justify-center select-none ${SIZE_CLASSES[size]} ${SHAPE_CLASSES[shape]}`;
   const interactive = isInteractive ? 'cursor-pointer' : '';
   const classes = `${base} ${interactive} ${className ?? ''}`;
 

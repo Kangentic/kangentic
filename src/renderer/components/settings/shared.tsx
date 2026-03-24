@@ -301,12 +301,12 @@ export function SettingRow({ label, description, children, searchId }: SettingRo
 
 /* ── Select ── */
 
-export function Select({ children, ...props }: React.SelectHTMLAttributes<HTMLSelectElement>) {
+export function Select({ children, className, ...props }: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <div className="relative">
       <select
         {...props}
-        className="appearance-none bg-surface-hover border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg w-full focus:outline-none focus:border-accent"
+        className={className ?? "appearance-none bg-surface-hover border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg w-full focus:outline-none focus:border-accent"}
       >
         {children}
       </select>

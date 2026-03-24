@@ -137,7 +137,7 @@ test.describe('Task Activity Indicators', () => {
       ({ browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: false })
       ));
-      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
     });
 
     test.afterAll(async () => {
@@ -164,7 +164,7 @@ test.describe('Task Activity Indicators', () => {
       );
 
       try {
-        await eventPage.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+        await eventPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         const card = eventPage.locator('text=Test Initializing Task').first();
         await expect(card).toBeVisible();
 
@@ -185,7 +185,7 @@ test.describe('Task Activity Indicators', () => {
       );
 
       try {
-        await thinkPage.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+        await thinkPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         const card = thinkPage.locator('text=Test Initializing Task').first();
         await expect(card).toBeVisible();
 
@@ -210,7 +210,7 @@ test.describe('Task Activity Indicators', () => {
       ({ browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true })
       ));
-      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
     });
 
     test.afterAll(async () => {
@@ -290,7 +290,7 @@ test.describe('Task Activity Indicators', () => {
       );
 
       try {
-        await thinkPage.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+        await thinkPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
         await thinkPage.locator('text=Test Initializing Task').first().click();
         await thinkPage.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
@@ -319,7 +319,7 @@ test.describe('Task Activity Indicators', () => {
       ({ browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'exited', activity: 'idle', withUsage: false })
       ));
-      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
     });
 
     test.afterAll(async () => {
@@ -342,7 +342,7 @@ test.describe('Task Activity Indicators', () => {
       );
 
       try {
-        await stalePage.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+        await stalePage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         const card = stalePage.locator('text=Test Initializing Task').first();
         await expect(card).toBeVisible();
 
@@ -365,7 +365,7 @@ test.describe('Task Activity Indicators', () => {
       ({ browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'suspended', activity: 'idle', withUsage: false })
       ));
-      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
     });
 
     test.afterAll(async () => {
@@ -399,7 +399,7 @@ test.describe('Task Activity Indicators', () => {
       const dialogPanel = page.locator('[data-testid="task-detail-dialog"]');
       await expect(dialogPanel).toBeVisible({ timeout: 5000 });
 
-      // Backlog tasks should not show a resume button
+      // To Do tasks should not show a resume button
       const resumeBtn = page.locator('text=Resume session');
       await expect(resumeBtn).not.toBeVisible();
 
@@ -417,7 +417,7 @@ test.describe('Task Activity Indicators', () => {
       ({ browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'queued', activity: 'idle', withUsage: false })
       ));
-      await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
     });
 
     test.afterAll(async () => {
@@ -497,7 +497,7 @@ test.describe('Task Activity Indicators', () => {
       const { browser, page } = await launchWithState(preConfig);
 
       try {
-        await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
         await page.locator('text=Test Initializing Task').first().click();
         await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'visible' });

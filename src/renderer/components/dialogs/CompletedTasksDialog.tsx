@@ -430,7 +430,7 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
         row.summary && row.summary.totalCostUsd > 0 ? (
           <span className="tabular-nums text-fg-secondary">{formatCost(row.summary.totalCostUsd)}</span>
         ) : (
-          <span className="text-fg-disabled">&mdash;</span>
+          <span className="text-fg-disabled">-</span>
         ),
     },
     {
@@ -443,7 +443,7 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
         row.summary && row.summary.durationMs > 0 ? (
           <span className="tabular-nums text-fg-secondary">{formatDuration(row.summary.durationMs)}</span>
         ) : (
-          <span className="text-fg-disabled">&mdash;</span>
+          <span className="text-fg-disabled">-</span>
         ),
     },
     {
@@ -467,7 +467,7 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
             </span>
           </span>
         ) : (
-          <span className="text-fg-disabled">&mdash;</span>
+          <span className="text-fg-disabled">-</span>
         ),
     },
     {
@@ -480,7 +480,7 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
         row.summary && row.summary.filesChanged > 0 ? (
           <span className="tabular-nums text-fg-secondary">{row.summary.filesChanged}</span>
         ) : (
-          <span className="text-fg-disabled">&mdash;</span>
+          <span className="text-fg-disabled">-</span>
         ),
     },
     {
@@ -497,7 +497,7 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
             <span className="text-red-400/70">-{row.summary.linesRemoved}</span>
           </span>
         ) : (
-          <span className="text-fg-disabled">&mdash;</span>
+          <span className="text-fg-disabled">-</span>
         ),
     },
     {
@@ -513,7 +513,7 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
             {formatDistanceToNow(new Date(row.task.archived_at), { addSuffix: true })}
           </span>
         ) : (
-          <span className="text-fg-disabled">&mdash;</span>
+          <span className="text-fg-disabled">-</span>
         ),
     },
     {

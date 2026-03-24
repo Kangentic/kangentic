@@ -127,7 +127,7 @@ The SessionManager watches these files with debounced `fs.watch` and emits IPC e
 ## Session Lifecycle
 
 ```
-Task created (Backlog)
+Task created (To Do)
   → No session, no worktree
 
 Task moved to active column (e.g., Planning)
@@ -151,7 +151,7 @@ Task moved back from Done
   → Resume: claude --resume <uuid> (no prompt, continues context)
   → Status: running
 
-Task moved to Backlog
+Task moved to To Do
   → Full cleanup: session killed, worktree removed, branch deleted (if config.git.autoCleanup)
   → DB references cleared (worktree_path, branch_name set to null)
   → Next activation creates a fresh worktree and branch

@@ -3,8 +3,8 @@
   "columns": [
     {
       "id": "e6350e8a-77fa-43a2-815b-6447820adf40",
-      "name": "Backlog",
-      "role": "backlog",
+      "name": "To Do",
+      "role": "todo",
       "icon": "layers",
       "color": "#6b7280"
     },

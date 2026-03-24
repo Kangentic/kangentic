@@ -2,7 +2,7 @@
  * E2E tests for rapid task moves between columns.
  *
  * Verifies that:
- *  1. Rapidly moving a task back-and-forth between Backlog and Planning
+ *  1. Rapidly moving a task back-and-forth between To Do and Planning
  *     does NOT crash the app (especially on Windows where PTY double-kill
  *     causes STATUS_HEAP_CORRUPTION / exit 0xC0000374).
  *  2. After the rapid moves settle, the task is in the correct final column
@@ -82,7 +82,7 @@ test.describe('Claude Agent -- Rapid Task Moves', () => {
     cleanupTestDataDir(TEST_NAME);
   });
 
-  test('rapid Backlog-Planning-Backlog-Planning-Backlog moves do not crash, final state is correct', async () => {
+  test('rapid To Do-Planning-To Do-Planning-To Do moves do not crash, final state is correct', async () => {
     const title = `Rapid Move ${runId}`;
     await createTask(page, title, 'Test rapid column moves do not corrupt session state');
 
@@ -90,7 +90,7 @@ test.describe('Claude Agent -- Rapid Task Moves', () => {
     const swimlaneIds = await page.evaluate(async () => {
       const swimlanes = await window.electronAPI.swimlanes.list();
       const planning = swimlanes.find((s: any) => s.name === 'Planning');
-      const backlog = swimlanes.find((s: any) => s.name === 'Backlog');
+      const backlog = swimlanes.find((s: any) => s.name === 'To Do');
       return { planning: planning?.id, backlog: backlog?.id };
     });
     expect(swimlaneIds.planning).toBeTruthy();
@@ -104,43 +104,43 @@ test.describe('Claude Agent -- Rapid Task Moves', () => {
     }, title);
     expect(taskId).toBeTruthy();
 
-    // --- Rapid-fire moves: Backlog → Planning → Backlog → Planning → Backlog ---
+    // --- Rapid-fire moves: To Do → Planning → To Do → Planning → To Do ---
     // Fire all five moves in quick succession without waiting for sessions to
     // start or stop. This stresses the PTY kill/spawn path and tests the
     // double-kill guard (session.pty = null before kill).
     await page.evaluate(async ({ taskId, planningId, backlogId }) => {
-      // Move 1: Backlog → Planning (spawns session)
+      // Move 1: To Do → Planning (spawns session)
       await window.electronAPI.tasks.move({
         taskId,
         targetSwimlaneId: planningId,
         targetPosition: 0,
       });
-      // Move 2: Planning → Backlog (kills session)
+      // Move 2: Planning → To Do (kills session)
       await window.electronAPI.tasks.move({
         taskId,
         targetSwimlaneId: backlogId,
         targetPosition: 0,
       });
-      // Move 3: Backlog → Planning (spawns session)
+      // Move 3: To Do → Planning (spawns session)
       await window.electronAPI.tasks.move({
         taskId,
         targetSwimlaneId: planningId,
         targetPosition: 0,
       });
-      // Move 4: Planning → Backlog (kills session)
+      // Move 4: Planning → To Do (kills session)
       await window.electronAPI.tasks.move({
         taskId,
         targetSwimlaneId: backlogId,
         targetPosition: 0,
       });
-      // Move 5: Backlog → Planning (spawns session)
-      // Move back to Backlog one more time for final resting position
+      // Move 5: To Do → Planning (spawns session)
+      // Move back to To Do one more time for final resting position
       await window.electronAPI.tasks.move({
         taskId,
         targetSwimlaneId: planningId,
         targetPosition: 0,
       });
-      // Move 6: Planning → Backlog (final position)
+      // Move 6: Planning → To Do (final position)
       await window.electronAPI.tasks.move({
         taskId,
         targetSwimlaneId: backlogId,
@@ -160,7 +160,7 @@ test.describe('Claude Agent -- Rapid Task Moves', () => {
     });
     expect(appAlive).toBe(true);
 
-    // --- Verify: task ended up in Backlog ---
+    // --- Verify: task ended up in To Do ---
     const finalTask = await page.evaluate(async (tid) => {
       const tasks = await window.electronAPI.tasks.list();
       return tasks.find((t: any) => t.id === tid);
@@ -204,7 +204,7 @@ test.describe('Claude Agent -- Rapid Task Moves', () => {
     const swimlaneIds = await page.evaluate(async () => {
       const swimlanes = await window.electronAPI.swimlanes.list();
       const planning = swimlanes.find((s: any) => s.name === 'Planning');
-      const backlog = swimlanes.find((s: any) => s.name === 'Backlog');
+      const backlog = swimlanes.find((s: any) => s.name === 'To Do');
       return { planning: planning?.id, backlog: backlog?.id };
     });
     expect(swimlaneIds.planning).toBeTruthy();
@@ -216,7 +216,7 @@ test.describe('Claude Agent -- Rapid Task Moves', () => {
     }, title);
     expect(taskId).toBeTruthy();
 
-    // Verify task is currently in Backlog (settled from previous test)
+    // Verify task is currently in To Do (settled from previous test)
     const taskBefore = await page.evaluate(async (tid) => {
       const tasks = await window.electronAPI.tasks.list();
       return tasks.find((t: any) => t.id === tid);

@@ -151,7 +151,7 @@ export async function launchApp(options?: {
 
 // Wait for the board to load (swimlanes visible)
 export async function waitForBoard(page: Page): Promise<void> {
-  await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+  await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
   await page.locator('[data-swimlane-name="Planning"]').waitFor({ state: 'visible', timeout: 5000 });
 }
 
@@ -164,13 +164,13 @@ export async function createProject(page: Page, _name: string, projectPath: stri
   await waitForBoard(page);
 }
 
-// Create a task via the UI in the Backlog column (the only column with an "Add task" button).
+// Create a task via the UI in the To Do column (the only column with an "Add task" button).
 export async function createTask(
   page: Page,
   title: string,
   description: string = '',
 ): Promise<void> {
-  const column = page.locator('[data-swimlane-name="Backlog"]');
+  const column = page.locator('[data-swimlane-name="To Do"]');
   const addButton = column.locator('text=Add task');
   await addButton.click();
 

@@ -49,7 +49,7 @@ async function createProject(page: Page, name: string): Promise<void> {
   }
 
   await page
-    .locator('[data-swimlane-name="Backlog"]')
+    .locator('[data-swimlane-name="To Do"]')
     .waitFor({ state: 'visible', timeout: 15000 });
 }
 
@@ -96,7 +96,7 @@ test.describe('Welcome Overlay', () => {
     await expect(overlay).toBeHidden({ timeout: 2000 });
   });
 
-  test('first-run hint card appears in empty Backlog', async () => {
+  test('first-run hint card appears in empty To Do', async () => {
     // Dismiss overlay first so we can see the board
     const dismissButton = page.locator('[data-testid="welcome-overlay-dismiss"]');
     await expect(dismissButton).toBeVisible({ timeout: 5000 });

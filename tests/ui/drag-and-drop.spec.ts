@@ -21,7 +21,7 @@ test.afterAll(async () => {
 async function ensureBoard() {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
-  const backlog = page.locator('[data-swimlane-name="Backlog"]');
+  const backlog = page.locator('[data-swimlane-name="To Do"]');
   if (await backlog.isVisible().catch(() => false)) return;
   await page.locator(`[role="button"]:has-text("${PROJECT_NAME}")`).first().click();
   await waitForBoard(page);
@@ -119,11 +119,11 @@ test.describe('Drag and Drop', () => {
     await ensureBoard();
   });
 
-  test('drag task from Backlog to Planning', async () => {
+  test('drag task from To Do to Planning', async () => {
     const taskName = `DnD Plan ${runId}`;
     await createTask(page, taskName, 'Test drag to Planning');
 
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     await expect(backlog.locator(`text=${taskName}`).first()).toBeVisible();
 
     await dragTaskToColumn(taskName, 'Planning');
@@ -135,11 +135,11 @@ test.describe('Drag and Drop', () => {
     await expect(backlog.locator(`text=${taskName}`)).not.toBeVisible({ timeout: 3000 });
   });
 
-  test('drag task from Backlog to Code Review', async () => {
+  test('drag task from To Do to Code Review', async () => {
     const taskName = `DnD Rev ${runId}`;
     await createTask(page, taskName, 'Test drag to Code Review');
 
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     await expect(backlog.locator(`text=${taskName}`).first()).toBeVisible();
 
     await dragTaskToColumn(taskName, 'Code Review');
@@ -169,14 +169,14 @@ test.describe('Drag and Drop', () => {
     ).not.toBeVisible({ timeout: 3000 });
   });
 
-  test('drag task skipping columns (Backlog to Code Review)', async () => {
+  test('drag task skipping columns (To Do to Code Review)', async () => {
     const taskName = `DnD Skip ${runId}`;
     await createTask(page, taskName, 'Test skip columns');
 
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     await expect(backlog.locator(`text=${taskName}`).first()).toBeVisible();
 
-    // Drag directly from Backlog to Code Review, skipping Planning
+    // Drag directly from To Do to Code Review, skipping Planning
     await dragTaskToColumn(taskName, 'Code Review');
     const review = page.locator('[data-swimlane-name="Code Review"]');
     await expect(
@@ -195,14 +195,14 @@ test.describe('Drag and Drop', () => {
     await createTask(page, task2, 'Second task');
     await createTask(page, task3, 'Third task');
 
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     await expect(backlog.locator(`text=${task1}`).first()).toBeVisible();
     await expect(backlog.locator(`text=${task3}`).first()).toBeVisible();
 
     // Drag task1 onto task3 (top to bottom)
     await dragTaskWithinColumn(task1, task3);
 
-    // Verify all tasks remain in Backlog (not moved to another column)
+    // Verify all tasks remain in To Do (not moved to another column)
     await expect(backlog.locator(`text=${task1}`).first()).toBeVisible({ timeout: 5000 });
     await expect(backlog.locator(`text=${task2}`).first()).toBeVisible();
     await expect(backlog.locator(`text=${task3}`).first()).toBeVisible();
@@ -223,13 +223,13 @@ test.describe('Drag and Drop', () => {
     await createTask(page, task2, 'Second task');
     await createTask(page, task3, 'Third task');
 
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     await expect(backlog.locator(`text=${task3}`).first()).toBeVisible();
 
     // Drag task3 onto task1 (bottom to top)
     await dragTaskWithinColumn(task3, task1);
 
-    // Verify all tasks remain in Backlog
+    // Verify all tasks remain in To Do
     await expect(backlog.locator(`text=${task1}`).first()).toBeVisible({ timeout: 5000 });
     await expect(backlog.locator(`text=${task2}`).first()).toBeVisible();
     await expect(backlog.locator(`text=${task3}`).first()).toBeVisible();

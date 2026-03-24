@@ -131,7 +131,7 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE swimlanes ADD COLUMN role TEXT');
     // Backfill roles for the default seed columns by position
     const lanes = db.prepare('SELECT id, position, is_archived FROM swimlanes ORDER BY position ASC').all() as Array<{ id: string; position: number; is_archived: number }>;
-    const roleMap: Record<number, string> = { 0: 'backlog', 1: 'planning', 2: 'running' };
+    const roleMap: Record<number, string> = { 0: 'todo', 1: 'planning', 2: 'running' };
     for (const lane of lanes) {
       const role = lane.is_archived ? 'done' : roleMap[lane.position] || null;
       if (role) {
@@ -279,7 +279,7 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE swimlanes ADD COLUMN permission_mode TEXT DEFAULT NULL');
     db.exec('ALTER TABLE swimlanes ADD COLUMN auto_spawn INTEGER NOT NULL DEFAULT 1');
     // Backfill: backlog/done columns don't auto-spawn; planning uses plan mode
-    db.exec("UPDATE swimlanes SET auto_spawn = 0 WHERE role IN ('backlog', 'done')");
+    db.exec("UPDATE swimlanes SET auto_spawn = 0 WHERE role IN ('todo', 'backlog', 'done')");
     db.exec("UPDATE swimlanes SET permission_mode = 'plan' WHERE role = 'planning'");
     // Convert running role to custom column (no longer a system role)
     db.exec("UPDATE swimlanes SET role = NULL WHERE role = 'running'");
@@ -376,6 +376,36 @@ export function runProjectMigrations(db: Database.Database): void {
   db.prepare("UPDATE sessions SET permission_mode = 'bypassPermissions' WHERE permission_mode = 'bypass-permissions'").run();
   db.prepare("UPDATE sessions SET permission_mode = 'default' WHERE permission_mode = 'manual'").run();
 
+  // Migration: rename 'Backlog' swimlane to 'To Do' and migrate role 'backlog' → 'todo'
+  db.prepare("UPDATE swimlanes SET name = 'To Do' WHERE role IN ('backlog', 'todo') AND name IN ('Backlog', 'Not Started')").run();
+  db.prepare("UPDATE swimlanes SET role = 'todo' WHERE role = 'backlog'").run();
+
+  // Migration: create backlog_items table for staging tasks before the board
+  const hasBacklogTable = (db.prepare(
+    "SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name='backlog_items'"
+  ).get() as { c: number }).c > 0;
+  if (!hasBacklogTable) {
+    db.exec(`
+      CREATE TABLE backlog_items (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        priority INTEGER NOT NULL DEFAULT 0,
+        labels TEXT NOT NULL DEFAULT '[]',
+        position INTEGER NOT NULL,
+        external_id TEXT DEFAULT NULL,
+        external_source TEXT DEFAULT NULL,
+        external_url TEXT DEFAULT NULL,
+        sync_status TEXT DEFAULT NULL,
+        attachment_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX idx_backlog_position ON backlog_items(position);
+      CREATE INDEX idx_backlog_external ON backlog_items(external_source, external_id);
+    `);
+  }
+
   // Seed default swimlanes if empty (must run after all ALTER TABLE migrations)
   const laneCount = db.prepare('SELECT COUNT(*) as c FROM swimlanes').get() as { c: number };
   if (laneCount.c === 0) {
@@ -384,7 +414,7 @@ export function runProjectMigrations(db: Database.Database): void {
       'INSERT INTO swimlanes (id, name, role, position, color, icon, is_archived, permission_mode, auto_spawn, auto_command, plan_exit_target_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
     const defaults = [
-      { name: 'Backlog', role: 'backlog', color: '#6b7280', icon: 'layers', archived: 0, permission_mode: null, auto_spawn: 0, auto_command: null },
+      { name: 'To Do', role: 'todo', color: '#6b7280', icon: 'layers', archived: 0, permission_mode: null, auto_spawn: 0, auto_command: null },
       { name: 'Planning', role: null, color: '#8b5cf6', icon: 'map', archived: 0, permission_mode: 'plan', auto_spawn: 1, auto_command: null },
       { name: 'Executing', role: null, color: '#3b82f6', icon: 'square-terminal', archived: 0, permission_mode: null, auto_spawn: 1, auto_command: null },
       { name: 'Code Review', role: null, color: '#f59e0b', icon: 'code', archived: 0, permission_mode: null, auto_spawn: 1, auto_command: null },

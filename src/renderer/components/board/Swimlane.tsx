@@ -7,7 +7,7 @@ import { NewTaskDialog } from '../dialogs/NewTaskDialog';
 import { EditColumnDialog } from '../dialogs/EditColumnDialog';
 import { getSwimlaneIcon } from '../../utils/swimlane-icons';
 import { useConfigStore } from '../../stores/config-store';
-import { Pill } from '../Pill';
+import { CountBadge } from '../CountBadge';
 import type { Swimlane as SwimlaneType, Task } from '../../../shared/types';
 
 export interface SwimlaneProps {
@@ -31,7 +31,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
 
   const role = swimlane.role;
   const isGhost = swimlane.is_ghost;
-  const showFirstRunHint = role === 'backlog' && tasks.length === 0 && !hasCompletedFirstRun;
+  const showFirstRunHint = role === 'todo' && tasks.length === 0 && !hasCompletedFirstRun;
   const isSystemColumn = role !== null;
   const isDraggable = !!dragHandleProps && !isGhost;
 
@@ -89,7 +89,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
           {swimlane.name}
         </span>
 
-        <Pill size="sm" className="bg-surface-hover/40 text-fg-faint tabular-nums leading-5">{tasks.length}</Pill>
+        <CountBadge count={tasks.length} />
 
         <button
           type="button"
@@ -134,8 +134,8 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
         )}
       </div>
 
-      {/* Add task button (backlog only, hidden for ghost columns) */}
-      {!isGhost && swimlane.role === 'backlog' && (
+      {/* Add task button (To Do only, hidden for ghost columns) */}
+      {!isGhost && swimlane.role === 'todo' && (
         <button
           type="button"
           onClick={() => setShowNewTask(true)}

@@ -78,8 +78,13 @@ interface BoardLifecycleSlice {
   loadShortcuts: () => Promise<void>;
 }
 
+interface ViewSlice {
+  activeView: 'board' | 'backlog';
+  setActiveView: (view: 'board' | 'backlog') => void;
+}
+
 type BoardStore = TaskSlice & SwimlaneSlice & ArchiveSlice & CompletionSlice
-  & SearchSlice & BoardConfigSlice & BoardLifecycleSlice;
+  & SearchSlice & BoardConfigSlice & BoardLifecycleSlice & ViewSlice;
 
 // ---------------------------------------------------------------------------
 // Shared module-level state
@@ -165,7 +170,7 @@ const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set, get) 
 
     // Optimistically clear session for tasks moving to backlog
     // (the backend will destroy the session during TASK_MOVE via cleanupTaskSession)
-    if (isColumnChange && targetLane?.role === 'backlog') {
+    if (isColumnChange && targetLane?.role === 'todo') {
       useSessionStore.setState((state) => ({
         sessions: state.sessions.filter((session) => session.taskId !== input.taskId),
       }));
@@ -572,6 +577,11 @@ const createBoardLifecycleSlice: StateCreator<BoardStore, [], [], BoardLifecycle
 // Store composition
 // ---------------------------------------------------------------------------
 
+const createViewSlice: StateCreator<BoardStore, [], [], ViewSlice> = (set) => ({
+  activeView: 'board',
+  setActiveView: (view) => set({ activeView: view }),
+});
+
 export const useBoardStore = create<BoardStore>((...args) => ({
   ...createTaskSlice(...args),
   ...createSwimlaneSlice(...args),
@@ -580,4 +590,5 @@ export const useBoardStore = create<BoardStore>((...args) => ({
   ...createSearchSlice(...args),
   ...createBoardConfigSlice(...args),
   ...createBoardLifecycleSlice(...args),
+  ...createViewSlice(...args),
 }));

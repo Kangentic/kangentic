@@ -2,6 +2,7 @@ import { useState, useLayoutEffect, useRef, useEffect, useMemo, useCallback } fr
 import { flushSync } from 'react-dom';
 import { Pencil, Trash2 } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
+import { useBacklogStore } from '../../stores/backlog-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -56,18 +57,18 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
 
   const isArchived = task.archived_at !== null;
   const currentSwimlane = swimlanes.find((s) => s.id === task.swimlane_id);
-  const isInBacklog = currentSwimlane?.role === 'backlog';
+  const isInTodo = currentSwimlane?.role === 'todo';
 
   // Hooks
   const attachments = useAttachments(task.id, updateAttachmentCount);
-  const branchConfig = useBranchConfig(task, title, isInBacklog);
+  const branchConfig = useBranchConfig(task, title, isInTodo);
 
   // Session state
   const session = useSessionStore((s) =>
     s.sessions.find((session) => session.taskId === task.id) ?? null
   );
   const displayState = useSessionDisplayState(session?.id);
-  const canToggle = !isInBacklog && (displayState.kind === 'running' || displayState.kind === 'queued'
+  const canToggle = !isInTodo && (displayState.kind === 'running' || displayState.kind === 'queued'
     || displayState.kind === 'initializing' || displayState.kind === 'suspended');
   const isSessionActive = displayState.kind === 'running' || displayState.kind === 'queued'
     || displayState.kind === 'initializing';
@@ -315,7 +316,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
         if (worktreeChanged) {
           payload.use_worktree = branchConfig.useWorktree != null ? (branchConfig.useWorktree ? 1 : 0) : null;
         }
-        if (isInBacklog) {
+        if (isInTodo) {
           const trimmedCustomBranch = branchConfig.customBranchName.trim();
           payload.branch_name = trimmedCustomBranch || null;
         }
@@ -327,6 +328,28 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
       onClose();
     } else {
       setIsEditing(false);
+    }
+  };
+
+  const [confirmSendToBacklog, setConfirmSendToBacklog] = useState(false);
+
+  const executeSendToBacklog = async () => {
+    setConfirmSendToBacklog(false);
+    const taskTitle = task.title;
+    onClose();
+    await useBacklogStore.getState().demoteTask({ taskId: task.id });
+    useToastStore.getState().addToast({
+      message: `Sent "${taskTitle}" to backlog`,
+      variant: 'info',
+    });
+  };
+
+  const handleSendToBacklog = () => {
+    const hasResources = !!task.session_id || !!task.worktree_path;
+    if (!hasResources || skipDeleteConfirm) {
+      executeSendToBacklog();
+    } else {
+      setConfirmSendToBacklog(true);
     }
   };
 
@@ -365,6 +388,25 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
 
   // -- Render --
 
+  if (confirmSendToBacklog) {
+    return (
+      <ConfirmDialog
+        title="Send to Backlog"
+        message={<>
+          <p>This will move &quot;{task.title}&quot; to the backlog and clean up its session and worktree.</p>
+          <p className="text-fg-muted mt-1">You can move it back to the board later.</p>
+        </>}
+        confirmLabel="Send to Backlog"
+        showDontAskAgain
+        onConfirm={(dontAskAgain) => {
+          if (dontAskAgain) updateConfig({ skipDeleteConfirm: true });
+          executeSendToBacklog();
+        }}
+        onCancel={() => setConfirmSendToBacklog(false)}
+      />
+    );
+  }
+
   if (confirmDelete) {
     return (
       <ConfirmDialog
@@ -396,6 +438,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
       onToggle={handleToggle}
       onCommandSelect={handleCommandSelect}
       onArchive={handleArchive}
+      onSendToBacklog={handleSendToBacklog}
       onDelete={() => skipDeleteConfirm ? handleDelete(false) : setConfirmDelete(true)}
       onMoveTo={handleMoveTo}
       moveTargets={moveTargets}
@@ -420,8 +463,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
         backdropClassName="p-6"
         testId="task-detail-dialog"
         footer={isEditing ? (
-          <div className={`flex ${isInBacklog ? 'justify-between' : 'justify-end'} items-center`}>
-            {isInBacklog && (
+          <div className={`flex ${isInTodo ? 'justify-between' : 'justify-end'} items-center`}>
+            {isInTodo && (
               <button
                 onClick={() => skipDeleteConfirm ? handleDelete(false) : setConfirmDelete(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-fg-faint hover:text-red-400 hover:bg-red-400/10 rounded transition-colors"
@@ -465,7 +508,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             branchConfig={branchConfig}
             isSessionActive={isSessionActive}
             isArchived={isArchived}
-            isInBacklog={isInBacklog}
+            isInTodo={isInTodo}
           />
         )}
 
@@ -473,7 +516,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
           <TaskDetailBody
             task={task}
             isArchived={isArchived}
-            isInBacklog={isInBacklog}
+            isInTodo={isInTodo}
             hasSessionContext={hasSessionContext}
             sessionId={session?.id ?? null}
             displayKind={displayState.kind}

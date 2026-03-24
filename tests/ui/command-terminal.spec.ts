@@ -119,7 +119,7 @@ test.describe('Command Terminal', () => {
     test('Command Terminal button is visible when a project is open', async () => {
       const { browser, page } = await launchWithState(preConfigWithTransientSession());
       try {
-        await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         await expect(page.getByTestId('quick-session-button')).toBeVisible();
       } finally {
         await browser.close();
@@ -150,7 +150,7 @@ test.describe('Command Terminal', () => {
     test('transient sessions are excluded from the terminal panel tabs', async () => {
       const { browser, page } = await launchWithState(preConfigWithTransientSession());
       try {
-        await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
         // The regular task session tab should be visible
         const taskTab = page.locator('button:has-text("regular-task")');
@@ -169,7 +169,7 @@ test.describe('Command Terminal', () => {
     test('Ctrl+Shift+P opens the command bar overlay', async () => {
       const { browser, page } = await launchWithState(preConfigWithTransientSession());
       try {
-        await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
         // Command bar should not be visible initially
         await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible();
@@ -188,7 +188,7 @@ test.describe('Command Terminal', () => {
     test('Ctrl+Shift+P toggles the command bar closed', async () => {
       const { browser, page } = await launchWithState(preConfigWithTransientSession());
       try {
-        await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
         // Open
         await page.keyboard.press('Control+Shift+P');
@@ -207,7 +207,7 @@ test.describe('Command Terminal', () => {
     test('pulsing indicator appears on TitleBar button when transient session is in background', async () => {
       const { browser, page } = await launchWithState(preConfigWithTransientSession());
       try {
-        await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
         // Set transientSessionId in the session store to simulate a background session
         await page.evaluate(() => {
@@ -238,7 +238,7 @@ test.describe('Command Terminal', () => {
     test('close button (X) hides the overlay without killing session', async () => {
       const { browser, page } = await launchWithState(preConfigWithTransientSession());
       try {
-        await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
         // Open overlay
         await page.keyboard.press('Control+Shift+P');
@@ -258,7 +258,7 @@ test.describe('Command Terminal', () => {
     test('stop button terminates the session and closes overlay', async () => {
       const { browser, page } = await launchWithState(preConfigWithTransientSession());
       try {
-        await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
         // Open overlay
         await page.keyboard.press('Control+Shift+P');
@@ -278,7 +278,7 @@ test.describe('Command Terminal', () => {
     test('kebab menu renders with expected items', async () => {
       const { browser, page } = await launchWithState(preConfigWithTransientSession());
       try {
-        await page.locator('[data-swimlane-name="Backlog"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
         // Open overlay
         await page.keyboard.press('Control+Shift+P');

@@ -109,10 +109,10 @@ async function cleanBacklogTaskResources(
   sessionRepo: SessionRepository,
   sessionManager: SessionManager,
 ): Promise<number> {
-  const backlogLane = swimlaneRepo.list().find(lane => lane.role === 'backlog');
-  if (!backlogLane) return 0;
+  const todoLane = swimlaneRepo.list().find(lane => lane.role === 'todo');
+  if (!todoLane) return 0;
 
-  const backlogTasks = taskRepo.list(backlogLane.id);
+  const backlogTasks = taskRepo.list(todoLane.id);
   let cleaned = 0;
 
   // Collect branches to delete after a single `git worktree prune`

@@ -2,7 +2,7 @@
  * E2E tests for session lifecycle across column moves.
  *
  * Covers scenarios introduced by the priority-ordered TASK_MOVE handler:
- *  1. Backlog → non-agent column (Code Review) spawns a fresh session
+ *  1. To Do → non-agent column (Code Review) spawns a fresh session
  *  2. Active session survives moves between same-permission columns (Executing → Code Review → Tests)
  *  3. Done → unarchive to non-agent column (Code Review) resumes suspended session
  *
@@ -170,13 +170,13 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
     cleanupTestDataDir(TEST_NAME);
   });
 
-  test('Backlog → Code Review spawns a fresh session (non-agent column)', async () => {
-    const title = `Backlog Review ${runId}`;
+  test('To Do → Code Review spawns a fresh session (non-agent column)', async () => {
+    const title = `To Do Review ${runId}`;
     await createTask(page, title, 'Test fresh spawn on non-agent column');
 
     const taskId = await getTaskId(page, title);
 
-    // Move directly from Backlog → Code Review (skipping agent columns)
+    // Move directly from To Do → Code Review (skipping agent columns)
     await moveTask(page, taskId, lanes['Code Review']);
 
     // Wait for a session to start
@@ -295,7 +295,7 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
     expect(resumedSessionId).toBe(originalSessionId);
   });
 
-  test('Backlog → Done → Unarchive to Code Review spawns fresh agent (no prior session)', async () => {
+  test('To Do → Done → Unarchive to Code Review spawns fresh agent (no prior session)', async () => {
     const title = `No Prior Session ${runId}`;
     await createTask(page, title, 'Test fresh spawn when no prior session exists');
 
@@ -376,9 +376,9 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
     expect(resumedSessionId).toBe(originalSessionId);
   });
 
-  test('Backlog → Planning → Backlog → Done: no false resume from exited session', async () => {
+  test('To Do → Planning → To Do → Done: no false resume from exited session', async () => {
     const title = `No False Resume ${runId}`;
-    await createTask(page, title, 'Test that Backlog exited sessions are not resumed by Done');
+    await createTask(page, title, 'Test that To Do exited sessions are not resumed by Done');
 
     const taskId = await getTaskId(page, title);
 
@@ -387,7 +387,7 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
     await waitForRunningSession(page);
     await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:', 30000);
 
-    // Move to Backlog → kills session, marks 'exited'
+    // Move to To Do → kills session, marks 'exited'
     await moveTask(page, taskId, lanes['role:backlog']);
     await waitForNoRunningSessions(page);
     await page.waitForTimeout(1000);

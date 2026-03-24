@@ -53,9 +53,9 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
   const taskCount = tasks.filter((t) => t.swimlane_id === swimlane.id).length;
   const isLocked = swimlane.role !== null;
 
-  const isBacklogOrDone = swimlane.role === 'backlog' || swimlane.role === 'done';
-  const permissionLocked = isBacklogOrDone;
-  const autoSpawnLocked = isBacklogOrDone;
+  const isTodoOrDone = swimlane.role === 'todo' || swimlane.role === 'done';
+  const permissionLocked = isTodoOrDone;
+  const autoSpawnLocked = isTodoOrDone;
   const isPlanMode = permissionMode === 'plan';
 
   const isCustomColor = !PRESET_COLORS.includes(color);
@@ -74,7 +74,7 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
       icon,
       permission_mode: permissionLocked ? undefined : permissionMode,
       auto_spawn: autoSpawnLocked ? undefined : autoSpawn,
-      auto_command: isBacklogOrDone ? undefined : (autoCommand.trim() || null),
+      auto_command: isTodoOrDone ? undefined : (autoCommand.trim() || null),
       plan_exit_target_id: isPlanMode ? (planExitTargetId || null) : undefined,
     });
     onClose();
@@ -320,7 +320,7 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
               </button>
             </div>
             <p className="text-[11px] text-fg-faint mt-1">
-              {isBacklogOrDone
+              {isTodoOrDone
                 ? 'Tasks in this column do not start agents.'
                 : 'Start an agent when a task enters this column.'}
             </p>
@@ -359,7 +359,7 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
               >
                 <option value="">Nowhere -- stay in column</option>
                 {swimlanes
-                  .filter((s) => s.id !== swimlane.id && s.role !== 'backlog' && s.role !== 'done')
+                  .filter((s) => s.id !== swimlane.id && s.role !== 'todo' && s.role !== 'done')
                   .map((s) => (
                     <option key={s.id} value={s.id}>{s.name}</option>
                   ))
@@ -372,7 +372,7 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
           )}
 
           {/* Auto-command textarea (hidden for backlog/done -- sessions don't run there) */}
-          {!isBacklogOrDone && (
+          {!isTodoOrDone && (
             <div>
               <label className="text-xs text-fg-muted mb-1.5 block">Auto-command</label>
               <textarea

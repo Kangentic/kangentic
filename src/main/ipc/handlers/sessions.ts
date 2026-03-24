@@ -77,9 +77,9 @@ export function registerSessionHandlers(context: IpcContext): void {
 
     const lane = swimlanes.getById(task.swimlane_id);
 
-    // Backlog tasks cannot have sessions -- reject resume
-    if (lane?.role === 'backlog') {
-      throw new Error('Cannot resume a session for a task in the backlog');
+    // To Do tasks cannot have sessions -- reject resume
+    if (lane?.role === 'todo') {
+      throw new Error('Cannot resume a session for a task in the To Do column');
     }
 
     // Create worktree if needed

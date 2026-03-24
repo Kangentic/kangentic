@@ -10,9 +10,9 @@ When a task moves from one column to another, the IPC handler (`task:move`) chec
 
 | Priority | Condition | Action |
 |----------|-----------|--------|
-| 1 | Target is **Backlog** (role=`backlog`) | Kill session, preserve worktree |
+| 1 | Target is **To Do** (role=`todo`) | Kill session, preserve worktree |
 | 2 | Target is **Done** (role=`done`) | Suspend session (resumable), archive task |
-| 2.5 | Target has `auto_spawn=false` (non-backlog, non-done) | Suspend session |
+| 2.5 | Target has `auto_spawn=false` (non-todo, non-done) | Suspend session |
 | 3 | Task has **active session** | If target has `auto_command`, suspend and respawn with command as resume prompt. Otherwise keep alive (permission mode differences alone do not trigger suspend/resume). |
 | 4 | Task has **no session** | Resume suspended session (with `auto_command` preloaded as resume prompt) OR create worktree (if enabled) + execute transition action chain |
 
@@ -163,7 +163,7 @@ Two special roles affect behavior:
 
 | Role | Behavior |
 |------|----------|
-| `backlog` | Task moves here → session killed (not suspended), worktree preserved |
+| `todo` | Task moves here → session killed (not suspended), worktree preserved |
 | `done` | Task moves here → session suspended (resumable), task archived |
 
 All other columns (including Planning, Running, Code Review, etc.) are custom columns with no special role. Their behavior is controlled by `auto_spawn`, `auto_command`, `permission_mode`, and `plan_exit_target_id`.
@@ -174,7 +174,7 @@ Each swimlane has an `auto_spawn` boolean (default: `true`):
 - `true` -- tasks in this column should have active sessions. Session recovery and reconciliation will spawn agents here.
 - `false` -- tasks in this column should NOT have active sessions. Moving a task here suspends its session.
 
-Backlog and Done columns have `auto_spawn=false` by default.
+To Do and Done columns have `auto_spawn=false` by default.
 
 ## plan_exit_target_id
 

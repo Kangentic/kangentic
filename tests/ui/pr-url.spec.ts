@@ -44,7 +44,7 @@ test.describe('PR URL in Edit Form', () => {
     await page.locator('button:has-text("Save")').click();
 
     // Dialog closes after save (no session). Card should now show PR badge.
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     const prBadge = backlog.locator('[data-testid="task-card-pr-link"]');
     await expect(prBadge).toBeVisible({ timeout: 3000 });
     await expect(prBadge).toHaveText('PR #99');
@@ -61,7 +61,7 @@ test.describe('PR URL in Edit Form', () => {
     await page.locator('button:has-text("Save")').click();
 
     // PR badge on card should be gone
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     await expect(backlog.locator('[data-testid="task-card-pr-link"]')).not.toBeVisible({ timeout: 3000 });
   });
 });

@@ -90,7 +90,7 @@ server.registerTool(
     inputSchema: {
       title: z.string().max(200).describe('Task title (max 200 characters)'),
       description: z.string().max(10000).optional().describe('Task description. Supports markdown.'),
-      column: z.string().optional().describe('Target column name. Defaults to the Backlog column. Use kangentic_list_columns to see available columns.'),
+      column: z.string().optional().describe('Target column name. Defaults to the To Do column. Use kangentic_list_columns to see available columns.'),
       branchName: z.string().optional().describe('Custom git branch name for the task (e.g. "bugfix/login-screen"). If omitted, a branch name is auto-generated from the title.'),
       baseBranch: z.string().optional().describe('Base branch to create the task branch from (e.g. "develop", "main"). Defaults to the project setting.'),
       useWorktree: z.boolean().optional().describe('Whether to use a git worktree for isolation. Defaults to the project setting. Set false to work in the main repo.'),
@@ -228,7 +228,7 @@ server.registerTool(
 server.registerTool(
   'kangentic_search_tasks',
   {
-    description: 'Search tasks by keyword across titles and descriptions. Searches both active and completed (archived) tasks.',
+    description: 'Search board tasks by keyword across titles and descriptions. Searches both active and completed (archived) tasks. Does not search backlog items - use kangentic_search_backlog for that.',
     inputSchema: {
       query: z.string().describe('Search keyword or phrase to match against task titles and descriptions (case-insensitive).'),
       status: z.enum(['active', 'completed', 'all']).optional().describe('Filter by task status. "active" = on the board, "completed" = in Done/archived. Defaults to "all".'),
@@ -458,6 +458,121 @@ server.registerTool(
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return { content: [{ type: 'text' as const, text: `Error updating task: ${errorMessage}` }], isError: true };
+    }
+  },
+);
+
+// --- kangentic_list_backlog ---
+server.registerTool(
+  'kangentic_list_backlog',
+  {
+    description: 'List items in the backlog staging area. The backlog holds work items before they are moved to the board. Items have priority levels and labels for organization.',
+    inputSchema: {
+      priority: z.number().min(0).max(4).optional().describe('Filter by priority level: 0=none, 1=low, 2=medium, 3=high, 4=urgent.'),
+      query: z.string().optional().describe('Search keyword to filter items by title, description, or labels (case-insensitive).'),
+    },
+  },
+  async ({ priority, query }) => {
+    try {
+      const response = await sendCommand('list_backlog', {
+        priority: priority ?? null,
+        query: query ?? null,
+      });
+      if (!response.success) {
+        return { content: [{ type: 'text' as const, text: `Failed to list backlog: ${response.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text' as const, text: response.message ?? JSON.stringify(response.data) }] };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { content: [{ type: 'text' as const, text: `Error listing backlog: ${errorMessage}` }], isError: true };
+    }
+  },
+);
+
+// --- kangentic_create_backlog_item ---
+server.registerTool(
+  'kangentic_create_backlog_item',
+  {
+    description: 'Create a new item in the backlog staging area. Use this for work that should be tracked but is not ready for the board yet (future tasks, ideas, improvements). Unlike kangentic_create_task, backlog items do not have branches or worktrees.',
+    inputSchema: {
+      title: z.string().max(200).describe('Item title (max 200 characters).'),
+      description: z.string().max(10000).optional().describe('Item description. Supports markdown.'),
+      priority: z.number().min(0).max(4).optional().describe('Priority level: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent.'),
+      labels: z.array(z.string()).optional().describe('Labels for categorization (e.g. ["bug", "frontend", "p1"]).'),
+    },
+  },
+  async ({ title, description, priority, labels }) => {
+    if (taskCreationCount >= MAX_TASKS_PER_SESSION) {
+      return {
+        content: [{ type: 'text' as const, text: `Rate limit reached: maximum ${MAX_TASKS_PER_SESSION} items per session.` }],
+        isError: true,
+      };
+    }
+    try {
+      const response = await sendCommand('create_backlog_item', {
+        title,
+        description: description ?? '',
+        priority: priority ?? 0,
+        labels: labels ?? [],
+      });
+      if (!response.success) {
+        return { content: [{ type: 'text' as const, text: `Failed to create backlog item: ${response.error}` }], isError: true };
+      }
+      taskCreationCount++;
+      return { content: [{ type: 'text' as const, text: response.message ?? `Created backlog item "${title}".` }] };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { content: [{ type: 'text' as const, text: `Error creating backlog item: ${errorMessage}` }], isError: true };
+    }
+  },
+);
+
+// --- kangentic_search_backlog ---
+server.registerTool(
+  'kangentic_search_backlog',
+  {
+    description: 'Search backlog items by keyword across titles, descriptions, and labels.',
+    inputSchema: {
+      query: z.string().describe('Search keyword or phrase (case-insensitive).'),
+    },
+  },
+  async ({ query }) => {
+    try {
+      const response = await sendCommand('search_backlog', { query });
+      if (!response.success) {
+        return { content: [{ type: 'text' as const, text: `Failed to search backlog: ${response.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text' as const, text: response.message ?? JSON.stringify(response.data) }] };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { content: [{ type: 'text' as const, text: `Error searching backlog: ${errorMessage}` }], isError: true };
+    }
+  },
+);
+
+// --- kangentic_promote_backlog ---
+server.registerTool(
+  'kangentic_promote_backlog',
+  {
+    description: 'Move one or more backlog items to the board, creating tasks in the specified column. Moved items are removed from the backlog. Find item IDs with kangentic_list_backlog or kangentic_search_backlog.',
+    inputSchema: {
+      itemIds: z.array(z.string()).describe('Backlog item IDs to move to the board.'),
+      column: z.string().optional().describe('Target column name. Defaults to the To Do column.'),
+    },
+  },
+  async ({ itemIds, column }) => {
+    try {
+      const response = await sendCommand('promote_backlog', {
+        itemIds,
+        column: column ?? null,
+      });
+      if (!response.success) {
+        return { content: [{ type: 'text' as const, text: `Failed to move backlog items: ${response.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text' as const, text: response.message ?? `Moved ${itemIds.length} item(s) to the board.` }] };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { content: [{ type: 'text' as const, text: `Error moving backlog items: ${errorMessage}` }], isError: true };
     }
   },
 );

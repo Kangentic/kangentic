@@ -1,6 +1,8 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { ArrowUp, ArrowDown } from 'lucide-react';
+import { ArrowUp, ArrowDown, GripVertical } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 export interface DataTableColumn<TRow, TKey extends string = string> {
   key: TKey;
@@ -22,9 +24,81 @@ interface DataTableProps<TRow, TKey extends string = string> {
   emptyMessage?: string;
   rowTestId?: string;
   virtualized?: boolean;
+  /** Enable drag-to-reorder rows. Requires wrapping with DndContext + SortableContext. */
+  sortableEnabled?: boolean;
+  /** Called when sort state changes so parent can detect column-sort vs manual order. */
+  onSortChange?: (sortKey: TKey | undefined) => void;
 }
 
 const ESTIMATED_ROW_HEIGHT = 45;
+
+/** Sortable row wrapper - renders a drag handle and applies transform/transition styles. */
+function SortableRow<TRow, TKey extends string>({
+  row,
+  rowId,
+  columns,
+  onRowClick,
+  rowTestId,
+  isDragDisabled,
+}: {
+  row: TRow;
+  rowId: string;
+  columns: DataTableColumn<TRow, TKey>[];
+  onRowClick?: (row: TRow) => void;
+  rowTestId?: string;
+  isDragDisabled: boolean;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: rowId, disabled: isDragDisabled });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+    position: 'relative',
+    zIndex: isDragging ? 10 : undefined,
+  };
+
+  return (
+    <tr
+      ref={setNodeRef}
+      style={style}
+      className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick ? 'hover:bg-surface-hover/30 cursor-pointer' : ''}`}
+      onClick={onRowClick ? () => onRowClick(row) : undefined}
+      data-testid={rowTestId}
+    >
+      {/* Drag handle cell */}
+      <td className="w-[32px] px-1 py-2.5">
+        <div
+          {...attributes}
+          {...listeners}
+          className={`flex items-center justify-center ${
+            isDragDisabled
+              ? 'text-fg-disabled/30 cursor-not-allowed'
+              : 'text-fg-disabled hover:text-fg-muted cursor-grab active:cursor-grabbing'
+          }`}
+          title={isDragDisabled ? 'Clear column sort to drag' : 'Drag to reorder'}
+        >
+          <GripVertical size={14} />
+        </div>
+      </td>
+      {columns.map((column, columnIndex) => (
+        <td
+          key={`${column.key}-${columnIndex}`}
+          className={`px-3 py-2.5 ${column.width || ''} ${column.align === 'right' ? 'text-right' : ''}`}
+        >
+          {column.render(row)}
+        </td>
+      ))}
+    </tr>
+  );
+}
 
 export function DataTable<TRow, TKey extends string = string>({
   columns,
@@ -36,6 +110,8 @@ export function DataTable<TRow, TKey extends string = string>({
   emptyMessage = 'No data',
   rowTestId,
   virtualized = false,
+  sortableEnabled = false,
+  onSortChange,
 }: DataTableProps<TRow, TKey>) {
   const [sortKey, setSortKey] = useState<TKey | undefined>(defaultSortKey);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(defaultSortDirection);
@@ -43,13 +119,28 @@ export function DataTable<TRow, TKey extends string = string>({
 
   const handleHeaderClick = (column: DataTableColumn<TRow, TKey>) => {
     if (!column.sortValue) return;
+    let newSortKey: TKey | undefined;
     if (sortKey === column.key) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+      // Clicking the same column cycles: asc -> desc -> clear
+      if (sortDirection === 'asc') {
+        setSortDirection('desc');
+        newSortKey = column.key;
+      } else {
+        // Clear sort (return to manual/position order)
+        setSortKey(undefined);
+        newSortKey = undefined;
+      }
     } else {
       setSortKey(column.key);
       setSortDirection(column.align === 'left' || !column.align ? 'asc' : 'desc');
+      newSortKey = column.key;
     }
+    if (newSortKey === undefined) setSortKey(undefined);
+    onSortChange?.(newSortKey);
   };
+
+  const isColumnSorted = sortKey !== undefined;
+  const isDragDisabled = isColumnSorted;
 
   const sortedData = useMemo(() => {
     if (!sortKey) return data;
@@ -82,6 +173,8 @@ export function DataTable<TRow, TKey extends string = string>({
 
   const headerRow = (
     <tr className="border-b-2 border-edge bg-surface-raised">
+      {/* Drag handle header cell (empty) */}
+      {sortableEnabled && <th className="w-[32px]" />}
       {columns.map((column, columnIndex) => {
         const isSortable = !!column.sortValue;
         const isActive = sortKey === column.key;
@@ -125,7 +218,7 @@ export function DataTable<TRow, TKey extends string = string>({
           <tbody>
             {sortedData.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-3 py-8 text-center text-fg-disabled text-sm">
+                <td colSpan={columns.length + (sortableEnabled ? 1 : 0)} className="px-3 py-8 text-center text-fg-disabled text-sm">
                   {emptyMessage}
                 </td>
               </tr>
@@ -133,14 +226,30 @@ export function DataTable<TRow, TKey extends string = string>({
               <>
                 {virtualItems.length > 0 && virtualItems[0].start > 0 && (
                   <tr>
-                    <td colSpan={columns.length} style={{ height: virtualItems[0].start, padding: 0 }} />
+                    <td colSpan={columns.length + (sortableEnabled ? 1 : 0)} style={{ height: virtualItems[0].start, padding: 0 }} />
                   </tr>
                 )}
                 {virtualItems.map((virtualRow) => {
                   const row = sortedData[virtualRow.index];
+                  const id = rowKey(row);
+
+                  if (sortableEnabled) {
+                    return (
+                      <SortableRow
+                        key={id}
+                        row={row}
+                        rowId={id}
+                        columns={columns}
+                        onRowClick={onRowClick}
+                        rowTestId={rowTestId}
+                        isDragDisabled={isDragDisabled}
+                      />
+                    );
+                  }
+
                   return (
                     <tr
-                      key={rowKey(row)}
+                      key={id}
                       data-index={virtualRow.index}
                       ref={virtualizer.measureElement}
                       className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick ? 'hover:bg-surface-hover/30 cursor-pointer' : ''}`}
@@ -161,7 +270,7 @@ export function DataTable<TRow, TKey extends string = string>({
                 {virtualItems.length > 0 && (
                   <tr>
                     <td
-                      colSpan={columns.length}
+                      colSpan={columns.length + (sortableEnabled ? 1 : 0)}
                       style={{
                         height: virtualizer.getTotalSize() - (virtualItems[virtualItems.length - 1].end),
                         padding: 0,
@@ -185,26 +294,42 @@ export function DataTable<TRow, TKey extends string = string>({
           {headerRow}
         </thead>
         <tbody>
-          {sortedData.map((row) => (
-            <tr
-              key={rowKey(row)}
-              className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick ? 'hover:bg-surface-hover/30 cursor-pointer' : ''}`}
-              onClick={onRowClick ? () => onRowClick(row) : undefined}
-              data-testid={rowTestId}
-            >
-              {columns.map((column, columnIndex) => (
-                <td
-                  key={`${column.key}-${columnIndex}`}
-                  className={`px-3 py-2.5 overflow-hidden ${column.width || ''} ${column.align === 'right' ? 'text-right' : ''}`}
-                >
-                  {column.render(row)}
-                </td>
-              ))}
-            </tr>
-          ))}
+          {sortedData.map((row) => {
+            if (sortableEnabled) {
+              const id = rowKey(row);
+              return (
+                <SortableRow
+                  key={id}
+                  row={row}
+                  rowId={id}
+                  columns={columns}
+                  onRowClick={onRowClick}
+                  rowTestId={rowTestId}
+                  isDragDisabled={isDragDisabled}
+                />
+              );
+            }
+            return (
+              <tr
+                key={rowKey(row)}
+                className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick ? 'hover:bg-surface-hover/30 cursor-pointer' : ''}`}
+                onClick={onRowClick ? () => onRowClick(row) : undefined}
+                data-testid={rowTestId}
+              >
+                {columns.map((column, columnIndex) => (
+                  <td
+                    key={`${column.key}-${columnIndex}`}
+                    className={`px-3 py-2.5 overflow-hidden ${column.width || ''} ${column.align === 'right' ? 'text-right' : ''}`}
+                  >
+                    {column.render(row)}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
           {sortedData.length === 0 && (
             <tr>
-              <td colSpan={columns.length} className="px-3 py-8 text-center text-fg-disabled text-sm">
+              <td colSpan={columns.length + (sortableEnabled ? 1 : 0)} className="px-3 py-8 text-center text-fg-disabled text-sm">
                 {emptyMessage}
               </td>
             </tr>

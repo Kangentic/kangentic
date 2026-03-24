@@ -107,13 +107,13 @@ export class SwimlaneRepository {
     const roleById = new Map(allLanes.map((l) => [l.id, l.role]));
 
     // Validate locked column constraints:
-    // 1. 'backlog' must be at position 0
-    const backlogId = allLanes.find((l) => l.role === 'backlog')?.id;
-    if (backlogId && ids[0] !== backlogId) {
-      throw new Error('Backlog column must remain at position 0.');
+    // 1. 'todo' must be at position 0
+    const todoId = allLanes.find((lane) => lane.role === 'todo')?.id;
+    if (todoId && ids[0] !== todoId) {
+      throw new Error('To Do column must remain at position 0.');
     }
 
-    // 2. Custom columns (role=null) cannot be at position 0 (Backlog slot)
+    // 2. Custom columns (role=null) cannot be at position 0 (To Do slot)
     if (!roleById.get(ids[0])) {
       throw new Error('Custom columns cannot be at the first position.');
     }

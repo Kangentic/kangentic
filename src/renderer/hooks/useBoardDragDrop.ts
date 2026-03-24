@@ -272,7 +272,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
 
       // Backlog and Done are locked in place
       const draggedCol = swimlanes.find((swimlane) => swimlane.id === fromSwimlaneId);
-      if (!draggedCol || draggedCol.role === 'backlog') return;
+      if (!draggedCol || draggedCol.role === 'todo') return;
 
       const fromIdx = swimlanes.findIndex((swimlane) => swimlane.id === fromSwimlaneId);
       const toIdx = swimlanes.findIndex((swimlane) => swimlane.id === toSwimlaneId);
@@ -281,11 +281,11 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
       // arrayMove handles directional offset correctly for dnd-kit
       const ordered = arrayMove([...swimlanes], fromIdx, toIdx);
 
-      // Validate constraints: Backlog must be first
-      const backlogIdx = ordered.findIndex((swimlane) => swimlane.role === 'backlog');
+      // Validate constraints: To Do must be first
+      const todoIndex = ordered.findIndex((swimlane) => swimlane.role === 'todo');
 
       const toast = useToastStore.getState().addToast;
-      if (backlogIdx !== 0) { toast({ message: 'Backlog must remain the first column', variant: 'warning' }); return; }
+      if (todoIndex !== 0) { toast({ message: 'To Do must remain the first column', variant: 'warning' }); return; }
 
       await reorderSwimlanes(ordered.map((swimlane) => swimlane.id));
       return;

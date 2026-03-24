@@ -17,9 +17,9 @@ test.afterAll(async () => {
   await browser?.close();
 });
 
-/** Open the New Task dialog in the Backlog column */
+/** Open the New Task dialog in the To Do column */
 async function openNewTaskDialog() {
-  const column = page.locator('[data-swimlane-name="Backlog"]');
+  const column = page.locator('[data-swimlane-name="To Do"]');
   const addButton = column.locator('text=Add task');
   await addButton.click();
   await page.locator('input[placeholder="Task title"]').waitFor({ state: 'visible' });
@@ -201,7 +201,7 @@ test.describe('Worktree Toggle', () => {
     await createTask(page, 'Detail Toggle Task');
 
     // Click on the task card to open detail dialog
-    // Backlog tasks open directly in edit mode
+    // To Do tasks open directly in edit mode
     const taskCard = page.locator('text=Detail Toggle Task').first();
     await taskCard.click();
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
@@ -215,11 +215,11 @@ test.describe('Worktree Toggle', () => {
   });
 });
 
-test.describe('Backlog Edit Branch Config', () => {
+test.describe('To Do Edit Branch Config', () => {
   test('backlog edit shows full branch config UI', async () => {
     await createTask(page, 'Branch Config Task');
 
-    // Backlog tasks open directly in edit mode
+    // To Do tasks open directly in edit mode
     const taskCard = page.locator('[data-testid="swimlane"]').locator('text=Branch Config Task').first();
     await taskCard.click();
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });

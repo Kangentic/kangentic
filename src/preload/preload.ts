@@ -215,6 +215,20 @@ const api: ElectronAPI = {
     },
   },
 
+  backlog: {
+    list: () => ipcRenderer.invoke(IPC.BACKLOG_LIST),
+    create: (input) => ipcRenderer.invoke(IPC.BACKLOG_CREATE, input),
+    update: (input) => ipcRenderer.invoke(IPC.BACKLOG_UPDATE, input),
+    delete: (id) => ipcRenderer.invoke(IPC.BACKLOG_DELETE, id),
+    reorder: (ids) => ipcRenderer.invoke(IPC.BACKLOG_REORDER, ids),
+    bulkDelete: (ids) => ipcRenderer.invoke(IPC.BACKLOG_BULK_DELETE, ids),
+    promote: (input) => ipcRenderer.invoke(IPC.BACKLOG_PROMOTE, input),
+    demote: (input) => ipcRenderer.invoke(IPC.BACKLOG_DEMOTE, input),
+    renameLabel: (oldName, newName) => ipcRenderer.invoke(IPC.BACKLOG_RENAME_LABEL, oldName, newName),
+    deleteLabel: (name) => ipcRenderer.invoke(IPC.BACKLOG_DELETE_LABEL, name),
+    remapPriorities: (mapping) => ipcRenderer.invoke(IPC.BACKLOG_REMAP_PRIORITIES, mapping),
+  },
+
   boardConfig: {
     exists: () => ipcRenderer.invoke(IPC.BOARD_CONFIG_EXISTS),
     export: () => ipcRenderer.invoke(IPC.BOARD_CONFIG_EXPORT),

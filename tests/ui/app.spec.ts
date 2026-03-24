@@ -23,7 +23,7 @@ async function ensureBoardVisible() {
   await page.locator('.fixed input[placeholder="Task title"], .fixed textarea, [data-testid="task-detail-dialog"]')
     .waitFor({ state: 'hidden', timeout: 2000 }).catch(() => {});
 
-  const backlog = page.locator('[data-swimlane-name="Backlog"]');
+  const backlog = page.locator('[data-swimlane-name="To Do"]');
   if (await backlog.isVisible().catch(() => false)) return;
 
   const projectBtn = page.locator(`[role="button"]:has-text("${PROJECT_NAME}")`).first();
@@ -94,12 +94,12 @@ test.describe('App Launch', () => {
 test.describe('Project Management', () => {
   test('can create a new project', async () => {
     await createProject(page, PROJECT_NAME, '/tmp/ui-test');
-    await expect(page.locator('[data-swimlane-name="Backlog"]')).toBeVisible();
+    await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible();
   });
 
   test('default swimlanes are created', async () => {
     await ensureBoardVisible();
-    await expect(page.locator('[data-swimlane-name="Backlog"]')).toBeVisible();
+    await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible();
     await expect(page.locator('[data-swimlane-name="Planning"]')).toBeVisible();
     await expect(page.locator('[data-swimlane-name="Executing"]')).toBeVisible();
     await expect(page.locator('[data-swimlane-name="Code Review"]')).toBeVisible();
@@ -125,8 +125,8 @@ test.describe('Task CRUD', () => {
     await ensureBoardVisible();
   });
 
-  test('can create a task in Backlog', async () => {
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+  test('can create a task in To Do', async () => {
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     await backlog.locator('text=Add task').click();
 
     await page.locator('input[placeholder="Task title"]').fill('Test Task Alpha');
@@ -144,7 +144,7 @@ test.describe('Task CRUD', () => {
     await taskCard('Test Task Alpha').click();
     await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'visible' });
 
-    // Backlog tasks open directly in edit mode -- title shows as input
+    // To Do tasks open directly in edit mode -- title shows as input
     const titleInput = page.locator('.fixed input[placeholder="Task title"]');
     await expect(titleInput).toBeVisible();
     await expect(titleInput).toHaveValue('Test Task Alpha');
@@ -158,7 +158,7 @@ test.describe('Task CRUD', () => {
     await taskCard('Test Task Alpha').click();
     await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'visible' });
 
-    // Backlog tasks open directly in edit mode -- no need to click kebab -> Edit
+    // To Do tasks open directly in edit mode -- no need to click kebab -> Edit
     const titleInput = page.locator('.fixed input[placeholder="Task title"]');
     await titleInput.fill('Updated Task Alpha');
 
@@ -169,7 +169,7 @@ test.describe('Task CRUD', () => {
   });
 
   test('can create a second task', async () => {
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     await backlog.locator('text=Add task').click();
 
     await page.locator('input[placeholder="Task title"]').fill('Test Task Beta');
@@ -179,7 +179,7 @@ test.describe('Task CRUD', () => {
   });
 
   test('can move a task to another column', async () => {
-    // Drag "Test Task Beta" from Backlog to Planning
+    // Drag "Test Task Beta" from To Do to Planning
     const card = page.locator('[data-testid="swimlane"]').locator('text=Test Task Beta').first();
     const planning = page.locator('[data-swimlane-name="Planning"]');
 
@@ -218,15 +218,15 @@ test.describe('Task CRUD', () => {
     // Wait for drop animation and state update
     await page.waitForTimeout(500);
 
-    // Task should appear in Planning and be gone from Backlog
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    // Task should appear in Planning and be gone from To Do
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     await expect(planning.locator('text=Test Task Beta').first()).toBeVisible({ timeout: 5000 });
     await expect(backlog.locator('text=Test Task Beta')).not.toBeVisible({ timeout: 3000 });
   });
 
   test('can delete a task', async () => {
     // Create a temp task to delete
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     await backlog.locator('text=Add task').click();
     await page.locator('input[placeholder="Task title"]').fill('Task To Delete');
     await page.locator('button:has-text("Create")').click();
@@ -242,13 +242,13 @@ test.describe('Task CRUD', () => {
     await page.locator('text=This action cannot be undone.').waitFor({ state: 'visible', timeout: 3000 });
     await page.locator('button:has-text("Delete")').click();
 
-    // Verify the task is gone from Backlog
+    // Verify the task is gone from To Do
     await expect(backlog.locator('text=Task To Delete')).not.toBeVisible({ timeout: 3000 });
   });
 
   test('edit mode footer shows Delete for backlog task', async () => {
     // Create a fresh task for this test
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     await backlog.locator('text=Add task').click();
     await page.locator('input[placeholder="Task title"]').fill('Test Task Gamma');
     await page.locator('button:has-text("Create")').click();
@@ -258,7 +258,7 @@ test.describe('Task CRUD', () => {
     await taskCard('Test Task Gamma').click();
     await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'visible' });
 
-    // Backlog tasks open in edit mode with Delete in footer
+    // To Do tasks open in edit mode with Delete in footer
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await expect(dialog.locator('button:has-text("Delete")')).toBeVisible();
     await expect(dialog.locator('button:has-text("Save")')).toBeVisible();
@@ -266,19 +266,19 @@ test.describe('Task CRUD', () => {
   });
 
   test('can delete a non-archived task directly', async () => {
-    // "Test Task Gamma" was created above and is still in Backlog
+    // "Test Task Gamma" was created above and is still in To Do
     await taskCard('Test Task Gamma').click();
     await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'visible' });
 
-    // Backlog tasks open in edit mode -- Delete is in the footer
+    // To Do tasks open in edit mode -- Delete is in the footer
     await page.locator('button:has-text("Delete")').click();
 
     // Confirm deletion in the ConfirmDialog
     await page.locator('text=This action cannot be undone.').waitFor({ state: 'visible', timeout: 3000 });
     await page.locator('button:has-text("Delete")').click();
 
-    // Verify the task is gone from the Backlog column
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    // Verify the task is gone from the To Do column
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     await expect(backlog.locator('text=Test Task Gamma')).not.toBeVisible({ timeout: 3000 });
   });
 });
@@ -322,7 +322,7 @@ test.describe('Session & Column Details', () => {
     await taskCard('Updated Task Alpha').click();
     await page.locator('.fixed input[placeholder="Task title"], .fixed textarea').first().waitFor({ state: 'visible' });
 
-    // Backlog tasks open in edit mode -- the edit textarea is visible instead of "No active session"
+    // To Do tasks open in edit mode -- the edit textarea is visible instead of "No active session"
     const textarea = page.locator('.fixed textarea');
     await expect(textarea).toBeVisible();
 
@@ -350,7 +350,7 @@ test.describe('Session & Column Details', () => {
     await page.locator('text=Edit Column').waitFor({ state: 'hidden', timeout: 2000 });
   });
 
-  test('tasks in Backlog have no branch info', async () => {
+  test('tasks in To Do have no branch info', async () => {
     await taskCard('Updated Task Alpha').click();
     await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'visible' });
 
@@ -395,7 +395,7 @@ test.describe('Project Deletion', () => {
     // Sanity: tasks and board visible
     await expect(taskCard(`Task A ${runId}`)).toBeVisible();
     await expect(taskCard(`Task B ${runId}`)).toBeVisible();
-    await expect(page.locator('[data-swimlane-name="Backlog"]')).toBeVisible();
+    await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible();
 
     // Hover project in sidebar -> click its delete icon (scoped to this row)
     const projectRow = page.locator(`[role="button"]:has-text("${name}")`);
@@ -422,11 +422,11 @@ test.describe('Project Deletion', () => {
     await createProject(page, name);
 
     // Default swimlanes present
-    await expect(page.locator('[data-swimlane-name="Backlog"]')).toBeVisible();
+    await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible();
     await expect(page.locator('[data-swimlane-name="Done"]')).toBeVisible();
 
     // Board has columns but no leftover tasks from the deleted project
-    const backlog = page.locator('[data-swimlane-name="Backlog"]');
+    const backlog = page.locator('[data-swimlane-name="To Do"]');
     await expect(backlog.locator(`text=Task A ${runId}`)).not.toBeVisible();
     await expect(backlog.locator(`text=Task B ${runId}`)).not.toBeVisible();
 
@@ -453,7 +453,7 @@ test.describe('Project Deletion', () => {
     // Dialog dismissed, project and board intact
     await expect(page.locator('h3:has-text("Delete Project")')).not.toBeVisible();
     await expect(page.locator(`[role="button"]:has-text("${name}")`)).toBeVisible();
-    await expect(page.locator('[data-swimlane-name="Backlog"]')).toBeVisible();
+    await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible();
     await expect(taskCard(`Fresh Task ${runId}`)).toBeVisible();
   });
 });

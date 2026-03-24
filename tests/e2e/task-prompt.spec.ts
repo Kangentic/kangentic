@@ -80,7 +80,7 @@ test.afterAll(async () => {
 async function ensureBoard() {
   await page.keyboard.press('Escape');
   await page.waitForTimeout(200);
-  const backlog = page.locator('[data-swimlane-name="Backlog"]');
+  const backlog = page.locator('[data-swimlane-name="To Do"]');
   if (await backlog.isVisible().catch(() => false)) return;
   await page.locator(`button:has-text("${PROJECT_NAME}")`).first().click();
   await waitForBoard(page);
@@ -159,7 +159,7 @@ test.describe('Claude Agent -- Task Prompt', () => {
     const description = 'Implement the login feature with OAuth support';
     await createTask(page, title, description);
 
-    // Drag to Code Review (Backlog → Code Review triggers spawn_agent)
+    // Drag to Code Review (To Do → Code Review triggers spawn_agent)
     await dragTaskToColumn(title, 'Code Review');
 
     // The shell echoes the full command including the quoted prompt.

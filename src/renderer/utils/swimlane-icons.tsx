@@ -45,13 +45,13 @@ export const ICON_REGISTRY = new Map<string, IconComponent>(
 
 /** Default icons for system swimlane roles. */
 export const ROLE_DEFAULTS: Record<SwimlaneRole, IconComponent> = {
-  backlog: Layers,
+  todo: Layers,
   done: CircleCheckBig,
 };
 
 /** Reverse lookup: role → kebab-case icon name. */
 const ROLE_DEFAULT_NAMES: Record<SwimlaneRole, string> = {
-  backlog: 'layers',
+  todo: 'layers',
   done: 'circle-check-big',
 };
 

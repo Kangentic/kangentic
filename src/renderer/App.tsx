@@ -4,6 +4,7 @@ import { useProjectStore } from './stores/project-store';
 import { useBoardStore } from './stores/board-store';
 import { useConfigStore } from './stores/config-store';
 import { useSessionStore } from './stores/session-store';
+import { useBacklogStore } from './stores/backlog-store';
 import { useToastStore } from './stores/toast-store';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
 
@@ -76,6 +77,7 @@ export function App() {
   useEffect(() => {
     if (currentProject) {
       loadBoard();
+      useBacklogStore.getState().loadBacklog();
       loadConfig(); // Re-fetch effective config (global + project overrides)
       useBoardStore.getState().setSearchQuery(''); // Clear search on project switch
 
@@ -418,6 +420,7 @@ if (import.meta.hot) {
     useProjectStore.getState().loadCurrent();
     useConfigStore.getState().loadConfig();
     useBoardStore.getState().loadBoard();
+    useBacklogStore.getState().loadBacklog();
     useSessionStore.getState().syncSessions();
   });
 }

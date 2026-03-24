@@ -53,7 +53,7 @@ export interface TaskAttachment {
   created_at: string;
 }
 
-export type SwimlaneRole = 'backlog' | 'done';
+export type SwimlaneRole = 'todo' | 'done';
 
 export interface Swimlane {
   id: string;
@@ -428,6 +428,11 @@ export interface AppConfig {
 
   notifications: NotificationConfig;
 
+  backlog: {
+    priorities: Array<{ label: string; color: string }>;
+    labelColors: Record<string, string>;
+  };
+
   hasCompletedFirstRun: boolean;
   showBoardSearch: boolean;
   skipDeleteConfirm: boolean;
@@ -496,6 +501,16 @@ export const DEFAULT_CONFIG: AppConfig = {
     },
     cooldownSeconds: 10,
   },
+  backlog: {
+    priorities: [
+      { label: 'None', color: '#6b7280' },
+      { label: 'Low', color: '#3b82f6' },
+      { label: 'Medium', color: '#eab308' },
+      { label: 'High', color: '#f97316' },
+      { label: 'Urgent', color: '#ef4444' },
+    ],
+    labelColors: {},
+  },
   hasCompletedFirstRun: false,
   showBoardSearch: true,
   skipDeleteConfirm: false,
@@ -520,6 +535,61 @@ export interface ClaudeCommand {
 
 export interface UpdateDownloadedInfo {
   version: string;
+}
+
+// === Backlog ===
+
+export type BacklogPriority = 0 | 1 | 2 | 3 | 4;
+// 0=none, 1=low, 2=medium, 3=high, 4=urgent
+
+export const BACKLOG_PRIORITY_LABELS: Record<number, string> = {
+  0: 'None',
+  1: 'Low',
+  2: 'Medium',
+  3: 'High',
+  4: 'Urgent',
+};
+
+export interface BacklogItem {
+  id: string;
+  title: string;
+  description: string;
+  priority: number;
+  labels: string[];
+  position: number;
+  external_id: string | null;
+  external_source: string | null;
+  external_url: string | null;
+  sync_status: string | null;
+  attachment_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BacklogItemCreateInput {
+  title: string;
+  description?: string;
+  priority?: number;
+  labels?: string[];
+}
+
+export interface BacklogItemUpdateInput {
+  id: string;
+  title?: string;
+  description?: string;
+  priority?: number;
+  labels?: string[];
+}
+
+export interface BacklogPromoteInput {
+  backlogItemIds: string[];
+  targetSwimlaneId: string;
+}
+
+export interface BacklogDemoteInput {
+  taskId: string;
+  priority?: number;
+  labels?: string[];
 }
 
 // === IPC API Types ===
@@ -864,6 +934,21 @@ export interface ElectronAPI {
     checkForUpdate: () => Promise<void>;
     installUpdate: () => Promise<void>;
     onUpdateDownloaded: (callback: (info: UpdateDownloadedInfo) => void) => () => void;
+  };
+
+  // Backlog
+  backlog: {
+    list: () => Promise<BacklogItem[]>;
+    create: (input: BacklogItemCreateInput) => Promise<BacklogItem>;
+    update: (input: BacklogItemUpdateInput) => Promise<BacklogItem>;
+    delete: (id: string) => Promise<void>;
+    reorder: (ids: string[]) => Promise<void>;
+    bulkDelete: (ids: string[]) => Promise<void>;
+    promote: (input: BacklogPromoteInput) => Promise<Task[]>;
+    demote: (input: BacklogDemoteInput) => Promise<BacklogItem>;
+    renameLabel: (oldName: string, newName: string) => Promise<number>;
+    deleteLabel: (name: string) => Promise<number>;
+    remapPriorities: (mapping: Record<number, number>) => Promise<number>;
   };
 
   // Board Config

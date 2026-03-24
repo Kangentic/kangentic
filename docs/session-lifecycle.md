@@ -47,7 +47,7 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 | `queued` | `running` | Concurrency slot opens, `SessionQueue` promotes |
 | `queued` | `exited` | Session killed while still queued |
 | `running` | `suspended` | Task moved to Done or `auto_spawn=false` column |
-| `running` | `exited` | Task moved to Backlog (full cleanup via `cleanupTaskSession`) |
+| `running` | `exited` | Task moved to To Do (full cleanup via `cleanupTaskSession`) |
 | `running` | `exited` | Process exits naturally or is killed |
 | `running` | `orphaned` | App crashes, leftover `running` DB record found on next launch |
 | `queued` | `orphaned` | App crashes, leftover `queued` DB record found on next launch |
@@ -90,7 +90,7 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 
 Session teardown varies by target column:
 
-- **Backlog** (role=`backlog`) -- full cleanup via `cleanupTaskSession()`: kills the PTY (via `SessionManager.remove()`), deletes session files from disk, deletes all session DB records for the task. The worktree and branch are preserved so code is not lost. Moving back to an active column spawns a fresh session.
+- **To Do** (role=`todo`) -- full cleanup via `cleanupTaskSession()`: kills the PTY (via `SessionManager.remove()`), deletes session files from disk, deletes all session DB records for the task. The worktree and branch are preserved so code is not lost. Moving back to an active column spawns a fresh session.
 - **Done** (role=`done`) -- suspends session (preserves for resume via `SessionManager.suspend()`), archives task. The DB record is marked `suspended` so the session can be resumed if the task is later unarchived.
 - **Any column with `auto_spawn=false`** -- suspends session (same as Done, but without archiving).
 
@@ -101,7 +101,7 @@ Session teardown varies by target column:
 - Session files on disk (`status.json`, `events.jsonl`, `settings.json`)
 - Scrollback buffer in memory
 
-### What is destroyed on Backlog cleanup
+### What is destroyed on To Do cleanup
 
 - PTY process (force-killed)
 - Session files on disk (deleted)

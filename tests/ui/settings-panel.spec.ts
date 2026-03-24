@@ -171,7 +171,7 @@ test.describe('Settings Panel', () => {
 
   test('board remains visible behind settings panel', async () => {
     await openSettings();
-    await expect(page.locator('[data-swimlane-name="Backlog"]')).toBeAttached();
+    await expect(page.locator('[data-swimlane-name="To Do"]')).toBeAttached();
     await expect(page.locator('[data-swimlane-name="Planning"]')).toBeAttached();
     await closeSettings();
   });

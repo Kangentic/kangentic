@@ -4,7 +4,7 @@ import { isValidGitBranchName } from '../../../../shared/git-utils';
 import { slugify } from '../../../../shared/slugify';
 import type { Task } from '../../../../shared/types';
 
-export function useBranchConfig(task: Task, title: string, isInBacklog: boolean) {
+export function useBranchConfig(task: Task, title: string, isInTodo: boolean) {
   const worktreesEnabled = useConfigStore((s) => s.config.git.worktreesEnabled);
   const defaultBaseBranch = useConfigStore((s) => s.config.git.defaultBaseBranch);
 
@@ -19,12 +19,12 @@ export function useBranchConfig(task: Task, title: string, isInBacklog: boolean)
   const effectiveBaseBranch = baseBranch.trim() || defaultBaseBranch || 'main';
 
   useEffect(() => {
-    if (isInBacklog) {
+    if (isInTodo) {
       window.electronAPI.git.listBranches()
         .then(branches => setKnownBranches(new Set(branches)))
         .catch(() => setKnownBranches(new Set()));
     }
-  }, [isInBacklog]);
+  }, [isInTodo]);
 
   const branchExists = useMemo(
     () => customBranchName.trim() ? knownBranches.has(customBranchName.trim()) : false,

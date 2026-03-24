@@ -16,7 +16,7 @@ Kangentic replaces terminal tab chaos with a drag-and-drop board. Each task card
 
 ### Visual Agent Orchestration
 
-Drag a task card into an active column to spawn a Claude Code agent. Drag it to Done to terminate the session. Drag it back to Backlog to suspend. Every column transition is an orchestration event.
+Drag a task card into an active column to spawn a Claude Code agent. Drag it to Done to terminate the session. Drag it back to To Do to suspend. Every column transition is an orchestration event.
 
 ### Shareable Board Configuration
 
@@ -64,16 +64,16 @@ Ten built-in themes: Dark, Light, Moon, Forest, Ocean, Ember, Sand, Mint, Sky, a
 
 ## How It Works
 
-1. **Create a board** with columns representing your workflow stages (Backlog, In Progress, Review, Done, or any custom stages).
+1. **Create a board** with columns representing your workflow stages (To Do, In Progress, Review, Done, or any custom stages).
 2. **Add task cards** describing units of work -- features, bugs, refactors.
 3. **Drag a card** into an active column. Kangentic spawns a Claude Code CLI session, passes it the task description as a prompt, and begins streaming terminal output.
 4. **Monitor progress** via the embedded terminal, activity indicators, and board-level status at a glance.
 5. **Drag the card forward** through your workflow. Each transition can trigger additional actions -- commands, scripts, webhooks.
-6. **Drag to Done** to complete and terminate the session, or back to Backlog to suspend it for later.
+6. **Drag to Done** to complete and terminate the session, or back to To Do to suspend it for later.
 
 ## What Kangentic Is Not
 
-- **Not a task tracker.** It is not Jira, Linear, or Trello. There are no sprints, story points, or backlog grooming features. The board exists to control agents, not to manage project management metadata.
+- **Not a task tracker.** It is not Jira, Linear, or Trello. There are no sprints, story points, or grooming features. The board exists to control agents, not to manage project management metadata.
 - **Not a CI system.** It does not run pipelines, deploy artifacts, or manage environments. It orchestrates interactive Claude Code sessions on your local machine.
 - **Not a wrapper around a web API.** Kangentic works with the Claude Code CLI directly. It spawns real terminal sessions with full PTY support.
 

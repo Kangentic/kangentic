@@ -17,7 +17,7 @@ User drags task between columns
   → BoardStore.moveTask() -- optimistic UI update
   → IPC task:move
   → Main: update DB positions
-  → Main: check priority rules (Backlog? Done? Active session? No session?)
+  → Main: check priority rules (To Do? Done? Active session? No session?)
   → Main: TransitionEngine executes action chain (create_worktree → spawn_agent)
   → SessionManager spawns PTY (or queues it)
   → PTY streams output → 16ms batched flush → IPC session:data → xterm render
@@ -76,6 +76,21 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `attachment:add` | invoke | Add attachment (base64 data) |
 | `attachment:remove` | invoke | Delete attachment |
 | `attachment:getDataUrl` | invoke | Get data URL for display |
+
+### Backlog (11 channels)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `backlog:list` | invoke | Fetch all backlog items (ordered by position) |
+| `backlog:create` | invoke | Create a new backlog item |
+| `backlog:update` | invoke | Update a backlog item |
+| `backlog:delete` | invoke | Delete a backlog item |
+| `backlog:reorder` | invoke | Reorder backlog items by ID array |
+| `backlog:bulk-delete` | invoke | Delete multiple backlog items by ID array |
+| `backlog:promote` | invoke | Promote backlog items to board tasks (move to a swimlane) |
+| `backlog:demote` | invoke | Demote a board task back to the backlog |
+| `backlog:renameLabel` | invoke | Rename a label across all backlog items |
+| `backlog:deleteLabel` | invoke | Remove a label from all backlog items |
+| `backlog:remapPriorities` | invoke | Remap priority values across all backlog items |
 
 ### Swimlanes (5 channels)
 | Channel | Pattern | Purpose |
@@ -233,12 +248,13 @@ Stores the project list. Tables:
 
 Created on project open. Stored in the global config directory (not inside the project). Tables:
 
-- **swimlanes** -- Kanban columns. Fields: id, name, role (`backlog`/`done`/null), position, color, icon, is_archived, permission_mode, auto_spawn, auto_command, plan_exit_target_id, is_ghost, created_at
+- **swimlanes** -- Kanban columns. Fields: id, name, role (`todo`/`done`/null), position, color, icon, is_archived, permission_mode, auto_spawn, auto_command, plan_exit_target_id, is_ghost, created_at
 - **tasks** -- Kanban cards. Fields: id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, base_branch, use_worktree, archived_at, created_at, updated_at
 - **actions** -- Executable steps. Types: `spawn_agent`, `send_command`, `run_script`, `kill_session`, `create_worktree`, `cleanup_worktree`, `create_pr`, `webhook`. Config stored as JSON.
 - **swimlane_transitions** -- Maps lane pairs to action chains. Fields: from_swimlane_id (`*` = any), to_swimlane_id, action_id, execution_order
 - **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, claude_session_id, command, cwd, permission_mode, prompt, status (`running`/`suspended`/`exited`/`orphaned`), exit_code, timestamps
 - **task_attachments** -- File attachments (images, etc.) stored on disk, metadata in DB
+- **backlog_items** -- Staging area items (Backlog View). Pre-board tasks with priority, labels, and optional external source tracking.
 
 Repositories follow a simple pattern -- one class per table, all queries are synchronous (better-sqlite3). Transactions used for position shifts (task move, swimlane reorder).
 
@@ -248,7 +264,7 @@ Repositories follow a simple pattern -- one class per table, all queries are syn
 
 When a task moves between swimlanes, the IPC handler checks priorities in order:
 
-1. **Target is Backlog** → Kill session, preserve worktree
+1. **Target is To Do** → Kill session, preserve worktree
 2. **Target is Done** → Suspend session (resumable), archive task
 3. **Target has auto_spawn=false** → Suspend session
 4. **Task has active session** → If target has an `auto_command`, suspend and respawn with the command as the resume prompt. Otherwise keep session alive (permission mode differences alone do not trigger suspend/resume).
@@ -431,7 +447,7 @@ On project open (`src/main/engine/session-recovery.ts`):
 1. **Prune orphaned worktrees** -- delete tasks whose worktree directories were removed externally
 2. **Mark crash recovery** -- leftover `running` DB records become `orphaned`
 3. **Deduplicate** -- keep only the latest record per task_id
-4. **Filter candidates** -- skip Backlog/Done, skip auto_spawn=false, skip missing CWD
+4. **Filter candidates** -- skip To Do/Done, skip auto_spawn=false, skip missing CWD
 5. **Resume or respawn** -- suspended sessions use `--resume`, others get fresh `--session-id`
 6. **Reconcile** -- spawn fresh agents for tasks in auto_spawn columns with no session
 

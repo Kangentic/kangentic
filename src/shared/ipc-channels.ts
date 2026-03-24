@@ -141,6 +141,19 @@ export const IPC = {
   BOARD_CONFIG_SHORTCUTS_CHANGED: 'boardConfig:shortcutsChanged',
   BOARD_CONFIG_SET_DEFAULT_BASE_BRANCH: 'boardConfig:setDefaultBaseBranch',
 
+  // Backlog
+  BACKLOG_LIST: 'backlog:list',
+  BACKLOG_CREATE: 'backlog:create',
+  BACKLOG_UPDATE: 'backlog:update',
+  BACKLOG_DELETE: 'backlog:delete',
+  BACKLOG_REORDER: 'backlog:reorder',
+  BACKLOG_BULK_DELETE: 'backlog:bulk-delete',
+  BACKLOG_PROMOTE: 'backlog:promote',
+  BACKLOG_DEMOTE: 'backlog:demote',
+  BACKLOG_RENAME_LABEL: 'backlog:renameLabel',
+  BACKLOG_DELETE_LABEL: 'backlog:deleteLabel',
+  BACKLOG_REMAP_PRIORITIES: 'backlog:remapPriorities',
+
   // Updater
   UPDATE_CHECK: 'updater:check',
   UPDATE_INSTALL: 'updater:install',

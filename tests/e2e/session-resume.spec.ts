@@ -117,7 +117,7 @@ function extractSessionId(scrollback: string, marker: 'SESSION' | 'RESUMED'): st
 }
 
 // =========================================================================
-// Test: Column-move suspend & resume (Planning → Backlog → Planning)
+// Test: Column-move suspend & resume (Planning → To Do → Planning)
 // =========================================================================
 test.describe('Claude Agent -- Session Resume via Column Move', () => {
   let app: ElectronApplication;

@@ -158,6 +158,13 @@ IPC channels for shortcuts are in the Board Config group: `boardConfig:getShortc
 
 All context bar settings are global-only and cannot be overridden per-project.
 
+### backlog.*
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `backlog.priorities` | Array<{ label: string; color: string }> | See below | Priority levels for backlog items. Default: None (#6b7280), Low (#3b82f6), Medium (#eab308), High (#f97316), Urgent (#ef4444). |
+| `backlog.labelColors` | Record<string, string> | `{}` | Mapping of label names to hex colors for backlog item labels. Empty by default; colors are assigned as labels are created. |
+
 ### sidebar.*
 
 | Key | Type | Default | Description |
@@ -211,8 +218,8 @@ Ghost columns are invisible on the board but still exist in the database. Once a
   "columns": [
     {
       "id": "uuid",
-      "name": "Backlog",
-      "role": "backlog",
+      "name": "To Do",
+      "role": "todo",
       "icon": "inbox",
       "color": "#6b7280",
       "autoSpawn": false

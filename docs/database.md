@@ -83,7 +83,7 @@ All queries are synchronous via **better-sqlite3** -- they block the Node.js eve
 | is_ghost | INTEGER | NOT NULL | 0 |
 | created_at | TEXT | NOT NULL | |
 
-Valid role values: `backlog`, `done`, or NULL (custom column).
+Valid role values: `todo`, `done`, or NULL (custom column).
 
 ### tasks table
 
@@ -185,6 +185,26 @@ Valid permission_mode values: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypa
 
 Index: `idx_task_attachments_task_id` on (task_id).
 
+### backlog_items table
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| title | TEXT | NOT NULL | |
+| description | TEXT | NOT NULL | '' |
+| priority | INTEGER | NOT NULL | 0 |
+| labels | TEXT | NOT NULL | '[]' |
+| position | INTEGER | NOT NULL | |
+| external_id | TEXT | | NULL |
+| external_source | TEXT | | NULL |
+| external_url | TEXT | | NULL |
+| sync_status | TEXT | | NULL |
+| attachment_count | INTEGER | NOT NULL | 0 |
+| created_at | TEXT | NOT NULL | |
+| updated_at | TEXT | NOT NULL | |
+
+Indexes: `idx_backlog_position` on (position), `idx_backlog_external` on (external_source, external_id).
+
 ## Migration Strategy
 
 Migrations run automatically on database open via `runGlobalMigrations()` and `runProjectMigrations()` in `src/main/db/migrations.ts`. The strategy uses three approaches depending on the change:
@@ -198,19 +218,19 @@ Migrations run automatically on database open via `runGlobalMigrations()` and `r
 
 Listed in execution order within `runProjectMigrations()`:
 
-1. **`role` column on swimlanes** -- adds the `role` column and backfills `backlog`, `planning`, `running` by position, plus `done` for archived columns.
+1. **`role` column on swimlanes** -- adds the `role` column and backfills `todo` (originally `backlog`), `planning`, `running` by position, plus `done` for archived columns.
 2. **`icon` column on swimlanes** -- adds custom icon support.
 3. **`archived_at` column on tasks** -- supports the Done auto-archive feature.
 4. **`base_branch` column on tasks** -- per-task base branch override.
 5. **`use_worktree` column on tasks** -- per-task worktree override.
 6. **`swimlane_transitions` table recreation** -- drops the foreign key constraint on `from_swimlane_id` to allow wildcard `*` source. SQLite requires full table recreation to remove a constraint.
-7. **Wildcard transition data migration** -- converts explicit per-source transitions (e.g., Backlog->Planning) into wildcard transitions (*->Planning). Groups by target swimlane and action, keeping the lowest execution_order.
+7. **Wildcard transition data migration** -- converts explicit per-source transitions (e.g., To Do->Planning) into wildcard transitions (*->Planning). Groups by target swimlane and action, keeping the lowest execution_order.
 8. **`task_attachments` table** -- creates the table with `ON DELETE CASCADE` on `task_id` and an index on `task_id`.
 9. **`spawn_agent` config data migrations** (single pass over all spawn_agent actions):
    - Appends `{{attachments}}` to prompt templates that lack it
    - Removes legacy permission modes (`dangerously-skip`, `bypass-permissions`) from action config (action-level permissionMode was removed in a later migration)
    - Updates old `Task: {{title}}...` prompt template to `{{title}}{{description}}{{attachments}}`
-10. **`permission_strategy` and `auto_spawn` columns on swimlanes** -- adds per-column permission strategy and auto-spawn toggle. Backfills: backlog/done get `auto_spawn = 0`, planning gets `permission_strategy = 'plan'`, running role is converted to a custom column. (Column later renamed to `permission_mode` in migration 16.)
+10. **`permission_strategy` and `auto_spawn` columns on swimlanes** -- adds per-column permission strategy and auto-spawn toggle. Backfills: todo/done get `auto_spawn = 0`, planning gets `permission_strategy = 'plan'`, running role is converted to a custom column. (Column later renamed to `permission_mode` in migration 16.)
 11. **`auto_command` column on swimlanes** -- per-column auto-command support.
 12. **`is_terminal` renamed to `is_archived`** -- uses `ALTER TABLE RENAME COLUMN`.
 13. **`plan_exit_target_id` column on swimlanes** -- adds plan exit target and removes the `planning` system role. Sets icon to `map` for former planning-role columns, clears the role, and auto-sets `plan_exit_target_id` to the next column by position.
@@ -220,6 +240,8 @@ Listed in execution order within `runProjectMigrations()`:
 17. **Session metrics columns** -- adds `total_cost_usd`, `total_input_tokens`, `total_output_tokens`, `model_id`, `model_display_name`, `total_duration_ms`, `tool_call_count`, `lines_added`, `lines_removed`, `files_changed` to sessions for completed task summaries.
 18. **`permission_strategy` column renamed to `permission_mode`** -- renames the `permission_strategy` column to `permission_mode` on swimlanes. Migrates old values: `bypass-permissions` to `bypassPermissions`, removes `manual` (alias for `default`). Adds `dontAsk` as a new valid mode. Also removes `permissionMode` from action `config_json` (action-level override removed; resolution is now swimlane override then global setting).
 19. **Legacy `permission_mode` value normalization** -- unconditional data migration that runs on every DB open. Normalizes legacy values in both swimlanes and sessions: `project-settings` to `default`, `manual` to `default`, `dangerously-skip` to `bypassPermissions`, `bypass-permissions` to `bypassPermissions`. Ensures all records use the current `PermissionMode` union values regardless of when they were created.
+20. **Swimlane role rename (`backlog` to `todo`)** -- renames the "Backlog" swimlane to "To Do" (also catches "Not Started") and migrates role values from `backlog` to `todo`.
+21. **`backlog_items` table** -- creates the staging area table for the Backlog View feature. Stores pre-board items with priority, labels, external source tracking, and position ordering. Includes indexes on position and (external_source, external_id).
 
 ### Key Migrations (Global DB)
 
@@ -273,8 +295,8 @@ Operates on a per-project DB.
 | `getById(id)` | Single swimlane by ID |
 | `create(input)` | Insert before the `done` column (if any), otherwise at the end. Shifts positions of existing columns. |
 | `update(input)` | Partial update -- only provided fields are changed |
-| `reorder(ids)` | Set positions from ordered array. Enforces constraints: backlog must be position 0, custom columns (role=null) cannot be position 0. |
-| `delete(id)` | Delete a custom column. System columns (`backlog`, `done`) cannot be deleted. Columns with tasks cannot be deleted. Also cleans up related transitions and dangling `plan_exit_target_id` references. |
+| `reorder(ids)` | Set positions from ordered array. Enforces constraints: todo must be position 0, custom columns (role=null) cannot be position 0. |
+| `delete(id)` | Delete a custom column. System columns (`todo`, `done`) cannot be deleted. Columns with tasks cannot be deleted. Also cleans up related transitions and dangling `plan_exit_target_id` references. |
 
 ### ActionRepository
 
@@ -323,6 +345,23 @@ Operates on a per-project DB. Manages both database records and files on disk un
 | `getPathsForTask(taskId)` | Get file paths for all attachments on a task (for passing to Claude CLI) |
 | `getDataUrl(id)` | Read file from disk and return as a `data:` URL with the correct media type |
 
+### BacklogRepository
+
+Operates on a per-project DB. Manages items in the Backlog View staging area.
+
+| Method | Description |
+|--------|-------------|
+| `list()` | All backlog items ordered by position ASC |
+| `getById(id)` | Single backlog item by ID |
+| `create(input)` | Insert at the end (next position) |
+| `update(input)` | Partial update - only provided fields are changed |
+| `delete(id)` | Delete and shift positions to keep them contiguous |
+| `reorder(ids)` | Set positions from ordered array of IDs |
+| `bulkDelete(ids)` | Delete multiple items and reindex positions |
+| `renameLabel(oldName, newName)` | Rename a label across all items |
+| `deleteLabel(name)` | Remove a label from all items |
+| `remapPriorities(mapping)` | Remap priority values across all items using a mapping |
+
 ## Connection Management
 
 - `getGlobalDb()` -- singleton, created on first access.
@@ -334,7 +373,7 @@ Operates on a per-project DB. Manages both database records and files on disk un
 
 New projects are seeded with 7 default swimlanes:
 
-1. **Backlog** (role: `backlog`)
+1. **To Do** (role: `todo`)
 2. **Planning**
 3. **Executing**
 4. **Code Review**

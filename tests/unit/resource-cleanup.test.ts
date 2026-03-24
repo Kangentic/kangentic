@@ -70,7 +70,7 @@ function createMockTask(overrides: Partial<MockTask> & { id: string; title: stri
 function createMockRepos(backlogTasks: MockTask[] = []) {
   const swimlaneRepo = {
     list: vi.fn(() => [
-      { id: 'lane-backlog', role: 'backlog', name: 'Backlog' },
+      { id: 'lane-backlog', role: 'todo', name: 'To Do' },
       { id: 'lane-planning', role: null, name: 'Planning' },
     ]),
   };
