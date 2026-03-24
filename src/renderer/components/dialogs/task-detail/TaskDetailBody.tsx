@@ -19,7 +19,8 @@ interface TaskDetailBodyProps {
   toggling: boolean;
   pendingCommandLabel: string | null;
   savedAttachments: AttachmentWithPreview[];
-  handlePreview: (att: AttachmentWithPreview) => void;
+  handlePreview: (attachment: AttachmentWithPreview) => void;
+  handleOpenExternal: (attachment: AttachmentWithPreview) => void;
   removeAttachment: (id: string) => void;
   handleToggle: () => void;
 }
@@ -36,6 +37,7 @@ export function TaskDetailBody({
   pendingCommandLabel,
   savedAttachments,
   handlePreview,
+  handleOpenExternal,
   removeAttachment,
   handleToggle,
 }: TaskDetailBodyProps) {
@@ -44,6 +46,7 @@ export function TaskDetailBody({
       attachments={savedAttachments}
       isEditing={false}
       onPreview={handlePreview}
+      onOpenExternal={handleOpenExternal}
       onRemove={removeAttachment}
     />
   );

@@ -47,11 +47,11 @@ test.describe('New Task Dialog Layout', () => {
   test('shows visual placeholder with image drop hint', async () => {
     await openNewTaskDialog();
     await expect(page.locator('text=Describe the task for the agent...')).toBeVisible();
-    await expect(page.locator('text=Paste or drop images here')).toBeVisible();
+    await expect(page.locator('text=Paste or drop files here')).toBeVisible();
     // Placeholder disappears when user types
     const textarea = page.locator('textarea');
     await textarea.fill('hello');
-    await expect(page.locator('text=Paste or drop images here')).not.toBeVisible();
+    await expect(page.locator('text=Paste or drop files here')).not.toBeVisible();
     // Form is dirty (title filled) -- Escape is blocked, use Cancel button
     await page.locator('button:has-text("Cancel")').click();
   });
@@ -75,7 +75,7 @@ test.describe('New Task Dialog Layout', () => {
     });
 
     await page.waitForTimeout(500);
-    await expect(page.locator('text=1 image')).toBeVisible();
+    await expect(page.locator('text=1 attachment')).toBeVisible();
     // Form is dirty (image attached) -- Escape is blocked, use Cancel button
     await page.locator('button:has-text("Cancel")').click();
   });
@@ -221,7 +221,7 @@ test.describe('Image Attachments', () => {
     });
 
     // The drop overlay should appear (exact match to avoid hitting the placeholder)
-    const dropOverlay = page.locator('text="Drop images here"');
+    const dropOverlay = page.locator('text="Drop files here"');
     await expect(dropOverlay).toBeVisible();
 
     // Simulate dragleave

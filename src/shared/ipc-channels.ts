@@ -39,6 +39,7 @@ export const IPC = {
   ATTACHMENT_ADD: 'attachment:add',
   ATTACHMENT_REMOVE: 'attachment:remove',
   ATTACHMENT_GET_DATA_URL: 'attachment:getDataUrl',
+  ATTACHMENT_OPEN: 'attachment:open',
 
   // Swimlanes
   SWIMLANE_LIST: 'swimlane:list',

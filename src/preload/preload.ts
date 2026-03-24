@@ -65,6 +65,7 @@ const api: ElectronAPI = {
     add: (input: { task_id: string; filename: string; data: string; media_type: string }) => ipcRenderer.invoke(IPC.ATTACHMENT_ADD, input),
     remove: (id: string) => ipcRenderer.invoke(IPC.ATTACHMENT_REMOVE, id),
     getDataUrl: (id: string) => ipcRenderer.invoke(IPC.ATTACHMENT_GET_DATA_URL, id),
+    open: (id: string) => ipcRenderer.invoke(IPC.ATTACHMENT_OPEN, id),
   },
 
   swimlanes: {

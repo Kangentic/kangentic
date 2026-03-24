@@ -525,6 +525,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             pendingCommandLabel={pendingCommandLabel}
             savedAttachments={attachments.savedAttachments}
             handlePreview={attachments.handlePreview}
+            handleOpenExternal={attachments.handleOpenExternal}
             removeAttachment={attachments.removeAttachment}
             handleToggle={handleToggle}
           />

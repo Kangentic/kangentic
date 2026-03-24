@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { Plus, X, Image, Info } from 'lucide-react';
+import { Plus, X, Paperclip, Info } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
@@ -8,15 +8,7 @@ import { BranchPicker } from './BranchPicker';
 import { WorktreeChip } from './WorktreeChip';
 import { isValidGitBranchName } from '../../../shared/git-utils';
 import { slugify } from '../../../shared/slugify';
-
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024; // 10MB
-
-const MEDIA_TYPE_EXT: Record<string, string> = {
-  'image/png': '.png',
-  'image/jpeg': '.jpg',
-  'image/gif': '.gif',
-  'image/webp': '.webp',
-};
+import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, getFileTypeIcon, getExtension } from './attachment-utils';
 
 interface PendingAttachment {
   id: string;
@@ -105,12 +97,12 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
     };
   }, []);
 
-  // Close image preview on Escape (capture phase -- fires before BaseDialog's handler)
+  // Close image preview on Escape (capture phase - fires before BaseDialog's handler)
   useEffect(() => {
     if (!previewAttachment) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
         setPreviewAttachment(null);
       }
     };
@@ -120,21 +112,22 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
 
   // Auto-expand textarea as user types
   useEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 800)}px`;
+    const element = textareaRef.current;
+    if (!element) return;
+    element.style.height = 'auto';
+    element.style.height = `${Math.min(element.scrollHeight, 800)}px`;
   }, [description]);
 
-  const addImageFile = useCallback((file: File, filenameOverride?: string) => {
+  const addFile = useCallback((file: File, filenameOverride?: string) => {
     if (file.size > MAX_ATTACHMENT_BYTES) {
       useToastStore.getState().addToast({
-        message: `Image "${file.name}" exceeds 10MB limit`,
+        message: `File "${file.name}" exceeds 10MB limit`,
         variant: 'warning',
       });
       return;
     }
-    if (!file.type.startsWith('image/')) return;
+
+    const mediaType = resolveMediaType(file);
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -143,11 +136,11 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
       const previewUrl = URL.createObjectURL(file);
       const id = `pending-${nextIdRef.current++}`;
       const filename = filenameOverride || file.name;
-      setAttachments((prev) => [...prev, {
+      setAttachments((previous) => [...previous, {
         id,
         filename,
         data: base64,
-        media_type: file.type,
+        media_type: mediaType,
         previewUrl,
       }]);
     };
@@ -155,63 +148,63 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   }, []);
 
   const removeAttachment = useCallback((id: string) => {
-    setAttachments((prev) => {
-      const removed = prev.find((a) => a.id === id);
+    setAttachments((previous) => {
+      const removed = previous.find((attachment) => attachment.id === id);
       if (removed) URL.revokeObjectURL(removed.previewUrl);
-      return prev.filter((a) => a.id !== id);
+      return previous.filter((attachment) => attachment.id !== id);
     });
   }, []);
 
-  const handlePaste = useCallback((e: React.ClipboardEvent) => {
-    const items = e.clipboardData?.items;
+  const handlePaste = useCallback((event: React.ClipboardEvent) => {
+    const items = event.clipboardData?.items;
     if (!items) return;
 
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.type.startsWith('image/')) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (!file) continue;
-        const ext = MEDIA_TYPE_EXT[file.type] || '.png';
-        // Count existing pasted images for sequential naming
-        const name = (() => {
-          const count = attachments.filter((a) => a.filename.startsWith('pasted-image-')).length;
-          return `pasted-image-${count + 1}${ext}`;
-        })();
-        addImageFile(file, name);
-      }
-    }
-  }, [attachments, addImageFile]);
+    for (let index = 0; index < items.length; index++) {
+      const item = items[index];
+      if (item.kind !== 'file') continue;
+      const file = item.getAsFile();
+      if (!file) continue;
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+      event.preventDefault();
+      const mediaType = resolveMediaType(file);
+      const isImage = isImageMediaType(mediaType);
+      const prefix = isImage ? 'pasted-image-' : 'pasted-file-';
+      const extensionStart = file.name ? file.name.lastIndexOf('.') : -1;
+      const extension = MEDIA_TYPE_EXT[mediaType] || (extensionStart >= 0 ? file.name.slice(extensionStart) : '.bin');
+      const name = (() => {
+        const count = attachments.filter((attachment) => attachment.filename.startsWith(prefix)).length;
+        return `${prefix}${count + 1}${extension}`;
+      })();
+      addFile(file, name);
+    }
+  }, [attachments, addFile]);
+
+  const handleDragOver = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
     setIsDragOver(true);
   }, []);
 
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const handleDragLeave = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
     setIsDragOver(false);
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
+  const handleDrop = useCallback((event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
     setIsDragOver(false);
 
-    const files = e.dataTransfer?.files;
+    const files = event.dataTransfer?.files;
     if (!files) return;
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (file.type.startsWith('image/')) {
-        addImageFile(file);
-      }
+    for (let index = 0; index < files.length; index++) {
+      addFile(files[index]);
     }
-  }, [addImageFile]);
+  }, [addFile]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
     if (!title.trim()) return;
     if (branchNameError) return;
     const taskTitle = title.trim();
@@ -223,15 +216,15 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
       ...(useWorktree !== null ? { useWorktree } : {}),
       ...(customBranchName.trim() ? { customBranchName: customBranchName.trim() } : {}),
       ...(attachments.length > 0 ? {
-        pendingAttachments: attachments.map((a) => ({
-          filename: a.filename,
-          data: a.data,
-          media_type: a.media_type,
+        pendingAttachments: attachments.map((attachment) => ({
+          filename: attachment.filename,
+          data: attachment.data,
+          media_type: attachment.media_type,
         })),
       } : {}),
     });
     // Revoke all preview URLs
-    attachments.forEach((a) => URL.revokeObjectURL(a.previewUrl));
+    attachments.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl));
     useToastStore.getState().addToast({
       message: `Created task "${taskTitle}"`,
       variant: 'info',
@@ -278,7 +271,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
               type="text"
               placeholder="Task title"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(event) => setTitle(event.target.value)}
               className="w-full bg-surface border border-edge-input rounded px-3 py-2 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
             />
             <div className="relative">
@@ -286,20 +279,20 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
                 ref={textareaRef}
                 data-testid="task-description"
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={(event) => setDescription(event.target.value)}
                 onPaste={handlePaste}
                 onFocus={() => setTextareaFocused(true)}
                 onBlur={() => setTextareaFocused(false)}
                 className="w-full bg-surface border border-edge-input rounded px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent min-h-[200px] max-h-[800px] resize-y overflow-y-auto"
               />
-              {/* Custom visual placeholder -- vanishes when user types */}
+              {/* Custom visual placeholder - vanishes when user types */}
               {!description && (
                 <div className={`absolute inset-0 flex flex-col pointer-events-none px-3 py-2 transition-opacity duration-200 ${textareaFocused ? 'opacity-100' : 'opacity-40'}`}>
                   <span className="text-sm text-fg-faint">Describe the task for the agent...</span>
                   <div className="flex-1 flex items-center justify-center">
                     <div className="flex flex-col items-center gap-1.5 border border-dashed border-edge rounded-lg px-6 py-4">
-                      <Image size={20} className="text-fg-disabled" />
-                      <span className="text-xs text-fg-disabled">Paste or drop images here</span>
+                      <Paperclip size={20} className="text-fg-disabled" />
+                      <span className="text-xs text-fg-disabled">Paste or drop files here</span>
                     </div>
                   </div>
                 </div>
@@ -310,32 +303,50 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
             {attachments.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[10px] text-fg-faint">{attachments.length} image{attachments.length !== 1 ? 's' : ''}</span>
+                  <span className="text-xs text-fg-faint">{attachments.length} attachment{attachments.length !== 1 ? 's' : ''}</span>
                 </div>
                 <div className="flex gap-2.5 overflow-x-auto pb-1" data-testid="attachment-thumbnails">
-                {attachments.map((att) => (
-                  <div
-                    key={att.id}
-                    className="relative flex-shrink-0 w-24 h-24 rounded-md border border-edge-input overflow-hidden group cursor-pointer"
-                    onClick={() => setPreviewAttachment(att)}
-                  >
-                    <img
-                      src={att.previewUrl}
-                      alt={att.filename}
-                      className="w-full h-full object-cover"
-                    />
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); removeAttachment(att.id); }}
-                      className="absolute top-0 right-0 p-1 bg-black/70 text-white rounded-bl opacity-0 group-hover:opacity-100 transition-opacity"
+                {attachments.map((attachment) => {
+                  const isImage = isImageMediaType(attachment.media_type);
+                  const FileTypeIcon = getFileTypeIcon(attachment.media_type);
+                  return (
+                    <div
+                      key={attachment.id}
+                      className="relative flex-shrink-0 w-24 h-24 rounded-md border border-edge-input overflow-hidden group cursor-pointer"
+                      onClick={() => isImage ? setPreviewAttachment(attachment) : undefined}
                     >
-                      <X size={14} />
-                    </button>
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-1 py-0.5 text-[9px] text-fg-tertiary truncate opacity-0 group-hover:opacity-100 transition-opacity">
-                      {att.filename}
+                      {isImage ? (
+                        <img
+                          src={attachment.previewUrl}
+                          alt={attachment.filename}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-surface-secondary flex flex-col items-center justify-evenly px-1.5 py-2">
+                          <FileTypeIcon size={20} className="text-fg-muted shrink-0" />
+                          <span className="text-[10px] text-fg-muted text-center break-all line-clamp-2 w-full leading-tight">
+                            {attachment.filename}
+                          </span>
+                          <span className="bg-surface-raised border border-edge-input rounded px-1.5 py-0.5 text-[9px] font-medium text-fg-faint uppercase leading-none">
+                            {getExtension(attachment.filename).replace('.', '')}
+                          </span>
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(buttonEvent) => { buttonEvent.stopPropagation(); removeAttachment(attachment.id); }}
+                        className="absolute top-0 right-0 p-1 bg-black/70 text-white rounded-bl opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X size={14} />
+                      </button>
+                      {isImage && (
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/50 px-1 py-0.5 text-[9px] text-fg-tertiary truncate opacity-0 group-hover:opacity-100 transition-opacity">
+                          {attachment.filename}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
                 </div>
               </div>
             )}
@@ -348,7 +359,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
                   type="text"
                   placeholder={branchPlaceholder}
                   value={customBranchName}
-                  onChange={(e) => setCustomBranchName(e.target.value)}
+                  onChange={(event) => setCustomBranchName(event.target.value)}
                   className={`flex-1 min-w-0 bg-surface border rounded px-3 py-1.5 text-xs text-fg placeholder-fg-faint focus:outline-none ${
                     branchNameError
                       ? 'border-red-500 focus:border-red-500'
@@ -370,15 +381,15 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
             {/* Drag overlay */}
             {isDragOver && (
               <div className="absolute inset-0 bg-accent/10 border-2 border-dashed border-accent rounded-lg flex items-center justify-center z-10 pointer-events-none">
-                <span className="text-sm text-accent-fg font-medium">Drop images here</span>
+                <span className="text-sm text-accent-fg font-medium">Drop files here</span>
               </div>
             )}
           </div>
         </BaseDialog>
       </form>
 
-      {/* Full-size preview overlay */}
-      {previewAttachment && (
+      {/* Full-size preview overlay (images only) */}
+      {previewAttachment && isImageMediaType(previewAttachment.media_type) && (
         <div
           className="fixed inset-0 bg-black/80 flex flex-col items-center justify-center z-[60]"
           onClick={() => setPreviewAttachment(null)}
@@ -393,7 +404,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
             src={previewAttachment.previewUrl}
             alt={previewAttachment.filename}
             className="max-w-[90vw] max-h-[85vh] object-contain"
-            onClick={(e) => e.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
           />
           <p className="mt-2 text-sm text-fg-muted">{previewAttachment.filename}</p>
         </div>

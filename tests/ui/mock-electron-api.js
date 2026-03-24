@@ -582,6 +582,9 @@
         // Return a 1x1 transparent PNG as a data URL for testing
         return 'data:' + att.media_type + ';base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
       },
+      open: async function () {
+        return '';
+      },
     },
 
     swimlanes: {

@@ -1,7 +1,7 @@
 import React, { useCallback, useState, useRef, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Loader2, Trash2, CirclePause, Mail, Image, Images, GitPullRequest, Inbox, Pencil, Archive } from 'lucide-react';
+import { Loader2, Trash2, CirclePause, Mail, Paperclip, GitPullRequest, Inbox, Pencil, Archive } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { TaskDetailDialog } from '../dialogs/TaskDetailDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -366,10 +366,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
 
         {task.attachment_count > 0 && displayState.kind === 'none' && (
           <div className="flex items-center gap-1.5 mt-2 pt-2 border-t border-edge">
-            {task.attachment_count === 1
-              ? <Image size={15} className="text-fg-faint" />
-              : <Images size={15} className="text-fg-faint" />
-            }
+            <Paperclip size={15} className="text-fg-faint" />
             <span className="text-xs text-fg-faint">{task.attachment_count}</span>
           </div>
         )}

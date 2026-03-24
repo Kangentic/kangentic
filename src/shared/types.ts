@@ -812,6 +812,7 @@ export interface ElectronAPI {
     add: (input: { task_id: string; filename: string; data: string; media_type: string }) => Promise<TaskAttachment>;
     remove: (id: string) => Promise<void>;
     getDataUrl: (id: string) => Promise<string>;
+    open: (id: string) => Promise<string>;
   };
 
   // Swimlanes

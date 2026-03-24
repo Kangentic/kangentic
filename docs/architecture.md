@@ -69,13 +69,14 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `task:createdByAgent` | on | Event: task was created by an agent via MCP tool call |
 | `task:updatedByAgent` | on | Event: task was updated by an agent via MCP tool call |
 
-### Attachments (4 channels)
+### Attachments (5 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `attachment:list` | invoke | Fetch task attachments |
 | `attachment:add` | invoke | Add attachment (base64 data) |
 | `attachment:remove` | invoke | Delete attachment |
 | `attachment:getDataUrl` | invoke | Get data URL for display |
+| `attachment:open` | invoke | Open attachment in the system default application |
 
 ### Backlog (11 channels)
 | Channel | Pattern | Purpose |

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Image, Info, GitPullRequest } from 'lucide-react';
+import { Paperclip, Info, GitPullRequest } from 'lucide-react';
 import { BranchPicker } from '../BranchPicker';
 import { WorktreeChip } from '../WorktreeChip';
 import { AttachmentThumbnails } from './AttachmentThumbnails';
@@ -84,8 +84,8 @@ export function TaskDetailEditForm({
             <span className="text-sm text-fg-faint">Describe the task for the agent...</span>
             <div className="flex-1 flex items-center justify-center">
               <div className="flex flex-col items-center gap-1.5 border border-dashed border-edge rounded-lg px-6 py-4">
-                <Image size={20} className="text-fg-disabled" />
-                <span className="text-xs text-fg-disabled">Paste or drop images here</span>
+                <Paperclip size={20} className="text-fg-disabled" />
+                <span className="text-xs text-fg-disabled">Paste or drop files here</span>
               </div>
             </div>
           </div>
@@ -95,6 +95,7 @@ export function TaskDetailEditForm({
         attachments={attachments.savedAttachments}
         isEditing={true}
         onPreview={attachments.handlePreview}
+        onOpenExternal={attachments.handleOpenExternal}
         onRemove={attachments.removeAttachment}
       />
       {!isInTodo && (
@@ -154,7 +155,7 @@ export function TaskDetailEditForm({
       )}
       {attachments.isDragOver && (
         <div className="absolute inset-0 bg-accent/10 border-2 border-dashed border-accent rounded-lg flex items-center justify-center z-10 pointer-events-none">
-          <span className="text-sm text-accent-fg font-medium">Drop images here</span>
+          <span className="text-sm text-accent-fg font-medium">Drop files here</span>
         </div>
       )}
     </div>
