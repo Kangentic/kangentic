@@ -116,6 +116,12 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     [swimlanes],
   );
 
+  /** O(1) swimlaneId → hex color lookup for drop highlight styling. */
+  const swimlaneColorMap = useMemo(
+    () => new Map(swimlanes.map((swimlane) => [swimlane.id, swimlane.color])),
+    [swimlanes],
+  );
+
   /** O(1) taskId → swimlaneId lookup covering both active and archived tasks. */
   const taskToSwimlane = useMemo(() => {
     const map = new Map<string, string>();
@@ -200,15 +206,24 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
     const previousId = hoveringSwimlaneIdRef.current;
     if (previousId === targetId) return;
     if (previousId) {
-      const previousElement = document.querySelector(`[data-swimlane-id="${previousId}"]`);
-      previousElement?.classList.remove('drop-highlight');
+      const previousElement = document.querySelector(`[data-swimlane-id="${previousId}"]`) as HTMLElement | null;
+      if (previousElement) {
+        previousElement.classList.remove('drop-highlight');
+        previousElement.style.removeProperty('--drop-color');
+      }
     }
     if (targetId) {
-      const targetElement = document.querySelector(`[data-swimlane-id="${targetId}"]`);
-      targetElement?.classList.add('drop-highlight');
+      const targetElement = document.querySelector(`[data-swimlane-id="${targetId}"]`) as HTMLElement | null;
+      if (targetElement) {
+        const color = swimlaneColorMap.get(targetId);
+        if (color) {
+          targetElement.style.setProperty('--drop-color', color);
+        }
+        targetElement.classList.add('drop-highlight');
+      }
     }
     hoveringSwimlaneIdRef.current = targetId;
-  }, []);
+  }, [swimlaneColorMap]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const id = event.active.id as string;

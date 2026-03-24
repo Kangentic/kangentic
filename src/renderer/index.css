@@ -416,13 +416,13 @@
 }
 
 /* Drop-target highlight applied via direct DOM class toggle (no React re-render).
-   Matches the previous Tailwind ring-2 ring-accent/40 + bg-surface-hover/30 styles. */
+   Uses outline instead of box-shadow so it follows the column's rounded corners. */
 .drop-highlight {
-  --tw-ring-color: color-mix(in srgb, var(--kng-accent) 40%, transparent);
-  box-shadow: 0 0 0 2px var(--tw-ring-color);
+  outline: 1.5px solid color-mix(in srgb, var(--drop-color, var(--kng-accent)) 20%, transparent);
+  outline-offset: -1.5px;
 }
 
 .drop-highlight [data-swimlane-task-list] {
-  background-color: color-mix(in srgb, var(--kng-surface-hover) 30%, transparent);
+  background-color: color-mix(in srgb, var(--drop-color, var(--kng-accent)) 5%, transparent);
 }
 
