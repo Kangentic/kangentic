@@ -2,10 +2,15 @@ import { useState, useRef, useEffect } from 'react';
 import { Paperclip, Info, GitPullRequest, Eye, PenLine } from 'lucide-react';
 import { BranchPicker } from '../BranchPicker';
 import { WorktreeChip } from '../WorktreeChip';
+import { Select } from '../../settings/shared';
+import { LabelInput } from '../../LabelInput';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
 import { AttachmentThumbnails } from './AttachmentThumbnails';
+import { useConfigStore } from '../../../stores/config-store';
+import { useAllExistingLabels } from '../../../hooks/useAllExistingLabels';
 import type { AttachmentsState } from './useAttachments';
 import type { BranchConfigState } from './useBranchConfig';
+import { DEFAULT_PRIORITY_CONFIG } from '../../../../shared/types';
 import type { Task } from '../../../../shared/types';
 
 interface TaskDetailEditFormProps {
@@ -16,6 +21,10 @@ interface TaskDetailEditFormProps {
   setDescription: (description: string) => void;
   prUrl: string;
   setPrUrl: (prUrl: string) => void;
+  labels: string[];
+  setLabels: (labels: string[]) => void;
+  priority: number;
+  setPriority: (priority: number) => void;
   attachments: AttachmentsState;
   branchConfig: BranchConfigState;
   isSessionActive: boolean;
@@ -31,6 +40,10 @@ export function TaskDetailEditForm({
   setDescription,
   prUrl,
   setPrUrl,
+  labels,
+  setLabels,
+  priority,
+  setPriority,
   attachments,
   branchConfig,
   isSessionActive,
@@ -41,6 +54,10 @@ export function TaskDetailEditForm({
   const titleInputRef = useRef<HTMLInputElement>(null);
   const [textareaFocused, setTextareaFocused] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+
+  const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
+  const priorities = useConfigStore((state) => state.config.backlog?.priorities) ?? DEFAULT_PRIORITY_CONFIG;
+  const allExistingLabels = useAllExistingLabels();
 
   // Focus title input on mount
   useEffect(() => {
@@ -133,6 +150,28 @@ export function TaskDetailEditForm({
         onOpenExternal={attachments.handleOpenExternal}
         onRemove={attachments.removeAttachment}
       />
+      <div className="flex gap-3">
+        <div className="flex-1">
+          <label className="text-xs text-fg-muted mb-1 block">Priority</label>
+          <Select
+            value={priority}
+            onChange={(event) => setPriority(Number((event.target as HTMLSelectElement).value))}
+            className="appearance-none bg-surface border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg w-full focus:outline-none focus:border-accent"
+            data-testid="task-priority"
+          >
+            {priorities.map((priorityEntry, index) => (
+              <option key={index} value={index}>{priorityEntry.label}</option>
+            ))}
+          </Select>
+        </div>
+        <LabelInput
+          labels={labels}
+          setLabels={setLabels}
+          labelColors={labelColors}
+          allExistingLabels={allExistingLabels}
+          testId="task-labels"
+        />
+      </div>
       {!isInTodo && (
         <div>
           <label className="text-xs text-fg-muted mb-1 flex items-center gap-1">

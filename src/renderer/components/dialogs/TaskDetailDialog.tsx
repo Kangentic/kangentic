@@ -51,6 +51,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
   const [prUrl, setPrUrl] = useState(task.pr_url ?? '');
+  const [labels, setLabels] = useState<string[]>(task.labels ?? []);
+  const [priority, setPriority] = useState(task.priority ?? 0);
   const [isEditing, setIsEditing] = useState(!!initialEdit);
   const [toggling, setToggling] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -136,12 +138,16 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   const editingRef = useRef(isEditing);
   const titleRef = useRef(title);
   const descriptionRef = useRef(description);
+  const labelsRef = useRef(labels);
+  const priorityRef = useRef(priority);
   editingRef.current = isEditing;
   titleRef.current = title;
   descriptionRef.current = description;
+  labelsRef.current = labels;
+  priorityRef.current = priority;
   useEffect(() => {
     if (!hadSessionContext.current && hasSessionContext && editingRef.current) {
-      updateTask({ id: task.id, title: titleRef.current, description: descriptionRef.current });
+      updateTask({ id: task.id, title: titleRef.current, description: descriptionRef.current, labels: labelsRef.current, priority: priorityRef.current });
       setIsEditing(false);
     }
     hadSessionContext.current = hasSessionContext;
@@ -248,6 +254,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
     setTitle(task.title);
     setDescription(task.description);
     setPrUrl(task.pr_url ?? '');
+    setLabels(task.labels ?? []);
+    setPriority(task.priority ?? 0);
     branchConfig.resetToTask();
     setIsEditing(false);
   };
@@ -298,8 +306,9 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
           newBaseBranch: trimmedBranch,
           enableWorktree: enablingWorktree || undefined,
         });
-        if (title !== task.title || description !== task.description || prUrlFields.pr_url !== undefined) {
-          await updateTask({ id: task.id, title, description, ...prUrlFields });
+        if (title !== task.title || description !== task.description || prUrlFields.pr_url !== undefined
+          || JSON.stringify(labels) !== JSON.stringify(task.labels ?? []) || priority !== (task.priority ?? 0)) {
+          await updateTask({ id: task.id, title, description, labels, priority, ...prUrlFields });
         }
         await useBoardStore.getState().loadBoard();
       } catch (error) {
@@ -311,7 +320,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
         return;
       }
     } else {
-      const payload: Parameters<typeof updateTask>[0] = { id: task.id, title, description, ...prUrlFields };
+      const payload: Parameters<typeof updateTask>[0] = { id: task.id, title, description, labels, priority, ...prUrlFields };
 
       if (!isSessionActive && !isArchived) {
         if (branchChanged) {
@@ -529,6 +538,10 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             setDescription={setDescription}
             prUrl={prUrl}
             setPrUrl={setPrUrl}
+            labels={labels}
+            setLabels={setLabels}
+            priority={priority}
+            setPriority={setPriority}
             attachments={attachments}
             branchConfig={branchConfig}
             isSessionActive={isSessionActive}

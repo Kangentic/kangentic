@@ -1,14 +1,14 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Plus, X, Paperclip, Eye, PenLine } from 'lucide-react';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { Select } from '../settings/shared';
-import { Pill } from '../Pill';
-import { useBacklogStore } from '../../stores/backlog-store';
-import { useBoardStore } from '../../stores/board-store';
+import { LabelInput } from '../LabelInput';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
+import { useAllExistingLabels } from '../../hooks/useAllExistingLabels';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, getFileTypeIcon, getExtension } from '../dialogs/attachment-utils';
+import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
 import type { BacklogItem, BacklogItemCreateInput, BacklogItemUpdateInput } from '../../../shared/types';
 
 interface PendingAttachment {
@@ -47,8 +47,6 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
   const [description, setDescription] = useState(editItem?.description ?? '');
   const [priority, setPriority] = useState(editItem?.priority ?? 0);
   const [labels, setLabels] = useState<string[]>(editItem?.labels ?? []);
-  const [labelInput, setLabelInput] = useState('');
-  const [showSuggestions, setShowSuggestions] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [attachments, setAttachments] = useState<DisplayAttachment[]>([]);
   const [previewAttachment, setPreviewAttachment] = useState<DisplayAttachment | null>(null);
@@ -57,8 +55,6 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
   const [showPreview, setShowPreview] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const labelInputRef = useRef<HTMLInputElement>(null);
-  const suggestionsRef = useRef<HTMLDivElement>(null);
   const nextIdRef = useRef(0);
   // Ref tracks current attachments for cleanup on unmount (avoids stale closure)
   const attachmentsRef = useRef<DisplayAttachment[]>([]);
@@ -67,38 +63,9 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
   const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
 
   // Read priority labels from config
-  const priorities = useConfigStore((state) => state.config.backlog?.priorities) ?? [
-    { label: 'None', color: '#6b7280' },
-    { label: 'Low', color: '#3b82f6' },
-    { label: 'Medium', color: '#eab308' },
-    { label: 'High', color: '#f97316' },
-    { label: 'Urgent', color: '#ef4444' },
-  ];
+  const priorities = useConfigStore((state) => state.config.backlog?.priorities) ?? DEFAULT_PRIORITY_CONFIG;
 
-  // Collect all unique labels from backlog items and board tasks for auto-complete
-  const existingItems = useBacklogStore((state) => state.items);
-  const boardTasks = useBoardStore((state) => state.tasks);
-  const allExistingLabels = useMemo(() => {
-    const labelSet = new Set<string>();
-    for (const item of existingItems) {
-      for (const label of item.labels) {
-        labelSet.add(label);
-      }
-    }
-    for (const task of boardTasks) {
-      for (const label of (task.labels ?? [])) {
-        labelSet.add(label);
-      }
-    }
-    return [...labelSet].sort();
-  }, [existingItems, boardTasks]);
-
-  const filteredSuggestions = useMemo(() => {
-    const query = labelInput.toLowerCase().trim();
-    return allExistingLabels.filter(
-      (label) => label.toLowerCase().includes(query) && !labels.includes(label),
-    );
-  }, [labelInput, allExistingLabels, labels]);
+  const allExistingLabels = useAllExistingLabels();
 
   const isDirty = isEditMode
     ? title.trim() !== (editItem?.title ?? '') ||
@@ -168,21 +135,6 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
     })();
     return () => { cancelled = true; };
   }, [isEditMode, editItem]);
-
-  // Close suggestions on click outside
-  useEffect(() => {
-    if (!showSuggestions) return;
-    const handleClick = (event: MouseEvent) => {
-      if (
-        suggestionsRef.current && !suggestionsRef.current.contains(event.target as Node) &&
-        labelInputRef.current && !labelInputRef.current.contains(event.target as Node)
-      ) {
-        setShowSuggestions(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick, true);
-    return () => document.removeEventListener('mousedown', handleClick, true);
-  }, [showSuggestions]);
 
   // --- File handling ---
 
@@ -272,45 +224,12 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
     }
   }, [addFile]);
 
-  // --- Labels ---
-
-  const addLabel = (label: string) => {
-    const trimmed = label.trim();
-    if (trimmed && !labels.includes(trimmed)) {
-      setLabels([...labels, trimmed]);
-    }
-    setLabelInput('');
-    setShowSuggestions(false);
-    labelInputRef.current?.focus();
-  };
-
-  const removeLabel = (label: string) => {
-    setLabels(labels.filter((existingLabel) => existingLabel !== label));
-  };
-
-  const handleLabelKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key === 'Enter' || event.key === ',') {
-      event.preventDefault();
-      if (labelInput.trim()) {
-        addLabel(labelInput);
-      }
-    } else if (event.key === 'Backspace' && !labelInput && labels.length > 0) {
-      removeLabel(labels[labels.length - 1]);
-    } else if (event.key === 'Escape' && showSuggestions) {
-      event.stopPropagation();
-      setShowSuggestions(false);
-    }
-  };
-
   // --- Submit ---
 
   const handleSubmit = async (event?: React.FormEvent) => {
     event?.preventDefault();
     if (!title.trim() || submitting) return;
     setSubmitting(true);
-    const finalLabels = labelInput.trim()
-      ? [...labels, labelInput.trim()].filter((label, index, array) => array.indexOf(label) === index)
-      : labels;
     try {
       // Collect only pending (unsaved) attachments to send to backend
       const pendingAttachments = attachments
@@ -323,7 +242,7 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
           title: title.trim(),
           description: description.trim(),
           priority,
-          labels: finalLabels,
+          labels,
           pendingAttachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,
         });
       } else {
@@ -331,7 +250,7 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
           title: title.trim(),
           description: description.trim(),
           priority,
-          labels: finalLabels,
+          labels,
           pendingAttachments: pendingAttachments.length > 0 ? pendingAttachments : undefined,
         });
       }
@@ -522,64 +441,13 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
                 </Select>
               </div>
 
-              <div className="flex-1 relative">
-                <label className="text-xs text-fg-muted mb-1 block">Labels</label>
-                <div className="flex flex-wrap items-center gap-1 bg-surface border border-edge-input rounded px-2 py-1 min-h-[32px] focus-within:border-accent">
-                  {labels.map((label) => {
-                    const color = labelColors[label];
-                    return (
-                    <Pill
-                      key={label}
-                      size="sm"
-                      className={color ? 'bg-surface-hover/60 font-medium' : 'bg-surface-raised text-fg-secondary font-medium border border-edge-input'}
-                      style={color ? { color } : undefined}
-                    >
-                      {label}
-                      <button
-                        type="button"
-                        onClick={() => removeLabel(label)}
-                        className="ml-px rounded-full hover:bg-black/20 p-0.5 opacity-60 hover:opacity-100 transition-opacity"
-                      >
-                        <X size={12} />
-                      </button>
-                    </Pill>
-                    );
-                  })}
-                  <input
-                    ref={labelInputRef}
-                    type="text"
-                    value={labelInput}
-                    onChange={(event) => {
-                      setLabelInput(event.target.value);
-                      setShowSuggestions(true);
-                    }}
-                    onFocus={() => setShowSuggestions(true)}
-                    onKeyDown={handleLabelKeyDown}
-                    placeholder={labels.length === 0 ? 'Type to add...' : ''}
-                    className="flex-1 min-w-[80px] bg-transparent text-xs text-fg placeholder-fg-faint outline-none py-0.5"
-                    data-testid="backlog-item-labels"
-                  />
-                </div>
-
-                {/* Label suggestions dropdown */}
-                {showSuggestions && filteredSuggestions.length > 0 && (
-                  <div
-                    ref={suggestionsRef}
-                    className="absolute z-50 left-0 right-0 mt-1 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 max-h-[150px] overflow-y-auto"
-                  >
-                    {filteredSuggestions.map((suggestion) => (
-                      <button
-                        key={suggestion}
-                        type="button"
-                        onClick={() => addLabel(suggestion)}
-                        className="w-full px-3 py-1.5 text-xs text-fg-secondary text-left hover:bg-surface-hover/40"
-                      >
-                        {suggestion}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <LabelInput
+                labels={labels}
+                setLabels={setLabels}
+                labelColors={labelColors}
+                allExistingLabels={allExistingLabels}
+                testId="backlog-item-labels"
+              />
             </div>
 
             {/* Drag overlay */}

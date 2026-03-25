@@ -2,12 +2,16 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Plus, X, Paperclip, Info, Eye, PenLine } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
+import { useAllExistingLabels } from '../../hooks/useAllExistingLabels';
 import { useToastStore } from '../../stores/toast-store';
 import { BaseDialog } from './BaseDialog';
 import { BranchPicker } from './BranchPicker';
 import { WorktreeChip } from './WorktreeChip';
+import { Select } from '../settings/shared';
+import { LabelInput } from '../LabelInput';
 import { isValidGitBranchName } from '../../../shared/git-utils';
 import { slugify } from '../../../shared/slugify';
+import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, getFileTypeIcon, getExtension } from './attachment-utils';
 
@@ -28,8 +32,12 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   const createTask = useBoardStore((s) => s.createTask);
   const defaultBaseBranch = useConfigStore((s) => s.config.git.defaultBaseBranch);
   const worktreesEnabled = useConfigStore((s) => s.config.git.worktreesEnabled);
+  const labelColors = useConfigStore((s) => s.config.backlog?.labelColors) ?? {};
+  const priorities = useConfigStore((s) => s.config.backlog?.priorities) ?? DEFAULT_PRIORITY_CONFIG;
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [priority, setPriority] = useState(0);
+  const [labels, setLabels] = useState<string[]>([]);
   const [baseBranch, setBaseBranch] = useState('');
   const [useWorktree, setUseWorktree] = useState<boolean | null>(null);
   const effectiveWorktree = useWorktree ?? worktreesEnabled;
@@ -77,6 +85,8 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
     }
     return <>Agent will work directly on {pill(effectiveBaseBranch)}</>;
   }, [customBranchName, branchExists, effectiveWorktree, effectiveBaseBranch]);
+  const allExistingLabels = useAllExistingLabels();
+
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [previewAttachment, setPreviewAttachment] = useState<PendingAttachment | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -86,7 +96,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const nextIdRef = useRef(0);
 
-  const isDirty = title.trim() !== '' || description.trim() !== '' || customBranchName.trim() !== '' || attachments.length > 0;
+  const isDirty = title.trim() !== '' || description.trim() !== '' || customBranchName.trim() !== '' || attachments.length > 0 || labels.length > 0 || priority !== 0;
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -206,6 +216,8 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
       title: taskTitle,
       description: description.trim(),
       swimlane_id: swimlaneId,
+      ...(labels.length > 0 ? { labels } : {}),
+      ...(priority > 0 ? { priority } : {}),
       ...(baseBranch.trim() ? { baseBranch: baseBranch.trim() } : {}),
       ...(useWorktree !== null ? { useWorktree } : {}),
       ...(customBranchName.trim() ? { customBranchName: customBranchName.trim() } : {}),
@@ -384,6 +396,29 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
                 </div>
               </div>
             )}
+
+            <div className="flex gap-3">
+              <div className="flex-1">
+                <label className="text-xs text-fg-muted mb-1 block">Priority</label>
+                <Select
+                  value={priority}
+                  onChange={(event) => setPriority(Number((event.target as HTMLSelectElement).value))}
+                  className="appearance-none bg-surface border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg w-full focus:outline-none focus:border-accent"
+                  data-testid="task-priority"
+                >
+                  {priorities.map((priorityEntry, index) => (
+                    <option key={index} value={index}>{priorityEntry.label}</option>
+                  ))}
+                </Select>
+              </div>
+              <LabelInput
+                labels={labels}
+                setLabels={setLabels}
+                labelColors={labelColors}
+                allExistingLabels={allExistingLabels}
+                testId="task-labels"
+              />
+            </div>
 
             <div>
               <label className="text-[10px] text-fg-muted mb-1 block">Branch</label>
