@@ -19,8 +19,13 @@ import type {
   BacklogItemUpdateInput,
   BacklogPromoteInput,
   BacklogDemoteInput,
+  ExternalSource,
+  ImportFetchInput,
+  ImportExecuteInput,
   Task,
 } from '../../../shared/types';
+import { GitHubImporter } from '../../import/github-importer';
+import { ImportSourceStore } from '../../import/import-source-store';
 
 function getBacklogRepo(context: IpcContext): BacklogRepository {
   if (!context.currentProjectId) throw new Error('No project is currently open');
@@ -284,5 +289,159 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const tempPath = path.join(tempDir, attachment.id + '_' + attachment.filename);
     fs.copyFileSync(attachment.file_path, tempPath);
     return shell.openPath(tempPath);
+  });
+
+  // --- Import handlers ---
+
+  const githubImporter = new GitHubImporter();
+
+  ipcMain.handle(IPC.BACKLOG_IMPORT_CHECK_CLI, async (_, source: ExternalSource) => {
+    if (source === 'github_issues' || source === 'github_projects') {
+      const ghPath = await githubImporter.detect();
+      if (!ghPath) {
+        return { available: false, authenticated: false, error: 'gh CLI not found. Install it from https://cli.github.com' };
+      }
+      const authResult = await githubImporter.checkAuth();
+      if (!authResult.authenticated) {
+        return { available: true, authenticated: false, error: authResult.error };
+      }
+      // GitHub Projects requires the project scope
+      if (source === 'github_projects') {
+        const scopeResult = await githubImporter.checkProjectScope();
+        if (!scopeResult.hasScope) {
+          return { available: true, authenticated: false, error: scopeResult.error };
+        }
+      }
+      return { available: true, authenticated: true };
+    }
+    return { available: false, authenticated: false, error: `Unsupported source: ${source}` };
+  });
+
+  ipcMain.handle(IPC.BACKLOG_IMPORT_FETCH, async (_, input: ImportFetchInput) => {
+    if (!context.currentProjectId) throw new Error('No project is currently open');
+    const db = getProjectDb(context.currentProjectId);
+    const backlogRepo = new BacklogRepository(db);
+
+    if (input.source === 'github_issues') {
+      const { issues: rawIssues, hasNextPage } = await githubImporter.fetchIssues(
+        input.repository,
+        input.page,
+        input.perPage,
+        input.searchQuery,
+        input.state,
+      );
+
+      const externalIds = rawIssues.map((issue) => String(issue.number));
+      const alreadyImportedIds = backlogRepo.findByExternalIds('github_issues', externalIds);
+      const issues = githubImporter.mapToExternalIssues(rawIssues, alreadyImportedIds);
+
+      return {
+        issues,
+        totalCount: issues.length,
+        hasNextPage,
+      };
+    }
+
+    if (input.source === 'github_projects') {
+      const [owner, numberString] = input.repository.split('/');
+      const projectNumber = parseInt(numberString, 10);
+      if (!owner || isNaN(projectNumber)) {
+        throw new Error(`Invalid project reference: ${input.repository}. Expected format: owner/number`);
+      }
+
+      const { items: rawItems } = await githubImporter.fetchProjectItems(owner, projectNumber);
+
+      const externalIds = rawItems.map((item) => item.id);
+      const alreadyImportedProjectIds = backlogRepo.findByExternalIds('github_projects', externalIds);
+      const projectIssues = githubImporter.mapProjectItemsToExternalIssues(rawItems, alreadyImportedProjectIds);
+
+      return {
+        issues: projectIssues,
+        totalCount: projectIssues.length,
+        hasNextPage: false,
+      };
+    }
+
+    throw new Error(`Unsupported source: ${input.source}`);
+  });
+
+  ipcMain.handle(IPC.BACKLOG_IMPORT_EXECUTE, async (_, input: ImportExecuteInput) => {
+    if (!context.currentProjectId || !context.currentProjectPath) {
+      throw new Error('No project is currently open');
+    }
+    const db = getProjectDb(context.currentProjectId);
+    const backlogRepo = new BacklogRepository(db);
+
+    const externalIds = input.issues.map((issue) => issue.externalId);
+    const alreadyImportedIds = backlogRepo.findByExternalIds(input.source, externalIds);
+
+    const importedItems = [];
+    let skippedDuplicates = 0;
+    let totalSkippedAttachments = 0;
+
+    for (const issue of input.issues) {
+      if (alreadyImportedIds.has(issue.externalId)) {
+        skippedDuplicates++;
+        continue;
+      }
+
+      // Download inline images from the issue body
+      const { attachments: downloadedAttachments, skippedCount } =
+        await githubImporter.downloadInlineImages(issue.body);
+      totalSkippedAttachments += skippedCount;
+
+      const attachmentMetadata = downloadedAttachments.map((attachment) => ({
+        originalUrl: attachment.sourceUrl,
+        filename: attachment.filename,
+      }));
+
+      const item = backlogRepo.create({
+        title: issue.title,
+        description: issue.body,
+        priority: 0,
+        labels: issue.labels,
+        assignee: issue.assignee ?? undefined,
+        externalId: issue.externalId,
+        externalSource: input.source,
+        externalUrl: issue.externalUrl,
+        syncStatus: 'imported',
+        externalMetadata: attachmentMetadata.length > 0 ? { attachments: attachmentMetadata } : undefined,
+      });
+
+      // Save downloaded images as backlog attachments
+      if (downloadedAttachments.length > 0) {
+        const pendingAttachments = downloadedAttachments.map((attachment) => ({
+          filename: attachment.filename,
+          data: attachment.data,
+          media_type: attachment.mediaType,
+        }));
+        savePendingAttachments(db, context.currentProjectPath, item.id, pendingAttachments);
+      }
+
+      const refreshedItem = backlogRepo.getById(item.id) ?? item;
+      importedItems.push(refreshedItem);
+    }
+
+    return {
+      imported: importedItems.length,
+      skippedDuplicates,
+      skippedAttachments: totalSkippedAttachments,
+      items: importedItems,
+    };
+  });
+
+  ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_LIST, () => {
+    if (!context.currentProjectPath) throw new Error('No project is currently open');
+    return new ImportSourceStore(context.currentProjectPath).list();
+  });
+
+  ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_ADD, (_, input: { source: ExternalSource; url: string }) => {
+    if (!context.currentProjectPath) throw new Error('No project is currently open');
+    return new ImportSourceStore(context.currentProjectPath).add(input.source, input.url);
+  });
+
+  ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_REMOVE, (_, id: string) => {
+    if (!context.currentProjectPath) throw new Error('No project is currently open');
+    new ImportSourceStore(context.currentProjectPath).remove(id);
   });
 }

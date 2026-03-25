@@ -95,6 +95,16 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `backlog:changedByAgent` | on | Event: backlog was modified by an agent via MCP tool call |
 | `backlog:labelColorsChanged` | on | Event: label color mappings changed by agent via MCP tool call |
 
+### Backlog Import (6 channels)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `backlog:importCheckCli` | invoke | Check if the CLI tool for a source is available and authenticated |
+| `backlog:importFetch` | invoke | Fetch items from an external source (GitHub Issues, Projects) |
+| `backlog:importExecute` | invoke | Import selected items into the backlog with attachment download |
+| `backlog:importSourcesList` | invoke | List saved import sources for the current project |
+| `backlog:importSourcesAdd` | invoke | Add a new import source (persisted in project config) |
+| `backlog:importSourcesRemove` | invoke | Remove a saved import source |
+
 ### Backlog Attachments (5 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|

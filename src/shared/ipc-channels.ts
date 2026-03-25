@@ -157,6 +157,14 @@ export const IPC = {
   BACKLOG_CHANGED_BY_AGENT: 'backlog:changedByAgent',
   BACKLOG_LABEL_COLORS_CHANGED: 'backlog:labelColorsChanged',
 
+  // Backlog Import
+  BACKLOG_IMPORT_CHECK_CLI: 'backlog:importCheckCli',
+  BACKLOG_IMPORT_FETCH: 'backlog:importFetch',
+  BACKLOG_IMPORT_EXECUTE: 'backlog:importExecute',
+  BACKLOG_IMPORT_SOURCES_LIST: 'backlog:importSourcesList',
+  BACKLOG_IMPORT_SOURCES_ADD: 'backlog:importSourcesAdd',
+  BACKLOG_IMPORT_SOURCES_REMOVE: 'backlog:importSourcesRemove',
+
   // Backlog Attachments
   BACKLOG_ATTACHMENT_LIST: 'backlogAttachment:list',
   BACKLOG_ATTACHMENT_ADD: 'backlogAttachment:add',

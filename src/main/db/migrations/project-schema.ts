@@ -371,6 +371,22 @@ export function runProjectMigrations(db: Database.Database): void {
     `);
   }
 
+  // Migration: add import-related columns to backlog_items for external source integration
+  const backlogColumns = (db.pragma('table_info(backlog_items)') as Array<{ name: string }>)
+    .map((col) => col.name);
+  if (!backlogColumns.includes('assignee')) {
+    db.exec('ALTER TABLE backlog_items ADD COLUMN assignee TEXT DEFAULT NULL');
+  }
+  if (!backlogColumns.includes('due_date')) {
+    db.exec('ALTER TABLE backlog_items ADD COLUMN due_date TEXT DEFAULT NULL');
+  }
+  if (!backlogColumns.includes('item_type')) {
+    db.exec('ALTER TABLE backlog_items ADD COLUMN item_type TEXT DEFAULT NULL');
+  }
+  if (!backlogColumns.includes('external_metadata')) {
+    db.exec('ALTER TABLE backlog_items ADD COLUMN external_metadata TEXT DEFAULT NULL');
+  }
+
   // Migration: add display_id column for short human-readable task IDs
   const hasDisplayIdColumn = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
     .some((col) => col.name === 'display_id');

@@ -106,6 +106,59 @@ Click a task card to open the detail dialog. From here you can:
 
 When the dialog is open, it claims the terminal session -- the bottom panel releases it. When you close the dialog, the bottom panel reclaims the session.
 
+## Backlog
+
+The Backlog is a staging area for tasks before they reach the board. Switch between **Board** and **Backlog** views using the tabs at the top.
+
+### Creating Items
+
+Click **New Task** in the backlog toolbar to create a backlog item with a title, description, priority, labels, and optional image attachments.
+
+### Labels
+
+Click **Labels** in the toolbar to manage labels. Labels are free-form text tags added during item creation or editing. From the Labels popover you can rename a label across all items, delete a label, and assign colors to labels for visual distinction.
+
+### Priorities
+
+Click **Priorities** in the toolbar to manage the priority scale. The default scale is None, Low, Medium, High, Urgent (0-4). You can rename priority levels, reorder them, add new ones, or remove existing ones. Priority colors are customizable.
+
+### Filtering
+
+Click **Filter** to filter by priority level and/or label. Active filters show a count badge on the Filter button. Use the search bar to filter items by title or description text.
+
+### Promoting to the Board
+
+Select one or more items using the checkboxes, then click **Move to Board** in the bulk toolbar that appears at the bottom. Choose a target column and the items become board tasks. If the target column has auto-spawn enabled, an agent session starts immediately.
+
+### Importing from External Sources
+
+Click **Import** in the backlog toolbar to pull tasks from external project management tools.
+
+**Supported sources:**
+- **GitHub Issues** - import issues from any GitHub repository
+- **GitHub Projects** - import items from a GitHub Project board
+
+**Prerequisites:** The `gh` CLI must be installed and authenticated. For GitHub Projects, the `project` scope is required (`gh auth refresh -s project`).
+
+**Adding a source:**
+1. Click **Import** > **Add Source**
+2. Choose a provider (GitHub) and source type (Issues or Projects)
+3. Paste the full URL (e.g., `https://github.com/owner/repo` or `https://github.com/orgs/owner/projects/1`)
+4. Click **Connect** - Kangentic verifies CLI authentication and saves the source
+
+**Importing items:**
+1. Click a saved source to open the import dialog
+2. Browse items with filtering by title, status, and assignee
+3. Use the "Imported" toggle to hide already-imported items (on by default)
+4. Click anywhere on a row to select it (or use the checkbox)
+5. Click **Import (N)** to pull selected items into the backlog
+
+Imported items include the title, description (markdown), labels, and assignee from the source. Inline images in issue bodies are downloaded as backlog attachments. A small GitHub icon appears on imported items linking back to the original ticket.
+
+Items that have already been imported are detected by `external_source` + `external_id` and shown with a checkmark. Re-importing the same source skips duplicates automatically.
+
+Saved sources persist in `.kangentic/config.json` per project and appear in the Import dropdown for quick re-syncing.
+
 ## Column Management
 
 ### Add a Column

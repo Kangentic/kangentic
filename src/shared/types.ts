@@ -578,10 +578,14 @@ export interface BacklogItem {
   priority: number;
   labels: string[];
   position: number;
+  assignee: string | null;
+  due_date: string | null;
+  item_type: string | null;
   external_id: string | null;
   external_source: string | null;
   external_url: string | null;
   sync_status: string | null;
+  external_metadata: Record<string, unknown> | null;
   attachment_count: number;
   created_at: string;
   updated_at: string;
@@ -593,6 +597,14 @@ export interface BacklogItemCreateInput {
   priority?: number;
   labels?: string[];
   pendingAttachments?: Array<{ filename: string; data: string; media_type: string }>;
+  assignee?: string;
+  dueDate?: string;
+  itemType?: string;
+  externalId?: string;
+  externalSource?: string;
+  externalUrl?: string;
+  syncStatus?: string;
+  externalMetadata?: Record<string, unknown>;
 }
 
 export interface BacklogItemUpdateInput {
@@ -613,6 +625,75 @@ export interface BacklogDemoteInput {
   taskId: string;
   priority?: number;
   labels?: string[];
+}
+
+// === External Import Types ===
+
+export type ExternalSource = 'github_issues' | 'github_projects';
+
+export interface ImportSource {
+  id: string;
+  source: ExternalSource;
+  label: string;
+  repository: string;
+  url: string;
+  createdAt: string;
+}
+
+export interface ExternalIssue {
+  externalId: string;
+  externalSource: ExternalSource;
+  externalUrl: string;
+  title: string;
+  body: string;
+  labels: string[];
+  assignee: string | null;
+  state: string;
+  createdAt: string;
+  updatedAt: string;
+  alreadyImported: boolean;
+  attachmentCount: number;
+}
+
+export interface ImportFetchInput {
+  source: ExternalSource;
+  repository: string;
+  page: number;
+  perPage: number;
+  searchQuery?: string;
+  state?: 'open' | 'closed' | 'all';
+}
+
+export interface ImportFetchResult {
+  issues: ExternalIssue[];
+  totalCount: number;
+  hasNextPage: boolean;
+}
+
+export interface ImportExecuteInput {
+  source: ExternalSource;
+  repository: string;
+  issues: Array<{
+    externalId: string;
+    externalUrl: string;
+    title: string;
+    body: string;
+    labels: string[];
+    assignee: string | null;
+  }>;
+}
+
+export interface ImportExecuteResult {
+  imported: number;
+  skippedDuplicates: number;
+  skippedAttachments: number;
+  items: BacklogItem[];
+}
+
+export interface ImportCheckCliResult {
+  available: boolean;
+  authenticated: boolean;
+  error?: string;
 }
 
 // === IPC API Types ===
@@ -988,6 +1069,12 @@ export interface ElectronAPI {
     remapPriorities: (mapping: Record<number, number>) => Promise<number>;
     onChangedByAgent: (callback: (projectId?: string) => void) => () => void;
     onLabelColorsChanged: (callback: () => void) => () => void;
+    importCheckCli: (source: ExternalSource) => Promise<ImportCheckCliResult>;
+    importFetch: (input: ImportFetchInput) => Promise<ImportFetchResult>;
+    importExecute: (input: ImportExecuteInput) => Promise<ImportExecuteResult>;
+    importSourcesList: () => Promise<ImportSource[]>;
+    importSourcesAdd: (input: { source: ExternalSource; url: string }) => Promise<ImportSource>;
+    importSourcesRemove: (id: string) => Promise<void>;
   };
 
   // Board Config

@@ -925,10 +925,14 @@
           priority: input.priority || 0,
           labels: input.labels || [],
           position: maxPos + 1,
-          external_id: null,
-          external_source: null,
-          external_url: null,
-          sync_status: null,
+          assignee: input.assignee || null,
+          due_date: input.dueDate || null,
+          item_type: input.itemType || null,
+          external_id: input.externalId || null,
+          external_source: input.externalSource || null,
+          external_url: input.externalUrl || null,
+          sync_status: input.syncStatus || null,
+          external_metadata: input.externalMetadata || null,
           attachment_count: input.pendingAttachments ? input.pendingAttachments.length : 0,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -1006,10 +1010,14 @@
           priority: input.priority != null ? input.priority : (task.priority || 0),
           labels: input.labels != null ? input.labels : (task.labels || []),
           position: maxPos + 1,
+          assignee: null,
+          due_date: null,
+          item_type: null,
           external_id: null,
           external_source: null,
           external_url: null,
           sync_status: null,
+          external_metadata: null,
           attachment_count: 0,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
@@ -1071,6 +1079,29 @@
       onLabelColorsChanged: function () {
         return noop;
       },
+      importCheckCli: async function (/* source */) {
+        return { available: true, authenticated: true };
+      },
+      importFetch: async function (/* input */) {
+        return { issues: [], totalCount: 0, hasNextPage: false };
+      },
+      importExecute: async function (/* input */) {
+        return { imported: 0, skippedDuplicates: 0, skippedAttachments: 0, items: [] };
+      },
+      importSourcesList: async function () {
+        return [];
+      },
+      importSourcesAdd: async function (input) {
+        return {
+          id: 'import-src-' + Date.now(),
+          source: input.source,
+          label: input.url,
+          repository: input.url,
+          url: input.url,
+          createdAt: new Date().toISOString(),
+        };
+      },
+      importSourcesRemove: async function (/* id */) {},
     },
 
     boardConfig: {

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { Plus, Search, SquareArrowOutUpRight, Trash2, Inbox, Tags, Flag, Filter, Pencil, X } from 'lucide-react';
+import { Plus, Search, SquareArrowOutUpRight, Trash2, Inbox, Tags, Flag, Filter, Pencil, X, Github, ExternalLink, GripVertical } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { DndContext, DragOverlay } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -13,6 +13,9 @@ import { BacklogContextMenu } from './BacklogContextMenu';
 import { BacklogBulkToolbar } from './BacklogBulkToolbar';
 import { NewBacklogItemDialog } from './NewBacklogItemDialog';
 import { LabelsPopover, PrioritiesPopover } from './ManageLabelsDialog';
+import { ImportPopover } from './ImportPopover';
+import { ImportDialog } from './ImportDialog';
+import type { ImportSource } from '../../../shared/types';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { CountBadge } from '../CountBadge';
 import { useBacklogDragDrop } from '../../hooks/useBacklogDragDrop';
@@ -117,6 +120,7 @@ export function BacklogView() {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ position: { x: number; y: number }; item: BacklogItem } | null>(null);
+  const [importSource, setImportSource] = useState<ImportSource | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const filterPopoverRef = useRef<HTMLDivElement>(null);
 
@@ -294,7 +298,22 @@ export function BacklogView() {
       sortValue: (item) => item.title.toLowerCase(),
       render: (item) => (
         <div className="min-w-0">
-          <div className="text-fg font-medium truncate">{item.title}</div>
+          <div className="flex items-center gap-1.5">
+            {item.external_source && item.external_url && (
+              <button
+                type="button"
+                className="shrink-0 text-fg-faint hover:text-fg transition-colors"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  window.electronAPI.shell.openExternal(item.external_url!);
+                }}
+                title={`Open in ${item.external_source?.startsWith('github') ? 'GitHub' : item.external_source}`}
+              >
+                {item.external_source?.startsWith('github') ? <Github size={13} /> : <ExternalLink size={13} />}
+              </button>
+            )}
+            <span className="text-fg font-medium truncate">{item.title}</span>
+          </div>
           {item.description && (
             <div className="text-xs text-fg-faint truncate mt-0.5">{stripMarkdown(item.description)}</div>
           )}
@@ -362,6 +381,7 @@ export function BacklogView() {
     handleDragStart,
     handleDragEnd,
     handleDragCancel,
+    activeItem,
   } = useBacklogDragDrop(filteredItems, items);
 
   const emptyMessage = searchQuery || hasActiveFilters
@@ -384,6 +404,7 @@ export function BacklogView() {
 
         <LabelsPopover />
         <PrioritiesPopover />
+        <ImportPopover onOpenImportDialog={(source) => setImportSource(source)} />
 
         <div className="flex-1" />
 
@@ -522,7 +543,7 @@ export function BacklogView() {
       </div>
 
       {/* Table */}
-      <div className="flex-1 min-h-0 relative">
+      <div className="flex-1 min-h-0 relative flex flex-col">
         {items.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-fg-faint gap-4">
             <Inbox size={48} strokeWidth={1} />
@@ -564,6 +585,26 @@ export function BacklogView() {
                   onSortChange={(key) => setIsColumnSorted(key !== undefined)}
                 />
               </SortableContext>
+              <DragOverlay style={{ pointerEvents: 'none' }}>
+                {activeItem ? (
+                  <table className="w-full table-fixed text-sm bg-surface-raised border border-edge rounded shadow-lg opacity-90">
+                    <tbody>
+                      <tr>
+                        <td className="w-[32px] px-1 py-2.5">
+                          <div className="flex items-center justify-center text-fg-disabled">
+                            <GripVertical size={14} />
+                          </div>
+                        </td>
+                        {columns.map((column, columnIndex) => (
+                          <td key={columnIndex} className={`px-3 py-2.5 ${column.width || ''}`}>
+                            {column.render(activeItem)}
+                          </td>
+                        ))}
+                      </tr>
+                    </tbody>
+                  </table>
+                ) : null}
+              </DragOverlay>
             </DndContext>
             {selectedIds.size > 0 && (
               <BacklogBulkToolbar
@@ -632,6 +673,13 @@ export function BacklogView() {
           showDontAskAgain
           onConfirm={handleConfirmBulkDelete}
           onCancel={() => setPendingBulkDelete(false)}
+        />
+      )}
+
+      {importSource && (
+        <ImportDialog
+          source={importSource}
+          onClose={() => setImportSource(null)}
         />
       )}
     </div>

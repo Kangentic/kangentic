@@ -14,10 +14,14 @@ interface BacklogItemRow {
   priority: number;
   labels: string;
   position: number;
+  assignee: string | null;
+  due_date: string | null;
+  item_type: string | null;
   external_id: string | null;
   external_source: string | null;
   external_url: string | null;
   sync_status: string | null;
+  external_metadata: string | null;
   attachment_count: number;
   created_at: string;
   updated_at: string;
@@ -28,10 +32,17 @@ function rowToItem(row: BacklogItemRow): BacklogItem {
   try {
     labels = JSON.parse(row.labels);
   } catch { /* default to empty */ }
+  let externalMetadata: Record<string, unknown> | null = null;
+  if (row.external_metadata) {
+    try {
+      externalMetadata = JSON.parse(row.external_metadata);
+    } catch { /* default to null */ }
+  }
   return {
     ...row,
     priority: row.priority,
     labels,
+    external_metadata: externalMetadata,
   };
 }
 
@@ -67,22 +78,27 @@ export class BacklogRepository {
       priority: input.priority ?? 0,
       labels: JSON.stringify(input.labels ?? []),
       position,
-      external_id: null,
-      external_source: null,
-      external_url: null,
-      sync_status: null,
+      assignee: input.assignee ?? null,
+      due_date: input.dueDate ?? null,
+      item_type: input.itemType ?? null,
+      external_id: input.externalId ?? null,
+      external_source: input.externalSource ?? null,
+      external_url: input.externalUrl ?? null,
+      sync_status: input.syncStatus ?? null,
+      external_metadata: input.externalMetadata ? JSON.stringify(input.externalMetadata) : null,
       attachment_count: 0,
       created_at: now,
       updated_at: now,
     };
 
     this.db.prepare(`
-      INSERT INTO backlog_items (id, title, description, priority, labels, position, external_id, external_source, external_url, sync_status, attachment_count, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO backlog_items (id, title, description, priority, labels, position, assignee, due_date, item_type, external_id, external_source, external_url, sync_status, external_metadata, attachment_count, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.title, row.description, row.priority, row.labels, row.position,
+      row.assignee, row.due_date, row.item_type,
       row.external_id, row.external_source, row.external_url, row.sync_status,
-      row.attachment_count, row.created_at, row.updated_at,
+      row.external_metadata, row.attachment_count, row.created_at, row.updated_at,
     );
 
     return rowToItem(row);
@@ -235,6 +251,16 @@ export class BacklogRepository {
     })();
 
     return modifiedCount;
+  }
+
+  /** Find which external IDs from a given source are already imported. */
+  findByExternalIds(source: string, externalIds: string[]): Set<string> {
+    if (externalIds.length === 0) return new Set();
+    const placeholders = externalIds.map(() => '?').join(', ');
+    const rows = this.db.prepare(
+      `SELECT external_id FROM backlog_items WHERE external_source = ? AND external_id IN (${placeholders})`
+    ).all(source, ...externalIds) as Array<{ external_id: string }>;
+    return new Set(rows.map((row) => row.external_id));
   }
 
   /** Create a backlog item from an existing task's title/description. */
