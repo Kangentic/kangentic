@@ -10,9 +10,11 @@ interface BoardSearchBarProps {
   totalCount: number;
   matchCount: number;
   autoFocus?: boolean;
+  /** Optional filter button element rendered before the dismiss button. */
+  filterButton?: React.ReactNode;
 }
 
-export const BoardSearchBar = React.memo(function BoardSearchBar({ totalCount, matchCount, autoFocus }: BoardSearchBarProps) {
+export const BoardSearchBar = React.memo(function BoardSearchBar({ totalCount, matchCount, autoFocus, filterButton }: BoardSearchBarProps) {
   const searchQuery = useBoardStore((state) => state.searchQuery);
   const setSearchQuery = useBoardStore((state) => state.setSearchQuery);
   const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -100,6 +102,8 @@ export const BoardSearchBar = React.memo(function BoardSearchBar({ totalCount, m
             {modifierKey}+F
           </kbd>
         )}
+
+        {filterButton}
 
         {/* Dismiss button */}
         <button

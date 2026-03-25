@@ -8,7 +8,7 @@ import {
   horizontalListSortingStrategy,
   useSortable,
 } from '@dnd-kit/sortable';
-import { AlertTriangle, X } from 'lucide-react';
+import { AlertTriangle, Filter, X } from 'lucide-react';
 import { Swimlane, type SwimlaneProps } from './Swimlane';
 import { DoneSwimlane } from './DoneSwimlane';
 import { TaskCard } from './TaskCard';
@@ -16,11 +16,14 @@ import { AddColumnButton } from './AddColumnButton';
 import { BoardSearchBar } from './BoardSearchBar';
 import { WelcomeOverlay } from './WelcomeOverlay';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
+import { FilterPopover } from '../FilterPopover';
+import { CountBadge } from '../CountBadge';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useBoardDragDrop } from '../../hooks/useBoardDragDrop';
 import { useBoardSearch } from '../../hooks/useBoardSearch';
+import { useFilterPopover } from '../../hooks/useFilterPopover';
 import type { Task } from '../../../shared/types';
 
 /** Wrapper that registers a column with @dnd-kit/sortable.
@@ -193,7 +196,31 @@ export function KanbanBoard() {
   const dismissConfigChange = useBoardStore((s) => s.dismissConfigChange);
   const updateConfig = useConfigStore((s) => s.updateConfig);
   const showBoardSearch = useConfigStore((s) => s.config.showBoardSearch);
+  const priorities = useConfigStore((s) => s.config.backlog?.priorities) ?? [
+    { label: 'None', color: '#6b7280' },
+    { label: 'Low', color: '#6b7280' },
+    { label: 'Medium', color: '#eab308' },
+    { label: 'High', color: '#f97316' },
+    { label: 'Urgent', color: '#ef4444' },
+  ];
+  const labelColors = useConfigStore((s) => s.config.backlog?.labelColors) ?? {};
   const searchQuery = useBoardStore((s) => s.searchQuery);
+
+  // Filter state
+  const {
+    priorityFilters, labelFilters, hasActiveFilters,
+    showFilterPopover, setShowFilterPopover,
+    togglePriorityFilter, toggleLabelFilter, clearAllFilters,
+    filterButtonRef, filterPopoverRef,
+  } = useFilterPopover();
+
+  const allLabels = useMemo(() => {
+    const labelSet = new Set<string>();
+    for (const task of tasks) {
+      for (const label of (task.labels ?? [])) labelSet.add(label);
+    }
+    return [...labelSet].sort();
+  }, [tasks]);
 
   const {
     sensors,
@@ -214,20 +241,22 @@ export function KanbanBoard() {
     for (const lane of swimlanes) map.set(lane.id, []);
     for (const task of tasks) {
       if (normalizedQuery && !task.title.toLowerCase().includes(normalizedQuery) && !task.description.toLowerCase().includes(normalizedQuery)) continue;
+      if (priorityFilters.size > 0 && !priorityFilters.has(task.priority)) continue;
+      if (labelFilters.size > 0 && !(task.labels ?? []).some((label) => labelFilters.has(label))) continue;
       const arr = map.get(task.swimlane_id);
       if (arr) arr.push(task);
     }
     for (const arr of map.values()) arr.sort((a, b) => a.position - b.position);
     return map;
-  }, [swimlanes, tasks, searchQuery]);
+  }, [swimlanes, tasks, searchQuery, priorityFilters, labelFilters]);
 
-  /** Total visible task count (matching search filter) for the search bar. */
+  /** Total visible task count (matching search + filters) for the search bar. */
   const searchMatchCount = useMemo(() => {
-    if (!searchQuery) return tasks.length;
+    if (!searchQuery && !hasActiveFilters) return tasks.length;
     let count = 0;
     for (const arr of tasksPerLane.values()) count += arr.length;
     return count;
-  }, [searchQuery, tasks.length, tasksPerLane]);
+  }, [searchQuery, hasActiveFilters, tasks.length, tasksPerLane]);
 
   const handleConfigConfirm = React.useCallback((dontAskAgain: boolean) => {
     if (dontAskAgain) {
@@ -236,14 +265,60 @@ export function KanbanBoard() {
     applyConfigChange();
   }, [applyConfigChange, updateConfig]);
 
+  const filterButtonElement = (
+    <div className="relative">
+      <button
+        ref={filterButtonRef}
+        type="button"
+        onClick={() => setShowFilterPopover(!showFilterPopover)}
+        className={`flex items-center gap-1 p-1 rounded transition-colors ${
+          hasActiveFilters
+            ? 'text-accent-fg'
+            : 'text-fg-muted hover:text-fg'
+        }`}
+        data-testid="board-filter-btn"
+        aria-label="Filter tasks"
+      >
+        <Filter size={14} />
+        {hasActiveFilters && (
+          <CountBadge count={priorityFilters.size + labelFilters.size} variant="solid" size="sm" />
+        )}
+      </button>
+
+      {showFilterPopover && (
+        <div
+          ref={filterPopoverRef}
+          className="absolute right-0 top-full mt-1 z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-2 w-[260px] max-h-[380px] overflow-y-auto"
+        >
+          <FilterPopover
+            priorities={priorities}
+            priorityFilters={priorityFilters}
+            onTogglePriority={togglePriorityFilter}
+            allLabels={allLabels}
+            labelColors={labelColors}
+            labelFilters={labelFilters}
+            onToggleLabel={toggleLabelFilter}
+            onClearAll={clearAllFilters}
+            hasActiveFilters={hasActiveFilters}
+          />
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className="relative h-full overflow-x-auto overflow-y-hidden flex flex-col">
       <ConfigWarningBanner />
-      {showBoardSearch && (
+      {showBoardSearch ? (
         <BoardSearchBar
           totalCount={tasks.length}
           matchCount={searchMatchCount}
+          filterButton={filterButtonElement}
         />
+      ) : (
+        <div className="mx-4 mt-4 mb-0 flex justify-end">
+          {filterButtonElement}
+        </div>
       )}
       <div className="flex-1 overflow-x-auto overflow-y-hidden p-4">
       <WelcomeOverlay />

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { Plus, Search, SquareArrowOutUpRight, Trash2, Inbox, Tags, Flag, Filter, Pencil, X, Github, ExternalLink, GripVertical } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { DndContext, DragOverlay } from '@dnd-kit/core';
@@ -18,7 +18,9 @@ import { ImportDialog } from './ImportDialog';
 import type { ImportSource } from '../../../shared/types';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { CountBadge } from '../CountBadge';
+import { FilterPopover } from '../FilterPopover';
 import { useBacklogDragDrop } from '../../hooks/useBacklogDragDrop';
+import { useFilterPopover } from '../../hooks/useFilterPopover';
 import { useBacklogStore } from '../../stores/backlog-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
@@ -112,17 +114,18 @@ export function BacklogView() {
   const labelColors = config.backlog?.labelColors ?? {};
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [priorityFilters, setPriorityFilters] = useState<Set<number>>(new Set());
-  const [labelFilters, setLabelFilters] = useState<Set<string>>(new Set());
-  const [showFilterPopover, setShowFilterPopover] = useState(false);
+  const {
+    priorityFilters, labelFilters, hasActiveFilters,
+    showFilterPopover, setShowFilterPopover,
+    togglePriorityFilter, toggleLabelFilter, clearAllFilters,
+    filterButtonRef, filterPopoverRef,
+  } = useFilterPopover();
   const [showNewDialog, setShowNewDialog] = useState(false);
   const [editingItem, setEditingItem] = useState<BacklogItem | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ position: { x: number; y: number }; item: BacklogItem } | null>(null);
   const [importSource, setImportSource] = useState<ImportSource | null>(null);
-  const filterButtonRef = useRef<HTMLButtonElement>(null);
-  const filterPopoverRef = useRef<HTMLDivElement>(null);
 
   // Config-driven priorities
   const priorities = config.backlog?.priorities ?? [
@@ -144,39 +147,6 @@ export function BacklogView() {
     }
     return [...labelSet].sort();
   }, [items, boardTasks]);
-
-  const hasActiveFilters = priorityFilters.size > 0 || labelFilters.size > 0;
-
-  // Close filter popover on click outside
-  useEffect(() => {
-    if (!showFilterPopover) return;
-    const handleClick = (event: MouseEvent) => {
-      if (
-        filterPopoverRef.current && !filterPopoverRef.current.contains(event.target as Node) &&
-        filterButtonRef.current && !filterButtonRef.current.contains(event.target as Node)
-      ) {
-        setShowFilterPopover(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick, true);
-    return () => document.removeEventListener('mousedown', handleClick, true);
-  }, [showFilterPopover]);
-
-  const togglePriorityFilter = useCallback((value: number) => {
-    setPriorityFilters((previous) => {
-      const next = new Set(previous);
-      if (next.has(value)) { next.delete(value); } else { next.add(value); }
-      return next;
-    });
-  }, []);
-
-  const toggleLabelFilter = useCallback((label: string) => {
-    setLabelFilters((previous) => {
-      const next = new Set(previous);
-      if (next.has(label)) { next.delete(label); } else { next.add(label); }
-      return next;
-    });
-  }, []);
 
   // --- Sort state (column sort disables drag-to-reorder) ---
   const [isColumnSorted, setIsColumnSorted] = useState(false);
@@ -454,89 +424,17 @@ export function BacklogView() {
               ref={filterPopoverRef}
               className="absolute right-0 top-full mt-1 z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-2 w-[260px] max-h-[380px] overflow-y-auto"
             >
-              {/* Priority section - horizontal toggleable pills */}
-              <div className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
-                Priority
-              </div>
-              <div className="flex flex-wrap gap-1.5 px-3 py-1.5">
-                {priorities.map((priority, index) => {
-                  const isActive = priorityFilters.has(index);
-                  return (
-                    <button
-                      key={index}
-                      type="button"
-                      onClick={() => togglePriorityFilter(index)}
-                    >
-                      {index === 0 ? (
-                        <Pill
-                          size="sm"
-                          className={`font-medium ${isActive ? 'bg-surface-hover text-fg ring-1 ring-fg-muted' : 'bg-surface-hover/60 text-fg-muted'}`}
-                        >
-                          {priority.label}
-                        </Pill>
-                      ) : (
-                        <Pill
-                          size="sm"
-                          className={`bg-surface-hover/60 font-medium ${isActive ? 'ring-1 ring-fg-muted' : ''}`}
-                          style={{ color: priority.color }}
-                        >
-                          {priority.label}
-                        </Pill>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Labels section - 2-column grid */}
-              {allLabels.length > 0 && (
-                <>
-                  <div className="my-1.5 border-t border-edge" />
-                  <div className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
-                    Labels
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5 px-3 py-1.5">
-                    {allLabels.map((label) => {
-                      const color = labelColors[label];
-                      const isActive = labelFilters.has(label);
-                      return (
-                        <button
-                          key={label}
-                          type="button"
-                          onClick={() => toggleLabelFilter(label)}
-                          className="flex items-center justify-center"
-                        >
-                          <Pill
-                            size="sm"
-                            className={color
-                              ? `bg-surface-hover/60 font-medium w-full ${isActive ? 'ring-1 ring-fg-muted' : ''}`
-                              : `w-full ${isActive ? 'bg-surface-hover text-fg ring-1 ring-fg-muted' : 'bg-surface-hover/60 text-fg-muted'}`
-                            }
-                            style={color ? { color } : undefined}
-                          >
-                            {label}
-                          </Pill>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-
-              {/* Clear all */}
-              {hasActiveFilters && (
-                <>
-                  <div className="mx-2 my-1.5 border-t border-edge" />
-                  <button
-                    type="button"
-                    onClick={() => { setPriorityFilters(new Set()); setLabelFilters(new Set()); }}
-                    className="w-full px-3 py-1.5 text-xs text-fg-secondary hover:text-fg text-left hover:bg-surface-hover/30 flex items-center gap-1.5"
-                  >
-                    <X size={12} />
-                    Clear all filters
-                  </button>
-                </>
-              )}
+              <FilterPopover
+                priorities={priorities}
+                priorityFilters={priorityFilters}
+                onTogglePriority={togglePriorityFilter}
+                allLabels={allLabels}
+                labelColors={labelColors}
+                labelFilters={labelFilters}
+                onToggleLabel={toggleLabelFilter}
+                onClearAll={clearAllFilters}
+                hasActiveFilters={hasActiveFilters}
+              />
             </div>
           )}
         </div>
