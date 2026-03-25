@@ -1,11 +1,10 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
-import { getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout, buildAutoCommandVars, createTransitionEngine } from '../helpers';
-import { handleTaskMove, guardActiveNonWorktreeSessions } from './tasks';
+import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, autoSpawnForTask } from '../helpers';
+import { handleTaskMove } from './tasks';
 import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
 import type { Session } from '../../../shared/types';
@@ -280,69 +279,10 @@ export function registerSessionHandlers(context: IpcContext): void {
     }
 
     // Auto-spawn: if the target column has auto_spawn, start an agent session
-    if (!projectId) return;
-    try {
-      const db = getProjectDb(projectId);
-      const swimlaneRepo = new SwimlaneRepository(db);
-      const toLane = swimlaneRepo.getById(swimlaneId);
-      if (!toLane?.auto_spawn) return;
-
-      const project = context.projectRepo.getById(projectId);
-      const projectPath = project?.path ?? null;
-      if (!projectPath) return;
-
-      const { tasks, actions, attachments } = getProjectRepos(context, projectId);
-      const fullTask = tasks.getById(task.id);
-      if (!fullTask) return;
-
-      try {
-        await ensureTaskWorktree(context, fullTask, tasks, projectPath);
-      } catch (worktreeError) {
-        console.error('[MCP auto-spawn] Worktree creation failed:', worktreeError);
-        return;
-      }
-
-      // Checkout branch for non-worktree tasks (may fail if another session is active)
-      if (fullTask.base_branch && !fullTask.worktree_path) {
-        try {
-          guardActiveNonWorktreeSessions(context, fullTask, tasks);
-          await ensureTaskBranchCheckout(fullTask, projectPath);
-        } catch (checkoutError) {
-          console.error('[MCP auto-spawn] Branch checkout failed:', checkoutError);
-          return;
-        }
-      }
-
-      const sessionRepo = new SessionRepository(db);
-      const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
-
-      try {
-        await engine.executeTransition(fullTask, '*', toLane.id, toLane.permission_mode);
-      } catch (err) {
-        console.error('[MCP auto-spawn] Transition engine error:', err);
-      }
-
-      // Re-read task; if still no session, resume suspended or spawn fresh
-      let finalTask = tasks.getById(task.id);
-      if (finalTask && !finalTask.session_id && toLane.auto_spawn) {
-        try {
-          await engine.resumeSuspendedSession(finalTask, toLane.permission_mode);
-          finalTask = tasks.getById(task.id);
-        } catch (err) {
-          console.error('[MCP auto-spawn] Failed to start session:', err);
-        }
-      }
-
-      // Schedule auto-command for freshly spawned session
-      if (finalTask?.session_id && toLane.auto_command) {
-        const vars = buildAutoCommandVars(finalTask);
-        const interpolated = context.commandBuilder.interpolateTemplate(toLane.auto_command, vars);
-        context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
-      }
-
-      console.log(`[MCP auto-spawn] Spawned agent for "${task.title}" in ${columnName}`);
-    } catch (err) {
-      console.error('[MCP auto-spawn] Failed:', err);
+    if (projectId) {
+      autoSpawnForTask(context, projectId, task, swimlaneId).catch(err => {
+        console.error('[MCP auto-spawn] Failed:', err);
+      });
     }
   });
 

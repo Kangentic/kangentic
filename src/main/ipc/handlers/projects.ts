@@ -12,7 +12,7 @@ import { stripKangenticHooks } from '../../agent/hook-manager';
 import { getProjectDb, closeProjectDb } from '../../db/database';
 import { CommandBridge } from '../../agent/command-bridge';
 import { PATHS } from '../../config/paths';
-import { ensureGitignore } from '../helpers';
+import { ensureGitignore, autoSpawnForTask } from '../helpers';
 import { trackEvent } from '../../analytics/analytics';
 import { isShuttingDown } from '../../shutdown-state';
 import type { Project, Task, AppConfig } from '../../../shared/types';
@@ -278,6 +278,10 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
             IPC.TASK_CREATED_BY_AGENT, task.id, task.title, columnName, project.id
           );
         }
+        // Auto-spawn agent if target column has auto_spawn enabled
+        autoSpawnForTask(context, project.id, task, swimlaneId).catch(err => {
+          console.error('[CommandBridge auto-spawn] Failed:', err);
+        });
       },
       onTaskUpdated: (task) => {
         if (!context.mainWindow.isDestroyed()) {

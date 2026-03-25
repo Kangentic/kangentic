@@ -217,6 +217,98 @@ export function getProjectRepos(context: IpcContext, projectId?: string | null):
 }
 
 /**
+ * Auto-spawn an agent session for a newly created task when the target
+ * swimlane has `auto_spawn` enabled. Handles worktree setup, branch checkout,
+ * transition engine execution, session resume fallback, and auto-command
+ * injection.
+ *
+ * Called from both the SessionManager `task-created` event (internal MCP
+ * bridge) and the external CommandBridge `onTaskCreated` callback.
+ */
+export async function autoSpawnForTask(
+  context: IpcContext,
+  projectId: string,
+  task: { id: string; title: string },
+  swimlaneId: string,
+): Promise<void> {
+  try {
+    const db = getProjectDb(projectId);
+    const swimlaneRepo = new SwimlaneRepository(db);
+    const toLane = swimlaneRepo.getById(swimlaneId);
+    if (!toLane?.auto_spawn) return;
+
+    const project = context.projectRepo.getById(projectId);
+    const projectPath = project?.path ?? null;
+    if (!projectPath) return;
+
+    const { tasks, actions, attachments } = getProjectRepos(context, projectId);
+    const fullTask = tasks.getById(task.id);
+    if (!fullTask) return;
+
+    try {
+      await ensureTaskWorktree(context, fullTask, tasks, projectPath);
+    } catch (worktreeError) {
+      console.error('[MCP auto-spawn] Worktree creation failed:', worktreeError);
+      return;
+    }
+
+    // Checkout branch for non-worktree tasks (may fail if another session is active)
+    if (fullTask.base_branch && !fullTask.worktree_path) {
+      try {
+        // Inlined from guardActiveNonWorktreeSessions to avoid circular import with task-move.ts
+        const activeSessions = context.sessionManager.listSessions()
+          .filter(session => session.taskId !== fullTask.id && (session.status === 'running' || session.status === 'queued'));
+        const otherNonWorktreeSessions = activeSessions.filter(session => {
+          const otherTask = tasks.getById(session.taskId);
+          return otherTask && !otherTask.worktree_path;
+        });
+        if (otherNonWorktreeSessions.length > 0) {
+          throw new Error(
+            `Cannot switch to branch '${fullTask.base_branch}': another task is running in the main repo. `
+            + `Enable worktree mode for branch isolation.`
+          );
+        }
+        await ensureTaskBranchCheckout(fullTask, projectPath);
+      } catch (checkoutError) {
+        console.error('[MCP auto-spawn] Branch checkout failed:', checkoutError);
+        return;
+      }
+    }
+
+    const sessionRepo = new SessionRepository(db);
+    const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
+
+    try {
+      await engine.executeTransition(fullTask, '*', toLane.id, toLane.permission_mode);
+    } catch (err) {
+      console.error('[MCP auto-spawn] Transition engine error:', err);
+    }
+
+    // Re-read task; if still no session, resume suspended or spawn fresh
+    let finalTask = tasks.getById(task.id);
+    if (finalTask && !finalTask.session_id && toLane.auto_spawn) {
+      try {
+        await engine.resumeSuspendedSession(finalTask, toLane.permission_mode);
+        finalTask = tasks.getById(task.id);
+      } catch (err) {
+        console.error('[MCP auto-spawn] Failed to start session:', err);
+      }
+    }
+
+    // Schedule auto-command for freshly spawned session
+    if (finalTask?.session_id && toLane.auto_command) {
+      const vars = buildAutoCommandVars(finalTask);
+      const interpolated = context.commandBuilder.interpolateTemplate(toLane.auto_command, vars);
+      context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
+    }
+
+    console.log(`[MCP auto-spawn] Spawned agent for "${task.title}" in ${toLane.name}`);
+  } catch (err) {
+    console.error('[MCP auto-spawn] Failed:', err);
+  }
+}
+
+/**
  * Kill the PTY session and wipe session records for a task.
  * Preserves the worktree and branch so code is not lost.
  *

@@ -388,7 +388,7 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
     await waitForTaskScrollback(page, taskId, 'MOCK_CLAUDE_SESSION:', 30000);
 
     // Move to To Do → kills session, marks 'exited'
-    await moveTask(page, taskId, lanes['role:backlog']);
+    await moveTask(page, taskId, lanes['role:todo']);
     await waitForNoRunningSessions(page);
     await page.waitForTimeout(1000);
 
