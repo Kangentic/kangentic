@@ -1,85 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Download, Plus, Trash2, Github, KanbanSquare, CircleDot, ChevronRight, ArrowLeft, Loader2, Cloud, X } from 'lucide-react';
+import { Download, Plus, Trash2, ChevronRight, ArrowLeft, Loader2, X } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
-import type { ExternalSource, ImportSource } from '../../../shared/types';
+import { PROVIDERS, getSourceLabel, getSourceIcon } from './import-providers';
+import type { Provider, SourceTypeOption } from './import-providers';
+import type { ImportSource } from '../../../shared/types';
 
 interface ImportPopoverProps {
   onOpenImportDialog: (source: ImportSource) => void;
-}
-
-// --- Provider + source type definitions ---
-
-interface SourceTypeOption {
-  value: ExternalSource;
-  label: string;
-  description: string;
-  placeholder: string;
-  hint: string;
-  icon: React.ReactNode;
-}
-
-interface Provider {
-  id: string;
-  label: string;
-  icon: React.ReactNode;
-  available: boolean;
-  comingSoon?: boolean;
-  sourceTypes: SourceTypeOption[];
-}
-
-const PROVIDERS: Provider[] = [
-  {
-    id: 'github',
-    label: 'GitHub',
-    icon: <Github size={18} />,
-    available: true,
-    sourceTypes: [
-      {
-        value: 'github_issues',
-        label: 'GitHub Issues',
-        description: 'Import from a repository issue tracker',
-        placeholder: 'https://github.com/owner/repo',
-        hint: 'Paste the full URL to your GitHub repository',
-        icon: <CircleDot size={16} />,
-      },
-      {
-        value: 'github_projects',
-        label: 'GitHub Projects',
-        description: 'Import from a GitHub Project board',
-        placeholder: 'https://github.com/orgs/owner/projects/1',
-        hint: 'Paste the full URL to your GitHub Project',
-        icon: <KanbanSquare size={16} />,
-      },
-    ],
-  },
-  {
-    id: 'azure',
-    label: 'Azure DevOps',
-    icon: <Cloud size={18} />,
-    available: false,
-    comingSoon: true,
-    sourceTypes: [],
-  },
-];
-
-// --- Helper functions ---
-
-function sourceLabel(source: ExternalSource): string {
-  for (const provider of PROVIDERS) {
-    for (const sourceType of provider.sourceTypes) {
-      if (sourceType.value === source) return `${provider.label} ${sourceType.label}`;
-    }
-  }
-  return source;
-}
-
-function sourceIconElement(source: ExternalSource): React.ReactNode {
-  for (const provider of PROVIDERS) {
-    for (const sourceType of provider.sourceTypes) {
-      if (sourceType.value === source) return provider.icon;
-    }
-  }
-  return <Github size={18} />;
 }
 
 // --- Add source flow phases ---
@@ -265,10 +192,10 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
                   onClick={() => handleSourceClick(source)}
                   data-testid={`import-source-${source.id}`}
                 >
-                  <span className="w-5 flex justify-center text-fg-muted shrink-0">{sourceIconElement(source.source)}</span>
+                  <span className="w-5 flex justify-center text-fg-muted shrink-0">{getSourceIcon(source.source)}</span>
                   <div className="flex-1 min-w-0">
                     <span className="text-sm text-fg truncate block">{source.label}</span>
-                    <span className="text-[11px] text-fg-faint">{sourceLabel(source.source)}</span>
+                    <span className="text-[11px] text-fg-faint">{getSourceLabel(source.source)}</span>
                   </div>
                   <button
                     type="button"

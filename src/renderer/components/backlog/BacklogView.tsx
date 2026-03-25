@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef } from 'react';
-import { Plus, Search, SquareArrowOutUpRight, Trash2, Inbox, Filter, Pencil, X, Github, ExternalLink, GripVertical } from 'lucide-react';
+import { Plus, Search, SquareArrowRight, Trash2, Inbox, Filter, Pencil, X, Github, ExternalLink, GripVertical } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { DndContext, DragOverlay } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -32,39 +32,39 @@ type SortKey = 'select' | 'priority' | 'title' | 'labels' | 'created' | 'actions
 function RowActions({
   itemId,
   swimlanes,
-  onPromote,
+  onMoveToBoard,
   onEdit,
   onDelete,
 }: {
   itemId: string;
   swimlanes: ReturnType<typeof useBoardStore.getState>['swimlanes'];
-  onPromote: (itemId: string, swimlaneId: string) => void;
+  onMoveToBoard: (itemId: string, swimlaneId: string) => void;
   onEdit: (itemId: string) => void;
   onDelete: (itemId: string) => void;
 }) {
   const [showPicker, setShowPicker] = useState(false);
-  const promoteButtonRef = useRef<HTMLButtonElement>(null);
+  const moveButtonRef = useRef<HTMLButtonElement>(null);
 
   return (
     <div className="flex items-center justify-end gap-1 relative" onClick={(event) => event.stopPropagation()}>
       <div className="relative">
         <button
-          ref={promoteButtonRef}
+          ref={moveButtonRef}
           type="button"
           onClick={() => setShowPicker(!showPicker)}
           className="p-1.5 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
           title="Move to board"
-          data-testid="promote-item-btn"
+          data-testid="move-to-board-btn"
         >
-          <SquareArrowOutUpRight size={15} />
+          <SquareArrowRight size={15} />
         </button>
         {showPicker && (
           <PromotePopover
-            triggerRef={promoteButtonRef}
+            triggerRef={moveButtonRef}
             swimlanes={swimlanes}
             onSelect={(swimlaneId) => {
               setShowPicker(false);
-              onPromote(itemId, swimlaneId);
+              onMoveToBoard(itemId, swimlaneId);
             }}
             onClose={() => setShowPicker(false)}
           />
@@ -174,11 +174,11 @@ export function BacklogView() {
 
   // --- Action handlers ---
 
-  const handlePromoteSingle = useCallback(async (itemId: string, swimlaneId: string) => {
+  const handleMoveSingle = useCallback(async (itemId: string, swimlaneId: string) => {
     await promoteItems([itemId], swimlaneId);
   }, [promoteItems]);
 
-  const handleBulkPromote = useCallback(async (swimlaneId: string) => {
+  const handleBulkMove = useCallback(async (swimlaneId: string) => {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
     await promoteItems(ids, swimlaneId);
@@ -332,13 +332,13 @@ export function BacklogView() {
         <RowActions
           itemId={item.id}
           swimlanes={swimlanes}
-          onPromote={handlePromoteSingle}
+          onMoveToBoard={handleMoveSingle}
           onEdit={handleEdit}
           onDelete={handleDelete}
         />
       ),
     },
-  ], [selectedIds, toggleSelected, selectAll, swimlanes, handlePromoteSingle, handleEdit, handleDelete, labelColors]);
+  ], [selectedIds, toggleSelected, selectAll, swimlanes, handleMoveSingle, handleEdit, handleDelete, labelColors]);
 
   // --- Drag-to-reorder ---
   // Drag is allowed with filters/search (slot algorithm preserves hidden items),
@@ -505,7 +505,8 @@ export function BacklogView() {
               <BacklogBulkToolbar
                 selectedCount={selectedIds.size}
                 swimlanes={swimlanes}
-                onPromote={handleBulkPromote}
+                onMoveToBoard={handleBulkMove}
+                onDelete={handleBulkDelete}
               />
             )}
           </>
@@ -517,7 +518,7 @@ export function BacklogView() {
         <BacklogContextMenu
           position={contextMenu.position}
           swimlanes={swimlanes}
-          onPromote={(swimlaneId) => handlePromoteSingle(contextMenu.item.id, swimlaneId)}
+          onMoveToBoard={(swimlaneId) => handleMoveSingle(contextMenu.item.id, swimlaneId)}
           onEdit={() => handleEdit(contextMenu.item.id)}
           onDelete={() => handleDelete(contextMenu.item.id)}
           onClose={() => setContextMenu(null)}

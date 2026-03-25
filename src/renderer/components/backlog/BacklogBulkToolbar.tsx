@@ -1,20 +1,22 @@
 import React, { useState, useRef } from 'react';
-import { SquareArrowOutUpRight } from 'lucide-react';
+import { SquareArrowRight, Trash2 } from 'lucide-react';
 import { PromotePopover } from './PromotePopover';
 import type { Swimlane } from '../../../shared/types';
 
 interface BacklogBulkToolbarProps {
   selectedCount: number;
   swimlanes: Swimlane[];
-  onPromote: (swimlaneId: string) => void;
+  onMoveToBoard: (swimlaneId: string) => void;
+  onDelete: () => void;
 }
 
 export function BacklogBulkToolbar({
   selectedCount,
   swimlanes,
-  onPromote,
+  onMoveToBoard,
+  onDelete,
 }: BacklogBulkToolbarProps) {
-  const [showPromotePicker, setShowPromotePicker] = useState(false);
+  const [showColumnPicker, setShowColumnPicker] = useState(false);
   const toolbarRef = useRef<HTMLDivElement>(null);
 
   return (
@@ -29,22 +31,31 @@ export function BacklogBulkToolbar({
       <div className="w-px h-5 bg-edge" />
       <button
         type="button"
-        onClick={() => setShowPromotePicker(!showPromotePicker)}
+        onClick={() => setShowColumnPicker(!showColumnPicker)}
         className="flex items-center gap-1.5 text-sm text-fg-secondary hover:text-fg px-2 py-1 rounded hover:bg-surface-hover/40 transition-colors"
-        data-testid="bulk-promote-btn"
+        data-testid="bulk-move-to-board-btn"
       >
-        <SquareArrowOutUpRight size={14} />
+        <SquareArrowRight size={14} />
         Move to Board
       </button>
-      {showPromotePicker && (
+      <button
+        type="button"
+        onClick={onDelete}
+        className="flex items-center gap-1.5 text-sm text-fg-secondary hover:text-danger px-2 py-1 rounded hover:bg-surface-hover/40 transition-colors"
+        data-testid="bulk-delete-btn"
+      >
+        <Trash2 size={14} />
+        Delete
+      </button>
+      {showColumnPicker && (
         <PromotePopover
           triggerRef={toolbarRef}
           swimlanes={swimlanes}
           onSelect={(swimlaneId) => {
-            setShowPromotePicker(false);
-            onPromote(swimlaneId);
+            setShowColumnPicker(false);
+            onMoveToBoard(swimlaneId);
           }}
-          onClose={() => setShowPromotePicker(false)}
+          onClose={() => setShowColumnPicker(false)}
         />
       )}
     </div>

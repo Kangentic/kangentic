@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import https from 'node:https';
 import http from 'node:http';
 import { URL } from 'node:url';
-import type { ExternalIssue } from '../../shared/types';
+import type { ExternalIssue } from '../../../shared/types';
 
 const execFileAsync = promisify(execFile);
 

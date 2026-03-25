@@ -137,18 +137,22 @@ Click **Import** in the backlog toolbar to pull tasks from external project mana
 **Supported sources:**
 - **GitHub Issues** - import issues from any GitHub repository
 - **GitHub Projects** - import items from a GitHub Project board
+- **Azure DevOps Work Items** - import work items from Azure DevOps boards, sprints, or backlogs
 
-**Prerequisites:** The `gh` CLI must be installed and authenticated. For GitHub Projects, the `project` scope is required (`gh auth refresh -s project`).
+**Prerequisites:**
+- **GitHub:** The `gh` CLI must be installed and authenticated. For GitHub Projects, the `project` scope is required (`gh auth refresh -s project`).
+- **Azure DevOps:** The `az` CLI must be installed, authenticated (`az login`), and the azure-devops extension installed (`az extension add --name azure-devops`).
 
 **Adding a source:**
 1. Click **Import** > **Add Source**
-2. Choose a provider (GitHub) and source type (Issues or Projects)
-3. Paste the full URL (e.g., `https://github.com/owner/repo` or `https://github.com/orgs/owner/projects/1`)
+2. Choose a provider (GitHub or Azure DevOps) and source type
+3. Paste the full URL (e.g., `https://github.com/owner/repo`, `https://github.com/orgs/owner/projects/1`, or `https://dev.azure.com/org/project`)
 4. Click **Connect** - Kangentic verifies CLI authentication and saves the source
+5. For Azure DevOps sprint URLs, items are automatically scoped to that sprint's iteration path
 
 **Importing items:**
 1. Click a saved source to open the import dialog
-2. Browse items with filtering by title, status, and assignee
+2. Browse items with filtering by title, type, status, assignee, and labels
 3. Use the "Imported" toggle to hide already-imported items (on by default)
 4. Click anywhere on a row to select it (or use the checkbox)
 5. Click **Import (N)** to pull selected items into the backlog

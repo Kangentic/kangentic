@@ -5,7 +5,7 @@ import type { Swimlane } from '../../../shared/types';
 interface BacklogContextMenuProps {
   position: { x: number; y: number };
   swimlanes: Swimlane[];
-  onPromote: (swimlaneId: string) => void;
+  onMoveToBoard: (swimlaneId: string) => void;
   onEdit: () => void;
   onDelete: () => void;
   onClose: () => void;
@@ -14,7 +14,7 @@ interface BacklogContextMenuProps {
 export function BacklogContextMenu({
   position,
   swimlanes,
-  onPromote,
+  onMoveToBoard,
   onEdit,
   onDelete,
   onClose,
@@ -63,9 +63,9 @@ export function BacklogContextMenu({
             <button
               key={lane.id}
               type="button"
-              onClick={() => { onPromote(lane.id); onClose(); }}
+              onClick={() => { onMoveToBoard(lane.id); onClose(); }}
               className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
-              data-testid="context-promote-item"
+              data-testid="context-move-to-board"
             >
               <div
                 className="w-2 h-2 rounded-full flex-shrink-0"

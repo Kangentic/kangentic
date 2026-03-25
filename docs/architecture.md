@@ -99,7 +99,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `backlog:importCheckCli` | invoke | Check if the CLI tool for a source is available and authenticated |
-| `backlog:importFetch` | invoke | Fetch items from an external source (GitHub Issues, Projects) |
+| `backlog:importFetch` | invoke | Fetch items from an external source (GitHub Issues, GitHub Projects, Azure DevOps) |
 | `backlog:importExecute` | invoke | Import selected items into the backlog with attachment download |
 | `backlog:importSourcesList` | invoke | List saved import sources for the current project |
 | `backlog:importSourcesAdd` | invoke | Add a new import source (persisted in project config) |

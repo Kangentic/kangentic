@@ -629,7 +629,7 @@ export interface BacklogDemoteInput {
 
 // === External Import Types ===
 
-export type ExternalSource = 'github_issues' | 'github_projects';
+export type ExternalSource = 'github_issues' | 'github_projects' | 'azure_devops';
 
 export interface ImportSource {
   id: string;
@@ -649,6 +649,7 @@ export interface ExternalIssue {
   labels: string[];
   assignee: string | null;
   state: string;
+  workItemType?: string;
   createdAt: string;
   updatedAt: string;
   alreadyImported: boolean;

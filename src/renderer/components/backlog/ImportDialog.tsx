@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Github, Check, Loader2, Paperclip, Search, AlertCircle, Filter, X, RefreshCw, EyeOff, Eye } from 'lucide-react';
+import { Check, Loader2, Paperclip, Search, AlertCircle, X, RefreshCw, EyeOff, Eye } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { Pill } from '../Pill';
+import { MultiSelectDropdown } from '../MultiSelectDropdown';
+import { ButtonGroup } from '../ButtonGroup';
 import { useBacklogStore } from '../../stores/backlog-store';
 import { useToastStore } from '../../stores/toast-store';
+import { getProviderLabel, getSourceIcon } from './import-providers';
 import type { ExternalIssue, ImportSource } from '../../../shared/types';
 
 interface ImportDialogProps {
@@ -32,6 +35,8 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   const [filterText, setFilterText] = useState('');
   const [filterStatuses, setFilterStatuses] = useState<Set<string>>(new Set());
   const [filterAssignees, setFilterAssignees] = useState<Set<string>>(new Set());
+  const [filterTypes, setFilterTypes] = useState<Set<string>>(new Set());
+  const [filterLabels, setFilterLabels] = useState<Set<string>>(new Set());
   const [hideImported, setHideImported] = useState(true);
 
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -123,6 +128,16 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     [issues],
   );
 
+  const uniqueTypes = useMemo(() =>
+    [...new Set(issues.map((issue) => issue.workItemType).filter((type): type is string => Boolean(type)))].sort(),
+    [issues],
+  );
+
+  const uniqueLabels = useMemo(() =>
+    [...new Set(issues.flatMap((issue) => issue.labels))].sort(),
+    [issues],
+  );
+
   // Client-side filtering (issues are pre-sorted by createdAt desc on fetch)
   const filteredIssues = useMemo(() => {
     return issues.filter((issue) => {
@@ -130,13 +145,15 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       if (filterText && !issue.title.toLowerCase().includes(filterText.toLowerCase())) return false;
       if (filterStatuses.size > 0 && (!issue.state || !filterStatuses.has(issue.state))) return false;
       if (filterAssignees.size > 0 && (!issue.assignee || !filterAssignees.has(issue.assignee))) return false;
+      if (filterTypes.size > 0 && (!issue.workItemType || !filterTypes.has(issue.workItemType))) return false;
+      if (filterLabels.size > 0 && !issue.labels.some((label) => filterLabels.has(label))) return false;
       return true;
     });
-  }, [issues, filterText, filterStatuses, filterAssignees, hideImported]);
+  }, [issues, filterText, filterStatuses, filterAssignees, filterTypes, filterLabels, hideImported]);
 
   const selectableIssues = filteredIssues.filter((issue) => !issue.alreadyImported);
   const allImported = issues.length > 0 && issues.every((issue) => issue.alreadyImported);
-  const hasActiveFilters = filterText !== '' || filterStatuses.size > 0 || filterAssignees.size > 0;
+  const hasActiveFilters = filterText !== '' || filterStatuses.size > 0 || filterAssignees.size > 0 || filterTypes.size > 0 || filterLabels.size > 0;
 
   const handleToggleSelect = (externalId: string) => {
     setSelectedIds((previous) => {
@@ -162,6 +179,8 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     setFilterText('');
     setFilterStatuses(new Set());
     setFilterAssignees(new Set());
+    setFilterTypes(new Set());
+    setFilterLabels(new Set());
   };
 
   const toggleFilterStatus = (status: string) => {
@@ -178,6 +197,24 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       const next = new Set(previous);
       if (next.has(assignee)) next.delete(assignee);
       else next.add(assignee);
+      return next;
+    });
+  };
+
+  const toggleFilterType = (type: string) => {
+    setFilterTypes((previous) => {
+      const next = new Set(previous);
+      if (next.has(type)) next.delete(type);
+      else next.add(type);
+      return next;
+    });
+  };
+
+  const toggleFilterLabel = (label: string) => {
+    setFilterLabels((previous) => {
+      const next = new Set(previous);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
       return next;
     });
   };
@@ -218,34 +255,28 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     }
   };
 
-  const sourceTypeLabel = isProjectsSource ? 'GitHub Projects' : 'GitHub Issues';
+  const sourceTypeLabel = getProviderLabel(source.source);
 
   const header = (
     <div className="flex items-center gap-3 px-4 py-3 border-b border-edge">
-      <span className="text-fg-muted"><Github size={16} /></span>
+      <span className="text-fg-muted">{getSourceIcon(source.source, 16)}</span>
       <div className="flex items-center gap-1.5">
         <span className="font-medium text-sm text-fg">{source.label}</span>
         <span className="text-xs text-fg-faint">{sourceTypeLabel}</span>
       </div>
       <div className="flex-1" />
-      {/* Server-side state toggle for GitHub Issues (controls what's fetched from API) */}
+      {/* Server-side state toggle (controls what's fetched from API) */}
       {!isProjectsSource && (
-        <div className="flex items-center gap-1 text-xs">
-          {(['open', 'closed', 'all'] as StateFilter[]).map((filterValue) => (
-            <button
-              key={filterValue}
-              type="button"
-              onClick={() => handleStateFilterChange(filterValue)}
-              className={`px-2 py-0.5 rounded transition-colors capitalize ${
-                stateFilter === filterValue
-                  ? 'bg-accent-bg/20 text-accent-fg font-medium'
-                  : 'text-fg-muted hover:text-fg hover:bg-surface-hover/40'
-              }`}
-            >
-              {filterValue}
-            </button>
-          ))}
-        </div>
+        <ButtonGroup
+          size="sm"
+          options={[
+            { value: 'open' as StateFilter, label: 'Open' },
+            { value: 'closed' as StateFilter, label: 'Closed' },
+            { value: 'all' as StateFilter, label: 'All' },
+          ]}
+          value={stateFilter}
+          onChange={handleStateFilterChange}
+        />
       )}
     </div>
   );
@@ -315,26 +346,48 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
           />
         </div>
 
+        {/* Type filter (Azure DevOps work item types) */}
+        {uniqueTypes.length > 0 && (
+          <MultiSelectDropdown
+            label="Type"
+            options={uniqueTypes}
+            selected={filterTypes}
+            onToggle={toggleFilterType}
+            onClear={() => setFilterTypes(new Set())}
+          />
+        )}
+
         {/* Status filter */}
         {uniqueStatuses.length > 0 && (
           <MultiSelectDropdown
-            allLabel="All statuses"
-            pluralLabel="statuses"
+            label="Status"
             options={uniqueStatuses}
             selected={filterStatuses}
             onToggle={toggleFilterStatus}
+            onClear={() => setFilterStatuses(new Set())}
           />
         )}
 
         {/* Assignee filter */}
         {uniqueAssignees.length > 0 && (
           <MultiSelectDropdown
-            allLabel="All assignees"
-            pluralLabel="assignees"
+            label="Assignee"
             options={uniqueAssignees}
             selected={filterAssignees}
             onToggle={toggleFilterAssignee}
+            onClear={() => setFilterAssignees(new Set())}
             prefix="@"
+          />
+        )}
+
+        {/* Label filter */}
+        {uniqueLabels.length > 0 && (
+          <MultiSelectDropdown
+            label="Label"
+            options={uniqueLabels}
+            selected={filterLabels}
+            onToggle={toggleFilterLabel}
+            onClear={() => setFilterLabels(new Set())}
           />
         )}
 
@@ -353,17 +406,6 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
           Imported
         </button>
 
-        {/* Clear filters */}
-        {hasActiveFilters && (
-          <button
-            type="button"
-            onClick={clearFilters}
-            className="flex items-center gap-1 text-xs text-fg-faint hover:text-fg transition-colors shrink-0"
-          >
-            <X size={12} />
-            Clear
-          </button>
-        )}
       </div>
 
       {/* CLI error */}
@@ -419,8 +461,8 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
 
         {/* Loading state */}
         {loading && (
-          <div className="flex items-center justify-center flex-1 min-h-[200px]">
-            <Loader2 size={32} className="animate-spin text-fg-muted" />
+          <div className="flex items-center justify-center h-full min-h-[400px]">
+            <Loader2 size={48} className="animate-spin text-fg-faint" />
           </div>
         )}
 
@@ -475,79 +517,6 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   );
 }
 
-// --- Multi-select filter dropdown ---
-
-function MultiSelectDropdown({
-  allLabel,
-  pluralLabel,
-  options,
-  selected,
-  onToggle,
-  prefix = '',
-}: {
-  allLabel: string;
-  pluralLabel: string;
-  options: string[];
-  selected: Set<string>;
-  onToggle: (value: string) => void;
-  prefix?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleClick = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick, true);
-    return () => document.removeEventListener('mousedown', handleClick, true);
-  }, [open]);
-
-  const buttonLabel = selected.size === 0
-    ? allLabel
-    : selected.size === 1
-      ? `${prefix}${[...selected][0]}`
-      : `${selected.size} ${pluralLabel}`;
-
-  return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs border rounded transition-colors whitespace-nowrap ${
-          selected.size > 0
-            ? 'text-accent-fg border-accent/50 bg-accent-bg/10'
-            : 'text-fg-muted border-edge/50 hover:text-fg hover:bg-surface-hover/40'
-        }`}
-      >
-        {buttonLabel}
-        <Filter size={10} />
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 w-48 bg-surface border border-edge rounded-lg shadow-xl py-1">
-          {options.map((option) => (
-            <label
-              key={option}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs text-fg hover:bg-surface-hover/40 cursor-pointer"
-            >
-              <input
-                type="checkbox"
-                checked={selected.has(option)}
-                onChange={() => onToggle(option)}
-                className="accent-accent-emphasis"
-              />
-              {prefix}{option}
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // --- Individual issue row ---
 
 /** For project items, extract the linked issue number from the external URL if available. */
@@ -575,7 +544,7 @@ function ImportIssueRow({
 
   return (
     <div
-      className={`flex items-start gap-2.5 px-4 py-2.5 border-b border-edge/20 transition-colors ${
+      className={`flex items-start gap-2.5 px-4 py-2.5 border-b border-edge/20 transition-colors select-none ${
         isImported ? 'opacity-50 bg-surface-hover/10' : 'hover:bg-surface-hover/30 cursor-pointer'
       }`}
       onClick={() => { if (!isImported) onToggle(); }}
@@ -591,6 +560,7 @@ function ImportIssueRow({
             type="checkbox"
             checked={selected}
             onChange={onToggle}
+            onClick={(event) => event.stopPropagation()}
             className="accent-accent-emphasis"
           />
         )}
@@ -612,13 +582,16 @@ function ImportIssueRow({
         </div>
 
         <div className="flex items-center gap-2 mt-1">
+          {issue.workItemType && (
+            <Pill size="sm" className="bg-accent-bg/20 text-accent-fg border border-accent/20">{issue.workItemType}</Pill>
+          )}
           {issue.state && issue.state !== 'unknown' && (
             <span className="text-[11px] text-fg-muted bg-surface-hover/40 px-1.5 py-0.5 rounded shrink-0">
               {issue.state}
             </span>
           )}
           {issue.labels.slice(0, 4).map((label) => (
-            <Pill key={label} size="sm" className="bg-surface-hover/50 text-fg-muted">{label}</Pill>
+            <Pill key={label} size="sm" className="border border-edge/40 text-fg-muted">{label}</Pill>
           ))}
           {issue.labels.length > 4 && (
             <span className="text-[11px] text-fg-faint">+{issue.labels.length - 4}</span>

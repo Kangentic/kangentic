@@ -24,7 +24,7 @@ import type {
   ImportExecuteInput,
   Task,
 } from '../../../shared/types';
-import { GitHubImporter } from '../../import/github-importer';
+import { createImporterRegistry, getImporter } from '../../import/importer-registry';
 import { ImportSourceStore } from '../../import/import-source-store';
 
 function getBacklogRepo(context: IpcContext): BacklogRepository {
@@ -293,76 +293,23 @@ export function registerBacklogHandlers(context: IpcContext): void {
 
   // --- Import handlers ---
 
-  const githubImporter = new GitHubImporter();
+  const importers = createImporterRegistry();
 
   ipcMain.handle(IPC.BACKLOG_IMPORT_CHECK_CLI, async (_, source: ExternalSource) => {
-    if (source === 'github_issues' || source === 'github_projects') {
-      const ghPath = await githubImporter.detect();
-      if (!ghPath) {
-        return { available: false, authenticated: false, error: 'gh CLI not found. Install it from https://cli.github.com' };
-      }
-      const authResult = await githubImporter.checkAuth();
-      if (!authResult.authenticated) {
-        return { available: true, authenticated: false, error: authResult.error };
-      }
-      // GitHub Projects requires the project scope
-      if (source === 'github_projects') {
-        const scopeResult = await githubImporter.checkProjectScope();
-        if (!scopeResult.hasScope) {
-          return { available: true, authenticated: false, error: scopeResult.error };
-        }
-      }
-      return { available: true, authenticated: true };
+    const importer = importers[source];
+    if (!importer) {
+      return { available: false, authenticated: false, error: `Unsupported source: ${source}` };
     }
-    return { available: false, authenticated: false, error: `Unsupported source: ${source}` };
+    return importer.checkCli();
   });
 
   ipcMain.handle(IPC.BACKLOG_IMPORT_FETCH, async (_, input: ImportFetchInput) => {
     if (!context.currentProjectId) throw new Error('No project is currently open');
     const db = getProjectDb(context.currentProjectId);
     const backlogRepo = new BacklogRepository(db);
+    const importer = getImporter(importers, input.source);
 
-    if (input.source === 'github_issues') {
-      const { issues: rawIssues, hasNextPage } = await githubImporter.fetchIssues(
-        input.repository,
-        input.page,
-        input.perPage,
-        input.searchQuery,
-        input.state,
-      );
-
-      const externalIds = rawIssues.map((issue) => String(issue.number));
-      const alreadyImportedIds = backlogRepo.findByExternalIds('github_issues', externalIds);
-      const issues = githubImporter.mapToExternalIssues(rawIssues, alreadyImportedIds);
-
-      return {
-        issues,
-        totalCount: issues.length,
-        hasNextPage,
-      };
-    }
-
-    if (input.source === 'github_projects') {
-      const [owner, numberString] = input.repository.split('/');
-      const projectNumber = parseInt(numberString, 10);
-      if (!owner || isNaN(projectNumber)) {
-        throw new Error(`Invalid project reference: ${input.repository}. Expected format: owner/number`);
-      }
-
-      const { items: rawItems } = await githubImporter.fetchProjectItems(owner, projectNumber);
-
-      const externalIds = rawItems.map((item) => item.id);
-      const alreadyImportedProjectIds = backlogRepo.findByExternalIds('github_projects', externalIds);
-      const projectIssues = githubImporter.mapProjectItemsToExternalIssues(rawItems, alreadyImportedProjectIds);
-
-      return {
-        issues: projectIssues,
-        totalCount: projectIssues.length,
-        hasNextPage: false,
-      };
-    }
-
-    throw new Error(`Unsupported source: ${input.source}`);
+    return importer.fetch(input, (source, externalIds) => backlogRepo.findByExternalIds(source, externalIds));
   });
 
   ipcMain.handle(IPC.BACKLOG_IMPORT_EXECUTE, async (_, input: ImportExecuteInput) => {
@@ -371,6 +318,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     }
     const db = getProjectDb(context.currentProjectId);
     const backlogRepo = new BacklogRepository(db);
+    const importer = getImporter(importers, input.source);
 
     const externalIds = input.issues.map((issue) => issue.externalId);
     const alreadyImportedIds = backlogRepo.findByExternalIds(input.source, externalIds);
@@ -385,9 +333,9 @@ export function registerBacklogHandlers(context: IpcContext): void {
         continue;
       }
 
-      // Download inline images from the issue body
+      // Download inline images from the issue body (source-agnostic)
       const { attachments: downloadedAttachments, skippedCount } =
-        await githubImporter.downloadInlineImages(issue.body);
+        await importer.downloadImages(issue.body);
       totalSkippedAttachments += skippedCount;
 
       const attachmentMetadata = downloadedAttachments.map((attachment) => ({

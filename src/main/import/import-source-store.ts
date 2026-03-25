@@ -2,10 +2,25 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import type { ExternalSource, ImportSource } from '../../shared/types';
+import { parseGitHubIssuesUrl, parseGitHubProjectsUrl, buildGitHubLabel } from './github/url-parser';
+import { parseAzureDevOpsUrl, buildAzureDevOpsLabel } from './azure-devops/url-parser';
 
 interface ProjectImportConfig {
   importSources?: ImportSource[];
 }
+
+/** URL parser for a specific source type. */
+interface SourceUrlParser {
+  parse: (url: string) => { repository: string };
+  buildLabel: (repository: string) => string;
+}
+
+/** Registry of URL parsers keyed by ExternalSource. */
+const urlParsers: Record<ExternalSource, SourceUrlParser> = {
+  github_issues: { parse: parseGitHubIssuesUrl, buildLabel: buildGitHubLabel },
+  github_projects: { parse: parseGitHubProjectsUrl, buildLabel: buildGitHubLabel },
+  azure_devops: { parse: parseAzureDevOpsUrl, buildLabel: buildAzureDevOpsLabel },
+};
 
 /**
  * Persists saved import sources in the project's .kangentic/config.json file
@@ -37,10 +52,11 @@ export class ImportSourceStore {
       return existing;
     }
 
+    const parser = urlParsers[source];
     const newSource: ImportSource = {
       id: uuidv4(),
       source,
-      label: repository,
+      label: parser ? parser.buildLabel(repository) : repository,
       repository,
       url,
       createdAt: new Date().toISOString(),
@@ -88,24 +104,9 @@ export class ImportSourceStore {
 /** Parse a URL for a specific source type, returning the repository identifier. */
 export function parseUrlForSource(source: ExternalSource, url: string): { repository: string } {
   const trimmed = url.trim().replace(/\/+$/, '');
-
-  if (source === 'github_projects') {
-    const projectUrlPattern = /https?:\/\/github\.com\/(?:orgs|users)\/([^/\s]+)\/projects\/(\d+)/;
-    const projectMatch = projectUrlPattern.exec(trimmed);
-    if (projectMatch) {
-      return { repository: `${projectMatch[1]}/${projectMatch[2]}` };
-    }
-    throw new Error('Invalid GitHub Projects URL. Expected format: https://github.com/orgs/owner/projects/1');
+  const parser = urlParsers[source];
+  if (!parser) {
+    throw new Error(`Unsupported source type: ${source}`);
   }
-
-  if (source === 'github_issues') {
-    const repoUrlPattern = /https?:\/\/github\.com\/(?!orgs\/)(?!users\/)([^/\s]+\/[^/\s]+?)(?:\/(?:issues|pulls|wiki|actions)?)?(?:\?.*)?$/;
-    const repoMatch = repoUrlPattern.exec(trimmed);
-    if (repoMatch) {
-      return { repository: repoMatch[1] };
-    }
-    throw new Error('Invalid GitHub repository URL. Expected format: https://github.com/owner/repo');
-  }
-
-  throw new Error(`Unsupported source type: ${source}`);
+  return parser.parse(trimmed);
 }
