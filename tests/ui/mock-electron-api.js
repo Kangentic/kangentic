@@ -13,7 +13,7 @@
   let actions = [];
   let sessions = [];
   let attachments = [];
-  let backlogItems = [];
+  let backlogTasks = [];
   let activityCache = {};
   let eventCache = {};
   let summaryCache = {};
@@ -891,13 +891,13 @@
     },
 
     backlogAttachments: {
-      list: async function (/* backlogItemId */) {
+      list: async function (/* backlogTaskId */) {
         return [];
       },
       add: async function (input) {
         return {
           id: 'ba-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
-          backlog_item_id: input.backlog_item_id,
+          backlog_task_id: input.backlog_task_id,
           filename: input.filename,
           file_path: '/mock/' + input.filename,
           media_type: input.media_type,
@@ -914,10 +914,10 @@
 
     backlog: {
       list: async function () {
-        return backlogItems.slice().sort(function (a, b) { return a.position - b.position; });
+        return backlogTasks.slice().sort(function (a, b) { return a.position - b.position; });
       },
       create: async function (input) {
-        var maxPos = backlogItems.reduce(function (max, item) { return Math.max(max, item.position); }, -1);
+        var maxPos = backlogTasks.reduce(function (max, item) { return Math.max(max, item.position); }, -1);
         var item = {
           id: 'backlog-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
           title: input.title,
@@ -937,12 +937,12 @@
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
-        backlogItems.push(item);
+        backlogTasks.push(item);
         return item;
       },
       update: async function (input) {
-        var item = backlogItems.find(function (i) { return i.id === input.id; });
-        if (!item) throw new Error('Backlog item not found');
+        var item = backlogTasks.find(function (i) { return i.id === input.id; });
+        if (!item) throw new Error('Backlog task not found');
         if (input.title !== undefined) item.title = input.title;
         if (input.description !== undefined) item.description = input.description;
         if (input.priority !== undefined) item.priority = input.priority;
@@ -954,21 +954,21 @@
         return Object.assign({}, item);
       },
       delete: async function (id) {
-        backlogItems = backlogItems.filter(function (i) { return i.id !== id; });
+        backlogTasks = backlogTasks.filter(function (i) { return i.id !== id; });
       },
       reorder: async function (ids) {
         ids.forEach(function (id, index) {
-          var item = backlogItems.find(function (i) { return i.id === id; });
+          var item = backlogTasks.find(function (i) { return i.id === id; });
           if (item) item.position = index;
         });
       },
       bulkDelete: async function (ids) {
-        backlogItems = backlogItems.filter(function (i) { return ids.indexOf(i.id) === -1; });
+        backlogTasks = backlogTasks.filter(function (i) { return ids.indexOf(i.id) === -1; });
       },
       promote: async function (input) {
         var createdTasks = [];
-        input.backlogItemIds.forEach(function (itemId) {
-          var item = backlogItems.find(function (i) { return i.id === itemId; });
+        input.backlogTaskIds.forEach(function (itemId) {
+          var item = backlogTasks.find(function (i) { return i.id === itemId; });
           if (!item) return;
           var maxPos = tasks.reduce(function (max, t) { return t.swimlane_id === input.targetSwimlaneId ? Math.max(max, t.position) : max; }, -1);
           var task = {
@@ -995,14 +995,14 @@
           };
           tasks.push(task);
           createdTasks.push(task);
-          backlogItems = backlogItems.filter(function (i) { return i.id !== itemId; });
+          backlogTasks = backlogTasks.filter(function (i) { return i.id !== itemId; });
         });
         return createdTasks;
       },
       demote: async function (input) {
         var task = tasks.find(function (t) { return t.id === input.taskId; });
         if (!task) throw new Error('Task not found');
-        var maxPos = backlogItems.reduce(function (max, item) { return Math.max(max, item.position); }, -1);
+        var maxPos = backlogTasks.reduce(function (max, item) { return Math.max(max, item.position); }, -1);
         var item = {
           id: 'backlog-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
           title: task.title,
@@ -1022,13 +1022,13 @@
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
-        backlogItems.push(item);
+        backlogTasks.push(item);
         tasks = tasks.filter(function (t) { return t.id !== input.taskId; });
         return item;
       },
       renameLabel: async function (oldName, newName) {
         var count = 0;
-        backlogItems.forEach(function (item) {
+        backlogTasks.forEach(function (item) {
           var index = item.labels.indexOf(oldName);
           if (index !== -1) {
             item.labels[index] = newName;
@@ -1049,7 +1049,7 @@
       },
       deleteLabel: async function (name) {
         var count = 0;
-        backlogItems.forEach(function (item) {
+        backlogTasks.forEach(function (item) {
           var before = item.labels.length;
           item.labels = item.labels.filter(function (label) { return label !== name; });
           if (item.labels.length !== before) count++;
@@ -1064,7 +1064,7 @@
       },
       remapPriorities: async function (mapping) {
         var count = 0;
-        backlogItems.forEach(function (item) {
+        backlogTasks.forEach(function (item) {
           var newPriority = mapping[item.priority];
           if (newPriority !== undefined && newPriority !== item.priority) {
             item.priority = newPriority;

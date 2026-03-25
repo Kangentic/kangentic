@@ -220,7 +220,7 @@ export function LabelsPopover() {
 
   const labelEntries = useMemo(() => {
     const counts = new Map<string, number>();
-    // Count labels used on backlog items and board tasks
+    // Count labels used on backlog tasks and board tasks
     for (const item of items) {
       for (const label of item.labels) {
         counts.set(label, (counts.get(label) ?? 0) + 1);

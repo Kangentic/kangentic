@@ -294,7 +294,7 @@ export function registerSessionHandlers(context: IpcContext): void {
     }
   });
 
-  // Backlog changed by agent (MCP server created/promoted backlog items)
+  // Backlog changed by agent (MCP server created/promoted backlog tasks)
   context.sessionManager.on('backlog-changed', (sessionId: string) => {
     if (!context.mainWindow.isDestroyed()) {
       const projectId = context.sessionManager.getSessionProjectId(sessionId);

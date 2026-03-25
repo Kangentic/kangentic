@@ -234,7 +234,7 @@ server.registerTool(
 server.registerTool(
   'kangentic_search_tasks',
   {
-    description: 'Search board tasks by keyword across titles and descriptions. Searches both active and completed (archived) tasks. Does not search backlog items - use kangentic_search_backlog for that.',
+    description: 'Search board tasks by keyword across titles and descriptions. Searches both active and completed (archived) tasks. Does not search backlog tasks - use kangentic_search_backlog for that.',
     inputSchema: z.object({
       query: z.string().describe('Search keyword or phrase to match against task titles and descriptions (case-insensitive).'),
       status: z.enum(['active', 'completed', 'all']).optional().describe('Filter by task status. "active" = on the board, "completed" = in Done/archived. Defaults to "all".'),
@@ -495,14 +495,14 @@ server.registerTool(
   },
 );
 
-// --- kangentic_create_backlog_item ---
+// --- kangentic_create_backlog_task ---
 server.registerTool(
-  'kangentic_create_backlog_item',
+  'kangentic_create_backlog_task',
   {
-    description: 'Create a new item in the backlog staging area. Use this for work that should be tracked but is not ready for the board yet (future tasks, ideas, improvements). Unlike kangentic_create_task, backlog items do not have branches or worktrees.',
+    description: 'Create a new task in the backlog staging area. Use this for work that should be tracked but is not ready for the board yet (future tasks, ideas, improvements). Unlike kangentic_create_task, backlog tasks do not have branches or worktrees.',
     inputSchema: z.object({
-      title: z.string().max(200).describe('Item title (max 200 characters).'),
-      description: z.string().max(10000).optional().describe('Item description. Supports markdown.'),
+      title: z.string().max(200).describe('Task title (max 200 characters).'),
+      description: z.string().max(10000).optional().describe('Task description. Supports markdown.'),
       priority: z.number().min(0).max(4).optional().describe('Priority level: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent.'),
       labels: z.array(z.union([
         z.string(),
@@ -518,7 +518,7 @@ server.registerTool(
     }),
   },
   async ({ title, description, priority, labels, attachments }) => {
-    console.error('[mcp] create_backlog_item params:', JSON.stringify({ title, description: description?.slice(0, 100) }));
+    console.error('[mcp] create_backlog_task params:', JSON.stringify({ title, description: description?.slice(0, 100) }));
     if (taskCreationCount >= MAX_TASKS_PER_SESSION) {
       return {
         content: [{ type: 'text' as const, text: `Rate limit reached: maximum ${MAX_TASKS_PER_SESSION} items per session.` }],
@@ -526,7 +526,7 @@ server.registerTool(
       };
     }
     try {
-      const response = await sendCommand('create_backlog_item', {
+      const response = await sendCommand('create_backlog_task', {
         title,
         description: description ?? '',
         priority: priority ?? 0,
@@ -534,13 +534,13 @@ server.registerTool(
         attachments: attachments ?? null,
       });
       if (!response.success) {
-        return { content: [{ type: 'text' as const, text: `Failed to create backlog item: ${response.error}` }], isError: true };
+        return { content: [{ type: 'text' as const, text: `Failed to create backlog task: ${response.error}` }], isError: true };
       }
       taskCreationCount++;
-      return { content: [{ type: 'text' as const, text: response.message ?? `Created backlog item "${title}".` }] };
+      return { content: [{ type: 'text' as const, text: response.message ?? `Created backlog task "${title}".` }] };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      return { content: [{ type: 'text' as const, text: `Error creating backlog item: ${errorMessage}` }], isError: true };
+      return { content: [{ type: 'text' as const, text: `Error creating backlog task: ${errorMessage}` }], isError: true };
     }
   },
 );
@@ -549,7 +549,7 @@ server.registerTool(
 server.registerTool(
   'kangentic_search_backlog',
   {
-    description: 'Search backlog items by keyword across titles, descriptions, and labels.',
+    description: 'Search backlog tasks by keyword across titles, descriptions, and labels.',
     inputSchema: z.object({
       query: z.string().describe('Search keyword or phrase (case-insensitive).'),
     }),
@@ -572,9 +572,9 @@ server.registerTool(
 server.registerTool(
   'kangentic_promote_backlog',
   {
-    description: 'Move one or more backlog items to the board, creating tasks in the specified column. Moved items are removed from the backlog. Find item IDs with kangentic_list_backlog or kangentic_search_backlog.',
+    description: 'Move one or more backlog tasks to the board, creating tasks in the specified column. Moved items are removed from the backlog. Find item IDs with kangentic_list_backlog or kangentic_search_backlog.',
     inputSchema: z.object({
-      itemIds: z.array(z.string()).describe('Backlog item IDs to move to the board.'),
+      itemIds: z.array(z.string()).describe('Backlog task IDs to move to the board.'),
       column: z.string().optional().describe('Target column name. Defaults to the To Do column.'),
     }),
   },
@@ -585,12 +585,12 @@ server.registerTool(
         column: column ?? null,
       });
       if (!response.success) {
-        return { content: [{ type: 'text' as const, text: `Failed to move backlog items: ${response.error}` }], isError: true };
+        return { content: [{ type: 'text' as const, text: `Failed to move backlog tasks: ${response.error}` }], isError: true };
       }
       return { content: [{ type: 'text' as const, text: response.message ?? `Moved ${itemIds.length} item(s) to the board.` }] };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      return { content: [{ type: 'text' as const, text: `Error moving backlog items: ${errorMessage}` }], isError: true };
+      return { content: [{ type: 'text' as const, text: `Error moving backlog tasks: ${errorMessage}` }], isError: true };
     }
   },
 );

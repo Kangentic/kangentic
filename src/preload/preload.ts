@@ -217,8 +217,8 @@ const api: ElectronAPI = {
   },
 
   backlogAttachments: {
-    list: (backlogItemId: string) => ipcRenderer.invoke(IPC.BACKLOG_ATTACHMENT_LIST, backlogItemId),
-    add: (input: { backlog_item_id: string; filename: string; data: string; media_type: string }) => ipcRenderer.invoke(IPC.BACKLOG_ATTACHMENT_ADD, input),
+    list: (backlogTaskId: string) => ipcRenderer.invoke(IPC.BACKLOG_ATTACHMENT_LIST, backlogTaskId),
+    add: (input: { backlog_task_id: string; filename: string; data: string; media_type: string }) => ipcRenderer.invoke(IPC.BACKLOG_ATTACHMENT_ADD, input),
     remove: (id: string) => ipcRenderer.invoke(IPC.BACKLOG_ATTACHMENT_REMOVE, id),
     getDataUrl: (id: string) => ipcRenderer.invoke(IPC.BACKLOG_ATTACHMENT_GET_DATA_URL, id),
     open: (id: string) => ipcRenderer.invoke(IPC.BACKLOG_ATTACHMENT_OPEN, id),

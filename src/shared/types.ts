@@ -58,7 +58,7 @@ export interface TaskAttachment {
 
 export interface BacklogAttachment {
   id: string;
-  backlog_item_id: string;
+  backlog_task_id: string;
   filename: string;
   file_path: string;
   media_type: string;
@@ -571,7 +571,7 @@ export const DEFAULT_PRIORITY_CONFIG: Array<{ label: string; color: string }> = 
   { label: 'Urgent', color: '#ef4444' },
 ];
 
-export interface BacklogItem {
+export interface BacklogTask {
   id: string;
   title: string;
   description: string;
@@ -591,7 +591,7 @@ export interface BacklogItem {
   updated_at: string;
 }
 
-export interface BacklogItemCreateInput {
+export interface BacklogTaskCreateInput {
   title: string;
   description?: string;
   priority?: number;
@@ -607,7 +607,7 @@ export interface BacklogItemCreateInput {
   externalMetadata?: Record<string, unknown>;
 }
 
-export interface BacklogItemUpdateInput {
+export interface BacklogTaskUpdateInput {
   id: string;
   title?: string;
   description?: string;
@@ -617,7 +617,7 @@ export interface BacklogItemUpdateInput {
 }
 
 export interface BacklogPromoteInput {
-  backlogItemIds: string[];
+  backlogTaskIds: string[];
   targetSwimlaneId: string;
 }
 
@@ -688,7 +688,7 @@ export interface ImportExecuteResult {
   imported: number;
   skippedDuplicates: number;
   skippedAttachments: number;
-  items: BacklogItem[];
+  items: BacklogTask[];
 }
 
 export interface ImportCheckCliResult {
@@ -1048,8 +1048,8 @@ export interface ElectronAPI {
 
   // Backlog Attachments
   backlogAttachments: {
-    list: (backlogItemId: string) => Promise<BacklogAttachment[]>;
-    add: (input: { backlog_item_id: string; filename: string; data: string; media_type: string }) => Promise<BacklogAttachment>;
+    list: (backlogTaskId: string) => Promise<BacklogAttachment[]>;
+    add: (input: { backlog_task_id: string; filename: string; data: string; media_type: string }) => Promise<BacklogAttachment>;
     remove: (id: string) => Promise<void>;
     getDataUrl: (id: string) => Promise<string>;
     open: (id: string) => Promise<string>;
@@ -1057,14 +1057,14 @@ export interface ElectronAPI {
 
   // Backlog
   backlog: {
-    list: () => Promise<BacklogItem[]>;
-    create: (input: BacklogItemCreateInput) => Promise<BacklogItem>;
-    update: (input: BacklogItemUpdateInput) => Promise<BacklogItem>;
+    list: () => Promise<BacklogTask[]>;
+    create: (input: BacklogTaskCreateInput) => Promise<BacklogTask>;
+    update: (input: BacklogTaskUpdateInput) => Promise<BacklogTask>;
     delete: (id: string) => Promise<void>;
     reorder: (ids: string[]) => Promise<void>;
     bulkDelete: (ids: string[]) => Promise<void>;
     promote: (input: BacklogPromoteInput) => Promise<Task[]>;
-    demote: (input: BacklogDemoteInput) => Promise<BacklogItem>;
+    demote: (input: BacklogDemoteInput) => Promise<BacklogTask>;
     renameLabel: (oldName: string, newName: string) => Promise<number>;
     deleteLabel: (name: string) => Promise<number>;
     remapPriorities: (mapping: Record<number, number>) => Promise<number>;

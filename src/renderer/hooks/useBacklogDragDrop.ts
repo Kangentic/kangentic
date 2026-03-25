@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { useBacklogStore } from '../stores/backlog-store';
-import type { BacklogItem } from '../../shared/types';
+import type { BacklogTask } from '../../shared/types';
 import type { DragEndEvent } from '@dnd-kit/core';
 
 /**
@@ -44,7 +44,7 @@ export function computeSlotReorder(
  * @param displayItems - Items in current display order (filtered + sorted)
  * @param allItems - All items ordered by position (the full unfiltered list)
  */
-export function useBacklogDragDrop(displayItems: BacklogItem[], allItems: BacklogItem[]) {
+export function useBacklogDragDrop(displayItems: BacklogTask[], allItems: BacklogTask[]) {
   const reorderItems = useBacklogStore((state) => state.reorderItems);
   const [activeId, setActiveId] = useState<string | null>(null);
 

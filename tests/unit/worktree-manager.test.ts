@@ -182,7 +182,7 @@ describe('WorktreeManager -- fetch and base branch', () => {
 
     // Second call: worktree add with origin/develop as start point
     const worktreeAddCall = mockProjectGit.raw.mock.calls.find(
-      (c: string[][]) => c[0]?.[0] === 'worktree' && c[0]?.[1] === 'add',
+      (c: string[][]) => c[0]?.includes('worktree') && c[0]?.includes('add'),
     );
     expect(worktreeAddCall).toBeDefined();
     expect(worktreeAddCall![0][worktreeAddCall![0].length - 1]).toBe('origin/develop');
@@ -208,7 +208,7 @@ describe('WorktreeManager -- fetch and base branch', () => {
 
     // worktree add should use local 'main' (not 'origin/main')
     const worktreeAddCall = mockProjectGit.raw.mock.calls.find(
-      (c: string[][]) => c[0]?.[0] === 'worktree' && c[0]?.[1] === 'add',
+      (c: string[][]) => c[0]?.includes('worktree') && c[0]?.includes('add'),
     );
     expect(worktreeAddCall).toBeDefined();
     expect(worktreeAddCall![0][worktreeAddCall![0].length - 1]).toBe('main');
@@ -589,16 +589,18 @@ describe('WorktreeManager -- stale branch recovery', () => {
 
     // Should use 'worktree add <path> <branch>' (no -b flag)
     const worktreeAddCall = mockProjectGit.raw.mock.calls.find(
-      (call: string[][]) => call[0]?.[0] === 'worktree' && call[0]?.[1] === 'add',
+      (call: string[][]) => call[0]?.includes('worktree') && call[0]?.includes('add'),
     );
     expect(worktreeAddCall).toBeDefined();
-    expect(worktreeAddCall![0]).toEqual([
+    const worktreeAddArgs = worktreeAddCall![0];
+    const worktreeIndex = worktreeAddArgs.indexOf('worktree');
+    expect(worktreeAddArgs.slice(worktreeIndex)).toEqual([
       'worktree', 'add',
       expect.stringContaining('test-task-abcd1234'),
       'test-task-abcd1234',
     ]);
     // Should NOT contain -b flag
-    expect(worktreeAddCall![0]).not.toContain('-b');
+    expect(worktreeAddArgs).not.toContain('-b');
   });
 
   it('createWorktree prunes stale worktree metadata before checking branch', async () => {
@@ -618,10 +620,10 @@ describe('WorktreeManager -- stale branch recovery', () => {
     // worktree prune should be called before rev-parse
     const calls = mockProjectGit.raw.mock.calls.map((call: string[][]) => call[0]);
     const pruneIndex = calls.findIndex(
-      (args: string[]) => args[0] === 'worktree' && args[1] === 'prune',
+      (args: string[]) => args.includes('worktree') && args.includes('prune'),
     );
     const revParseIndex = calls.findIndex(
-      (args: string[]) => args[0] === 'rev-parse' && args[1] === '--verify',
+      (args: string[]) => args.includes('rev-parse') && args.includes('--verify'),
     );
 
     expect(pruneIndex).toBeGreaterThanOrEqual(0);

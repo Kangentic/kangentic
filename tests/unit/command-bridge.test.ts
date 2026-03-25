@@ -11,18 +11,18 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import type { Task, Swimlane, BacklogItem } from '../../src/shared/types';
+import type { Task, Swimlane, BacklogTask } from '../../src/shared/types';
 
 // ── In-memory store for mock repositories ────────────────────────────────
 
 let mockSwimlanes: Swimlane[] = [];
 let mockTasks: Task[] = [];
 let mockArchivedTasks: Task[] = [];
-let mockBacklogItems: BacklogItem[] = [];
+let mockBacklogTasks: BacklogTask[] = [];
 let taskIdCounter = 0;
 let backlogIdCounter = 0;
 
-function makeBacklogItem(overrides: Partial<BacklogItem> & { title: string }): BacklogItem {
+function makeBacklogTask(overrides: Partial<BacklogTask> & { title: string }): BacklogTask {
   backlogIdCounter++;
   const now = new Date().toISOString();
   return {
@@ -31,7 +31,7 @@ function makeBacklogItem(overrides: Partial<BacklogItem> & { title: string }): B
     description: overrides.description ?? '',
     priority: overrides.priority ?? (0),
     labels: overrides.labels ?? [],
-    position: mockBacklogItems.length,
+    position: mockBacklogTasks.length,
     external_id: null,
     external_source: null,
     external_url: null,
@@ -56,7 +56,7 @@ function resetMockStore(): void {
   ];
   mockTasks = [];
   mockArchivedTasks = [];
-  mockBacklogItems = [];
+  mockBacklogTasks = [];
 }
 
 function makeSwimlane(
@@ -182,20 +182,20 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
 
 vi.mock('../../src/main/db/repositories/backlog-repository', () => ({
   BacklogRepository: class MockBacklogRepository {
-    list() { return mockBacklogItems; }
-    getById(id: string) { return mockBacklogItems.find((item) => item.id === id); }
+    list() { return mockBacklogTasks; }
+    getById(id: string) { return mockBacklogTasks.find((item) => item.id === id); }
     create(input: { title: string; description?: string; priority?: number; labels?: string[] }) {
-      const item = makeBacklogItem({
+      const item = makeBacklogTask({
         title: input.title,
         description: input.description ?? '',
         priority: (input.priority ?? 0),
         labels: input.labels ?? [],
       });
-      mockBacklogItems.push(item);
+      mockBacklogTasks.push(item);
       return item;
     }
     delete(id: string) {
-      mockBacklogItems = mockBacklogItems.filter((item) => item.id !== id);
+      mockBacklogTasks = mockBacklogTasks.filter((item) => item.id !== id);
     }
   },
 }));
@@ -210,8 +210,8 @@ vi.mock('../../src/main/db/repositories/attachment-repository', () => ({
 vi.mock('../../src/main/db/repositories/backlog-attachment-repository', () => ({
   BacklogAttachmentRepository: class MockBacklogAttachmentRepository {
     list() { return []; }
-    add() { return { id: 'batt-1', backlog_item_id: '', filename: '', file_path: '', media_type: '', size_bytes: 0, created_at: '' }; }
-    deleteByItemId() {}
+    add() { return { id: 'batt-1', backlog_task_id: '', filename: '', file_path: '', media_type: '', size_bytes: 0, created_at: '' }; }
+    deleteByTaskId() {}
   },
 }));
 
@@ -727,7 +727,7 @@ describe('CommandBridge - get_session_history', () => {
 // ── Backlog commands ──────────────────────────────────────────────────────
 
 describe('CommandBridge - list_backlog', () => {
-  it('returns empty list when no backlog items', () => {
+  it('returns empty list when no backlog tasks', () => {
     const bridge = createBridge();
     bridge.start();
 
@@ -736,14 +736,14 @@ describe('CommandBridge - list_backlog', () => {
     bridge.stop();
 
     expect(response.success).toBe(true);
-    expect(response.message).toContain('No backlog items');
+    expect(response.message).toContain('No backlog tasks');
     expect(response.data).toEqual([]);
   });
 
-  it('lists all backlog items', () => {
-    const itemA = makeBacklogItem({ title: 'Fix auth', priority: 3, labels: ['backend'] });
-    const itemB = makeBacklogItem({ title: 'Add tests', priority: 1 });
-    mockBacklogItems.push(itemA, itemB);
+  it('lists all backlog tasks', () => {
+    const itemA = makeBacklogTask({ title: 'Fix auth', priority: 3, labels: ['backend'] });
+    const itemB = makeBacklogTask({ title: 'Add tests', priority: 1 });
+    mockBacklogTasks.push(itemA, itemB);
 
     const bridge = createBridge();
     bridge.start();
@@ -761,9 +761,9 @@ describe('CommandBridge - list_backlog', () => {
   });
 
   it('filters by priority', () => {
-    mockBacklogItems.push(
-      makeBacklogItem({ title: 'High priority', priority: 3 }),
-      makeBacklogItem({ title: 'Low priority', priority: 1 }),
+    mockBacklogTasks.push(
+      makeBacklogTask({ title: 'High priority', priority: 3 }),
+      makeBacklogTask({ title: 'Low priority', priority: 1 }),
     );
 
     const bridge = createBridge();
@@ -780,9 +780,9 @@ describe('CommandBridge - list_backlog', () => {
   });
 
   it('filters by search query', () => {
-    mockBacklogItems.push(
-      makeBacklogItem({ title: 'Auth flow', labels: ['backend'] }),
-      makeBacklogItem({ title: 'UI polish' }),
+    mockBacklogTasks.push(
+      makeBacklogTask({ title: 'Auth flow', labels: ['backend'] }),
+      makeBacklogTask({ title: 'UI polish' }),
     );
 
     const bridge = createBridge();
@@ -799,12 +799,12 @@ describe('CommandBridge - list_backlog', () => {
   });
 });
 
-describe('CommandBridge - create_backlog_item', () => {
-  it('creates a backlog item with defaults', () => {
+describe('CommandBridge - create_backlog_task', () => {
+  it('creates a backlog task with defaults', () => {
     const bridge = createBridge();
     bridge.start();
 
-    const response = sendCommand(bridge, 'create_backlog_item', { title: 'New feature idea' });
+    const response = sendCommand(bridge, 'create_backlog_task', { title: 'New feature idea' });
 
     bridge.stop();
 
@@ -813,14 +813,14 @@ describe('CommandBridge - create_backlog_item', () => {
     const data = response.data as { id: string; title: string; priority: string };
     expect(data.title).toBe('New feature idea');
     expect(data.priority).toBe('None');
-    expect(mockBacklogItems).toHaveLength(1);
+    expect(mockBacklogTasks).toHaveLength(1);
   });
 
   it('creates with priority and labels', () => {
     const bridge = createBridge();
     bridge.start();
 
-    const response = sendCommand(bridge, 'create_backlog_item', {
+    const response = sendCommand(bridge, 'create_backlog_task', {
       title: 'Critical bug',
       description: 'Login fails on Safari',
       priority: 4,
@@ -839,7 +839,7 @@ describe('CommandBridge - create_backlog_item', () => {
     const bridge = createBridge();
     bridge.start();
 
-    const response = sendCommand(bridge, 'create_backlog_item', { title: '' });
+    const response = sendCommand(bridge, 'create_backlog_task', { title: '' });
 
     bridge.stop();
 
@@ -851,7 +851,7 @@ describe('CommandBridge - create_backlog_item', () => {
     const bridge = createBridge();
     bridge.start();
 
-    const response = sendCommand(bridge, 'create_backlog_item', { title: 'Test', priority: 9 });
+    const response = sendCommand(bridge, 'create_backlog_task', { title: 'Test', priority: 9 });
 
     bridge.stop();
 
@@ -864,7 +864,7 @@ describe('CommandBridge - create_backlog_item', () => {
     const bridge = createBridge({ onLabelColorsChanged });
     bridge.start();
 
-    const response = sendCommand(bridge, 'create_backlog_item', {
+    const response = sendCommand(bridge, 'create_backlog_task', {
       title: 'Colored labels test',
       labels: [
         { name: 'Bug', color: '#ef4444' },
@@ -889,7 +889,7 @@ describe('CommandBridge - create_backlog_item', () => {
     const bridge = createBridge({ onLabelColorsChanged });
     bridge.start();
 
-    sendCommand(bridge, 'create_backlog_item', {
+    sendCommand(bridge, 'create_backlog_task', {
       title: 'Plain labels test',
       labels: ['bug', 'frontend'],
     });
@@ -902,9 +902,9 @@ describe('CommandBridge - create_backlog_item', () => {
 
 describe('CommandBridge - search_backlog', () => {
   it('finds matching items by title', () => {
-    mockBacklogItems.push(
-      makeBacklogItem({ title: 'Fix login bug', labels: ['auth'] }),
-      makeBacklogItem({ title: 'Add dark mode' }),
+    mockBacklogTasks.push(
+      makeBacklogTask({ title: 'Fix login bug', labels: ['auth'] }),
+      makeBacklogTask({ title: 'Add dark mode' }),
     );
 
     const bridge = createBridge();
@@ -921,9 +921,9 @@ describe('CommandBridge - search_backlog', () => {
   });
 
   it('finds matching items by label', () => {
-    mockBacklogItems.push(
-      makeBacklogItem({ title: 'Task A', labels: ['frontend'] }),
-      makeBacklogItem({ title: 'Task B', labels: ['backend'] }),
+    mockBacklogTasks.push(
+      makeBacklogTask({ title: 'Task A', labels: ['frontend'] }),
+      makeBacklogTask({ title: 'Task B', labels: ['backend'] }),
     );
 
     const bridge = createBridge();
@@ -940,7 +940,7 @@ describe('CommandBridge - search_backlog', () => {
   });
 
   it('returns empty for no matches', () => {
-    mockBacklogItems.push(makeBacklogItem({ title: 'Some item' }));
+    mockBacklogTasks.push(makeBacklogTask({ title: 'Some item' }));
 
     const bridge = createBridge();
     bridge.start();
@@ -950,7 +950,7 @@ describe('CommandBridge - search_backlog', () => {
     bridge.stop();
 
     expect(response.success).toBe(true);
-    expect(response.message).toContain('No backlog items matching');
+    expect(response.message).toContain('No backlog tasks matching');
   });
 
   it('rejects empty query', () => {
@@ -968,8 +968,8 @@ describe('CommandBridge - search_backlog', () => {
 
 describe('CommandBridge - promote_backlog', () => {
   it('promotes a single item to the default column', () => {
-    const item = makeBacklogItem({ title: 'Ready to start' });
-    mockBacklogItems.push(item);
+    const item = makeBacklogTask({ title: 'Ready to start' });
+    mockBacklogTasks.push(item);
 
     const createdTasks: Array<{ task: Task; column: string }> = [];
     const bridge = createBridge({
@@ -984,7 +984,7 @@ describe('CommandBridge - promote_backlog', () => {
     expect(response.success).toBe(true);
     expect(response.message).toContain('Moved 1 item(s)');
     expect(response.message).toContain('To Do');
-    expect(mockBacklogItems).toHaveLength(0);
+    expect(mockBacklogTasks).toHaveLength(0);
     expect(mockTasks).toHaveLength(1);
     expect(mockTasks[0].title).toBe('Ready to start');
     expect(createdTasks).toHaveLength(1);
@@ -992,8 +992,8 @@ describe('CommandBridge - promote_backlog', () => {
   });
 
   it('promotes to a specific column', () => {
-    const item = makeBacklogItem({ title: 'Needs planning' });
-    mockBacklogItems.push(item);
+    const item = makeBacklogTask({ title: 'Needs planning' });
+    mockBacklogTasks.push(item);
 
     const bridge = createBridge();
     bridge.start();
@@ -1019,12 +1019,12 @@ describe('CommandBridge - promote_backlog', () => {
     bridge.stop();
 
     expect(response.success).toBe(false);
-    expect(response.error).toContain('No backlog items found');
+    expect(response.error).toContain('No backlog tasks found');
   });
 
   it('returns error for non-existent column', () => {
-    const item = makeBacklogItem({ title: 'Test' });
-    mockBacklogItems.push(item);
+    const item = makeBacklogTask({ title: 'Test' });
+    mockBacklogTasks.push(item);
 
     const bridge = createBridge();
     bridge.start();
@@ -1042,11 +1042,11 @@ describe('CommandBridge - promote_backlog', () => {
 });
 
 describe('CommandBridge - board_summary includes backlog', () => {
-  it('includes backlog item count in summary', () => {
-    mockBacklogItems.push(
-      makeBacklogItem({ title: 'Item 1' }),
-      makeBacklogItem({ title: 'Item 2' }),
-      makeBacklogItem({ title: 'Item 3' }),
+  it('includes backlog task count in summary', () => {
+    mockBacklogTasks.push(
+      makeBacklogTask({ title: 'Item 1' }),
+      makeBacklogTask({ title: 'Item 2' }),
+      makeBacklogTask({ title: 'Item 3' }),
     );
 
     const bridge = createBridge();
@@ -1057,8 +1057,8 @@ describe('CommandBridge - board_summary includes backlog', () => {
     bridge.stop();
 
     expect(response.success).toBe(true);
-    expect(response.message).toContain('Backlog items: 3');
-    const data = response.data as { backlogItems: number };
-    expect(data.backlogItems).toBe(3);
+    expect(response.message).toContain('Backlog tasks: 3');
+    const data = response.data as { backlogTasks: number };
+    expect(data.backlogTasks).toBe(3);
   });
 });

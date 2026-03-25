@@ -162,7 +162,7 @@ export const handleBoardSummary: CommandHandler = (
   const allSwimlanes = swimlaneRepo.list().filter((swimlane) => !swimlane.is_archived);
   const archivedTasks = taskRepo.listArchived();
   const allSummaries = sessionRepo.listAllSummaries();
-  const backlogItems = backlogRepo.list();
+  const backlogTasks = backlogRepo.list();
 
   let totalActiveTasks = 0;
   let activeSessions = 0;
@@ -198,7 +198,7 @@ export const handleBoardSummary: CommandHandler = (
     ...columnLines,
     ``,
     `Active tasks: ${totalActiveTasks}`,
-    `Backlog items: ${backlogItems.length}`,
+    `Backlog tasks: ${backlogTasks.length}`,
     `Completed tasks: ${archivedTasks.length}`,
     `Active sessions: ${activeSessions}`,
     ``,
@@ -214,7 +214,7 @@ export const handleBoardSummary: CommandHandler = (
     data: {
       columns: columnData,
       totalActiveTasks,
-      backlogItems: backlogItems.length,
+      backlogTasks: backlogTasks.length,
       completedTasks: archivedTasks.length,
       activeSessions,
       totalCost,

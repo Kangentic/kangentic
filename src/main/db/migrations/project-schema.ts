@@ -326,13 +326,17 @@ export function runProjectMigrations(db: Database.Database): void {
   db.prepare("UPDATE swimlanes SET name = 'To Do' WHERE role IN ('backlog', 'todo') AND name IN ('Backlog', 'Not Started')").run();
   db.prepare("UPDATE swimlanes SET role = 'todo' WHERE role = 'backlog'").run();
 
-  // Migration: create backlog_items table for staging tasks before the board
+  // Migration: create backlog_tasks table for staging tasks before the board
+  // (Originally created as backlog_items, renamed to backlog_tasks below)
   const hasBacklogTable = (db.prepare(
+    "SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name='backlog_tasks'"
+  ).get() as { c: number }).c > 0;
+  const hasLegacyBacklogTable = (db.prepare(
     "SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name='backlog_items'"
   ).get() as { c: number }).c > 0;
-  if (!hasBacklogTable) {
+  if (!hasBacklogTable && !hasLegacyBacklogTable) {
     db.exec(`
-      CREATE TABLE backlog_items (
+      CREATE TABLE backlog_tasks (
         id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
         description TEXT NOT NULL DEFAULT '',
@@ -347,12 +351,12 @@ export function runProjectMigrations(db: Database.Database): void {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
-      CREATE INDEX idx_backlog_position ON backlog_items(position);
-      CREATE INDEX idx_backlog_external ON backlog_items(external_source, external_id);
+      CREATE INDEX idx_backlog_position ON backlog_tasks(position);
+      CREATE INDEX idx_backlog_external ON backlog_tasks(external_source, external_id);
     `);
   }
 
-  // Migration: create backlog_attachments table for backlog item file attachments
+  // Migration: create backlog_attachments table for backlog task file attachments
   const hasBacklogAttachmentsTable = (db.prepare(
     "SELECT COUNT(*) as c FROM sqlite_master WHERE type='table' AND name='backlog_attachments'"
   ).get() as { c: number }).c > 0;
@@ -360,31 +364,43 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec(`
       CREATE TABLE backlog_attachments (
         id TEXT PRIMARY KEY,
-        backlog_item_id TEXT NOT NULL REFERENCES backlog_items(id) ON DELETE CASCADE,
+        backlog_task_id TEXT NOT NULL REFERENCES backlog_tasks(id) ON DELETE CASCADE,
         filename TEXT NOT NULL,
         file_path TEXT NOT NULL,
         media_type TEXT NOT NULL,
         size_bytes INTEGER NOT NULL,
         created_at TEXT NOT NULL
       );
-      CREATE INDEX idx_backlog_attachments_item_id ON backlog_attachments(backlog_item_id);
+      CREATE INDEX idx_backlog_attachments_task_id ON backlog_attachments(backlog_task_id);
     `);
   }
 
-  // Migration: add import-related columns to backlog_items for external source integration
-  const backlogColumns = (db.pragma('table_info(backlog_items)') as Array<{ name: string }>)
+  // Migration: add import-related columns to backlog_tasks for external source integration
+  const backlogTableName = hasLegacyBacklogTable && !hasBacklogTable ? 'backlog_items' : 'backlog_tasks';
+  const backlogColumns = (db.pragma(`table_info(${backlogTableName})`) as Array<{ name: string }>)
     .map((col) => col.name);
   if (!backlogColumns.includes('assignee')) {
-    db.exec('ALTER TABLE backlog_items ADD COLUMN assignee TEXT DEFAULT NULL');
+    db.exec(`ALTER TABLE ${backlogTableName} ADD COLUMN assignee TEXT DEFAULT NULL`);
   }
   if (!backlogColumns.includes('due_date')) {
-    db.exec('ALTER TABLE backlog_items ADD COLUMN due_date TEXT DEFAULT NULL');
+    db.exec(`ALTER TABLE ${backlogTableName} ADD COLUMN due_date TEXT DEFAULT NULL`);
   }
   if (!backlogColumns.includes('item_type')) {
-    db.exec('ALTER TABLE backlog_items ADD COLUMN item_type TEXT DEFAULT NULL');
+    db.exec(`ALTER TABLE ${backlogTableName} ADD COLUMN item_type TEXT DEFAULT NULL`);
   }
   if (!backlogColumns.includes('external_metadata')) {
-    db.exec('ALTER TABLE backlog_items ADD COLUMN external_metadata TEXT DEFAULT NULL');
+    db.exec(`ALTER TABLE ${backlogTableName} ADD COLUMN external_metadata TEXT DEFAULT NULL`);
+  }
+
+  // Migration: rename backlog_items -> backlog_tasks (for existing DBs)
+  if (hasLegacyBacklogTable && !hasBacklogTable) {
+    db.exec('ALTER TABLE backlog_items RENAME TO backlog_tasks');
+  }
+  // Migration: rename backlog_item_id -> backlog_task_id in backlog_attachments (for existing DBs)
+  const attachmentColumns = (db.pragma('table_info(backlog_attachments)') as Array<{ name: string }>)
+    .map((col) => col.name);
+  if (attachmentColumns.includes('backlog_item_id')) {
+    db.exec('ALTER TABLE backlog_attachments RENAME COLUMN backlog_item_id TO backlog_task_id');
   }
 
   // Migration: add display_id column for short human-readable task IDs

@@ -401,7 +401,7 @@ export function App() {
       }));
     }
 
-    // Backlog changed by agent (MCP server created/promoted backlog items)
+    // Backlog changed by agent (MCP server created/promoted backlog tasks)
     const backlog = window.electronAPI?.backlog;
     if (backlog?.onChangedByAgent) {
       cleanups.push(backlog.onChangedByAgent((changedProjectId) => {

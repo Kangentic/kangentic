@@ -9,7 +9,7 @@ import { useAllExistingLabels } from '../../hooks/useAllExistingLabels';
 import { DescriptionEditor } from '../DescriptionEditor';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, getFileTypeIcon, getExtension } from '../dialogs/attachment-utils';
 import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
-import type { BacklogItem, BacklogItemCreateInput, BacklogItemUpdateInput } from '../../../shared/types';
+import type { BacklogTask, BacklogTaskCreateInput, BacklogTaskUpdateInput } from '../../../shared/types';
 
 interface PendingAttachment {
   id: string;
@@ -34,19 +34,19 @@ function isSavedAttachment(attachment: DisplayAttachment): attachment is SavedAt
   return 'saved' in attachment && attachment.saved === true;
 }
 
-interface NewBacklogItemDialogProps {
+interface NewBacklogTaskDialogProps {
   onClose: () => void;
-  onCreate: (input: BacklogItemCreateInput) => Promise<unknown>;
-  editItem?: BacklogItem;
-  onUpdate?: (input: BacklogItemUpdateInput) => Promise<unknown>;
+  onCreate: (input: BacklogTaskCreateInput) => Promise<unknown>;
+  editTask?: BacklogTask;
+  onUpdate?: (input: BacklogTaskUpdateInput) => Promise<unknown>;
 }
 
-export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: NewBacklogItemDialogProps) {
-  const isEditMode = !!editItem;
-  const [title, setTitle] = useState(editItem?.title ?? '');
-  const [description, setDescription] = useState(editItem?.description ?? '');
-  const [priority, setPriority] = useState(editItem?.priority ?? 0);
-  const [labels, setLabels] = useState<string[]>(editItem?.labels ?? []);
+export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate }: NewBacklogTaskDialogProps) {
+  const isEditMode = !!editTask;
+  const [title, setTitle] = useState(editTask?.title ?? '');
+  const [description, setDescription] = useState(editTask?.description ?? '');
+  const [priority, setPriority] = useState(editTask?.priority ?? 0);
+  const [labels, setLabels] = useState<string[]>(editTask?.labels ?? []);
   const [submitting, setSubmitting] = useState(false);
   const [attachments, setAttachments] = useState<DisplayAttachment[]>([]);
   const [previewAttachment, setPreviewAttachment] = useState<DisplayAttachment | null>(null);
@@ -65,10 +65,10 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
   const allExistingLabels = useAllExistingLabels();
 
   const isDirty = isEditMode
-    ? title.trim() !== (editItem?.title ?? '') ||
-      description.trim() !== (editItem?.description ?? '') ||
-      priority !== (editItem?.priority ?? 0) ||
-      JSON.stringify(labels) !== JSON.stringify(editItem?.labels ?? []) ||
+    ? title.trim() !== (editTask?.title ?? '') ||
+      description.trim() !== (editTask?.description ?? '') ||
+      priority !== (editTask?.priority ?? 0) ||
+      JSON.stringify(labels) !== JSON.stringify(editTask?.labels ?? []) ||
       attachments.length > 0
     : title.trim() !== '' || description.trim() !== '' || labels.length > 0 || priority !== 0 || attachments.length > 0;
 
@@ -100,11 +100,11 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
 
   // Load existing attachments in edit mode
   useEffect(() => {
-    if (!isEditMode || !editItem) return;
+    if (!isEditMode || !editTask) return;
     let cancelled = false;
     (async () => {
       try {
-        const saved = await window.electronAPI.backlogAttachments.list(editItem.id);
+        const saved = await window.electronAPI.backlogAttachments.list(editTask.id);
         if (cancelled) return;
         const displayAttachments: SavedAttachment[] = [];
         for (const attachment of saved) {
@@ -122,16 +122,16 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
               saved: true,
             });
           } catch (error) {
-            console.error('[NewBacklogItemDialog] Failed to load attachment preview:', error);
+            console.error('[NewBacklogTaskDialog] Failed to load attachment preview:', error);
           }
         }
         setAttachments((previous) => [...displayAttachments, ...previous]);
       } catch (error) {
-        console.error('[NewBacklogItemDialog] Failed to load attachments:', error);
+        console.error('[NewBacklogTaskDialog] Failed to load attachments:', error);
       }
     })();
     return () => { cancelled = true; };
-  }, [isEditMode, editItem]);
+  }, [isEditMode, editTask]);
 
   // --- File handling ---
 
@@ -167,7 +167,7 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
       window.electronAPI.backlogAttachments.remove(id).then(() => {
         setAttachments((previous) => previous.filter((attachment) => attachment.id !== id));
       }).catch((error: unknown) => {
-        console.error('[NewBacklogItemDialog] Failed to remove saved attachment:', error);
+        console.error('[NewBacklogTaskDialog] Failed to remove saved attachment:', error);
       });
     } else {
       URL.revokeObjectURL(target.previewUrl);
@@ -233,9 +233,9 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
         .filter((attachment): attachment is PendingAttachment => !isSavedAttachment(attachment))
         .map(({ filename, data, media_type }) => ({ filename, data, media_type }));
 
-      if (isEditMode && onUpdate && editItem) {
+      if (isEditMode && onUpdate && editTask) {
         await onUpdate({
-          id: editItem.id,
+          id: editTask.id,
           title: title.trim(),
           description: description.trim(),
           priority,
@@ -269,7 +269,7 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
           title={isEditMode ? 'Edit Backlog Task' : 'New Backlog Task'}
           icon={<Plus size={14} className="text-fg-muted" />}
           className="w-[700px]"
-          testId="new-backlog-item-dialog"
+          testId="new-backlog-task-dialog"
           footer={
             <div className="flex items-center justify-end gap-3">
               <button
@@ -283,7 +283,7 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
                 type="submit"
                 disabled={!title.trim() || submitting}
                 className="px-4 py-1.5 text-xs bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                data-testid="create-backlog-item-btn"
+                data-testid="create-backlog-task-btn"
               >
                 {submitting ? (isEditMode ? 'Saving...' : 'Creating...') : (isEditMode ? 'Save' : 'Create')}
               </button>
@@ -303,14 +303,14 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
               onChange={(event) => setTitle(event.target.value)}
               placeholder="Task title"
               className="w-full bg-surface border border-edge-input rounded px-3 py-2 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
-              data-testid="backlog-item-title"
+              data-testid="backlog-task-title"
             />
 
             <DescriptionEditor
               value={description}
               onChange={setDescription}
               onPaste={handlePaste}
-              testId="backlog-item-description"
+              testId="backlog-task-description"
             />
 
             {/* Thumbnail strip */}
@@ -372,7 +372,7 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
                   value={priority}
                   onChange={(event) => setPriority(Number((event.target as HTMLSelectElement).value))}
                   className="appearance-none bg-surface border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg w-full focus:outline-none focus:border-accent"
-                  data-testid="backlog-item-priority"
+                  data-testid="backlog-task-priority"
                 >
                   {priorities.map((priorityEntry, index) => (
                     <option key={index} value={index}>{priorityEntry.label}</option>
@@ -385,7 +385,7 @@ export function NewBacklogItemDialog({ onClose, onCreate, editItem, onUpdate }: 
                 setLabels={setLabels}
                 labelColors={labelColors}
                 allExistingLabels={allExistingLabels}
-                testId="backlog-item-labels"
+                testId="backlog-task-labels"
               />
             </div>
 
