@@ -46,6 +46,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   deleteProject: async (id) => {
+    useSessionStore.getState().killTransientSessionForProject(id).catch(() => {});
     await window.electronAPI.projects.delete(id);
     set((s) => ({
       projects: s.projects.filter((p) => p.id !== id),
@@ -54,11 +55,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   openProject: async (id) => {
-    // Kill any background transient session from the previous project
-    useSessionStore.getState().killTransientSession().catch(() => {});
+    // Stash current project's transient session (keep PTY alive for later restore)
+    useSessionStore.getState().stashTransientSession();
     await window.electronAPI.projects.open(id);
     const project = get().projects.find((p) => p.id === id) || await window.electronAPI.projects.getCurrent();
     set({ currentProject: project });
+    // Restore the target project's transient session if one exists
+    useSessionStore.getState().restoreTransientSession(id);
     useSessionStore.getState().markIdleSessionsSeen(id);
   },
 

@@ -13,6 +13,8 @@ const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 
 const PROJECT_ID = 'proj-cmd-term';
+const PROJECT_A_ID = 'proj-cmd-a';
+const PROJECT_B_ID = 'proj-cmd-b';
 const TASK_SESSION_ID = 'sess-task-1';
 const TASK_ID = 'task-1';
 const TRANSIENT_SESSION_ID = 'sess-transient-1';
@@ -94,6 +96,48 @@ function preConfigWithTransientSession(): string {
       });
 
       return { currentProjectId: '${PROJECT_ID}' };
+    });
+  `;
+}
+
+/**
+ * Pre-configure mock state with two projects for cross-project transient session tests.
+ * Starts with Project A active. No transient sessions pre-spawned - tests open them via hotkey.
+ */
+function twoProjectPreConfig(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+
+      state.projects.push({
+        id: '${PROJECT_A_ID}',
+        name: 'Project Alpha',
+        path: '/mock/project-alpha',
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: ts,
+        created_at: ts,
+      });
+
+      state.projects.push({
+        id: '${PROJECT_B_ID}',
+        name: 'Project Beta',
+        path: '/mock/project-beta',
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: ts,
+        created_at: ts,
+      });
+
+      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        state.swimlanes.push(Object.assign({}, s, {
+          id: 'lane-cmd-multi-' + i,
+          position: i,
+          created_at: ts,
+        }));
+      });
+
+      return { currentProjectId: '${PROJECT_A_ID}' };
     });
   `;
 }
@@ -291,6 +335,141 @@ test.describe('Command Terminal', () => {
         await expect(page.locator('button:has-text("Open folder")')).toBeVisible();
         await expect(page.getByRole('button', { name: 'Commands' }).nth(1)).toBeVisible();
         await expect(page.getByTestId('command-bar-kebab-stop')).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
+  test.describe('Cross-Project Transient Session Persistence', () => {
+    test('transient session survives project switch and reattaches on return', async () => {
+      const { browser, page } = await launchWithState(twoProjectPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Open command terminal in Project A and close overlay (session stays in background)
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+
+        // Background indicator should be visible for Project A's transient session
+        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
+
+        // Switch to Project B
+        await page.locator('[role="button"]:has-text("Project Beta")').click();
+        await page.waitForTimeout(500);
+
+        // No transient indicator for Project B (never opened command terminal there)
+        await expect(page.getByTestId('transient-session-indicator')).not.toBeVisible();
+
+        // Switch back to Project A
+        await page.locator('[role="button"]:has-text("Project Alpha")').click();
+        await page.waitForTimeout(500);
+
+        // Background indicator should reappear - session was stashed, not killed
+        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
+
+        // Opening the command bar should reattach to the existing session (no new spawn)
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('command bar overlay closes automatically on project switch', async () => {
+      const { browser, page } = await launchWithState(twoProjectPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Open command terminal in Project A
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+
+        // Trigger project switch programmatically (overlay backdrop blocks sidebar clicks)
+        await page.evaluate(async () => {
+          const store = (window as any).__zustandStores?.project;
+          if (store) {
+            await store.getState().openProject('proj-cmd-b');
+          }
+        });
+        await page.waitForTimeout(500);
+
+        // Overlay should close automatically via useCommandBar's currentProjectId effect
+        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('each project gets its own independent transient session', async () => {
+      const { browser, page } = await launchWithState(twoProjectPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Open and close command terminal in Project A
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
+
+        // Switch to Project B
+        await page.locator('[role="button"]:has-text("Project Beta")').click();
+        await page.waitForTimeout(500);
+
+        // No indicator yet for Project B
+        await expect(page.getByTestId('transient-session-indicator')).not.toBeVisible();
+
+        // Open and close command terminal in Project B (spawns a new session)
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
+
+        // Switch back to Project A - its indicator should still be there
+        await page.locator('[role="button"]:has-text("Project Alpha")').click();
+        await page.waitForTimeout(500);
+        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
+
+        // Switch to Project B - its indicator should also still be there
+        await page.locator('[role="button"]:has-text("Project Beta")').click();
+        await page.waitForTimeout(500);
+        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('deleting a project kills its transient session', async () => {
+      const { browser, page } = await launchWithState(twoProjectPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Open and close command terminal in Project A (creates a background transient)
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
+
+        // Switch to Project B
+        await page.locator('[role="button"]:has-text("Project Beta")').click();
+        await page.waitForTimeout(500);
+
+        // Delete Project A via context menu
+        await page.locator('[role="button"]:has-text("Project Alpha")').click({ button: 'right' });
+        await page.locator('button:has-text("Delete")').click();
+
+        // Confirm deletion
+        const confirmButton = page.locator('button:has-text("Delete"):not([disabled])');
+        await confirmButton.last().click();
+        await page.waitForTimeout(500);
+
+        // Project A should be gone from sidebar
+        await expect(page.locator('[role="button"]:has-text("Project Alpha")')).not.toBeVisible();
       } finally {
         await browser.close();
       }

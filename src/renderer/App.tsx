@@ -7,6 +7,7 @@ import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useToastStore } from './stores/toast-store';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
+import type { SessionEvent } from '../shared/types';
 
 export function App() {
   const loadProjects = useProjectStore((s) => s.loadProjects);
@@ -90,11 +91,23 @@ export function App() {
       // Do NOT clear sessionUsage -- eagerly clearing causes a flash-to-0% on HMR
       // remount. Stale keys from the old project are harmless (components only
       // render current-project sessions) and get replaced by syncSessions().
+      // Preserve sessionEvents for stashed transient sessions (they have no DB backup).
+      const currentSessionState = useSessionStore.getState();
+      const stashedTransientSessionIds = new Set(
+        Object.values(currentSessionState.transientSessions)
+          .map((entry) => entry.sessionId),
+      );
+      const preservedEvents: Record<string, SessionEvent[]> = {};
+      for (const [sessionId, events] of Object.entries(currentSessionState.sessionEvents)) {
+        if (stashedTransientSessionIds.has(sessionId)) {
+          preservedEvents[sessionId] = events;
+        }
+      }
       useSessionStore.setState({
         activeSessionId: null,
         dialogSessionId: null,
         detailTaskId: null,
-        sessionEvents: {},
+        sessionEvents: preservedEvents,
       });
 
       const generationBeforeSync = useSessionStore.getState()._syncGeneration;
@@ -172,7 +185,21 @@ export function App() {
         // Transient sessions (command terminal) are ephemeral - skip toasts and notifications
         if (currentSession?.transient) {
           updateSessionStatus(sessionId, { status: 'exited', exitCode });
-          useSessionStore.getState().clearTransientSession();
+          const sessionState = useSessionStore.getState();
+          if (sessionState.transientSessionId === sessionId) {
+            // Current project's transient session - use existing clear
+            sessionState.clearTransientSession();
+          } else {
+            // Stashed transient session from another project - remove from map
+            const updatedTransientSessions = { ...sessionState.transientSessions };
+            for (const [entryProjectId, entry] of Object.entries(updatedTransientSessions)) {
+              if (entry.sessionId === sessionId) {
+                delete updatedTransientSessions[entryProjectId];
+                break;
+              }
+            }
+            useSessionStore.setState({ transientSessions: updatedTransientSessions });
+          }
           return;
         }
 
@@ -223,8 +250,11 @@ export function App() {
     if (sessions.onUsage) {
       cleanups.push(sessions.onUsage((sessionId, data, projectId) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
-        const transientId = useSessionStore.getState().transientSessionId;
-        if (sessionId === transientId || !projectId || !activeProjectId || projectId === activeProjectId) {
+        const sessionState = useSessionStore.getState();
+        // Accept usage from the current transient session or any stashed transient session
+        const isTransient = sessionId === sessionState.transientSessionId
+          || Object.values(sessionState.transientSessions).some((entry) => entry.sessionId === sessionId);
+        if (isTransient || !projectId || !activeProjectId || projectId === activeProjectId) {
           updateUsage(sessionId, data);
         }
       }));
@@ -451,6 +481,7 @@ if (import.meta.env.DEV) {
   (window as unknown as Record<string, unknown>).__zustandStores = {
     board: useBoardStore,
     config: useConfigStore,
+    project: useProjectStore,
     session: useSessionStore,
   };
 }

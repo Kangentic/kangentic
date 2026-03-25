@@ -8,6 +8,12 @@ import { useToastStore } from '../stores/toast-store';
  */
 export function useCommandBar() {
   const [isOpen, setIsOpen] = useState(false);
+  const currentProjectId = useProjectStore((s) => s.currentProject?.id);
+
+  // Close command bar when project changes - it will reattach on next open
+  useEffect(() => {
+    setIsOpen(false);
+  }, [currentProjectId]);
 
   const open = useCallback(() => {
     const currentProject = useProjectStore.getState().currentProject;
