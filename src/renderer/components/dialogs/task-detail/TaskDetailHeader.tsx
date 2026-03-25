@@ -7,6 +7,7 @@ import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
 import { Pill } from '../../Pill';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
 import { CommandPalettePopover } from './CommandPalettePopover';
+import { PriorityBadge } from '../../backlog/PriorityBadge';
 import type { Task, ClaudeCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
 
 interface TaskDetailHeaderProps {
@@ -101,6 +102,9 @@ export function TaskDetailHeader({
         }
         #{task.display_id}
       </button>
+
+      {/* Priority badge (hidden when priority is 0) */}
+      <PriorityBadge priority={task.priority ?? 0} />
 
       {/* Title */}
       <h2 className="text-base font-semibold text-fg truncate min-w-0">{task.title}</h2>

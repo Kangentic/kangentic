@@ -9,6 +9,7 @@ import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useSessionDisplayState } from '../../utils/session-display-state';
 import { resolveShortcutCommand } from '../../../shared/template-vars';
+import { PriorityBadge } from '../backlog/PriorityBadge';
 import { BaseDialog } from './BaseDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import {
@@ -474,6 +475,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
                   }
                   #{task.display_id}
                 </button>
+                <PriorityBadge priority={task.priority ?? 0} />
               </span>
             ),
             icon: <Pencil size={14} className="text-fg-muted" />,
