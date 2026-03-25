@@ -85,7 +85,8 @@ export function buildAutoCommandVars(task: Task): Record<string, string> {
  * No-ops when worktrees are disabled or project isn't a git repo.
  * Throws on worktree creation failure (e.g. duplicate branch).
  */
-export async function ensureTaskWorktree(context: IpcContext, task: Task, tasks: TaskRepository, projectPath?: string | null): Promise<void> {
+export async function ensureTaskWorktree(context: IpcContext, task: Task, tasks: TaskRepository, projectPath?: string | null, options?: { signal?: AbortSignal }): Promise<void> {
+  options?.signal?.throwIfAborted();
   const resolvedProjectPath = projectPath ?? context.currentProjectPath;
   if (!resolvedProjectPath) return;
   const config = context.configManager.getEffectiveConfig(resolvedProjectPath);
@@ -111,7 +112,9 @@ export async function ensureTaskWorktree(context: IpcContext, task: Task, tasks:
 export async function ensureTaskBranchCheckout(
   task: Task,
   projectPath?: string | null,
+  options?: { signal?: AbortSignal },
 ): Promise<void> {
+  options?.signal?.throwIfAborted();
   if (!projectPath) return;
   if (task.worktree_path) return;
   if (!isGitRepo(projectPath)) return;
@@ -335,6 +338,10 @@ export async function cleanupTaskSession(
     } catch { /* may already be dead */ }
     tasks.update({ id: task.id, session_id: null });
   }
+
+  // Safety net: kill any PTY session for this task that was spawned by a
+  // concurrent move but not yet written to the task's session_id field.
+  context.sessionManager.removeByTaskId(task.id);
 
   // Remove session DB records + directories from disk
   if (resolvedProjectId) {

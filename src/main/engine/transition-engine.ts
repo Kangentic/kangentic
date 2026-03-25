@@ -30,7 +30,8 @@ export class TransitionEngine {
    * Resume a suspended session for a task. Used when moving out of
    * Backlog/Done into a non-agent column (no spawn_agent transition fires).
    */
-  async resumeSuspendedSession(task: Task, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, resumePrompt?: string): Promise<void> {
+  async resumeSuspendedSession(task: Task, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, resumePrompt?: string, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     const attachmentPaths = this.attachmentRepo?.getPathsForTask(task.id) ?? [];
     const cleanTitle = sanitizeForPty(task.title);
     const cleanDesc = sanitizeForPty(task.description);
@@ -47,22 +48,23 @@ export class TransitionEngine {
       attachments: attachmentPaths.length > 0
         ? `\n${attachmentPaths.join('\n')}`
         : '',
-    }, permissionOverride, resumePrompt);
+    }, permissionOverride, resumePrompt, signal);
   }
 
-  async executeTransition(task: Task, fromSwimlaneId: string, toSwimlaneId: string, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean): Promise<void> {
+  async executeTransition(task: Task, fromSwimlaneId: string, toSwimlaneId: string, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, signal?: AbortSignal): Promise<void> {
     const transitions = this.actionRepo.getTransitionsFor(fromSwimlaneId, toSwimlaneId);
     if (transitions.length === 0) return;
 
     for (const transition of transitions) {
+      signal?.throwIfAborted();
       const action = this.actionRepo.getById(transition.action_id);
       if (!action) continue;
 
-      await this.executeAction(action, task, permissionOverride, skipPromptTemplate);
+      await this.executeAction(action, task, permissionOverride, skipPromptTemplate, signal);
     }
   }
 
-  private async executeAction(action: Action, task: Task, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean): Promise<void> {
+  private async executeAction(action: Action, task: Task, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, signal?: AbortSignal): Promise<void> {
     let config: ActionConfig;
     try {
       config = JSON.parse(action.config_json);
@@ -91,7 +93,7 @@ export class TransitionEngine {
         if (skipPromptTemplate) {
           config.promptTemplate = undefined;
         }
-        await this.executeSpawnAgent(config, task, templateVars, permissionOverride);
+        await this.executeSpawnAgent(config, task, templateVars, permissionOverride, undefined, signal);
         break;
 
       case 'send_command':
@@ -120,7 +122,7 @@ export class TransitionEngine {
     }
   }
 
-  private async executeSpawnAgent(config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string): Promise<void> {
+  private async executeSpawnAgent(config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string, signal?: AbortSignal): Promise<void> {
     const appConfig = this.getConfig();
     const claude = await this.claudeDetector.detect(appConfig.claudePath);
     if (!claude.found || !claude.path) {
@@ -193,6 +195,9 @@ export class TransitionEngine {
       shell,
       mcpServerEnabled: appConfig.mcpServerEnabled,
     });
+
+    // Last chance to abort before creating a PTY process
+    signal?.throwIfAborted();
 
     const session = await this.sessionManager.spawn({
       id: randomUUID(),

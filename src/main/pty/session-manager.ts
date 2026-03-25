@@ -457,6 +457,26 @@ export class SessionManager extends EventEmitter {
     this.firstOutputEmitted.delete(sessionId);
   }
 
+  /**
+   * Kill any PTY session belonging to a task, regardless of whether the
+   * task's session_id field has been written to the DB yet. This handles
+   * the race where a concurrent handleTaskMove spawned a session but
+   * hasn't updated the task record.
+   */
+  killByTaskId(taskId: string): void {
+    const session = this.findByTaskId(taskId);
+    if (session) this.kill(session.id);
+  }
+
+  /**
+   * Fully remove any PTY session belonging to a task from all internal
+   * maps. Like killByTaskId but also cleans up caches and session files.
+   */
+  removeByTaskId(taskId: string): void {
+    const session = this.findByTaskId(taskId);
+    if (session) this.remove(session.id);
+  }
+
   kill(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (session?.pty) {

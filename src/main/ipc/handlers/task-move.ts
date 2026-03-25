@@ -18,6 +18,7 @@ import {
 import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
 import type { IpcContext } from '../ipc-context';
+import { isAbortError } from '../../../shared/abort-utils';
 import type { Task } from '../../../shared/types';
 
 /**
@@ -78,6 +79,15 @@ export function guardActiveNonWorktreeSessions(
 }
 
 /**
+ * Per-task AbortController to cancel in-flight moves when a newer move
+ * supersedes the current one. Prevents orphaned sessions from spawning
+ * when the user quickly moves a task back before the async spawn completes.
+ * The signal propagates through the async call chain; each helper throws
+ * AbortError when cancelled, and cleanup is centralized in a single catch.
+ */
+const taskMoveControllers = new Map<string, AbortController>();
+
+/**
  * Core task-move logic shared by the TASK_MOVE IPC handler and the
  * plan-exit auto-move listener. Moves the task, runs transitions, and
  * manages session lifecycle based on the target column's role.
@@ -88,6 +98,12 @@ export async function handleTaskMove(
   projectId?: string | null,
   projectPath?: string | null,
 ): Promise<void> {
+  // Abort any in-flight move for this task (user dragged again before spawn finished)
+  taskMoveControllers.get(input.taskId)?.abort();
+  const moveController = new AbortController();
+  taskMoveControllers.set(input.taskId, moveController);
+  const { signal } = moveController;
+
   const resolvedProjectId = projectId ?? context.currentProjectId;
   // Use !== undefined (not ??) to distinguish "caller passed null" from "caller omitted the arg"
   const resolvedProjectPath = projectPath !== undefined ? projectPath : context.currentProjectPath;
@@ -123,6 +139,10 @@ export async function handleTaskMove(
   // --- Priority 1: TARGET IS TO DO → full reset (kill session, remove worktree, delete branch) ---
   if (toLane?.role === 'todo') {
     context.commandInjector.cancel(task.id);
+    // Kill any in-flight PTY session spawned by a concurrent move that
+    // hasn't written session_id to the task record yet (race condition
+    // when user quickly moves task back before async spawn completes).
+    context.sessionManager.removeByTaskId(task.id);
     await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
     // Re-read the task to check if worktree_path was actually cleared
     const updatedTask = tasks.getById(task.id);
@@ -240,100 +260,125 @@ export async function handleTaskMove(
   }
 
   // --- Priority 4: TASK HAS NO ACTIVE SESSION ---
-  // Create worktree if worktrees are enabled and task doesn't have one yet.
-  // If worktree creation fails (e.g. duplicate branch), revert the task
-  // back to its original column so it doesn't get stuck without a session.
+  // All async operations below receive the abort signal so a newer move
+  // cancels them via AbortError. Cleanup is centralized in the catch block.
   try {
-    await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
-  } catch (error) {
-    // Best-effort cleanup of stale resources that may have caused the failure
-    // (e.g. leftover directory or branch from a previous partial cleanup).
-    // This makes the next drag attempt succeed without requiring an app restart.
-    if (resolvedProjectPath) {
-      try {
-        const worktreeManager = new WorktreeManager(resolvedProjectPath);
-        const expectedSlug = slugify(task.title) || 'task';
-        const expectedFolder = `${expectedSlug}-${task.id.slice(0, 8)}`;
-        const expectedPath = path.join(resolvedProjectPath, '.kangentic', 'worktrees', expectedFolder);
-        const expectedBranch = task.branch_name || expectedFolder;
+    // Create worktree if worktrees are enabled and task doesn't have one yet.
+    // If worktree creation fails (e.g. duplicate branch), revert the task
+    // back to its original column so it doesn't get stuck without a session.
+    try {
+      await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { signal });
+    } catch (error) {
+      // Let AbortError propagate to the outer catch for centralized handling
+      if (isAbortError(error)) throw error;
 
-        await worktreeManager.withLock(async () => {
-          if (fs.existsSync(expectedPath)) {
-            await worktreeManager.removeWorktree(expectedPath);
-            // removeWorktree doesn't throw on failure - verify it actually worked
+      // Best-effort cleanup of stale resources that may have caused the failure
+      // (e.g. leftover directory or branch from a previous partial cleanup).
+      // This makes the next drag attempt succeed without requiring an app restart.
+      if (resolvedProjectPath) {
+        try {
+          const worktreeManager = new WorktreeManager(resolvedProjectPath);
+          const expectedSlug = slugify(task.title) || 'task';
+          const expectedFolder = `${expectedSlug}-${task.id.slice(0, 8)}`;
+          const expectedPath = path.join(resolvedProjectPath, '.kangentic', 'worktrees', expectedFolder);
+          const expectedBranch = task.branch_name || expectedFolder;
+
+          await worktreeManager.withLock(async () => {
             if (fs.existsSync(expectedPath)) {
-              console.warn(`[TASK_MOVE] Could not remove stale worktree directory (file handles may still be held): ${expectedPath}`);
-            } else {
-              console.log(`[TASK_MOVE] Cleaned stale worktree directory: ${expectedPath}`);
+              await worktreeManager.removeWorktree(expectedPath);
+              // removeWorktree doesn't throw on failure - verify it actually worked
+              if (fs.existsSync(expectedPath)) {
+                console.warn(`[TASK_MOVE] Could not remove stale worktree directory (file handles may still be held): ${expectedPath}`);
+              } else {
+                console.log(`[TASK_MOVE] Cleaned stale worktree directory: ${expectedPath}`);
+              }
             }
-          }
-          await worktreeManager.pruneWorktrees();
-          await worktreeManager.removeBranch(expectedBranch);
-        });
-      } catch (cleanupError) {
-        console.warn('[TASK_MOVE] Stale resource cleanup failed (will retry on next attempt):', cleanupError);
+            await worktreeManager.pruneWorktrees();
+            await worktreeManager.removeBranch(expectedBranch);
+          });
+        } catch (cleanupError) {
+          console.warn('[TASK_MOVE] Stale resource cleanup failed (will retry on next attempt):', cleanupError);
+        }
+      }
+
+      // Revert: move task back to original column. The forward tasks.move()
+      // compacted positions in the old swimlane; this reverse move
+      // re-expands at the original slot, restoring the prior ordering.
+      try {
+        tasks.move({ taskId: input.taskId, targetSwimlaneId: fromSwimlaneId, targetPosition: task.position });
+      } catch (revertError) {
+        console.error('[TASK_MOVE] Failed to revert task move:', revertError);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Worktree setup failed: ${message}`);
+    }
+
+    // Checkout the task's branch in the main repo (non-worktree tasks only).
+    // Intentionally unguarded: if checkout fails, the error propagates to
+    // board-store's catch block which reverts the optimistic move and shows a toast.
+    guardActiveNonWorktreeSessions(context, task, tasks);
+    await ensureTaskBranchCheckout(task, resolvedProjectPath, { signal });
+
+    // Execute transition actions (may fire spawn_agent which handles resume internally)
+    const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, resolvedProjectId, resolvedProjectPath);
+
+    try {
+      await engine.executeTransition(task, fromSwimlaneId, input.targetSwimlaneId, toLane?.permission_mode, skipPromptTemplate, signal);
+    } catch (err) {
+      // Let AbortError propagate to the outer catch for centralized handling
+      if (isAbortError(err)) throw err;
+      console.error('[TASK_MOVE] Transition engine error:', err);
+    }
+
+    // Re-read task from DB -- transition engine may have spawned a session
+    let finalTask = tasks.getById(task.id);
+
+    // If task STILL has no session, resume a suspended session or spawn fresh.
+    if (finalTask && !finalTask.session_id && toLane?.auto_spawn) {
+      console.log(`[TASK_MOVE] Ensuring agent for task ${task.id.slice(0, 8)}`);
+
+      // Check if a suspended session exists so we can preload auto_command into the resume prompt
+      const suspendedRecord = sessionRepo.getLatestForTask(task.id);
+      const wasSuspended = !!suspendedRecord?.claude_session_id
+        && suspendedRecord.status === 'suspended';
+
+      const resumePrompt = (toLane?.auto_command && wasSuspended)
+        ? context.commandBuilder.interpolateTemplate(
+            toLane.auto_command,
+            buildAutoCommandVars(finalTask),
+          )
+        : undefined;
+
+      try {
+        await engine.resumeSuspendedSession(finalTask, toLane.permission_mode, skipPromptTemplate, resumePrompt, signal);
+        finalTask = tasks.getById(task.id);
+      } catch (err) {
+        // Let AbortError propagate to the outer catch for centralized handling
+        if (isAbortError(err)) throw err;
+        console.error('[TASK_MOVE] Failed to start session:', err);
+      }
+
+      // Schedule auto-command via deferred injection only for fresh spawns
+      // (resumes preload the command as the initial prompt instead)
+      if (finalTask?.session_id && toLane?.auto_command && !resumePrompt) {
+        const vars = buildAutoCommandVars(finalTask);
+        const interpolated = context.commandBuilder.interpolateTemplate(toLane.auto_command, vars);
+        context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
       }
     }
-
-    // Revert: move task back to original column. The forward tasks.move() at
-    // line 153 compacted positions in the old swimlane; this reverse move
-    // re-expands at the original slot, restoring the prior ordering.
-    try {
-      tasks.move({ taskId: input.taskId, targetSwimlaneId: fromSwimlaneId, targetPosition: task.position });
-    } catch (revertError) {
-      console.error('[TASK_MOVE] Failed to revert task move:', revertError);
+  } catch (error) {
+    if (isAbortError(error)) {
+      // A newer move superseded this one - clean up any partially-spawned session
+      console.log(`[TASK_MOVE] Aborted stale move for task ${task.id.slice(0, 8)}`);
+      context.sessionManager.removeByTaskId(task.id);
+      tasks.update({ id: task.id, session_id: null });
+      return;
     }
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Worktree setup failed: ${message}`);
-  }
-
-  // Checkout the task's branch in the main repo (non-worktree tasks only).
-  // Intentionally unguarded: if checkout fails, the error propagates to
-  // board-store's catch block which reverts the optimistic move and shows a toast.
-  guardActiveNonWorktreeSessions(context, task, tasks);
-  await ensureTaskBranchCheckout(task, resolvedProjectPath);
-
-  // Execute transition actions (may fire spawn_agent which handles resume internally)
-  const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, resolvedProjectId, resolvedProjectPath);
-
-  try {
-    await engine.executeTransition(task, fromSwimlaneId, input.targetSwimlaneId, toLane?.permission_mode, skipPromptTemplate);
-  } catch (err) {
-    console.error('[TASK_MOVE] Transition engine error:', err);
-  }
-
-  // Re-read task from DB -- transition engine may have spawned a session
-  let finalTask = tasks.getById(task.id);
-
-  // If task STILL has no session, resume a suspended session or spawn fresh.
-  if (finalTask && !finalTask.session_id && toLane?.auto_spawn) {
-    console.log(`[TASK_MOVE] Ensuring agent for task ${task.id.slice(0, 8)}`);
-
-    // Check if a suspended session exists so we can preload auto_command into the resume prompt
-    const suspendedRecord = sessionRepo.getLatestForTask(task.id);
-    const wasSuspended = !!suspendedRecord?.claude_session_id
-      && suspendedRecord.status === 'suspended';
-
-    const resumePrompt = (toLane?.auto_command && wasSuspended)
-      ? context.commandBuilder.interpolateTemplate(
-          toLane.auto_command,
-          buildAutoCommandVars(finalTask),
-        )
-      : undefined;
-
-    try {
-      await engine.resumeSuspendedSession(finalTask, toLane.permission_mode, skipPromptTemplate, resumePrompt);
-      finalTask = tasks.getById(task.id);
-    } catch (err) {
-      console.error('[TASK_MOVE] Failed to start session:', err);
-    }
-
-    // Schedule auto-command via deferred injection only for fresh spawns
-    // (resumes preload the command as the initial prompt instead)
-    if (finalTask?.session_id && toLane?.auto_command && !resumePrompt) {
-      const vars = buildAutoCommandVars(finalTask);
-      const interpolated = context.commandBuilder.interpolateTemplate(toLane.auto_command, vars);
-      context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
+    throw error;
+  } finally {
+    // Clean up controller if this is still the active one for this task
+    if (taskMoveControllers.get(input.taskId) === moveController) {
+      taskMoveControllers.delete(input.taskId);
     }
   }
 }
