@@ -5,6 +5,7 @@ import type { Swimlane } from '../../../shared/types';
 interface BacklogContextMenuProps {
   position: { x: number; y: number };
   swimlanes: Swimlane[];
+  selectedCount: number;
   onMoveToBoard: (swimlaneId: string) => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -14,6 +15,7 @@ interface BacklogContextMenuProps {
 export function BacklogContextMenu({
   position,
   swimlanes,
+  selectedCount,
   onMoveToBoard,
   onEdit,
   onDelete,
@@ -57,7 +59,7 @@ export function BacklogContextMenu({
       {targets.length > 0 && (
         <>
           <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
-            Move to Board
+            {selectedCount > 1 ? `Move ${selectedCount} to Board` : 'Move to Board'}
           </div>
           {targets.map((lane) => (
             <button
@@ -97,7 +99,7 @@ export function BacklogContextMenu({
         data-testid="context-delete-item"
       >
         <Trash2 size={14} />
-        Delete
+        {selectedCount > 1 ? `Delete ${selectedCount} items` : 'Delete'}
       </button>
     </div>
   );

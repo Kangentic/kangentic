@@ -220,8 +220,17 @@ export function BacklogView() {
   }, [selectedIds, bulkDelete, updateConfig]);
 
   const handleRowContextMenu = useCallback((item: BacklogTask, event: React.MouseEvent) => {
+    // If right-clicked item is not in current selection,
+    // clear selection and select only the right-clicked item
+    if (!selectedIds.has(item.id)) {
+      clearSelection();
+      toggleSelected(item.id);
+    }
     setContextMenu({ position: { x: event.clientX, y: event.clientY }, item });
-  }, []);
+  }, [selectedIds, clearSelection, toggleSelected]);
+
+  // Context menu acts on all selected items when the right-clicked item is part of a multi-selection
+  const contextMenuIsMultiSelect = contextMenu !== null && selectedIds.size > 1 && selectedIds.has(contextMenu.item.id);
 
   // --- Columns ---
 
@@ -518,9 +527,22 @@ export function BacklogView() {
         <BacklogContextMenu
           position={contextMenu.position}
           swimlanes={swimlanes}
-          onMoveToBoard={(swimlaneId) => handleMoveSingle(contextMenu.item.id, swimlaneId)}
+          selectedCount={contextMenuIsMultiSelect ? selectedIds.size : 1}
+          onMoveToBoard={(swimlaneId) => {
+            if (contextMenuIsMultiSelect) {
+              handleBulkMove(swimlaneId);
+            } else {
+              handleMoveSingle(contextMenu.item.id, swimlaneId);
+            }
+          }}
           onEdit={() => handleEdit(contextMenu.item.id)}
-          onDelete={() => handleDelete(contextMenu.item.id)}
+          onDelete={() => {
+            if (contextMenuIsMultiSelect) {
+              handleBulkDelete();
+            } else {
+              handleDelete(contextMenu.item.id);
+            }
+          }}
           onClose={() => setContextMenu(null)}
         />
       )}

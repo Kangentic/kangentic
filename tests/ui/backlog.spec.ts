@@ -310,4 +310,77 @@ test.describe('Backlog View', () => {
 
     await browser.close();
   });
+
+  test('context menu on multi-selected items shows count and moves all', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'backlog-ctx-multi');
+
+    await page.locator('[data-testid="view-toggle-backlog"]').click();
+
+    // Create three items
+    for (const title of ['Task A', 'Task B', 'Task C']) {
+      await page.locator('[data-testid="new-backlog-task-btn"]').click();
+      await page.locator('[data-testid="backlog-task-title"]').fill(title);
+      await page.locator('[data-testid="create-backlog-task-btn"]').click();
+      await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+    }
+
+    const rows = page.locator('[data-testid="backlog-task-row"]');
+    await expect(rows).toHaveCount(3);
+
+    // Select first two items via checkboxes
+    await rows.nth(0).locator('[data-testid="backlog-task-checkbox"]').check();
+    await rows.nth(1).locator('[data-testid="backlog-task-checkbox"]').check();
+
+    // Right-click the first selected item
+    await rows.nth(0).click({ button: 'right' });
+
+    // Context menu should show count in "Move to Board" header
+    await expect(page.locator('text=Move 2 to Board')).toBeVisible();
+    await expect(page.locator('text=Delete 2 items')).toBeVisible();
+
+    // Click the first swimlane target to move both
+    await page.locator('[data-testid="context-move-to-board"]').first().click();
+
+    // Only one item should remain in the backlog
+    await expect(rows).toHaveCount(1);
+    await expect(page.locator('text=Task C')).toBeVisible();
+
+    await browser.close();
+  });
+
+  test('context menu on unselected item resets selection', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'backlog-ctx-reset');
+
+    await page.locator('[data-testid="view-toggle-backlog"]').click();
+
+    // Create two items
+    for (const title of ['Item X', 'Item Y']) {
+      await page.locator('[data-testid="new-backlog-task-btn"]').click();
+      await page.locator('[data-testid="backlog-task-title"]').fill(title);
+      await page.locator('[data-testid="create-backlog-task-btn"]').click();
+      await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+    }
+
+    const rows = page.locator('[data-testid="backlog-task-row"]');
+
+    // Select the first item
+    await rows.nth(0).locator('[data-testid="backlog-task-checkbox"]').check();
+    await expect(rows.nth(0).locator('[data-testid="backlog-task-checkbox"]')).toBeChecked();
+
+    // Right-click the second (unselected) item
+    await rows.nth(1).click({ button: 'right' });
+
+    // First item should no longer be selected, second should be selected
+    await expect(rows.nth(0).locator('[data-testid="backlog-task-checkbox"]')).not.toBeChecked();
+    await expect(rows.nth(1).locator('[data-testid="backlog-task-checkbox"]')).toBeChecked();
+
+    // Context menu should show single-item labels (not multi-select counts)
+    await expect(page.locator('[data-testid="context-move-to-board"]').first()).toBeVisible();
+    await expect(page.locator('text=Delete 2 items')).not.toBeVisible();
+    await expect(page.locator('[data-testid="context-delete-item"]')).toHaveText('Delete');
+
+    await browser.close();
+  });
 });
