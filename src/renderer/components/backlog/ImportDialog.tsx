@@ -235,6 +235,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
           body: issue.body,
           labels: issue.labels,
           assignee: issue.assignee,
+          fileAttachments: issue.fileAttachments,
         })),
       });
 

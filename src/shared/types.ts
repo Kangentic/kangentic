@@ -654,6 +654,7 @@ export interface ExternalIssue {
   updatedAt: string;
   alreadyImported: boolean;
   attachmentCount: number;
+  fileAttachments?: Array<{ url: string; filename: string; sizeBytes: number }>;
 }
 
 export interface ImportFetchInput {
@@ -681,6 +682,7 @@ export interface ImportExecuteInput {
     body: string;
     labels: string[];
     assignee: string | null;
+    fileAttachments?: Array<{ url: string; filename: string; sizeBytes: number }>;
   }>;
 }
 

@@ -17,7 +17,7 @@ export function createImporterRegistry(): ImporterRegistry {
   return {
     github_issues: new GitHubIssuesAdapter(githubImporter),
     github_projects: new GitHubProjectsAdapter(githubImporter),
-    azure_devops: new AzureDevOpsAdapter(azureDevOpsImporter, githubImporter),
+    azure_devops: new AzureDevOpsAdapter(azureDevOpsImporter),
   };
 }
 

@@ -42,6 +42,18 @@ export interface Importer {
     attachments: DownloadedAttachment[];
     skippedCount: number;
   }>;
+
+  /**
+   * Download file attachments from an external source using authenticated HTTP.
+   * Optional - only implemented by sources that have explicit file attachments
+   * (e.g. Azure DevOps AttachedFile relations).
+   */
+  downloadFileAttachments?(
+    attachments: Array<{ url: string; filename: string; sizeBytes: number }>,
+  ): Promise<{
+    attachments: DownloadedAttachment[];
+    skippedCount: number;
+  }>;
 }
 
 /**

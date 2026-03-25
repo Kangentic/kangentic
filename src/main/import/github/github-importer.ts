@@ -1,10 +1,10 @@
 import which from 'which';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import https from 'node:https';
-import http from 'node:http';
 import { URL } from 'node:url';
 import type { ExternalIssue } from '../../../shared/types';
+import type { DownloadedAttachment } from '../importer';
+import { downloadFile, DOWNLOAD_CONCURRENCY } from '../download-file';
 
 const execFileAsync = promisify(execFile);
 
@@ -44,16 +44,6 @@ interface GitHubProjectItemRaw {
   };
 }
 
-interface DownloadedAttachment {
-  filename: string;
-  data: string;
-  mediaType: string;
-  sizeBytes: number;
-  sourceUrl: string;
-}
-
-const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024; // 10 MB
-const DOWNLOAD_CONCURRENCY = 3;
 const COMMAND_TIMEOUT = 15_000;
 
 export class GitHubImporter {
@@ -340,90 +330,3 @@ function filenameFromUrl(url: string, altText: string): string {
   return `image_${Date.now()}.png`;
 }
 
-function mediaTypeFromFilename(filename: string): string {
-  const extension = filename.split('.').pop()?.toLowerCase();
-  const mimeTypes: Record<string, string> = {
-    png: 'image/png',
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    gif: 'image/gif',
-    webp: 'image/webp',
-    svg: 'image/svg+xml',
-    bmp: 'image/bmp',
-    ico: 'image/x-icon',
-    pdf: 'application/pdf',
-  };
-  return mimeTypes[extension ?? ''] ?? 'application/octet-stream';
-}
-
-const MAX_REDIRECTS = 3;
-
-/** Download a file from a URL, returning base64 data. Returns null if too large or failed. */
-async function downloadFile(url: string, filename: string, remainingRedirects = MAX_REDIRECTS): Promise<DownloadedAttachment | null> {
-  return new Promise((resolve) => {
-    const protocol = url.startsWith('https://') ? https : http;
-    const request = protocol.get(url, { timeout: 30_000 }, (response) => {
-      // Follow redirects with depth limit
-      if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-        request.destroy();
-        if (remainingRedirects <= 0) {
-          resolve(null);
-          return;
-        }
-        downloadFile(response.headers.location, filename, remainingRedirects - 1).then(resolve).catch(() => resolve(null));
-        return;
-      }
-
-      if (response.statusCode !== 200) {
-        request.destroy();
-        resolve(null);
-        return;
-      }
-
-      // Check content-length header first
-      const contentLength = parseInt(response.headers['content-length'] ?? '0', 10);
-      if (contentLength > MAX_ATTACHMENT_SIZE) {
-        request.destroy();
-        resolve(null);
-        return;
-      }
-
-      const chunks: Buffer[] = [];
-      let totalSize = 0;
-      let aborted = false;
-
-      response.on('data', (chunk: Buffer) => {
-        totalSize += chunk.length;
-        if (totalSize > MAX_ATTACHMENT_SIZE) {
-          aborted = true;
-          request.destroy();
-          resolve(null);
-          return;
-        }
-        chunks.push(chunk);
-      });
-
-      response.on('end', () => {
-        if (aborted) return;
-        const buffer = Buffer.concat(chunks);
-        resolve({
-          filename,
-          data: buffer.toString('base64'),
-          mediaType: mediaTypeFromFilename(filename),
-          sizeBytes: buffer.length,
-          sourceUrl: url,
-        });
-      });
-
-      response.on('error', () => {
-        if (!aborted) resolve(null);
-      });
-    });
-
-    request.on('error', () => resolve(null));
-    request.on('timeout', () => {
-      request.destroy();
-      resolve(null);
-    });
-  });
-}

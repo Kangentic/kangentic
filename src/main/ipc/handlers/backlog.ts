@@ -279,7 +279,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     return new BacklogAttachmentRepository(db).getDataUrl(id);
   });
 
-  ipcMain.handle(IPC.BACKLOG_ATTACHMENT_OPEN, (_, id: string) => {
+  ipcMain.handle(IPC.BACKLOG_ATTACHMENT_OPEN, async (_, id: string) => {
     if (!context.currentProjectId) throw new Error('No project is currently open');
     const db = getProjectDb(context.currentProjectId);
     const attachment = new BacklogAttachmentRepository(db).getById(id);
@@ -288,7 +288,12 @@ export function registerBacklogHandlers(context: IpcContext): void {
     fs.mkdirSync(tempDir, { recursive: true });
     const tempPath = path.join(tempDir, attachment.id + '_' + attachment.filename);
     fs.copyFileSync(attachment.file_path, tempPath);
-    return shell.openPath(tempPath);
+    const errorMessage = await shell.openPath(tempPath);
+    if (errorMessage) {
+      // File format unsupported or no default app - fall back to showing in file explorer
+      shell.showItemInFolder(tempPath);
+    }
+    return errorMessage;
   });
 
   // --- Import handlers ---
@@ -334,9 +339,18 @@ export function registerBacklogHandlers(context: IpcContext): void {
       }
 
       // Download inline images from the issue body (source-agnostic)
-      const { attachments: downloadedAttachments, skippedCount } =
+      const { attachments: inlineAttachments, skippedCount: inlineSkipped } =
         await importer.downloadImages(issue.body);
-      totalSkippedAttachments += skippedCount;
+      totalSkippedAttachments += inlineSkipped;
+
+      // Download file attachments if the source supports them (e.g. Azure DevOps AttachedFile relations)
+      const downloadedAttachments = [...inlineAttachments];
+      if (importer.downloadFileAttachments && issue.fileAttachments?.length) {
+        const { attachments: fileAttachments, skippedCount: fileSkipped } =
+          await importer.downloadFileAttachments(issue.fileAttachments);
+        downloadedAttachments.push(...fileAttachments);
+        totalSkippedAttachments += fileSkipped;
+      }
 
       const attachmentMetadata = downloadedAttachments.map((attachment) => ({
         originalUrl: attachment.sourceUrl,

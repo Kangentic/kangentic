@@ -23,7 +23,27 @@ interface AzureDevOpsWorkItemRaw {
     'Microsoft.VSTS.TCM.SystemInfo'?: string;
     'Microsoft.VSTS.Common.AcceptanceCriteria'?: string;
   };
+  relations?: Array<{
+    rel: string;
+    url: string;
+    attributes: { name?: string; resourceSize?: number; comment?: string };
+  }>;
   url: string;
+}
+
+/** Comment shape from the Azure DevOps work item comments API. */
+export interface AzureDevOpsComment {
+  id: number;
+  text: string;
+  createdBy: { displayName: string };
+  createdDate: string;
+}
+
+/** File attachment extracted from a work item relation. */
+export interface AzureDevOpsFileAttachment {
+  url: string;
+  filename: string;
+  sizeBytes: number;
 }
 
 /** Cache key for paginated results. */
@@ -34,6 +54,9 @@ interface QueryCacheEntry {
 
 const COMMAND_TIMEOUT = 30_000;
 const QUERY_CACHE_TTL = 60_000; // 1 minute
+const COMMENT_FETCH_CONCURRENCY = 5;
+const AZURE_DEVOPS_RESOURCE_ID = '499b84ac-1321-427f-aa17-267ca6975798';
+const TOKEN_REFRESH_BUFFER = 5 * 60_000; // Refresh token 5 minutes before expiry
 
 // On Windows, `az` is a .cmd batch script. execFile cannot spawn .cmd files
 // directly (EINVAL). We spawn `cmd.exe /c az ...` instead, which properly
@@ -57,6 +80,7 @@ export class AzureDevOpsImporter {
   private azDetected = false;
   private detectPromise: Promise<boolean> | null = null;
   private queryCache = new Map<string, QueryCacheEntry>();
+  private tokenCache: { token: string; expiresAt: number } | null = null;
 
   /** Check if the az CLI binary is available. */
   async detect(): Promise<boolean> {
@@ -205,12 +229,144 @@ export class AzureDevOpsImporter {
     return allItems;
   }
 
+  /**
+   * Get an Azure DevOps access token for authenticated API calls.
+   * Caches the token and refreshes it before expiry.
+   */
+  async getAccessToken(): Promise<string> {
+    if (this.tokenCache && Date.now() < this.tokenCache.expiresAt - TOKEN_REFRESH_BUFFER) {
+      return this.tokenCache.token;
+    }
+
+    const { stdout } = await execAz(
+      ['account', 'get-access-token', '--resource', AZURE_DEVOPS_RESOURCE_ID, '--output', 'json'],
+      { timeout: COMMAND_TIMEOUT },
+    );
+
+    const parsed = JSON.parse(stdout) as { accessToken: string; expiresOn: string };
+    this.tokenCache = {
+      token: parsed.accessToken,
+      expiresAt: new Date(parsed.expiresOn).getTime(),
+    };
+
+    return this.tokenCache.token;
+  }
+
+  /**
+   * Batch fetch work items with relations expanded.
+   * Uses az rest to call the Work Items API with $expand=relations.
+   *
+   * Query parameters are passed via --url-parameters (not in the URL) because
+   * cmd.exe on Windows interprets & as a command separator, breaking URLs
+   * with multiple query params.
+   */
+  async fetchWorkItemsWithRelations(
+    organization: string,
+    project: string,
+    workItemIds: number[],
+  ): Promise<Map<number, AzureDevOpsWorkItemRaw['relations']>> {
+    const relationsMap = new Map<number, AzureDevOpsWorkItemRaw['relations']>();
+    if (workItemIds.length === 0) return relationsMap;
+
+    const batchSize = 200;
+    const organizationUrl = `https://dev.azure.com/${organization}`;
+
+    for (let batchStart = 0; batchStart < workItemIds.length; batchStart += batchSize) {
+      const batchIds = workItemIds.slice(batchStart, batchStart + batchSize);
+
+      const { stdout } = await execAz(
+        [
+          'rest', '--method', 'get',
+          '--url', `${organizationUrl}/${project}/_apis/wit/workitems`,
+          '--resource', AZURE_DEVOPS_RESOURCE_ID,
+          '--url-parameters', `ids=${batchIds.join(',')}`, '$expand=relations', 'api-version=7.0',
+        ],
+        { timeout: COMMAND_TIMEOUT, maxBuffer: 50 * 1024 * 1024 },
+      );
+
+      const parsed = JSON.parse(stdout) as { value: AzureDevOpsWorkItemRaw[] };
+      for (const item of parsed.value) {
+        if (item.relations) {
+          relationsMap.set(item.id, item.relations);
+        }
+      }
+    }
+
+    return relationsMap;
+  }
+
+  /**
+   * Fetch comments for multiple work items.
+   * Uses az rest to call the Work Item Comments API, concurrency-limited.
+   */
+  async fetchCommentsForItems(
+    organization: string,
+    project: string,
+    workItemIds: number[],
+  ): Promise<Map<number, AzureDevOpsComment[]>> {
+    const commentsMap = new Map<number, AzureDevOpsComment[]>();
+    if (workItemIds.length === 0) return commentsMap;
+
+    const organizationUrl = `https://dev.azure.com/${organization}`;
+
+    for (let batchStart = 0; batchStart < workItemIds.length; batchStart += COMMENT_FETCH_CONCURRENCY) {
+      const batch = workItemIds.slice(batchStart, batchStart + COMMENT_FETCH_CONCURRENCY);
+      const results = await Promise.allSettled(
+        batch.map(async (workItemId) => {
+          const { stdout } = await execAz(
+            [
+              'rest', '--method', 'get',
+              '--url', `${organizationUrl}/${project}/_apis/wit/workitems/${workItemId}/comments`,
+              '--resource', AZURE_DEVOPS_RESOURCE_ID,
+              '--url-parameters', 'api-version=7.0-preview.4',
+            ],
+            { timeout: COMMAND_TIMEOUT },
+          );
+
+          const parsed = JSON.parse(stdout) as { comments: AzureDevOpsComment[] };
+          return { workItemId, comments: parsed.comments ?? [] };
+        }),
+      );
+
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value.comments.length > 0) {
+          commentsMap.set(result.value.workItemId, result.value.comments);
+        }
+      }
+    }
+
+    return commentsMap;
+  }
+
+  /** Extract file attachments from work item relations. */
+  extractFileAttachments(
+    relations: AzureDevOpsWorkItemRaw['relations'],
+  ): AzureDevOpsFileAttachment[] {
+    if (!relations) return [];
+
+    return relations
+      .filter((relation) => relation.rel === 'AttachedFile')
+      .map((relation) => {
+        // Azure DevOps attachment URLs require api-version to return file content
+        const attachmentUrl = relation.url.includes('?')
+          ? `${relation.url}&api-version=7.0`
+          : `${relation.url}?api-version=7.0`;
+        return {
+          url: attachmentUrl,
+          filename: relation.attributes.name ?? `attachment_${Date.now()}`,
+          sizeBytes: relation.attributes.resourceSize ?? 0,
+        };
+      });
+  }
+
   /** Map raw Azure DevOps work items to ExternalIssue format. */
   mapToExternalIssues(
     rawItems: AzureDevOpsWorkItemRaw[],
     organization: string,
     project: string,
     alreadyImportedIds: Set<string>,
+    commentsMap?: Map<number, AzureDevOpsComment[]>,
+    relationsMap?: Map<number, AzureDevOpsWorkItemRaw['relations']>,
   ): ExternalIssue[] {
     return rawItems.map((item) => {
       const externalId = String(item.id);
@@ -235,7 +391,14 @@ export class AzureDevOpsImporter {
           .map((field) => `<h3>${field.label}</h3>\n${field.value}`)
           .join('\n');
       }
-      const body = convertHtmlToMarkdown(htmlDescription);
+      let body = convertHtmlToMarkdown(htmlDescription);
+
+      // Append work item comments to the body
+      const comments = commentsMap?.get(item.id);
+      if (comments && comments.length > 0) {
+        const commentSection = formatCommentsSection(comments);
+        body = body ? `${body}\n\n${commentSection}` : commentSection;
+      }
 
       // Tags only (work item type is a separate field)
       const tags = fields['System.Tags'] ?? '';
@@ -244,6 +407,10 @@ export class AzureDevOpsImporter {
       // AssignedTo can be a string or an object depending on API version
       const rawAssignee = fields['System.AssignedTo'];
       const assignee = resolveAssignee(rawAssignee);
+
+      // Extract file attachments from relations
+      const relations = relationsMap?.get(item.id);
+      const fileAttachments = this.extractFileAttachments(relations);
 
       return {
         externalId,
@@ -258,7 +425,8 @@ export class AzureDevOpsImporter {
         createdAt: fields['System.CreatedDate'] ?? new Date().toISOString(),
         updatedAt: fields['System.ChangedDate'] ?? new Date().toISOString(),
         alreadyImported: alreadyImportedIds.has(externalId),
-        attachmentCount: extractInlineImageUrls(body).length,
+        attachmentCount: extractInlineImageUrls(body).length + fileAttachments.length,
+        fileAttachments: fileAttachments.length > 0 ? fileAttachments : undefined,
       };
     });
   }
@@ -272,6 +440,7 @@ export class AzureDevOpsImporter {
     this.azDetected = false;
     this.detectPromise = null;
     this.queryCache.clear();
+    this.tokenCache = null;
   }
 }
 
@@ -323,6 +492,38 @@ function buildWiqlQuery(project: string, state?: string, searchQuery?: string, i
 /** Escape single quotes in WIQL string literals. */
 function escapeWiqlString(value: string): string {
   return value.replace(/'/g, "''");
+}
+
+/** Format work item comments as a markdown section. */
+function formatCommentsSection(comments: AzureDevOpsComment[]): string {
+  const lines = ['## Comments', ''];
+
+  for (const comment of comments) {
+    const author = comment.createdBy?.displayName ?? 'Unknown';
+    const date = formatCommentDate(comment.createdDate);
+    lines.push(`### ${author} - ${date}`);
+    lines.push('');
+    lines.push(convertHtmlToMarkdown(comment.text));
+    lines.push('');
+  }
+
+  return lines.join('\n').trim();
+}
+
+/** Format an ISO date string for comment display. */
+function formatCommentDate(isoDate: string): string {
+  try {
+    const date = new Date(isoDate);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return isoDate;
+  }
 }
 
 /** Convert HTML (from Azure DevOps rich text) to markdown. */

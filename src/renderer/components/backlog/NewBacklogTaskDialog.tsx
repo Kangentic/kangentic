@@ -327,7 +327,13 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate }: 
                       <div
                         key={attachment.id}
                         className="relative flex-shrink-0 w-24 h-24 rounded-md border border-edge-input overflow-hidden group cursor-pointer"
-                        onClick={() => isImage ? setPreviewAttachment(attachment) : undefined}
+                        onClick={() => {
+                          if (isImage) {
+                            setPreviewAttachment(attachment);
+                          } else if (isSavedAttachment(attachment)) {
+                            window.electronAPI.backlogAttachments.open(attachment.id);
+                          }
+                        }}
                       >
                         {isImage ? (
                           <img
