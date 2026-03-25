@@ -14,7 +14,8 @@ const PTY_RESIZE_DEBOUNCE_MS = 200;
 const TERMINAL_THEME = {
   background: '#18181b',
   foreground: '#e4e4e7',
-  cursor: '#e4e4e7',
+  cursor: '#18181b',
+  cursorAccent: '#18181b',
   selectionBackground: 'rgba(58, 130, 246, 0.35)',
   black: '#18181b',
   red: '#ef4444',
@@ -67,7 +68,7 @@ export function useTerminal(options: UseTerminalOptions) {
       fontSize: options.fontSize || 14,
       theme: xtermTheme,
       scrollback: options.scrollbackLines || 5000,
-      cursorBlink: true,
+      cursorBlink: false,
       cursorStyle: options.cursorStyle || 'block',
       allowProposedApi: true,
     });
