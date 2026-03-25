@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef } from 'react';
-import { Plus, Search, SquareArrowOutUpRight, Trash2, Inbox, Tags, Flag, Filter, Pencil, X, Github, ExternalLink, GripVertical } from 'lucide-react';
+import { Plus, Search, SquareArrowOutUpRight, Trash2, Inbox, Filter, Pencil, X, Github, ExternalLink, GripVertical } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { DndContext, DragOverlay } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -12,7 +12,6 @@ import { stripMarkdown } from '../../utils/strip-markdown';
 import { BacklogContextMenu } from './BacklogContextMenu';
 import { BacklogBulkToolbar } from './BacklogBulkToolbar';
 import { NewBacklogItemDialog } from './NewBacklogItemDialog';
-import { LabelsPopover, PrioritiesPopover } from './ManageLabelsDialog';
 import { ImportPopover } from './ImportPopover';
 import { ImportDialog } from './ImportDialog';
 import type { ImportSource } from '../../../shared/types';
@@ -372,8 +371,6 @@ export function BacklogView() {
           New Task
         </button>
 
-        <LabelsPopover />
-        <PrioritiesPopover />
         <ImportPopover onOpenImportDialog={(source) => setImportSource(source)} />
 
         <div className="flex-1" />

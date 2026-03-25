@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Download, Plus, Trash2, Github, KanbanSquare, CircleDot, ChevronRight, ArrowLeft, Loader2, Cloud } from 'lucide-react';
+import { Download, Plus, Trash2, Github, KanbanSquare, CircleDot, ChevronRight, ArrowLeft, Loader2, Cloud, X } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import type { ExternalSource, ImportSource } from '../../../shared/types';
 
@@ -236,7 +236,7 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
         data-testid="import-sources-btn"
       >
         <Download size={14} />
-        Import
+        Import Tasks
       </button>
 
       {open && (
@@ -255,7 +255,7 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
             <div className="max-h-48 overflow-y-auto">
               {sources.length === 0 && (
                 <div className="px-3 py-4 text-center text-sm text-fg-faint">
-                  No sources configured. Add one to start importing.
+                  No sources configured. Add one to start.
                 </div>
               )}
               {sources.map((source) => (
@@ -311,12 +311,13 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
                   {provider.available && <ChevronRight size={14} className="text-fg-faint" />}
                 </button>
               ))}
-              <div className="px-3 py-2 border-t border-edge/50">
+              <div className="border-t border-edge">
                 <button
                   type="button"
                   onClick={resetAddFlow}
-                  className="text-xs text-fg-faint hover:text-fg transition-colors"
+                  className="flex items-center gap-1.5 w-full px-3 py-2 text-sm text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
                 >
+                  <X size={14} />
                   Cancel
                 </button>
               </div>

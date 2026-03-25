@@ -220,6 +220,7 @@ export function LabelsPopover() {
 
   const labelEntries = useMemo(() => {
     const counts = new Map<string, number>();
+    // Count labels used on backlog items and board tasks
     for (const item of items) {
       for (const label of item.labels) {
         counts.set(label, (counts.get(label) ?? 0) + 1);
@@ -228,6 +229,12 @@ export function LabelsPopover() {
     for (const task of boardTasks) {
       for (const label of (task.labels ?? [])) {
         counts.set(label, (counts.get(label) ?? 0) + 1);
+      }
+    }
+    // Include labels from config that aren't yet assigned to any item
+    for (const name of Object.keys(labelColors)) {
+      if (!counts.has(name)) {
+        counts.set(name, 0);
       }
     }
     return [...counts.entries()]
@@ -251,14 +258,17 @@ export function LabelsPopover() {
   }, [renameLabel, labelColors, config.backlog, updateConfig]);
 
   const handleDelete = useCallback(async (name: string) => {
-    await deleteLabel(name);
-    if (labelColors[name]) {
-      const updated = { ...labelColors };
+    // Read fresh config via getState() to avoid stale closure values
+    const currentConfig = useConfigStore.getState().config;
+    const currentLabelColors = currentConfig.backlog?.labelColors ?? {};
+    if (currentLabelColors[name]) {
+      const updated = { ...currentLabelColors };
       delete updated[name];
-      updateConfig({ backlog: { ...config.backlog, labelColors: updated } } as Partial<AppConfig>);
+      await useConfigStore.getState().updateConfig({ backlog: { ...currentConfig.backlog, labelColors: updated } } as Partial<AppConfig>);
     }
+    await deleteLabel(name);
     setPendingDeleteLabel(null);
-  }, [deleteLabel, labelColors, config.backlog, updateConfig]);
+  }, [deleteLabel]);
 
   return (
     <div className="relative">
@@ -278,15 +288,15 @@ export function LabelsPopover() {
       </button>
 
       <PopoverShell open={open} popoverRef={popoverRef}>
-        <div className="p-3">
+        <div>
           {labelEntries.length === 0 ? (
-            <div className="text-center text-fg-faint py-6">
+            <div className="text-center text-fg-faint py-6 px-3">
               <Tags size={28} strokeWidth={1} className="mx-auto mb-2" />
               <p className="text-sm">No labels yet</p>
-              <p className="text-xs mt-1">Add labels when creating backlog items</p>
+              <p className="text-xs mt-1">Add labels when creating tasks</p>
             </div>
           ) : (
-            <div className="space-y-0.5">
+            <div className="space-y-0.5 p-2">
               {labelEntries.map((entry) => (
                 <LabelRow
                   key={entry.name}
@@ -294,15 +304,21 @@ export function LabelsPopover() {
                   color={entry.color}
                   onColorChange={(newColor) => handleColorChange(entry.name, newColor)}
                   onRename={(newName) => handleRename(entry.name, newName)}
-                  onDelete={() => setPendingDeleteLabel({ name: entry.name, count: entry.count })}
+                  onDelete={() => {
+                    if (useConfigStore.getState().config.skipDeleteConfirm) {
+                      handleDelete(entry.name);
+                    } else {
+                      setPendingDeleteLabel({ name: entry.name, count: entry.count });
+                    }
+                  }}
                 />
               ))}
             </div>
           )}
 
-          <div className="my-1.5 border-t border-edge" />
+          <div className="border-t border-edge" />
           {addingLabel ? (
-            <div className="flex items-center gap-2 px-1.5">
+            <div className="flex items-center gap-2 px-3 py-1.5">
               <input
                 ref={newLabelInputRef}
                 type="text"
@@ -322,7 +338,16 @@ export function LabelsPopover() {
                     setNewLabelName('');
                   }
                 }}
-                onBlur={() => { setAddingLabel(false); setNewLabelName(''); }}
+                onBlur={() => {
+                  if (newLabelName.trim()) {
+                    const trimmed = newLabelName.trim();
+                    if (!labelEntries.some((entry) => entry.name === trimmed)) {
+                      handleColorChange(trimmed, '#6b7280');
+                    }
+                  }
+                  setNewLabelName('');
+                  setAddingLabel(false);
+                }}
                 placeholder="Label name"
                 className="flex-1 bg-surface border border-edge-input rounded px-2 py-1 text-sm text-fg focus:outline-none focus:border-accent"
               />
@@ -334,9 +359,9 @@ export function LabelsPopover() {
                 setAddingLabel(true);
                 setTimeout(() => newLabelInputRef.current?.focus(), 0);
               }}
-              className="flex items-center gap-1.5 px-1.5 py-1.5 text-xs text-fg-secondary hover:text-fg hover:bg-surface-hover/30 rounded w-full transition-colors"
+              className="flex items-center gap-1.5 w-full px-3 py-2 text-sm text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
             >
-              <Plus size={13} />
+              <Plus size={14} />
               Add Label
             </button>
           )}
@@ -346,10 +371,16 @@ export function LabelsPopover() {
       {pendingDeleteLabel && (
         <ConfirmDialog
           title={`Delete label "${pendingDeleteLabel.name}"`}
-          message={`This will remove the label from ${pendingDeleteLabel.count} backlog item${pendingDeleteLabel.count !== 1 ? 's' : ''}.`}
+          message={pendingDeleteLabel.count > 0
+            ? `This will remove the label from ${pendingDeleteLabel.count} item${pendingDeleteLabel.count !== 1 ? 's' : ''}.`
+            : 'This label is not assigned to any items.'}
           confirmLabel="Delete"
           variant="danger"
-          onConfirm={() => handleDelete(pendingDeleteLabel.name)}
+          showDontAskAgain
+          onConfirm={(dontAskAgain) => {
+            if (dontAskAgain) useConfigStore.getState().updateConfig({ skipDeleteConfirm: true });
+            handleDelete(pendingDeleteLabel.name);
+          }}
           onCancel={() => setPendingDeleteLabel(null)}
         />
       )}
@@ -604,8 +635,8 @@ export function PrioritiesPopover() {
       </button>
 
       <PopoverShell open={open} popoverRef={popoverRef}>
-        <div className="p-3">
-          <div className="space-y-0.5">
+        <div>
+          <div className="space-y-0.5 p-2">
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
@@ -630,26 +661,32 @@ export function PrioritiesPopover() {
                     isLocked={priority.index === 0}
                     onRename={(newLabel) => handleRename(priority.index, newLabel)}
                     onColorChange={(newColor) => handleColorChange(priority.index, newColor)}
-                    onDelete={() => setPendingDeletePriority({
-                      index: priority.index,
-                      label: priority.label,
-                      count: priorityItemCounts.get(priority.index) ?? 0,
-                    })}
+                    onDelete={() => {
+                      if (useConfigStore.getState().config.skipDeleteConfirm) {
+                        handleDelete(priority.index);
+                      } else {
+                        setPendingDeletePriority({
+                          index: priority.index,
+                          label: priority.label,
+                          count: priorityItemCounts.get(priority.index) ?? 0,
+                        });
+                      }
+                    }}
                   />
                 ))}
               </SortableContext>
             </DndContext>
-
-            <div className="my-1.5 border-t border-edge" />
-            <button
-              type="button"
-              onClick={handleAdd}
-              className="flex items-center gap-1.5 px-1.5 py-1.5 text-xs text-fg-secondary hover:text-fg hover:bg-surface-hover/30 rounded w-full transition-colors"
-            >
-              <Plus size={13} />
-              Add Priority
-            </button>
           </div>
+
+          <div className="border-t border-edge" />
+          <button
+            type="button"
+            onClick={handleAdd}
+            className="flex items-center gap-1.5 w-full px-3 py-2 text-sm text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
+          >
+            <Plus size={14} />
+            Add Priority
+          </button>
         </div>
       </PopoverShell>
 
@@ -659,7 +696,11 @@ export function PrioritiesPopover() {
           message={`${pendingDeletePriority.count} item${pendingDeletePriority.count !== 1 ? 's' : ''} with this priority will be reset to "${priorities[0]?.label ?? 'None'}".`}
           confirmLabel="Delete"
           variant="danger"
-          onConfirm={() => handleDelete(pendingDeletePriority.index)}
+          showDontAskAgain
+          onConfirm={(dontAskAgain) => {
+            if (dontAskAgain) useConfigStore.getState().updateConfig({ skipDeleteConfirm: true });
+            handleDelete(pendingDeletePriority.index);
+          }}
           onCancel={() => setPendingDeletePriority(null)}
         />
       )}

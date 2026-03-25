@@ -46,13 +46,27 @@ export function removeNestedKey(object: object, keyPath: string): void {
   }
 }
 
-/** Deep-merge source into target (returns new object). Allows null to override. */
+/** Check if an object is a flat key-value map (all values are primitives, not nested objects/arrays). */
+function isFlatMap(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Object.values(value as Record<string, unknown>).every(
+    (item) => item === null || typeof item !== 'object',
+  );
+}
+
+/** Deep-merge source into target (returns new object). Allows null to override.
+ *  Flat maps (objects with only primitive values) are replaced entirely, not merged key-by-key.
+ *  This allows key deletion in flat maps like `labelColors: Record<string, string>`. */
 export function deepMerge<T extends object>(target: T, source: Partial<T>): T {
   const result = { ...target } as Record<string, unknown>;
   for (const [key, value] of Object.entries(source)) {
     if (value === undefined) continue;
     if (value !== null && typeof value === 'object' && !Array.isArray(value) && typeof result[key] === 'object') {
-      result[key] = deepMerge(result[key] as Record<string, unknown>, value as Record<string, unknown>);
+      if (isFlatMap(value)) {
+        result[key] = { ...value as Record<string, unknown> };
+      } else {
+        result[key] = deepMerge(result[key] as Record<string, unknown>, value as Record<string, unknown>);
+      }
     } else {
       result[key] = value;
     }
