@@ -546,6 +546,7 @@ export function BacklogView() {
                   data={filteredItems}
                   rowKey={(item) => item.id}
                   onRowClick={(item) => toggleSelected(item.id)}
+                  onRowDoubleClick={(item) => handleEdit(item.id)}
                   onRowContextMenu={handleRowContextMenu}
                   emptyMessage={emptyMessage}
                   rowTestId="backlog-item-row"

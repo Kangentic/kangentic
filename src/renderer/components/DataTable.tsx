@@ -19,6 +19,7 @@ interface DataTableProps<TRow, TKey extends string = string> {
   data: TRow[];
   rowKey: (row: TRow) => string;
   onRowClick?: (row: TRow) => void;
+  onRowDoubleClick?: (row: TRow) => void;
   onRowContextMenu?: (row: TRow, event: React.MouseEvent) => void;
   defaultSortKey?: TKey;
   defaultSortDirection?: 'asc' | 'desc';
@@ -39,6 +40,7 @@ function SortableRow<TRow, TKey extends string>({
   rowId,
   columns,
   onRowClick,
+  onRowDoubleClick,
   onRowContextMenu,
   rowTestId,
   isDragDisabled,
@@ -47,6 +49,7 @@ function SortableRow<TRow, TKey extends string>({
   rowId: string;
   columns: DataTableColumn<TRow, TKey>[];
   onRowClick?: (row: TRow) => void;
+  onRowDoubleClick?: (row: TRow) => void;
   onRowContextMenu?: (row: TRow, event: React.MouseEvent) => void;
   rowTestId?: string;
   isDragDisabled: boolean;
@@ -72,8 +75,9 @@ function SortableRow<TRow, TKey extends string>({
     <tr
       ref={setNodeRef}
       style={style}
-      className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick ? 'hover:bg-surface-hover/30 cursor-pointer' : ''}`}
+      className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick || onRowDoubleClick ? 'hover:bg-surface-hover/30 cursor-pointer' : ''}`}
       onClick={onRowClick ? () => onRowClick(row) : undefined}
+      onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
       onContextMenu={onRowContextMenu ? (event) => { event.preventDefault(); onRowContextMenu(row, event); } : undefined}
       data-testid={rowTestId}
     >
@@ -109,6 +113,7 @@ export function DataTable<TRow, TKey extends string = string>({
   data,
   rowKey,
   onRowClick,
+  onRowDoubleClick,
   onRowContextMenu,
   defaultSortKey,
   defaultSortDirection = 'desc',
@@ -246,6 +251,7 @@ export function DataTable<TRow, TKey extends string = string>({
                         rowId={id}
                         columns={columns}
                         onRowClick={onRowClick}
+                        onRowDoubleClick={onRowDoubleClick}
                         onRowContextMenu={onRowContextMenu}
                         rowTestId={rowTestId}
                         isDragDisabled={isDragDisabled}
@@ -258,8 +264,9 @@ export function DataTable<TRow, TKey extends string = string>({
                       key={id}
                       data-index={virtualRow.index}
                       ref={virtualizer.measureElement}
-                      className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick ? 'hover:bg-surface-hover/30 cursor-pointer' : ''}`}
+                      className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick || onRowDoubleClick ? 'hover:bg-surface-hover/30 cursor-pointer' : ''}`}
                       onClick={onRowClick ? () => onRowClick(row) : undefined}
+                      onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
                       onContextMenu={onRowContextMenu ? (event) => { event.preventDefault(); onRowContextMenu(row, event); } : undefined}
                       data-testid={rowTestId}
                     >
@@ -311,6 +318,7 @@ export function DataTable<TRow, TKey extends string = string>({
                   rowId={id}
                   columns={columns}
                   onRowClick={onRowClick}
+                  onRowDoubleClick={onRowDoubleClick}
                   onRowContextMenu={onRowContextMenu}
                   rowTestId={rowTestId}
                   isDragDisabled={isDragDisabled}
@@ -320,8 +328,9 @@ export function DataTable<TRow, TKey extends string = string>({
             return (
               <tr
                 key={rowKey(row)}
-                className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick ? 'hover:bg-surface-hover/30 cursor-pointer' : ''}`}
+                className={`border-b border-edge/30 transition-colors even:bg-surface/20 ${onRowClick || onRowDoubleClick ? 'hover:bg-surface-hover/30 cursor-pointer' : ''}`}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
+                onDoubleClick={onRowDoubleClick ? () => onRowDoubleClick(row) : undefined}
                 onContextMenu={onRowContextMenu ? (event) => { event.preventDefault(); onRowContextMenu(row, event); } : undefined}
                 data-testid={rowTestId}
               >
