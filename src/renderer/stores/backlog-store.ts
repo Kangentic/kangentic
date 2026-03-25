@@ -1,27 +1,27 @@
 import { create } from 'zustand';
 import type {
-  BacklogItem,
-  BacklogItemCreateInput,
-  BacklogItemUpdateInput,
+  BacklogTask,
+  BacklogTaskCreateInput,
+  BacklogTaskUpdateInput,
   BacklogDemoteInput,
   Task,
 } from '../../shared/types';
 import { useBoardStore } from './board-store';
 
 interface BacklogState {
-  items: BacklogItem[];
+  items: BacklogTask[];
   loading: boolean;
   selectedIds: Set<string>;
 
   // Data actions
   loadBacklog: () => Promise<void>;
-  createItem: (input: BacklogItemCreateInput) => Promise<BacklogItem>;
-  updateItem: (input: BacklogItemUpdateInput) => Promise<BacklogItem>;
+  createItem: (input: BacklogTaskCreateInput) => Promise<BacklogTask>;
+  updateItem: (input: BacklogTaskUpdateInput) => Promise<BacklogTask>;
   deleteItem: (id: string) => Promise<void>;
   reorderItems: (ids: string[]) => Promise<void>;
   bulkDelete: (ids: string[]) => Promise<void>;
   promoteItems: (ids: string[], targetSwimlaneId: string) => Promise<Task[]>;
-  demoteTask: (input: BacklogDemoteInput) => Promise<BacklogItem>;
+  demoteTask: (input: BacklogDemoteInput) => Promise<BacklogTask>;
   renameLabel: (oldName: string, newName: string) => Promise<void>;
   deleteLabel: (name: string) => Promise<void>;
 
@@ -80,7 +80,7 @@ export const useBacklogStore = create<BacklogState>((set, get) => ({
     const reordered = ids.map((id, index) => {
       const item = itemMap.get(id);
       return item ? { ...item, position: index } : null;
-    }).filter(Boolean) as BacklogItem[];
+    }).filter(Boolean) as BacklogTask[];
     set({ items: reordered });
 
     try {
@@ -101,7 +101,7 @@ export const useBacklogStore = create<BacklogState>((set, get) => ({
 
   promoteItems: async (ids, targetSwimlaneId) => {
     const createdTasks = await window.electronAPI.backlog.promote({
-      backlogItemIds: ids,
+      backlogTaskIds: ids,
       targetSwimlaneId,
     });
 
@@ -118,15 +118,15 @@ export const useBacklogStore = create<BacklogState>((set, get) => ({
   },
 
   demoteTask: async (input) => {
-    const backlogItem = await window.electronAPI.backlog.demote(input);
+    const backlogTask = await window.electronAPI.backlog.demote(input);
 
-    // Add to local backlog items
-    set((state) => ({ items: [...state.items, backlogItem] }));
+    // Add to local backlog tasks
+    set((state) => ({ items: [...state.items, backlogTask] }));
 
     // Reload the board to reflect the removed task
     useBoardStore.getState().loadBoard();
 
-    return backlogItem;
+    return backlogTask;
   },
 
   renameLabel: async (oldName, newName) => {

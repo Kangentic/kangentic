@@ -7,10 +7,10 @@ import type { BacklogAttachment } from '../../../shared/types';
 export class BacklogAttachmentRepository {
   constructor(private db: Database.Database) {}
 
-  list(backlogItemId: string): BacklogAttachment[] {
+  list(backlogTaskId: string): BacklogAttachment[] {
     return this.db.prepare(
-      'SELECT * FROM backlog_attachments WHERE backlog_item_id = ? ORDER BY created_at ASC'
-    ).all(backlogItemId) as BacklogAttachment[];
+      'SELECT * FROM backlog_attachments WHERE backlog_task_id = ? ORDER BY created_at ASC'
+    ).all(backlogTaskId) as BacklogAttachment[];
   }
 
   getById(id: string): BacklogAttachment | undefined {
@@ -21,7 +21,7 @@ export class BacklogAttachmentRepository {
 
   add(
     projectPath: string,
-    backlogItemId: string,
+    backlogTaskId: string,
     filename: string,
     base64Data: string,
     mediaType: string,
@@ -33,7 +33,7 @@ export class BacklogAttachmentRepository {
     const sanitized = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const diskName = `${id}_${sanitized}`;
 
-    const attachDir = path.join(projectPath, '.kangentic', 'backlog', backlogItemId, 'attachments');
+    const attachDir = path.join(projectPath, '.kangentic', 'backlog', backlogTaskId, 'attachments');
     fs.mkdirSync(attachDir, { recursive: true });
 
     const filePath = path.join(attachDir, diskName);
@@ -42,7 +42,7 @@ export class BacklogAttachmentRepository {
 
     const attachment: BacklogAttachment = {
       id,
-      backlog_item_id: backlogItemId,
+      backlog_task_id: backlogTaskId,
       filename,
       file_path: filePath,
       media_type: mediaType,
@@ -51,11 +51,11 @@ export class BacklogAttachmentRepository {
     };
 
     this.db.prepare(`
-      INSERT INTO backlog_attachments (id, backlog_item_id, filename, file_path, media_type, size_bytes, created_at)
+      INSERT INTO backlog_attachments (id, backlog_task_id, filename, file_path, media_type, size_bytes, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(attachment.id, attachment.backlog_item_id, attachment.filename, attachment.file_path, attachment.media_type, attachment.size_bytes, attachment.created_at);
+    `).run(attachment.id, attachment.backlog_task_id, attachment.filename, attachment.file_path, attachment.media_type, attachment.size_bytes, attachment.created_at);
 
-    this.syncAttachmentCount(backlogItemId);
+    this.syncAttachmentCount(backlogTaskId);
 
     return attachment;
   }
@@ -69,35 +69,35 @@ export class BacklogAttachmentRepository {
     } catch { /* file may already be gone */ }
 
     this.db.prepare('DELETE FROM backlog_attachments WHERE id = ?').run(id);
-    this.syncAttachmentCount(attachment.backlog_item_id);
+    this.syncAttachmentCount(attachment.backlog_task_id);
   }
 
-  deleteByItemId(backlogItemId: string): void {
-    const attachments = this.list(backlogItemId);
+  deleteByTaskId(backlogTaskId: string): void {
+    const attachments = this.list(backlogTaskId);
     for (const attachment of attachments) {
       try {
         fs.unlinkSync(attachment.file_path);
       } catch { /* file may already be gone */ }
     }
 
-    this.db.prepare('DELETE FROM backlog_attachments WHERE backlog_item_id = ?').run(backlogItemId);
-    this.syncAttachmentCount(backlogItemId);
+    this.db.prepare('DELETE FROM backlog_attachments WHERE backlog_task_id = ?').run(backlogTaskId);
+    this.syncAttachmentCount(backlogTaskId);
 
     // Try to clean up the empty attachments directory
     if (attachments.length > 0) {
       try {
         const dir = path.dirname(attachments[0].file_path);
         fs.rmdirSync(dir);
-        // Also try to remove the parent backlog/<itemId> directory if empty
+        // Also try to remove the parent backlog/<taskId> directory if empty
         fs.rmdirSync(path.dirname(dir));
       } catch { /* not empty or doesn't exist */ }
     }
   }
 
-  getPathsForItem(backlogItemId: string): string[] {
+  getPathsForTask(backlogTaskId: string): string[] {
     const rows = this.db.prepare(
-      'SELECT file_path FROM backlog_attachments WHERE backlog_item_id = ? ORDER BY created_at ASC'
-    ).all(backlogItemId) as Array<{ file_path: string }>;
+      'SELECT file_path FROM backlog_attachments WHERE backlog_task_id = ? ORDER BY created_at ASC'
+    ).all(backlogTaskId) as Array<{ file_path: string }>;
     return rows.map((row) => row.file_path);
   }
 
@@ -110,13 +110,13 @@ export class BacklogAttachmentRepository {
     return `data:${attachment.media_type};base64,${base64}`;
   }
 
-  /** Keep backlog_items.attachment_count in sync with actual attachment rows. */
-  private syncAttachmentCount(backlogItemId: string): void {
+  /** Keep backlog_tasks.attachment_count in sync with actual attachment rows. */
+  private syncAttachmentCount(backlogTaskId: string): void {
     const count = (this.db.prepare(
-      'SELECT COUNT(*) as c FROM backlog_attachments WHERE backlog_item_id = ?'
-    ).get(backlogItemId) as { c: number }).c;
+      'SELECT COUNT(*) as c FROM backlog_attachments WHERE backlog_task_id = ?'
+    ).get(backlogTaskId) as { c: number }).c;
     this.db.prepare(
-      'UPDATE backlog_items SET attachment_count = ? WHERE id = ?'
-    ).run(count, backlogItemId);
+      'UPDATE backlog_tasks SET attachment_count = ? WHERE id = ?'
+    ).run(count, backlogTaskId);
   }
 }

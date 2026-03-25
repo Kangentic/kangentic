@@ -50,28 +50,28 @@ test.describe('Backlog View', () => {
     await browser.close();
   });
 
-  test('can create a backlog item', async () => {
+  test('can create a backlog task', async () => {
     const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
-    await page.locator('[data-testid="new-backlog-item-btn"]').click();
+    await page.locator('[data-testid="new-backlog-task-btn"]').click();
 
     // Dialog should open
-    await expect(page.locator('[data-testid="new-backlog-item-dialog"]')).toBeVisible();
+    await expect(page.locator('[data-testid="new-backlog-task-dialog"]')).toBeVisible();
 
     // Fill in title
-    await page.locator('[data-testid="backlog-item-title"]').fill('Test backlog item');
+    await page.locator('[data-testid="backlog-task-title"]').fill('Test backlog task');
 
     // Fill in description
-    await page.locator('[data-testid="backlog-item-description"]').fill('A test description');
+    await page.locator('[data-testid="backlog-task-description"]').fill('A test description');
 
     // Create
-    await page.locator('[data-testid="create-backlog-item-btn"]').click();
+    await page.locator('[data-testid="create-backlog-task-btn"]').click();
 
     // Item should appear in the table
-    await expect(page.locator('[data-testid="backlog-item-row"]')).toBeVisible();
-    await expect(page.locator('text=Test backlog item')).toBeVisible();
+    await expect(page.locator('[data-testid="backlog-task-row"]')).toBeVisible();
+    await expect(page.locator('text=Test backlog task')).toBeVisible();
 
     await browser.close();
   });
@@ -84,10 +84,10 @@ test.describe('Backlog View', () => {
 
     // Create two items
     for (const title of ['Item 1', 'Item 2']) {
-      await page.locator('[data-testid="new-backlog-item-btn"]').click();
-      await page.locator('[data-testid="backlog-item-title"]').fill(title);
-      await page.locator('[data-testid="create-backlog-item-btn"]').click();
-      await page.locator('[data-testid="new-backlog-item-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+      await page.locator('[data-testid="new-backlog-task-btn"]').click();
+      await page.locator('[data-testid="backlog-task-title"]').fill(title);
+      await page.locator('[data-testid="create-backlog-task-btn"]').click();
+      await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
     }
 
     // Count badge should show 2
@@ -97,7 +97,7 @@ test.describe('Backlog View', () => {
     await browser.close();
   });
 
-  test('can search backlog items', async () => {
+  test('can search backlog tasks', async () => {
     const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
@@ -105,10 +105,10 @@ test.describe('Backlog View', () => {
 
     // Create two items
     for (const title of ['Fix login bug', 'Add dark mode']) {
-      await page.locator('[data-testid="new-backlog-item-btn"]').click();
-      await page.locator('[data-testid="backlog-item-title"]').fill(title);
-      await page.locator('[data-testid="create-backlog-item-btn"]').click();
-      await page.locator('[data-testid="new-backlog-item-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+      await page.locator('[data-testid="new-backlog-task-btn"]').click();
+      await page.locator('[data-testid="backlog-task-title"]').fill(title);
+      await page.locator('[data-testid="create-backlog-task-btn"]').click();
+      await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
     }
 
     // Search for "login"
@@ -125,17 +125,17 @@ test.describe('Backlog View', () => {
     await browser.close();
   });
 
-  test('can delete a backlog item', async () => {
+  test('can delete a backlog task', async () => {
     const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
 
     // Create an item
-    await page.locator('[data-testid="new-backlog-item-btn"]').click();
-    await page.locator('[data-testid="backlog-item-title"]').fill('Delete me');
-    await page.locator('[data-testid="create-backlog-item-btn"]').click();
-    await page.locator('[data-testid="new-backlog-item-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+    await page.locator('[data-testid="new-backlog-task-btn"]').click();
+    await page.locator('[data-testid="backlog-task-title"]').fill('Delete me');
+    await page.locator('[data-testid="create-backlog-task-btn"]').click();
+    await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     await expect(page.locator('text=Delete me')).toBeVisible();
 
@@ -151,27 +151,27 @@ test.describe('Backlog View', () => {
     await browser.close();
   });
 
-  test('can edit a backlog item', async () => {
+  test('can edit a backlog task', async () => {
     const { browser, page } = await launchPage();
     await createProject(page, 'backlog-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
 
     // Create an item
-    await page.locator('[data-testid="new-backlog-item-btn"]').click();
-    await page.locator('[data-testid="backlog-item-title"]').fill('Original title');
-    await page.locator('[data-testid="create-backlog-item-btn"]').click();
-    await page.locator('[data-testid="new-backlog-item-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+    await page.locator('[data-testid="new-backlog-task-btn"]').click();
+    await page.locator('[data-testid="backlog-task-title"]').fill('Original title');
+    await page.locator('[data-testid="create-backlog-task-btn"]').click();
+    await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     // Click edit button
     await page.locator('[data-testid="edit-item-btn"]').click();
 
     // Dialog should open with existing title
-    await expect(page.locator('[data-testid="backlog-item-title"]')).toHaveValue('Original title');
+    await expect(page.locator('[data-testid="backlog-task-title"]')).toHaveValue('Original title');
 
     // Change title
-    await page.locator('[data-testid="backlog-item-title"]').fill('Updated title');
-    await page.locator('[data-testid="create-backlog-item-btn"]').click();
+    await page.locator('[data-testid="backlog-task-title"]').fill('Updated title');
+    await page.locator('[data-testid="create-backlog-task-btn"]').click();
 
     // Updated title should appear
     await expect(page.locator('text=Updated title')).toBeVisible();
@@ -211,19 +211,19 @@ test.describe('Backlog View', () => {
     await browser.close();
   });
 
-  test('create backlog item with attachment passes pendingAttachments', async () => {
+  test('create backlog task with attachment passes pendingAttachments', async () => {
     const { browser, page } = await launchPage();
     await createProject(page, 'backlog-attach-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
-    await page.locator('[data-testid="new-backlog-item-btn"]').click();
+    await page.locator('[data-testid="new-backlog-task-btn"]').click();
 
     // Fill in title
-    await page.locator('[data-testid="backlog-item-title"]').fill('Item with image');
+    await page.locator('[data-testid="backlog-task-title"]').fill('Item with image');
 
     // Paste an image into the description textarea
     await page.evaluate(() => {
-      const textarea = document.querySelector('[data-testid="backlog-item-description"]');
+      const textarea = document.querySelector('[data-testid="backlog-task-description"]');
       if (!textarea) return;
       const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
       const binary = atob(base64);
@@ -243,8 +243,8 @@ test.describe('Backlog View', () => {
     await expect(page.locator('text=1 attachment')).toBeVisible();
 
     // Submit the form
-    await page.locator('[data-testid="create-backlog-item-btn"]').click();
-    await page.locator('[data-testid="new-backlog-item-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+    await page.locator('[data-testid="create-backlog-task-btn"]').click();
+    await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     // Item should appear in the backlog table
     await expect(page.locator('text=Item with image')).toBeVisible();
@@ -261,25 +261,25 @@ test.describe('Backlog View', () => {
     await browser.close();
   });
 
-  test('edit backlog item with new attachment updates attachment_count', async () => {
+  test('edit backlog task with new attachment updates attachment_count', async () => {
     const { browser, page } = await launchPage();
     await createProject(page, 'backlog-edit-attach-test');
 
     await page.locator('[data-testid="view-toggle-backlog"]').click();
 
     // Create an item without attachments
-    await page.locator('[data-testid="new-backlog-item-btn"]').click();
-    await page.locator('[data-testid="backlog-item-title"]').fill('Edit me later');
-    await page.locator('[data-testid="create-backlog-item-btn"]').click();
-    await page.locator('[data-testid="new-backlog-item-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+    await page.locator('[data-testid="new-backlog-task-btn"]').click();
+    await page.locator('[data-testid="backlog-task-title"]').fill('Edit me later');
+    await page.locator('[data-testid="create-backlog-task-btn"]').click();
+    await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     // Open edit dialog
     await page.locator('[data-testid="edit-item-btn"]').click();
-    await expect(page.locator('[data-testid="backlog-item-title"]')).toHaveValue('Edit me later');
+    await expect(page.locator('[data-testid="backlog-task-title"]')).toHaveValue('Edit me later');
 
     // Paste an image
     await page.evaluate(() => {
-      const textarea = document.querySelector('[data-testid="backlog-item-description"]');
+      const textarea = document.querySelector('[data-testid="backlog-task-description"]');
       if (!textarea) return;
       const base64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
       const binary = atob(base64);
@@ -296,8 +296,8 @@ test.describe('Backlog View', () => {
     await expect(page.locator('[data-testid="attachment-thumbnails"]')).toBeVisible();
 
     // Save
-    await page.locator('[data-testid="create-backlog-item-btn"]').click();
-    await page.locator('[data-testid="new-backlog-item-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+    await page.locator('[data-testid="create-backlog-task-btn"]').click();
+    await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     // Verify attachment_count was incremented via mock
     const attachmentCount = await page.evaluate(() => {

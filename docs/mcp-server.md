@@ -154,14 +154,14 @@ List items in the backlog staging area. Items have priority levels and labels fo
 | `priority` | number | No | Filter by priority: 0=none, 1=low, 2=medium, 3=high, 4=urgent |
 | `query` | string | No | Search keyword to filter by title, description, or labels |
 
-### kangentic_create_backlog_item
+### kangentic_create_backlog_task
 
-Create a new item in the backlog staging area for work not yet ready for the board.
+Create a new task in the backlog staging area for work not yet ready for the board.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `title` | string | Yes | Item title (max 200 chars) |
-| `description` | string | No | Item description, supports markdown (max 10000 chars) |
+| `title` | string | Yes | Task title (max 200 chars) |
+| `description` | string | No | Task description, supports markdown (max 10000 chars) |
 | `priority` | number | No | Priority: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent |
 | `labels` | array | No | String labels for categorization |
 | `attachments` | array | No | File attachments: `[{ filePath: string, filename?: string }]` |
@@ -170,7 +170,7 @@ Rate limit: shared with task creation (50 per session).
 
 ### kangentic_search_backlog
 
-Search backlog items by keyword across titles, descriptions, and labels.
+Search backlog tasks by keyword across titles, descriptions, and labels.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -178,14 +178,14 @@ Search backlog items by keyword across titles, descriptions, and labels.
 
 ### kangentic_promote_backlog
 
-Move backlog items to the board, creating tasks in the specified column.
+Move backlog tasks to the board, creating tasks in the specified column.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `itemIds` | array | Yes | Backlog item IDs to move |
+| `itemIds` | array | Yes | Backlog task IDs to move |
 | `column` | string | No | Target column name. Defaults to To Do. |
 
-Attachments on promoted backlog items are automatically copied to the new task.
+Attachments on promoted backlog tasks are automatically copied to the new task.
 
 ## Configuration
 

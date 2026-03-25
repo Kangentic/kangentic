@@ -11,7 +11,7 @@ import { PromotePopover } from './PromotePopover';
 import { stripMarkdown } from '../../utils/strip-markdown';
 import { BacklogContextMenu } from './BacklogContextMenu';
 import { BacklogBulkToolbar } from './BacklogBulkToolbar';
-import { NewBacklogItemDialog } from './NewBacklogItemDialog';
+import { NewBacklogTaskDialog } from './NewBacklogTaskDialog';
 import { ImportPopover } from './ImportPopover';
 import { ImportDialog } from './ImportDialog';
 import type { ImportSource } from '../../../shared/types';
@@ -23,7 +23,7 @@ import { useFilterPopover } from '../../hooks/useFilterPopover';
 import { useBacklogStore } from '../../stores/backlog-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
-import type { BacklogItem } from '../../../shared/types';
+import type { BacklogTask } from '../../../shared/types';
 
 type SortKey = 'select' | 'priority' | 'title' | 'labels' | 'created' | 'actions';
 
@@ -120,10 +120,10 @@ export function BacklogView() {
     filterButtonRef, filterPopoverRef,
   } = useFilterPopover();
   const [showNewDialog, setShowNewDialog] = useState(false);
-  const [editingItem, setEditingItem] = useState<BacklogItem | null>(null);
+  const [editingTask, setEditingItem] = useState<BacklogTask | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
-  const [contextMenu, setContextMenu] = useState<{ position: { x: number; y: number }; item: BacklogItem } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ position: { x: number; y: number }; item: BacklogTask } | null>(null);
   const [importSource, setImportSource] = useState<ImportSource | null>(null);
 
   // Config-driven priorities
@@ -135,7 +135,7 @@ export function BacklogView() {
     { label: 'Urgent', color: '#ef4444' },
   ];
 
-  // All unique labels across backlog items and board tasks
+  // All unique labels across backlog tasks and board tasks
   const allLabels = useMemo(() => {
     const labelSet = new Set<string>();
     for (const item of items) {
@@ -219,13 +219,13 @@ export function BacklogView() {
     setPendingBulkDelete(false);
   }, [selectedIds, bulkDelete, updateConfig]);
 
-  const handleRowContextMenu = useCallback((item: BacklogItem, event: React.MouseEvent) => {
+  const handleRowContextMenu = useCallback((item: BacklogTask, event: React.MouseEvent) => {
     setContextMenu({ position: { x: event.clientX, y: event.clientY }, item });
   }, []);
 
   // --- Columns ---
 
-  const columns: DataTableColumn<BacklogItem, SortKey>[] = useMemo(() => [
+  const columns: DataTableColumn<BacklogTask, SortKey>[] = useMemo(() => [
     {
       key: 'select' as SortKey,
       label: '',
@@ -237,11 +237,11 @@ export function BacklogView() {
             checked={selectedIds.has(item.id)}
             onChange={() => toggleSelected(item.id)}
             className="w-3 h-3 accent-accent-fg cursor-pointer"
-            data-testid="backlog-item-checkbox"
+            data-testid="backlog-task-checkbox"
           />
         </label>
       ),
-      headerRender: (data: BacklogItem[]) => (
+      headerRender: (data: BacklogTask[]) => (
         <label className="flex items-center justify-center p-1 cursor-pointer">
           <input
             type="checkbox"
@@ -365,7 +365,7 @@ export function BacklogView() {
           type="button"
           onClick={() => setShowNewDialog(true)}
           className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors"
-          data-testid="new-backlog-item-btn"
+          data-testid="new-backlog-task-btn"
         >
           <Plus size={14} />
           New Task
@@ -466,7 +466,7 @@ export function BacklogView() {
               onDragCancel={handleDragCancel}
             >
               <SortableContext items={filteredItems.map((item) => item.id)} strategy={verticalListSortingStrategy}>
-                <DataTable<BacklogItem, SortKey>
+                <DataTable<BacklogTask, SortKey>
                   columns={columns}
                   data={filteredItems}
                   rowKey={(item) => item.id}
@@ -474,7 +474,7 @@ export function BacklogView() {
                   onRowDoubleClick={(item) => handleEdit(item.id)}
                   onRowContextMenu={handleRowContextMenu}
                   emptyMessage={emptyMessage}
-                  rowTestId="backlog-item-row"
+                  rowTestId="backlog-task-row"
                   virtualized
                   sortableEnabled={canDrag}
                   onSortChange={(key) => setIsColumnSorted(key !== undefined)}
@@ -527,26 +527,26 @@ export function BacklogView() {
 
       {/* Dialogs */}
       {showNewDialog && (
-        <NewBacklogItemDialog
+        <NewBacklogTaskDialog
           onClose={() => setShowNewDialog(false)}
           onCreate={createItem}
         />
       )}
 
-      {editingItem && (
-        <NewBacklogItemDialog
+      {editingTask && (
+        <NewBacklogTaskDialog
           onClose={() => setEditingItem(null)}
           onCreate={createItem}
-          editItem={editingItem}
+          editTask={editingTask}
           onUpdate={updateItem}
         />
       )}
 
       {pendingDeleteId && (
         <ConfirmDialog
-          title="Delete backlog item"
+          title="Delete backlog task"
           message={<>
-            <p>This will permanently delete the backlog item.</p>
+            <p>This will permanently delete the backlog task.</p>
             <p className="text-red-400 font-medium">This action cannot be undone.</p>
           </>}
           confirmLabel="Delete"
@@ -559,9 +559,9 @@ export function BacklogView() {
 
       {pendingBulkDelete && (
         <ConfirmDialog
-          title={`Delete ${selectedIds.size} backlog items`}
+          title={`Delete ${selectedIds.size} backlog tasks`}
           message={<>
-            <p>This will permanently delete {selectedIds.size} backlog items.</p>
+            <p>This will permanently delete {selectedIds.size} backlog tasks.</p>
             <p className="text-red-400 font-medium">This action cannot be undone.</p>
           </>}
           confirmLabel={`Delete ${selectedIds.size} items`}

@@ -35,7 +35,7 @@ src/
         inventory-commands.ts # list_columns, list_tasks
         search-commands.ts # search_tasks, find_task
         analytics-commands.ts # get_task_stats, board_summary, session_history, column_detail
-        backlog-commands.ts # list_backlog, create_backlog_item, search_backlog, promote_backlog
+        backlog-commands.ts # list_backlog, create_backlog_task, search_backlog, promote_backlog
         index.ts           # Barrel + command handler registry
       git-detector.ts      # Detects git installation and version
       hook-manager.ts      # Injects/strips Kangentic hooks from Claude settings

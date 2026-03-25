@@ -15,8 +15,8 @@ import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTa
 import { guardActiveNonWorktreeSessions } from './task-move';
 import type { IpcContext } from '../ipc-context';
 import type {
-  BacklogItemCreateInput,
-  BacklogItemUpdateInput,
+  BacklogTaskCreateInput,
+  BacklogTaskUpdateInput,
   BacklogPromoteInput,
   BacklogDemoteInput,
   ExternalSource,
@@ -33,17 +33,17 @@ function getBacklogRepo(context: IpcContext): BacklogRepository {
   return new BacklogRepository(db);
 }
 
-/** Save pending attachments for a backlog item and return the item with updated attachment_count. */
+/** Save pending attachments for a backlog task and return the task with updated attachment_count. */
 function savePendingAttachments(
   db: ReturnType<typeof getProjectDb>,
   projectPath: string,
-  backlogItemId: string,
+  backlogTaskId: string,
   pendingAttachments?: Array<{ filename: string; data: string; media_type: string }>,
 ): void {
   if (!pendingAttachments?.length) return;
   const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
   for (const attachment of pendingAttachments) {
-    backlogAttachmentRepo.add(projectPath, backlogItemId, attachment.filename, attachment.data, attachment.media_type);
+    backlogAttachmentRepo.add(projectPath, backlogTaskId, attachment.filename, attachment.data, attachment.media_type);
   }
 }
 
@@ -52,7 +52,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     return getBacklogRepo(context).list();
   });
 
-  ipcMain.handle(IPC.BACKLOG_CREATE, (_, input: BacklogItemCreateInput) => {
+  ipcMain.handle(IPC.BACKLOG_CREATE, (_, input: BacklogTaskCreateInput) => {
     if (!context.currentProjectId || !context.currentProjectPath) {
       throw new Error('No project is currently open');
     }
@@ -63,7 +63,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     return backlogRepo.getById(item.id) ?? item;
   });
 
-  ipcMain.handle(IPC.BACKLOG_UPDATE, (_, input: BacklogItemUpdateInput) => {
+  ipcMain.handle(IPC.BACKLOG_UPDATE, (_, input: BacklogTaskUpdateInput) => {
     if (!context.currentProjectId || !context.currentProjectPath) {
       throw new Error('No project is currently open');
     }
@@ -77,8 +77,8 @@ export function registerBacklogHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.BACKLOG_DELETE, (_, id: string) => {
     if (!context.currentProjectId) throw new Error('No project is currently open');
     const db = getProjectDb(context.currentProjectId);
-    // Clean up backlog attachments before deleting the item
-    new BacklogAttachmentRepository(db).deleteByItemId(id);
+    // Clean up backlog attachments before deleting the task
+    new BacklogAttachmentRepository(db).deleteByTaskId(id);
     new BacklogRepository(db).delete(id);
   });
 
@@ -92,7 +92,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
     // Clean up backlog attachments before bulk delete
     for (const id of ids) {
-      backlogAttachmentRepo.deleteByItemId(id);
+      backlogAttachmentRepo.deleteByTaskId(id);
     }
     new BacklogRepository(db).bulkDelete(ids);
   });
@@ -117,11 +117,11 @@ export function registerBacklogHandlers(context: IpcContext): void {
 
     const createdTasks: Task[] = [];
 
-    for (const backlogItemId of input.backlogItemIds) {
-      const item = backlogRepo.getById(backlogItemId);
+    for (const backlogTaskId of input.backlogTaskIds) {
+      const item = backlogRepo.getById(backlogTaskId);
       if (!item) continue;
 
-      // Create a task from the backlog item, carrying over labels and priority
+      // Create a task from the backlog task, carrying over labels and priority
       const task = tasks.create({
         title: item.title,
         description: item.description,
@@ -131,7 +131,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
       });
 
       // Copy backlog attachments to task attachments
-      const itemAttachments = backlogAttachments.list(backlogItemId);
+      const itemAttachments = backlogAttachments.list(backlogTaskId);
       for (const backlogAttachment of itemAttachments) {
         try {
           const buffer = fs.readFileSync(backlogAttachment.file_path);
@@ -142,10 +142,10 @@ export function registerBacklogHandlers(context: IpcContext): void {
         }
       }
       // Clean up backlog attachment files
-      backlogAttachments.deleteByItemId(backlogItemId);
+      backlogAttachments.deleteByTaskId(backlogTaskId);
 
       // Remove from backlog
-      backlogRepo.delete(backlogItemId);
+      backlogRepo.delete(backlogTaskId);
 
       // Fire transition engine if target column auto-spawns
       if (targetSwimlane.auto_spawn) {
@@ -200,21 +200,21 @@ export function registerBacklogHandlers(context: IpcContext): void {
     // Clean up session, worktree, and branch
     await cleanupTaskResources(context, task, tasks);
 
-    // Create backlog item from task, preserving labels/priority (input overrides task values)
-    const backlogItem = backlogRepo.createFromTask(
+    // Create backlog task from task, preserving labels/priority (input overrides task values)
+    const backlogTask = backlogRepo.createFromTask(
       task.title,
       task.description,
       input.priority ?? task.priority,
       input.labels ?? task.labels,
     );
 
-    // Copy task attachments to backlog item before deleting
+    // Copy task attachments to backlog task before deleting
     const taskAttachments = attachments.list(task.id);
     for (const taskAttachment of taskAttachments) {
       try {
         const buffer = fs.readFileSync(taskAttachment.file_path);
         const base64Data = buffer.toString('base64');
-        backlogAttachmentRepo.add(context.currentProjectPath, backlogItem.id, taskAttachment.filename, base64Data, taskAttachment.media_type);
+        backlogAttachmentRepo.add(context.currentProjectPath, backlogTask.id, taskAttachment.filename, base64Data, taskAttachment.media_type);
       } catch (error) {
         console.error(`[BACKLOG_DEMOTE] Failed to copy attachment "${taskAttachment.filename}":`, error);
       }
@@ -227,7 +227,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     tasks.delete(task.id);
 
     // Re-fetch to get updated attachment_count
-    return backlogRepo.getById(backlogItem.id) ?? backlogItem;
+    return backlogRepo.getById(backlogTask.id) ?? backlogTask;
   });
 
   ipcMain.handle(IPC.BACKLOG_REMAP_PRIORITIES, (_, mapping: Record<number, number>) => {
@@ -250,13 +250,13 @@ export function registerBacklogHandlers(context: IpcContext): void {
 
   // === Backlog Attachments ===
 
-  ipcMain.handle(IPC.BACKLOG_ATTACHMENT_LIST, (_, backlogItemId: string) => {
+  ipcMain.handle(IPC.BACKLOG_ATTACHMENT_LIST, (_, backlogTaskId: string) => {
     if (!context.currentProjectId) throw new Error('No project is currently open');
     const db = getProjectDb(context.currentProjectId);
-    return new BacklogAttachmentRepository(db).list(backlogItemId);
+    return new BacklogAttachmentRepository(db).list(backlogTaskId);
   });
 
-  ipcMain.handle(IPC.BACKLOG_ATTACHMENT_ADD, (_, input: { backlog_item_id: string; filename: string; data: string; media_type: string }) => {
+  ipcMain.handle(IPC.BACKLOG_ATTACHMENT_ADD, (_, input: { backlog_task_id: string; filename: string; data: string; media_type: string }) => {
     if (!context.currentProjectId || !context.currentProjectPath) {
       throw new Error('No project is currently open');
     }
@@ -264,7 +264,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
     const dataSize = Buffer.byteLength(input.data, 'base64');
     if (dataSize > maxSize) throw new Error(`Attachment exceeds 10MB limit (${(dataSize / 1024 / 1024).toFixed(1)}MB)`);
     const db = getProjectDb(context.currentProjectId);
-    return new BacklogAttachmentRepository(db).add(context.currentProjectPath, input.backlog_item_id, input.filename, input.data, input.media_type);
+    return new BacklogAttachmentRepository(db).add(context.currentProjectPath, input.backlog_task_id, input.filename, input.data, input.media_type);
   });
 
   ipcMain.handle(IPC.BACKLOG_ATTACHMENT_REMOVE, (_, id: string) => {

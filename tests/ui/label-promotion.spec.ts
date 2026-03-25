@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { launchPage, createProject, waitForBoard } from './helpers';
 
-/** Create a backlog item with labels and priority via the mock API directly. */
-async function createBacklogItemWithLabels(
+/** Create a backlog task with labels and priority via the mock API directly. */
+async function createBacklogTaskWithLabels(
   page: Page,
   title: string,
   labels: string[],
@@ -21,11 +21,11 @@ async function createBacklogItemWithLabels(
   );
 }
 
-/** Promote backlog items to the board via the mock API directly. */
+/** Promote backlog tasks to the board via the mock API directly. */
 async function promoteToBoard(page: Page, itemIds: string[], targetSwimlaneId: string): Promise<void> {
   await page.evaluate(
     ({ itemIds, targetSwimlaneId }) => {
-      return window.electronAPI.backlog.promote({ backlogItemIds: itemIds, targetSwimlaneId });
+      return window.electronAPI.backlog.promote({ backlogTaskIds: itemIds, targetSwimlaneId });
     },
     { itemIds, targetSwimlaneId },
   );
@@ -43,13 +43,13 @@ test.describe('Label and Priority Promotion', () => {
     testInfo.setTimeout(30000);
   });
 
-  test('promoted backlog item carries labels and priority to board task', async () => {
+  test('promoted backlog task carries labels and priority to board task', async () => {
     const { browser, page } = await launchPage();
     try {
       await createProject(page, 'LabelTest');
 
       const swimlaneId = await getFirstSwimlaneId(page);
-      const itemId = await createBacklogItemWithLabels(page, 'Labeled task', ['bug', 'ui'], 3);
+      const itemId = await createBacklogTaskWithLabels(page, 'Labeled task', ['bug', 'ui'], 3);
       await promoteToBoard(page, [itemId], swimlaneId);
 
       // Reload the board to pick up the new task
@@ -68,13 +68,13 @@ test.describe('Label and Priority Promotion', () => {
     }
   });
 
-  test('demoted task preserves labels and priority on backlog item', async () => {
+  test('demoted task preserves labels and priority on backlog task', async () => {
     const { browser, page } = await launchPage();
     try {
       await createProject(page, 'DemoteTest');
 
       const swimlaneId = await getFirstSwimlaneId(page);
-      const itemId = await createBacklogItemWithLabels(page, 'Demote test', ['feature'], 2);
+      const itemId = await createBacklogTaskWithLabels(page, 'Demote test', ['feature'], 2);
       await promoteToBoard(page, [itemId], swimlaneId);
 
       // Get the created task
@@ -89,7 +89,7 @@ test.describe('Label and Priority Promotion', () => {
         task!.id,
       );
 
-      // Verify the backlog item has the original labels and priority
+      // Verify the backlog task has the original labels and priority
       const items = await page.evaluate(() => window.electronAPI.backlog.list());
       const demotedItem = (items as Array<{ title: string; labels: string[]; priority: number }>)
         .find((item) => item.title === 'Demote test');
@@ -102,26 +102,26 @@ test.describe('Label and Priority Promotion', () => {
     }
   });
 
-  test('renameLabel updates both backlog items and board tasks', async () => {
+  test('renameLabel updates both backlog tasks and board tasks', async () => {
     const { browser, page } = await launchPage();
     try {
       await createProject(page, 'RenameTest');
 
       const swimlaneId = await getFirstSwimlaneId(page);
 
-      // Create a backlog item and a promoted task, both with 'old-label'
-      await createBacklogItemWithLabels(page, 'Backlog item', ['old-label'], 0);
-      const promoteItemId = await createBacklogItemWithLabels(page, 'Board task', ['old-label'], 1);
+      // Create a backlog task and a promoted task, both with 'old-label'
+      await createBacklogTaskWithLabels(page, 'Backlog task', ['old-label'], 0);
+      const promoteItemId = await createBacklogTaskWithLabels(page, 'Board task', ['old-label'], 1);
       await promoteToBoard(page, [promoteItemId], swimlaneId);
 
       // Rename the label
       await page.evaluate(() => window.electronAPI.backlog.renameLabel('old-label', 'new-label'));
 
-      // Verify backlog item was updated
+      // Verify backlog task was updated
       const items = await page.evaluate(() => window.electronAPI.backlog.list());
-      const backlogItem = (items as Array<{ title: string; labels: string[] }>)
-        .find((item) => item.title === 'Backlog item');
-      expect(backlogItem!.labels).toEqual(['new-label']);
+      const backlogTask = (items as Array<{ title: string; labels: string[] }>)
+        .find((item) => item.title === 'Backlog task');
+      expect(backlogTask!.labels).toEqual(['new-label']);
 
       // Verify board task was updated
       const tasks = await page.evaluate(() => window.electronAPI.tasks.list());
@@ -133,7 +133,7 @@ test.describe('Label and Priority Promotion', () => {
     }
   });
 
-  test('deleteLabel removes from both backlog items and board tasks', async () => {
+  test('deleteLabel removes from both backlog tasks and board tasks', async () => {
     const { browser, page } = await launchPage();
     try {
       await createProject(page, 'DeleteTest');
@@ -141,18 +141,18 @@ test.describe('Label and Priority Promotion', () => {
       const swimlaneId = await getFirstSwimlaneId(page);
 
       // Create items with the label to delete
-      await createBacklogItemWithLabels(page, 'Backlog item', ['keep', 'remove'], 0);
-      const promoteItemId = await createBacklogItemWithLabels(page, 'Board task', ['keep', 'remove'], 0);
+      await createBacklogTaskWithLabels(page, 'Backlog task', ['keep', 'remove'], 0);
+      const promoteItemId = await createBacklogTaskWithLabels(page, 'Board task', ['keep', 'remove'], 0);
       await promoteToBoard(page, [promoteItemId], swimlaneId);
 
       // Delete the label
       await page.evaluate(() => window.electronAPI.backlog.deleteLabel('remove'));
 
-      // Verify backlog item only has 'keep'
+      // Verify backlog task only has 'keep'
       const items = await page.evaluate(() => window.electronAPI.backlog.list());
-      const backlogItem = (items as Array<{ title: string; labels: string[] }>)
-        .find((item) => item.title === 'Backlog item');
-      expect(backlogItem!.labels).toEqual(['keep']);
+      const backlogTask = (items as Array<{ title: string; labels: string[] }>)
+        .find((item) => item.title === 'Backlog task');
+      expect(backlogTask!.labels).toEqual(['keep']);
 
       // Verify board task only has 'keep'
       const tasks = await page.evaluate(() => window.electronAPI.tasks.list());

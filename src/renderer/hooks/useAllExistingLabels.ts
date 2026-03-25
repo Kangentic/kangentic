@@ -3,7 +3,7 @@ import { useBacklogStore } from '../stores/backlog-store';
 import { useBoardStore } from '../stores/board-store';
 
 /**
- * Collects all unique labels from backlog items and board tasks,
+ * Collects all unique labels from backlog tasks and board tasks,
  * sorted alphabetically. Used for label autocomplete suggestions.
  */
 export function useAllExistingLabels(): string[] {

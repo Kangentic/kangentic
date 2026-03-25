@@ -1,13 +1,13 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 import type {
-  BacklogItem,
-  BacklogItemCreateInput,
-  BacklogItemUpdateInput,
+  BacklogTask,
+  BacklogTaskCreateInput,
+  BacklogTaskUpdateInput,
 } from '../../../shared/types';
 
 /** Row shape as stored in SQLite (labels is a JSON string). */
-interface BacklogItemRow {
+interface BacklogTaskRow {
   id: string;
   title: string;
   description: string;
@@ -27,7 +27,7 @@ interface BacklogItemRow {
   updated_at: string;
 }
 
-function rowToItem(row: BacklogItemRow): BacklogItem {
+function rowToItem(row: BacklogTaskRow): BacklogTask {
   let labels: string[] = [];
   try {
     labels = JSON.parse(row.labels);
@@ -49,29 +49,29 @@ function rowToItem(row: BacklogItemRow): BacklogItem {
 export class BacklogRepository {
   constructor(private db: Database.Database) {}
 
-  list(): BacklogItem[] {
+  list(): BacklogTask[] {
     const rows = this.db.prepare(
-      'SELECT * FROM backlog_items ORDER BY position ASC'
-    ).all() as BacklogItemRow[];
+      'SELECT * FROM backlog_tasks ORDER BY position ASC'
+    ).all() as BacklogTaskRow[];
     return rows.map(rowToItem);
   }
 
-  getById(id: string): BacklogItem | undefined {
+  getById(id: string): BacklogTask | undefined {
     const row = this.db.prepare(
-      'SELECT * FROM backlog_items WHERE id = ?'
-    ).get(id) as BacklogItemRow | undefined;
+      'SELECT * FROM backlog_tasks WHERE id = ?'
+    ).get(id) as BacklogTaskRow | undefined;
     return row ? rowToItem(row) : undefined;
   }
 
-  create(input: BacklogItemCreateInput): BacklogItem {
+  create(input: BacklogTaskCreateInput): BacklogTask {
     const now = new Date().toISOString();
     const id = uuidv4();
     const maxPos = this.db.prepare(
-      'SELECT COALESCE(MAX(position), -1) as max FROM backlog_items'
+      'SELECT COALESCE(MAX(position), -1) as max FROM backlog_tasks'
     ).get() as { max: number };
     const position = maxPos.max + 1;
 
-    const row: BacklogItemRow = {
+    const row: BacklogTaskRow = {
       id,
       title: input.title,
       description: input.description ?? '',
@@ -92,7 +92,7 @@ export class BacklogRepository {
     };
 
     this.db.prepare(`
-      INSERT INTO backlog_items (id, title, description, priority, labels, position, assignee, due_date, item_type, external_id, external_source, external_url, sync_status, external_metadata, attachment_count, created_at, updated_at)
+      INSERT INTO backlog_tasks (id, title, description, priority, labels, position, assignee, due_date, item_type, external_id, external_source, external_url, sync_status, external_metadata, attachment_count, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       row.id, row.title, row.description, row.priority, row.labels, row.position,
@@ -104,9 +104,9 @@ export class BacklogRepository {
     return rowToItem(row);
   }
 
-  update(input: BacklogItemUpdateInput): BacklogItem {
+  update(input: BacklogTaskUpdateInput): BacklogTask {
     const existing = this.getById(input.id);
-    if (!existing) throw new Error(`Backlog item ${input.id} not found`);
+    if (!existing) throw new Error(`Backlog task ${input.id} not found`);
 
     const now = new Date().toISOString();
     const title = input.title ?? existing.title;
@@ -115,7 +115,7 @@ export class BacklogRepository {
     const labels = input.labels ?? existing.labels;
 
     this.db.prepare(`
-      UPDATE backlog_items
+      UPDATE backlog_tasks
       SET title = ?, description = ?, priority = ?, labels = ?, updated_at = ?
       WHERE id = ?
     `).run(title, description, priority, JSON.stringify(labels), now, input.id);
@@ -134,17 +134,17 @@ export class BacklogRepository {
     const item = this.getById(id);
     if (!item) return;
     this.db.transaction(() => {
-      this.db.prepare('DELETE FROM backlog_items WHERE id = ?').run(id);
-      // Shift positions down for items after the deleted one
+      this.db.prepare('DELETE FROM backlog_tasks WHERE id = ?').run(id);
+      // Shift positions down for tasks after the deleted one
       this.db.prepare(
-        'UPDATE backlog_items SET position = position - 1 WHERE position > ?'
+        'UPDATE backlog_tasks SET position = position - 1 WHERE position > ?'
       ).run(item.position);
     })();
   }
 
   reorder(ids: string[]): void {
     const updatePosition = this.db.prepare(
-      'UPDATE backlog_items SET position = ? WHERE id = ?'
+      'UPDATE backlog_tasks SET position = ? WHERE id = ?'
     );
     this.db.transaction(() => {
       ids.forEach((id, index) => {
@@ -156,16 +156,16 @@ export class BacklogRepository {
   bulkDelete(ids: string[]): void {
     if (ids.length === 0) return;
     this.db.transaction(() => {
-      const deleteStmt = this.db.prepare('DELETE FROM backlog_items WHERE id = ?');
+      const deleteStmt = this.db.prepare('DELETE FROM backlog_tasks WHERE id = ?');
       for (const id of ids) {
         deleteStmt.run(id);
       }
       // Resequence all positions to remove gaps
       const remaining = this.db.prepare(
-        'SELECT id FROM backlog_items ORDER BY position ASC'
+        'SELECT id FROM backlog_tasks ORDER BY position ASC'
       ).all() as Array<{ id: string }>;
       const updatePosition = this.db.prepare(
-        'UPDATE backlog_items SET position = ? WHERE id = ?'
+        'UPDATE backlog_tasks SET position = ? WHERE id = ?'
       );
       remaining.forEach((row, index) => {
         updatePosition.run(index, row.id);
@@ -173,16 +173,16 @@ export class BacklogRepository {
     })();
   }
 
-  /** Rename a label across all backlog items. Returns count of modified items. */
+  /** Rename a label across all backlog tasks. Returns count of modified tasks. */
   renameLabel(oldName: string, newName: string): number {
     const allItems = this.db.prepare(
-      'SELECT id, labels FROM backlog_items'
+      'SELECT id, labels FROM backlog_tasks'
     ).all() as Array<{ id: string; labels: string }>;
 
     let modifiedCount = 0;
     const now = new Date().toISOString();
     const updateStatement = this.db.prepare(
-      'UPDATE backlog_items SET labels = ?, updated_at = ? WHERE id = ?'
+      'UPDATE backlog_tasks SET labels = ?, updated_at = ? WHERE id = ?'
     );
 
     this.db.transaction(() => {
@@ -202,16 +202,16 @@ export class BacklogRepository {
     return modifiedCount;
   }
 
-  /** Remove a label from all backlog items. Returns count of modified items. */
+  /** Remove a label from all backlog tasks. Returns count of modified tasks. */
   deleteLabel(name: string): number {
     const allItems = this.db.prepare(
-      'SELECT id, labels FROM backlog_items'
+      'SELECT id, labels FROM backlog_tasks'
     ).all() as Array<{ id: string; labels: string }>;
 
     let modifiedCount = 0;
     const now = new Date().toISOString();
     const updateStatement = this.db.prepare(
-      'UPDATE backlog_items SET labels = ?, updated_at = ? WHERE id = ?'
+      'UPDATE backlog_tasks SET labels = ?, updated_at = ? WHERE id = ?'
     );
 
     this.db.transaction(() => {
@@ -228,16 +228,16 @@ export class BacklogRepository {
     return modifiedCount;
   }
 
-  /** Remap item priorities using a mapping of old index -> new index. */
+  /** Remap task priorities using a mapping of old index -> new index. */
   remapPriorities(mapping: Record<number, number>): number {
     const allItems = this.db.prepare(
-      'SELECT id, priority FROM backlog_items'
+      'SELECT id, priority FROM backlog_tasks'
     ).all() as Array<{ id: string; priority: number }>;
 
     let modifiedCount = 0;
     const now = new Date().toISOString();
     const updateStatement = this.db.prepare(
-      'UPDATE backlog_items SET priority = ?, updated_at = ? WHERE id = ?'
+      'UPDATE backlog_tasks SET priority = ?, updated_at = ? WHERE id = ?'
     );
 
     this.db.transaction(() => {
@@ -258,18 +258,18 @@ export class BacklogRepository {
     if (externalIds.length === 0) return new Set();
     const placeholders = externalIds.map(() => '?').join(', ');
     const rows = this.db.prepare(
-      `SELECT external_id FROM backlog_items WHERE external_source = ? AND external_id IN (${placeholders})`
+      `SELECT external_id FROM backlog_tasks WHERE external_source = ? AND external_id IN (${placeholders})`
     ).all(source, ...externalIds) as Array<{ external_id: string }>;
     return new Set(rows.map((row) => row.external_id));
   }
 
-  /** Create a backlog item from an existing task's title/description. */
+  /** Create a backlog task from an existing task's title/description. */
   createFromTask(
     title: string,
     description: string,
     priority?: number,
     labels?: string[],
-  ): BacklogItem {
+  ): BacklogTask {
     return this.create({
       title,
       description,

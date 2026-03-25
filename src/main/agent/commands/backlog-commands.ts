@@ -34,7 +34,7 @@ export const handleListBacklog: CommandHandler = (
 
   if (items.length === 0) {
     const filterNote = query ? ` matching "${query}"` : '';
-    return { success: true, message: `No backlog items found${filterNote}.`, data: [] };
+    return { success: true, message: `No backlog tasks found${filterNote}.`, data: [] };
   }
 
   const lines = items.map((item) => {
@@ -45,7 +45,7 @@ export const handleListBacklog: CommandHandler = (
 
   return {
     success: true,
-    message: `${items.length} backlog item(s):\n${lines.join('\n')}`,
+    message: `${items.length} backlog task(s):\n${lines.join('\n')}`,
     data: items.map((item) => ({
       id: item.id,
       title: item.title,
@@ -58,7 +58,7 @@ export const handleListBacklog: CommandHandler = (
   };
 };
 
-export const handleCreateBacklogItem: CommandHandler = (
+export const handleCreateBacklogTask: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
 ): CommandResponse => {
@@ -109,7 +109,7 @@ export const handleCreateBacklogItem: CommandHandler = (
         const fileData = readFileAsAttachment(entry.filePath, entry.filename);
         backlogAttachmentRepo.add(projectPath, item.id, fileData.filename, fileData.base64Data, fileData.mediaType);
       } catch (error) {
-        console.error(`[create_backlog_item] Failed to attach file "${entry.filePath}":`, error);
+        console.error(`[create_backlog_task] Failed to attach file "${entry.filePath}":`, error);
       }
     }
   }
@@ -125,7 +125,7 @@ export const handleCreateBacklogItem: CommandHandler = (
   return {
     success: true,
     data: { id: item.id, title: item.title, priority: priorityLabel, labels: item.labels },
-    message: `Created backlog item "${item.title}" (priority: ${priorityLabel}, id: ${item.id})`,
+    message: `Created backlog task "${item.title}" (priority: ${priorityLabel}, id: ${item.id})`,
   };
 };
 
@@ -151,7 +151,7 @@ export const handleSearchBacklog: CommandHandler = (
   );
 
   if (matches.length === 0) {
-    return { success: true, message: `No backlog items matching "${query}" found.`, data: [] };
+    return { success: true, message: `No backlog tasks matching "${query}" found.`, data: [] };
   }
 
   const lines = matches.map((item) => {
@@ -165,7 +165,7 @@ export const handleSearchBacklog: CommandHandler = (
 
   return {
     success: true,
-    message: `Found ${matches.length} backlog item(s) matching "${query}":\n${lines.join('\n')}`,
+    message: `Found ${matches.length} backlog task(s) matching "${query}":\n${lines.join('\n')}`,
     data: matches.map((item) => ({
       id: item.id,
       title: item.title,
@@ -185,7 +185,7 @@ export const handlePromoteBacklog: CommandHandler = (
   const columnName = params.column as string | null;
 
   if (!itemIds || itemIds.length === 0) {
-    return { success: false, error: 'At least one backlog item ID is required' };
+    return { success: false, error: 'At least one backlog task ID is required' };
   }
 
   const db = context.getProjectDb();
@@ -232,7 +232,7 @@ export const handlePromoteBacklog: CommandHandler = (
       }
     }
     // Clean up backlog attachment files
-    backlogAttachmentRepo.deleteByItemId(itemId);
+    backlogAttachmentRepo.deleteByTaskId(itemId);
 
     backlogRepo.delete(itemId);
     promoted.push({ taskId: task.id, title: task.title });
@@ -243,7 +243,7 @@ export const handlePromoteBacklog: CommandHandler = (
   context.onBacklogChanged();
 
   if (promoted.length === 0) {
-    return { success: false, error: `No backlog items found for the provided IDs` };
+    return { success: false, error: `No backlog tasks found for the provided IDs` };
   }
 
   const lines = promoted.map((item) => `- "${item.title}" (task id: ${item.taskId})`);

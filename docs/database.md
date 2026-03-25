@@ -188,7 +188,7 @@ Valid permission_mode values: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypa
 
 Index: `idx_task_attachments_task_id` on (task_id).
 
-### backlog_items table
+### backlog_tasks table
 
 | Column | Type | Constraints | Default |
 |--------|------|-------------|---------|
@@ -213,16 +213,16 @@ Indexes: `idx_backlog_position` on (position), `idx_backlog_external` on (extern
 | Column | Type | Constraints | Default |
 |--------|------|-------------|---------|
 | id | TEXT | PRIMARY KEY | |
-| backlog_item_id | TEXT | NOT NULL, FK -> backlog_items(id) ON DELETE CASCADE | |
+| backlog_task_id | TEXT | NOT NULL, FK -> backlog_tasks(id) ON DELETE CASCADE | |
 | filename | TEXT | NOT NULL | |
 | file_path | TEXT | NOT NULL | |
 | media_type | TEXT | NOT NULL | |
 | size_bytes | INTEGER | NOT NULL | |
 | created_at | TEXT | NOT NULL | |
 
-Index: `idx_backlog_attachments_item_id` on (backlog_item_id).
+Index: `idx_backlog_attachments_task_id` on (backlog_task_id).
 
-Mirrors `task_attachments` for backlog items. Files stored at `.kangentic/backlog/<backlogItemId>/attachments/`. When a backlog item is promoted to a task, attachments are copied to `task_attachments` and backlog attachment files are cleaned up.
+Mirrors `task_attachments` for backlog tasks. Files stored at `.kangentic/backlog/<backlogTaskId>/attachments/`. When a backlog task is promoted to a task, attachments are copied to `task_attachments` and backlog attachment files are cleaned up.
 
 ## Migration Strategy
 
@@ -260,8 +260,8 @@ Listed in execution order within `runProjectMigrations()`:
 18. **`permission_strategy` column renamed to `permission_mode`** -- renames the `permission_strategy` column to `permission_mode` on swimlanes. Migrates old values: `bypass-permissions` to `bypassPermissions`, removes `manual` (alias for `default`). Adds `dontAsk` as a new valid mode. Also removes `permissionMode` from action `config_json` (action-level override removed; resolution is now swimlane override then global setting).
 19. **Legacy `permission_mode` value normalization** -- unconditional data migration that runs on every DB open. Normalizes legacy values in both swimlanes and sessions: `project-settings` to `default`, `manual` to `default`, `dangerously-skip` to `bypassPermissions`, `bypass-permissions` to `bypassPermissions`. Ensures all records use the current `PermissionMode` union values regardless of when they were created.
 20. **Swimlane role rename (`backlog` to `todo`)** -- renames the "Backlog" swimlane to "To Do" (also catches "Not Started") and migrates role values from `backlog` to `todo`.
-21. **`backlog_items` table** -- creates the staging area table for the Backlog View feature. Stores pre-board items with priority, labels, external source tracking, and position ordering. Includes indexes on position and (external_source, external_id).
-22. **`backlog_attachments` table** -- creates the attachment table for backlog items with `ON DELETE CASCADE` on `backlog_item_id` and an index on `backlog_item_id`. Mirrors `task_attachments` structure.
+21. **`backlog_tasks` table** -- creates the staging area table for the Backlog View feature. Stores pre-board tasks with priority, labels, external source tracking, and position ordering. Includes indexes on position and (external_source, external_id).
+22. **`backlog_attachments` table** -- creates the attachment table for backlog tasks with `ON DELETE CASCADE` on `backlog_task_id` and an index on `backlog_task_id`. Mirrors `task_attachments` structure.
 23. **`display_id` column on tasks** -- adds a human-readable sequential integer ID for tasks. Backfills existing tasks with sequential IDs ordered by `created_at ASC`. Creates a unique index on `display_id`.
 
 ### Key Migrations (Global DB)
