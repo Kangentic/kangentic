@@ -46,6 +46,7 @@
       "Bash(gh workflow:*)",
       "Bash(gh release:*)",
       "Bash(gh issue:*)",
+      "Bash(gh pr:*)",
       "Bash(start:*)",
       "mcp__context7",
       "mcp__kangentic",
