@@ -13,6 +13,7 @@ import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attac
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout } from '../helpers';
 import { guardActiveNonWorktreeSessions } from './task-move';
+import { isAbortError } from '../../../shared/abort-utils';
 import type { IpcContext } from '../ipc-context';
 import type {
   BacklogTaskCreateInput,
@@ -26,6 +27,19 @@ import type {
 } from '../../../shared/types';
 import { createImporterRegistry, getImporter } from '../../import/importer-registry';
 import { ImportSourceStore } from '../../import/import-source-store';
+
+/**
+ * Per-task AbortControllers for in-flight backlog promotions.
+ * When a promoted task is moved before the async chain completes,
+ * handleTaskMove aborts the controller to prevent orphaned sessions.
+ */
+const promotionControllers = new Map<string, AbortController>();
+
+/** Abort an in-flight backlog promotion for the given task. */
+export function abortBacklogPromotion(taskId: string): void {
+  promotionControllers.get(taskId)?.abort();
+  promotionControllers.delete(taskId);
+}
 
 function getBacklogRepo(context: IpcContext): BacklogRepository {
   if (!context.currentProjectId) throw new Error('No project is currently open');
@@ -149,30 +163,52 @@ export function registerBacklogHandlers(context: IpcContext): void {
 
       // Fire transition engine if target column auto-spawns
       if (targetSwimlane.auto_spawn) {
-        try {
-          await ensureTaskWorktree(context, task, tasks, projectPath);
-        } catch (worktreeError) {
-          console.error('[BACKLOG_PROMOTE] Worktree creation failed:', worktreeError);
-          createdTasks.push(tasks.getById(task.id) ?? task);
-          continue;
-        }
+        const promotionController = new AbortController();
+        promotionControllers.set(task.id, promotionController);
+        const { signal } = promotionController;
 
         try {
-          guardActiveNonWorktreeSessions(context, task, tasks);
-          await ensureTaskBranchCheckout(task, projectPath);
-        } catch (checkoutError) {
-          console.error('[BACKLOG_PROMOTE] Branch checkout failed:', checkoutError);
-          createdTasks.push(tasks.getById(task.id) ?? task);
-          continue;
-        }
+          try {
+            await ensureTaskWorktree(context, task, tasks, projectPath, { signal });
+          } catch (worktreeError) {
+            if (isAbortError(worktreeError)) throw worktreeError;
+            console.error('[BACKLOG_PROMOTE] Worktree creation failed:', worktreeError);
+            createdTasks.push(tasks.getById(task.id) ?? task);
+            continue;
+          }
 
-        const sessionRepo = new SessionRepository(db);
-        const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
+          try {
+            guardActiveNonWorktreeSessions(context, task, tasks);
+            await ensureTaskBranchCheckout(task, projectPath, { signal });
+          } catch (checkoutError) {
+            if (isAbortError(checkoutError)) throw checkoutError;
+            console.error('[BACKLOG_PROMOTE] Branch checkout failed:', checkoutError);
+            createdTasks.push(tasks.getById(task.id) ?? task);
+            continue;
+          }
 
-        try {
-          await engine.executeTransition(task, '*', input.targetSwimlaneId);
-        } catch (transitionError) {
-          console.error('[BACKLOG_PROMOTE] Transition failed:', transitionError);
+          const sessionRepo = new SessionRepository(db);
+          const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
+
+          try {
+            await engine.executeTransition(task, '*', input.targetSwimlaneId, undefined, undefined, signal);
+          } catch (transitionError) {
+            if (isAbortError(transitionError)) throw transitionError;
+            console.error('[BACKLOG_PROMOTE] Transition failed:', transitionError);
+          }
+        } catch (error) {
+          if (isAbortError(error)) {
+            console.log(`[BACKLOG_PROMOTE] Aborted promotion for task ${task.id.slice(0, 8)}`);
+            context.sessionManager.removeByTaskId(task.id);
+            tasks.update({ id: task.id, session_id: null });
+            createdTasks.push(tasks.getById(task.id) ?? task);
+            continue;
+          }
+          throw error;
+        } finally {
+          if (promotionControllers.get(task.id) === promotionController) {
+            promotionControllers.delete(task.id);
+          }
         }
       }
 

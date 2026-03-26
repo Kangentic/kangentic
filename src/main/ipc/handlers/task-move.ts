@@ -19,6 +19,7 @@ import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
+import { abortBacklogPromotion } from './backlog';
 import type { Task } from '../../../shared/types';
 
 /**
@@ -98,8 +99,9 @@ export async function handleTaskMove(
   projectId?: string | null,
   projectPath?: string | null,
 ): Promise<void> {
-  // Abort any in-flight move for this task (user dragged again before spawn finished)
+  // Abort any in-flight move or promotion for this task (user dragged again before spawn finished)
   taskMoveControllers.get(input.taskId)?.abort();
+  abortBacklogPromotion(input.taskId);
   const moveController = new AbortController();
   taskMoveControllers.set(input.taskId, moveController);
   const { signal } = moveController;
