@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.12.1] - 2026-03-26
+
+### Fixes
+- Crash on Git tab when project overrides use partial config (1e25c2b)
+
 ## [v0.12.0] - 2026-03-26
 
 ### Features
