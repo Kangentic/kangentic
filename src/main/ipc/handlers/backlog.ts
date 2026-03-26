@@ -11,7 +11,7 @@ import { ActionRepository } from '../../db/repositories/action-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
 import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attachment-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { buildAutoCommandVars, cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout } from '../helpers';
+import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout, spawnAgent } from '../helpers';
 import { guardActiveNonWorktreeSessions } from './task-move';
 import { isAbortError } from '../../../shared/abort-utils';
 import type { IpcContext } from '../ipc-context';
@@ -201,36 +201,7 @@ export function registerBacklogHandlers(context: IpcContext): void {
 
               const sessionRepo = new SessionRepository(db);
               const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
-
-              try {
-                await engine.executeTransition(task, '*', input.targetSwimlaneId, targetSwimlane.permission_mode, undefined, signal);
-              } catch (transitionError) {
-                if (isAbortError(transitionError)) throw transitionError;
-                console.error('[BACKLOG_PROMOTE] Transition failed:', transitionError);
-              }
-
-              // Fallback: if task still has no session after executeTransition
-              // (e.g. no wildcard transition configured), spawn fresh.
-              // Mirrors task-move's fallback at lines 338-370 of task-move.ts.
-              let currentTask = tasks.getById(task.id);
-              if (currentTask && !currentTask.session_id) {
-                try {
-                  await engine.resumeSuspendedSession(currentTask, targetSwimlane.permission_mode, undefined, undefined, signal);
-                } catch (spawnError) {
-                  if (isAbortError(spawnError)) throw spawnError;
-                  console.error('[BACKLOG_PROMOTE] Fallback spawn failed:', spawnError);
-                }
-              }
-
-              // Schedule auto_command injection for fresh spawns (mirrors task-move behavior)
-              if (targetSwimlane.auto_command?.trim()) {
-                const finalTask = tasks.getById(task.id);
-                if (finalTask?.session_id) {
-                  const vars = buildAutoCommandVars(finalTask);
-                  const interpolated = context.commandBuilder.interpolateTemplate(targetSwimlane.auto_command, vars);
-                  context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
-                }
-              }
+              await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane: targetSwimlane, signal });
             } catch (error) {
               if (isAbortError(error)) {
                 console.log(`[BACKLOG_PROMOTE] Aborted promotion for task ${task.id.slice(0, 8)}`);

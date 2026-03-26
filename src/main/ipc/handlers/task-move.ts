@@ -9,11 +9,11 @@ import { slugify } from '../../../shared/slugify';
 import { getProjectDb } from '../../db/database';
 import {
   getProjectRepos,
-  buildAutoCommandVars,
   ensureTaskWorktree,
   ensureTaskBranchCheckout,
   createTransitionEngine,
   cleanupTaskResources,
+  spawnAgent,
 } from '../helpers';
 import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
@@ -321,52 +321,10 @@ export async function handleTaskMove(
     guardActiveNonWorktreeSessions(context, task, tasks);
     await ensureTaskBranchCheckout(task, resolvedProjectPath, { signal });
 
-    // Execute transition actions (may fire spawn_agent which handles resume internally)
+    // Execute transition actions + ensure agent is running (handles resume/spawn/auto_command)
     const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, resolvedProjectId, resolvedProjectPath);
-
-    try {
-      await engine.executeTransition(task, fromSwimlaneId, input.targetSwimlaneId, toLane?.permission_mode, skipPromptTemplate, signal);
-    } catch (err) {
-      // Let AbortError propagate to the outer catch for centralized handling
-      if (isAbortError(err)) throw err;
-      console.error('[TASK_MOVE] Transition engine error:', err);
-    }
-
-    // Re-read task from DB -- transition engine may have spawned a session
-    let finalTask = tasks.getById(task.id);
-
-    // If task STILL has no session, resume a suspended session or spawn fresh.
-    if (finalTask && !finalTask.session_id && toLane?.auto_spawn) {
-      console.log(`[TASK_MOVE] Ensuring agent for task ${task.id.slice(0, 8)}`);
-
-      // Check if a suspended session exists so we can preload auto_command into the resume prompt
-      const suspendedRecord = sessionRepo.getLatestForTask(task.id);
-      const wasSuspended = !!suspendedRecord?.claude_session_id
-        && suspendedRecord.status === 'suspended';
-
-      const resumePrompt = (toLane?.auto_command && wasSuspended)
-        ? context.commandBuilder.interpolateTemplate(
-            toLane.auto_command,
-            buildAutoCommandVars(finalTask),
-          )
-        : undefined;
-
-      try {
-        await engine.resumeSuspendedSession(finalTask, toLane.permission_mode, skipPromptTemplate, resumePrompt, signal);
-        finalTask = tasks.getById(task.id);
-      } catch (err) {
-        // Let AbortError propagate to the outer catch for centralized handling
-        if (isAbortError(err)) throw err;
-        console.error('[TASK_MOVE] Failed to start session:', err);
-      }
-
-      // Schedule auto-command via deferred injection only for fresh spawns
-      // (resumes preload the command as the initial prompt instead)
-      if (finalTask?.session_id && toLane?.auto_command && !resumePrompt) {
-        const vars = buildAutoCommandVars(finalTask);
-        const interpolated = context.commandBuilder.interpolateTemplate(toLane.auto_command, vars);
-        context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
-      }
+    if (toLane) {
+      await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId, toLane, skipPromptTemplate, signal });
     }
   } catch (error) {
     if (isAbortError(error)) {
