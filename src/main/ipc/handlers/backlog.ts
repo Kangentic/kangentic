@@ -209,6 +209,19 @@ export function registerBacklogHandlers(context: IpcContext): void {
                 console.error('[BACKLOG_PROMOTE] Transition failed:', transitionError);
               }
 
+              // Fallback: if task still has no session after executeTransition
+              // (e.g. no wildcard transition configured), spawn fresh.
+              // Mirrors task-move's fallback at lines 338-370 of task-move.ts.
+              let currentTask = tasks.getById(task.id);
+              if (currentTask && !currentTask.session_id) {
+                try {
+                  await engine.resumeSuspendedSession(currentTask, targetSwimlane.permission_mode, undefined, undefined, signal);
+                } catch (spawnError) {
+                  if (isAbortError(spawnError)) throw spawnError;
+                  console.error('[BACKLOG_PROMOTE] Fallback spawn failed:', spawnError);
+                }
+              }
+
               // Schedule auto_command injection for fresh spawns (mirrors task-move behavior)
               if (targetSwimlane.auto_command?.trim()) {
                 const finalTask = tasks.getById(task.id);
