@@ -62,7 +62,7 @@ export function deepMerge<T extends object>(target: T, source: Partial<T>): T {
   for (const [key, value] of Object.entries(source)) {
     if (value === undefined) continue;
     if (value !== null && typeof value === 'object' && !Array.isArray(value) && typeof result[key] === 'object') {
-      if (isFlatMap(value)) {
+      if (isFlatMap(value) && isFlatMap(result[key])) {
         result[key] = { ...value as Record<string, unknown> };
       } else {
         result[key] = deepMerge(result[key] as Record<string, unknown>, value as Record<string, unknown>);

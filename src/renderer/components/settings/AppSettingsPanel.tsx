@@ -521,7 +521,7 @@ function GitTab({ config }: { config: AppConfig }) {
       <SettingRow {...settingProps('git.copyFiles')}>
         <input
           type="text"
-          value={config.git.copyFiles.join(', ')}
+          value={(config.git.copyFiles ?? []).join(', ')}
           onChange={(event) => {
             const files = event.target.value.split(',').map((file) => file.trim()).filter(Boolean);
             updateProject({ git: { copyFiles: files } });

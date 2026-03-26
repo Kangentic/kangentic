@@ -68,6 +68,35 @@ describe('deepMerge', () => {
       expect('removed' in result.settings).toBe(false);
     });
 
+    it('recursively merges when source is flat but target has non-primitive values', () => {
+      const target = {
+        git: {
+          worktreesEnabled: true,
+          autoCleanup: true,
+          defaultBaseBranch: 'main',
+          copyFiles: [] as string[],
+          initScript: null as string | null,
+        },
+      };
+      const source = { git: { defaultBaseBranch: 'develop' } };
+      const result = deepMerge(target, source);
+      // target.git has arrays (copyFiles), so it is NOT a flat map — must recurse
+      expect(result.git.defaultBaseBranch).toBe('develop');
+      expect(result.git.copyFiles).toEqual([]);
+      expect(result.git.worktreesEnabled).toBe(true);
+      expect(result.git.autoCleanup).toBe(true);
+      expect(result.git.initScript).toBeNull();
+    });
+
+    it('preserves target array values when source subset is all primitives', () => {
+      const target = { section: { name: 'original', items: ['a', 'b'], active: true } };
+      const source = { section: { name: 'updated' } };
+      const result = deepMerge(target, source);
+      expect(result.section.name).toBe('updated');
+      expect(result.section.items).toEqual(['a', 'b']);
+      expect(result.section.active).toBe(true);
+    });
+
     it('treats flat map with null values as a flat map', () => {
       const target = { colors: { a: '#fff', b: '#000' } };
       const source = { colors: { a: null } };
