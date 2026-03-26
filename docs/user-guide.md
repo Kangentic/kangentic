@@ -448,6 +448,29 @@ The Command Terminal provides quick, ephemeral access to Claude Code without cre
 
 **Closing:** Press `Ctrl+Shift+P` again, or click the backdrop outside the overlay. The PTY is killed and the session directory is cleaned up. Transient sessions are non-resumable by design.
 
+## Status Bar
+
+The status bar runs along the bottom of the window, providing at-a-glance metrics for the current project.
+
+| Element | Description |
+|---------|-------------|
+| **Agents** | Count of actively running agent sessions (green when > 0), plus queued count if any |
+| **Tasks** | Count of active (non-done) tasks on the board |
+| **Tokens** | Aggregate input and output token counts across sessions |
+| **Cost** | Aggregate API cost across sessions |
+
+### Time Period
+
+Click the time period dropdown at the right end of the status bar to change the reporting window. Options:
+
+- **Live** - shows only metrics from currently running sessions (default)
+- **Today** - includes historical session metrics from today plus live sessions
+- **This Week** - includes metrics from the past 7 days plus live sessions
+- **This Month** - includes metrics from the past 30 days plus live sessions
+- **All Time** - includes all historical metrics plus live sessions
+
+Token and cost values pulse briefly when they change. The selected period persists across app restarts (stored in `statusBarPeriod` config key).
+
 ## Keyboard Shortcuts
 
 - **Ctrl+Shift+P** / **Cmd+Shift+P** - Toggle the Command Terminal overlay

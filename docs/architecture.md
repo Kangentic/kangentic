@@ -272,10 +272,10 @@ Stores the project list. Tables:
 Created on project open. Stored in the global config directory (not inside the project). Tables:
 
 - **swimlanes** -- Kanban columns. Fields: id, name, role (`todo`/`done`/null), position, color, icon, is_archived, permission_mode, auto_spawn, auto_command, plan_exit_target_id, is_ghost, created_at
-- **tasks** -- Kanban cards. Fields: id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, base_branch, use_worktree, archived_at, created_at, updated_at
+- **tasks** -- Kanban cards. Fields: id, display_id, title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name, pr_number, pr_url, base_branch, use_worktree, labels, priority, archived_at, created_at, updated_at
 - **actions** -- Executable steps. Types: `spawn_agent`, `send_command`, `run_script`, `kill_session`, `create_worktree`, `cleanup_worktree`, `create_pr`, `webhook`. Config stored as JSON.
 - **swimlane_transitions** -- Maps lane pairs to action chains. Fields: from_swimlane_id (`*` = any), to_swimlane_id, action_id, execution_order
-- **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, claude_session_id, command, cwd, permission_mode, prompt, status (`running`/`suspended`/`exited`/`orphaned`), exit_code, timestamps
+- **sessions** -- Session persistence for recovery/resume. Fields: id, task_id, session_type, claude_session_id, command, cwd, permission_mode, prompt, status (`running`/`queued`/`suspended`/`exited`/`orphaned`), exit_code, timestamps
 - **task_attachments** -- File attachments (images, etc.) stored on disk, metadata in DB
 - **backlog_tasks** -- Staging area tasks (Backlog View). Pre-board tasks with priority, labels, and optional external source tracking.
 - **backlog_attachments** -- File attachments for backlog tasks, mirroring `task_attachments`. Copied to `task_attachments` on promote.
@@ -309,7 +309,7 @@ Transitions only fire for case 5. The action chain runs in `execution_order`: ty
 | `create_pr` | Reserved. Not yet implemented. |
 | `webhook` | POST to URL with interpolated body |
 
-Template variables available: `{{title}}`, `{{description}}`, `{{taskId}}`, `{{worktreePath}}`, `{{branchName}}`, `{{attachments}}`.
+Template variables available: `{{title}}`, `{{description}}`, `{{taskId}}`, `{{worktreePath}}`, `{{branchName}}`, `{{prUrl}}`, `{{prNumber}}`, `{{attachments}}`.
 
 ## PTY Session Manager
 

@@ -122,7 +122,7 @@ Kangentic subscribes to 17 Claude Code hook points via the event bridge:
 | `WorktreeCreate` | `worktree_create` | Worktree created |
 | `WorktreeRemove` | `worktree_remove` | Worktree removed |
 
-Additionally, `PreToolUse` with specific matchers (`AskUserQuestion`, `ExitPlanMode`) emits `idle`, and `PostToolUse` with those matchers emits `prompt`. See [Activity Detection](activity-detection.md) for the full mapping and state derivation logic.
+All hooks use blank matchers (fire for every invocation regardless of tool name). See [Activity Detection](activity-detection.md) for the full event-to-state mapping and state derivation logic.
 
 ### Hook Identification
 
