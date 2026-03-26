@@ -39,7 +39,6 @@ export function cleanSelection(raw: string, cols: number): string {
 export function enableTerminalClipboard(
   terminal: Terminal,
   el: HTMLElement,
-  onPaste: (text: string) => void,
 ): void {
   terminal.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
@@ -64,7 +63,7 @@ export function enableTerminalClipboard(
 
     if (isPaste) {
       navigator.clipboard.readText().then((text) => {
-        if (text) onPaste(text);
+        if (text) terminal.paste(text);
       }).catch(() => { /* clipboard access denied */ });
       return false;
     }

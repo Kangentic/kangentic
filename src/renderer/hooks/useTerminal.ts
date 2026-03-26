@@ -79,11 +79,7 @@ export function useTerminal(options: UseTerminalOptions) {
     terminal.open(terminalRef.current);
 
     // Enable Ctrl+C copy (when text selected) and Ctrl+V paste
-    enableTerminalClipboard(terminal, terminalRef.current, (text) => {
-      if (options.sessionId) {
-        window.electronAPI.sessions.write(options.sessionId, text);
-      }
-    });
+    enableTerminalClipboard(terminal, terminalRef.current);
 
     terminal.onScroll(() => {
       const buffer = terminal.buffer.active;
@@ -238,7 +234,7 @@ export function useTerminal(options: UseTerminalOptions) {
       if (!isInside(e)) return;
       navigator.clipboard.readText().then((text) => {
         if (text && options.sessionId) {
-          window.electronAPI.sessions.write(options.sessionId, text);
+          xtermRef.current?.paste(text);
         }
       }).catch(() => { /* clipboard access denied */ });
     };

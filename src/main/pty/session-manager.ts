@@ -422,9 +422,21 @@ export class SessionManager extends EventEmitter {
 
   write(sessionId: string, data: string): void {
     const session = this.sessions.get(sessionId);
-    if (session?.pty) {
+    if (!session?.pty) return;
+
+    const CHUNK_SIZE = 4096;
+    if (data.length <= CHUNK_SIZE) {
       session.pty.write(data);
+      return;
     }
+    let offset = 0;
+    const writeNextChunk = () => {
+      if (!session.pty || offset >= data.length) return;
+      session.pty.write(data.slice(offset, offset + CHUNK_SIZE));
+      offset += CHUNK_SIZE;
+      if (offset < data.length) setTimeout(writeNextChunk, 1);
+    };
+    writeNextChunk();
   }
 
   resize(sessionId: string, cols: number, rows: number): void {
