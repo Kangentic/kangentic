@@ -318,17 +318,21 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
               </button>
             )}
           </div>
-          <div className="flex items-center gap-1.5 mt-0.5">
-            {task.description && (
-              <span className="text-xs text-fg-disabled truncate flex-1">{stripMarkdown(task.description)}</span>
-            )}
-            <span className="text-xs text-fg-disabled flex-shrink-0 ml-auto">
-              {task.archived_at ? formatDistanceToNow(new Date(task.archived_at), { addSuffix: true }) : ''}
-            </span>
-          </div>
+          {task.description && (
+            <div className="mt-0.5">
+              <span className="text-xs text-fg-disabled truncate block">{stripMarkdown(task.description)}</span>
+            </div>
+          )}
           <div className="mt-1">
             <LabelPills labels={taskLabels} labelColors={labelColors} />
           </div>
+          {task.archived_at && (
+            <div className="mt-0.5">
+              <span className="text-xs text-fg-disabled">
+                {formatDistanceToNow(new Date(task.archived_at), { addSuffix: true })}
+              </span>
+            </div>
+          )}
         </div>
 
         {showDetail && (

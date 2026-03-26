@@ -453,16 +453,19 @@ export function BacklogView() {
             <Inbox size={48} strokeWidth={1} />
             <div className="text-center">
               <div className="text-lg font-medium text-fg-muted">Backlog is empty</div>
-              <div className="text-sm mt-1">Create items to stage work before promoting to the board</div>
+              <div className="text-sm mt-1">Create or import items to stage work before promoting to the board</div>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowNewDialog(true)}
-              className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors mt-2"
-            >
-              <Plus size={14} />
-              Create your first task
-            </button>
+            <div className="flex items-center gap-3 mt-2">
+              <button
+                type="button"
+                onClick={() => setShowNewDialog(true)}
+                className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors"
+              >
+                <Plus size={14} />
+                Create your first task
+              </button>
+              <ImportPopover onOpenImportDialog={(source) => setImportSource(source)} />
+            </div>
           </div>
         ) : (
           <>

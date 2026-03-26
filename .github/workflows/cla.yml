@@ -24,7 +24,7 @@ jobs:
         with:
           path-to-document: 'https://github.com/Kangentic/kangentic/blob/main/CLA.md'
           path-to-signatures: 'signatures/version1/cla.json'
-          branch: 'main'
+          branch: 'cla-signatures'
           custom-notsigned-prcomment: |
             Thank you for your pull request! Before we can merge it, you need to sign our [Contributor License Agreement](https://github.com/Kangentic/kangentic/blob/main/CLA.md).
 
@@ -34,7 +34,7 @@ jobs:
 
             You only need to do this once for all future contributions.
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
-          allowlist: 'bot*,dependabot[bot],github-actions[bot],renovate[bot]'
+          allowlist: 'Tyler-V,bot*,dependabot[bot],github-actions[bot],renovate[bot]'
           lock-pullrequest-aftermerge: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
