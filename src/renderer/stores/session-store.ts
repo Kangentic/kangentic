@@ -4,6 +4,15 @@ import { useProjectStore } from './project-store';
 
 const MAX_EVENTS_PER_SESSION = 500;
 
+/** Aborts in-flight syncSessions() calls when the project switches. */
+let syncController: AbortController | null = null;
+
+/** Cancel any in-flight syncSessions() call. Called on project switch. */
+export function cancelSync(): void {
+  syncController?.abort();
+  syncController = null;
+}
+
 /** Build a taskId→Session lookup Map from the sessions array. */
 function buildSessionByTaskId(sessions: Session[]): Map<string, Session> {
   const map = new Map<string, Session>();
@@ -30,10 +39,8 @@ interface SessionStore {
   /** Command label to show in the terminal overlay (e.g. "/code-review") keyed by task ID */
   pendingCommandLabel: Record<string, string>;
   _pendingOpenTaskId: string | null;
-  _syncGeneration: number;
 
-  syncSessions: () => Promise<void>;
-  _bumpSyncGeneration: () => number;
+  syncSessions: () => Promise<boolean>;
   setPendingOpenTaskId: (id: string | null) => void;
   setDetailTaskId: (id: string | null) => void;
   spawnSession: (input: SpawnSessionInput) => Promise<Session>;
@@ -90,21 +97,19 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   seenIdleSessions: {},
   pendingCommandLabel: {},
   _pendingOpenTaskId: null,
-  _syncGeneration: 0,
   transientSessions: {},
   transientSessionId: null,
   transientBranch: null,
 
   setPendingOpenTaskId: (id) => set({ _pendingOpenTaskId: id }),
 
-  _bumpSyncGeneration: () => {
-    const next = get()._syncGeneration + 1;
-    set({ _syncGeneration: next });
-    return next;
-  },
-
   syncSessions: async () => {
-    const generation = get()._syncGeneration;
+    // Abort any prior in-flight sync (e.g. user switched projects quickly)
+    syncController?.abort();
+    const controller = new AbortController();
+    syncController = controller;
+    const { signal } = controller;
+
     const currentProjectId = useProjectStore.getState().currentProject?.id;
 
     // Snapshot session references before async gap -- used to detect
@@ -113,15 +118,14 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
     // Sessions list is always unscoped -- sidebar needs cross-project data
     const freshSessions = await window.electronAPI.sessions.list();
+    if (signal.aborted) return false;
 
     // Usage/events are scoped to current project; activity is unscoped
     // because sidebar badges need cross-project activity data.
     const cachedUsage = await window.electronAPI.sessions.getUsage(currentProjectId);
     const cachedActivity = await window.electronAPI.sessions.getActivity();
     const cachedEvents = await window.electronAPI.sessions.getEventsCache(currentProjectId);
-
-    // Stale guard: discard if a project switch bumped the generation
-    if (get()._syncGeneration !== generation) return;
+    if (signal.aborted) return false;
 
     const currentState = get();
     const postAsyncSessions = new Map(currentState.sessions.map((s) => [s.id, s]));
@@ -152,6 +156,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       sessionActivity: { ...cachedActivity, ...currentState.sessionActivity },
       sessionEvents: { ...cachedEvents, ...currentState.sessionEvents },
     });
+
+    return true;
   },
 
   spawnSession: async (input) => {

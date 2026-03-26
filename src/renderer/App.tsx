@@ -3,7 +3,7 @@ import { AppLayout } from './components/layout/AppLayout';
 import { useProjectStore } from './stores/project-store';
 import { useBoardStore } from './stores/board-store';
 import { useConfigStore } from './stores/config-store';
-import { useSessionStore } from './stores/session-store';
+import { useSessionStore, cancelSync } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useToastStore } from './stores/toast-store';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
@@ -83,7 +83,7 @@ export function App() {
       useBoardStore.getState().setSearchQuery(''); // Clear search on project switch
 
       // Invalidate any in-flight syncSessions() calls from the previous project
-      useSessionStore.getState()._bumpSyncGeneration();
+      cancelSync();
 
       // Clear all per-project view state before syncing -- prevents stale data
       // from the previous project leaking into the new project's terminal/events.
@@ -110,10 +110,9 @@ export function App() {
         sessionEvents: preservedEvents,
       });
 
-      const generationBeforeSync = useSessionStore.getState()._syncGeneration;
-      useSessionStore.getState().syncSessions().then(() => {
+      useSessionStore.getState().syncSessions().then((applied) => {
         // If project switched again while syncing, don't mark sessions seen
-        if (useSessionStore.getState()._syncGeneration !== generationBeforeSync) {
+        if (!applied) {
           useSessionStore.getState().setPendingOpenTaskId(null);
           return;
         }
