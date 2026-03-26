@@ -326,6 +326,16 @@ export interface SessionUsage {
   };
 }
 
+// === Usage Time Period Stats ===
+
+export type UsageTimePeriod = 'live' | 'today' | 'week' | 'month' | 'all';
+
+export interface PeriodUsageStats {
+  totalCostUsd: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+}
+
 // === Session Display State (discriminated union for UI) ===
 
 export type SessionDisplayState =
@@ -454,6 +464,7 @@ export interface AppConfig {
   activateAllProjectsOnStartup: boolean;
   restoreWindowPosition: boolean;
   windowBounds: { x: number; y: number; width: number; height: number } | null;
+  statusBarPeriod: UsageTimePeriod;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -532,6 +543,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   activateAllProjectsOnStartup: true,
   restoreWindowPosition: true,
   windowBounds: null,
+  statusBarPeriod: 'live',
 };
 
 // === Claude Commands ===
@@ -976,6 +988,7 @@ export interface ElectronAPI {
     listSummaries: () => Promise<Record<string, SessionSummary>>;
     spawnTransient: (input: SpawnTransientSessionInput) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
     killTransient: (sessionId: string) => Promise<void>;
+    getPeriodStats: (period: UsageTimePeriod) => Promise<PeriodUsageStats>;
   };
 
   // Config

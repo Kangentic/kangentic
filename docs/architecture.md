@@ -138,7 +138,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `transition:set` | invoke | Set action chain for lane A→B |
 | `transition:getFor` | invoke | Get transitions for lane pair (exact match, then wildcard) |
 
-### Sessions (24 channels)
+### Sessions (25 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -165,6 +165,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `session:listSummaries` | invoke | Get summaries of multiple sessions |
 | `session:spawnTransient` | invoke | Spawn ephemeral command terminal session (no task, no DB) |
 | `session:killTransient` | invoke | Kill a transient session and clean up session directory |
+| `session:getPeriodStats` | invoke | Fetch aggregated usage stats (tokens, cost) for a given time period |
 
 ### Config (8 channels)
 | Channel | Pattern | Purpose |

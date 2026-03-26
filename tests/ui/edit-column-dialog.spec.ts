@@ -57,7 +57,8 @@ test.describe('EditColumnDialog', () => {
   test('custom column shows editable permissions dropdown with Default selected', async () => {
     await openEditDialog('Code Review');
 
-    const select = page.locator('select').last();
+    const dialog = page.locator('.bg-surface-raised').filter({ hasText: 'Edit Column' });
+    const select = dialog.locator('select').last();
     await expect(select).toBeEnabled();
 
     // Global default should be the selected value (empty string = inherit)

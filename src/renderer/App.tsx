@@ -118,6 +118,12 @@ export function App() {
         }
         useSessionStore.getState().markIdleSessionsSeen(currentProject.id);
 
+        // Restore persisted usage period and fetch stats if not 'live'
+        const savedPeriod = useConfigStore.getState().config.statusBarPeriod;
+        if (savedPeriod && savedPeriod !== useSessionStore.getState().selectedPeriod) {
+          useSessionStore.getState().setSelectedPeriod(savedPeriod);
+        }
+
         // Open task detail dialog if a notification click set a pending task ID
         const pendingTaskId = useSessionStore.getState()._pendingOpenTaskId;
         if (pendingTaskId) {
@@ -218,6 +224,11 @@ export function App() {
               variant: exitCode === 0 ? 'info' : 'warning',
             });
           }
+        }
+
+        // Refresh period stats after metrics are persisted (slight delay for DB write)
+        if (useSessionStore.getState().selectedPeriod !== 'live') {
+          setTimeout(() => useSessionStore.getState().fetchPeriodStats(), 1000);
         }
 
         // Desktop notification for non-zero exit on non-visible projects
@@ -470,7 +481,13 @@ if (import.meta.hot) {
     useConfigStore.getState().loadConfig();
     useBoardStore.getState().loadBoard();
     useBacklogStore.getState().loadBacklog();
-    useSessionStore.getState().syncSessions();
+    useSessionStore.getState().syncSessions().then((applied) => {
+      if (!applied) return;
+      const savedPeriod = useConfigStore.getState().config.statusBarPeriod;
+      if (savedPeriod && savedPeriod !== useSessionStore.getState().selectedPeriod) {
+        useSessionStore.getState().setSelectedPeriod(savedPeriod);
+      }
+    });
   });
 }
 

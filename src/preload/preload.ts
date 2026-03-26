@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, Session, SessionUsage, ActivityState, SessionEvent, UpdateDownloadedInfo } from '../shared/types';
+import type { ElectronAPI, NotificationInput, Project, Session, SessionUsage, ActivityState, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod } from '../shared/types';
 
 const api: ElectronAPI = {
   projects: {
@@ -146,6 +146,7 @@ const api: ElectronAPI = {
     listSummaries: () => ipcRenderer.invoke(IPC.SESSION_LIST_SUMMARIES),
     spawnTransient: (input) => ipcRenderer.invoke(IPC.SESSION_SPAWN_TRANSIENT, input),
     killTransient: (id) => ipcRenderer.invoke(IPC.SESSION_KILL_TRANSIENT, id),
+    getPeriodStats: (period: UsageTimePeriod) => ipcRenderer.invoke(IPC.SESSION_GET_PERIOD_STATS, period),
   },
 
   config: {

@@ -60,6 +60,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `hasCompletedFirstRun` | boolean | `false` | Whether the user has completed first-run onboarding. Auto-set, not shown in UI. |
 | `windowBounds` | object \| null | `null` | Persisted window bounds `{x, y, width, height}`. Auto-saved, not shown in UI. |
 | `skipBoardConfigConfirm` | boolean | `false` | Auto-apply board config changes without confirmation dialog |
+| `statusBarPeriod` | UsageTimePeriod | `'live'` | Time period for status bar usage stats. Values: `live`, `today`, `week`, `month`, `all`. Global-only. |
 
 ### terminal.*
 

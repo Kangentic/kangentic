@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
-import type { SessionRecord, SessionRecordStatus, SessionSummary, SuspendedBy } from '../../../shared/types';
+import type { SessionRecord, SessionRecordStatus, SessionSummary, SuspendedBy, PeriodUsageStats } from '../../../shared/types';
 
 /** Fields accepted by insert(). Excludes `id` (auto-generated) and metric columns (set via updateMetrics). */
 type SessionInsertInput = Omit<SessionRecord,
@@ -347,5 +347,30 @@ export class SessionRepository {
       };
     }
     return result;
+  }
+
+  /**
+   * Get aggregated cost/token stats for sessions started on or after
+   * the given ISO date string. Pass null to include all sessions.
+   */
+  getStatsAfter(since: string | null): PeriodUsageStats {
+    const row = since
+      ? this.db.prepare(`
+          SELECT
+            COALESCE(SUM(total_cost_usd), 0) AS totalCostUsd,
+            COALESCE(SUM(total_input_tokens), 0) AS totalInputTokens,
+            COALESCE(SUM(total_output_tokens), 0) AS totalOutputTokens
+          FROM sessions
+          WHERE total_cost_usd IS NOT NULL AND started_at >= ?
+        `).get(since) as PeriodUsageStats
+      : this.db.prepare(`
+          SELECT
+            COALESCE(SUM(total_cost_usd), 0) AS totalCostUsd,
+            COALESCE(SUM(total_input_tokens), 0) AS totalInputTokens,
+            COALESCE(SUM(total_output_tokens), 0) AS totalOutputTokens
+          FROM sessions
+          WHERE total_cost_usd IS NOT NULL
+        `).get() as PeriodUsageStats;
+    return row ?? { totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0 };
   }
 }

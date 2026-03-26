@@ -788,6 +788,9 @@
         var index = sessions.findIndex(function (s) { return s.id === sessionId; });
         if (index !== -1) sessions.splice(index, 1);
       },
+      getPeriodStats: async function () {
+        return { totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0 };
+      },
     },
 
     config: {

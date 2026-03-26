@@ -7,9 +7,10 @@ import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, autoSpawnF
 import { handleTaskMove } from './tasks';
 import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
-import type { Session, AppConfig } from '../../../shared/types';
+import type { Session, AppConfig, UsageTimePeriod } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
+import { computePeriodCutoff } from '../../../shared/period-cutoff';
 
 // Track session start times for duration calculation on exit
 const sessionStartTimes = new Map<string, number>();
@@ -152,6 +153,14 @@ export function registerSessionHandlers(context: IpcContext): void {
     const db = getProjectDb(context.currentProjectId);
     const sessionRepo = new SessionRepository(db);
     return sessionRepo.listAllSummaries();
+  });
+
+  ipcMain.handle(IPC.SESSION_GET_PERIOD_STATS, (_, period: UsageTimePeriod) => {
+    if (!context.currentProjectId) return { totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0 };
+    const db = getProjectDb(context.currentProjectId);
+    const sessionRepo = new SessionRepository(db);
+    const since = computePeriodCutoff(period);
+    return sessionRepo.getStatsAfter(since);
   });
 
   // Forward PTY events to renderer (guard against destroyed window during shutdown)

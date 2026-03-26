@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, SessionUsage, ActivityState, SessionEvent, SpawnSessionInput } from '../../shared/types';
+import type { Session, SessionUsage, ActivityState, SessionEvent, SpawnSessionInput, UsageTimePeriod, PeriodUsageStats } from '../../shared/types';
 import { useProjectStore } from './project-store';
 
 const MAX_EVENTS_PER_SESSION = 500;
@@ -79,6 +79,13 @@ interface SessionStore {
   /** Kill a specific project's transient session and clean up all data. */
   killTransientSessionForProject: (projectId: string) => Promise<void>;
 
+  /** Selected time period for status bar usage stats */
+  selectedPeriod: UsageTimePeriod;
+  /** Aggregated DB stats for the selected period (excludes live sessions) */
+  periodStats: PeriodUsageStats | null;
+  setSelectedPeriod: (period: UsageTimePeriod) => void;
+  fetchPeriodStats: (period?: UsageTimePeriod) => Promise<void>;
+
   getRunningCount: () => number;
   getQueuedCount: () => number;
   getQueuePosition: (sessionId: string) => { position: number; total: number } | null;
@@ -100,6 +107,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   transientSessions: {},
   transientSessionId: null,
   transientBranch: null,
+  selectedPeriod: 'live',
+  periodStats: null,
 
   setPendingOpenTaskId: (id) => set({ _pendingOpenTaskId: id }),
 
@@ -433,6 +442,28 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         seenIdleSessions: restSeen,
       };
     });
+  },
+
+  setSelectedPeriod: (period) => {
+    if (period === 'live') {
+      set({ selectedPeriod: period, periodStats: null });
+    } else {
+      set({ selectedPeriod: period });
+      get().fetchPeriodStats(period);
+    }
+    // Persist selection to config (fire-and-forget)
+    window.electronAPI.config.set({ statusBarPeriod: period });
+  },
+
+  fetchPeriodStats: async (period?) => {
+    const targetPeriod = period ?? get().selectedPeriod;
+    if (targetPeriod === 'live') return;
+    try {
+      const stats = await window.electronAPI.sessions.getPeriodStats(targetPeriod);
+      set({ periodStats: stats });
+    } catch {
+      // Ignore - project may have been closed
+    }
   },
 
   getRunningCount: () => get().sessions.filter((s) => s.status === 'running').length,

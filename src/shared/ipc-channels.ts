@@ -84,6 +84,7 @@ export const IPC = {
   SESSION_LIST_SUMMARIES: 'session:listSummaries',
   SESSION_SPAWN_TRANSIENT: 'session:spawnTransient',
   SESSION_KILL_TRANSIENT: 'session:killTransient',
+  SESSION_GET_PERIOD_STATS: 'session:getPeriodStats',
 
   // Config
   CONFIG_GET: 'config:get',
