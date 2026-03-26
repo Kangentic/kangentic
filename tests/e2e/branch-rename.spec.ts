@@ -213,8 +213,8 @@ test.describe('Branch Rename on Title Edit', () => {
 
   test('renaming task title renames the git branch', async () => {
     test.setTimeout(90_000);
-    const originalTitle = `Rename Test ${runId}`;
-    const newTitle = `Renamed Task ${runId}`;
+    const originalTitle = `Alpha Test ${runId}`;
+    const newTitle = `Beta Task ${runId}`;
 
     // Create a task and drag to Planning (creates worktree + branch)
     await createTask(page, originalTitle, 'Test branch rename');
@@ -223,7 +223,8 @@ test.describe('Branch Rename on Title Edit', () => {
 
     // Wait for branch to be set on the task (worktree creation is async)
     const originalBranch = await waitForBranch(page, originalTitle);
-    expect(originalBranch).toContain('rename-test-');
+    // Branch follows {slug}-{shortId} pattern (slug length varies by path budget)
+    expect(originalBranch).toMatch(/^[a-z0-9-]+-[a-f0-9]{8}$/);
 
     // Verify worktree directory exists
     const task = await getTaskByTitle(page, originalTitle);
@@ -240,7 +241,7 @@ test.describe('Branch Rename on Title Edit', () => {
 
     // Verify the branch was renamed
     const updatedTask = await getTaskByTitle(page, newTitle);
-    expect(updatedTask?.branch_name).toContain('renamed-task-');
+    expect(updatedTask?.branch_name).toMatch(/^[a-z0-9-]+-[a-f0-9]{8}$/);
     expect(updatedTask?.branch_name).not.toBe(originalBranch);
 
     // Verify via git that old branch is gone and new one exists
@@ -273,7 +274,8 @@ test.describe('Branch Rename on Title Edit', () => {
     await waitForMoveSettle(page, 'Planning', originalTitle);
 
     const originalBranch = await waitForBranch(page, originalTitle);
-    expect(originalBranch).toContain('slug-same-');
+    // Branch follows {slug}-{shortId} pattern (slug length varies by path budget)
+    expect(originalBranch).toMatch(/^[a-z0-9-]+-[a-f0-9]{8}$/);
 
     await editTaskTitle(page, originalTitle, newTitle);
 
