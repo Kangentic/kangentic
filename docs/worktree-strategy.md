@@ -45,11 +45,23 @@ All git-mutating operations (create, remove, branch delete, prune, checkout, ren
 5. Check if branch already exists (stale branch from failed cleanup, or custom branch)
 6. If branch exists: `git worktree add <worktreePath> <branchName>`
 7. If new branch: `git worktree add -b <branchName> <worktreePath> <startPoint>`
-8. `git config kangentic.baseBranch <baseBranch>` (in worktree)
-9. Set up sparse-checkout (see below)
-10. Copy optional files from repo root (configured via `config.git.copyFiles`)
-11. Create `node_modules` junction/symlink to root repo's `node_modules`
-12. Pre-populate `~/.claude.json` trust entry for the worktree path
+8. On Windows: enable `core.longpaths` (see below)
+9. `git config kangentic.baseBranch <baseBranch>` (in worktree)
+10. Set up sparse-checkout (see below)
+11. Copy optional files from repo root (configured via `config.git.copyFiles`)
+12. Create `node_modules` junction/symlink to root repo's `node_modules`
+13. Pre-populate `~/.claude.json` trust entry for the worktree path
+
+### Windows Long Paths
+
+On Windows, projects with deeply nested file paths (e.g. .NET migrations, `node_modules` trees) can exceed the default 260-character path limit when checked out into a worktree under `.kangentic/worktrees/<slug>/`. This causes `git worktree add` and subsequent git operations to fail with "Filename too long" errors.
+
+Kangentic enables `core.longpaths` in two places:
+
+1. **`git worktree add`** - the `-c core.longpaths=true` flag is passed as a per-command config override so the checkout itself succeeds. This does not modify any persistent git config.
+2. **Worktree local config** - after creation, `git config core.longpaths true` is set in the worktree's local config so all subsequent operations (sparse-checkout, agent commits, merges) also use extended-length paths.
+
+This setting uses the `\\?\` extended-length path prefix on Windows. macOS and Linux have 1024-4096 byte `PATH_MAX` limits and are unaffected - the setting is only applied on `process.platform === 'win32'`.
 
 ## Sparse-Checkout
 

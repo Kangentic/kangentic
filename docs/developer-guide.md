@@ -56,6 +56,9 @@ src/
       repositories/        # One class per table, synchronous queries
         action-repository.ts
         attachment-repository.ts
+        attachment-utils.ts  # Shared attachment file handling
+        backlog-repository.ts # Backlog task CRUD
+        backlog-attachment-repository.ts # Backlog task attachments
         project-group-repository.ts
         project-repository.ts
         session-repository.ts
@@ -69,11 +72,19 @@ src/
       transition-engine.ts # Executes action chains on swimlane transitions
     git/
       worktree-manager.ts  # Worktree creation, sparse-checkout, cleanup
+    import/                # External issue import subsystem
+      importer.ts          # Base importer interface and types
+      importer-registry.ts # Registry of available import providers
+      import-source-store.ts # Persists import source configuration
+      download-file.ts     # File download utility for attachments
+      github/              # GitHub import adapters (Issues, Projects)
+      azure-devops/        # Azure DevOps import adapter
     ipc/
       register-all.ts      # Thin orchestrator, creates IpcContext, re-exports
       ipc-context.ts       # Shared IpcContext interface
       helpers.ts           # Shared helper functions (ensureGitignore, getProjectRepos, etc.)
       handlers/
+        backlog.ts         # Backlog CRUD, import, promotion handlers
         board.ts           # Swimlane, Action, Transition, Attachment CRUD
         projects.ts        # PROJECT_* handlers, cleanupProject, openProjectByPath
         session-metrics.ts # Session summary and metrics aggregation
@@ -83,6 +94,7 @@ src/
         task-crud.ts       # TASK_LIST, CREATE, UPDATE, DELETE, archive handlers
         task-move.ts       # TASK_MOVE handler with priority rules
         tasks.ts           # Task handler orchestrator, bulk operations
+        transient-sessions.ts # Ephemeral command-bar sessions (spawn/kill)
     pty/                   # Terminal session management
       pty-buffer-manager.ts # Output buffering, scrollback ring buffer (512KB)
       session-file-watcher.ts # fs.watch for status.json and events.jsonl
@@ -94,19 +106,29 @@ src/
     preload.ts             # Context bridge (window.electronAPI)
   renderer/                # React UI
     components/
+      backlog/             # Backlog view, task creation, import, promotion
       board/               # Kanban board, columns, task cards, drag-and-drop
       dialogs/             # Settings, task detail, project management
       layout/              # App shell, sidebar, title bar, status bar
       terminal/            # xterm integration, activity log
+      CountBadge.tsx       # Reusable circular badge (muted, accent, solid variants)
+      DescriptionEditor.tsx # Markdown editor with preview toggle
+      FilterPopover.tsx    # Reusable filter dropdown popover
+      LabelInput.tsx       # Tag-style label input with autocomplete
+      MarkdownRenderer.tsx # Renders markdown to sanitized HTML
     hooks/
       useTerminal.ts       # xterm lifecycle, resize, scrollback restoration
     stores/                # Zustand state management
+      backlog-store.ts     # Backlog tasks, labels, import sources
       board-store.ts       # Tasks, swimlanes, optimistic updates
       session-store.ts     # PTY sessions, usage, activity, events
       config-store.ts      # App config, Claude detection, theme
       project-store.ts     # Project CRUD
       toast-store.ts       # Notification queue
+    utils/
+      terminal-clipboard.ts # Terminal copy/paste with bracketed paste support
   shared/                  # Shared between main and renderer
+    abort-utils.ts         # AbortSignal type guard for stale spawn prevention
     types.ts               # All TypeScript interfaces
     ipc-channels.ts        # IPC channel constants (single source of truth)
     paths.ts               # Path utilities, shell adaptation
@@ -272,12 +294,12 @@ npm run test:unit                 # Unit (separate runner)
 
 ## Documentation Maintenance
 
-Run `/update-docs` to review and update documentation after code changes. This command:
-- Maps changed source files to affected docs using the source-to-doc mapping in `.claude/skills/docs-maintenance/SKILL.md`
+Run `/sync-docs` to review and update documentation after code changes. This command:
+- Maps changed source files to affected docs using the source-to-doc mapping in `.claude/skills/sync-docs/SKILL.md`
 - Checks for stale facts (schema, config keys, constants, types)
 - Updates docs in-place and reports what changed
 
-This runs automatically as part of `/merge-back` (Step 4.5). To run manually: `/update-docs`.
+This runs automatically as part of `/merge-back` (Step 4.5). To run manually: `/sync-docs`.
 
 ## Packaging
 

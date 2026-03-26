@@ -422,6 +422,16 @@ State: `projects`, `currentProject`, `loading`
 
 Standard CRUD. `openProject()` triggers main process initialization (DB open, worktree pruning). Session recovery and reconciliation run in the background (fire-and-forget) so the board renders immediately; sessions appear reactively as PTYs come online via IPC status events.
 
+### BacklogStore (`backlog-store.ts`)
+
+State: `items`, `loading`, `selectedIds`
+
+- **CRUD + bulk operations** -- `createItem()`, `updateItem()`, `deleteItem()`, `bulkDelete()`, `reorderItems()`.
+- **Optimistic reorder** -- `reorderItems()` reorders locally first, then syncs via IPC. Errors trigger a full `loadBacklog()` reload.
+- **Promote/demote** -- `promoteItems()` optimistically removes items from the backlog, calls IPC (which returns after DB work but before agent spawn), then reloads the board. On failure, removed items are restored and a toast error is shown. `demoteTask()` adds the returned backlog item locally and reloads the board.
+- **Label management** -- `renameLabel()` and `deleteLabel()` update labels across all items via IPC, then reload both the backlog and the board (since promoted tasks share label data).
+- **Selection** -- `toggleSelected()`, `selectAll()`, `clearSelection()` manage a `Set<string>` of selected item IDs for bulk actions.
+
 ### ToastStore (`toast-store.ts`)
 
 State: `toasts` (max 5)
@@ -483,6 +493,31 @@ On project open (`src/main/engine/session-recovery.ts`):
 - **Terminal ownership handoff** -- one xterm instance per session at a time prevents duplicate resize calls that corrupt TUI output
 - **Output batching** -- 16ms flush interval prevents per-character IPC overhead
 - **Scrollback cap** -- 512KB prevents unbounded memory growth
+
+## Import Subsystem
+
+`src/main/import/`
+
+Provides external issue import into the backlog. Uses an adapter pattern with a central registry:
+
+- **`importer-registry.ts`** -- maps source types to importer instances. Currently supports `github-issues`, `github-projects`, and `azure-devops`.
+- **`importer.ts`** -- defines the `Importer` interface: `checkCli()` (verify CLI tool is installed and authenticated), `fetch()` (retrieve items from external source), `execute()` (import selected items with attachment download).
+- **`import-source-store.ts`** -- persists saved import source configurations in the project config file.
+- **`download-file.ts`** -- shared utility for downloading attachment files during import.
+
+### GitHub Importers (`github/`)
+
+- **`github-issues-adapter.ts`** -- fetches issues from a GitHub repository via `gh` CLI. Maps issue fields (title, body, labels, assignee, milestone) to backlog task fields.
+- **`github-projects-adapter.ts`** -- fetches items from a GitHub Projects (v2) board via `gh` CLI. Maps project item fields to backlog task fields.
+- **`url-parser.ts`** -- extracts owner/repo/project-number from GitHub URLs.
+
+### Azure DevOps Importer (`azure-devops/`)
+
+- **`azure-devops-importer.ts`** -- fetches work items from Azure DevOps via `az` CLI.
+- **`azure-devops-adapter.ts`** -- maps Azure DevOps work item fields to backlog task fields.
+- **`url-parser.ts`** -- extracts organization/project from Azure DevOps URLs.
+
+IPC channels for import are in the Backlog Import group (6 channels): `backlog:importCheckCli`, `backlog:importFetch`, `backlog:importExecute`, `backlog:importSourcesList`, `backlog:importSourcesAdd`, `backlog:importSourcesRemove`.
 
 ## See Also
 

@@ -28,7 +28,7 @@ New projects start with seven columns:
 
 ### Create a Task
 
-Click the **+** button on any column header or use the "New Task" button. Enter a title and optional description. You can also attach images (screenshots, mockups) that will be included in the agent's prompt.
+Click the **+** button on any column header or use the "New Task" button. Enter a title and optional description. You can set a priority level, add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
 
 ### Spawn an Agent
 
@@ -43,13 +43,13 @@ Drag a task from To Do to any active column (Planning, Executing, etc.). Kangent
 - **Terminal panel** at the bottom shows the active session's terminal output
 - **Activity tab** shows structured events (tool calls, idle state) instead of raw terminal output
 - **Context bar** below the terminal shows session metadata (shell, model, cost, tokens, context usage). Each element is configurable.
-- **Task card status** -- each card shows a contextual status bar at the bottom:
+- **Task card status** - each card shows a contextual status bar at the bottom:
   - A spinning indicator and model name with context percentage when the agent is actively working
   - An idle icon (amber) when the agent is waiting for input
   - "Initializing..." or "Resuming..." during session startup
   - "Queued..." when waiting for a concurrency slot
   - "Paused" when manually suspended
-- **Shimmer overlay** -- when a session is starting or resuming (e.g., after a column move that triggers an auto_command), a shimmer loading overlay appears over the terminal. It shows a context-aware label such as the auto_command name, "Resuming agent...", or "Starting agent...". Terminal output is suppressed behind the overlay until the session is ready.
+- **Shimmer overlay** - when a session is starting or resuming (e.g., after a column move that triggers an auto_command), a shimmer loading overlay appears over the terminal. It shows a context-aware label such as the auto_command name, "Resuming agent...", or "Starting agent...". Terminal output is suppressed behind the overlay until the session is ready.
 
 ### Move Between Active Columns
 
@@ -61,6 +61,16 @@ Drag to Done. The session is suspended (not destroyed), the task is archived, an
 
 Clicking a completed task opens a session summary showing: duration, model, cost, token usage, tool call count, files changed, and lines added/removed. The Done column also supports searching completed tasks by title and sorting by date, cost, tokens, or duration.
 
+### Task Card Context Menu
+
+Right-click any task card on the board to open a context menu with:
+- **Copy Task ID** - copies the display ID (e.g., `#42`) to clipboard
+- **Edit** - opens the task detail dialog in edit mode
+- **Move to** - submenu listing all other columns as move targets
+- **Backlog** - send the task back to the backlog (cleans up session and worktree)
+- **Archive** - move the task to Done and archive it
+- **Delete** - permanently delete the task, session, and worktree
+
 ### Return to To Do
 
 Drag to To Do to kill the session. The worktree is preserved (code stays on disk), but the session is ended. If you drag back to an active column, a fresh session starts.
@@ -71,11 +81,23 @@ The bottom panel shows terminal output for running sessions.
 
 ### Session Tabs
 
-Each running session gets a tab. Click a tab to switch between sessions. The active tab is highlighted.
+Each running session gets a tab. Click a tab to switch between sessions. The active tab is highlighted. Double-click a tab to open the corresponding task detail dialog.
+
+Tab indicators show session state at a glance:
+- **Green spinner** - agent is actively working
+- **Amber dot** - agent is idle (waiting for input). Pulses on tabs that have not been viewed since going idle.
+- **Green dot** - session is running (no activity data yet)
+- **Gray dot** - session is not running
+
+The amber idle indicator replaces the previous auto-focus behavior (which switched the panel to the idle session automatically). Auto-focus is still available as an opt-in setting under Behavior > Auto-Focus Idle Sessions, but defaults to off.
 
 ### Activity Tab
 
-The leftmost tab shows an activity log -- structured events from all sessions. This is a plain list (not a terminal) showing tool calls, idle events, and session state changes.
+The leftmost tab shows an activity log - structured events from all sessions. This is a plain list (not a terminal) showing tool calls, idle events, and session state changes.
+
+### File Drop to Terminal
+
+Drag files from your file manager onto the terminal to insert their file paths into the active session. Paths containing spaces are automatically quoted. Multiple files are inserted as a space-separated list. A visual overlay appears when files are dragged over the terminal area.
 
 ### Resize
 
@@ -85,8 +107,11 @@ Drag the panel divider to resize. The terminal resizes to match. Resize events a
 
 Click a task card to open the detail dialog. From here you can:
 
-- Edit the task title and description
-- View and manage image attachments (drag-and-drop files onto the dialog, or paste from clipboard)
+- View the task's **display ID** (e.g., `#42`) in the header - click it to copy to clipboard
+- See the **priority badge** next to the display ID when a priority is set
+- View **Markdown-rendered descriptions** with full GitHub Flavored Markdown support (tables, task lists, strikethrough, links)
+- Edit the task title, description, priority, and labels
+- View and manage attachments of any file type (drag-and-drop files onto the dialog, or paste from clipboard)
 - Right-click an attachment thumbnail to copy the image to clipboard
 - Click any attachment thumbnail to open a full-size preview modal (press Escape to close)
 - See the full terminal output (takes ownership from the bottom panel while open)
@@ -95,16 +120,16 @@ Click a task card to open the detail dialog. From here you can:
 - Run shortcuts from the header bar (configurable pills that launch external tools)
 - Open the **Commands & Skills** popover to browse and run Claude Code commands (`.claude/commands/`) and skills (`.claude/skills/`) from the project directory. Search by name, navigate with arrow keys, press Enter to invoke.
 - Access the kebab menu (three-dot icon) for additional actions:
-  - **Edit** -- switch to edit mode for title and description
-  - **Open folder** -- open the worktree or project directory in your file manager
-  - **View PR** -- open the associated pull request. PR URLs are populated automatically when an agent runs `gh pr create` or `gh pr view` (GitHub), explicitly via the `kangentic_update_task` MCP tool (any platform), or manually through the PR URL field in edit mode. Also shown as a pill in the header bar and a clickable badge on the task card.
-  - **Commands & Skills** -- submenu of available Claude Code commands and skills (same as the header popover)
-  - **Pause / Resume session** -- manually suspend or resume the agent
-  - **Move to** -- submenu listing all other columns as move targets
-  - **Archive** -- move the task to Done and archive it
-  - **Delete** -- permanently delete the task, session, and worktree
+  - **Edit** - switch to edit mode for title and description
+  - **Open folder** - open the worktree or project directory in your file manager
+  - **View PR** - open the associated pull request. PR URLs are populated automatically when an agent runs `gh pr create` or `gh pr view` (GitHub), explicitly via the `kangentic_update_task` MCP tool (any platform), or manually through the PR URL field in edit mode. Also shown as a pill in the header bar and a clickable badge on the task card.
+  - **Commands & Skills** - submenu of available Claude Code commands and skills (same as the header popover)
+  - **Pause / Resume session** - manually suspend or resume the agent
+  - **Move to** - submenu listing all other columns as move targets
+  - **Archive** - move the task to Done and archive it
+  - **Delete** - permanently delete the task, session, and worktree
 
-When the dialog is open, it claims the terminal session -- the bottom panel releases it. When you close the dialog, the bottom panel reclaims the session.
+When the dialog is open, it claims the terminal session. The bottom panel releases it. When you close the dialog, the bottom panel reclaims the session.
 
 ## Backlog
 
@@ -112,11 +137,15 @@ The Backlog is a staging area for tasks before they reach the board. Switch betw
 
 ### Creating Items
 
-Click **New Task** in the backlog toolbar to create a backlog item with a title, description, priority, labels, and optional image attachments.
+Click **New Task** in the backlog toolbar to create a backlog item with a title, description, priority, labels, and optional file attachments. You can paste or drag-and-drop any file type as an attachment.
+
+### Editing Items
+
+Double-click any row to open it for editing. You can also click the pencil icon in the row's action buttons, or right-click and select **Edit** from the context menu.
 
 ### Labels
 
-Click **Labels** in the toolbar to manage labels. Labels are free-form text tags added during item creation or editing. From the Labels popover you can rename a label across all items, delete a label, and assign colors to labels for visual distinction.
+Click **Labels** in the toolbar to manage labels. Labels are free-form text tags added during item creation or editing. From the Labels popover you can rename a label across all items, delete a label, and assign colors to labels for visual distinction. Labels and their colors are shared between the backlog and the board.
 
 ### Priorities
 
@@ -124,11 +153,28 @@ Click **Priorities** in the toolbar to manage the priority scale. The default sc
 
 ### Filtering
 
-Click **Filter** to filter by priority level and/or label. Active filters show a count badge on the Filter button. Use the search bar to filter items by title or description text.
+Click **Filter** to filter by priority level and/or label. Active filters show a count badge on the Filter button. Use the search bar to filter items by title, description, or label text.
+
+### Multi-Selection & Bulk Operations
+
+Click a row to select it, or use the checkboxes. The header checkbox selects/deselects all visible items. When multiple items are selected, a bulk toolbar appears at the bottom with **Move to Board** and **Delete** actions. Right-clicking with multiple items selected shows a context menu that operates on the entire selection.
+
+### Context Menu
+
+Right-click any backlog row to open a context menu with:
+- **Move to Board** - submenu listing all available columns as targets
+- **Edit** - open the item for editing
+- **Delete** - permanently remove the item
+
+When multiple items are selected and you right-click one of them, the context menu operates on all selected items (e.g., "Move 5 to Board", "Delete 3 items").
+
+### Drag to Reorder
+
+Drag rows by the grip handle on the left to manually reorder items. Drag-to-reorder is available when no column sort is active. When you sort by a column header (priority, title, created date), manual reorder is disabled until the sort is cleared.
 
 ### Promoting to the Board
 
-Select one or more items using the checkboxes, then click **Move to Board** in the bulk toolbar that appears at the bottom. Choose a target column and the items become board tasks. If the target column has auto-spawn enabled, an agent session starts immediately.
+Select one or more items using the checkboxes, then click **Move to Board** in the bulk toolbar that appears at the bottom. Choose a target column and the items become board tasks. If the target column has auto-spawn enabled, an agent session starts immediately. You can also promote individual items using the arrow icon in the row action buttons or the context menu.
 
 ### Importing from External Sources
 
@@ -163,6 +209,22 @@ Items that have already been imported are detected by `external_source` + `exter
 
 Saved sources persist in `.kangentic/config.json` per project and appear in the Import dropdown for quick re-syncing.
 
+## Board Filtering
+
+The board supports filtering to help you focus on relevant tasks across all columns.
+
+### Search Bar
+
+Press **Ctrl+F** (Cmd+F on macOS) or enable "Show Board Search Bar" in Behavior settings to display the search bar above the board columns. Type to filter tasks by title or description. The bar shows a match count (e.g., "3 of 12"). Press Escape to clear the query, or click the eye-off icon to dismiss the search bar entirely. A toast reminds you of the keyboard shortcut when dismissing.
+
+### Filter Popover
+
+Click the filter icon in the search bar to open the filter popover. Filter by:
+- **Priority** - toggle one or more priority levels (None, Low, Medium, High, Urgent)
+- **Labels** - toggle one or more labels from the project's label set
+
+Active filters show a count badge on the filter icon. Click "Clear all filters" at the bottom of the popover to reset. Priority and label filters combine with the search query - a task must match all active criteria to be visible.
+
 ## Column Management
 
 ### Add a Column
@@ -195,8 +257,8 @@ Columns can only be deleted when empty (no tasks).
 
 Settings are accessed from two entry points:
 
-- **App Settings** -- click the gear icon in the title bar. This is the main settings panel with all app-wide and project-default settings.
-- **Project Settings** -- click the gear icon on a project row in the sidebar. This shows only the per-project overridable subset.
+- **App Settings** - click the gear icon in the title bar. This is the main settings panel with all app-wide and project-default settings.
+- **Project Settings** - click the gear icon on a project row in the sidebar. This shows only the per-project overridable subset.
 
 Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. In App Settings, tabs above the separator (Appearance, Terminal, Agent, Git, Shortcuts) are per-project settings; tabs below the separator (Behavior, MCP Server, Notifications, Privacy) are shared across all projects. When no project is open, only the shared tabs appear. Project Settings shows inherited defaults as hints, with reset buttons on any overridden value and a "Reset All" footer when overrides exist.
 
@@ -218,7 +280,7 @@ Choose from 10 themes:
 | Shell | Override the auto-detected shell |
 | Font Size | Terminal text size in pixels |
 | Font Family | CSS font-family for the terminal |
-| Scrollback Lines | Maximum lines kept in terminal buffer (1000--100000, default 5000) |
+| Scrollback Lines | Maximum lines kept in terminal buffer (1000 to 100000, default 5000) |
 | Cursor Style | Terminal cursor appearance (block, underline, or bar) |
 
 ### Context Bar
@@ -240,7 +302,7 @@ The context bar is a status line displayed below the terminal showing session me
 | Setting | Description |
 |---------|-------------|
 | CLI Path | Path to Claude CLI binary (auto-detected if empty) |
-| Max Concurrent Sessions | Limit how many agents can run at the same time (1--20) |
+| Max Concurrent Sessions | Limit how many agents can run at the same time (1 to 20) |
 | When Max Sessions Reached | How new agent requests are handled when all slots are in use (Queue or Reject) |
 | Idle Timeout (minutes) | Auto-suspend sessions after N minutes idle; 0 to disable |
 | Permissions | Default permission mode for all sessions (Default, Plan, Accept Edits, Don't Ask, or Bypass) |
@@ -268,8 +330,8 @@ Shortcuts can be scoped as **Team** (saved in `kangentic.json`, shared via git) 
 ### Scope
 
 Settings have two scopes:
-- **Global** -- applies to all projects
-- **Project** -- overrides global settings for this project only (stored in `.kangentic/config.json`)
+- **Global** - applies to all projects
+- **Project** - overrides global settings for this project only (stored in `.kangentic/config.json`)
 
 Some settings are global-only and cannot be overridden per-project (e.g., max concurrent sessions, sidebar width).
 
@@ -280,7 +342,7 @@ These are global-only settings that apply to the entire app.
 | Setting | Description |
 |---------|-------------|
 | Skip Task Delete Confirmation | Delete tasks immediately without a confirmation dialog |
-| Auto-Focus Idle Sessions | Automatically switch the bottom panel to the most recently idle session |
+| Auto-Focus Idle Sessions | Automatically switch the bottom panel to the most recently idle session. Off by default - idle sessions show an amber dot on their tab instead. |
 | Launch All Projects on Startup | Start agents across all projects on launch, not just the current one |
 | Restore Window Position | Remember window size and position between launches |
 | Show Board Search Bar | Display the search bar above board columns. Press Ctrl+F / Cmd+F to toggle. |
@@ -331,7 +393,7 @@ When the max concurrent sessions limit is reached, new sessions are queued autom
 
 ### Multi-Project
 
-The sidebar shows all your projects. Click to switch between them. Each project has its own board, columns, and sessions. Drag projects to reorder them -- the order persists across app restarts. New projects appear at the top.
+The sidebar shows all your projects. Click to switch between them. Each project has its own board, columns, and sessions. Drag projects to reorder them. The order persists across app restarts. New projects appear at the top.
 
 The selected project shows action buttons (Open, Settings, Delete) directly on the row. Right-click any project to open a context menu with Rename, Open in Explorer, Project Settings, and Delete. Inline rename is supported via the context menu - press Enter to save, Escape to cancel.
 
@@ -341,7 +403,7 @@ When an agent goes idle (waiting for input or stopped) on a non-active project, 
 
 ### Notifications
 
-Desktop and toast notifications fire when an agent needs attention and the user can't already see it -- either the window is minimized/unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking a desktop notification brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second per-session cooldown prevents repeated desktop notifications from the same agent.
+Desktop and toast notifications fire when an agent needs attention and the user can't already see it - either the window is minimized/unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking a desktop notification brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second per-session cooldown prevents repeated desktop notifications from the same agent.
 
 The Settings > Notifications panel exposes two configurable events: **Agent Idle** and **Plan Complete**. Each can be set to Desktop & Toast, Desktop Only, Toast Only, or Off. Toast duration and max visible count are also configurable. The **Agent Crash** notification (non-zero exit) is always on and not exposed in the settings UI.
 
@@ -381,15 +443,16 @@ The Command Terminal provides quick, ephemeral access to Claude Code without cre
 - The **branch picker** in the header lets you switch branches - selecting a new branch kills the current session and respawns on the selected branch
 - A shimmer overlay shows while Claude Code initializes, then lifts to reveal the clean TUI
 - Transient sessions are fully independent of task sessions - they don't appear in the terminal panel tabs, don't count toward session limits, and produce no toasts on exit
+- The command terminal session is **preserved across project switches**. If you open the command terminal, switch to another project, and switch back, the session is still running. This allows you to keep a command terminal open for ad-hoc work while navigating between projects.
 - If git checkout fails when switching branches (e.g., uncommitted changes), a warning toast explains the issue and the session stays on the current branch
 
 **Closing:** Press `Ctrl+Shift+P` again, or click the backdrop outside the overlay. The PTY is killed and the session directory is cleaned up. Transient sessions are non-resumable by design.
 
 ## Keyboard Shortcuts
 
-- **Ctrl+Shift+P** / **Cmd+Shift+P** -- Toggle the Command Terminal overlay
-- **Ctrl+F** / **Cmd+F** -- Toggle board search
-- **Escape** -- Close any open dialog
+- **Ctrl+Shift+P** / **Cmd+Shift+P** - Toggle the Command Terminal overlay
+- **Ctrl+F** / **Cmd+F** - Toggle board search bar (or focus it if already visible)
+- **Escape** - Close any open dialog, or clear the search query if the search bar is focused
 - Standard OS shortcuts for copy, paste, etc. in the terminal
 
 ## Tips

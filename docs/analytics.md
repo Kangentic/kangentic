@@ -4,7 +4,7 @@ Kangentic collects anonymous usage statistics to understand adoption and improve
 
 ## What We Collect
 
-Seven event types are tracked, all on critical-path actions only:
+Eight event types are tracked, all on critical-path actions only:
 
 | Event | When | Properties |
 |-------|------|------------|
@@ -15,6 +15,7 @@ Seven event types are tracked, all on critical-path actions only:
 | `project_create` | User creates a project | (none) |
 | `task_complete` | Task moves to Done | (none) |
 | `session_exit` | Agent session finishes | exit code, duration (seconds) |
+| `transient_session_spawn` | Transient session launched from command bar | (none) |
 
 The analytics SDK automatically detects: OS name, OS version, locale, app version, anonymous session ID, and country (derived from IP, then discarded).
 

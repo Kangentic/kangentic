@@ -1,8 +1,8 @@
-# Kangentic -- Product Overview
+# Kangentic - Product Overview
 
 ## What is Kangentic?
 
-Kangentic is a cross-platform desktop Kanban application purpose-built for orchestrating Claude Code CLI agents. It gives developers a visual board where dragging a task card between columns can spawn, suspend, resume, or terminate Claude Code sessions -- turning a familiar Kanban workflow into a powerful agent control plane.
+Kangentic is a cross-platform desktop Kanban application purpose-built for orchestrating Claude Code CLI agents. It gives developers a visual board where dragging a task card between columns can spawn, suspend, resume, or terminate Claude Code sessions - turning a familiar Kanban workflow into a powerful agent control plane.
 
 ## The Problem
 
@@ -10,7 +10,7 @@ Working with multiple Claude Code CLI sessions simultaneously is difficult. Deve
 
 ## The Solution
 
-Kangentic replaces terminal tab chaos with a drag-and-drop board. Each task card represents a unit of work. Moving a card into a column triggers configurable actions -- spawning a Claude Code agent, sending it a command, suspending it, or tearing it down. The board becomes the single interface for seeing what every agent is doing and controlling what happens next.
+Kangentic replaces terminal tab chaos with a drag-and-drop board. Each task card represents a unit of work. Moving a card into a column triggers configurable actions - spawning a Claude Code agent, sending it a command, suspending it, or tearing it down. The board becomes the single interface for seeing what every agent is doing and controlling what happens next.
 
 ## Key Features
 
@@ -18,13 +18,29 @@ Kangentic replaces terminal tab chaos with a drag-and-drop board. Each task card
 
 Drag a task card into an active column to spawn a Claude Code agent. Drag it to Done to terminate the session. Drag it back to To Do to suspend. Every column transition is an orchestration event.
 
+### Backlog & Import
+
+Stage tasks in a backlog before promoting them to the board. Import issues from GitHub Issues, GitHub Projects, and Azure DevOps with full metadata (descriptions, labels, attachments, comments). Multi-select items for bulk operations, drag to reorder, and right-click for context menus. See the [User Guide](user-guide.md#backlog) for details.
+
+### Board Filtering & Search
+
+Filter board tasks by priority level and label using the filter popover. A search bar (toggle with Ctrl+F / Cmd+F) filters tasks by title or description across all columns. Active filters show a count badge and can be cleared with one click.
+
+### Markdown Descriptions
+
+Task descriptions support full Markdown rendering with GitHub Flavored Markdown (tables, task lists, strikethrough). Links open in the default browser. Markdown is rendered in the task detail dialog and on completed task summaries.
+
+### File Attachments
+
+Paste or drag-and-drop any file type onto a task as an attachment - not limited to images. Drag files from your file manager onto the terminal to insert the file path directly into the active session.
+
 ### Shareable Board Configuration
 
 Teams commit a `kangentic.json` file to share column layout, colors, icons, actions, and transitions across all collaborators. Personal overrides live in `kangentic.local.json` (auto-gitignored). Live file watching detects when a teammate pushes changes and offers to reconcile them into your board.
 
 ### Session Persistence
 
-Claude Code sessions survive application restarts. Kangentic uses `--resume` to reconnect to existing sessions, so agents pick up exactly where they left off -- no lost context, no repeated work. Sessions paused manually by the user (via the pause button) stay paused on relaunch, respecting user intent. Only system-suspended sessions auto-resume.
+Claude Code sessions survive application restarts. Kangentic uses `--resume` to reconnect to existing sessions, so agents pick up exactly where they left off. No lost context, no repeated work. Sessions paused manually by the user (via the pause button) stay paused on relaunch, respecting user intent. Only system-suspended sessions auto-resume.
 
 ### Git Worktrees
 
@@ -40,7 +56,7 @@ Attach actions to any column transition: spawn agents, send commands, run shell 
 
 ### Cross-Platform
 
-Native installers for Windows (NSIS), macOS (DMG), and Linux (deb/rpm). Kangentic adapts to the local shell environment -- PowerShell, bash, zsh, fish, nushell, WSL, and cmd are all supported.
+Native installers for Windows (NSIS), macOS (DMG), and Linux (deb/rpm). Kangentic adapts to the local shell environment - PowerShell, bash, zsh, fish, nushell, WSL, and cmd are all supported.
 
 ### Real-Time Terminal
 
@@ -65,10 +81,10 @@ Ten built-in themes: Dark, Light, Moon, Forest, Ocean, Ember, Sand, Mint, Sky, a
 ## How It Works
 
 1. **Create a board** with columns representing your workflow stages (To Do, In Progress, Review, Done, or any custom stages).
-2. **Add task cards** describing units of work -- features, bugs, refactors.
+2. **Add task cards** describing units of work - features, bugs, refactors. Create them directly on the board, stage them in the backlog, or import them from GitHub Issues, GitHub Projects, or Azure DevOps.
 3. **Drag a card** into an active column. Kangentic spawns a Claude Code CLI session, passes it the task description as a prompt, and begins streaming terminal output.
-4. **Monitor progress** via the embedded terminal, activity indicators, and board-level status at a glance.
-5. **Drag the card forward** through your workflow. Each transition can trigger additional actions -- commands, scripts, webhooks.
+4. **Monitor progress** via the embedded terminal, activity indicators, and board-level status at a glance. Filter by priority or label to focus on what matters.
+5. **Drag the card forward** through your workflow. Each transition can trigger additional actions - commands, scripts, webhooks.
 6. **Drag to Done** to complete and terminate the session, or back to To Do to suspend it for later.
 
 ## What Kangentic Is Not
@@ -77,7 +93,7 @@ Ten built-in themes: Dark, Light, Moon, Forest, Ocean, Ember, Sand, Mint, Sky, a
 - **Not a CI system.** It does not run pipelines, deploy artifacts, or manage environments. It orchestrates interactive Claude Code sessions on your local machine.
 - **Not a wrapper around a web API.** Kangentic works with the Claude Code CLI directly. It spawns real terminal sessions with full PTY support.
 
-Kangentic is an **agent orchestration desktop app** -- a visual control surface for running multiple Claude Code agents in parallel.
+Kangentic is an **agent orchestration desktop app** - a visual control surface for running multiple Claude Code agents in parallel.
 
 ## Tech Stack
 
@@ -92,4 +108,4 @@ Kangentic is an **agent orchestration desktop app** -- a visual control surface 
 
 ## Target Audience
 
-Kangentic is built for developers who use Claude Code and want to run multiple agents concurrently with visual oversight. Whether you are parallelizing feature work across branches, running review agents alongside coding agents, or simply want a better interface than a wall of terminal tabs -- Kangentic gives you a board to see and control it all.
+Kangentic is built for developers who use Claude Code and want to run multiple agents concurrently with visual oversight. Whether you are parallelizing feature work across branches, running review agents alongside coding agents, or simply want a better interface than a wall of terminal tabs - Kangentic gives you a board to see and control it all.

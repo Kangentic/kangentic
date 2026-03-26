@@ -96,7 +96,7 @@ for (const row of rows) {
    - Fix any type errors
 
 8. **Remind about docs:**
-   - Suggest running `/update-docs` to update `docs/database.md`
+   - Suggest running `/sync-docs` to update `docs/database.md`
 
 ## Checklist
 

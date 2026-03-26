@@ -142,6 +142,18 @@ All action types that accept templates can use these placeholders:
 
 Shortcut commands use a separate set of template variables. See [Configuration](configuration.md#shortcuts) for the full list.
 
+## Stale Spawn Prevention (AbortSignal)
+
+When a task moves rapidly between columns (e.g. user drags to the wrong column and immediately corrects), earlier transitions may still be in-flight when the new transition starts. Without cancellation, the old spawn would complete and create a PTY process that the new transition immediately supersedes.
+
+The transition engine threads an `AbortSignal` through the execution chain:
+
+- `executeTransition()` checks the signal before each action in the chain
+- `executeAction()` checks the signal before dispatching to the action handler
+- `executeSpawnAgent()` checks the signal as a final gate before creating the PTY process
+
+If the signal is aborted, the method throws an `AbortError` which the caller catches and ignores (the newer transition takes over). This prevents orphaned PTY processes from accumulating.
+
 ## Command Injection
 
 When a task moves to a column with `auto_command` set, the command delivery depends on how the session was started:

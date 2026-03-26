@@ -200,6 +200,51 @@ Sessions from non-active projects must not interfere with the active project's t
 | Stale thinking threshold | 45000 ms | If no activity signal for 45s while in "thinking" state, emit synthetic idle event |
 | Stale thinking check | 15000 ms | How often the stale thinking timer polls |
 
+## Transient Sessions
+
+Transient sessions are ephemeral Claude Code terminals spawned from the command bar (Ctrl+Shift+P). They differ from task-bound sessions in several ways:
+
+- **No task association** - run at the project root with no Kanban task
+- **No DB persistence** - no session record in the database
+- **No resume capability** - killed on close, not suspendable
+- **No queue** - spawned immediately regardless of concurrency limits
+
+### Spawn Flow (`SESSION_SPAWN_TRANSIENT`)
+
+1. Optionally checkout a target branch (falls back to current branch on failure)
+2. Create a session directory at `.kangentic/sessions/<transientTaskId>/` for bridge files
+3. Build Claude CLI command via `CommandBuilder` (with MCP server if enabled)
+4. Call `SessionManager.spawn()` with `transient: true`
+
+### Kill Flow (`SESSION_KILL_TRANSIENT`)
+
+1. Remove the session from `SessionManager` (kills PTY)
+2. Delete the session directory from disk (best-effort cleanup)
+
+Transient sessions are tracked with a `transient_session_spawn` analytics event.
+
+## AbortSignal Pattern
+
+When a task moves rapidly between columns (e.g. drag-and-drop corrections), spawns from earlier transitions can become stale before they complete. The transition engine uses `AbortSignal` to cancel in-flight spawns:
+
+1. Each task move creates an `AbortController` for the transition
+2. If the same task moves again before the previous transition completes, the old controller is aborted
+3. The `AbortSignal` is threaded through `executeTransition()`, `executeAction()`, and `executeSpawnAgent()`
+4. At each async boundary (CLI detection, worktree creation, PTY spawn), the signal is checked via `signal?.throwIfAborted()`
+5. If aborted, the spawn stops immediately - no PTY process is created
+
+The `isAbortError()` utility in `src/shared/abort-utils.ts` provides a type guard for distinguishing abort errors from real errors in catch blocks.
+
+## Terminal Paste Strategy
+
+Terminal paste operations use xterm.js's built-in `terminal.paste()` method, which handles bracketed paste mode for the PTY. The paste path is unified:
+
+- **Ctrl+V / Cmd+V** - intercepted by a custom key handler, reads clipboard, calls `terminal.paste()`
+- **Context menu paste** - follows the same clipboard-read-then-paste path
+- **Built-in xterm paste suppressed** - a `paste` event listener on the xterm helper textarea prevents the browser's native paste from double-sending text through xterm's `onData` handler
+
+This ensures consistent behavior across keyboard shortcuts and context menu paste.
+
 ## See Also
 
 - [Configuration](configuration.md) -- permission modes and session limits

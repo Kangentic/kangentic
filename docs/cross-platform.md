@@ -113,6 +113,10 @@ Electron fuses enabled for production builds:
 - **ASAR integrity validation** -- verifies archive hasn't been tampered with
 - **OnlyLoadAppFromAsar** -- prevents loading code from extracted directories
 
+## Windows Long Paths
+
+Git worktrees live under `.kangentic/worktrees/<slug>/`, which can push deeply nested file paths past Windows' default 260-character limit. Kangentic enables `core.longpaths=true` on Windows during worktree creation (both as a per-command flag for `git worktree add` and as a persistent config in the worktree's local git config). This activates the `\\?\` extended-length path prefix, allowing paths up to 32,767 characters. macOS and Linux are unaffected (1024-4096 byte `PATH_MAX`). See [Worktree Strategy](worktree-strategy.md#windows-long-paths) for details.
+
 ## WSL Support
 
 - Detection: `wsl --list --quiet` with 5s timeout

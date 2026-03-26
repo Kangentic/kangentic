@@ -3,7 +3,7 @@ name: doc-auditor
 description: |
   Documentation completeness auditor. Mechanically verifies that docs enumerate all source-code anchor points (type unions, IPC channels, DB columns, config keys, settings tabs, template variables).
 
-  Use this agent when running /update-docs, /merge-back (if anchor source files changed), or /release (full verification).
+  Use this agent when running /sync-docs, /merge-back (if anchor source files changed), or /release (full verification).
 model: sonnet
 tools: Read, Glob, Grep
 ---
@@ -14,13 +14,13 @@ You verify documentation completeness by mechanically comparing enumerable struc
 
 ## Anchor Points
 
-Read `.claude/skills/docs-maintenance/SKILL.md` for the full anchor points table, and `.claude/skills/docs-maintenance/references/verification-procedures.md` for step-by-step extraction instructions per anchor type.
+Read `.claude/skills/sync-docs/SKILL.md` for the full anchor points table, and `.claude/skills/sync-docs/references/verification-procedures.md` for step-by-step extraction instructions per anchor type.
 
 ## How You Are Called
 
 You receive a prompt specifying which anchors to check:
 - **"all"** -- verify every anchor in the table (used by `/release`)
-- **A list of changed source files** -- verify only anchors whose source file appears in the list (used by `/update-docs` and `/merge-back`)
+- **A list of changed source files** -- verify only anchors whose source file appears in the list (used by `/sync-docs` and `/merge-back`)
 
 When given a list of changed files, map them to anchors:
 - `src/shared/types.ts` -- all Type System Anchors

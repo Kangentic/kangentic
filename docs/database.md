@@ -202,6 +202,10 @@ Index: `idx_task_attachments_task_id` on (task_id).
 | external_source | TEXT | | NULL |
 | external_url | TEXT | | NULL |
 | sync_status | TEXT | | NULL |
+| assignee | TEXT | | NULL |
+| due_date | TEXT | | NULL |
+| item_type | TEXT | | NULL |
+| external_metadata | TEXT | | NULL |
 | attachment_count | INTEGER | NOT NULL | 0 |
 | created_at | TEXT | NOT NULL | |
 | updated_at | TEXT | NOT NULL | |
@@ -262,7 +266,9 @@ Listed in execution order within `runProjectMigrations()`:
 20. **Swimlane role rename (`backlog` to `todo`)** -- renames the "Backlog" swimlane to "To Do" (also catches "Not Started") and migrates role values from `backlog` to `todo`.
 21. **`backlog_tasks` table** -- creates the staging area table for the Backlog View feature. Stores pre-board tasks with priority, labels, external source tracking, and position ordering. Includes indexes on position and (external_source, external_id).
 22. **`backlog_attachments` table** -- creates the attachment table for backlog tasks with `ON DELETE CASCADE` on `backlog_task_id` and an index on `backlog_task_id`. Mirrors `task_attachments` structure.
-23. **`display_id` column on tasks** -- adds a human-readable sequential integer ID for tasks. Backfills existing tasks with sequential IDs ordered by `created_at ASC`. Creates a unique index on `display_id`.
+23. **Import-related columns on `backlog_tasks`** -- adds `assignee`, `due_date`, `item_type`, and `external_metadata` columns for richer external source integration (GitHub Issues, GitHub Projects, Azure DevOps).
+24. **`display_id` column on tasks** -- adds a human-readable sequential integer ID for tasks. Backfills existing tasks with sequential IDs ordered by `created_at ASC`. Creates a unique index on `display_id`.
+25. **`labels` and `priority` columns on tasks** -- adds label and priority support to board tasks (mirroring backlog_tasks). Labels default to `'[]'` (JSON array), priority defaults to `0`. Preserved during promote from backlog.
 
 ### Key Migrations (Global DB)
 
@@ -382,6 +388,20 @@ Operates on a per-project DB. Manages items in the Backlog View staging area.
 | `renameLabel(oldName, newName)` | Rename a label across all items |
 | `deleteLabel(name)` | Remove a label from all items |
 | `remapPriorities(mapping)` | Remap priority values across all items using a mapping |
+
+### BacklogAttachmentRepository
+
+Operates on a per-project DB. Manages both database records and files on disk under `<projectPath>/.kangentic/backlog/<backlogTaskId>/attachments/`. Mirrors `AttachmentRepository` for backlog tasks.
+
+| Method | Description |
+|--------|-------------|
+| `list(backlogTaskId)` | All attachments for a backlog task ordered by `created_at` ASC |
+| `getById(id)` | Single attachment by ID |
+| `add(projectPath, backlogTaskId, filename, base64Data, mediaType)` | Decode base64 data, write file to disk, insert DB record. Syncs `attachment_count` on the parent backlog task. |
+| `remove(id)` | Delete file from disk and DB record. Syncs `attachment_count`. |
+| `deleteByTaskId(backlogTaskId)` | Delete all attachments for a backlog task (files + DB records). Attempts to clean up empty directories. |
+| `getPathsForTask(backlogTaskId)` | Get file paths for all attachments on a backlog task |
+| `getDataUrl(id)` | Read file from disk and return as a `data:` URL with the correct media type |
 
 ## Connection Management
 

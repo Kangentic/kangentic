@@ -27,9 +27,11 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 |-----------|------|---------|
 | MCP Server | `src/main/agent/mcp-server.ts` | Stdio MCP server using official SDK. Bundled by esbuild into single JS file. |
 | Command Bridge | `src/main/agent/command-bridge.ts` | Watches commands.jsonl, processes commands via DB repositories, writes responses. |
+| Command Handlers | `src/main/agent/commands/` | Extracted per-domain handlers: task, inventory, search, analytics, backlog commands. |
+| Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers. |
 | MCP Config Delivery | `src/main/agent/command-builder.ts` | Writes session `mcp.json` and adds `--mcp-config` flag to CLI command. |
 | Trust Manager | `src/main/agent/trust-manager.ts` | Pre-approves kangentic MCP server in `~/.claude.json`. |
-| Board Refresh | `src/main/ipc/handlers/sessions.ts` | Forwards task-created/updated events to renderer via IPC. |
+| Board Refresh | `src/main/ipc/handlers/sessions.ts` | Forwards task-created/updated/backlog-changed events to renderer via IPC. |
 
 ### Discovery
 
@@ -204,7 +206,7 @@ Config key: `mcpServer.enabled` (boolean, default `true`)
 
 ### Permissions
 
-The `.claude/settings.json` file includes pre-approved permissions for all kangentic MCP tools. Agents can use the tools without prompting for approval.
+The `.claude/settings.json` file includes a wildcard permission entry (`mcp__kangentic`) that pre-approves all kangentic MCP tools at once. Agents can use any kangentic tool without prompting for approval. This avoids maintaining a separate permission entry for each individual tool name.
 
 ## Security
 
