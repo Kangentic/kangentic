@@ -183,6 +183,74 @@
     { name: 'Done', role: 'done', color: '#10b981', icon: 'circle-check-big', is_archived: true, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, plan_exit_target_id: null },
   ];
 
+  var MOCK_PROJECT_ENTRIES = [
+    { path: 'src', kind: 'directory', parentPath: undefined },
+    { path: 'src/main', kind: 'directory', parentPath: 'src' },
+    { path: 'src/main/index.ts', kind: 'file', parentPath: 'src/main' },
+    { path: 'src/renderer', kind: 'directory', parentPath: 'src' },
+    { path: 'src/renderer/components', kind: 'directory', parentPath: 'src/renderer' },
+    { path: 'src/renderer/components/DescriptionEditor.tsx', kind: 'file', parentPath: 'src/renderer/components' },
+    { path: 'README.md', kind: 'file', parentPath: undefined },
+    { path: 'docs/worktree-strategy.md', kind: 'file', parentPath: 'docs' },
+  ];
+
+  function basenameOfPath(pathValue) {
+    var slashIndex = pathValue.lastIndexOf('/');
+    return slashIndex === -1 ? pathValue : pathValue.slice(slashIndex + 1);
+  }
+
+  function normalizeEntryQuery(query) {
+    return (query || '').trim().replace(/^[@./]+/, '').toLowerCase();
+  }
+
+  function subsequenceScore(value, query) {
+    if (!query) return 0;
+
+    var queryIndex = 0;
+    var firstMatchIndex = -1;
+    var previousMatchIndex = -1;
+    var gapPenalty = 0;
+
+    for (var valueIndex = 0; valueIndex < value.length; valueIndex += 1) {
+      if (value[valueIndex] !== query[queryIndex]) continue;
+      if (firstMatchIndex === -1) firstMatchIndex = valueIndex;
+      if (previousMatchIndex !== -1) gapPenalty += valueIndex - previousMatchIndex - 1;
+      previousMatchIndex = valueIndex;
+      queryIndex += 1;
+
+      if (queryIndex === query.length) {
+        var spanPenalty = valueIndex - firstMatchIndex + 1 - query.length;
+        var lengthPenalty = Math.min(64, value.length - query.length);
+        return firstMatchIndex * 2 + gapPenalty * 3 + spanPenalty + lengthPenalty;
+      }
+    }
+
+    return null;
+  }
+
+  function scoreMockProjectEntry(entry, query) {
+    if (!query) return entry.kind === 'directory' ? 0 : 1;
+
+    var normalizedPath = entry.path.toLowerCase();
+    var normalizedName = basenameOfPath(normalizedPath);
+
+    if (normalizedName === query) return 0;
+    if (normalizedPath === query) return 1;
+    if (normalizedName.indexOf(query) === 0) return 2;
+    if (normalizedPath.indexOf(query) === 0) return 3;
+    if (normalizedPath.indexOf('/' + query) !== -1) return 4;
+    if (normalizedName.indexOf(query) !== -1) return 5;
+    if (normalizedPath.indexOf(query) !== -1) return 6;
+
+    var nameFuzzyScore = subsequenceScore(normalizedName, query);
+    if (nameFuzzyScore !== null) return 100 + nameFuzzyScore;
+
+    var pathFuzzyScore = subsequenceScore(normalizedPath, query);
+    if (pathFuzzyScore !== null) return 200 + pathFuzzyScore;
+
+    return null;
+  }
+
   function noop() {}
 
   window.electronAPI = {
@@ -295,6 +363,23 @@
           }
         }
         return project;
+      },
+      searchEntries: async function (input) {
+        var normalizedQuery = normalizeEntryQuery(input.query);
+        var limit = Math.max(0, Math.floor(input.limit || 0));
+        var ranked = MOCK_PROJECT_ENTRIES.map(function (entry) {
+          return { entry: entry, score: scoreMockProjectEntry(entry, normalizedQuery) };
+        }).filter(function (candidate) {
+          return candidate.score !== null;
+        }).sort(function (left, right) {
+          if (left.score !== right.score) return left.score - right.score;
+          return left.entry.path.localeCompare(right.entry.path);
+        });
+
+        return {
+          entries: ranked.slice(0, limit).map(function (candidate) { return candidate.entry; }),
+          truncated: ranked.length > limit,
+        };
       },
       reorder: async function (ids) {
         ids.forEach(function (id, i) {

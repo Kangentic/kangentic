@@ -6,6 +6,7 @@ export const IPC = {
   PROJECT_OPEN: 'project:open',
   PROJECT_GET_CURRENT: 'project:getCurrent',
   PROJECT_OPEN_BY_PATH: 'project:openByPath',
+  PROJECT_SEARCH_ENTRIES: 'project:searchEntries',
   PROJECT_REORDER: 'project:reorder',
   PROJECT_SET_GROUP: 'project:setGroup',
   PROJECT_RENAME: 'project:rename',

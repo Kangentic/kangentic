@@ -23,6 +23,25 @@ export interface Project {
   created_at: string;
 }
 
+export type ProjectSearchEntryKind = 'file' | 'directory';
+
+export interface ProjectSearchEntry {
+  path: string;
+  kind: ProjectSearchEntryKind;
+  parentPath?: string;
+}
+
+export interface ProjectSearchEntriesInput {
+  cwd: string;
+  query: string;
+  limit: number;
+}
+
+export interface ProjectSearchEntriesResult {
+  entries: ProjectSearchEntry[];
+  truncated: boolean;
+}
+
 export interface Task {
   id: string;
   display_id: number;
@@ -896,6 +915,7 @@ export interface ElectronAPI {
     open: (id: string) => Promise<void>;
     getCurrent: () => Promise<Project | null>;
     openByPath: (path: string) => Promise<Project>;
+    searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     rename: (id: string, name: string) => Promise<Project>;
     reorder: (ids: string[]) => Promise<void>;
     setGroup: (projectId: string, groupId: string | null) => Promise<void>;

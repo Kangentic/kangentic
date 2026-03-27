@@ -10,6 +10,7 @@ const api: ElectronAPI = {
     open: (id) => ipcRenderer.invoke(IPC.PROJECT_OPEN, id),
     getCurrent: () => ipcRenderer.invoke(IPC.PROJECT_GET_CURRENT),
     openByPath: (path: string) => ipcRenderer.invoke(IPC.PROJECT_OPEN_BY_PATH, path),
+    searchEntries: (input) => ipcRenderer.invoke(IPC.PROJECT_SEARCH_ENTRIES, input),
     rename: (id: string, name: string) => ipcRenderer.invoke(IPC.PROJECT_RENAME, id, name),
     reorder: (ids: string[]) => ipcRenderer.invoke(IPC.PROJECT_REORDER, ids),
     setGroup: (projectId: string, groupId: string | null) => ipcRenderer.invoke(IPC.PROJECT_SET_GROUP, projectId, groupId),

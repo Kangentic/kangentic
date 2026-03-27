@@ -7,6 +7,7 @@ import { LabelInput } from '../../LabelInput';
 import { DescriptionEditor } from '../../DescriptionEditor';
 import { AttachmentThumbnails } from './AttachmentThumbnails';
 import { useConfigStore } from '../../../stores/config-store';
+import { useProjectStore } from '../../../stores/project-store';
 import { useAllExistingLabels } from '../../../hooks/useAllExistingLabels';
 import type { AttachmentsState } from './useAttachments';
 import type { BranchConfigState } from './useBranchConfig';
@@ -55,6 +56,7 @@ export function TaskDetailEditForm({
   const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
   const priorities = useConfigStore((state) => state.config.backlog?.priorities) ?? DEFAULT_PRIORITY_CONFIG;
   const allExistingLabels = useAllExistingLabels();
+  const currentProject = useProjectStore((state) => state.currentProject);
 
   // Focus title input on mount
   useEffect(() => {
@@ -81,6 +83,7 @@ export function TaskDetailEditForm({
         onChange={setDescription}
         onPaste={attachments.handleAttachmentPaste}
         testId="task-description"
+        mentionSearchCwd={task.worktree_path ?? currentProject?.path ?? null}
       />
       <AttachmentThumbnails
         attachments={attachments.savedAttachments}

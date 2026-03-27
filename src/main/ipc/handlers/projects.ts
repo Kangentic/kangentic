@@ -13,9 +13,10 @@ import { getProjectDb, closeProjectDb } from '../../db/database';
 import { CommandBridge } from '../../agent/command-bridge';
 import { PATHS } from '../../config/paths';
 import { ensureGitignore, autoSpawnForTask } from '../helpers';
+import { searchProjectEntries } from '../helpers/project-entry-search';
 import { trackEvent } from '../../analytics/analytics';
 import { isShuttingDown } from '../../shutdown-state';
-import type { Project, Task, AppConfig } from '../../../shared/types';
+import type { Project, Task, AppConfig, ProjectSearchEntriesInput } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import type { ProjectRepository } from '../../db/repositories/project-repository';
 import type { ConfigManager } from '../../config/config-manager';
@@ -448,6 +449,15 @@ export function registerProjectHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.PROJECT_OPEN_BY_PATH, async (_, projectPath: string) => {
     return openProjectByPath(context, projectPath);
+  });
+
+  ipcMain.handle(IPC.PROJECT_SEARCH_ENTRIES, async (_, input: ProjectSearchEntriesInput) => {
+    const resolvedCwd = path.resolve(input.cwd);
+    const stat = await fs.promises.stat(resolvedCwd).catch(() => null);
+    if (!stat?.isDirectory()) {
+      throw new Error(`Project search path is not a directory: ${resolvedCwd}`);
+    }
+    return searchProjectEntries({ ...input, cwd: resolvedCwd });
   });
 
   // Project Groups

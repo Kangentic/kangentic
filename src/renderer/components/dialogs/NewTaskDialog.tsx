@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { Plus, X, Info } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
+import { useProjectStore } from '../../stores/project-store';
 import { useAllExistingLabels } from '../../hooks/useAllExistingLabels';
 import { useToastStore } from '../../stores/toast-store';
 import { BaseDialog } from './BaseDialog';
@@ -32,6 +33,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   const createTask = useBoardStore((s) => s.createTask);
   const defaultBaseBranch = useConfigStore((s) => s.config.git.defaultBaseBranch);
   const worktreesEnabled = useConfigStore((s) => s.config.git.worktreesEnabled);
+  const currentProject = useProjectStore((s) => s.currentProject);
   const labelColors = useConfigStore((s) => s.config.backlog?.labelColors) ?? {};
   const priorities = useConfigStore((s) => s.config.backlog?.priorities) ?? DEFAULT_PRIORITY_CONFIG;
   const [title, setTitle] = useState('');
@@ -282,6 +284,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
               onChange={setDescription}
               onPaste={handlePaste}
               testId="task-description"
+              mentionSearchCwd={currentProject?.path ?? null}
             />
 
             {/* Thumbnail strip */}

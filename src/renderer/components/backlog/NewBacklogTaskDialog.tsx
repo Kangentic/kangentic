@@ -4,6 +4,7 @@ import { BaseDialog } from '../dialogs/BaseDialog';
 import { Select } from '../settings/shared';
 import { LabelInput } from '../LabelInput';
 import { useConfigStore } from '../../stores/config-store';
+import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useAllExistingLabels } from '../../hooks/useAllExistingLabels';
 import { DescriptionEditor } from '../DescriptionEditor';
@@ -43,6 +44,7 @@ interface NewBacklogTaskDialogProps {
 
 export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate }: NewBacklogTaskDialogProps) {
   const isEditMode = !!editTask;
+  const currentProject = useProjectStore((state) => state.currentProject);
   const [title, setTitle] = useState(editTask?.title ?? '');
   const [description, setDescription] = useState(editTask?.description ?? '');
   const [priority, setPriority] = useState(editTask?.priority ?? 0);
@@ -311,6 +313,7 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate }: 
               onChange={setDescription}
               onPaste={handlePaste}
               testId="backlog-task-description"
+              mentionSearchCwd={currentProject?.path ?? null}
             />
 
             {/* Thumbnail strip */}
