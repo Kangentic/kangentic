@@ -407,6 +407,10 @@ Desktop and toast notifications fire when an agent needs attention and the user 
 
 The Settings > Notifications panel exposes two configurable events: **Agent Idle** and **Plan Complete**. Each can be set to Desktop & Toast, Desktop Only, Toast Only, or Off. Toast duration and max visible count are also configurable. The **Agent Crash** notification (non-zero exit) is always on and not exposed in the settings UI.
 
+### Privacy
+
+The Privacy tab shows what anonymous analytics Kangentic collects and how to opt out. Analytics are powered by Aptabase (no cookies, no persistent identifiers, GDPR-compliant). Set `KANGENTIC_TELEMETRY=0` as an environment variable to disable analytics entirely. This tab is informational only - there are no configurable settings.
+
 ## CLI
 
 Open a project directly from the terminal:
