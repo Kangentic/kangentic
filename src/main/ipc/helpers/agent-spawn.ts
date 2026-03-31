@@ -86,6 +86,14 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   // Guard: if the target column doesn't want agents, no-op
   if (!toLane.auto_spawn) return;
 
+  // Guard: if the user manually paused this task, don't auto-resume.
+  // The user must explicitly click Resume (SESSION_RESUME) to restart.
+  const latestSession = sessionRepo.getLatestForTask(task.id);
+  if (latestSession?.status === 'suspended' && latestSession.suspended_by === 'user') {
+    console.log(`[spawnAgent] Skipping auto-spawn for task ${task.id.slice(0, 8)} (manually paused by user)`);
+    return;
+  }
+
   // Step 1: execute configured transition actions (may fire spawn_agent)
   // Error-isolated: a broken/missing transition must not prevent fallback spawn
   try {

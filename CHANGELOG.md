@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.12.2] - 2026-03-26
+
+### Fixes
+- Shorten worktree slug names to avoid Windows MAX_PATH limit (28b9fdb)
+
 ## [v0.12.1] - 2026-03-26
 
 ### Fixes

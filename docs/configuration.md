@@ -172,6 +172,10 @@ All context bar settings are global-only and cannot be overridden per-project.
 |-----|------|---------|-------------|
 | `sidebar.width` | number | `400` | Sidebar width (px). Global-only. |
 
+### Privacy
+
+The Privacy tab is informational only - it has no configurable keys. It displays what anonymous analytics Kangentic collects (app launches, platform, crash reports, task/session counts) and what it does not collect (task content, file paths, usernames, code). Analytics are powered by Aptabase (no cookies, no persistent identifiers, GDPR-compliant). Set `KANGENTIC_TELEMETRY=0` as an environment variable to opt out.
+
 ## Swimlane-Level Configuration
 
 Each swimlane has its own overrides (stored in the per-project DB):

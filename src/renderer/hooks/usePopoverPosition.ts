@@ -144,7 +144,7 @@ export function usePopoverPosition(
   }, [isOpen, mode, viewportPadding, preferRight, triggerRef, popoverRef]);
 
   return {
-    style: isOpen ? HIDDEN : EMPTY,
+    style: isOpen ? EMPTY : HIDDEN,
     placement,
   };
 }

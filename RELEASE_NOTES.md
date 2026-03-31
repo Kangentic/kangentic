@@ -1,2 +1,2 @@
 ## Bug Fixes
-- Fixed a crash when opening the Git settings tab in projects with partial config overrides
+- Fixed worktree creation failing on Windows when task names produced slug paths exceeding the MAX_PATH (260 character) limit
