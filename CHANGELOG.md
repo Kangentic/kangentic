@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.13.0] - 2026-03-31
+
+### Features
+- Add @-mention file autocomplete to description editors (4455387)
+
+### Fixes
+- Eliminate terminal truncation from resize/scrollback race (b8385ca)
+- Clear stale pendingCommandLabel when user-paused task is moved (2dd36cb)
+- Hide header shortcut pills that overflow instead of clipping (a9eca21)
+- Don't auto-resume manually paused tasks on column move (e759dbc)
+- Command palette dropdown not visible in Command Terminal overlay (fdf5a24)
+- Address PR review feedback for file mention autocomplete (4da56dd)
+
 ## [v0.12.2] - 2026-03-26
 
 ### Fixes

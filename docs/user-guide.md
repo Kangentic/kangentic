@@ -30,6 +30,8 @@ New projects start with seven columns:
 
 Click the **+** button on any column header or use the "New Task" button. Enter a title and optional description. You can set a priority level, add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
 
+In the description field, type `@` to trigger file autocomplete. A dropdown lists files and directories from the project root, which you can navigate with arrow keys and select with Enter to insert the path.
+
 ### Spawn an Agent
 
 Drag a task from To Do to any active column (Planning, Executing, etc.). Kangentic will:
@@ -110,7 +112,7 @@ Click a task card to open the detail dialog. From here you can:
 - View the task's **display ID** (e.g., `#42`) in the header - click it to copy to clipboard
 - See the **priority badge** next to the display ID when a priority is set
 - View **Markdown-rendered descriptions** with full GitHub Flavored Markdown support (tables, task lists, strikethrough, links)
-- Edit the task title, description, priority, and labels
+- Edit the task title, description, priority, and labels (type `@` in the description field for file path autocomplete)
 - View and manage attachments of any file type (drag-and-drop files onto the dialog, or paste from clipboard)
 - Right-click an attachment thumbnail to copy the image to clipboard
 - Click any attachment thumbnail to open a full-size preview modal (press Escape to close)
