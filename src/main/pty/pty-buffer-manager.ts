@@ -69,14 +69,16 @@ export class PtyBufferManager {
    * (absolute cursor positioning, colored bars) garble when replayed
    * at a different width. Claude Code redraws via SIGWINCH within ~50-100ms.
    */
-  onResize(sessionId: string, cols: number): void {
+  onResize(sessionId: string, cols: number): boolean {
     const state = this.buffers.get(sessionId);
-    if (!state) return;
-    if (cols !== state.lastCols) {
+    if (!state) return false;
+    const colsChanged = cols !== state.lastCols;
+    if (colsChanged) {
       state.scrollback = '';
       state.buffer = '';
     }
     state.lastCols = cols;
+    return colsChanged;
   }
 
   getScrollback(sessionId: string): string {

@@ -39,7 +39,8 @@ describe('PtyBufferManager', () => {
       manager.onData(SESSION, '\x1b[1;1Hcontent at old width');
 
       // Resize to different cols before flush
-      manager.onResize(SESSION, 120);
+      const colsChanged = manager.onResize(SESSION, 120);
+      expect(colsChanged).toBe(true);
 
       // Advance past the 16ms timer
       vi.advanceTimersByTime(20);
@@ -58,13 +59,19 @@ describe('PtyBufferManager', () => {
       manager.onData(SESSION, 'some data');
 
       // Resize with same cols (e.g. rows-only change)
-      manager.onResize(SESSION, 80);
+      const colsChanged = manager.onResize(SESSION, 80);
+      expect(colsChanged).toBe(false);
 
       // Buffer should still flush
       vi.advanceTimersByTime(20);
       expect(onFlush).toHaveBeenCalledWith(SESSION, 'some data');
 
       vi.useRealTimers();
+    });
+
+    it('returns false for unknown session', () => {
+      const { manager } = createManager();
+      expect(manager.onResize('nonexistent', 100)).toBe(false);
     });
   });
 

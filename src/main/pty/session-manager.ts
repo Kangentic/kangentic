@@ -455,20 +455,21 @@ export class SessionManager extends EventEmitter {
     writeNextChunk();
   }
 
-  resize(sessionId: string, cols: number, rows: number): void {
+  resize(sessionId: string, cols: number, rows: number): { colsChanged: boolean } {
     const session = this.sessions.get(sessionId);
-    if (!session?.pty) return;
+    if (!session?.pty) return { colsChanged: false };
 
     // Guard against NaN/Infinity from layout edge cases (e.g. getComputedStyle
     // returning "" during unmount, yielding parseInt -> NaN)
-    if (!Number.isFinite(cols) || !Number.isFinite(rows)) return;
+    if (!Number.isFinite(cols) || !Number.isFinite(rows)) return { colsChanged: false };
 
     // Clamp to valid dimensions (node-pty throws on 0 or negative)
     const clampedCols = Math.max(2, Math.floor(cols));
     const clampedRows = Math.max(1, Math.floor(rows));
 
-    this.bufferManager.onResize(sessionId, clampedCols);
+    const colsChanged = this.bufferManager.onResize(sessionId, clampedCols);
     session.pty.resize(clampedCols, clampedRows);
+    return { colsChanged };
   }
 
   /**

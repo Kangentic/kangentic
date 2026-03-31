@@ -189,7 +189,8 @@ describe('Scrollback clearing on resize', () => {
     feedData('hello world');
 
     // Resize with same cols as initial (120) but different rows
-    manager.resize(session.id, 120, 50);
+    const result = manager.resize(session.id, 120, 50);
+    expect(result).toEqual({ colsChanged: false });
 
     const scrollback = manager.getScrollback(session.id);
     expect(scrollback).toContain('hello world');
@@ -201,7 +202,8 @@ describe('Scrollback clearing on resize', () => {
     feedData('hello world');
 
     // Resize to different cols
-    manager.resize(session.id, 80, 24);
+    const result = manager.resize(session.id, 80, 24);
+    expect(result).toEqual({ colsChanged: true });
 
     const scrollback = manager.getScrollback(session.id);
     // getScrollback returns '' for empty scrollback
@@ -905,8 +907,9 @@ describe('Write and resize', () => {
     expect(() => manager.write('nonexistent', 'hello')).not.toThrow();
   });
 
-  it('resize on non-existent session does not throw', () => {
-    expect(() => manager.resize('nonexistent', 80, 24)).not.toThrow();
+  it('resize on non-existent session returns colsChanged false', () => {
+    const result = manager.resize('nonexistent', 80, 24);
+    expect(result).toEqual({ colsChanged: false });
   });
 
   it('write no-ops after session is killed', async () => {

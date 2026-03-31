@@ -756,7 +756,7 @@
         return newSession;
       },
       write: async function () {},
-      resize: async function () {},
+      resize: async function () { return { colsChanged: false }; },
       list: async function () {
         return sessions;
       },

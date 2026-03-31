@@ -119,10 +119,10 @@ export function useTerminal(options: UseTerminalOptions) {
 
       // Resize-first scrollback replay: fit the terminal to the container
       // FIRST, then send an immediate (non-debounced) resize to the PTY.
-      // This ensures the PTY dimensions match the container before we fetch
-      // scrollback. If cols changed, the main process clears stale scrollback
-      // (TUI escape sequences garble at wrong widths). Claude Code redraws
-      // via SIGWINCH within ~50-100ms.
+      // If cols changed, skip scrollback entirely -- the PTY may still flush
+      // output at the old width before SIGWINCH is processed, so replaying
+      // scrollback would show truncated/garbled content. Instead, let Claude
+      // Code's SIGWINCH redraw populate the terminal via live onData.
       scrollbackPendingRef.current = true;
       const scrollbackGeneration = ++scrollbackGenerationRef.current;
       const suppressScrollback = suppressDataRef.current;
@@ -131,9 +131,14 @@ export function useTerminal(options: UseTerminalOptions) {
       fitAddon.fit();
       const { cols, rows } = terminal;
 
-      // Immediate resize to sync PTY dimensions (clears stale scrollback if cols changed)
+      // Immediate resize to sync PTY dimensions
       window.electronAPI.sessions.resize(sid, cols, rows)
-        .then(() => window.electronAPI.sessions.getScrollback(sid))
+        .then(({ colsChanged }) => {
+          // Cols changed: scrollback is stale (old width). Skip it.
+          // CLI redraws via SIGWINCH; live onData populates the terminal.
+          if (colsChanged || suppressScrollback) return null;
+          return window.electronAPI.sessions.getScrollback(sid);
+        })
         .then((scrollback) => {
           // A newer scrollback operation has started; abandon this one.
           if (scrollbackGenerationRef.current !== scrollbackGeneration) {
@@ -163,7 +168,7 @@ export function useTerminal(options: UseTerminalOptions) {
               xtermRef.current?.focus();
             });
           };
-          if (scrollback && xtermRef.current && !suppressScrollback) {
+          if (scrollback && xtermRef.current) {
             xtermRef.current.write(scrollback, afterWrite);
           } else {
             afterWrite();
@@ -282,7 +287,12 @@ export function useTerminal(options: UseTerminalOptions) {
     const sessionId = options.sessionId;
 
     window.electronAPI.sessions.resize(sessionId, cols, rows)
-      .then(() => window.electronAPI.sessions.getScrollback(sessionId))
+      .then(({ colsChanged }) => {
+        // Cols changed: scrollback is stale (old width). Skip it.
+        // CLI redraws via SIGWINCH; live onData populates the terminal.
+        if (colsChanged) return null;
+        return window.electronAPI.sessions.getScrollback(sessionId);
+      })
       .then((scrollback) => {
         // A newer scrollback operation has started; abandon this one.
         if (scrollbackGenerationRef.current !== scrollbackGeneration) {
@@ -290,24 +300,25 @@ export function useTerminal(options: UseTerminalOptions) {
           return;
         }
 
-        if (scrollback && xtermRef.current) {
-          xtermRef.current.write(scrollback, () => {
-            if (fitAddonRef.current) fitAddonRef.current.fit();
-            if (xtermRef.current) {
-              xtermRef.current.scrollToBottom();
-              isAtBottomRef.current = true;
-            }
-            scrollbackPendingRef.current = false;
-            requestAnimationFrame(() => {
-              if (xtermRef.current && options.sessionId) {
-                const { cols, rows } = xtermRef.current;
-                window.electronAPI.sessions.resize(options.sessionId, cols, rows);
-              }
-              xtermRef.current?.focus();
-            });
-          });
-        } else {
+        const afterWrite = () => {
+          if (fitAddonRef.current) fitAddonRef.current.fit();
+          if (xtermRef.current) {
+            xtermRef.current.scrollToBottom();
+            isAtBottomRef.current = true;
+          }
           scrollbackPendingRef.current = false;
+          requestAnimationFrame(() => {
+            if (xtermRef.current && options.sessionId) {
+              const { cols, rows } = xtermRef.current;
+              window.electronAPI.sessions.resize(options.sessionId, cols, rows);
+            }
+            xtermRef.current?.focus();
+          });
+        };
+        if (scrollback && xtermRef.current) {
+          xtermRef.current.write(scrollback, afterWrite);
+        } else {
+          afterWrite();
         }
       })
       .catch(() => {

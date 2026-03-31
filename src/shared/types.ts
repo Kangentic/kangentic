@@ -989,7 +989,7 @@ export interface ElectronAPI {
     suspend: (taskId: string) => Promise<void>;
     resume: (taskId: string, resumePrompt?: string) => Promise<Session>;
     write: (sessionId: string, data: string) => Promise<void>;
-    resize: (sessionId: string, cols: number, rows: number) => Promise<void>;
+    resize: (sessionId: string, cols: number, rows: number) => Promise<{ colsChanged: boolean }>;
     list: () => Promise<Session[]>;
     getScrollback: (sessionId: string) => Promise<string>;
     getUsage: (projectId?: string) => Promise<Record<string, SessionUsage>>;
