@@ -370,6 +370,46 @@ export type SessionDisplayState =
 /** Sentinel value for the Activity tab in the bottom panel. */
 export const ACTIVITY_TAB = '__all__';
 
+// === Git Diff Types ===
+
+export type GitDiffStatus = 'A' | 'M' | 'D' | 'R' | 'C';
+
+export interface GitDiffFileEntry {
+  path: string;
+  status: GitDiffStatus;
+  insertions: number;
+  deletions: number;
+  oldPath?: string;
+  binary: boolean;
+}
+
+export interface GitDiffFilesInput {
+  worktreePath?: string;
+  projectPath: string;
+  baseBranch: string;
+}
+
+export interface GitDiffFilesResult {
+  files: GitDiffFileEntry[];
+  totalInsertions: number;
+  totalDeletions: number;
+}
+
+export interface GitFileContentInput {
+  worktreePath?: string;
+  projectPath: string;
+  baseBranch: string;
+  filePath: string;
+  status: GitDiffStatus;
+  oldPath?: string;
+}
+
+export interface GitFileContentResult {
+  original: string;
+  modified: string;
+  language: string;
+}
+
 // === Configuration ===
 
 export type PermissionMode = 'default' | 'plan' | 'acceptEdits' | 'dontAsk' | 'bypassPermissions';
@@ -1042,6 +1082,11 @@ export interface ElectronAPI {
   git: {
     detect: () => Promise<{ found: boolean; path: string | null; version: string | null; meetsMinimum: boolean }>;
     listBranches: () => Promise<string[]>;
+    diffFiles: (input: GitDiffFilesInput) => Promise<GitDiffFilesResult>;
+    fileContent: (input: GitFileContentInput) => Promise<GitFileContentResult>;
+    subscribeDiff: (worktreePath: string) => void;
+    unsubscribeDiff: (worktreePath: string) => void;
+    onDiffChanged: (callback: () => void) => () => void;
   };
 
   // Dialog

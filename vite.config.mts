@@ -28,9 +28,10 @@ export default defineConfig({
       output: {
         manualChunks: {
           xterm: ['@xterm/xterm', '@xterm/addon-webgl'],
+          monaco: ['monaco-editor'],
         },
       },
     },
-    chunkSizeWarningLimit: 600,
+    chunkSizeWarningLimit: 3000,
   },
 });

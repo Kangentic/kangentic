@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, FolderGit2, FolderOpen, GitPullRequest, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, FolderGit2, FolderOpen, GitPullRequest, GitCompareArrows, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
 import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
@@ -31,6 +31,9 @@ interface TaskDetailHeaderProps {
   menuShortcuts: ShortcutConfig[];
   executeShortcut: (action: ShortcutConfig) => void;
   projectPath: string | null;
+  canShowChanges: boolean;
+  changesOpen: boolean;
+  onToggleChanges: () => void;
 }
 
 export function TaskDetailHeader({
@@ -54,6 +57,9 @@ export function TaskDetailHeader({
   menuShortcuts,
   executeShortcut,
   projectPath,
+  canShowChanges,
+  changesOpen,
+  onToggleChanges,
 }: TaskDetailHeaderProps) {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const commandButtonRef = useRef<HTMLDivElement>(null);
@@ -196,6 +202,23 @@ export function TaskDetailHeader({
         </div>
       ) : (
         <div className="flex-1" />
+      )}
+
+      {/* Changes toggle */}
+      {canShowChanges && (
+        <button
+          onClick={onToggleChanges}
+          className={`flex items-center gap-1.5 px-2.5 py-1 text-xs rounded transition-colors flex-shrink-0 ${
+            changesOpen
+              ? 'bg-accent/15 text-accent-fg border border-accent/30'
+              : 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border border-transparent'
+          }`}
+          title={changesOpen ? 'Hide changes' : 'Show changes'}
+          data-testid="changes-toggle"
+        >
+          <GitCompareArrows size={14} />
+          Changes
+        </button>
       )}
 
       {/* Actions */}

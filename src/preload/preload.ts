@@ -177,6 +177,15 @@ const api: ElectronAPI = {
   git: {
     detect: () => ipcRenderer.invoke(IPC.GIT_DETECT),
     listBranches: () => ipcRenderer.invoke(IPC.GIT_LIST_BRANCHES),
+    diffFiles: (input) => ipcRenderer.invoke(IPC.GIT_DIFF_FILES, input),
+    fileContent: (input) => ipcRenderer.invoke(IPC.GIT_FILE_CONTENT, input),
+    subscribeDiff: (worktreePath) => ipcRenderer.send(IPC.GIT_DIFF_SUBSCRIBE, worktreePath),
+    unsubscribeDiff: (worktreePath) => ipcRenderer.send(IPC.GIT_DIFF_UNSUBSCRIBE, worktreePath),
+    onDiffChanged: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on(IPC.GIT_DIFF_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.GIT_DIFF_CHANGED, handler);
+    },
   },
 
   dialog: {

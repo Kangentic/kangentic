@@ -113,6 +113,11 @@ export const IPC = {
   // Git
   GIT_DETECT: 'git:detect',
   GIT_LIST_BRANCHES: 'git:listBranches',
+  GIT_DIFF_FILES: 'git:diffFiles',
+  GIT_FILE_CONTENT: 'git:fileContent',
+  GIT_DIFF_SUBSCRIBE: 'git:diffSubscribe',
+  GIT_DIFF_UNSUBSCRIBE: 'git:diffUnsubscribe',
+  GIT_DIFF_CHANGED: 'git:diffChanged',
 
   // Dialog
   DIALOG_SELECT_FOLDER: 'dialog:selectFolder',

@@ -3,5 +3,6 @@
   "react/jsx-runtime", "react/jsx-dev-runtime",
   "@dnd-kit/core", "@dnd-kit/sortable", "@dnd-kit/utilities",
   "@xterm/xterm", "@xterm/addon-webgl", "@xterm/addon-serialize",
-  "lucide-react", "react-colorful", "zustand", "date-fns"
+  "lucide-react", "react-colorful", "zustand", "date-fns",
+  "monaco-editor", "@monaco-editor/react"
 ]

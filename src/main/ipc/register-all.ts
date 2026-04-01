@@ -26,6 +26,7 @@ import { registerTransientSessionHandlers } from './handlers/transient-sessions'
 import { registerBoardHandlers } from './handlers/board';
 import { registerSystemHandlers } from './handlers/system';
 import { registerBacklogHandlers } from './handlers/backlog';
+import { registerGitDiffHandlers } from './handlers/git-diff';
 import type { IpcContext } from './ipc-context';
 
 let context: IpcContext | null = null;
@@ -104,6 +105,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   registerTransientSessionHandlers(context);
   registerBoardHandlers(context);
   registerBacklogHandlers(context);
+  registerGitDiffHandlers(context);
   registerSystemHandlers(context);
 
   // Analytics: renderer error tracking (fire-and-forget from renderer)

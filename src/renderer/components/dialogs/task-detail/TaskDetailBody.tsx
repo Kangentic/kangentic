@@ -1,3 +1,4 @@
+import { Suspense, lazy } from 'react';
 import { Loader2, Play } from 'lucide-react';
 import { TerminalTab } from '../../terminal/TerminalTab';
 import { ContextBar } from '../../terminal/ContextBar';
@@ -11,6 +12,8 @@ import { AttachmentThumbnails } from './AttachmentThumbnails';
 import type { AttachmentWithPreview } from './useAttachments';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
 import type { Task, SessionDisplayState } from '../../../../shared/types';
+
+const ChangesPanel = lazy(() => import('./changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
 
 interface TaskDetailBodyProps {
   task: Task;
@@ -27,6 +30,8 @@ interface TaskDetailBodyProps {
   handleOpenExternal: (attachment: AttachmentWithPreview) => void;
   removeAttachment: (id: string) => void;
   handleToggle: () => void;
+  changesOpen: boolean;
+  projectPath: string;
 }
 
 export function TaskDetailBody({
@@ -44,6 +49,8 @@ export function TaskDetailBody({
   handleOpenExternal,
   removeAttachment,
   handleToggle,
+  changesOpen,
+  projectPath,
 }: TaskDetailBodyProps) {
   const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
   const taskLabels = task.labels ?? [];
@@ -102,20 +109,37 @@ export function TaskDetailBody({
     );
   }
 
+  const changesPanelElement = changesOpen && (
+    <div className="w-1/2 min-h-0 border-l border-edge flex-shrink-0">
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center h-full">
+            <Loader2 size={20} className="animate-spin text-fg-muted" />
+          </div>
+        }
+      >
+        <ChangesPanel task={task} projectPath={projectPath} />
+      </Suspense>
+    </div>
+  );
+
   // Active terminal session
   if (sessionId && displayKind !== 'queued' && displayKind !== 'suspended') {
     return (
       <>
         {descriptionBar}
-        <div className="flex-1 min-h-0 relative">
-          <div className="absolute inset-0">
-            <TerminalTab
-              key={sessionId}
-              sessionId={sessionId}
-              taskId={task.id}
-              active={true}
-            />
+        <div className="flex-1 min-h-0 flex">
+          <div className={`${changesOpen ? 'w-1/2' : 'flex-1'} min-h-0 relative`}>
+            <div className="absolute inset-0">
+              <TerminalTab
+                key={sessionId}
+                sessionId={sessionId}
+                taskId={task.id}
+                active={true}
+              />
+            </div>
           </div>
+          {changesPanelElement}
         </div>
         <ContextBar sessionId={sessionId} />
       </>
@@ -131,27 +155,55 @@ export function TaskDetailBody({
   if ((isSuspended || toggling) && !isArchived && !isInTodo) {
     if (pendingCommandLabel) {
       return (
-        <div className="flex-1 min-h-0 relative">
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface">
-            <ShimmerOverlay label={pendingCommandLabel} />
+        <div className="flex-1 min-h-0 flex">
+          <div className={`${changesOpen ? 'w-1/2' : 'flex-1'} min-h-0 relative`}>
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface">
+              <ShimmerOverlay label={pendingCommandLabel} />
+            </div>
           </div>
+          {changesPanelElement}
         </div>
       );
     }
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-surface/50">
-        <button
-          onClick={handleToggle}
-          disabled={toggling}
-          className="flex items-center gap-2.5 px-6 py-3 rounded-lg bg-accent/20 border border-accent/40 text-base text-accent-fg hover:bg-accent/30 transition-colors disabled:opacity-50"
-        >
-          {toggling ? (
-            <Loader2 size={16} className="animate-spin" />
+      <div className="flex-1 min-h-0 flex">
+        <div className={`${changesOpen ? 'w-1/2' : 'flex-1'} flex flex-col items-center justify-center gap-3 bg-surface/50`}>
+          <button
+            onClick={handleToggle}
+            disabled={toggling}
+            className="flex items-center gap-2.5 px-6 py-3 rounded-lg bg-accent/20 border border-accent/40 text-base text-accent-fg hover:bg-accent/30 transition-colors disabled:opacity-50"
+          >
+            {toggling ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Play size={16} />
+            )}
+            {toggling ? 'Resuming agent...' : 'Resume session'}
+          </button>
+        </div>
+        {changesPanelElement}
+      </div>
+    );
+  }
+
+  // Changes-only view (no session but changes panel open)
+  if (changesOpen) {
+    return (
+      <div className="flex-1 min-h-0 flex">
+        <div className="w-1/2 min-h-0 overflow-y-auto">
+          {task.description ? (
+            <div className="px-4 py-4 space-y-2">
+              <MarkdownRenderer content={task.description} />
+              {labelsAndPriorityRow}
+              {thumbnailStrip}
+            </div>
           ) : (
-            <Play size={16} />
+            <div className="flex items-center justify-center h-full text-fg-disabled text-sm p-8">
+              No active session
+            </div>
           )}
-          {toggling ? 'Resuming agent...' : 'Resume session'}
-        </button>
+        </div>
+        {changesPanelElement}
       </div>
     );
   }

@@ -57,6 +57,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   const [toggling, setToggling] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showEnableWorktreeConfirm, setShowEnableWorktreeConfirm] = useState(false);
+  const [changesOpen, setChangesOpen] = useState(false);
   const pendingSaveRef = useRef<(() => Promise<void>) | null>(null);
 
   const isArchived = task.archived_at !== null;
@@ -81,7 +82,14 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
 
   // Use large dialog when there's an active session OR a suspended one (but not for archived tasks)
   const hasSessionContext = !isArchived && ((displayState.kind !== 'none' && displayState.kind !== 'exited') || toggling);
-  const dialogSizeClass = isEditing || !hasSessionContext
+  const isInDone = currentSwimlane?.role === 'done';
+  // Show Changes button when the task has a branch or worktree and isn't in a terminal column.
+  // branch_name/base_branch may be null if the worktree was auto-created without explicit branch config,
+  // so also check worktree_path. The diff service defaults base_branch to 'main' if not set.
+  const hasBranchOrWorktree = !!(task.branch_name || task.worktree_path);
+  const canShowChanges = !isArchived && !isInTodo && !isInDone && hasBranchOrWorktree;
+  const needsLargeDialog = hasSessionContext || changesOpen;
+  const dialogSizeClass = isEditing || !needsLargeDialog
     ? (isQueued ? 'w-[520px] h-[320px]' : 'w-[700px]')
     : 'w-[90vw] h-[85vh]';
 
@@ -459,6 +467,9 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
       menuShortcuts={menuShortcuts}
       executeShortcut={executeShortcut}
       projectPath={projectPath}
+      canShowChanges={canShowChanges}
+      changesOpen={changesOpen}
+      onToggleChanges={() => setChangesOpen((open) => !open)}
     />
   );
 
@@ -566,6 +577,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             handleOpenExternal={attachments.handleOpenExternal}
             removeAttachment={attachments.removeAttachment}
             handleToggle={handleToggle}
+            changesOpen={changesOpen}
+            projectPath={projectPath ?? ''}
           />
         )}
       </BaseDialog>
