@@ -313,13 +313,14 @@ The context bar is a status line displayed below the terminal showing session me
 
 | Setting | Description |
 |---------|-------------|
+| Default Agent | Which agent CLI to use for new sessions in this project (per-project) |
 | CLI Path | Path to Claude CLI binary (auto-detected if empty) |
 | Max Concurrent Sessions | Limit how many agents can run at the same time (1 to 20) |
 | When Max Sessions Reached | How new agent requests are handled when all slots are in use (Queue or Reject) |
 | Idle Timeout (minutes) | Auto-suspend sessions after N minutes idle; 0 to disable |
 | Permissions | Default permission mode for all sessions (Default, Plan, Accept Edits, Don't Ask, or Bypass) |
 
-All five permission modes are available in both the global App Settings dropdown and the per-column Edit Column dialog.
+All five permission modes are available in both the global App Settings dropdown and the per-column Edit Column dialog. Each column can also override the project default agent via the Edit Column dialog.
 
 ### Git Settings
 

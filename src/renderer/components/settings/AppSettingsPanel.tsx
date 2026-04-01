@@ -5,6 +5,8 @@ import { BranchPicker } from '../dialogs/BranchPicker';
 import { SettingsPanelProvider, SectionHeader, SettingRow, Select, ToggleSwitch, CompactToggleList, INPUT_CLASS, useScopedUpdate, SearchTabGroupHeader, NoSearchResults } from './shared';
 import { Pill } from '../Pill';
 import type { SettingsTabDefinition, SettingScope, SettingsContentProps } from './shared';
+import { useProjectStore } from '../../stores/project-store';
+import type { AgentDetectionInfo } from '../../../shared/types';
 import type { AppConfig, DeepPartial, NotificationConfig, PermissionMode, ThemeMode } from '../../../shared/types';
 import { NAMED_THEMES } from '../../../shared/types';
 import { deepMergeConfig } from '../../../shared/object-utils';
@@ -100,6 +102,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
   const updateConfig = useConfigStore((state) => state.updateConfig);
   const updateProjectOverride = useConfigStore((state) => state.updateProjectOverride);
   const agentInfo = useConfigStore((state) => state.agentInfo);
+  const agentList = useConfigStore((state) => state.agentList);
 
   // Effective config for per-project tabs: global merged with project overrides
   const effectiveConfig = useMemo(
@@ -127,7 +130,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
               <div className="space-y-4">
                 {tab.id === 'appearance' && <AppearanceTab config={effectiveConfig} />}
                 {tab.id === 'terminal' && <TerminalTab config={effectiveConfig} globalConfig={globalConfig} shells={shells} />}
-                {tab.id === 'agent' && <AgentTab config={effectiveConfig} globalConfig={globalConfig} agentInfo={agentInfo} />}
+                {tab.id === 'agent' && <AgentTab config={effectiveConfig} globalConfig={globalConfig} agentInfo={agentInfo} agentList={agentList} />}
                 {tab.id === 'git' && <GitTab config={effectiveConfig} />}
                 {tab.id === 'shortcuts' && <ShortcutsTab />}
                 {tab.id === 'behavior' && <BehaviorTab globalConfig={globalConfig} />}
@@ -145,7 +148,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
         <>
           {activeTab === 'appearance' && <AppearanceTab config={effectiveConfig} />}
           {activeTab === 'terminal' && <TerminalTab config={effectiveConfig} globalConfig={globalConfig} shells={shells} />}
-          {activeTab === 'agent' && <AgentTab config={effectiveConfig} globalConfig={globalConfig} agentInfo={agentInfo} />}
+          {activeTab === 'agent' && <AgentTab config={effectiveConfig} globalConfig={globalConfig} agentInfo={agentInfo} agentList={agentList} />}
           {activeTab === 'behavior' && <BehaviorTab globalConfig={globalConfig} />}
           {activeTab === 'mcpServer' && <McpServerTab globalConfig={globalConfig} />}
           {activeTab === 'notifications' && <NotificationsTab globalConfig={globalConfig} />}
@@ -264,11 +267,34 @@ function TerminalTab({ config, globalConfig, shells }: { config: AppConfig; glob
   );
 }
 
-function AgentTab({ config, globalConfig, agentInfo }: { config: AppConfig; globalConfig: AppConfig; agentInfo: { found: boolean; path: string | null; version: string | null } | null }) {
+function AgentTab({ config, globalConfig, agentInfo, agentList }: { config: AppConfig; globalConfig: AppConfig; agentInfo: { found: boolean; path: string | null; version: string | null } | null; agentList: AgentDetectionInfo[] }) {
   const updateGlobal = useScopedUpdate('global');
   const updateProject = useScopedUpdate('project');
+  const currentProject = useProjectStore((state) => state.currentProject);
+  const refreshProjects = useProjectStore((state) => state.loadProjects);
+
+  const handleDefaultAgentChange = async (agentName: string) => {
+    if (!currentProject) return;
+    await window.electronAPI.projects.setDefaultAgent(currentProject.id, agentName);
+    await refreshProjects();
+  };
+
   return (
     <>
+      <SettingRow {...settingProps('project.defaultAgent')}>
+        <Select
+          value={currentProject?.default_agent ?? 'claude'}
+          onChange={(event) => handleDefaultAgentChange(event.target.value)}
+          disabled={!currentProject}
+        >
+          {agentList.map((agent) => (
+            <option key={agent.name} value={agent.name}>
+              {agent.name}{agent.found ? ` (${agent.version ?? 'detected'})` : ' (not found)'}
+            </option>
+          ))}
+          {agentList.length === 0 && <option value="claude">claude</option>}
+        </Select>
+      </SettingRow>
       <SettingRow {...settingProps('claude.cliPath')}>
         <div className="relative">
           <input

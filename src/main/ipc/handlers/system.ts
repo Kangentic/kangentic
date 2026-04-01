@@ -6,7 +6,7 @@ import { app, ipcMain, Notification, dialog, shell } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { WorktreeManager, isGitRepo } from '../../git/worktree-manager';
 import { deepMergeConfig } from '../../../shared/object-utils';
-import type { NotificationInput, AgentCommand } from '../../../shared/types';
+import type { NotificationInput, AgentCommand, AgentDetectionInfo } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
 export function registerSystemHandlers(context: IpcContext): void {
@@ -73,6 +73,24 @@ export function registerSystemHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.AGENT_DETECT, () => {
     const config = context.configManager.load();
     return context.claudeDetector.detect(config.claude.cliPath);
+  });
+
+  // === Agents ===
+  ipcMain.handle(IPC.AGENT_LIST, async (): Promise<AgentDetectionInfo[]> => {
+    const { agentRegistry } = await import('../../agent/agent-registry');
+    const config = context.configManager.load();
+    // Map agent names to user-configured CLI path overrides.
+    // Extend this when adding new agents with configurable paths.
+    const cliPathOverrides: Record<string, string | null> = {
+      claude: config.claude.cliPath,
+    };
+    const results: AgentDetectionInfo[] = [];
+    for (const agentName of agentRegistry.list()) {
+      const adapter = agentRegistry.getOrThrow(agentName);
+      const info = await adapter.detect(cliPathOverrides[agentName] ?? null);
+      results.push({ name: agentName, found: info.found, path: info.path, version: info.version });
+    }
+    return results;
   });
 
   ipcMain.handle(IPC.AGENT_LIST_COMMANDS, (_, cwd?: string): AgentCommand[] => {

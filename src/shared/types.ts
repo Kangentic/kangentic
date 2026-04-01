@@ -23,6 +23,13 @@ export interface Project {
   created_at: string;
 }
 
+export interface AgentDetectionInfo {
+  name: string;
+  found: boolean;
+  path: string | null;
+  version: string | null;
+}
+
 export type ProjectSearchEntryKind = 'file' | 'directory';
 
 export interface ProjectSearchEntry {
@@ -100,6 +107,7 @@ export interface Swimlane {
   auto_spawn: boolean;
   auto_command: string | null;
   plan_exit_target_id: string | null;
+  agent_override: string | null;
   created_at: string;
 }
 
@@ -832,6 +840,7 @@ export interface SwimlaneCreateInput {
   auto_spawn?: boolean;
   auto_command?: string | null;
   plan_exit_target_id?: string | null;
+  agent_override?: string | null;
 }
 
 export interface SwimlaneUpdateInput {
@@ -846,6 +855,7 @@ export interface SwimlaneUpdateInput {
   auto_spawn?: boolean;
   auto_command?: string | null;
   plan_exit_target_id?: string | null;
+  agent_override?: string | null;
 }
 
 export interface ActionCreateInput {
@@ -909,6 +919,7 @@ export interface BoardColumnConfig {
   planExitTarget?: string; // name of target column
   archived?: boolean;
   autoCommand?: string | null;
+  agentOverride?: string | null;
 }
 
 export interface BoardActionConfig {
@@ -957,6 +968,7 @@ export interface ElectronAPI {
     openByPath: (path: string) => Promise<Project>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     rename: (id: string, name: string) => Promise<Project>;
+    setDefaultAgent: (id: string, agentName: string) => Promise<Project>;
     reorder: (ids: string[]) => Promise<void>;
     setGroup: (projectId: string, groupId: string | null) => Promise<void>;
     onAutoOpened: (callback: (project: Project) => void) => () => void;
@@ -1068,6 +1080,11 @@ export interface ElectronAPI {
   agent: {
     detect: () => Promise<{ found: boolean; path: string | null; version: string | null }>;
     listCommands: (cwd?: string) => Promise<AgentCommand[]>;
+  };
+
+  // Agents
+  agents: {
+    list: () => Promise<AgentDetectionInfo[]>;
   };
 
   // Shell

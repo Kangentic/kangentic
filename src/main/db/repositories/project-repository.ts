@@ -71,6 +71,12 @@ export class ProjectRepository {
     return db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Project;
   }
 
+  setDefaultAgent(projectId: string, agentName: string): Project {
+    const db = getGlobalDb();
+    db.prepare('UPDATE projects SET default_agent = ? WHERE id = ?').run(agentName, projectId);
+    return db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as Project;
+  }
+
   reorder(ids: string[]): void {
     const db = getGlobalDb();
     const tx = db.transaction(() => {

@@ -89,8 +89,8 @@ test.describe('EditColumnDialog', () => {
   test('Planning column has editable permissions set to Plan', async () => {
     await openEditDialog('Planning');
 
-    // Planning is now a regular column -- permissions are editable
-    const select = page.locator('select').first();
+    // Planning is now a regular column -- permissions are editable (second select, first is agent override)
+    const select = page.locator('select').nth(1);
     await expect(select).toBeEnabled();
 
     const value = await select.inputValue();
@@ -157,8 +157,8 @@ test.describe('EditColumnDialog', () => {
   test('save persists permission_mode and auto_spawn changes', async () => {
     await openEditDialog('Code Review');
 
-    // Change permissions to Plan (first select is the permissions dropdown)
-    const permSelect = page.locator('select').first();
+    // Change permissions to Plan (second select - first is agent override)
+    const permSelect = page.locator('select').nth(1);
     await permSelect.selectOption('plan');
 
     // Toggle auto-spawn OFF
@@ -174,7 +174,7 @@ test.describe('EditColumnDialog', () => {
     // Reopen and verify persisted values
     await openEditDialog('Code Review');
 
-    const permSelectAfter = page.locator('select').first();
+    const permSelectAfter = page.locator('select').nth(1);
     const valueAfter = await permSelectAfter.inputValue();
     expect(valueAfter).toBe('plan');
 

@@ -447,6 +447,14 @@ export function registerProjectHandlers(context: IpcContext): void {
     return context.projectRepo.rename(id, name);
   });
 
+  ipcMain.handle(IPC.PROJECT_SET_DEFAULT_AGENT, async (_, id: string, agentName: string) => {
+    const { agentRegistry } = await import('../../agent/agent-registry');
+    if (!agentRegistry.has(agentName)) {
+      throw new Error(`Unknown agent: "${agentName}"`);
+    }
+    return context.projectRepo.setDefaultAgent(id, agentName);
+  });
+
   ipcMain.handle(IPC.PROJECT_OPEN_BY_PATH, async (_, projectPath: string) => {
     return openProjectByPath(context, projectPath);
   });

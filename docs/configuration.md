@@ -186,6 +186,7 @@ Each swimlane has its own overrides (stored in the per-project DB):
 | `auto_spawn` | boolean | true | Whether moving a task here spawns an agent |
 | `auto_command` | string \| null | null | Command injected into running session on task arrival |
 | `plan_exit_target_id` | string \| null | null | Target column when plan-mode agent exits |
+| `agent_override` | string \| null | null | Agent CLI override for sessions spawned in this column |
 
 ## Board Configuration
 
@@ -238,6 +239,7 @@ Ghost columns are invisible on the board but still exist in the database. Once a
       "permissionMode": "default",
       "autoCommand": null,
       "planExitTarget": null,
+      "agentOverride": null,
       "archived": false
     }
   ],

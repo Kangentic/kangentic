@@ -8,7 +8,7 @@ import { BaseDialog } from './BaseDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { IconPickerDialog } from './IconPickerDialog';
 import { ICON_REGISTRY, ROLE_DEFAULTS, getUsedIcons } from '../../utils/swimlane-icons';
-import type { Swimlane, PermissionMode } from '../../../shared/types';
+import type { Swimlane, PermissionMode, AgentDetectionInfo } from '../../../shared/types';
 
 const PERMISSION_LABELS: Record<PermissionMode, string> = {
   default: 'Default (Allowlist)',
@@ -47,6 +47,8 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
   const [autoSpawn, setAutoSpawn] = useState(swimlane.auto_spawn);
   const [autoCommand, setAutoCommand] = useState(swimlane.auto_command || '');
   const [planExitTargetId, setPlanExitTargetId] = useState<string | null>(swimlane.plan_exit_target_id);
+  const [agentOverride, setAgentOverride] = useState<string | null>(swimlane.agent_override);
+  const [agentList, setAgentList] = useState<AgentDetectionInfo[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -63,6 +65,7 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
 
   useEffect(() => {
     inputRef.current?.select();
+    window.electronAPI.agents.list().then(setAgentList).catch(() => {});
   }, []);
 
   const handleSave = async () => {
@@ -76,6 +79,7 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
       auto_spawn: autoSpawnLocked ? undefined : autoSpawn,
       auto_command: isTodoOrDone ? undefined : (autoCommand.trim() || null),
       plan_exit_target_id: isPlanMode ? (planExitTargetId || null) : undefined,
+      agent_override: isTodoOrDone ? undefined : (agentOverride || null),
     });
     onClose();
   };
@@ -323,6 +327,27 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
               {isTodoOrDone
                 ? 'Tasks in this column do not start agents.'
                 : 'Start an agent when a task enters this column.'}
+            </p>
+          </div>
+
+          {/* Agent override dropdown */}
+          <div>
+            <label className="text-xs text-fg-muted mb-1.5 block">Agent</label>
+            <select
+              value={agentOverride ?? ''}
+              onChange={(event) => setAgentOverride(event.target.value || null)}
+              disabled={isTodoOrDone}
+              className="w-full appearance-none bg-surface border border-edge-input rounded px-3 py-1.5 text-sm text-fg focus:outline-none focus:border-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="">Default (project setting)</option>
+              {agentList.map((agent) => (
+                <option key={agent.name} value={agent.name}>
+                  {agent.name}{agent.found ? ` (${agent.version ?? 'detected'})` : ' (not found)'}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-fg-faint mt-1">
+              Override the project default agent for this column.
             </p>
           </div>
 

@@ -439,6 +439,13 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE sessions RENAME COLUMN claude_session_id TO agent_session_id');
   }
 
+  // Migration: add agent_override column to swimlanes for per-column agent selection
+  const hasAgentOverride = (db.pragma('table_info(swimlanes)') as Array<{ name: string }>)
+    .some((col) => col.name === 'agent_override');
+  if (!hasAgentOverride) {
+    db.exec('ALTER TABLE swimlanes ADD COLUMN agent_override TEXT DEFAULT NULL');
+  }
+
   // Seed default swimlanes if empty (must run after all ALTER TABLE migrations)
   const laneCount = db.prepare('SELECT COUNT(*) as c FROM swimlanes').get() as { c: number };
   if (laneCount.c === 0) {

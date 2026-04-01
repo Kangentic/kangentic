@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppConfig, DeepPartial } from '../../shared/types';
+import type { AppConfig, DeepPartial, AgentDetectionInfo } from '../../shared/types';
 import { DEFAULT_CONFIG } from '../../shared/types';
 import { deepMergeConfig } from '../../shared/object-utils';
 
@@ -28,6 +28,10 @@ interface ConfigStore {
   // -- Git detection --
   gitInfo: { found: boolean; path: string | null; version: string | null; meetsMinimum: boolean } | null;
   detectGit: () => Promise<void>;
+
+  // -- Agent detection --
+  agentList: AgentDetectionInfo[];
+  loadAgentList: () => Promise<void>;
 
   // -- Settings panel UI --
   settingsOpen: boolean;
@@ -59,6 +63,7 @@ export const useConfigStore = create<ConfigStore>((set, get) => ({
   config: DEFAULT_CONFIG,
   globalConfig: DEFAULT_CONFIG,
   appVersion: null,
+  agentList: [],
   agentInfo: null,
   agentVersionNumber: null,
   gitInfo: null,
@@ -97,6 +102,11 @@ export const useConfigStore = create<ConfigStore>((set, get) => ({
   detectGit: async () => {
     const gitInfo = await window.electronAPI.git.detect();
     set({ gitInfo });
+  },
+
+  loadAgentList: async () => {
+    const agentList = await window.electronAPI.agents.list();
+    set({ agentList });
   },
 
   setSettingsOpen: (open) => {

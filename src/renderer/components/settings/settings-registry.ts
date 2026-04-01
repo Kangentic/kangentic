@@ -39,6 +39,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'contextBar.showProgressBar', tabId: 'terminal', label: 'Progress Bar', description: 'Usage bar and percentage', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
 
   // ── Agent ──
+  { id: 'project.defaultAgent', tabId: 'agent', label: 'Default Agent', description: 'Which agent CLI to use for new sessions', scope: 'project', keywords: ['agent', 'claude', 'default'] },
   { id: 'claude.cliPath', tabId: 'agent', label: 'CLI Path', description: 'Path to Claude CLI binary (auto-detected if empty)', scope: 'global', keywords: ['binary', 'executable'] },
   { id: 'claude.maxConcurrentSessions', tabId: 'agent', label: 'Max Concurrent Sessions', description: 'Limit how many agents can run at the same time', scope: 'global', keywords: ['parallel', 'limit'] },
   { id: 'claude.queueOverflow', tabId: 'agent', label: 'When Max Sessions Reached', description: 'How new agent requests are handled when all slots are in use', scope: 'global', keywords: ['overflow', 'queue', 'reject'] },

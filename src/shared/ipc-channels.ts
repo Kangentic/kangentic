@@ -10,6 +10,7 @@ export const IPC = {
   PROJECT_REORDER: 'project:reorder',
   PROJECT_SET_GROUP: 'project:setGroup',
   PROJECT_RENAME: 'project:rename',
+  PROJECT_SET_DEFAULT_AGENT: 'project:setDefaultAgent',
   PROJECT_AUTO_OPENED: 'project:autoOpened',
 
   // Project Groups
@@ -101,6 +102,9 @@ export const IPC = {
   // Agent
   AGENT_DETECT: 'agent:detect',
   AGENT_LIST_COMMANDS: 'agent:listCommands',
+
+  // Agents
+  AGENT_LIST: 'agent:list',
 
   // Shell
   SHELL_GET_AVAILABLE: 'shell:getAvailable',

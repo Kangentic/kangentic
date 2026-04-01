@@ -28,7 +28,7 @@ User drags task between columns
 
 All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src/preload/preload.ts` mirrors them as `window.electronAPI.*`.
 
-### Projects (11 channels)
+### Projects (12 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `project:list` | invoke | Fetch all projects (ordered by position) |
@@ -41,6 +41,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `project:reorder` | invoke | Reorder projects by ID array |
 | `project:setGroup` | invoke | Assign a project to a group (or clear group assignment) |
 | `project:rename` | invoke | Rename a project |
+| `project:setDefaultAgent` | invoke | Set the default agent CLI for a project |
 | `project:autoOpened` | on | Event: project auto-opened on launch |
 
 ### Project Groups (6 channels)
@@ -204,6 +205,11 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 |---------|---------|---------|
 | `agent:detect` | invoke | Detect agent CLI (path, version) |
 | `agent:listCommands` | invoke | List available agent commands and skills |
+
+### Agents (1 channel)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `agent:list` | invoke | List all detected agent CLIs with name, path, and version |
 
 ### Shell (5 channels)
 | Channel | Pattern | Purpose |

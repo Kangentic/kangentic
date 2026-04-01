@@ -12,6 +12,7 @@ const api: ElectronAPI = {
     openByPath: (path: string) => ipcRenderer.invoke(IPC.PROJECT_OPEN_BY_PATH, path),
     searchEntries: (input) => ipcRenderer.invoke(IPC.PROJECT_SEARCH_ENTRIES, input),
     rename: (id: string, name: string) => ipcRenderer.invoke(IPC.PROJECT_RENAME, id, name),
+    setDefaultAgent: (id: string, agentName: string) => ipcRenderer.invoke(IPC.PROJECT_SET_DEFAULT_AGENT, id, agentName),
     reorder: (ids: string[]) => ipcRenderer.invoke(IPC.PROJECT_REORDER, ids),
     setGroup: (projectId: string, groupId: string | null) => ipcRenderer.invoke(IPC.PROJECT_SET_GROUP, projectId, groupId),
     onAutoOpened: (callback) => {
@@ -165,6 +166,10 @@ const api: ElectronAPI = {
   agent: {
     detect: () => ipcRenderer.invoke(IPC.AGENT_DETECT),
     listCommands: (cwd?) => ipcRenderer.invoke(IPC.AGENT_LIST_COMMANDS, cwd),
+  },
+
+  agents: {
+    list: () => ipcRenderer.invoke(IPC.AGENT_LIST),
   },
 
   shell: {
