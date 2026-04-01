@@ -46,10 +46,14 @@ function makeDiffSummary(files: Array<{ file: string; insertions: number; deleti
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('DiffService', () => {
-  const service = new DiffService('/project');
+  // Create a fresh instance per test so the merge-base cache doesn't leak between tests
+  let service: DiffService;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    service = new DiffService('/project');
+    // Default merge-base mock - tests can override as needed
+    mockGit.raw.mockResolvedValue('abc123\n');
   });
 
   describe('getDiffFiles', () => {
@@ -152,7 +156,8 @@ describe('DiffService', () => {
       expect(mockGit.diff).toHaveBeenCalledWith(['--name-status', 'abc123']);
     });
 
-    it('uses three-dot diff when no worktreePath', async () => {
+    it('uses merge-base diff when no worktreePath', async () => {
+      mockGit.raw.mockResolvedValue('abc123\n');
       mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
       mockGit.diff.mockResolvedValue('');
 
@@ -161,9 +166,10 @@ describe('DiffService', () => {
         baseBranch: 'main',
       });
 
-      // Three-dot: 'main...HEAD' (only changes on branch since fork point)
-      expect(mockGit.diffSummary).toHaveBeenCalledWith(['main...HEAD']);
-      expect(mockGit.diff).toHaveBeenCalledWith(['--name-status', 'main...HEAD']);
+      // Always uses merge-base, even without worktreePath
+      expect(mockGit.raw).toHaveBeenCalledWith(['merge-base', 'main', 'HEAD']);
+      expect(mockGit.diffSummary).toHaveBeenCalledWith(['abc123']);
+      expect(mockGit.diff).toHaveBeenCalledWith(['--name-status', 'abc123']);
     });
 
     it('falls back to heuristic status when name-status is missing', async () => {
@@ -301,11 +307,10 @@ describe('DiffService', () => {
       expect(mockGit.show).toHaveBeenCalledWith(['abc123:src/old-name.ts']);
     });
 
-    it('reads from HEAD when no worktreePath', async () => {
+    it('reads from filesystem when no worktreePath', async () => {
       mockGit.raw.mockResolvedValue('abc123\n');
-      mockGit.show
-        .mockResolvedValueOnce('original')
-        .mockResolvedValueOnce('from HEAD');
+      mockGit.show.mockResolvedValue('original');
+      vi.mocked(fs.promises.readFile).mockResolvedValue('from working tree');
 
       const result = await service.getFileContent({
         projectPath: '/project',
@@ -314,8 +319,13 @@ describe('DiffService', () => {
         status: 'M',
       });
 
-      expect(result.modified).toBe('from HEAD');
-      expect(mockGit.show).toHaveBeenCalledWith(['HEAD:src/file.ts']);
+      expect(result.original).toBe('original');
+      expect(result.modified).toBe('from working tree');
+      // Should read from projectPath when no worktreePath
+      expect(fs.promises.readFile).toHaveBeenCalledWith(
+        expect.stringMatching(/src[/\\]file\.ts$/),
+        'utf-8',
+      );
     });
 
     it('handles git show failure gracefully for original', async () => {

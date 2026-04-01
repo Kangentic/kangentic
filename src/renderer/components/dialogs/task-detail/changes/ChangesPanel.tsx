@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import { Loader2 } from 'lucide-react';
 import { FileTreePanel } from './FileTreePanel';
+import { useSessionStore } from '../../../../stores/session-store';
 import type { Task, GitDiffFileEntry, GitDiffFilesResult, GitFileContentResult } from '../../../../../shared/types';
 
 const DiffViewer = lazy(() => import('./DiffViewer').then((module) => ({ default: module.DiffViewer })));
@@ -14,7 +15,9 @@ export function ChangesPanel({ task, projectPath }: ChangesPanelProps) {
   const [files, setFiles] = useState<GitDiffFileEntry[]>([]);
   const [totalInsertions, setTotalInsertions] = useState(0);
   const [totalDeletions, setTotalDeletions] = useState(0);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const selectedFile = useSessionStore((state) => state.changesSelectedFile[task.id] ?? null);
+  const setChangesSelectedFile = useSessionStore((state) => state.setChangesSelectedFile);
+  const setSelectedFile = useCallback((filePath: string | null) => setChangesSelectedFile(task.id, filePath), [task.id, setChangesSelectedFile]);
   const [fileContent, setFileContent] = useState<GitFileContentResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [contentLoading, setContentLoading] = useState(false);
@@ -92,6 +95,14 @@ export function ChangesPanel({ task, projectPath }: ChangesPanelProps) {
     fetchFiles();
   }, [fetchFiles]);
 
+  // Restore content for the persisted selected file after files load
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current || loading || !selectedFile) return;
+    restoredRef.current = true;
+    fetchFileContent(selectedFile);
+  }, [loading, selectedFile, fetchFileContent]);
+
   // Subscribe to live updates via fs.watch.
   // Uses refs for selectedFile/files to avoid re-subscribing on every selection.
   useEffect(() => {
@@ -118,7 +129,7 @@ export function ChangesPanel({ task, projectPath }: ChangesPanelProps) {
   const handleSelectFile = useCallback((filePath: string) => {
     setSelectedFile(filePath);
     fetchFileContent(filePath);
-  }, [fetchFileContent]);
+  }, [setSelectedFile, fetchFileContent]);
 
   const selectedFileEntry = files.find((file) => file.path === selectedFile);
 

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, FolderGit2, FolderOpen, GitPullRequest, GitCompareArrows, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
 import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
@@ -117,7 +117,7 @@ export function TaskDetailHeader({
 
       {/* Scrollable pills container - hidden for archived tasks */}
       {!isArchived ? (
-        <div className={`flex-1 flex items-center flex-wrap gap-3 min-w-0${showCommandPalette ? '' : ' overflow-hidden max-h-7'}`}>
+        <div className={`flex-1 flex items-center flex-wrap gap-3 min-w-0${showCommandPalette ? '' : ' overflow-hidden max-h-8'}`}>
           {/* Commands button */}
           {!isEditing && (
             <div className="relative flex-shrink-0" ref={commandButtonRef}>
@@ -187,15 +187,15 @@ export function TaskDetailHeader({
             <Pill
               shape="square"
               onClick={onToggleChanges}
-              className={`flex-shrink-0 transition-colors ${
+              className={`flex-shrink-0 transition-colors border ${
                 changesOpen
-                  ? 'bg-accent/15 text-accent-fg border border-accent/30'
-                  : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover'
+                  ? 'bg-accent/15 text-accent-fg border-accent/30'
+                  : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
               }`}
               title={changesOpen ? 'Hide changes' : 'Show changes'}
               data-testid="changes-toggle"
             >
-              <GitCompareArrows size={14} />
+              <GitCompare size={14} />
               Changes
             </Pill>
           )}
@@ -243,6 +243,9 @@ export function TaskDetailHeader({
             menuShortcuts={menuShortcuts}
             executeShortcut={executeShortcut}
             projectPath={projectPath}
+            canShowChanges={canShowChanges}
+            changesOpen={changesOpen}
+            onToggleChanges={onToggleChanges}
           />
         )}
       </KebabMenu>
@@ -281,6 +284,9 @@ interface TaskDetailKebabItemsProps {
   menuShortcuts: ShortcutConfig[];
   executeShortcut: (action: ShortcutConfig) => void;
   projectPath: string | null;
+  canShowChanges: boolean;
+  changesOpen: boolean;
+  onToggleChanges: () => void;
 }
 
 function TaskDetailKebabItems({
@@ -301,6 +307,9 @@ function TaskDetailKebabItems({
   menuShortcuts,
   executeShortcut,
   projectPath,
+  canShowChanges,
+  changesOpen,
+  onToggleChanges,
 }: TaskDetailKebabItemsProps) {
   const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
   const [showCommandsSubmenu, setShowCommandsSubmenu] = useState(false);
@@ -345,6 +354,15 @@ function TaskDetailKebabItems({
           icon={<FolderGit2 size={14} />}
           label="Open folder"
           onClick={() => { closeAll(); window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!); }}
+        />
+      )}
+
+      {/* Changes */}
+      {canShowChanges && (
+        <KebabMenuItem
+          icon={<GitCompare size={14} />}
+          label={changesOpen ? 'Hide changes' : 'Show changes'}
+          onClick={() => { closeAll(); onToggleChanges(); }}
         />
       )}
 

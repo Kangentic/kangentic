@@ -38,6 +38,10 @@ interface SessionStore {
   seenIdleSessions: Record<string, boolean>;
   /** Command label to show in the terminal overlay (e.g. "/code-review") keyed by task ID */
   pendingCommandLabel: Record<string, string>;
+  /** Task IDs whose Changes panel is open (persists across dialog open/close) */
+  changesOpenTasks: Set<string>;
+  /** Last selected file in the Changes panel, keyed by task ID */
+  changesSelectedFile: Record<string, string>;
   _pendingOpenTaskId: string | null;
 
   syncSessions: () => Promise<boolean>;
@@ -60,6 +64,8 @@ interface SessionStore {
   clearPendingCommandLabel: (taskId: string) => void;
   markIdleSessionsSeen: (projectId: string) => void;
   markSingleIdleSessionSeen: (sessionId: string) => void;
+  toggleChangesOpen: (taskId: string) => void;
+  setChangesSelectedFile: (taskId: string, filePath: string | null) => void;
 
   // Transient session (command bar) - per-project map + convenience pointers
   /** Per-project transient session tracking: projectId -> { sessionId, branch } */
@@ -103,6 +109,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   sessionEvents: {},
   seenIdleSessions: {},
   pendingCommandLabel: {},
+  changesOpenTasks: new Set(),
+  changesSelectedFile: {},
   _pendingOpenTaskId: null,
   transientSessions: {},
   transientSessionId: null,
@@ -320,6 +328,27 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     const { sessionActivity, seenIdleSessions } = get();
     if (sessionActivity[sessionId] === 'idle' && !seenIdleSessions[sessionId]) {
       set({ seenIdleSessions: { ...seenIdleSessions, [sessionId]: true } });
+    }
+  },
+
+  toggleChangesOpen: (taskId) => {
+    const next = new Set(get().changesOpenTasks);
+    if (next.has(taskId)) {
+      next.delete(taskId);
+    } else {
+      next.add(taskId);
+    }
+    set({ changesOpenTasks: next });
+  },
+
+  setChangesSelectedFile: (taskId, filePath) => {
+    const current = get().changesSelectedFile;
+    if (filePath === null) {
+      if (!(taskId in current)) return;
+      const { [taskId]: _, ...rest } = current;
+      set({ changesSelectedFile: rest });
+    } else {
+      set({ changesSelectedFile: { ...current, [taskId]: filePath } });
     }
   },
 

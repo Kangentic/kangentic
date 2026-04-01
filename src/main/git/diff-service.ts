@@ -83,6 +83,7 @@ function parseNameStatus(output: string): Map<string, { status: GitDiffStatus; o
 
 export class DiffService {
   private readonly gitDirectory: string;
+  private mergeBaseCache: Map<string, string> = new Map();
 
   constructor(gitDirectory: string) {
     this.gitDirectory = gitDirectory;
@@ -93,25 +94,35 @@ export class DiffService {
    * This is the fork point - where the task branch diverged from the base.
    * Diffing against this (instead of the base branch tip) shows only changes
    * made on this branch, excluding changes merged into the base after forking.
+   * Result is cached per base branch to avoid redundant git subprocess calls
+   * (getDiffFiles and getFileContent both need the merge-base).
    */
   private async getMergeBase(git: ReturnType<typeof simpleGit>, baseBranch: string): Promise<string> {
-    const result = await git.raw(['merge-base', baseBranch, 'HEAD']);
-    return result.trim();
+    const cached = this.mergeBaseCache.get(baseBranch);
+    if (cached) return cached;
+
+    try {
+      const result = await git.raw(['merge-base', baseBranch, 'HEAD']);
+      const ref = result.trim();
+      this.mergeBaseCache.set(baseBranch, ref);
+      return ref;
+    } catch {
+      // Base branch doesn't exist (e.g. repo uses 'master' not 'main') - fall back to HEAD
+      // so the panel still shows uncommitted working tree changes.
+      this.mergeBaseCache.set(baseBranch, 'HEAD');
+      return 'HEAD';
+    }
   }
 
   async getDiffFiles(input: GitDiffFilesInput): Promise<GitDiffFilesResult> {
     const git = simpleGit(this.gitDirectory);
     const { baseBranch } = input;
 
-    // For worktrees: diff working tree against the merge-base (fork point).
-    // This shows only changes made on this task's branch, including uncommitted edits.
-    // For non-worktree: three-dot diff achieves the same (merge-base..HEAD, committed only).
-    let diffRef: string;
-    if (input.worktreePath) {
-      diffRef = await this.getMergeBase(git, baseBranch);
-    } else {
-      diffRef = `${baseBranch}...HEAD`;
-    }
+    // Always diff working tree against the merge-base (fork point).
+    // This shows changes made on this branch including uncommitted edits.
+    // When on the base branch itself (e.g. main), merge-base resolves to HEAD,
+    // so only uncommitted working tree changes are shown.
+    const diffRef = await this.getMergeBase(git, baseBranch);
 
     // Run both git commands in parallel for faster initial load
     const [summary, nameStatusOutput] = await Promise.all([
@@ -174,24 +185,15 @@ export class DiffService {
       }
     }
 
-    // Fetch modified content (current version)
+    // Fetch modified content from working tree (includes uncommitted changes)
     if (status !== 'D') {
-      if (input.worktreePath) {
-        // Read from working tree (includes uncommitted changes)
-        const absolutePath = path.join(input.worktreePath, filePath);
-        try {
-          modified = await fs.promises.readFile(absolutePath, 'utf-8');
-        } catch {
-          // File might have been deleted after diff was computed
-          modified = '';
-        }
-      } else {
-        // No worktree - read from HEAD
-        try {
-          modified = await git.show([`HEAD:${filePath}`]);
-        } catch {
-          modified = '';
-        }
+      const workingDir = input.worktreePath ?? input.projectPath;
+      const absolutePath = path.join(workingDir, filePath);
+      try {
+        modified = await fs.promises.readFile(absolutePath, 'utf-8');
+      } catch {
+        // File might have been deleted after diff was computed
+        modified = '';
       }
     }
 
