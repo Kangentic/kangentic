@@ -12,6 +12,7 @@ import { useBacklogStore } from '../../stores/backlog-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useSessionDisplayState } from '../../utils/session-display-state';
+import { agentShortName } from '../../utils/agent-display-name';
 import { getProgressColor } from '../../utils/color-lerp';
 import { LabelPills } from '../Pill';
 import type { Task, Swimlane } from '../../../shared/types';
@@ -413,7 +414,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
                 <div className="mt-2 pt-2 border-t border-edge" data-testid="usage-bar">
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-xs text-fg-faint">
-                      {displayState.usage.model.displayName || 'Claude'}
+                      {displayState.usage.model.displayName || agentShortName(task.agent)}
                     </span>
                     <span className="text-xs text-fg-faint">{pct}%</span>
                   </div>

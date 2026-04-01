@@ -150,7 +150,7 @@ IPC channels for shortcuts are in the Board Config group: `boardConfig:getShortc
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `contextBar.showShell` | boolean | `true` | Show the shell name (e.g., pwsh, bash) in the context bar |
-| `contextBar.showVersion` | boolean | `true` | Show the Claude CLI version |
+| `contextBar.showVersion` | boolean | `true` | Show the agent CLI version |
 | `contextBar.showModel` | boolean | `true` | Show the active model name (e.g., Claude Sonnet 4) |
 | `contextBar.showCost` | boolean | `true` | Show the cumulative session cost in dollars |
 | `contextBar.showTokens` | boolean | `true` | Show token usage (input + output) |

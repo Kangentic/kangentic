@@ -31,7 +31,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
 
   // ── Terminal > Context Bar ──
   { id: 'contextBar.showShell', tabId: 'terminal', label: 'Shell', description: 'Detected shell name', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
-  { id: 'contextBar.showVersion', tabId: 'terminal', label: 'Version', description: 'Claude Code version', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showVersion', tabId: 'terminal', label: 'Version', description: 'Agent CLI version', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
   { id: 'contextBar.showModel', tabId: 'terminal', label: 'Model', description: 'Active model name', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
   { id: 'contextBar.showCost', tabId: 'terminal', label: 'Cost', description: 'Session API cost', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'price'] },
   { id: 'contextBar.showTokens', tabId: 'terminal', label: 'Token Counts', description: 'Input / output totals', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
@@ -40,11 +40,11 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
 
   // ── Agent ──
   { id: 'project.defaultAgent', tabId: 'agent', label: 'Default Agent', description: 'Which agent CLI to use for new sessions', scope: 'project', keywords: ['agent', 'claude', 'default'] },
-  { id: 'claude.cliPath', tabId: 'agent', label: 'CLI Path', description: 'Path to Claude CLI binary (auto-detected if empty)', scope: 'global', keywords: ['binary', 'executable'] },
+  { id: 'claude.cliPath', tabId: 'agent', label: 'CLI Path', description: 'Path to agent CLI binary (auto-detected if empty)', scope: 'global', keywords: ['binary', 'executable'] },
   { id: 'claude.maxConcurrentSessions', tabId: 'agent', label: 'Max Concurrent Sessions', description: 'Limit how many agents can run at the same time', scope: 'global', keywords: ['parallel', 'limit'] },
   { id: 'claude.queueOverflow', tabId: 'agent', label: 'When Max Sessions Reached', description: 'How new agent requests are handled when all slots are in use', scope: 'global', keywords: ['overflow', 'queue', 'reject'] },
   { id: 'claude.idleTimeoutMinutes', tabId: 'agent', label: 'Idle Timeout (minutes)', description: 'Auto-suspend sessions after this many minutes idle. 0 to disable.', scope: 'global', keywords: ['suspend', 'minutes'] },
-  { id: 'claude.permissionMode', tabId: 'agent', label: 'Permissions', description: 'How Claude handles tool approvals', scope: 'project', keywords: ['allowlist', 'bypass', 'approve'] },
+  { id: 'claude.permissionMode', tabId: 'agent', label: 'Permissions', description: 'How the agent handles tool approvals', scope: 'project', keywords: ['allowlist', 'bypass', 'approve'] },
 
   // ── Git ──
   { id: 'git.worktreesEnabled', tabId: 'git', label: 'Enable Worktrees', description: 'Create git worktrees for agent tasks', scope: 'project', keywords: ['branch', 'isolate'] },

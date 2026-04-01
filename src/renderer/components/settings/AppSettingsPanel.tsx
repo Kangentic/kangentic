@@ -10,6 +10,7 @@ import type { AgentDetectionInfo } from '../../../shared/types';
 import type { AppConfig, DeepPartial, NotificationConfig, PermissionMode, ThemeMode } from '../../../shared/types';
 import { NAMED_THEMES } from '../../../shared/types';
 import { deepMergeConfig } from '../../../shared/object-utils';
+import { agentDisplayName } from '../../utils/agent-display-name';
 import { settingProps } from './settings-registry';
 import { ShortcutsTab } from './ShortcutsTab';
 
@@ -256,7 +257,7 @@ function TerminalTab({ config, globalConfig, shells }: { config: AppConfig; glob
       />
       <CompactToggleList items={[
         { label: 'Shell', description: 'Detected shell name', checked: globalConfig.contextBar.showShell, onChange: (value) => updateGlobal({ contextBar: { showShell: value } }), searchId: 'contextBar.showShell' },
-        { label: 'Version', description: 'Claude Code version', checked: globalConfig.contextBar.showVersion, onChange: (value) => updateGlobal({ contextBar: { showVersion: value } }), searchId: 'contextBar.showVersion' },
+        { label: 'Version', description: `${agentDisplayName('claude')} version`, checked: globalConfig.contextBar.showVersion, onChange: (value) => updateGlobal({ contextBar: { showVersion: value } }), searchId: 'contextBar.showVersion' },
         { label: 'Model', description: 'Active model name', checked: globalConfig.contextBar.showModel, onChange: (value) => updateGlobal({ contextBar: { showModel: value } }), searchId: 'contextBar.showModel' },
         { label: 'Cost', description: 'Session API cost', checked: globalConfig.contextBar.showCost, onChange: (value) => updateGlobal({ contextBar: { showCost: value } }), searchId: 'contextBar.showCost' },
         { label: 'Token Counts', description: 'Input / output totals', checked: globalConfig.contextBar.showTokens, onChange: (value) => updateGlobal({ contextBar: { showTokens: value } }), searchId: 'contextBar.showTokens' },
@@ -305,7 +306,7 @@ function AgentTab({ config, globalConfig, agentInfo, agentList }: { config: AppC
             className={`${INPUT_CLASS} pr-8 ${agentInfo?.found ? 'placeholder-fg-muted' : 'placeholder-red-400/70'}`}
           />
           {agentInfo && (
-            <div className="absolute right-2.5 top-1/2 -translate-y-1/2" title={agentInfo.found ? `Detected: ${agentInfo.version || 'unknown version'}` : 'Claude CLI not found'}>
+            <div className="absolute right-2.5 top-1/2 -translate-y-1/2" title={agentInfo.found ? `Detected: ${agentInfo.version || 'unknown version'}` : `${agentDisplayName('claude')} not found`}>
               {agentInfo.found
                 ? <Check size={16} className="text-green-400" />
                 : <CircleAlert size={16} className="text-red-400" />}
@@ -482,7 +483,7 @@ function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
         <Plug className="size-5 text-fg-muted shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium text-fg-primary">Kangentic MCP Server</div>
-          <div className="text-xs text-fg-muted">Give Claude Code agents tools to interact with your board</div>
+          <div className="text-xs text-fg-muted">Give agents tools to interact with your board</div>
         </div>
         <ToggleSwitch
           checked={enabled}
@@ -507,8 +508,8 @@ function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
 
         <SectionHeader label="How It Works" searchIds={['mcpServer.enabled']} />
         <p className="text-sm text-fg-muted leading-relaxed">
-          When enabled, Kangentic injects a local MCP server into each Claude Code session.
-          Claude discovers the tools automatically and can call them at any time during its work.
+          When enabled, Kangentic injects a local MCP server into each agent session.
+          The agent discovers the tools automatically and can call them at any time during its work.
           Tasks created by agents appear on the board with a toast notification.
           If a task is created in a column with auto-spawn enabled, a new agent session starts for it automatically.
         </p>

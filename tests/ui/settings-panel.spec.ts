@@ -182,7 +182,7 @@ test.describe('Settings Panel', () => {
 
     // Banner with toggle should be visible
     await expect(page.getByText('Kangentic MCP Server')).toBeVisible();
-    await expect(page.getByText('Give Claude Code agents tools to interact with your board')).toBeVisible();
+    await expect(page.getByText('Give agents tools to interact with your board')).toBeVisible();
 
     // Tools list should be visible (spot-check a few)
     await expect(page.getByText('Create Task')).toBeVisible();

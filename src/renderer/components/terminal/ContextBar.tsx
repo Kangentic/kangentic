@@ -1,9 +1,11 @@
 import { ArrowUp, ArrowDown } from 'lucide-react';
+import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { getProgressColor } from '../../utils/color-lerp';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost } from '../../utils/format-session';
+import { agentDisplayName, agentShortName } from '../../utils/agent-display-name';
 import { shellDisplayName } from '../../utils/shell-display-name';
 import { useValuePulse } from '../../hooks/useValuePulse';
 
@@ -30,6 +32,7 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
     }
     return undefined;
   });
+  const taskAgent = useBoardStore((s) => s.tasks.find((t) => t.session_id === sessionId)?.agent ?? null);
   const agentVersionNumber = useConfigStore((s) => s.agentVersionNumber);
   const contextBarConfig = useConfigStore((s) => s.config.contextBar);
 
@@ -47,7 +50,7 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
   const pct = Math.round(usage.contextWindow.usedPercentage);
   const progressColor = getProgressColor(pct);
 
-  const modelName = usage.model.displayName || 'Claude';
+  const modelName = usage.model.displayName || agentShortName(taskAgent);
 
   // Fallback to 0 for fields that may be absent from older main-process sessions
   const usedTokens = usage.contextWindow.usedTokens ?? 0;
@@ -87,7 +90,7 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
       )}
       {showVersion && (
         <span className={`${pill} text-fg-muted`}>
-          Claude Code
+          {agentDisplayName(taskAgent)}
           {agentVersionNumber && (
             <span className="text-fg-faint ml-1.5">v{agentVersionNumber}</span>
           )}

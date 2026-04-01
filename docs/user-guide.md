@@ -302,7 +302,7 @@ The context bar is a status line displayed below the terminal showing session me
 | Toggle | What it shows |
 |--------|--------------|
 | Shell | The active shell name (e.g., pwsh, bash, zsh) |
-| Version | Claude CLI version |
+| Version | Agent CLI version |
 | Model | Active model name (e.g., Claude Sonnet 4) |
 | Cost | Cumulative session cost in dollars |
 | Tokens | Token usage (input + output) |
@@ -314,7 +314,7 @@ The context bar is a status line displayed below the terminal showing session me
 | Setting | Description |
 |---------|-------------|
 | Default Agent | Which agent CLI to use for new sessions in this project (per-project) |
-| CLI Path | Path to Claude CLI binary (auto-detected if empty) |
+| CLI Path | Path to agent CLI binary (auto-detected if empty) |
 | Max Concurrent Sessions | Limit how many agents can run at the same time (1 to 20) |
 | When Max Sessions Reached | How new agent requests are handled when all slots are in use (Queue or Reject) |
 | Idle Timeout (minutes) | Auto-suspend sessions after N minutes idle; 0 to disable |

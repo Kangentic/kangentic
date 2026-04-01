@@ -1,6 +1,7 @@
 import { FolderOpen, FileText, GitBranch, Terminal, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
+import { agentDisplayName, agentInstallUrl } from '../../utils/agent-display-name';
 import logoSrc from '../../assets/logo-32.png';
 
 /** Pulsing skeleton line shown while detection is in progress */
@@ -37,7 +38,7 @@ export function WelcomeScreen() {
           <span className="text-3xl font-bold text-fg leading-none">Kangentic</span>
           {appVersion && <span className="text-xs text-fg-faint/50 self-end mb-0.5">v{appVersion}</span>}
         </div>
-        <p className="text-lg text-fg-muted mb-0">Kanban for Claude Code agents</p>
+        <p className="text-lg text-fg-muted mb-0">Kanban for AI coding agents</p>
 
         <div className="mt-8 border-t border-edge pt-5 text-left">
           <div className="text-xs text-fg-faint uppercase tracking-wider mb-3">When you open a project</div>
@@ -56,7 +57,7 @@ export function WelcomeScreen() {
                 <GitBranch size={18} />
               </div>
               <div>
-                <div className="text-fg text-sm font-medium">Each task gets its own Claude Code session</div>
+                <div className="text-fg text-sm font-medium">Each task gets its own agent session</div>
                 <div className="text-fg-faint text-xs">Optional worktree branches keep changes isolated</div>
               </div>
             </div>
@@ -121,25 +122,25 @@ export function WelcomeScreen() {
             {/* Claude Code status */}
             <div data-testid="welcome-claude-status">
               {agentInfo === null ? (
-                <DetectionSkeleton label="Claude Code" />
+                <DetectionSkeleton label={agentDisplayName('claude')} />
               ) : agentInfo.found ? (
                 <div className="flex items-center gap-1.5 text-sm text-green-400">
                   <CheckCircle size={14} />
-                  <span>Claude Code {agentVersionNumber ? `v${agentVersionNumber}` : ''}</span>
+                  <span>{agentDisplayName('claude')} {agentVersionNumber ? `v${agentVersionNumber}` : ''}</span>
                 </div>
               ) : (
                 <div className="space-y-1 text-left">
                   <div className="flex items-center gap-1.5 text-sm text-amber-400">
                     <AlertTriangle size={14} />
-                    <span>Claude Code not found</span>
+                    <span>{agentDisplayName('claude')} not found</span>
                   </div>
                   <p className="text-xs text-fg-faint pl-5">
                     Required for AI agents.{' '}
                     <button
                       className="underline text-amber-400 hover:opacity-80 cursor-pointer"
-                      onClick={() => window.electronAPI.shell.openExternal('https://docs.anthropic.com/en/docs/claude-code/overview')}
+                      onClick={() => window.electronAPI.shell.openExternal(agentInstallUrl('claude')!)}
                     >
-                      Install Claude Code
+                      Install {agentDisplayName('claude')}
                     </button>
                   </p>
                 </div>
