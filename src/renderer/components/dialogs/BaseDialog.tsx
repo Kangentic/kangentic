@@ -127,7 +127,11 @@ export function BaseDialog({
         )}
 
         {/* Body */}
-        {rawBody ? children : (
+        {rawBody ? (
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            {children}
+          </div>
+        ) : (
           <div className="px-4 py-4">
             {children}
           </div>
