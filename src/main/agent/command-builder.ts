@@ -12,7 +12,7 @@ interface ClaudeSettings {
   [key: string]: unknown; // preserve unknown keys from user's settings
 }
 
-interface CommandOptions {
+export interface CommandOptions {
   claudePath: string;
   taskId: string;
   prompt?: string;

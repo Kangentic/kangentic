@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-interface ClaudeInfo {
+export interface ClaudeInfo {
   found: boolean;
   path: string | null;
   version: string | null;
