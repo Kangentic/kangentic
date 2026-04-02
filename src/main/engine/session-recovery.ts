@@ -12,6 +12,7 @@ import { CommandBuilder } from '../agent/command-builder';
 import { ConfigManager } from '../config/config-manager';
 import type { SessionRecord, ActionConfig, Task, PermissionMode } from '../../shared/types';
 import { ensureWorktreeTrust, ensureMcpServerTrust } from '../agent/trust-manager';
+import { agentRegistry } from '../agent/agent-registry';
 import { isShuttingDown } from '../shutdown-state';
 import { sessionOutputPaths } from './session-paths';
 import { app } from 'electron';
@@ -318,7 +319,7 @@ export async function recoverSessions(
 
       sessionRepo.insert({
         task_id: input.task.id,
-        session_type: 'claude_agent',
+        session_type: input.record.session_type,
         agent_session_id: input.agentSessionId,
         command: input.command,
         cwd: input.cwd,
@@ -578,9 +579,10 @@ export async function reconcileSessions(
         agent: input.agent,
       });
 
+      const sessionType = agentRegistry.get(input.agent)?.sessionType ?? 'claude_agent';
       sessionRepo.insert({
         task_id: input.task.id,
-        session_type: 'claude_agent',
+        session_type: sessionType,
         agent_session_id: input.agentSessionId,
         command: input.command,
         cwd: input.cwd,

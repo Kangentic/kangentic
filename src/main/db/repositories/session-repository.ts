@@ -89,7 +89,7 @@ export class SessionRepository {
   /** Get suspended agent sessions that can be resumed */
   getResumable(): SessionRecord[] {
     return this.db.prepare(
-      `SELECT * FROM sessions WHERE status = 'suspended' AND session_type = 'claude_agent'`
+      `SELECT * FROM sessions WHERE status = 'suspended' AND session_type != 'run_script'`
     ).all() as SessionRecord[];
   }
 
@@ -120,7 +120,7 @@ export class SessionRepository {
   /** Get orphaned agent sessions */
   getOrphaned(): SessionRecord[] {
     return this.db.prepare(
-      `SELECT * FROM sessions WHERE status = 'orphaned' AND session_type = 'claude_agent'`
+      `SELECT * FROM sessions WHERE status = 'orphaned' AND session_type != 'run_script'`
     ).all() as SessionRecord[];
   }
 

@@ -75,7 +75,7 @@ function mergePermissions(
  * 2. Dev build (.vite/build/ → project root)
  * 3. Fallback from CWD
  */
-function resolveBridgeScript(name: string): string {
+export function resolveBridgeScript(name: string): string {
   const candidates = [
     path.join(__dirname, `${name}.js`),
     path.resolve(__dirname, '..', '..', 'src', 'main', 'agent', `${name}.js`),

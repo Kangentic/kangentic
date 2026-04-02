@@ -180,7 +180,7 @@ export async function handleTaskMove(
       // No active PTY -- preserve latest exited session for future resume
       const record = sessionRepo.getLatestForTask(task.id);
       if (record && record.agent_session_id
-          && record.session_type === 'claude_agent'
+          && record.session_type !== 'run_script'
           && record.status === 'exited') {
         sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: new Date().toISOString(), suspended_by: 'system' });
         console.log(`[TASK_MOVE] Preserved exited session ${record.id.slice(0, 8)} for future resume`);

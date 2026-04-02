@@ -1,4 +1,4 @@
-import type { SessionUsage, SessionEvent } from '../../shared/types';
+import type { SessionUsage, SessionEvent, SessionRecord } from '../../shared/types';
 import type { ClaudeInfo } from './claude-detector';
 import type { CommandOptions } from './command-builder';
 
@@ -14,7 +14,7 @@ export interface AgentAdapter {
   readonly name: string;
 
   /** The session_type value stored in the sessions DB table. */
-  readonly sessionType: string;
+  readonly sessionType: SessionRecord['session_type'];
 
   /** Detect whether the agent CLI is installed and return path + version. */
   detect(overridePath?: string | null): Promise<AgentInfo>;

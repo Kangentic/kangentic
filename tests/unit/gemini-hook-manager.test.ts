@@ -1,0 +1,193 @@
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import {
+  buildGeminiEventHooks,
+  stripGeminiKangenticHooks,
+} from '../../src/main/agent/gemini-hook-manager';
+
+let tmpDir: string;
+const EVENT_BRIDGE = '/fake/.kangentic/event-bridge.js';
+const EVENTS_PATH = '/fake/.kangentic/sessions/abc/events.jsonl';
+
+function readSettings(): Record<string, unknown> {
+  const settingsPath = path.join(tmpDir, '.gemini', 'settings.json');
+  return JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+}
+
+function settingsExists(): boolean {
+  return fs.existsSync(path.join(tmpDir, '.gemini', 'settings.json'));
+}
+
+beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-hookman-'));
+});
+
+afterEach(() => {
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+describe('gemini-hook-manager', () => {
+  describe('buildGeminiEventHooks', () => {
+    it('produces correct hook entries for all 8 mapped event types', () => {
+      const hooks = buildGeminiEventHooks(EVENT_BRIDGE, EVENTS_PATH, {});
+
+      // BeforeTool: tool_start
+      expect(hooks.BeforeTool).toHaveLength(1);
+      expect(hooks.BeforeTool[0].matcher).toBe('*');
+      expect(hooks.BeforeTool[0].hooks[0].command).toContain('event-bridge');
+      expect(hooks.BeforeTool[0].hooks[0].command).toContain('tool_start');
+      expect(hooks.BeforeTool[0].hooks[0].name).toBe('kangentic-tool_start');
+
+      // AfterTool: tool_end
+      expect(hooks.AfterTool).toHaveLength(1);
+      expect(hooks.AfterTool[0].hooks[0].command).toContain('tool_end');
+
+      // SessionStart: session_start
+      expect(hooks.SessionStart).toHaveLength(1);
+      expect(hooks.SessionStart[0].hooks[0].command).toContain('session_start');
+
+      // SessionEnd: session_end
+      expect(hooks.SessionEnd).toHaveLength(1);
+      expect(hooks.SessionEnd[0].hooks[0].command).toContain('session_end');
+
+      // AfterAgent: idle
+      expect(hooks.AfterAgent).toHaveLength(1);
+      expect(hooks.AfterAgent[0].hooks[0].command).toContain('idle');
+
+      // BeforeAgent: prompt
+      expect(hooks.BeforeAgent).toHaveLength(1);
+      expect(hooks.BeforeAgent[0].hooks[0].command).toContain('prompt');
+
+      // Notification: notification
+      expect(hooks.Notification).toHaveLength(1);
+      expect(hooks.Notification[0].hooks[0].command).toContain('notification');
+
+      // PreCompress: compact
+      expect(hooks.PreCompress).toHaveLength(1);
+      expect(hooks.PreCompress[0].hooks[0].command).toContain('compact');
+
+      // Total: 8 hook event keys
+      expect(Object.keys(hooks)).toHaveLength(8);
+    });
+
+    it('preserves existing user hooks', () => {
+      const existing = {
+        BeforeTool: [
+          { matcher: 'write_file', hooks: [{ name: 'security', type: 'command', command: 'echo user-check' }] },
+        ],
+        BeforeAgent: [
+          { matcher: '*', hooks: [{ name: 'memory', type: 'command', command: 'echo inject-memory' }] },
+        ],
+      };
+
+      const hooks = buildGeminiEventHooks(EVENT_BRIDGE, EVENTS_PATH, existing);
+
+      // BeforeTool: 1 user + 1 event-bridge
+      expect(hooks.BeforeTool).toHaveLength(2);
+      expect(hooks.BeforeTool[0].hooks[0].command).toBe('echo user-check');
+
+      // BeforeAgent: 1 user + 1 event-bridge
+      expect(hooks.BeforeAgent).toHaveLength(2);
+      expect(hooks.BeforeAgent[0].hooks[0].command).toBe('echo inject-memory');
+    });
+
+    it('hook entries include name field (Gemini requirement)', () => {
+      const hooks = buildGeminiEventHooks(EVENT_BRIDGE, EVENTS_PATH, {});
+
+      for (const entries of Object.values(hooks)) {
+        for (const entry of entries) {
+          for (const hook of entry.hooks) {
+            expect(hook.name).toBeDefined();
+            expect(hook.name).toMatch(/^kangentic-/);
+          }
+        }
+      }
+    });
+  });
+
+  describe('stripGeminiKangenticHooks', () => {
+    it('removes kangentic hooks, preserves user hooks', () => {
+      const geminiDir = path.join(tmpDir, '.gemini');
+      fs.mkdirSync(geminiDir, { recursive: true });
+      const settings = {
+        hooks: {
+          BeforeTool: [
+            { matcher: '*', hooks: [{ name: 'kangentic-tool_start', type: 'command', command: `node "${EVENT_BRIDGE}" "${EVENTS_PATH}" tool_start` }] },
+            { matcher: 'write_file', hooks: [{ name: 'security', type: 'command', command: 'echo user-check' }] },
+          ],
+          AfterTool: [
+            { matcher: '*', hooks: [{ name: 'kangentic-tool_end', type: 'command', command: `node "${EVENT_BRIDGE}" "${EVENTS_PATH}" tool_end` }] },
+          ],
+          BeforeAgent: [
+            { matcher: '*', hooks: [{ name: 'memory', type: 'command', command: 'echo inject-memory' }] },
+          ],
+        },
+      };
+      fs.writeFileSync(
+        path.join(geminiDir, 'settings.json'),
+        JSON.stringify(settings, null, 2),
+      );
+
+      stripGeminiKangenticHooks(tmpDir);
+
+      const result = readSettings();
+      const hooks = result.hooks as Record<string, unknown[]>;
+      // BeforeTool: only user hook remains
+      expect(hooks.BeforeTool).toHaveLength(1);
+      expect((hooks.BeforeTool[0] as { hooks: Array<{ command: string }> }).hooks[0].command).toBe('echo user-check');
+      // AfterTool had only kangentic hooks - key removed
+      expect(hooks.AfterTool).toBeUndefined();
+      // BeforeAgent: user hook preserved
+      expect(hooks.BeforeAgent).toHaveLength(1);
+    });
+
+    it('cleans up empty settings file', () => {
+      const geminiDir = path.join(tmpDir, '.gemini');
+      fs.mkdirSync(geminiDir, { recursive: true });
+      const settings = {
+        hooks: {
+          BeforeTool: [
+            { matcher: '*', hooks: [{ name: 'kangentic-tool_start', type: 'command', command: `node "${EVENT_BRIDGE}" "${EVENTS_PATH}" tool_start` }] },
+          ],
+        },
+      };
+      fs.writeFileSync(
+        path.join(geminiDir, 'settings.json'),
+        JSON.stringify(settings, null, 2),
+      );
+
+      stripGeminiKangenticHooks(tmpDir);
+
+      expect(settingsExists()).toBe(false);
+    });
+
+    it('handles missing file', () => {
+      expect(() => stripGeminiKangenticHooks(tmpDir)).not.toThrow();
+    });
+
+    it('preserves non-hook settings', () => {
+      const geminiDir = path.join(tmpDir, '.gemini');
+      fs.mkdirSync(geminiDir, { recursive: true });
+      const settings = {
+        theme: 'dark',
+        hooks: {
+          BeforeTool: [
+            { matcher: '*', hooks: [{ name: 'kangentic-tool_start', type: 'command', command: `node "${EVENT_BRIDGE}" "${EVENTS_PATH}" tool_start` }] },
+          ],
+        },
+      };
+      fs.writeFileSync(
+        path.join(geminiDir, 'settings.json'),
+        JSON.stringify(settings, null, 2),
+      );
+
+      stripGeminiKangenticHooks(tmpDir);
+
+      const result = readSettings();
+      expect(result.theme).toBe('dark');
+      expect(result.hooks).toBeUndefined();
+    });
+  });
+});

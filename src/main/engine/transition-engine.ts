@@ -8,6 +8,7 @@ import { CommandBuilder } from '../agent/command-builder';
 import { ClaudeDetector } from '../agent/claude-detector';
 import { WorktreeManager } from '../git/worktree-manager';
 import { ensureWorktreeTrust, ensureMcpServerTrust } from '../agent/trust-manager';
+import { agentRegistry } from '../agent/agent-registry';
 import { sessionOutputPaths } from './session-paths';
 import type { ActionRepository } from '../db/repositories/action-repository';
 import type { TaskRepository } from '../db/repositories/task-repository';
@@ -143,7 +144,7 @@ export class TransitionEngine {
     const previousSession = this.sessionRepo?.getLatestForTask(task.id);
     const canResume = previousSession
       && previousSession.agent_session_id
-      && previousSession.session_type === 'claude_agent'
+      && previousSession.session_type !== 'run_script'
       && previousSession.status === 'suspended';
 
     console.log(
@@ -225,9 +226,11 @@ export class TransitionEngine {
         });
       }
 
+      const agentName = config.agent || 'claude';
+      const sessionType = agentRegistry.get(agentName)?.sessionType ?? 'claude_agent';
       this.sessionRepo.insert({
         task_id: task.id,
-        session_type: 'claude_agent',
+        session_type: sessionType,
         agent_session_id: agentSessionId,
         command,
         cwd,
