@@ -86,7 +86,7 @@ export const useConfigStore = create<ConfigStore>((set, get) => ({
     // Re-detect Claude when the CLI path setting changes so the UI
     // updates immediately instead of requiring an app restart.
     if (partial.claude) {
-      get().detectClaude();
+      get().detectAgent();
     }
   },
 

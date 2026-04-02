@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+import fs from 'node:fs';
 import which from 'which';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
