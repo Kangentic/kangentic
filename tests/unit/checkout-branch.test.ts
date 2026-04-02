@@ -31,6 +31,7 @@ vi.mock('node:fs', () => ({
 }));
 
 vi.mock('node:child_process', () => ({
+  execFile: vi.fn(), // required by transitive import of claude-detector
   execFileSync: vi.fn(),
 }));
 
