@@ -86,7 +86,7 @@ const server = new McpServer({
 server.registerTool(
   'kangentic_create_task',
   {
-    description: 'Create a new task on the Kangentic board. Use this when you identify work that should be tracked separately (bugs, refactoring opportunities, follow-ups, improvements).',
+    description: 'Create a new task on the Kangentic board in the To Do column (default). This is the primary tool for creating tasks - use it whenever the user asks to "create a task", "add a todo", "create a todo task", or similar. Tasks get a git branch and are ready to work on immediately. Use this when you identify work that should be tracked separately (bugs, refactoring opportunities, follow-ups, improvements).',
     inputSchema: z.object({
       title: z.string().max(200).describe('Task title (max 200 characters)'),
       description: z.string().max(10000).optional().describe('Task description. Supports markdown.'),
@@ -533,7 +533,7 @@ server.registerTool(
 server.registerTool(
   'kangentic_create_backlog_task',
   {
-    description: 'Create a new task in the backlog staging area. Use this for work that should be tracked but is not ready for the board yet (future tasks, ideas, improvements). Unlike kangentic_create_task, backlog tasks do not have branches or worktrees.',
+    description: 'Create a new task in the backlog staging area. The backlog is a parking lot for future ideas - NOT the To Do column. Only use this when the user explicitly says "backlog" or "add to backlog". If the user says "create a task" or "create a todo task", use kangentic_create_task instead. Unlike kangentic_create_task, backlog tasks do not have branches or worktrees.',
     inputSchema: z.object({
       title: z.string().max(200).describe('Task title (max 200 characters).'),
       description: z.string().max(10000).optional().describe('Task description. Supports markdown.'),

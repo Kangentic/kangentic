@@ -299,6 +299,12 @@ test.describe('Merged Settings Hooks', () => {
 });
 
 test.describe('Activity State via IPC', () => {
+  // Derive the events path from the session spawned in the first test.
+  // Using the session ID from terminal output is more reliable than scanning
+  // the filesystem for settings.json files (which breaks when multiple
+  // session dirs exist or file system caching delays visibility).
+  let eventsPathForBlock: string | null = null;
+
   test.beforeEach(async () => {
     await ensureBoard();
   });
@@ -308,9 +314,15 @@ test.describe('Activity State via IPC', () => {
     await createTask(page, title, 'Check default idle state');
 
     await dragTaskToColumn(title, 'Code Review');
-    await waitForTerminalOutput('MOCK_CLAUDE_SESSION:');
+    const scrollback = await waitForTerminalOutput('MOCK_CLAUDE_SESSION:');
 
-    // Check activity cache has 'idle' for the session (safe default --
+    // Extract the Claude session ID from mock output and build the events path
+    const sessionIdMatch = scrollback.match(/MOCK_CLAUDE_SESSION:([^\s\r\n]+)/);
+    expect(sessionIdMatch).toBeTruthy();
+    const agentSessionId = sessionIdMatch![1];
+    eventsPathForBlock = path.join(tmpDir, '.kangentic', 'sessions', agentSessionId, 'events.jsonl');
+
+    // Check activity cache has 'idle' for the session (safe default -
     // 'thinking' is only set when hooks explicitly fire)
     const activity = await page.evaluate(async () => {
       return window.electronAPI.sessions.getActivity();
@@ -321,8 +333,8 @@ test.describe('Activity State via IPC', () => {
   });
 
   test('writing events JSONL transitions state to thinking', async () => {
-    // Find the events output path from the merged settings
-    const eventsPath = findEventsOutputPath();
+    // Use path derived from the first test, fall back to filesystem scan
+    const eventsPath = eventsPathForBlock || findEventsOutputPath();
     expect(eventsPath).toBeTruthy();
 
     // Ensure directory exists
@@ -347,7 +359,7 @@ test.describe('Activity State via IPC', () => {
   });
 
   test('writing idle event transitions state back to idle', async () => {
-    const eventsPath = findEventsOutputPath();
+    const eventsPath = eventsPathForBlock || findEventsOutputPath();
     expect(eventsPath).toBeTruthy();
 
     // Write idle event (simulating Stop hook)
