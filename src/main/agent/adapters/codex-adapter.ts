@@ -52,7 +52,9 @@ class CodexDetector {
         timeout: 5000,
         shell: process.platform === 'win32',
       });
-      return stdout.trim() || stderr.trim() || null;
+      const raw = stdout.trim() || stderr.trim() || null;
+      // `codex --version` outputs e.g. "codex-cli 0.118.0" - strip the product name prefix
+      return raw?.replace(/^codex-cli\s+/i, '') ?? null;
     } catch {
       return null;
     }
@@ -285,6 +287,7 @@ function buildCodexCommand(options: SpawnCommandOptions): string {
  */
 export class CodexAdapter implements AgentAdapter {
   readonly name = 'codex';
+  readonly displayName = 'Codex CLI';
   readonly sessionType = 'codex_agent';
 
   private readonly detector = new CodexDetector();

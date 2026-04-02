@@ -19,6 +19,7 @@ const execFileAsync = promisify(execFile);
  */
 export class AiderAdapter implements AgentAdapter {
   readonly name = 'aider';
+  readonly displayName = 'Aider';
   readonly sessionType = 'aider_agent';
 
   private cachedDetection: AgentInfo | null = null;
@@ -56,7 +57,9 @@ export class AiderAdapter implements AgentAdapter {
         timeout: 5000,
         shell: process.platform === 'win32',
       });
-      return stdout.trim() || stderr.trim() || null;
+      const raw = stdout.trim() || stderr.trim() || null;
+      // `aider --version` outputs e.g. "aider 86.2" - strip the product name prefix
+      return raw?.replace(/^aider\s+/i, '') ?? null;
     } catch {
       return null;
     }

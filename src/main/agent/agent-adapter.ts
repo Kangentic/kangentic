@@ -13,6 +13,9 @@ export interface AgentAdapter {
   /** Unique identifier for this agent type (e.g. 'claude', 'codex', 'aider'). */
   readonly name: string;
 
+  /** Human-readable product name (e.g. 'Claude Code', 'Codex CLI', 'Aider'). */
+  readonly displayName: string;
+
   /** The session_type value stored in the sessions DB table. */
   readonly sessionType: SessionRecord['session_type'];
 

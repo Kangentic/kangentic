@@ -209,7 +209,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 ### Agents (1 channel)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `agent:list` | invoke | List all detected agent CLIs with name, path, and version |
+| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version) |
 
 ### Shell (5 channels)
 | Channel | Pattern | Purpose |

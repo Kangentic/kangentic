@@ -12,6 +12,7 @@ import type { SessionUsage, SessionEvent } from '../../../shared/types';
  */
 export class GeminiAdapter implements AgentAdapter {
   readonly name = 'gemini';
+  readonly displayName = 'Gemini CLI';
   readonly sessionType = 'gemini_agent';
 
   private readonly detector = new GeminiDetector();

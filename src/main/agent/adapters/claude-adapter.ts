@@ -13,6 +13,7 @@ import type { SessionUsage, SessionEvent } from '../../../shared/types';
  */
 export class ClaudeAdapter implements AgentAdapter {
   readonly name = 'claude';
+  readonly displayName = 'Claude Code';
   readonly sessionType = 'claude_agent';
 
   private readonly detector = new ClaudeDetector();

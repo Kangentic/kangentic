@@ -903,7 +903,7 @@
 
     agents: {
       list: async function () {
-        return [{ name: 'claude', found: true, path: '/usr/bin/claude', version: '2.1.72' }];
+        return [{ name: 'claude', displayName: 'Claude Code', found: true, path: '/usr/bin/claude', version: '2.1.72' }];
       },
     },
 

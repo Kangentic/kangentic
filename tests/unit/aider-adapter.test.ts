@@ -21,6 +21,17 @@ vi.mock('which', () => ({
   },
 }));
 
+vi.mock('node:fs', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...original,
+    default: {
+      ...original,
+      existsSync: () => true,
+    },
+  };
+});
+
 vi.mock('node:child_process', async (importOriginal) => {
   const original = await importOriginal<typeof import('node:child_process')>();
   return {
@@ -83,7 +94,7 @@ describe('AiderAdapter', () => {
       const result = await adapter.detect('/custom/aider');
       expect(result.found).toBe(true);
       expect(result.path).toBe('/custom/aider');
-      expect(result.version).toBe('aider v0.50.1');
+      expect(result.version).toBe('v0.50.1');
     });
 
     it('falls back to which when no override path', async () => {

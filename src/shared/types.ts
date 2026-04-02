@@ -25,6 +25,7 @@ export interface Project {
 
 export interface AgentDetectionInfo {
   name: string;
+  displayName: string;
   found: boolean;
   path: string | null;
   version: string | null;

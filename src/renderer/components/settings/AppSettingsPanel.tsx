@@ -290,10 +290,10 @@ function AgentTab({ config, globalConfig, agentInfo, agentList }: { config: AppC
         >
           {agentList.map((agent) => (
             <option key={agent.name} value={agent.name}>
-              {agent.name}{agent.found ? ` (${agent.version ?? 'detected'})` : ' (not found)'}
+              {agent.displayName ?? agent.name}{agent.found ? (agent.version ? ` ${agent.version}` : '') : ' (not found)'}
             </option>
           ))}
-          {agentList.length === 0 && <option value="claude">claude</option>}
+          {agentList.length === 0 && <option value="claude">Claude Code</option>}
         </Select>
       </SettingRow>
       <SettingRow {...settingProps('claude.cliPath')}>

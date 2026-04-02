@@ -18,6 +18,21 @@ const AGENT_META: Record<string, AgentMeta> = {
     short: 'Claude',
     installUrl: 'https://docs.anthropic.com/en/docs/claude-code/overview',
   },
+  codex: {
+    display: 'Codex CLI',
+    short: 'Codex',
+    installUrl: 'https://github.com/openai/codex',
+  },
+  gemini: {
+    display: 'Gemini CLI',
+    short: 'Gemini',
+    installUrl: 'https://github.com/google-gemini/gemini-cli',
+  },
+  aider: {
+    display: 'Aider',
+    short: 'Aider',
+    installUrl: 'https://aider.chat',
+  },
 };
 
 /** Full product name for an agent identifier (e.g. 'claude' -> 'Claude Code'). */

@@ -47,7 +47,9 @@ export class ClaudeDetector {
         timeout: 5000,
         shell: process.platform === 'win32',
       });
-      return stdout.trim() || stderr.trim() || null;
+      const raw = stdout.trim() || stderr.trim() || null;
+      // `claude --version` outputs e.g. "2.1.90 (Claude Code)" - strip the product name suffix
+      return raw?.replace(/\s*\(Claude Code\)\s*$/i, '') ?? null;
     } catch {
       return null;
     }
