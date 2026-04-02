@@ -4,6 +4,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, autoSpawnForTask } from '../helpers';
+import { WorktreeManager } from '../../git/worktree-manager';
 import { handleTaskMove } from './tasks';
 import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
@@ -372,6 +373,39 @@ export function registerSessionHandlers(context: IpcContext): void {
     if (!context.mainWindow.isDestroyed()) {
       const projectId = context.sessionManager.getSessionProjectId(sessionId);
       context.mainWindow.webContents.send(IPC.TASK_UPDATED_BY_AGENT, task.id, task.title, projectId);
+    }
+  });
+
+  // Forward task-deleted-by-agent events to renderer for board refresh
+  context.sessionManager.on('task-deleted', (sessionId: string, task: { id: string; title: string; session_id: string | null; worktree_path: string | null; branch_name: string | null }) => {
+    // Kill PTY session if still running
+    if (task.session_id) {
+      try {
+        context.sessionManager.kill(task.session_id);
+        context.sessionManager.remove(task.session_id);
+      } catch { /* may already be dead */ }
+    }
+    context.sessionManager.removeByTaskId(task.id);
+    // Fire-and-forget: remove worktree + branch
+    const projectPath = context.currentProjectPath;
+    if (task.worktree_path && projectPath) {
+      const worktreeManager = new WorktreeManager(projectPath);
+      worktreeManager.withLock(async () => {
+        const removed = await worktreeManager.removeWorktree(task.worktree_path!);
+        if (removed && task.branch_name) {
+          const config = context.configManager.getEffectiveConfig(projectPath);
+          if (config.git.autoCleanup) {
+            try { await worktreeManager.pruneWorktrees(); } catch { /* best effort */ }
+            await worktreeManager.removeBranch(task.branch_name);
+          }
+        }
+      }).catch((error) => {
+        console.error(`[MCP delete] Worktree cleanup failed for task ${task.id.slice(0, 8)}:`, error);
+      });
+    }
+    if (!context.mainWindow.isDestroyed()) {
+      const projectId = context.sessionManager.getSessionProjectId(sessionId);
+      context.mainWindow.webContents.send(IPC.TASK_DELETED_BY_AGENT, task.id, task.title, projectId);
     }
   });
 

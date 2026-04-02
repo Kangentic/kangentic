@@ -411,6 +411,20 @@ export function App() {
       }));
     }
 
+    // Task deleted by agent (MCP server)
+    if (tasks?.onDeletedByAgent) {
+      cleanups.push(tasks.onDeletedByAgent((_taskId, taskTitle, deletedByAgentProjectId) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (!deletedByAgentProjectId || deletedByAgentProjectId === activeProjectId) {
+          useBoardStore.getState().loadBoard();
+        }
+        useToastStore.getState().addToast({
+          message: `Task deleted by agent: "${taskTitle}"`,
+          variant: 'info',
+        });
+      }));
+    }
+
     // Backlog changed by agent (MCP server created/promoted backlog tasks)
     const backlog = window.electronAPI?.backlog;
     if (backlog?.onChangedByAgent) {

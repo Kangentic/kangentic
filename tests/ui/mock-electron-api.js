@@ -550,6 +550,9 @@
       onUpdatedByAgent: function () {
         return noop;
       },
+      onDeletedByAgent: function () {
+        return noop;
+      },
       unarchive: async function (input) {
         var idx = archivedTasks.findIndex(function (t) {
           return t.id === input.id;

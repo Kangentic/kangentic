@@ -10,6 +10,7 @@ interface SessionFileWatcherCallbacks {
   onEventsFileChanged(sessionId: string, eventsOutputPath: string): void;
   onTaskCreated(sessionId: string, task: Task, columnName: string, swimlaneId: string): void;
   onTaskUpdated(sessionId: string, task: Task): void;
+  onTaskDeleted(sessionId: string, task: Task): void;
   onBacklogChanged(sessionId: string): void;
   onLabelColorsChanged(sessionId: string, colors: Record<string, string>): void;
 }
@@ -133,6 +134,9 @@ export class SessionFileWatcher {
         },
         onTaskUpdated: (task) => {
           this.callbacks.onTaskUpdated(sessionId, task);
+        },
+        onTaskDeleted: (task) => {
+          this.callbacks.onTaskDeleted(sessionId, task);
         },
         onBacklogChanged: () => {
           this.callbacks.onBacklogChanged(sessionId);

@@ -6,6 +6,7 @@ export interface CommandContext {
   getProjectPath: () => string;
   onTaskCreated: (task: Task, columnName: string, swimlaneId: string) => void;
   onTaskUpdated: (task: Task) => void;
+  onTaskDeleted: (task: Task) => void;
   onBacklogChanged: () => void;
   onLabelColorsChanged: (colors: Record<string, string>) => void;
 }

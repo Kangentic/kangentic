@@ -88,6 +88,7 @@ export class SessionManager extends EventEmitter {
       },
       onTaskCreated: (sessionId, task, columnName, swimlaneId) => this.emit('task-created', sessionId, task, columnName, swimlaneId),
       onTaskUpdated: (sessionId, task) => this.emit('task-updated', sessionId, task),
+      onTaskDeleted: (sessionId, task) => this.emit('task-deleted', sessionId, task),
       onBacklogChanged: (sessionId) => this.emit('backlog-changed', sessionId),
       onLabelColorsChanged: (sessionId, colors) => this.emit('label-colors-changed', sessionId, colors),
     });

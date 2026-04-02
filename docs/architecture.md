@@ -54,7 +54,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `projectGroup:reorder` | invoke | Reorder groups by ID array |
 | `projectGroup:setCollapsed` | invoke | Toggle group collapsed state |
 
-### Tasks (13 channels)
+### Tasks (14 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |
@@ -70,6 +70,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `task:autoMoved` | on | Event: task was auto-moved by transition engine |
 | `task:createdByAgent` | on | Event: task was created by an agent via MCP tool call |
 | `task:updatedByAgent` | on | Event: task was updated by an agent via MCP tool call |
+| `task:deletedByAgent` | on | Event: task was deleted by an agent via MCP tool call |
 
 ### Attachments (5 channels)
 | Channel | Pattern | Purpose |

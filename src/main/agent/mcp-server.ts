@@ -468,6 +468,40 @@ server.registerTool(
   },
 );
 
+// --- kangentic_delete_task ---
+server.registerTool(
+  'kangentic_delete_task',
+  {
+    description: 'Permanently delete a task from the Kangentic board. This removes the task, its attachments, and session records. The associated worktree and branch may also be cleaned up. Find the task ID first with kangentic_find_task or kangentic_search_tasks.',
+    inputSchema: z.object({
+      taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
+    }),
+  },
+  async ({ taskId }) => {
+    console.error('[mcp] delete_task params:', JSON.stringify({ taskId }));
+    try {
+      const response = await sendCommand('delete_task', { taskId });
+
+      if (!response.success) {
+        return {
+          content: [{ type: 'text' as const, text: `Failed to delete task: ${response.error}` }],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [{ type: 'text' as const, text: response.message ?? 'Task deleted.' }],
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: 'text' as const, text: `Error deleting task: ${errorMessage}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // --- kangentic_list_backlog ---
 server.registerTool(
   'kangentic_list_backlog',

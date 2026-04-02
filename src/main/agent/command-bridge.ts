@@ -23,6 +23,7 @@ interface CommandBridgeOptions {
   getProjectPath: () => string;
   onTaskCreated: (task: Task, columnName: string, swimlaneId: string) => void;
   onTaskUpdated: (task: Task) => void;
+  onTaskDeleted: (task: Task) => void;
   onBacklogChanged: () => void;
   onLabelColorsChanged: (colors: Record<string, string>) => void;
 }
@@ -52,6 +53,7 @@ export class CommandBridge {
       getProjectPath: options.getProjectPath,
       onTaskCreated: options.onTaskCreated,
       onTaskUpdated: options.onTaskUpdated,
+      onTaskDeleted: options.onTaskDeleted,
       onBacklogChanged: options.onBacklogChanged,
       onLabelColorsChanged: options.onLabelColorsChanged,
     };

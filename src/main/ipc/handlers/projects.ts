@@ -291,6 +291,37 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
           );
         }
       },
+      onTaskDeleted: (task) => {
+        // Kill PTY session
+        if (task.session_id) {
+          try {
+            context.sessionManager.kill(task.session_id);
+            context.sessionManager.remove(task.session_id);
+          } catch { /* may already be dead */ }
+        }
+        context.sessionManager.removeByTaskId(task.id);
+        // Fire-and-forget: remove worktree + branch
+        if (task.worktree_path) {
+          const worktreeManager = new WorktreeManager(project.path);
+          worktreeManager.withLock(async () => {
+            const removed = await worktreeManager.removeWorktree(task.worktree_path!);
+            if (removed && task.branch_name) {
+              const config = context.configManager.getEffectiveConfig(project.path);
+              if (config.git.autoCleanup) {
+                try { await worktreeManager.pruneWorktrees(); } catch { /* best effort */ }
+                await worktreeManager.removeBranch(task.branch_name);
+              }
+            }
+          }).catch((error) => {
+            console.error(`[MCP delete] Worktree cleanup failed for task ${task.id.slice(0, 8)}:`, error);
+          });
+        }
+        if (!context.mainWindow.isDestroyed()) {
+          context.mainWindow.webContents.send(
+            IPC.TASK_DELETED_BY_AGENT, task.id, task.title, project.id
+          );
+        }
+      },
       onBacklogChanged: () => {
         if (!context.mainWindow.isDestroyed()) {
           context.mainWindow.webContents.send(IPC.BACKLOG_CHANGED_BY_AGENT, project.id);

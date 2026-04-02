@@ -1,5 +1,6 @@
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
+import { SessionRepository } from '../../db/repositories/session-repository';
 import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
@@ -103,5 +104,42 @@ export const handleUpdateTask: CommandHandler = (
     success: true,
     message: `Updated ${changedFields.join(' and ')} for "${updated.title}".`,
     data: { id: updated.id, title: updated.title, description: updated.description, prUrl: updated.pr_url, prNumber: updated.pr_number },
+  };
+};
+
+export const handleDeleteTask: CommandHandler = (
+  params: Record<string, unknown>,
+  context: CommandContext,
+): CommandResponse => {
+  const taskId = params.taskId as string;
+
+  if (!taskId) {
+    return { success: false, error: 'taskId is required' };
+  }
+
+  const db = context.getProjectDb();
+  const taskRepo = new TaskRepository(db);
+  const task = resolveTask(taskRepo, taskId);
+  if (!task) {
+    return { success: false, error: `Task "${taskId}" not found` };
+  }
+
+  const attachmentRepo = new AttachmentRepository(db);
+  const sessionRepo = new SessionRepository(db);
+
+  // Delete attachments and session records before task (FK constraints)
+  attachmentRepo.deleteByTaskId(task.id);
+  sessionRepo.deleteByTaskId(task.id);
+
+  // Fire-and-forget async cleanup (PTY kill, worktree removal, renderer notification)
+  context.onTaskDeleted(task);
+
+  // Delete the task from DB
+  taskRepo.delete(task.id);
+
+  return {
+    success: true,
+    message: `Deleted task "${task.title}" (#${task.display_id}).`,
+    data: { id: task.id, displayId: task.display_id, title: task.title },
   };
 };
