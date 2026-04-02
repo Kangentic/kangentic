@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react'
 import { Loader2 } from 'lucide-react';
 import { FileTreePanel } from './FileTreePanel';
 import { useSessionStore } from '../../../../stores/session-store';
+import { useConfigStore } from '../../../../stores/config-store';
 import type { Task, GitDiffFileEntry, GitDiffFilesResult, GitFileContentResult } from '../../../../../shared/types';
 
 const DiffViewer = lazy(() => import('./DiffViewer').then((module) => ({ default: module.DiffViewer })));
@@ -30,7 +31,8 @@ export function ChangesPanel({ task, projectPath }: ChangesPanelProps) {
   const [viewMode, setViewMode] = useState<'split' | 'inline'>('split');
 
   const worktreePath = task.worktree_path ?? undefined;
-  const baseBranch = task.base_branch ?? 'main';
+  const defaultBaseBranch = useConfigStore((s) => s.config.git.defaultBaseBranch);
+  const baseBranch = task.base_branch || defaultBaseBranch || 'main';
 
   // Refs for values needed inside the onDiffChanged callback to avoid
   // stale closures and subscription churn on every file selection.

@@ -375,7 +375,7 @@ export function FileTreePanel({
           files={filteredFiles}
           selectedFile={selectedFile}
           onSelect={onSelect}
-          defaultExpanded={filteredFiles.length <= 50}
+          defaultExpanded
         />
       )}
     </div>

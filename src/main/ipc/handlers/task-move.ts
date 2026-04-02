@@ -31,11 +31,12 @@ async function captureGitStats(
   sessionRepo: SessionRepository,
   recordId: string,
   projectPath: string | null | undefined,
+  defaultBaseBranch?: string,
 ): Promise<void> {
   const gitDir = task.worktree_path ?? projectPath;
   if (!gitDir) return;
 
-  const baseBranch = task.base_branch ?? 'main';
+  const baseBranch = task.base_branch || defaultBaseBranch || 'main';
   const git = simpleGit(gitDir);
 
   // Compare all changes (committed + uncommitted) against the merge-base.
@@ -190,7 +191,10 @@ export async function handleTaskMove(
     const latestRecord = sessionRepo.getLatestForTask(task.id);
     if (latestRecord) {
       try {
-        await captureGitStats(task, sessionRepo, latestRecord.id, resolvedProjectPath);
+        const effectiveConfig = context.configManager.getEffectiveConfig(resolvedProjectPath || undefined);
+        const boardDefaultBranch = context.boardConfigManager.getDefaultBaseBranch();
+        const effectiveDefaultBranch = boardDefaultBranch || effectiveConfig.git.defaultBaseBranch;
+        await captureGitStats(task, sessionRepo, latestRecord.id, resolvedProjectPath, effectiveDefaultBranch);
       } catch {
         // Git stats capture is best-effort
       }
