@@ -133,7 +133,7 @@ On project open (`session-recovery.ts`):
 
 1. **Prune orphaned worktrees** -- delete tasks whose worktree directories were removed externally
 2. **Mark crash recovery** -- leftover `running` DB records become `orphaned` (skip records with live PTYs to handle re-entrant calls)
-3. **Collect candidates** -- all `suspended` + `orphaned` claude_agent records
+3. **Collect candidates** -- all `suspended` + `orphaned` agent records (`claude_agent`, `codex_agent`)
 4. **Deduplicate** -- keep only the latest record per `task_id`, mark older duplicates as `exited`
 5. **Filter** -- skip tasks in non-auto-spawn columns, skip user-paused sessions (`suspended_by = 'user'`), skip missing CWD, skip deleted/archived tasks
 6. **Resume or respawn**:

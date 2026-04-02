@@ -1,5 +1,6 @@
 import type { AgentAdapter } from './agent-adapter';
 import { ClaudeAdapter } from './adapters/claude-adapter';
+import { CodexAdapter } from './adapters/codex-adapter';
 
 class AgentRegistry {
   private adapters = new Map<string, AgentAdapter>();
@@ -29,6 +30,7 @@ class AgentRegistry {
   }
 }
 
-/** Singleton agent registry with 'claude' pre-registered. */
+/** Singleton agent registry with built-in adapters pre-registered. */
 export const agentRegistry = new AgentRegistry();
 agentRegistry.register(new ClaudeAdapter());
+agentRegistry.register(new CodexAdapter());

@@ -166,7 +166,7 @@ Index: `idx_transitions_from_to` on (from_swimlane_id, to_swimlane_id).
 | lines_removed | INTEGER | | NULL |
 | files_changed | INTEGER | | NULL |
 
-Valid session_type values: `claude_agent`, `run_script`.
+Valid session_type values: `claude_agent`, `codex_agent`, `run_script`.
 
 Valid status values: `running`, `queued`, `suspended`, `exited`, `orphaned`.
 
