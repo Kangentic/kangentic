@@ -83,6 +83,11 @@ export const useConfigStore = create<ConfigStore>((set, get) => ({
     await window.electronAPI.config.set(partial);
     const configs = await refreshConfigs();
     set(configs);
+    // Re-detect Claude when the CLI path setting changes so the UI
+    // updates immediately instead of requiring an app restart.
+    if (partial.claude) {
+      get().detectAgent();
+    }
   },
 
   loadAppVersion: async () => {
