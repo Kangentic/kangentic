@@ -35,19 +35,26 @@ class CodexDetector {
   private async performDetection(overridePath?: string | null): Promise<AgentInfo> {
     try {
       const codexPath = overridePath || await which('codex');
-      let version: string | null = null;
-      try {
-        const { stdout } = await execFileAsync(codexPath, ['--version'], {
-          timeout: 5000,
-        });
-        version = stdout.trim();
-      } catch { /* version detection failed */ }
-
+      const version = await this.extractVersion(codexPath);
       this.cached = { found: true, path: codexPath, version };
       return this.cached;
+    } catch { /* not on PATH */ }
+
+    this.cached = { found: false, path: null, version: null };
+    return this.cached;
+  }
+
+  /** Run --version and return the version string, or null on failure. */
+  private async extractVersion(candidatePath: string): Promise<string | null> {
+    try {
+      if (!fs.existsSync(candidatePath)) return null;
+      const { stdout, stderr } = await execFileAsync(candidatePath, ['--version'], {
+        timeout: 5000,
+        shell: process.platform === 'win32',
+      });
+      return stdout.trim() || stderr.trim() || null;
     } catch {
-      this.cached = { found: false, path: null, version: null };
-      return this.cached;
+      return null;
     }
   }
 

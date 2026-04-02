@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import which from 'which';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -38,19 +39,26 @@ export class AiderAdapter implements AgentAdapter {
   private async performDetection(overridePath?: string | null): Promise<AgentInfo> {
     try {
       const aiderPath = overridePath || await which('aider');
-      let version: string | null = null;
-      try {
-        const { stdout } = await execFileAsync(aiderPath, ['--version'], {
-          timeout: 5000,
-        });
-        version = stdout.trim();
-      } catch { /* version detection failed */ }
-
+      const version = await this.extractVersion(aiderPath);
       this.cachedDetection = { found: true, path: aiderPath, version };
       return this.cachedDetection;
+    } catch { /* not on PATH */ }
+
+    this.cachedDetection = { found: false, path: null, version: null };
+    return this.cachedDetection;
+  }
+
+  /** Run --version and return the version string, or null on failure. */
+  private async extractVersion(candidatePath: string): Promise<string | null> {
+    try {
+      if (!fs.existsSync(candidatePath)) return null;
+      const { stdout, stderr } = await execFileAsync(candidatePath, ['--version'], {
+        timeout: 5000,
+        shell: process.platform === 'win32',
+      });
+      return stdout.trim() || stderr.trim() || null;
     } catch {
-      this.cachedDetection = { found: false, path: null, version: null };
-      return this.cachedDetection;
+      return null;
     }
   }
 

@@ -8,6 +8,11 @@ vi.mock('which', () => ({
   default: vi.fn().mockResolvedValue('/usr/bin/gemini'),
 }));
 
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return { ...actual, default: { ...actual, existsSync: vi.fn().mockReturnValue(true) } };
+});
+
 vi.mock('node:child_process', () => ({
   execFile: vi.fn((_cmd: string, _args: string[], _opts: unknown, cb: (err: Error | null, result: { stdout: string }) => void) => {
     setTimeout(() => cb(null, { stdout: '1.2.3\n' }), 10);
