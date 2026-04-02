@@ -314,25 +314,6 @@ function AgentTab({ config, globalConfig, agentInfo, agentList }: { config: AppC
           )}
         </div>
       </SettingRow>
-      <SettingRow {...settingProps('claude.maxConcurrentSessions')}>
-        <input
-          type="number"
-          value={globalConfig.claude.maxConcurrentSessions}
-          onChange={(event) => updateGlobal({ claude: { maxConcurrentSessions: Number(event.target.value) } })}
-          min={1}
-          max={20}
-          className={INPUT_CLASS}
-        />
-      </SettingRow>
-      <SettingRow {...settingProps('claude.queueOverflow')}>
-        <Select
-          value={globalConfig.claude.queueOverflow}
-          onChange={(event) => updateGlobal({ claude: { queueOverflow: event.target.value as 'queue' | 'reject' } })}
-        >
-          <option value="queue">Queue</option>
-          <option value="reject">Reject</option>
-        </Select>
-      </SettingRow>
       <SettingRow {...settingProps('claude.idleTimeoutMinutes')}>
         <input
           type="number"
@@ -363,6 +344,28 @@ function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
   return (
     <>
+      <SectionHeader
+        label="Session Limits"
+        searchIds={['claude.maxConcurrentSessions', 'claude.queueOverflow']}
+      />
+      <SettingRow {...settingProps('claude.maxConcurrentSessions')}>
+        <input
+          type="number"
+          value={globalConfig.claude.maxConcurrentSessions}
+          onChange={(event) => updateGlobal({ claude: { maxConcurrentSessions: Number(event.target.value) } })}
+          min={1}
+          className={INPUT_CLASS}
+        />
+      </SettingRow>
+      <SettingRow {...settingProps('claude.queueOverflow')}>
+        <Select
+          value={globalConfig.claude.queueOverflow}
+          onChange={(event) => updateGlobal({ claude: { queueOverflow: event.target.value as 'queue' | 'reject' } })}
+        >
+          <option value="queue">Queue</option>
+          <option value="reject">Reject</option>
+        </Select>
+      </SettingRow>
       <SettingRow {...settingProps('showBoardSearch')}>
         <ToggleSwitch
           checked={globalConfig.showBoardSearch}

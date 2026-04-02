@@ -63,19 +63,19 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
-  test('shows Agent section with CLI Path, Max Sessions, and Idle Timeout', async () => {
+  test('shows Agent section with CLI Path and Idle Timeout', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Agent' }).click();
     await expect(page.locator('text=CLI Path')).toBeVisible();
-    await expect(page.locator('text=Max Concurrent Sessions')).toBeVisible();
-    await expect(page.locator('text=When Max Sessions Reached')).toBeVisible();
     await expect(page.getByText('Idle Timeout (minutes)')).toBeVisible();
     await closeSettings();
   });
 
-  test('shows Behavior section with toggles', async () => {
+  test('shows Behavior section with session limits and toggles', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Behavior' }).click();
+    await expect(page.locator('text=Max Concurrent Sessions')).toBeVisible();
+    await expect(page.locator('text=When Max Sessions Reached')).toBeVisible();
     await expect(page.locator('text=Skip Task Delete Confirmation')).toBeVisible();
     await expect(page.locator('text=Auto-Focus Idle Sessions')).toBeVisible();
     await expect(page.locator('text=Launch All Projects on Startup')).toBeVisible();
@@ -226,10 +226,9 @@ test.describe('Project Settings via Sidebar', () => {
     await expect(page.getByRole('button', { name: 'MCP Server' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Behavior' })).toBeVisible();
 
-    // Agent tab should show ALL settings (no more filtering)
+    // Agent tab should show agent-specific settings
     await page.getByRole('button', { name: 'Agent' }).click();
     await expect(page.locator('text=CLI Path')).toBeVisible();
-    await expect(page.locator('text=Max Concurrent Sessions')).toBeVisible();
 
     await closeSettings();
   });

@@ -315,8 +315,6 @@ The context bar is a status line displayed below the terminal showing session me
 |---------|-------------|
 | Default Agent | Which agent CLI to use for new sessions in this project (per-project) |
 | CLI Path | Path to agent CLI binary (auto-detected if empty) |
-| Max Concurrent Sessions | Limit how many agents can run at the same time (1 to 20) |
-| When Max Sessions Reached | How new agent requests are handled when all slots are in use (Queue or Reject) |
 | Idle Timeout (minutes) | Auto-suspend sessions after N minutes idle; 0 to disable |
 | Permissions | Default permission mode for all sessions (Default, Plan, Accept Edits, Don't Ask, or Bypass) |
 
@@ -354,6 +352,8 @@ These are global-only settings that apply to the entire app.
 
 | Setting | Description |
 |---------|-------------|
+| Max Concurrent Sessions | Limit how many agents can run at the same time |
+| When Max Sessions Reached | How new agent requests are handled when all slots are in use (Queue or Reject) |
 | Skip Task Delete Confirmation | Delete tasks immediately without a confirmation dialog |
 | Auto-Focus Idle Sessions | Automatically switch the bottom panel to the most recently idle session. Off by default - idle sessions show an amber dot on their tab instead. |
 | Launch All Projects on Startup | Start agents across all projects on launch, not just the current one |

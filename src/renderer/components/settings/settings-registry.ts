@@ -41,8 +41,6 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── Agent ──
   { id: 'project.defaultAgent', tabId: 'agent', label: 'Default Agent', description: 'Which agent CLI to use for new sessions', scope: 'project', keywords: ['agent', 'claude', 'default'] },
   { id: 'claude.cliPath', tabId: 'agent', label: 'CLI Path', description: 'Path to agent CLI binary (auto-detected if empty)', scope: 'global', keywords: ['binary', 'executable'] },
-  { id: 'claude.maxConcurrentSessions', tabId: 'agent', label: 'Max Concurrent Sessions', description: 'Limit how many agents can run at the same time', scope: 'global', keywords: ['parallel', 'limit'] },
-  { id: 'claude.queueOverflow', tabId: 'agent', label: 'When Max Sessions Reached', description: 'How new agent requests are handled when all slots are in use', scope: 'global', keywords: ['overflow', 'queue', 'reject'] },
   { id: 'claude.idleTimeoutMinutes', tabId: 'agent', label: 'Idle Timeout (minutes)', description: 'Auto-suspend sessions after this many minutes idle. 0 to disable.', scope: 'global', keywords: ['suspend', 'minutes'] },
   { id: 'claude.permissionMode', tabId: 'agent', label: 'Permissions', description: 'How the agent handles tool approvals', scope: 'project', keywords: ['allowlist', 'bypass', 'approve'] },
 
@@ -58,6 +56,10 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
 
   // ── MCP Server ──
   { id: 'mcpServer.enabled', tabId: 'mcpServer', label: 'Kangentic MCP Server', description: 'Give agents tools to create tasks, query the board, and view session stats', scope: 'global', keywords: ['mcp', 'tools', 'create task', 'agent', 'board', 'query'] },
+
+  // ── Behavior > Session Limits ──
+  { id: 'claude.maxConcurrentSessions', tabId: 'behavior', label: 'Max Concurrent Sessions', description: 'Limit how many agents can run at the same time', scope: 'global', section: 'Session Limits', keywords: ['parallel', 'limit'] },
+  { id: 'claude.queueOverflow', tabId: 'behavior', label: 'When Max Sessions Reached', description: 'How new agent requests are handled when all slots are in use', scope: 'global', section: 'Session Limits', keywords: ['overflow', 'queue', 'reject'] },
 
   // ── Behavior ──
   { id: 'showBoardSearch', tabId: 'behavior', label: 'Show Board Search Bar', description: 'Display the search bar above board columns. Press Ctrl+F (Cmd+F on Mac) to toggle.', scope: 'global', keywords: ['search', 'filter', 'find', 'board'] },
