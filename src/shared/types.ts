@@ -944,6 +944,7 @@ export interface ProjectCreateInput {
   name: string;
   path: string;
   github_url?: string;
+  default_agent?: string;
 }
 
 /** Minimal parsing interface for agent-specific status/event parsing. */

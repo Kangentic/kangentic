@@ -6,6 +6,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { TransitionEngine } from '../../engine/transition-engine';
 import { getProjectDb } from '../../db/database';
 import { interpolateTemplate } from '../../agent/command-builder';
+import { DEFAULT_AGENT } from '../../../shared/types';
 import type { Task, Swimlane } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
@@ -50,7 +51,7 @@ export function createTransitionEngine(
         projectId,
         gitConfig,
         mcpServerEnabled: config.mcpServer?.enabled ?? true,
-        defaultAgent: project?.default_agent ?? 'claude',
+        defaultAgent: project?.default_agent ?? DEFAULT_AGENT,
         cliPathOverrides: config.agent.cliPaths,
       };
     },

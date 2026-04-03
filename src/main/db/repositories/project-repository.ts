@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getGlobalDb } from '../database';
 import type { Project, ProjectCreateInput } from '../../../shared/types';
+import { DEFAULT_AGENT } from '../../../shared/types';
 
 export class ProjectRepository {
   list(): Project[] {
@@ -22,7 +23,7 @@ export class ProjectRepository {
       name: input.name,
       path: input.path,
       github_url: input.github_url || null,
-      default_agent: 'claude',
+      default_agent: input.default_agent || DEFAULT_AGENT,
       group_id: null,
       position: 0,
       last_opened: now,

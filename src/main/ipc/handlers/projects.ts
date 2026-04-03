@@ -16,6 +16,7 @@ import { ensureGitignore, autoSpawnForTask } from '../helpers';
 import { searchProjectEntries } from '../helpers/project-entry-search';
 import { trackEvent } from '../../analytics/analytics';
 import { isShuttingDown } from '../../shutdown-state';
+import { DEFAULT_AGENT } from '../../../shared/types';
 import type { Project, Task, AppConfig, ProjectSearchEntriesInput } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import type { ProjectRepository } from '../../db/repositories/project-repository';
@@ -219,6 +220,26 @@ function getLastProjectOverrides(
 }
 
 /**
+ * Detect installed agents and return the first one found.
+ * Falls back to DEFAULT_AGENT ('claude') if none are detected.
+ */
+async function resolveDefaultAgent(configManager: ConfigManager): Promise<string> {
+  const { agentRegistry } = await import('../../agent/agent-registry');
+  const config = configManager.load();
+  const cliPaths = config.agent.cliPaths;
+  for (const name of agentRegistry.list()) {
+    try {
+      const adapter = agentRegistry.getOrThrow(name);
+      const info = await adapter.detect(cliPaths[name] ?? null);
+      if (info.found) return name;
+    } catch {
+      // Detection failed for this agent (corrupt binary, permission error, etc.) - skip it
+    }
+  }
+  return DEFAULT_AGENT;
+}
+
+/**
  * Find an existing project by path, or create one and open it.
  * Returns the project object.
  */
@@ -233,7 +254,8 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   if (!project) {
     // Create a new project using the directory name
     const name = path.basename(normalized);
-    project = context.projectRepo.create({ name, path: normalized });
+    const defaultAgent = await resolveDefaultAgent(context.configManager);
+    project = context.projectRepo.create({ name, path: normalized, default_agent: defaultAgent });
     // Initialize the project database (creates tables + default swimlanes)
     getProjectDb(project.id);
     // Clone settings from the last modified project (or global defaults if none).
