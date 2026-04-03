@@ -4,8 +4,19 @@ import { useProjectStore } from './project-store';
 
 const MAX_EVENTS_PER_SESSION = 500;
 
-/** Aborts in-flight syncSessions() calls when the project switches. */
-let syncController: AbortController | null = null;
+/** Aborts in-flight syncSessions() calls when the project switches.
+ *  Persisted across HMR via import.meta.hot.data so cancelSync() can
+ *  still abort an in-flight sync after a module replacement. */
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+let syncController: AbortController | null = import.meta.hot?.data?.syncController ?? null;
+
+// @ts-expect-error -- Vite handles import.meta.hot
+if (import.meta.hot) {
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.dispose((data: Record<string, unknown>) => {
+    data.syncController = syncController;
+  });
+}
 
 /** Cancel any in-flight syncSessions() call. Called on project switch. */
 export function cancelSync(): void {

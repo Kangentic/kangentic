@@ -104,8 +104,19 @@ type BoardStore = TaskSlice & SwimlaneSlice & ArchiveSlice & CompletionSlice
 
 /** Generation counter for stale reload protection.
  *  Each moveTask/reorderTaskInColumn increments before async work.
- *  After IPC completes, the reload is only applied if no newer move has started. */
-let moveGeneration = 0;
+ *  After IPC completes, the reload is only applied if no newer move has started.
+ *  Persisted across HMR via import.meta.hot.data to prevent stale-check
+ *  from incorrectly skipping reloads when the counter resets to 0. */
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+let moveGeneration: number = import.meta.hot?.data?.moveGeneration ?? 0;
+
+// @ts-expect-error -- Vite handles import.meta.hot
+if (import.meta.hot) {
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.dispose((data: Record<string, unknown>) => {
+    data.moveGeneration = moveGeneration;
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Slice creators
