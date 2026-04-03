@@ -5,10 +5,33 @@ import { trackEvent, sanitizeErrorMessage } from './analytics/analytics';
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const INITIAL_DELAY_MS = 5000; // 5 seconds after launch
+const RETRY_DELAY_MS = 30_000; // 30 seconds before retry
 
 let checkTimeout: ReturnType<typeof setTimeout> | null = null;
 let checkInterval: ReturnType<typeof setInterval> | null = null;
 let updaterWindow: BrowserWindow | null = null;
+let retrying = false;
+
+/**
+ * Check for updates with a single retry on failure. Transient network errors
+ * (DNS timeout, GitHub API blip) resolve on retry without waiting 4 hours.
+ */
+async function checkWithRetry(): Promise<void> {
+  try {
+    await autoUpdater.checkForUpdates();
+  } catch {
+    console.log('[UPDATER] Check failed, retrying in 30s...');
+    retrying = true;
+    await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+    try {
+      await autoUpdater.checkForUpdates();
+    } catch (retryError) {
+      console.error('[UPDATER] Check failed after retry:', retryError);
+    } finally {
+      retrying = false;
+    }
+  }
+}
 
 /**
  * Initialize the auto-updater for packaged builds (Windows and macOS only).
@@ -25,11 +48,7 @@ export function initUpdater(mainWindow: BrowserWindow): void {
   autoUpdater.autoInstallOnAppQuit = true;
 
   // IPC handlers for renderer
-  ipcMain.handle(IPC.UPDATE_CHECK, () => {
-    autoUpdater.checkForUpdates().catch((error) => {
-      console.error('[UPDATER] Manual check failed:', error);
-    });
-  });
+  ipcMain.handle(IPC.UPDATE_CHECK, () => checkWithRetry());
 
   ipcMain.handle(IPC.UPDATE_INSTALL, () => {
     autoUpdater.quitAndInstall(true, true);
@@ -51,27 +70,26 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     }
   });
 
-  // Log errors but never surface to user
+  // Log errors but never surface to user. Skip analytics during retry to
+  // avoid double-counting transient failures that resolve on second attempt.
   autoUpdater.on('error', (error) => {
     console.error('[UPDATER] Error:', error);
-    trackEvent('app_error', {
-      source: 'updater',
-      message: sanitizeErrorMessage(error.message),
-    });
+    if (!retrying) {
+      trackEvent('app_error', {
+        source: 'updater',
+        message: sanitizeErrorMessage(error.message),
+      });
+    }
   });
 
   // Schedule checks
   checkTimeout = setTimeout(() => {
     console.log('[UPDATER] Checking for updates...');
-    autoUpdater.checkForUpdates().catch((error) => {
-      console.error('[UPDATER] Check failed:', error);
-    });
+    checkWithRetry();
 
     checkInterval = setInterval(() => {
       console.log('[UPDATER] Checking for updates...');
-      autoUpdater.checkForUpdates().catch((error) => {
-        console.error('[UPDATER] Check failed:', error);
-      });
+      checkWithRetry();
     }, CHECK_INTERVAL_MS);
   }, INITIAL_DELAY_MS);
 }
