@@ -54,18 +54,28 @@ function isFlatMap(value: unknown): boolean {
   );
 }
 
+interface DeepMergeOptions {
+  /** When true (default), flat maps (all-primitive-value objects) are replaced
+   *  entirely instead of merged key-by-key. This allows key deletion in
+   *  dictionary-style maps like `labelColors: Record<string, string>`.
+   *  Set to false for config overlay operations where partial overrides
+   *  should merge into the base without dropping unmentioned keys. */
+  replaceFlatMaps?: boolean;
+}
+
 /** Deep-merge source into target (returns new object). Allows null to override.
  *  Flat maps (objects with only primitive values) are replaced entirely, not merged key-by-key.
  *  This allows key deletion in flat maps like `labelColors: Record<string, string>`. */
-export function deepMerge<T extends object>(target: T, source: Partial<T>): T {
+export function deepMerge<T extends object>(target: T, source: Partial<T>, options?: DeepMergeOptions): T {
+  const replaceFlatMaps = options?.replaceFlatMaps !== false;
   const result = { ...target } as Record<string, unknown>;
   for (const [key, value] of Object.entries(source)) {
     if (value === undefined) continue;
     if (value !== null && typeof value === 'object' && !Array.isArray(value) && typeof result[key] === 'object') {
-      if (isFlatMap(value) && isFlatMap(result[key])) {
+      if (replaceFlatMaps && isFlatMap(value) && isFlatMap(result[key])) {
         result[key] = { ...value as Record<string, unknown> };
       } else {
-        result[key] = deepMerge(result[key] as Record<string, unknown>, value as Record<string, unknown>);
+        result[key] = deepMerge(result[key] as Record<string, unknown>, value as Record<string, unknown>, options);
       }
     } else {
       result[key] = value;
@@ -74,9 +84,10 @@ export function deepMerge<T extends object>(target: T, source: Partial<T>): T {
   return result as T;
 }
 
-/** Typed deep-merge for AppConfig (avoids `as unknown as` chains at call sites). */
+/** Typed deep-merge for config overlay (global + project overrides).
+ *  Disables flat-map replacement so partial overrides preserve unmentioned keys. */
 export function deepMergeConfig<T extends object>(base: T, overrides: Partial<T> | Record<string, unknown>): T {
-  return deepMerge(base, overrides as Partial<T>);
+  return deepMerge(base, overrides as Partial<T>, { replaceFlatMaps: false });
 }
 
 /** Simple deep equality check for plain values, arrays, and objects. */

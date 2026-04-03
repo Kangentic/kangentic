@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deepMerge } from '../../src/shared/object-utils';
+import { deepMerge, deepMergeConfig } from '../../src/shared/object-utils';
 
 describe('deepMerge', () => {
   it('merges nested objects recursively when they contain non-primitive values', () => {
@@ -103,6 +103,45 @@ describe('deepMerge', () => {
       const result = deepMerge(target, source as Partial<typeof target>);
       expect(result.colors).toEqual({ a: null });
       expect('b' in result.colors).toBe(false);
+    });
+  });
+
+  describe('replaceFlatMaps: false (config overlay)', () => {
+    it('preserves unmentioned keys in flat map when replaceFlatMaps is false', () => {
+      const target = { terminal: { shell: null, fontSize: 14, fontFamily: 'Menlo', scrollbackLines: 5000, cursorStyle: 'block' } };
+      const source = { terminal: { shell: 'powershell', cursorStyle: 'underline' } };
+      const result = deepMerge(target, source, { replaceFlatMaps: false });
+      expect(result.terminal.fontSize).toBe(14);
+      expect(result.terminal.fontFamily).toBe('Menlo');
+      expect(result.terminal.scrollbackLines).toBe(5000);
+      expect(result.terminal.shell).toBe('powershell');
+      expect(result.terminal.cursorStyle).toBe('underline');
+    });
+
+    it('still allows overriding individual keys', () => {
+      const target = { settings: { enabled: true, count: 5, name: 'test' } };
+      const source = { settings: { count: 10 } };
+      const result = deepMerge(target, source, { replaceFlatMaps: false });
+      expect(result.settings).toEqual({ enabled: true, count: 10, name: 'test' });
+    });
+
+    it('allows null to override in flat maps', () => {
+      const target = { terminal: { shell: 'bash', fontSize: 14 } };
+      const source = { terminal: { shell: null } };
+      const result = deepMerge(target, source as Partial<typeof target>, { replaceFlatMaps: false });
+      expect(result.terminal.shell).toBeNull();
+      expect(result.terminal.fontSize).toBe(14);
+    });
+
+    it('deepMergeConfig uses replaceFlatMaps: false', () => {
+      const base = { terminal: { shell: null, fontSize: 14, fontFamily: 'Menlo', scrollbackLines: 5000, cursorStyle: 'block' } };
+      const overrides = { terminal: { shell: 'powershell' } };
+      const result = deepMergeConfig(base, overrides);
+      expect(result.terminal.fontSize).toBe(14);
+      expect(result.terminal.fontFamily).toBe('Menlo');
+      expect(result.terminal.scrollbackLines).toBe(5000);
+      expect(result.terminal.shell).toBe('powershell');
+      expect(result.terminal.cursorStyle).toBe('block');
     });
   });
 });

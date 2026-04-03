@@ -8,7 +8,7 @@ import type { SettingsTabDefinition, SettingScope, SettingsContentProps } from '
 import { useProjectStore } from '../../stores/project-store';
 import type { AgentDetectionInfo } from '../../../shared/types';
 import type { AppConfig, DeepPartial, NotificationConfig, PermissionMode, ThemeMode, AgentPermissionEntry } from '../../../shared/types';
-import { NAMED_THEMES, nearestPermission, CLAUDE_DEFAULT_PERMISSIONS, DEFAULT_AGENT } from '../../../shared/types';
+import { NAMED_THEMES, nearestPermission, CLAUDE_DEFAULT_PERMISSIONS, DEFAULT_AGENT, DEFAULT_CONFIG } from '../../../shared/types';
 import { deepMergeConfig } from '../../../shared/object-utils';
 import { agentDisplayName } from '../../utils/agent-display-name';
 import { settingProps } from './settings-registry';
@@ -210,29 +210,40 @@ function TerminalTab({ config, globalConfig, shells }: { config: AppConfig; glob
       <SettingRow {...settingProps('terminal.fontSize')}>
         <input
           type="number"
-          value={config.terminal.fontSize}
-          onChange={(event) => updateProject({ terminal: { fontSize: Number(event.target.value) } })}
+          value={config.terminal.fontSize ?? DEFAULT_CONFIG.terminal.fontSize}
+          onChange={(event) => {
+            if (event.target.value === '') return;
+            const value = Number(event.target.value);
+            if (!Number.isNaN(value)) updateProject({ terminal: { fontSize: value } });
+          }}
           min={8}
           max={32}
+          placeholder={String(DEFAULT_CONFIG.terminal.fontSize)}
           className={INPUT_CLASS}
         />
       </SettingRow>
       <SettingRow {...settingProps('terminal.fontFamily')}>
         <input
           type="text"
-          value={config.terminal.fontFamily}
+          value={config.terminal.fontFamily ?? ''}
           onChange={(event) => updateProject({ terminal: { fontFamily: event.target.value } })}
-          className={INPUT_CLASS}
+          placeholder={DEFAULT_CONFIG.terminal.fontFamily}
+          className={`${INPUT_CLASS} placeholder-fg-faint`}
         />
       </SettingRow>
       <SettingRow {...settingProps('terminal.scrollbackLines')}>
         <input
           type="number"
-          value={config.terminal.scrollbackLines}
-          onChange={(event) => updateProject({ terminal: { scrollbackLines: Number(event.target.value) } })}
+          value={config.terminal.scrollbackLines ?? DEFAULT_CONFIG.terminal.scrollbackLines}
+          onChange={(event) => {
+            if (event.target.value === '') return;
+            const value = Number(event.target.value);
+            if (!Number.isNaN(value)) updateProject({ terminal: { scrollbackLines: value } });
+          }}
           min={1000}
           max={100000}
           step={1000}
+          placeholder={String(DEFAULT_CONFIG.terminal.scrollbackLines)}
           className={INPUT_CLASS}
         />
       </SettingRow>

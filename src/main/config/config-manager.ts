@@ -3,7 +3,7 @@ import path from 'node:path';
 import { PATHS, ensureDirs } from './paths';
 import type { AppConfig, PermissionMode } from '../../shared/types';
 import { DEFAULT_CONFIG } from '../../shared/types';
-import { deepMerge } from '../../shared/object-utils';
+import { deepMerge, deepMergeConfig } from '../../shared/object-utils';
 
 export class ConfigManager {
   private config: AppConfig | null = null;
@@ -16,7 +16,7 @@ export class ConfigManager {
     try {
       const raw = fs.readFileSync(PATHS.configFile, 'utf-8');
       parsed = JSON.parse(raw);
-      this.config = deepMerge(DEFAULT_CONFIG, parsed as Partial<AppConfig>);
+      this.config = deepMergeConfig(DEFAULT_CONFIG, parsed as Partial<AppConfig>);
     } catch {
       this.config = { ...DEFAULT_CONFIG };
     }
@@ -131,6 +131,6 @@ export class ConfigManager {
     const overrides = this.loadProjectOverrides(projectPath);
     if (!overrides) return global;
 
-    return deepMerge(global, overrides);
+    return deepMergeConfig(global, overrides);
   }
 }
