@@ -272,7 +272,7 @@ function AgentTab({ config, globalConfig, agentInfo, agentList }: { config: AppC
   const updateGlobal = useScopedUpdate('global');
   const updateProject = useScopedUpdate('project');
   const currentProject = useProjectStore((state) => state.currentProject);
-  const refreshProjects = useProjectStore((state) => state.loadProjects);
+  const refreshCurrentProject = useProjectStore((state) => state.loadCurrent);
 
   const effectiveAgent = currentProject?.default_agent ?? DEFAULT_AGENT;
   const agentPermissions: AgentPermissionEntry[] = agentList.find((agent) => agent.name === effectiveAgent)?.permissions ?? CLAUDE_DEFAULT_PERMISSIONS;
@@ -288,7 +288,7 @@ function AgentTab({ config, globalConfig, agentInfo, agentList }: { config: AppC
         updateProject({ agent: { permissionMode: adjusted } });
       }
     }
-    await refreshProjects();
+    await refreshCurrentProject();
   };
 
   return (
