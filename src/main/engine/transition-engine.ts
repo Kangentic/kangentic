@@ -4,10 +4,8 @@ import { randomUUID } from 'node:crypto';
 import type { Task, Action, ActionConfig, AppConfig, PermissionMode } from '../../shared/types';
 import { sanitizeForPty } from '../../shared/paths';
 import { SessionManager } from '../pty/session-manager';
-import { CommandBuilder } from '../agent/command-builder';
-import { ClaudeDetector } from '../agent/claude-detector';
+import { interpolateTemplate } from '../agent/command-builder';
 import { WorktreeManager } from '../git/worktree-manager';
-import { ensureWorktreeTrust, ensureMcpServerTrust } from '../agent/trust-manager';
 import { agentRegistry } from '../agent/agent-registry';
 import { sessionOutputPaths } from './session-paths';
 import type { ActionRepository } from '../db/repositories/action-repository';
@@ -15,14 +13,22 @@ import type { TaskRepository } from '../db/repositories/task-repository';
 import type { SessionRepository } from '../db/repositories/session-repository';
 import type { AttachmentRepository } from '../db/repositories/attachment-repository';
 
+interface TransitionEngineConfig {
+  permissionMode: string;
+  projectPath: string | null;
+  projectId: string;
+  gitConfig: AppConfig['git'];
+  mcpServerEnabled?: boolean;
+  defaultAgent: string;
+  cliPathOverrides: Record<string, string | null>;
+}
+
 export class TransitionEngine {
   constructor(
     private sessionManager: SessionManager,
     private actionRepo: ActionRepository,
     private taskRepo: TaskRepository,
-    private claudeDetector: ClaudeDetector,
-    private commandBuilder: CommandBuilder,
-    private getConfig: () => { permissionMode: string; claudePath: string | null; projectPath: string | null; projectId: string; gitConfig: AppConfig['git']; mcpServerEnabled?: boolean },
+    private getConfig: () => TransitionEngineConfig,
     private sessionRepo?: SessionRepository,
     private attachmentRepo?: AttachmentRepository,
   ) {}
@@ -125,9 +131,15 @@ export class TransitionEngine {
 
   private async executeSpawnAgent(config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string, signal?: AbortSignal): Promise<void> {
     const appConfig = this.getConfig();
-    const claude = await this.claudeDetector.detect(appConfig.claudePath);
-    if (!claude.found || !claude.path) {
-      throw new Error('Claude CLI not found on PATH');
+
+    // Resolve which agent adapter to use: action override → project default → claude
+    const agentName = config.agent || appConfig.defaultAgent || 'claude';
+    const adapter = agentRegistry.getOrThrow(agentName);
+    const cliPathOverride = appConfig.cliPathOverrides[agentName] ?? null;
+
+    const detection = await adapter.detect(cliPathOverride);
+    if (!detection.found || !detection.path) {
+      throw new Error(`${adapter.displayName} CLI not found on PATH`);
     }
 
     // Resolution order: swimlane override → global setting
@@ -137,8 +149,7 @@ export class TransitionEngine {
     // Pre-populate trust so the agent doesn't block on the trust dialog.
     // This covers both worktree paths and the main project path (important
     // for demo mode where the project has never been opened in Claude Code).
-    await ensureWorktreeTrust(cwd);
-    await ensureMcpServerTrust(cwd);
+    await adapter.ensureTrust(cwd);
 
     // Check for a previous session to resume (only explicitly suspended sessions)
     const previousSession = this.sessionRepo?.getLatestForTask(task.id);
@@ -165,7 +176,7 @@ export class TransitionEngine {
       // --session-id <id> "prompt" to create a new session with a given ID.
       agentSessionId = randomUUID();
       prompt = config.promptTemplate
-        ? this.commandBuilder.interpolateTemplate(config.promptTemplate, vars)
+        ? interpolateTemplate(config.promptTemplate, vars)
         : undefined;
     }
 
@@ -181,8 +192,8 @@ export class TransitionEngine {
     const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 
     const shell = await this.sessionManager.getShell();
-    const command = this.commandBuilder.buildClaudeCommand({
-      claudePath: claude.path,
+    const command = adapter.buildCommand({
+      agentPath: detection.path,
       taskId: task.id,
       prompt,
       cwd,
@@ -200,9 +211,6 @@ export class TransitionEngine {
     // Last chance to abort before creating a PTY process
     signal?.throwIfAborted();
 
-    const agentName = config.agent || 'claude';
-    const agentAdapter = agentRegistry.get(agentName);
-
     const session = await this.sessionManager.spawn({
       id: randomUUID(),
       taskId: task.id,
@@ -212,7 +220,7 @@ export class TransitionEngine {
       statusOutputPath,
       eventsOutputPath,
       resuming: !!canResume,
-      agentParser: agentAdapter,
+      agentParser: adapter,
     });
 
     this.taskRepo.update({
@@ -230,10 +238,9 @@ export class TransitionEngine {
         });
       }
 
-      const sessionType = agentAdapter?.sessionType ?? 'claude_agent';
       this.sessionRepo.insert({
         task_id: task.id,
-        session_type: sessionType,
+        session_type: adapter.sessionType,
         agent_session_id: agentSessionId,
         command,
         cwd,
@@ -252,7 +259,7 @@ export class TransitionEngine {
   private executeSendCommand(config: ActionConfig, task: Task, vars: Record<string, string>): void {
     if (!task.session_id) return;
     const raw = config.command
-      ? this.commandBuilder.interpolateTemplate(config.command, vars)
+      ? interpolateTemplate(config.command, vars)
       : '';
     const command = sanitizeForPty(raw);
     if (command) {
@@ -262,7 +269,7 @@ export class TransitionEngine {
 
   private async executeRunScript(config: ActionConfig, task: Task, vars: Record<string, string>): Promise<void> {
     const script = config.script
-      ? this.commandBuilder.interpolateTemplate(config.script, vars)
+      ? interpolateTemplate(config.script, vars)
       : '';
     if (!script) return;
 
@@ -304,9 +311,9 @@ export class TransitionEngine {
 
   private async executeWebhook(config: ActionConfig, vars: Record<string, string>): Promise<void> {
     if (!config.url) return;
-    const url = this.commandBuilder.interpolateTemplate(config.url, vars);
+    const url = interpolateTemplate(config.url, vars);
     const body = config.body
-      ? this.commandBuilder.interpolateTemplate(config.body, vars)
+      ? interpolateTemplate(config.body, vars)
       : undefined;
 
     try {

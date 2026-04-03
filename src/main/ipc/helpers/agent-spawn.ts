@@ -5,6 +5,7 @@ import { AttachmentRepository } from '../../db/repositories/attachment-repositor
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { TransitionEngine } from '../../engine/transition-engine';
 import { getProjectDb } from '../../db/database';
+import { interpolateTemplate } from '../../agent/command-builder';
 import type { Task, Swimlane } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
@@ -33,7 +34,7 @@ export function createTransitionEngine(
   projectPath: string | null,
 ): TransitionEngine {
   return new TransitionEngine(
-    context.sessionManager, actions, tasks, context.claudeDetector, context.commandBuilder,
+    context.sessionManager, actions, tasks,
     () => {
       const config = context.configManager.getEffectiveConfig(projectPath || undefined);
       const gitConfig = { ...config.git };
@@ -42,13 +43,15 @@ export function createTransitionEngine(
       if (boardDefaultBranch) {
         gitConfig.defaultBaseBranch = boardDefaultBranch;
       }
+      const project = context.projectRepo.getById(projectId);
       return {
         permissionMode: config.claude.permissionMode,
-        claudePath: config.claude.cliPath,
         projectPath,
         projectId,
         gitConfig,
         mcpServerEnabled: config.mcpServer?.enabled ?? true,
+        defaultAgent: project?.default_agent ?? 'claude',
+        cliPathOverrides: { claude: config.claude.cliPath },
       };
     },
     sessionRepo,
@@ -120,7 +123,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   // Resume path: preload auto_command as initial resume prompt
   // Fresh path: auto_command scheduled via commandInjector after spawn
   const resumePrompt = (toLane.auto_command?.trim() && wasSuspended)
-    ? context.commandBuilder.interpolateTemplate(toLane.auto_command, buildAutoCommandVars(currentTask))
+    ? interpolateTemplate(toLane.auto_command, buildAutoCommandVars(currentTask))
     : undefined;
 
   try {
@@ -138,7 +141,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   // (resumes already have it preloaded as the resume prompt)
   if (currentTask?.session_id && toLane.auto_command?.trim() && !resumePrompt) {
     const vars = buildAutoCommandVars(currentTask);
-    const interpolated = context.commandBuilder.interpolateTemplate(toLane.auto_command, vars);
+    const interpolated = interpolateTemplate(toLane.auto_command, vars);
     context.commandInjector.schedule(currentTask.id, currentTask.session_id, interpolated, { freshlySpawned: true });
   }
 }
