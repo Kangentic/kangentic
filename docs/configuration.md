@@ -80,7 +80,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `agent.permissionMode` | PermissionMode | `'default'` | Default permission mode for spawned agents |
+| `agent.permissionMode` | PermissionMode | `'acceptEdits'` | Default permission mode for spawned agents |
 | `agent.cliPaths` | Record\<string, string \| null\> | `{}` | Per-agent CLI path overrides keyed by agent name. Empty = auto-detect all. Global-only. |
 | `agent.maxConcurrentSessions` | number | `8` | Max concurrent PTY sessions. Global-only. |
 | `agent.queueOverflow` | `'queue'` \| `'reject'` | `'queue'` | What to do when max sessions reached. Global-only. |

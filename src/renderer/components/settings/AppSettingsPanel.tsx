@@ -1,5 +1,5 @@
-import { useCallback, useMemo } from 'react';
-import { Bell, Bot, Check, CircleAlert, GitBranch, Palette, Plug, ShieldAlert, ShieldCheck, SlidersHorizontal, Terminal, Zap } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import { Bell, Bot, Check, CircleAlert, GitBranch, Palette, Plug, RefreshCw, ShieldAlert, ShieldCheck, SlidersHorizontal, Terminal, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { SettingsPanelProvider, SectionHeader, SettingRow, Select, ToggleSwitch, CompactToggleList, INPUT_CLASS, useScopedUpdate, SearchTabGroupHeader, NoSearchResults } from './shared';
@@ -8,7 +8,7 @@ import type { SettingsTabDefinition, SettingScope, SettingsContentProps } from '
 import { useProjectStore } from '../../stores/project-store';
 import type { AgentDetectionInfo } from '../../../shared/types';
 import type { AppConfig, DeepPartial, NotificationConfig, PermissionMode, ThemeMode, AgentPermissionEntry } from '../../../shared/types';
-import { NAMED_THEMES, nearestPermission, CLAUDE_DEFAULT_PERMISSIONS, DEFAULT_AGENT, DEFAULT_CONFIG } from '../../../shared/types';
+import { NAMED_THEMES, DEFAULT_PERMISSIONS, DEFAULT_AGENT, DEFAULT_CONFIG, getAgentDefaultPermission } from '../../../shared/types';
 import { deepMergeConfig } from '../../../shared/object-utils';
 import { agentDisplayName } from '../../utils/agent-display-name';
 import { settingProps } from './settings-registry';
@@ -284,20 +284,28 @@ function AgentTab({ config, globalConfig, agentInfo, agentList }: { config: AppC
   const updateProject = useScopedUpdate('project');
   const currentProject = useProjectStore((state) => state.currentProject);
   const refreshCurrentProject = useProjectStore((state) => state.loadCurrent);
+  const refreshAgentList = useConfigStore((state) => state.loadAgentList);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefreshAgents = async () => {
+    setRefreshing(true);
+    const minimumDelay = new Promise((resolve) => setTimeout(resolve, 800));
+    await Promise.all([minimumDelay, refreshAgentList()]);
+    setRefreshing(false);
+  };
 
   const effectiveAgent = currentProject?.default_agent ?? DEFAULT_AGENT;
-  const agentPermissions: AgentPermissionEntry[] = agentList.find((agent) => agent.name === effectiveAgent)?.permissions ?? CLAUDE_DEFAULT_PERMISSIONS;
+  const agentPermissions: AgentPermissionEntry[] = agentList.find((agent) => agent.name === effectiveAgent)?.permissions ?? DEFAULT_PERMISSIONS;
+  const detectedAgents = useMemo(() => agentList.filter((agent) => agent.found), [agentList]);
+  const undetectedAgents = useMemo(() => agentList.filter((agent) => !agent.found), [agentList]);
 
   const handleDefaultAgentChange = async (agentName: string) => {
     if (!currentProject) return;
     await window.electronAPI.projects.setDefaultAgent(currentProject.id, agentName);
-    // Auto-adjust permission mode if unsupported by the new agent
-    const newAgentPermissions = agentList.find((agent) => agent.name === agentName)?.permissions ?? [];
-    if (newAgentPermissions.length > 0) {
-      const adjusted = nearestPermission(newAgentPermissions, config.agent.permissionMode);
-      if (adjusted !== config.agent.permissionMode) {
-        updateProject({ agent: { permissionMode: adjusted } });
-      }
+    // Switch to the new agent's recommended default permission mode
+    const newDefault = getAgentDefaultPermission(agentList, agentName);
+    if (newDefault !== config.agent.permissionMode) {
+      updateProject({ agent: { permissionMode: newDefault } });
     }
     await refreshCurrentProject();
   };
@@ -310,29 +318,52 @@ function AgentTab({ config, globalConfig, agentInfo, agentList }: { config: AppC
           onChange={(event) => handleDefaultAgentChange(event.target.value)}
           disabled={!currentProject}
         >
-          {agentList.map((agent) => (
+          {detectedAgents.map((agent) => (
             <option key={agent.name} value={agent.name}>
-              {agent.displayName ?? agent.name}{agent.found ? '' : ' (not found)'}
+              {agent.displayName ?? agent.name}
+            </option>
+          ))}
+          {detectedAgents.length > 0 && undetectedAgents.length > 0 && (
+            <option disabled>────────────</option>
+          )}
+          {undetectedAgents.map((agent) => (
+            <option key={agent.name} value={agent.name}>
+              {agent.displayName ?? agent.name}
             </option>
           ))}
           {agentList.length === 0 && <option value={DEFAULT_AGENT}>{agentDisplayName(DEFAULT_AGENT)}</option>}
         </Select>
       </SettingRow>
-      {agentList.map((agent) => (
-        <SettingRow key={agent.name} {...settingProps('agent.cliPaths')} label={`${agent.displayName} Path`}>
+      {agentList.filter((agent) => agent.name === effectiveAgent).map((agent) => (
+        <SettingRow
+          key={agent.name}
+          {...settingProps('agent.cliPaths')}
+          label={`${agent.displayName} Path`}
+          trailing={
+            <span className={`text-xs flex items-center gap-1 ${agent.found ? 'text-fg-faint' : 'text-red-400/70'}`}>
+              {agent.found
+                ? <><Check size={13} className="text-green-400" />{agent.version ? `v${agent.version.replace(/^v/, '')}` : 'Detected'}</>
+                : <><CircleAlert size={13} />Not found</>}
+            </span>
+          }
+        >
           <div className="relative">
             <input
               type="text"
               value={globalConfig.agent.cliPaths[agent.name] || ''}
               onChange={(event) => updateGlobal({ agent: { cliPaths: { ...globalConfig.agent.cliPaths, [agent.name]: event.target.value || null } } })}
-              placeholder={agent.found ? (agent.path ?? undefined) : 'Not found. Enter path manually'}
-              className={`${INPUT_CLASS} pr-8 ${agent.found ? 'placeholder-fg-muted' : 'placeholder-red-400/70'}`}
+              placeholder={agent.found ? (agent.path ?? undefined) : 'Enter path manually'}
+              className={`${INPUT_CLASS} pr-8 placeholder-fg-muted`}
             />
-            <div className="absolute right-2.5 top-1/2 -translate-y-1/2" title={agent.found ? `Detected: ${agent.version || 'unknown version'}` : `${agent.displayName} not found`}>
-              {agent.found
-                ? <Check size={16} className="text-green-400" />
-                : <CircleAlert size={16} className="text-red-400" />}
-            </div>
+            <button
+              type="button"
+              onClick={handleRefreshAgents}
+              disabled={refreshing}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors disabled:opacity-50"
+              title={agent.found ? 'Re-detect agent' : `${agent.displayName} not found - click to re-detect`}
+            >
+              <RefreshCw size={16} className={`text-fg-faint hover:text-fg-muted ${refreshing ? 'animate-spin' : ''}`} />
+            </button>
           </div>
         </SettingRow>
       ))}

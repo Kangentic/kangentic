@@ -92,7 +92,7 @@ export function registerSystemHandlers(context: IpcContext): void {
     for (const agentName of agentRegistry.list()) {
       const adapter = agentRegistry.getOrThrow(agentName);
       const info = await adapter.detect(cliPathOverrides[agentName] ?? null);
-      results.push({ name: agentName, displayName: adapter.displayName, found: info.found, path: info.path, version: info.version, permissions: adapter.permissions });
+      results.push({ name: agentName, displayName: adapter.displayName, found: info.found, path: info.path, version: info.version, permissions: adapter.permissions, defaultPermission: adapter.defaultPermission });
     }
     return results;
   });

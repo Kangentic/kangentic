@@ -30,6 +30,7 @@ export interface AgentDetectionInfo {
   path: string | null;
   version: string | null;
   permissions: AgentPermissionEntry[];
+  defaultPermission: PermissionMode;
 }
 
 export type ProjectSearchEntryKind = 'file' | 'directory';
@@ -443,8 +444,11 @@ export interface AgentPermissionEntry {
 /** Default agent identifier - matches the DB schema default for new projects. */
 export const DEFAULT_AGENT = 'claude';
 
-/** Default Claude Code permissions - used as fallback when agent list hasn't loaded yet. */
-export const CLAUDE_DEFAULT_PERMISSIONS: AgentPermissionEntry[] = [
+/** Default permission mode - used as fallback when agent list hasn't loaded or agent not found. */
+export const DEFAULT_PERMISSION: PermissionMode = 'acceptEdits';
+
+/** Default permission modes - used as fallback when agent list hasn't loaded yet. */
+export const DEFAULT_PERMISSIONS: AgentPermissionEntry[] = [
   { mode: 'plan', label: 'Plan (Read-Only)' },
   { mode: 'dontAsk', label: "Don't Ask (Deny Unless Allowed)" },
   { mode: 'default', label: 'Default (Allowlist)' },
@@ -453,15 +457,26 @@ export const CLAUDE_DEFAULT_PERMISSIONS: AgentPermissionEntry[] = [
   { mode: 'bypassPermissions', label: 'Bypass (Unsafe)' },
 ];
 
-/** Find the nearest supported mode when switching agents. Exact match or first (safest). */
-export function nearestPermission(permissions: AgentPermissionEntry[], current: PermissionMode): PermissionMode {
-  if (permissions.some((entry) => entry.mode === current)) return current;
-  return permissions[0]?.mode ?? current;
-}
-
 /** Get label for a mode from a permissions list. */
 export function getPermissionLabel(permissions: AgentPermissionEntry[], mode: PermissionMode): string {
   return permissions.find((entry) => entry.mode === mode)?.label ?? mode;
+}
+
+/** Resolve the default permission mode for an agent from the detection list. */
+export function getAgentDefaultPermission(agentList: AgentDetectionInfo[], agentName: string): PermissionMode {
+  return agentList.find((agent) => agent.name === agentName)?.defaultPermission ?? DEFAULT_PERMISSION;
+}
+
+/**
+ * Resolve permission mode when switching agents.
+ * Preserves the current mode if the new agent supports it; otherwise falls back
+ * to the new agent's recommended default.
+ */
+export function resolvePermissionForAgent(agentList: AgentDetectionInfo[], agentName: string, currentMode: PermissionMode): PermissionMode {
+  const agentInfo = agentList.find((agent) => agent.name === agentName);
+  if (!agentInfo) return DEFAULT_PERMISSION;
+  if (agentInfo.permissions.some((entry) => entry.mode === currentMode)) return currentMode;
+  return agentInfo.defaultPermission;
 }
 
 export type ThemeMode = 'dark' | 'light'
@@ -592,7 +607,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     cursorStyle: 'block',
   },
   agent: {
-    permissionMode: 'default',
+    permissionMode: 'acceptEdits',
     cliPaths: {},
     maxConcurrentSessions: 8,
     queueOverflow: 'queue',

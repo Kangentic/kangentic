@@ -4,7 +4,7 @@ import { execVersion } from '../exec-version';
 import { quoteArg, isUnixLikeShell } from '../../../shared/paths';
 import { interpolateTemplate } from '../command-builder';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../agent-adapter';
-import type { SessionUsage, SessionEvent, AgentPermissionEntry } from '../../../shared/types';
+import type { SessionUsage, SessionEvent, AgentPermissionEntry, PermissionMode } from '../../../shared/types';
 
 /**
  * Aider CLI adapter - integrates the Aider AI pair programming tool
@@ -22,6 +22,7 @@ export class AiderAdapter implements AgentAdapter {
     { mode: 'default', label: 'Interactive (Confirm)' },
     { mode: 'bypassPermissions', label: 'Auto-Approve (--yes)' },
   ];
+  readonly defaultPermission: PermissionMode = 'bypassPermissions';
 
   private cachedDetection: AgentInfo | null = null;
   private inflightDetection: Promise<AgentInfo> | null = null;

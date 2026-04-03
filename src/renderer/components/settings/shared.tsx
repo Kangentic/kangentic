@@ -278,9 +278,11 @@ interface SettingRowProps {
   children: React.ReactNode;
   /** Registry ID for search filtering. */
   searchId?: string;
+  /** Optional content rendered right-aligned in the label row. */
+  trailing?: React.ReactNode;
 }
 
-export function SettingRow({ label, description, children, searchId }: SettingRowProps) {
+export function SettingRow({ label, description, children, searchId, trailing }: SettingRowProps) {
   const visible = useSettingVisible(searchId);
 
   // Search filtering.
@@ -288,10 +290,11 @@ export function SettingRow({ label, description, children, searchId }: SettingRo
 
   return (
     <div className="space-y-1.5">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="text-sm font-medium text-fg-secondary">{label}</div>
+      <div>
+        <div className="text-sm font-medium text-fg-secondary">{label}</div>
+        <div className="flex items-center justify-between gap-2">
           <div className="text-xs text-fg-faint">{description}</div>
+          {trailing}
         </div>
       </div>
       {children}

@@ -2,7 +2,7 @@ import { CodexDetector } from '../codex-detector';
 import { CodexCommandBuilder } from '../codex-command-builder';
 import { stripCodexHooks } from '../codex-hook-manager';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../agent-adapter';
-import type { SessionUsage, SessionEvent, AgentPermissionEntry } from '../../../shared/types';
+import type { SessionUsage, SessionEvent, AgentPermissionEntry, PermissionMode } from '../../../shared/types';
 
 /**
  * Codex CLI adapter - wraps CodexDetector, CodexCommandBuilder, and
@@ -17,6 +17,7 @@ export class CodexAdapter implements AgentAdapter {
     { mode: 'acceptEdits', label: 'Auto-Edit' },
     { mode: 'bypassPermissions', label: 'Full Auto (Sandboxed)' },
   ];
+  readonly defaultPermission: PermissionMode = 'acceptEdits';
 
   private readonly detector = new CodexDetector();
   private readonly commandBuilder = new CodexCommandBuilder();

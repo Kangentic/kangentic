@@ -17,8 +17,8 @@ export function App() {
   const loadConfig = useConfigStore((s) => s.loadConfig);
   const loadAppVersion = useConfigStore((s) => s.loadAppVersion);
   const detectAgent = useConfigStore((s) => s.detectAgent);
-  const detectGit = useConfigStore((s) => s.detectGit);
   const loadAgentList = useConfigStore((s) => s.loadAgentList);
+  const detectGit = useConfigStore((s) => s.detectGit);
   const upsertSession = useSessionStore((s) => s.upsertSession);
   const updateSessionStatus = useSessionStore((s) => s.updateSessionStatus);
   const updateUsage = useSessionStore((s) => s.updateUsage);
@@ -32,8 +32,8 @@ export function App() {
     loadConfig();
     loadAppVersion();
     detectAgent();
-    detectGit();
     loadAgentList();
+    detectGit();
     loadProjects();
     useProjectStore.getState().loadGroups();
     // Restore the current project after a page reload (e.g. Vite HMR).

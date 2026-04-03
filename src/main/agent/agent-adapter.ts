@@ -1,4 +1,4 @@
-import type { SessionUsage, SessionEvent, SessionRecord, AgentPermissionEntry } from '../../shared/types';
+import type { SessionUsage, SessionEvent, SessionRecord, AgentPermissionEntry, PermissionMode } from '../../shared/types';
 import type { ClaudeInfo } from './claude-detector';
 import type { CommandOptions } from './command-builder';
 
@@ -21,6 +21,9 @@ export interface AgentAdapter {
 
   /** Supported permission modes with agent-specific labels. */
   readonly permissions: AgentPermissionEntry[];
+
+  /** Recommended default permission mode for this agent. */
+  readonly defaultPermission: PermissionMode;
 
   /** Detect whether the agent CLI is installed and return path + version. */
   detect(overridePath?: string | null): Promise<AgentInfo>;

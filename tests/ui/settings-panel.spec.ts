@@ -140,8 +140,8 @@ test.describe('Settings Panel', () => {
   test('CLI path status indicator appears after panel opens', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Agent' }).click();
-    // The mock returns { found: true }, so the indicator div has a "Detected:" title
-    await expect(page.locator('[title^="Detected:"]')).toBeVisible();
+    // The mock returns { found: true }, so the refresh button has a "Re-detect agent" title
+    await expect(page.locator('[title="Re-detect agent"]')).toBeVisible();
     await closeSettings();
   });
 
@@ -149,11 +149,9 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByRole('button', { name: 'Agent' }).click();
 
-    const permissionsLabel = page.getByText('Permissions', { exact: true });
-
-    // The Permissions select is the one immediately following the "Permissions" label
-    // It's inside the same setting row container
-    const permSettingRow = permissionsLabel.locator('..').locator('..').locator('..');
+    // Find the Permissions setting row by its description text, then locate its select
+    const permDescription = page.getByText('How the agent handles tool approvals');
+    const permSettingRow = permDescription.locator('..').locator('..').locator('..');
     const permSelect = permSettingRow.locator('select');
     const options = permSelect.locator('option');
     const texts = await options.allTextContents();

@@ -40,9 +40,9 @@ export class ConfigManager {
     const pm = this.config.agent.permissionMode as string;
     const migrationMap: Record<string, string> = {
       'dangerously-skip': 'bypassPermissions',
-      'project-settings': 'default',
+      'project-settings': 'acceptEdits',
       'bypass-permissions': 'bypassPermissions',
-      'manual': 'default',
+      'manual': 'acceptEdits',
     };
     if (pm in migrationMap) {
       this.config.agent.permissionMode = migrationMap[pm] as PermissionMode;

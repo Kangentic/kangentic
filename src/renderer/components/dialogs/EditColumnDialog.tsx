@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Pencil, Lock, Trash2, Palette, ChevronRight, Info } from 'lucide-react';
+import { Pencil, Lock, Trash2, Palette, ChevronRight, Info, RotateCcw } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
@@ -9,7 +9,7 @@ import { BaseDialog } from './BaseDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { IconPickerDialog } from './IconPickerDialog';
 import { ICON_REGISTRY, ROLE_DEFAULTS, getUsedIcons } from '../../utils/swimlane-icons';
-import { nearestPermission, getPermissionLabel, CLAUDE_DEFAULT_PERMISSIONS, DEFAULT_AGENT } from '../../../shared/types';
+import { getPermissionLabel, DEFAULT_PERMISSIONS, DEFAULT_AGENT, getAgentDefaultPermission, resolvePermissionForAgent } from '../../../shared/types';
 import type { Swimlane, PermissionMode, AgentDetectionInfo } from '../../../shared/types';
 
 const PRESET_COLORS = [
@@ -43,7 +43,7 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
   const [autoCommand, setAutoCommand] = useState(swimlane.auto_command || '');
   const [planExitTargetId, setPlanExitTargetId] = useState<string | null>(swimlane.plan_exit_target_id);
   const [agentOverride, setAgentOverride] = useState<string | null>(swimlane.agent_override);
-  const [agentList, setAgentList] = useState<AgentDetectionInfo[]>([]);
+  const [agentList, setAgentList] = useState<AgentDetectionInfo[]>(() => useConfigStore.getState().agentList);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -53,8 +53,10 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
   const isTodoOrDone = swimlane.role === 'todo' || swimlane.role === 'done';
   const isPlanMode = permissionMode === 'plan';
 
-  const effectiveAgent = agentOverride ?? currentProject?.default_agent ?? DEFAULT_AGENT;
-  const agentPermissions = agentList.find((agent) => agent.name === effectiveAgent)?.permissions ?? CLAUDE_DEFAULT_PERMISSIONS;
+  const projectDefaultAgent = currentProject?.default_agent ?? DEFAULT_AGENT;
+  const projectDefaultAgentLabel = agentList.find((agent) => agent.name === projectDefaultAgent)?.displayName ?? projectDefaultAgent;
+  const effectiveAgent = agentOverride ?? projectDefaultAgent;
+  const agentPermissions = agentList.find((agent) => agent.name === effectiveAgent)?.permissions ?? DEFAULT_PERMISSIONS;
 
   const isCustomColor = !PRESET_COLORS.includes(color);
   const usedIcons = getUsedIcons(swimlanes, swimlane.id);
@@ -326,28 +328,48 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
 
             {/* Agent override dropdown */}
             <div>
-              <label className="text-xs text-fg-muted mb-1.5 block">Agent</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs text-fg-muted">Agent</label>
+                {agentOverride && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAgentOverride(null);
+                      // Reset permission to the project default agent's recommended default
+                      if (permissionMode) {
+                        const newDefault = getAgentDefaultPermission(agentList, projectDefaultAgent);
+                        if (newDefault !== permissionMode) setPermissionMode(newDefault);
+                      }
+                    }}
+                    className="flex items-center gap-1 text-[11px] text-fg-faint hover:text-fg-muted transition-colors"
+                    title="Reset to project setting"
+                  >
+                    <RotateCcw size={11} />
+                    Reset
+                  </button>
+                )}
+              </div>
               <select
                 value={agentOverride ?? ''}
                 onChange={(event) => {
                   const newAgent = event.target.value || null;
                   setAgentOverride(newAgent);
-                  // Auto-adjust permission if unsupported by the new agent
+                  // Preserve permission if supported by new agent, otherwise use agent's default
                   if (permissionMode) {
-                    const newEffectiveAgent = newAgent ?? currentProject?.default_agent ?? DEFAULT_AGENT;
-                    const newAgentPermissions = agentList.find((agent) => agent.name === newEffectiveAgent)?.permissions ?? CLAUDE_DEFAULT_PERMISSIONS;
-                    const adjusted = nearestPermission(newAgentPermissions, permissionMode);
-                    if (adjusted !== permissionMode) setPermissionMode(adjusted);
+                    const resolved = resolvePermissionForAgent(agentList, newAgent ?? projectDefaultAgent, permissionMode);
+                    if (resolved !== permissionMode) setPermissionMode(resolved);
                   }
                 }}
                 className="w-full appearance-none bg-surface border border-edge-input rounded px-3 py-1.5 text-sm text-fg focus:outline-none focus:border-accent"
               >
-                <option value="">Default (project setting)</option>
-                {agentList.map((agent) => (
-                  <option key={agent.name} value={agent.name}>
-                    {agent.displayName ?? agent.name}{agent.found ? '' : ' (not found)'}
-                  </option>
-                ))}
+                <option value="">{projectDefaultAgentLabel}</option>
+                {agentList
+                  .filter((agent) => agent.name !== projectDefaultAgent)
+                  .map((agent) => (
+                    <option key={agent.name} value={agent.name}>
+                      {agent.displayName ?? agent.name}{agent.found ? '' : ' (not found)'}
+                    </option>
+                  ))}
               </select>
               <p className="text-[11px] text-fg-faint mt-1">
                 Override the project default agent for this column.
@@ -356,7 +378,20 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
 
             {/* Permissions dropdown */}
             <div>
-              <label className="text-xs text-fg-muted mb-1.5 block">Permissions</label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs text-fg-muted">Permissions</label>
+                {permissionMode && (
+                  <button
+                    type="button"
+                    onClick={() => setPermissionMode(null)}
+                    className="flex items-center gap-1 text-[11px] text-fg-faint hover:text-fg-muted transition-colors"
+                    title="Reset to project setting"
+                  >
+                    <RotateCcw size={11} />
+                    Reset
+                  </button>
+                )}
+              </div>
               <select
                 value={permissionMode ?? ''}
                 onChange={(e) => setPermissionMode(e.target.value ? e.target.value as PermissionMode : null)}
@@ -370,7 +405,7 @@ export function EditColumnDialog({ swimlane, onClose }: EditColumnDialogProps) {
                   ))}
               </select>
               <p className="text-[11px] text-fg-faint mt-1">
-                Override the global permission mode for new agents spawned in this column.
+                Override the project permission mode for this column.
               </p>
             </div>
           </>)}

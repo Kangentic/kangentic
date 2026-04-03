@@ -48,7 +48,7 @@ describe('Config Manager -- Permission Mode Migration', () => {
     expect(raw.agent.permissionMode).toBe('bypassPermissions');
   });
 
-  it("migrates 'project-settings' to 'default'", async () => {
+  it("migrates 'project-settings' to 'acceptEdits'", async () => {
     fs.writeFileSync(configPath, JSON.stringify({
       agent: { permissionMode: 'project-settings' },
     }));
@@ -56,10 +56,10 @@ describe('Config Manager -- Permission Mode Migration', () => {
     const cm = await createConfigManager();
     const config = cm.load();
 
-    expect(config.agent.permissionMode).toBe('default');
+    expect(config.agent.permissionMode).toBe('acceptEdits');
 
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    expect(raw.agent.permissionMode).toBe('default');
+    expect(raw.agent.permissionMode).toBe('acceptEdits');
   });
 
   it("preserves 'default' without re-migration", async () => {
@@ -88,7 +88,7 @@ describe('Config Manager -- Permission Mode Migration', () => {
     expect(raw.agent.permissionMode).toBe('bypassPermissions');
   });
 
-  it("migrates 'manual' to 'default'", async () => {
+  it("migrates 'manual' to 'acceptEdits'", async () => {
     fs.writeFileSync(configPath, JSON.stringify({
       agent: { permissionMode: 'manual' },
     }));
@@ -96,10 +96,10 @@ describe('Config Manager -- Permission Mode Migration', () => {
     const cm = await createConfigManager();
     const config = cm.load();
 
-    expect(config.agent.permissionMode).toBe('default');
+    expect(config.agent.permissionMode).toBe('acceptEdits');
 
     const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    expect(raw.agent.permissionMode).toBe('default');
+    expect(raw.agent.permissionMode).toBe('acceptEdits');
   });
 
   it("preserves valid modes: plan, acceptEdits, dontAsk, bypassPermissions", async () => {
@@ -118,12 +118,12 @@ describe('Config Manager -- Permission Mode Migration', () => {
     }
   });
 
-  it("fresh config (no file) defaults to 'default'", async () => {
+  it("fresh config (no file) defaults to 'acceptEdits'", async () => {
     // No config file written -- should fall back to DEFAULT_CONFIG
     const cm = await createConfigManager();
     const config = cm.load();
 
-    expect(config.agent.permissionMode).toBe('default');
+    expect(config.agent.permissionMode).toBe('acceptEdits');
   });
 });
 

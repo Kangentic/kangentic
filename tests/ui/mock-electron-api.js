@@ -38,7 +38,7 @@
       width: 224,
     },
     agent: {
-      permissionMode: 'default',
+      permissionMode: 'acceptEdits',
       cliPaths: {},
       maxConcurrentSessions: 8,
       queueOverflow: 'queue',
@@ -918,6 +918,7 @@
               { mode: 'auto', label: 'Auto (Classifier)' },
               { mode: 'bypassPermissions', label: 'Bypass (Unsafe)' },
             ],
+            defaultPermission: 'acceptEdits',
           },
           {
             name: 'codex', displayName: 'Codex CLI', found: false, path: null, version: null,
@@ -926,6 +927,7 @@
               { mode: 'acceptEdits', label: 'Auto-Edit' },
               { mode: 'bypassPermissions', label: 'Full Auto (Sandboxed)' },
             ],
+            defaultPermission: 'acceptEdits',
           },
           {
             name: 'gemini', displayName: 'Gemini CLI', found: false, path: null, version: null,
@@ -935,6 +937,7 @@
               { mode: 'acceptEdits', label: 'Auto-Edit' },
               { mode: 'bypassPermissions', label: 'YOLO (Auto-Approve All)' },
             ],
+            defaultPermission: 'acceptEdits',
           },
           {
             name: 'aider', displayName: 'Aider', found: false, path: null, version: null,
@@ -942,6 +945,7 @@
               { mode: 'default', label: 'Interactive (Confirm)' },
               { mode: 'bypassPermissions', label: 'Auto-Approve (--yes)' },
             ],
+            defaultPermission: 'bypassPermissions',
           },
         ];
       },
