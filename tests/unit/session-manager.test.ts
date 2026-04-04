@@ -158,6 +158,10 @@ describe('Scrollback', () => {
 describe('Scrollback clearing on resize', () => {
   let manager: SessionManager;
   let spawnedSessionId: string | null = null;
+  // Note: the buffer manager's first resize after initSession is the "initial"
+  // resize that establishes real terminal dimensions without clearing scrollback.
+  // spawnSession() calls resize(120, 30) to simulate that initial resize, so
+  // subsequent test resizes trigger the mid-session clearing behavior.
 
   beforeEach(() => {
     manager = new SessionManager();
@@ -180,6 +184,9 @@ describe('Scrollback clearing on resize', () => {
       cwd: tmpDir,
     });
     spawnedSessionId = session.id;
+    // Simulate the initial resize that the renderer sends on first connect.
+    // This establishes real terminal dimensions (120 cols matches PTY spawn).
+    manager.resize(session.id, 120, 30);
     return { session, ...mock };
   }
 

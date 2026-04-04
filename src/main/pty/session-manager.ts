@@ -384,7 +384,7 @@ export class SessionManager extends EventEmitter {
     this.sessions.set(id, session);
 
     // Initialize extracted modules for this session
-    this.bufferManager.initSession(id, previousScrollback, 120);
+    this.bufferManager.initSession(id, previousScrollback, 0);
     this.fileWatcher.startAll({
       sessionId: id,
       projectId: session.projectId,

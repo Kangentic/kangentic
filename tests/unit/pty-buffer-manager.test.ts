@@ -8,6 +8,9 @@ describe('PtyBufferManager', () => {
     const onFlush = vi.fn();
     const manager = new PtyBufferManager({ onFlush });
     manager.initSession(SESSION, '', 80);
+    // Simulate the initial resize that establishes real terminal dimensions.
+    // This mirrors what the renderer does on first connection (fit + resize).
+    manager.onResize(SESSION, 80);
     return { manager, onFlush };
   }
 
@@ -93,6 +96,65 @@ describe('PtyBufferManager', () => {
       expect(onFlush).toHaveBeenCalledWith(SESSION, 'second chunk');
 
       vi.useRealTimers();
+    });
+  });
+
+  describe('initial resize preserves carried-over scrollback', () => {
+    it('does not clear scrollback on the first resize after initSession', () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush });
+      // Simulate a resumed session with carried-over scrollback
+      manager.initSession(SESSION, 'previous session output', 0);
+
+      // First resize (renderer establishing container dimensions) must NOT clear
+      const colsChanged = manager.onResize(SESSION, 120);
+      expect(colsChanged).toBe(false);
+      expect(manager.getScrollback(SESSION)).toContain('previous session output');
+    });
+
+    it('clears scrollback on second resize with different cols', () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush });
+      manager.initSession(SESSION, 'previous session output', 0);
+
+      // First resize: establishes dimensions
+      manager.onResize(SESSION, 120);
+
+      // Add some live data at the current width
+      manager.onData(SESSION, 'live data');
+
+      // Second resize: user resizes window to different width
+      const colsChanged = manager.onResize(SESSION, 200);
+      expect(colsChanged).toBe(true);
+      expect(manager.getScrollback(SESSION)).toBe('');
+    });
+
+    it('does not clear scrollback on second resize with same cols', () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush });
+      manager.initSession(SESSION, 'previous session output', 0);
+
+      // First resize
+      manager.onResize(SESSION, 120);
+      // Add live data
+      manager.onData(SESSION, ' plus new data');
+
+      // Second resize with same cols (rows-only change)
+      const colsChanged = manager.onResize(SESSION, 120);
+      expect(colsChanged).toBe(false);
+      expect(manager.getScrollback(SESSION)).toContain('previous session output');
+      expect(manager.getScrollback(SESSION)).toContain('plus new data');
+    });
+
+    it('fresh session with empty scrollback is unaffected by initial resize', () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush });
+      manager.initSession(SESSION, '', 0);
+
+      // First resize: cols change from 0 to 120 but scrollback is empty
+      const colsChanged = manager.onResize(SESSION, 120);
+      expect(colsChanged).toBe(false);
+      expect(manager.getScrollback(SESSION)).toBe('');
     });
   });
 

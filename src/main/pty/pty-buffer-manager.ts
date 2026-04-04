@@ -11,6 +11,10 @@ interface BufferState {
   flushScheduled: boolean;
   scrollback: string;
   lastCols: number;
+  /** Whether the first resize has established the real terminal dimensions.
+   *  The initial resize must NOT clear scrollback - it contains carried-over
+   *  history from a previous session that hasn't been replayed yet. */
+  initialized: boolean;
 }
 
 /**
@@ -33,6 +37,7 @@ export class PtyBufferManager {
       flushScheduled: false,
       scrollback: previousScrollback,
       lastCols: initialCols,
+      initialized: false,
     });
   }
 
@@ -68,10 +73,27 @@ export class PtyBufferManager {
    * When column width changes, clear scrollback. TUI escape sequences
    * (absolute cursor positioning, colored bars) garble when replayed
    * at a different width. Claude Code redraws via SIGWINCH within ~50-100ms.
+   *
+   * The FIRST resize after initSession is special: it establishes the real
+   * terminal dimensions (the renderer fits to its container). We must NOT
+   * clear scrollback on this initial resize because it may contain
+   * carried-over history from a suspended session that hasn't been replayed
+   * to the xterm instance yet. Clearing it would lose all terminal history.
    */
   onResize(sessionId: string, cols: number): boolean {
     const state = this.buffers.get(sessionId);
     if (!state) return false;
+
+    // First resize: establish real dimensions without clearing scrollback.
+    // The renderer calls resize immediately after creating the xterm, before
+    // fetching scrollback. If we cleared here, the scrollback would be gone
+    // before the renderer ever reads it.
+    if (!state.initialized) {
+      state.initialized = true;
+      state.lastCols = cols;
+      return false;
+    }
+
     const colsChanged = cols !== state.lastCols;
     if (colsChanged) {
       state.scrollback = '';
