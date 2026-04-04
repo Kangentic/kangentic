@@ -203,6 +203,26 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       sessionEvents: { ...cachedEvents, ...currentState.sessionEvents },
     });
 
+    // Recover transient session pointers after a full page reload.
+    // The main process keeps transient PTYs alive, but the renderer's
+    // in-memory pointers (transientSessionId, transientSessions map)
+    // are lost on full reload. Rebuild them from the session list.
+    if (currentProjectId && !get().transientSessionId) {
+      const transientSession = mergedSessions.find(
+        (s) => s.transient && s.projectId === currentProjectId && s.status === 'running',
+      );
+      if (transientSession) {
+        set((state) => ({
+          transientSessions: {
+            ...state.transientSessions,
+            [currentProjectId]: { sessionId: transientSession.id, branch: null },
+          },
+          transientSessionId: transientSession.id,
+          transientBranch: null,
+        }));
+      }
+    }
+
     return true;
   },
 
