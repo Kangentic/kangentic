@@ -26,12 +26,9 @@ const pill = 'px-2 py-0.5 rounded bg-surface-raised whitespace-nowrap select-non
  */
 export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
   const usage = useSessionStore((s) => s.sessionUsage[sessionId]);
-  const sessionShell = useSessionStore((s) => {
-    for (const sess of s.sessions) {
-      if (sess.id === sessionId) return sess.shell;
-    }
-    return undefined;
-  });
+  const sessionShell = useSessionStore((s) =>
+    s.sessions.find((sess) => sess.id === sessionId)?.shell,
+  );
   const taskAgent = useBoardStore((s) => s.tasks.find((t) => t.session_id === sessionId)?.agent ?? null);
   const agentVersionNumber = useConfigStore((s) => s.agentVersionNumber);
   const contextBarConfig = useConfigStore((s) => s.config.contextBar);

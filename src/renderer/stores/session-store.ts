@@ -88,6 +88,8 @@ interface SessionStore {
   markFirstOutput: (sessionId: string) => void;
   updateActivity: (sessionId: string, state: ActivityState) => void;
   addEvent: (sessionId: string, event: SessionEvent) => void;
+  batchUpdateUsage: (entries: Map<string, SessionUsage>) => void;
+  batchAddEvents: (entries: Array<{ sessionId: string; event: SessionEvent }>) => void;
   clearEvents: (sessionId: string) => void;
   setPendingCommandLabel: (taskId: string, label: string) => void;
   clearPendingCommandLabel: (taskId: string) => void;
@@ -348,6 +350,30 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         ? updated.slice(-MAX_EVENTS_PER_SESSION)
         : updated;
       return { sessionEvents: { ...s.sessionEvents, [sessionId]: capped } };
+    });
+  },
+
+  batchUpdateUsage: (entries) => {
+    set((s) => {
+      const merged = { ...s.sessionUsage };
+      for (const [sessionId, data] of entries) {
+        merged[sessionId] = data;
+      }
+      return { sessionUsage: merged };
+    });
+  },
+
+  batchAddEvents: (entries) => {
+    set((s) => {
+      const merged = { ...s.sessionEvents };
+      for (const { sessionId, event } of entries) {
+        const existing = merged[sessionId] || [];
+        const updated = [...existing, event];
+        merged[sessionId] = updated.length > MAX_EVENTS_PER_SESSION
+          ? updated.slice(-MAX_EVENTS_PER_SESSION)
+          : updated;
+      }
+      return { sessionEvents: merged };
     });
   },
 

@@ -7,7 +7,37 @@ import { useSessionStore, cancelSync } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useToastStore } from './stores/toast-store';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
-import type { SessionEvent } from '../shared/types';
+import type { SessionEvent, SessionUsage } from '../shared/types';
+
+/**
+ * Microtask batcher for Zustand store updates. Accumulates usage and event
+ * updates during the current microtask and applies them in a single set() call.
+ * This prevents N background IPC callbacks from triggering N separate React renders.
+ */
+const pendingUsage = new Map<string, SessionUsage>();
+const pendingEvents: Array<{ sessionId: string; event: SessionEvent }> = [];
+let batchScheduled = false;
+
+function scheduleBatchFlush(): void {
+  if (batchScheduled) return;
+  batchScheduled = true;
+  queueMicrotask(() => {
+    batchScheduled = false;
+    const store = useSessionStore.getState();
+
+    if (pendingUsage.size > 0) {
+      const usageCopy = new Map(pendingUsage);
+      pendingUsage.clear();
+      store.batchUpdateUsage(usageCopy);
+    }
+
+    if (pendingEvents.length > 0) {
+      const eventsCopy = [...pendingEvents];
+      pendingEvents.length = 0;
+      store.batchAddEvents(eventsCopy);
+    }
+  });
+}
 
 export function App() {
   const loadProjects = useProjectStore((s) => s.loadProjects);
@@ -21,9 +51,7 @@ export function App() {
   const detectGit = useConfigStore((s) => s.detectGit);
   const upsertSession = useSessionStore((s) => s.upsertSession);
   const updateSessionStatus = useSessionStore((s) => s.updateSessionStatus);
-  const updateUsage = useSessionStore((s) => s.updateUsage);
   const updateActivity = useSessionStore((s) => s.updateActivity);
-  const addEvent = useSessionStore((s) => s.addEvent);
 
   useEffect(() => {
     if (process.env.NODE_ENV !== 'production') {
@@ -259,6 +287,7 @@ export function App() {
 
     // Session usage data -- only update store for current project sessions
     // Transient sessions (command terminal) always pass through regardless of projectId
+    // Batched via microtask to coalesce rapid updates from multiple sessions
     if (sessions.onUsage) {
       cleanups.push(sessions.onUsage((sessionId, data, projectId) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
@@ -267,7 +296,8 @@ export function App() {
         const isTransient = sessionId === sessionState.transientSessionId
           || Object.values(sessionState.transientSessions).some((entry) => entry.sessionId === sessionId);
         if (isTransient || !projectId || !activeProjectId || projectId === activeProjectId) {
-          updateUsage(sessionId, data);
+          pendingUsage.set(sessionId, data);
+          scheduleBatchFlush();
         }
       }));
     }
@@ -340,11 +370,13 @@ export function App() {
 
     // Session events (tool calls, idle, prompt -- activity log)
     // Only add events for current project sessions
+    // Batched via microtask to coalesce rapid updates from multiple sessions
     if (sessions.onEvent) {
       cleanups.push(sessions.onEvent((sessionId, event, projectId) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (!projectId || !activeProjectId || projectId === activeProjectId) {
-          addEvent(sessionId, event);
+          pendingEvents.push({ sessionId, event });
+          scheduleBatchFlush();
         }
       }));
     }
@@ -472,7 +504,7 @@ export function App() {
     return () => {
       cleanups.forEach((fn) => fn());
     };
-  }, [upsertSession, updateSessionStatus, updateUsage, updateActivity, addEvent]);
+  }, [upsertSession, updateSessionStatus, updateActivity]);
 
   return <AppLayout />;
 }

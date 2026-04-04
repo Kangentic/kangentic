@@ -1141,6 +1141,7 @@ export interface ElectronAPI {
     spawnTransient: (input: SpawnTransientSessionInput) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
     killTransient: (sessionId: string) => Promise<void>;
     getPeriodStats: (period: UsageTimePeriod) => Promise<PeriodUsageStats>;
+    setFocused: (sessionId: string | null) => Promise<void>;
   };
 
   // Config

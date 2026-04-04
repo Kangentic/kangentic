@@ -856,6 +856,7 @@
       getPeriodStats: async function () {
         return { totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0 };
       },
+      setFocused: async function () {},
     },
 
     config: {

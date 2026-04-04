@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { SquareTerminal, ClipboardCheck, ArrowUp, ArrowDown, ChevronDown, Check } from 'lucide-react';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
@@ -27,7 +28,6 @@ const PERIOD_LABELS: Record<UsageTimePeriod, string> = Object.fromEntries(
 
 export function StatusBar() {
   const allSessions = useSessionStore((s) => s.sessions);
-  const sessionUsage = useSessionStore((s) => s.sessionUsage);
   const selectedPeriod = useSessionStore((s) => s.selectedPeriod);
   const periodStats = useSessionStore((s) => s.periodStats);
   const setSelectedPeriod = useSessionStore((s) => s.setSelectedPeriod);
@@ -83,14 +83,32 @@ export function StatusBar() {
   );
   const activeTasks = tasks.filter((t) => !doneSwimlaneIds.has(t.swimlane_id)).length;
 
-  // Aggregate token usage across current project's live sessions
-  const projectSessionIds = new Set(projectSessions.map((s) => s.id));
-  const usageValues = Object.entries(sessionUsage)
-    .filter(([id]) => projectSessionIds.has(id))
-    .map(([, usage]) => usage);
-  const liveCost = usageValues.reduce((sum, u) => sum + u.cost.totalCostUsd, 0);
-  const liveInput = usageValues.reduce((sum, u) => sum + u.contextWindow.totalInputTokens, 0);
-  const liveOutput = usageValues.reduce((sum, u) => sum + u.contextWindow.totalOutputTokens, 0);
+  // Aggregate token usage across current project's live sessions.
+  // Computed inside a selector that returns primitives so re-renders only happen
+  // when the rounded aggregate values actually change (not on every background update).
+  const projectSessionIds = useMemo(() => new Set(projectSessions.map((s) => s.id)), [projectSessions]);
+  const liveUsage = useSessionStore(
+    useShallow(
+      useCallback((s) => {
+        let cost = 0;
+        let input = 0;
+        let output = 0;
+        let count = 0;
+        for (const [id, usage] of Object.entries(s.sessionUsage)) {
+          if (projectSessionIds.has(id)) {
+            cost += usage.cost.totalCostUsd;
+            input += usage.contextWindow.totalInputTokens;
+            output += usage.contextWindow.totalOutputTokens;
+            count++;
+          }
+        }
+        return { cost, input, output, count };
+      }, [projectSessionIds]),
+    ),
+  );
+  const liveCost = liveUsage.cost;
+  const liveInput = liveUsage.input;
+  const liveOutput = liveUsage.output;
 
   // Compute displayed stats based on selected period
   const isLive = selectedPeriod === 'live';
@@ -98,7 +116,7 @@ export function StatusBar() {
   const displayOutput = isLive ? liveOutput : (periodStats?.totalOutputTokens ?? 0) + liveOutput;
   const displayCost = isLive ? liveCost : (periodStats?.totalCostUsd ?? 0) + liveCost;
 
-  const hasUsage = usageValues.length > 0 || (periodStats && !isLive);
+  const hasUsage = liveUsage.count > 0 || (periodStats && !isLive);
 
   // Pulse hooks - always called unconditionally (hooks rules)
   const tokenKey = `${displayInput}-${displayOutput}`;

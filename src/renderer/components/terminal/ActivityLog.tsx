@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { format } from 'date-fns';
+import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore } from '../../stores/session-store';
 import { EventType } from '../../../shared/types';
 import type { SessionEvent } from '../../../shared/types';
@@ -27,7 +28,21 @@ interface ActivityLogProps {
 }
 
 export function ActivityLog({ active, sessionIds, taskLabelMap }: ActivityLogProps) {
-  const sessionEvents = useSessionStore((s) => s.sessionEvents);
+  // Narrow selector: only re-render when events for visible sessions change.
+  // useShallow compares each value by reference, so background session events
+  // don't trigger re-renders here.
+  const sessionEvents = useSessionStore(
+    useShallow(
+      useCallback((s) => {
+        const result: Record<string, SessionEvent[]> = {};
+        for (const sid of sessionIds) {
+          const events = s.sessionEvents[sid];
+          if (events) result[sid] = events;
+        }
+        return result;
+      }, [sessionIds]),
+    ),
+  );
   const containerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
   const colorMapRef = useRef(new Map<string, number>());
@@ -117,12 +132,12 @@ export function ActivityLog({ active, sessionIds, taskLabelMap }: ActivityLogPro
     }
   };
 
-  // Auto-scroll to bottom when new events arrive
+  // Auto-scroll to bottom when new events arrive (only when visible)
   useEffect(() => {
-    if (autoScrollRef.current && containerRef.current) {
+    if (active && autoScrollRef.current && containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-  }, [displayEvents.length]);
+  }, [active, displayEvents.length]);
 
   // Clear isSmoothScrollingRef when scroll animation finishes
   useEffect(() => {

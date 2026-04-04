@@ -156,6 +156,7 @@ const api: ElectronAPI = {
     spawnTransient: (input) => ipcRenderer.invoke(IPC.SESSION_SPAWN_TRANSIENT, input),
     killTransient: (id) => ipcRenderer.invoke(IPC.SESSION_KILL_TRANSIENT, id),
     getPeriodStats: (period: UsageTimePeriod) => ipcRenderer.invoke(IPC.SESSION_GET_PERIOD_STATS, period),
+    setFocused: (sessionId: string | null) => ipcRenderer.invoke(IPC.SESSION_SET_FOCUSED, sessionId),
   },
 
   config: {

@@ -1,5 +1,6 @@
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { Activity, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -9,6 +10,7 @@ import { ContextBar } from './ContextBar';
 import { slugify } from '../../utils/slugify';
 import { shellDisplayName } from '../../utils/shell-display-name';
 import { ACTIVITY_TAB } from '../../../shared/types';
+import type { ActivityState } from '../../../shared/types';
 
 interface TerminalPanelProps {
   collapsed?: boolean;
@@ -23,8 +25,6 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const setDetailTaskId = useSessionStore((s) => s.setDetailTaskId);
   const dialogSessionId = useSessionStore((s) => s.dialogSessionId);
-  const sessionActivity = useSessionStore((s) => s.sessionActivity);
-  const seenIdleSessions = useSessionStore((s) => s.seenIdleSessions);
   const markSingleIdleSessionSeen = useSessionStore((s) => s.markSingleIdleSessionSeen);
 
   // Only show sessions that are actively running.
@@ -34,6 +34,32 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
   const activeSessions = useMemo(
     () => allSessions.filter((s) => s.status === 'running' && s.projectId === currentProjectId && !s.transient),
     [allSessions, currentProjectId],
+  );
+
+  // Narrow activity/idle selectors to only the panel's visible sessions.
+  // Prevents re-renders from background session state changes.
+  const activeSessionIdSet = useMemo(() => activeSessions.map((s) => s.id), [activeSessions]);
+  const sessionActivity = useSessionStore(
+    useShallow(
+      useCallback((s) => {
+        const result: Record<string, ActivityState> = {};
+        for (const id of activeSessionIdSet) {
+          if (s.sessionActivity[id]) result[id] = s.sessionActivity[id];
+        }
+        return result;
+      }, [activeSessionIdSet]),
+    ),
+  );
+  const seenIdleSessions = useSessionStore(
+    useShallow(
+      useCallback((s) => {
+        const result: Record<string, boolean> = {};
+        for (const id of activeSessionIdSet) {
+          if (s.seenIdleSessions[id]) result[id] = s.seenIdleSessions[id];
+        }
+        return result;
+      }, [activeSessionIdSet]),
+    ),
   );
 
   const showActivityTab = activeSessions.length >= 1;
@@ -56,6 +82,16 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
       setActiveSession(effectiveActiveId);
     }
   }, [effectiveActiveId, activeSessionId, setActiveSession]);
+
+  // Notify the main process which session is focused so it can suppress
+  // SESSION_DATA IPC for background sessions (they accumulate in scrollback).
+  // When a dialog owns a session, that session is focused instead.
+  useEffect(() => {
+    const focusedId = dialogSessionId
+      ? dialogSessionId
+      : (effectiveActiveId && effectiveActiveId !== ACTIVITY_TAB ? effectiveActiveId : null);
+    window.electronAPI.sessions.setFocused(focusedId);
+  }, [effectiveActiveId, dialogSessionId]);
 
   // Mark the active session as seen when it becomes the selected tab
   useEffect(() => {
@@ -187,26 +223,28 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
               </div>
             )}
 
-            {/* Individual session terminals */}
-            {activeSessions.map((session) => {
-              const isActive = effectiveActiveId === session.id;
-              const ownedByDialog = dialogSessionId === session.id;
-              return (
+            {/* Active session terminal -- only the focused session is mounted.
+                Background sessions accumulate in scrollback (Phase 1 gate) and reload
+                via getScrollback() when the user switches tabs. This reduces xterm
+                instances from N to 1, eliminating WebGL context exhaustion. */}
+            {activeSessions
+              .filter((session) => {
+                const isActive = effectiveActiveId === session.id;
+                const ownedByDialog = dialogSessionId === session.id;
+                return isActive && !ownedByDialog;
+              })
+              .map((session) => (
                 <div
                   key={session.id}
-                  style={{ display: isActive && !ownedByDialog ? 'block' : 'none' }}
                   className="absolute inset-0"
                 >
-                  {!ownedByDialog && (
-                    <TerminalTab
-                      sessionId={session.id}
-                      taskId={session.taskId}
-                      active={isActive}
-                    />
-                  )}
+                  <TerminalTab
+                    sessionId={session.id}
+                    taskId={session.taskId}
+                    active
+                  />
                 </div>
-              );
-            })}
+              ))}
           </div>
 
           {/* Context bar for individual session tabs (hidden when dialog owns the session) */}

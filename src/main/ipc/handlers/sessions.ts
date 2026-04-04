@@ -202,6 +202,51 @@ export function registerSessionHandlers(context: IpcContext): void {
     return sessionRepo.getStatsAfter(since);
   });
 
+  // Set which session is visible in the renderer's terminal panel.
+  // Background sessions stop emitting data IPC (accumulate in scrollback only).
+  ipcMain.handle(IPC.SESSION_SET_FOCUSED, (_, sessionId: string | null) => {
+    context.sessionManager.setFocusedSession(sessionId);
+    // Immediately flush any buffered usage/events so the newly focused
+    // session's data is up-to-date without waiting for the 2s timer.
+    flushBackgroundBuffer();
+  });
+
+  // === Background IPC Buffering ===
+  // Buffer usage and event IPC for non-focused sessions, flushing every 2 seconds.
+  // This reduces IPC churn from O(N*freq) to O(1*freq) + trickle.
+  // Activity state is NEVER buffered (drives board card states, sidebar badges, notifications).
+  const BACKGROUND_FLUSH_MS = 2000;
+  const bufferedUsage = new Map<string, { data: unknown; projectId: string | undefined }>();
+  const bufferedEvents: Array<{ sessionId: string; event: unknown; projectId: string | undefined }> = [];
+  let backgroundFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function isFocusedSession(sessionId: string): boolean {
+    const focused = context.sessionManager.getFocusedSession();
+    return !focused || sessionId === focused;
+  }
+
+  function scheduleBackgroundFlush(): void {
+    if (backgroundFlushTimer) return;
+    backgroundFlushTimer = setTimeout(flushBackgroundBuffer, BACKGROUND_FLUSH_MS);
+  }
+
+  function flushBackgroundBuffer(): void {
+    backgroundFlushTimer = null;
+    if (context.mainWindow.isDestroyed()) return;
+
+    // Flush buffered usage (last-write-wins per session)
+    for (const [sessionId, { data, projectId }] of bufferedUsage) {
+      context.mainWindow.webContents.send(IPC.SESSION_USAGE, sessionId, data, projectId);
+    }
+    bufferedUsage.clear();
+
+    // Flush buffered events (in order)
+    for (const entry of bufferedEvents) {
+      context.mainWindow.webContents.send(IPC.SESSION_EVENT, entry.sessionId, entry.event, entry.projectId);
+    }
+    bufferedEvents.length = 0;
+  }
+
   // Forward PTY events to renderer (guard against destroyed window during shutdown)
   // Each event includes the session's projectId so the renderer can filter by project.
   context.sessionManager.on('data', (sessionId: string, data: string) => {
@@ -219,9 +264,14 @@ export function registerSessionHandlers(context: IpcContext): void {
   });
 
   context.sessionManager.on('usage', (sessionId: string, data: unknown) => {
-    if (!context.mainWindow.isDestroyed()) {
-      const projectId = context.sessionManager.getSessionProjectId(sessionId);
+    if (context.mainWindow.isDestroyed()) return;
+    const projectId = context.sessionManager.getSessionProjectId(sessionId);
+    if (isFocusedSession(sessionId)) {
       context.mainWindow.webContents.send(IPC.SESSION_USAGE, sessionId, data, projectId);
+    } else {
+      // Buffer for background sessions (last-write-wins)
+      bufferedUsage.set(sessionId, { data, projectId });
+      scheduleBackgroundFlush();
     }
   });
 
@@ -244,9 +294,13 @@ export function registerSessionHandlers(context: IpcContext): void {
   });
 
   context.sessionManager.on('event', (sessionId: string, event: unknown) => {
-    if (!context.mainWindow.isDestroyed()) {
-      const projectId = context.sessionManager.getSessionProjectId(sessionId);
+    if (context.mainWindow.isDestroyed()) return;
+    const projectId = context.sessionManager.getSessionProjectId(sessionId);
+    if (isFocusedSession(sessionId)) {
       context.mainWindow.webContents.send(IPC.SESSION_EVENT, sessionId, event, projectId);
+    } else {
+      bufferedEvents.push({ sessionId, event, projectId });
+      scheduleBackgroundFlush();
     }
   });
 

@@ -38,6 +38,14 @@ export class SessionManager extends EventEmitter {
   private usageTracker: UsageTracker;
   private firstOutputEmitted = new Set<string>();
 
+  /**
+   * The session currently visible in the renderer's terminal panel.
+   * When set, only this session's PTY data is emitted via IPC - background
+   * sessions accumulate silently in the scrollback buffer. This eliminates
+   * O(N) IPC flooding when many sessions run concurrently.
+   */
+  private focusedSessionId: string | null = null;
+
   constructor() {
     super();
     this.sessionQueue = new SessionQueue({
@@ -55,7 +63,11 @@ export class SessionManager extends EventEmitter {
           this.firstOutputEmitted.add(sessionId);
           this.emit('first-output', sessionId);
         }
-        this.emit('data', sessionId, data);
+        // Only emit IPC data for the focused session. Background sessions
+        // accumulate in scrollback and reload via getScrollback() on tab switch.
+        if (!this.focusedSessionId || sessionId === this.focusedSessionId) {
+          this.emit('data', sessionId, data);
+        }
       },
     });
 
@@ -104,6 +116,16 @@ export class SessionManager extends EventEmitter {
 
   dispose(): void {
     this.usageTracker.dispose();
+  }
+
+  /** Set which session is currently visible in the terminal panel. */
+  setFocusedSession(sessionId: string | null): void {
+    this.focusedSessionId = sessionId;
+  }
+
+  /** Return the currently focused session ID, or null if none. */
+  getFocusedSession(): string | null {
+    return this.focusedSessionId;
   }
 
   setShell(shell: string | null): void {
