@@ -11,6 +11,7 @@ import {
   ensureTaskBranchCheckout,
   createTransitionEngine,
   cleanupTaskResources,
+  spawnAgent,
 } from '../helpers';
 import { guardActiveNonWorktreeSessions } from './task-move';
 import type { IpcContext } from '../ipc-context';
@@ -180,38 +181,19 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       return tasks.getById(input.id);
     }
 
-    // Execute transition actions (from Done → target) for ALL non-kill columns
-    if (resolvedProjectPath) {
-      const doneLane = swimlanes.list().find((l) => l.role === 'done');
+    // Execute transition actions + resume suspended session (or spawn fresh).
+    // Uses the consolidated spawnAgent helper which handles:
+    // - user-paused guard (won't auto-resume manually paused tasks)
+    // - correct auto_command handling (resume prompt vs commandInjector)
+    // - single source of truth for spawn/resume logic
+    if (resolvedProjectPath && toLane) {
+      const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
       if (doneLane) {
         const db = getProjectDb(resolvedProjectId);
         const sessionRepo = new SessionRepository(db);
         const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
 
-        try {
-          await engine.executeTransition(task, doneLane.id, input.targetSwimlaneId, toLane?.permission_mode, true);
-        } catch (err) {
-          console.error('[TASK_UNARCHIVE] Transition engine error:', err);
-        }
-
-        // Re-read task; if still no session, resume suspended or spawn fresh.
-        let finalTask = tasks.getById(task.id);
-        if (finalTask && !finalTask.session_id && toLane?.auto_spawn) {
-          console.log(`[TASK_UNARCHIVE] Ensuring agent for task ${task.id.slice(0, 8)}`);
-          try {
-            await engine.resumeSuspendedSession(finalTask, toLane.permission_mode, true);
-            finalTask = tasks.getById(task.id);
-          } catch (err) {
-            console.error('[TASK_UNARCHIVE] Failed to start session:', err);
-          }
-        }
-
-        // Schedule auto-command for freshly spawned session
-        if (finalTask?.session_id && toLane?.auto_command) {
-          const vars = buildAutoCommandVars(finalTask);
-          const interpolated = context.commandBuilder.interpolateTemplate(toLane.auto_command, vars);
-          context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
-        }
+        await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: doneLane.id, toLane, skipPromptTemplate: true });
       }
     }
 
@@ -264,34 +246,14 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
         continue;
       }
 
-      if (resolvedProjectPath) {
+      if (resolvedProjectPath && toLane) {
         const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
         if (doneLane) {
           const db = getProjectDb(resolvedProjectId);
           const sessionRepo = new SessionRepository(db);
           const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
 
-          try {
-            await engine.executeTransition(task, doneLane.id, targetSwimlaneId, toLane?.permission_mode, true);
-          } catch (error) {
-            console.error('[TASK_BULK_UNARCHIVE] Transition engine error:', error);
-          }
-
-          let finalTask = tasks.getById(task.id);
-          if (finalTask && !finalTask.session_id && toLane?.auto_spawn) {
-            try {
-              await engine.resumeSuspendedSession(finalTask, toLane.permission_mode, true);
-              finalTask = tasks.getById(task.id);
-            } catch (error) {
-              console.error('[TASK_BULK_UNARCHIVE] Failed to start session:', error);
-            }
-          }
-
-          if (finalTask?.session_id && toLane?.auto_command) {
-            const vars = buildAutoCommandVars(finalTask);
-            const interpolated = context.commandBuilder.interpolateTemplate(toLane.auto_command, vars);
-            context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
-          }
+          await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: doneLane.id, toLane, skipPromptTemplate: true });
         }
       }
     }

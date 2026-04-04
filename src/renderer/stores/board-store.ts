@@ -432,12 +432,14 @@ const createArchiveSlice: StateCreator<BoardStore, [], [], ArchiveSlice> = (set,
       variant: 'success',
     });
 
-    // Detect if the unarchived task got a session (transition engine fired)
+    // Detect if the unarchived task got a session (transition engine fired).
+    // Unarchiving from Done always attempts to resume the suspended session,
+    // preserving Claude's conversation history via --resume.
     const restoredTask = tasks.find((t) => t.id === input.id);
     if (restoredTask?.session_id) {
       useSessionStore.setState({ activeSessionId: restoredTask.session_id });
       useToastStore.getState().addToast({
-        message: `Agent started for "${restoredTask.title}"`,
+        message: `Agent resumed for "${restoredTask.title}"`,
         variant: 'success',
       });
     }
