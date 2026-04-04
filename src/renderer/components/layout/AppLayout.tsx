@@ -23,6 +23,7 @@ export function AppLayout() {
   const config = useConfigStore((s) => s.config);
   const currentProject = useProjectStore((s) => s.currentProject);
   const projects = useProjectStore((s) => s.projects);
+  const hydrated = useProjectStore((s) => s.hydrated);
   const activeView = useBoardStore((s) => s.activeView);
 
   const sidebar = useSidebarResize(config);
@@ -39,7 +40,7 @@ export function AppLayout() {
 
       <div className="flex flex-1 min-h-0">
         {/* Hide sidebar entirely when no projects (welcome screen is primary UI) */}
-        {projects.length > 0 && (
+        {hydrated && projects.length > 0 && (
           <>
             {/* Sidebar area -- animates between full width and collapsed strip */}
             <div
@@ -130,6 +131,8 @@ export function AppLayout() {
                 </div>
               )}
             </>
+          ) : !hydrated ? (
+            null /* Empty content area while project store hydrates from IPC */
           ) : projects.length === 0 ? (
             <WelcomeScreen />
           ) : (

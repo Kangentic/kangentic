@@ -2,11 +2,19 @@ import { create } from 'zustand';
 import type { Project, ProjectCreateInput, ProjectGroup, ProjectGroupCreateInput } from '../../shared/types';
 import { useSessionStore } from './session-store';
 
+// Hydration gate: tracks whether both loadProjects() and loadCurrent() have
+// resolved at least once. Module-scoped so they don't pollute the store
+// interface. On HMR, the module re-evaluates and both reset to false, but the
+// vite:afterUpdate handler in App.tsx immediately re-calls both methods.
+let projectsReady = false;
+let currentReady = false;
+
 interface ProjectStore {
   projects: Project[];
   groups: ProjectGroup[];
   currentProject: Project | null;
   loading: boolean;
+  hydrated: boolean;
 
   loadProjects: () => Promise<void>;
   createProject: (input: ProjectCreateInput) => Promise<Project>;
@@ -32,11 +40,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   groups: [],
   currentProject: null,
   loading: false,
+  hydrated: false,
 
   loadProjects: async () => {
     set({ loading: true });
     const projects = await window.electronAPI.projects.list();
-    set({ projects, loading: false });
+    projectsReady = true;
+    set({ projects, loading: false, hydrated: projectsReady && currentReady });
   },
 
   createProject: async (input) => {
@@ -135,7 +145,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   loadCurrent: async () => {
     const project = await window.electronAPI.projects.getCurrent();
-    set({ currentProject: project });
+    currentReady = true;
+    set({ currentProject: project, hydrated: projectsReady && currentReady });
   },
 
   // Group actions
