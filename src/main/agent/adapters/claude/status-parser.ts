@@ -107,6 +107,7 @@ export class ClaudeStatusParser {
       }
 
       const modelId = (model?.id as string) ?? '';
+      const sessionId = typeof data.session_id === 'string' ? data.session_id : undefined;
 
       return {
         usage: {
@@ -128,6 +129,7 @@ export class ClaudeStatusParser {
             id: modelId,
             displayName: (model?.display_name as string) ?? '',
           },
+          sessionId,
         },
         meta: { modelId, rawUsedPercentage },
       };

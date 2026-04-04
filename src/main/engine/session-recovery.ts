@@ -7,10 +7,12 @@ import { TaskRepository } from '../db/repositories/task-repository';
 import { ActionRepository } from '../db/repositories/action-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { SessionManager } from '../pty/session-manager';
-import { ClaudeDetector, CommandBuilder, ensureWorktreeTrust, ensureMcpServerTrust } from '../agent/adapters/claude';
 import { ConfigManager } from '../config/config-manager';
+import type { AgentAdapter } from '../agent/agent-adapter';
 import type { SessionRecord, ActionConfig, Task, PermissionMode } from '../../shared/types';
+import { DEFAULT_AGENT } from '../../shared/types';
 import { agentRegistry } from '../agent/agent-registry';
+import { retireRecord, canResume as checkCanResume } from './session-lifecycle';
 import { isShuttingDown } from '../shutdown-state';
 import { sessionOutputPaths } from './session-paths';
 import { app } from 'electron';
@@ -20,25 +22,25 @@ import { app } from 'electron';
 // ---------------------------------------------------------------------------
 
 /**
- * Recover suspended and orphaned Claude agent sessions on project open.
+ * Recover suspended and orphaned agent sessions on project open.
+ *
+ * Agent-agnostic: resolves the correct adapter per-task via agentRegistry,
+ * so a project with mixed Claude/Gemini/Codex tasks recovers each with
+ * the right CLI and command builder.
  *
  * Steps:
  *  1. Mark any leftover 'running' DB records as 'orphaned' (crash recovery).
- *  2. Collect all suspended + orphaned `claude_agent` session records.
+ *  2. Collect all suspended + orphaned session records.
  *  3. Deduplicate: keep only the LATEST record per task_id.
- *     Mark all older duplicates as exited. This prevents compounding on
- *     repeated restarts.
  *  4. For each candidate, verify the task exists AND is NOT in a Backlog/Done
  *     column. Skip and mark exited otherwise.
- *  5. Spawn a new PTY with `--session-id` to let Claude CLI resume.
+ *  5. Detect the agent CLI, build the command, and spawn a new PTY.
  *  6. Mark old records as exited; insert fresh records for the new PTYs.
  */
 export async function recoverSessions(
   projectId: string,
   projectPath: string,
   sessionManager: SessionManager,
-  claudeDetector: ClaudeDetector,
-  commandBuilder: CommandBuilder,
   configManager: ConfigManager,
 ): Promise<void> {
   if (isShuttingDown()) return;
@@ -88,11 +90,11 @@ export async function recoverSessions(
       const recordTime = record.started_at || '';
       if (recordTime > existingTime) {
         // New record is newer -- retire the old one
-        sessionRepo.updateStatus(existing.id, 'exited', { exited_at: now });
+        retireRecord(sessionRepo, existing.id);
         latestByTask.set(record.task_id, record);
       } else {
         // Existing is newer -- retire this one
-        sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+        retireRecord(sessionRepo, record.id);
       }
     }
   }
@@ -130,14 +132,14 @@ export async function recoverSessions(
 
     const task = taskMap.get(record.task_id);
     if (!task) {
-      sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+      retireRecord(sessionRepo, record.id);
       skipped++;
       continue;
     }
 
     if (excludedLaneIds.has(task.swimlane_id)) {
       if (record.status !== 'suspended') {
-        sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+        retireRecord(sessionRepo, record.id);
       }
       skipped++;
       continue;
@@ -171,26 +173,18 @@ export async function recoverSessions(
     return;
   }
 
-  // Detect Claude CLI once
   const config = configManager.getEffectiveConfig(projectPath);
-  const claude = await claudeDetector.detect(config.agent.cliPaths.claude ?? null);
-  if (!claude.found || !claude.path) {
-    console.warn(
-      '[SESSION_RECOVERY] Claude CLI not found -- skipping',
-      toProcess.length,
-      'session(s)',
-    );
-    if (!app.isPackaged) console.timeEnd(timerLabel);
-    return;
-  }
 
   // Resolve shell once for all sessions (same global setting)
   const resolvedShell = await sessionManager.getShell();
 
-  // --- Preparation pass (synchronous): build spawn inputs ---
+  // --- Preparation pass: build spawn inputs per-task ---
+  // Each task may use a different agent, so we resolve the adapter per-task
+  // via the agent registry.
   interface SpawnInput {
     record: SessionRecord;
     task: Task;
+    adapter: AgentAdapter;
     command: string;
     cwd: string;
     agentSessionId: string;
@@ -214,34 +208,52 @@ export async function recoverSessions(
         console.log(
           `[SESSION_RECOVERY] CWD ${record.cwd} missing -- marking exited`,
         );
-        sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+        retireRecord(sessionRepo, record.id);
+        skipped++;
+        continue;
+      }
+
+      // Resolve the agent adapter for this task
+      const agentName = task.agent || DEFAULT_AGENT;
+      const adapter = agentRegistry.get(agentName);
+      if (!adapter) {
+        console.warn(`[SESSION_RECOVERY] Unknown agent "${agentName}" for task ${task.id.slice(0, 8)} -- skipping`);
+        retireRecord(sessionRepo, record.id);
+        skipped++;
+        continue;
+      }
+
+      // Detect the agent CLI
+      const cliPathOverride = config.agent.cliPaths[agentName] ?? null;
+      const detection = await adapter.detect(cliPathOverride);
+      if (!detection.found || !detection.path) {
+        console.warn(`[SESSION_RECOVERY] ${adapter.displayName} CLI not found for task ${task.id.slice(0, 8)} -- skipping`);
+        retireRecord(sessionRepo, record.id);
         skipped++;
         continue;
       }
 
       // Pre-populate trust so the agent doesn't block on the trust dialog
-      await ensureWorktreeTrust(record.cwd);
-      await ensureMcpServerTrust(record.cwd);
+      await adapter.ensureTrust(record.cwd);
 
       // Resolution order: lane override → global config.
       // Use the task's current swimlane to resolve permission mode.
       const taskLane = swimlaneRepo.getById(task.swimlane_id);
       const permissionMode = taskLane?.permission_mode ?? config.agent.permissionMode;
 
-      // Decide whether to resume or start fresh.
-      const canResume = (record.status === 'suspended' || record.status === 'orphaned')
-        && !!record.agent_session_id;
+      // Decide whether to resume or start fresh. Uses agent_session_id
+      // existence (not status) to determine resumability.
+      const resumeCheck = checkCanResume(record.task_id, sessionRepo);
+      const canResume = resumeCheck.resumable;
 
       let prompt: string | undefined;
       let agentSessionId: string;
 
-      if (canResume) {
-        agentSessionId = record.agent_session_id!;
+      if (canResume && resumeCheck.agentSessionId) {
+        agentSessionId = resumeCheck.agentSessionId;
         prompt = undefined;
       } else {
         agentSessionId = randomUUID();
-        // Recovery is resuming previously-started work, not starting fresh.
-        // Don't re-send the original task description as it would duplicate context.
         prompt = undefined;
       }
 
@@ -250,8 +262,8 @@ export async function recoverSessions(
       fs.mkdirSync(sessionDir, { recursive: true });
       const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 
-      const command = commandBuilder.buildClaudeCommand({
-        cliPath: claude.path,
+      const command = adapter.buildCommand({
+        agentPath: detection.path,
         taskId: task.id,
         prompt,
         cwd: record.cwd,
@@ -266,7 +278,7 @@ export async function recoverSessions(
       });
 
       spawnInputs.push({
-        record, task, command, cwd: record.cwd,
+        record, task, adapter, command, cwd: record.cwd,
         agentSessionId, canResume, prompt, permissionMode,
         statusOutputPath, eventsOutputPath,
       });
@@ -276,7 +288,7 @@ export async function recoverSessions(
         err,
       );
       try {
-        sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+        retireRecord(sessionRepo, record.id);
       } catch (updateErr) {
         console.error(`[SESSION_RECOVERY] Failed to mark session ${record.id} as exited:`, updateErr);
       }
@@ -291,6 +303,7 @@ export async function recoverSessions(
     if (!app.isPackaged) console.timeEnd(timerLabel);
     return;
   }
+
   const spawnResults = await Promise.allSettled(
     spawnInputs.map(async (input) => {
       const newSession = await sessionManager.spawn({
@@ -301,6 +314,8 @@ export async function recoverSessions(
         cwd: input.cwd,
         statusOutputPath: input.statusOutputPath,
         eventsOutputPath: input.eventsOutputPath,
+        agentParser: input.adapter,
+        exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
       });
       return { input, newSession };
     }),
@@ -313,7 +328,7 @@ export async function recoverSessions(
     if (result.status === 'fulfilled') {
       const { input, newSession } = result.value;
 
-      sessionRepo.updateStatus(input.record.id, 'exited', { exited_at: now });
+      retireRecord(sessionRepo, input.record.id);
 
       sessionRepo.insert({
         task_id: input.task.id,
@@ -344,7 +359,7 @@ export async function recoverSessions(
         result.reason,
       );
       try {
-        sessionRepo.updateStatus(input.record.id, 'exited', { exited_at: now });
+        retireRecord(sessionRepo, input.record.id);
       } catch (updateErr) {
         console.error(`[SESSION_RECOVERY] Failed to mark session ${input.record.id} as exited:`, updateErr);
       }
@@ -375,8 +390,6 @@ export async function reconcileSessions(
   projectId: string,
   projectPath: string,
   sessionManager: SessionManager,
-  claudeDetector: ClaudeDetector,
-  commandBuilder: CommandBuilder,
   configManager: ConfigManager,
 ): Promise<void> {
   if (isShuttingDown()) return;
@@ -406,16 +419,6 @@ export async function reconcileSessions(
       .map((s) => s.taskId),
   );
 
-  // Detect Claude CLI once before the loop
-  const claude = await claudeDetector.detect(config.agent.cliPaths.claude ?? null);
-  if (!claude.found || !claude.path) {
-    console.warn(
-      '[SESSION_RECONCILE] Claude CLI not found -- skipping all tasks',
-    );
-    if (!app.isPackaged) console.timeEnd(reconcileTimerLabel);
-    return;
-  }
-
   // Resolve shell once for all sessions (same global setting)
   const resolvedShell = await sessionManager.getShell();
 
@@ -429,6 +432,7 @@ export async function reconcileSessions(
   // --- Preparation pass (synchronous): collect spawn inputs ---
   interface ReconcileSpawnInput {
     task: Task;
+    adapter: AgentAdapter;
     command: string;
     cwd: string;
     agentSessionId: string;
@@ -500,14 +504,27 @@ export async function reconcileSessions(
           continue;
         }
 
+        // Resolve the agent adapter for this task
+        const agentName = actionConfig?.agent || task.agent || DEFAULT_AGENT;
+        const adapter = agentRegistry.get(agentName);
+        if (!adapter) {
+          console.warn(`[SESSION_RECONCILE] Unknown agent "${agentName}" for task ${task.id.slice(0, 8)} -- skipping`);
+          continue;
+        }
+
+        // Detect the agent CLI
+        const cliPathOverride = config.agent.cliPaths[agentName] ?? null;
+        const detection = await adapter.detect(cliPathOverride);
+        if (!detection.found || !detection.path) {
+          console.warn(`[SESSION_RECONCILE] ${adapter.displayName} CLI not found for task ${task.id.slice(0, 8)} -- skipping`);
+          continue;
+        }
+
         // Pre-populate trust so the agent doesn't block on the trust dialog
-        await ensureWorktreeTrust(cwd);
-        await ensureMcpServerTrust(cwd);
+        await adapter.ensureTrust(cwd);
 
         // Generate an agent session ID upfront so recovery can resume
         const agentSessionId = randomUUID();
-        // Reconciliation is resuming previously-started work, not starting fresh.
-        // Don't re-send the original task description as it would duplicate context.
         const prompt = undefined;
 
         // Ensure the per-session directory exists
@@ -515,8 +532,8 @@ export async function reconcileSessions(
         fs.mkdirSync(sessionDir, { recursive: true });
         const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 
-        const command = commandBuilder.buildClaudeCommand({
-          cliPath: claude.path,
+        const command = adapter.buildCommand({
+          agentPath: detection.path,
           taskId: task.id,
           prompt,
           cwd,
@@ -530,8 +547,8 @@ export async function reconcileSessions(
         });
 
         spawnInputs.push({
-          task, command, cwd, agentSessionId, prompt, permissionMode,
-          agent: actionConfig?.agent || 'claude',
+          task, adapter, command, cwd, agentSessionId, prompt, permissionMode,
+          agent: agentName,
           statusOutputPath, eventsOutputPath,
         });
       } catch (err) {
@@ -548,6 +565,7 @@ export async function reconcileSessions(
     if (!app.isPackaged) console.timeEnd(reconcileTimerLabel);
     return;
   }
+
   const spawnResults = await Promise.allSettled(
     spawnInputs.map(async (input) => {
       const newSession = await sessionManager.spawn({
@@ -558,6 +576,8 @@ export async function reconcileSessions(
         cwd: input.cwd,
         statusOutputPath: input.statusOutputPath,
         eventsOutputPath: input.eventsOutputPath,
+        agentParser: input.adapter,
+        exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
       });
       return { input, newSession };
     }),
@@ -577,7 +597,7 @@ export async function reconcileSessions(
         agent: input.agent,
       });
 
-      const sessionType = agentRegistry.get(input.agent)?.sessionType ?? 'claude_agent';
+      const sessionType = input.adapter.sessionType;
       sessionRepo.insert({
         task_id: input.task.id,
         session_type: sessionType,

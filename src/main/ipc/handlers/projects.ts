@@ -8,7 +8,7 @@ import { recoverSessions, reconcileSessions } from '../../engine/session-recover
 import { cleanupStaleResources } from '../../engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { WorktreeManager, isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../git/worktree-manager';
-import { stripKangenticHooks } from '../../agent/adapters/claude';
+import { agentRegistry } from '../../agent/agent-registry';
 import { getProjectDb, closeProjectDb } from '../../db/database';
 import { CommandBridge } from '../../agent/command-bridge';
 import { PATHS } from '../../config/paths';
@@ -82,17 +82,23 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     }
   }
 
-  // 3. Strip our hooks from .claude/settings.local.json (legacy cleanup --
+  // 3. Strip injected hooks from all registered agents (legacy cleanup --
   //    new sessions use --settings and don't write to settings.local.json,
   //    but existing worktrees from before the change may still have our hooks)
-  stripKangenticHooks(projectPath);
+  const directories = [projectPath];
   const worktreesDir = path.join(projectPath, '.kangentic', 'worktrees');
   if (fs.existsSync(worktreesDir)) {
     try {
       for (const entry of fs.readdirSync(worktreesDir)) {
-        stripKangenticHooks(path.join(worktreesDir, entry));
+        directories.push(path.join(worktreesDir, entry));
       }
     } catch { /* best effort */ }
+  }
+  for (const directory of directories) {
+    for (const adapterName of agentRegistry.list()) {
+      const adapter = agentRegistry.get(adapterName);
+      if (adapter) adapter.stripHooks(directory);
+    }
   }
 
   // 4. Remove empty .claude/ directory if it only contained our hooks file.
@@ -370,9 +376,9 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     const sessionRepo = new SessionRepository(db);
     const swimlaneRepo = new SwimlaneRepository(db);
     cleanupStaleResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
-      .then(() => recoverSessions(project.id, project.path, context.sessionManager, context.claudeDetector, context.commandBuilder, context.configManager))
+      .then(() => recoverSessions(project.id, project.path, context.sessionManager, context.configManager))
       .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
-      .then(() => reconcileSessions(project.id, project.path, context.sessionManager, context.claudeDetector, context.commandBuilder, context.configManager))
+      .then(() => reconcileSessions(project.id, project.path, context.sessionManager, context.configManager))
       .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err));
   }
 
@@ -403,8 +409,8 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       const sessionRepo = new SessionRepository(db);
       const swimlaneRepo = new SwimlaneRepository(db);
       await cleanupStaleResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager);
-      await recoverSessions(project.id, project.path, context.sessionManager, context.claudeDetector, context.commandBuilder, context.configManager);
-      await reconcileSessions(project.id, project.path, context.sessionManager, context.claudeDetector, context.commandBuilder, context.configManager);
+      await recoverSessions(project.id, project.path, context.sessionManager, context.configManager);
+      await reconcileSessions(project.id, project.path, context.sessionManager, context.configManager);
     }),
   );
 
@@ -476,9 +482,9 @@ export function registerProjectHandlers(context: IpcContext): void {
       const sessionRepo = new SessionRepository(db);
       const swimlaneRepo = new SwimlaneRepository(db);
       cleanupStaleResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
-        .then(() => recoverSessions(id, project.path, context.sessionManager, context.claudeDetector, context.commandBuilder, context.configManager))
+        .then(() => recoverSessions(id, project.path, context.sessionManager, context.configManager))
         .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
-        .then(() => reconcileSessions(id, project.path, context.sessionManager, context.claudeDetector, context.commandBuilder, context.configManager))
+        .then(() => reconcileSessions(id, project.path, context.sessionManager, context.configManager))
         .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err));
     }
   });

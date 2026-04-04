@@ -6,7 +6,6 @@ import { ProjectGroupRepository } from '../db/repositories/project-group-reposit
 import { SessionManager } from '../pty/session-manager';
 import { ConfigManager } from '../config/config-manager';
 import { BoardConfigManager } from '../config/board-config-manager';
-import { ClaudeDetector, CommandBuilder } from '../agent/adapters/claude';
 import { GitDetector } from '../agent/git-detector';
 import { ShellResolver } from '../pty/shell-resolver';
 import { CommandInjector } from '../engine/command-injector';
@@ -55,10 +54,8 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
   let projectRepo: ProjectRepository | null = null;
   let projectGroupRepo: ProjectGroupRepository | null = null;
   let configManager: ConfigManager | null = null;
-  let claudeDetector: ClaudeDetector | null = null;
   let gitDetector: GitDetector | null = null;
   let shellResolver: ShellResolver | null = null;
-  let commandBuilder: CommandBuilder | null = null;
 
   context = {
     mainWindow,
@@ -76,10 +73,6 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
       if (!configManager) configManager = new ConfigManager();
       return configManager;
     },
-    get claudeDetector() {
-      if (!claudeDetector) claudeDetector = new ClaudeDetector();
-      return claudeDetector;
-    },
     get gitDetector() {
       if (!gitDetector) gitDetector = new GitDetector();
       return gitDetector;
@@ -87,10 +80,6 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     get shellResolver() {
       if (!shellResolver) shellResolver = new ShellResolver();
       return shellResolver;
-    },
-    get commandBuilder() {
-      if (!commandBuilder) commandBuilder = new CommandBuilder();
-      return commandBuilder;
     },
     commandInjector,
     currentProjectId: null,

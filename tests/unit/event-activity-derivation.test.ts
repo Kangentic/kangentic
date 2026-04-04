@@ -52,6 +52,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
+import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
 import { EventType } from '../../src/shared/types';
 import type { ActivityState } from '../../src/shared/types';
 
@@ -113,7 +114,7 @@ describe('Event-derived activity state', () => {
   afterEach(async () => {
     // Close file watchers to prevent EBUSY/EPERM on Windows cleanup
     if (spawnedSessionId) {
-      manager.suspend(spawnedSessionId);
+      await manager.suspend(spawnedSessionId);
       spawnedSessionId = null;
     }
     // Let async onExit callbacks settle
@@ -130,6 +131,7 @@ describe('Event-derived activity state', () => {
       command: '',
       cwd: tmpDir,
       eventsOutputPath: eventsPath,
+      agentParser: ClaudeStatusParser,
     });
 
     spawnedSessionId = session.id;
@@ -1330,6 +1332,7 @@ describe('Event-derived activity state', () => {
         cwd: tmpDir,
         eventsOutputPath: eventsPath,
         statusOutputPath: statusPath,
+        agentParser: ClaudeStatusParser,
       });
 
       fakeSpawnedSessionId = session.id;
@@ -1386,12 +1389,13 @@ describe('Event-derived activity state', () => {
     });
 
     afterEach(async () => {
+      // Restore real timers before suspend() - the async graceful exit uses setTimeout
+      vi.useRealTimers();
       if (fakeSpawnedSessionId) {
-        fakeManager.suspend(fakeSpawnedSessionId);
+        await fakeManager.suspend(fakeSpawnedSessionId);
         fakeSpawnedSessionId = null;
       }
       fakeManager.dispose();
-      vi.useRealTimers();
       await new Promise((r) => setTimeout(r, 20));
     });
 

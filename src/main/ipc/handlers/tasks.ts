@@ -15,6 +15,7 @@ import {
 } from '../helpers';
 import { handleTaskMove, guardActiveNonWorktreeSessions } from './task-move';
 import { carryUncommittedChanges } from './task-branch';
+import { interpolateTemplate } from '../../agent/shared';
 import type { IpcContext } from '../ipc-context';
 import type { TaskSwitchBranchInput } from '../../../shared/types';
 
@@ -88,7 +89,7 @@ export function registerTaskHandlers(context: IpcContext): void {
       // Schedule auto-command for freshly spawned session
       if (finalTask?.session_id && toLane.auto_command) {
         const vars = buildAutoCommandVars(finalTask);
-        const interpolated = context.commandBuilder.interpolateTemplate(toLane.auto_command, vars);
+        const interpolated = interpolateTemplate(toLane.auto_command, vars);
         context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
       }
     }
@@ -220,7 +221,7 @@ export function registerTaskHandlers(context: IpcContext): void {
         // Schedule auto-command for freshly spawned session
         if (finalTask?.session_id && toLane?.auto_command) {
           const vars = buildAutoCommandVars(finalTask);
-          const interpolated = context.commandBuilder.interpolateTemplate(toLane.auto_command, vars);
+          const interpolated = interpolateTemplate(toLane.auto_command, vars);
           context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
         }
       }
@@ -300,7 +301,7 @@ export function registerTaskHandlers(context: IpcContext): void {
 
           if (finalTask?.session_id && toLane?.auto_command) {
             const vars = buildAutoCommandVars(finalTask);
-            const interpolated = context.commandBuilder.interpolateTemplate(toLane.auto_command, vars);
+            const interpolated = interpolateTemplate(toLane.auto_command, vars);
             context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
           }
         }

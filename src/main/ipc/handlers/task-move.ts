@@ -17,6 +17,7 @@ import {
 } from '../helpers';
 import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
+import { markRecordExited, markRecordSuspended } from '../../engine/session-lifecycle';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
 import { abortBacklogPromotion } from './backlog';
@@ -172,21 +173,23 @@ export async function handleTaskMove(
           && (record.status === 'running' || record.status === 'exited')) {
         // Capture metrics before suspend (caches are still populated)
         captureSessionMetrics(context.sessionManager, sessionRepo, task.session_id, record.id);
-        sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: new Date().toISOString(), suspended_by: 'system' });
+        markRecordSuspended(sessionRepo, record.id, 'system');
         console.log(`[TASK_MOVE] Suspended session record ${record.id.slice(0, 8)} for task ${task.id.slice(0, 8)}`);
       } else if (record && record.status === 'queued') {
-        sessionRepo.updateStatus(record.id, 'exited', { exited_at: new Date().toISOString() });
+        markRecordExited(sessionRepo, record.id);
         console.log(`[TASK_MOVE] Exited queued session record ${record.id.slice(0, 8)} for task ${task.id.slice(0, 8)}`);
       }
-      context.sessionManager.suspend(task.session_id);
+      await context.sessionManager.suspend(task.session_id);
       tasks.update({ id: task.id, session_id: null });
     } else {
-      // No active PTY -- preserve latest exited session for future resume
+      // No active PTY -- preserve latest exited session for future resume.
+      // With the state machine, canResume() checks agent_session_id existence
+      // regardless of status, so this marker is mainly for UI display.
       const record = sessionRepo.getLatestForTask(task.id);
       if (record && record.agent_session_id
           && record.session_type !== 'run_script'
           && record.status === 'exited') {
-        sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: new Date().toISOString(), suspended_by: 'system' });
+        markRecordSuspended(sessionRepo, record.id, 'system');
         console.log(`[TASK_MOVE] Preserved exited session ${record.id.slice(0, 8)} for future resume`);
       }
     }
@@ -217,11 +220,11 @@ export async function handleTaskMove(
       if (record && record.agent_session_id
           && (record.status === 'running' || record.status === 'exited')) {
         captureSessionMetrics(context.sessionManager, sessionRepo, task.session_id, record.id);
-        sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: new Date().toISOString(), suspended_by: 'system' });
+        markRecordSuspended(sessionRepo, record.id, 'system');
       } else if (record && record.status === 'queued') {
-        sessionRepo.updateStatus(record.id, 'exited', { exited_at: new Date().toISOString() });
+        markRecordExited(sessionRepo, record.id);
       }
-      context.sessionManager.suspend(task.session_id);
+      await context.sessionManager.suspend(task.session_id);
       tasks.update({ id: task.id, session_id: null });
       console.log(`[TASK_MOVE] Suspended session for task ${task.id.slice(0, 8)} (target column has auto_spawn=false)`);
     }
@@ -244,13 +247,11 @@ export async function handleTaskMove(
       if (sessionRecord && sessionRecord.agent_session_id
           && (sessionRecord.status === 'running' || sessionRecord.status === 'exited')) {
         captureSessionMetrics(context.sessionManager, sessionRepo, task.session_id, sessionRecord.id);
-        sessionRepo.updateStatus(sessionRecord.id, 'suspended', {
-          suspended_at: new Date().toISOString(),
-        });
+        markRecordSuspended(sessionRepo, sessionRecord.id, 'system');
       } else if (sessionRecord && sessionRecord.status === 'queued') {
-        sessionRepo.updateStatus(sessionRecord.id, 'exited', { exited_at: new Date().toISOString() });
+        markRecordExited(sessionRepo, sessionRecord.id);
       }
-      context.sessionManager.suspend(task.session_id);
+      await context.sessionManager.suspend(task.session_id);
       tasks.update({ id: task.id, session_id: null });
       console.log(
         `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`

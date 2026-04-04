@@ -78,9 +78,12 @@ export function registerSystemHandlers(context: IpcContext): void {
   });
 
   // === Agent ===
-  ipcMain.handle(IPC.AGENT_DETECT, () => {
+  ipcMain.handle(IPC.AGENT_DETECT, async () => {
+    const { agentRegistry } = await import('../../agent/agent-registry');
     const config = context.configManager.load();
-    return context.claudeDetector.detect(config.agent.cliPaths.claude ?? null);
+    const claudeAdapter = agentRegistry.get('claude');
+    if (!claudeAdapter) return { found: false, path: null, version: null };
+    return claudeAdapter.detect(config.agent.cliPaths.claude ?? null);
   });
 
   // === Agents ===

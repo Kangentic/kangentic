@@ -8,6 +8,7 @@ import { WorktreeManager } from '../../git/worktree-manager';
 import { handleTaskMove } from './tasks';
 import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
+import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessionId } from '../../engine/session-lifecycle';
 import type { Session, AppConfig, UsageTimePeriod } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
@@ -59,21 +60,21 @@ export function registerSessionHandlers(context: IpcContext): void {
     const db = getProjectDb(resolvedProjectId);
     const sessionRepo = new SessionRepository(db);
 
-    // Mark session record as suspended in DB
+    // Mark session record as suspended in DB (atomic: only transitions from running/exited)
     const record = sessionRepo.getLatestForTask(task.id);
     if (record && record.agent_session_id
         && (record.status === 'running' || record.status === 'exited')) {
       // Capture metrics before suspend (caches are still populated)
       captureSessionMetrics(context.sessionManager, sessionRepo, task.session_id!, record.id);
-      sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: new Date().toISOString(), suspended_by: 'user' });
+      markRecordSuspended(sessionRepo, record.id, 'user');
     } else if (record && record.status === 'queued') {
       // Queued sessions never started Claude CLI - mark as exited (not
       // suspended) to avoid a failed --resume attempt on next resume click.
-      sessionRepo.updateStatus(record.id, 'exited', { exited_at: new Date().toISOString() });
+      markRecordExited(sessionRepo, record.id);
     }
 
-    // Kill PTY but preserve session files
-    context.sessionManager.suspend(task.session_id);
+    // Gracefully exit agent then kill PTY, preserve session files
+    await context.sessionManager.suspend(task.session_id);
 
     // Clear task's active session reference
     tasks.update({ id: task.id, session_id: null });
@@ -165,14 +166,12 @@ export function registerSessionHandlers(context: IpcContext): void {
     // that were never written to the task record)
     context.sessionManager.removeByTaskId(taskId);
 
-    // Mark latest non-exited session record as exited in DB
+    // Atomically mark latest session record as exited in DB
     const db = getProjectDb(resolvedProjectId);
     const sessionRepo = new SessionRepository(db);
     const latest = sessionRepo.getLatestForTask(taskId);
-    if (latest && latest.status !== 'exited') {
-      sessionRepo.updateStatus(latest.id, 'exited', {
-        exited_at: new Date().toISOString(),
-      });
+    if (latest) {
+      markRecordExited(sessionRepo, latest.id);
     }
 
     // Clear task's session reference
@@ -308,17 +307,17 @@ export function registerSessionHandlers(context: IpcContext): void {
     if (session.status === 'running') {
       sessionStartTimes.set(sessionId, Date.now());
 
-      // Update DB record from 'queued' to 'running' when promoted
+      // Atomically promote DB record from 'queued' to 'running'
       const resolvedProjectId = context.sessionManager.getSessionProjectId(sessionId);
       if (resolvedProjectId) {
         try {
           const database = getProjectDb(resolvedProjectId);
           const sessionRepo = new SessionRepository(database);
-          const session = context.sessionManager.getSession(sessionId);
-          if (session) {
-            const record = sessionRepo.getLatestForTask(session.taskId);
-            if (record && record.status === 'queued') {
-              sessionRepo.updateStatus(record.id, 'running');
+          const managedSession = context.sessionManager.getSession(sessionId);
+          if (managedSession) {
+            const record = sessionRepo.getLatestForTask(managedSession.taskId);
+            if (record) {
+              promoteRecord(sessionRepo, record.id);
             }
           }
         } catch {
@@ -335,6 +334,19 @@ export function registerSessionHandlers(context: IpcContext): void {
     if (!context.mainWindow.isDestroyed()) {
       const projectId = context.sessionManager.getSessionProjectId(sessionId);
       context.mainWindow.webContents.send(IPC.SESSION_IDLE_TIMEOUT, sessionId, taskId, timeoutMinutes, projectId);
+    }
+  });
+
+  // Stale session ID recovery: when a resuming session reports a different
+  // agent session_id (from status.json), --resume failed silently and Claude
+  // created a fresh session. Update the DB so the next resume uses the correct UUID.
+  context.sessionManager.on('agent-session-id', (_sessionId: string, taskId: string, projectId: string, agentReportedId: string) => {
+    try {
+      const database = getProjectDb(projectId);
+      const sessionRepo = new SessionRepository(database);
+      recoverStaleSessionId(sessionRepo, taskId, agentReportedId);
+    } catch {
+      // DB may be closed
     }
   });
 
@@ -359,20 +371,18 @@ export function registerSessionHandlers(context: IpcContext): void {
       try {
         const db = getProjectDb(resolvedProjectId);
         const sessionRepo = new SessionRepository(db);
-        // Look up by task ID from the in-memory session.
-        // Only mark 'running' or 'queued' records as 'exited' -- never
-        // overwrite 'suspended' status, which is set by TASK_MOVE before
-        // the async onExit fires and is needed for resume on re-entry.
+        // Atomically mark 'running' or 'queued' records as 'exited'.
+        // compareAndUpdateStatus guards against overwriting 'suspended',
+        // which is set by TASK_MOVE before the async onExit fires.
         let updated = false;
         const session = context.sessionManager.getSession(sessionId);
         if (session) {
           const record = sessionRepo.getLatestForTask(session.taskId);
-          if (record && (record.status === 'running' || record.status === 'queued')) {
-            sessionRepo.updateStatus(record.id, 'exited', {
+          if (record) {
+            updated = markRecordExited(sessionRepo, record.id, {
               exit_code: exitCode,
               exited_at: new Date().toISOString(),
             });
-            updated = true;
           }
         }
         // Fallback: try matching by agent_session_id only if taskId lookup didn't find it
@@ -381,7 +391,7 @@ export function registerSessionHandlers(context: IpcContext): void {
             `SELECT id FROM sessions WHERE agent_session_id = ? AND status IN ('running', 'queued') LIMIT 1`
           ).get(sessionId) as { id: string } | undefined;
           if (byAgentId) {
-            sessionRepo.updateStatus(byAgentId.id, 'exited', {
+            markRecordExited(sessionRepo, byAgentId.id, {
               exit_code: exitCode,
               exited_at: new Date().toISOString(),
             });

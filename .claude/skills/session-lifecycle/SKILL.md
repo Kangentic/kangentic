@@ -13,24 +13,33 @@ spawn() called
     |
     v
 [queued] --processQueue()--> [running] --onExit()--> [exited]
-                                |
-                          suspend()
-                                |
-                                v
-                          [suspended]
+             |                  |                       |
+         cancelled          suspend()            markRecordSuspended()
+             |                  |                  (Done column)
+             v                  v                       |
+          [exited]         [suspended] <----------------+
+                               |
+                         retireRecord()
+                               |
+                               v
+                           [exited]
 ```
 
-**Legal transitions only:**
-- `queued -> running` (via `SessionQueue.processQueue()`)
-- `running -> exited` (PTY process exits naturally or killed)
-- `running -> suspended` (explicit `suspend()` call)
-- `suspended -> running` (new `doSpawn()` with `--resume`)
-- `exited -> running` (new `doSpawn()` with `--resume` if `claude_session_id` exists)
+All DB status transitions flow through `src/main/engine/session-lifecycle.ts` using atomic compare-and-set SQL (`compareAndUpdateStatus`) to prevent race conditions between concurrent writers.
+
+**Legal transitions (enforced by `compareAndUpdateStatus`):**
+- `queued -> running` (via `promoteRecord()`)
+- `queued -> exited` (cancelled before start, via `markRecordExited()`)
+- `running -> exited` (PTY process exits naturally or killed, via `markRecordExited()`)
+- `running -> suspended` (explicit `suspend()` call, via `markRecordSuspended()`)
+- `exited -> suspended` (preserve for future resume when moved to Done, via `markRecordSuspended()`)
+- `suspended -> exited` (retired when replaced by new session, via `retireRecord()`)
+- `orphaned -> exited` (recovery dedup or failed recovery, via `retireRecord()`)
+
+**Resume check (`canResume()`):** checks `agent_session_id` existence, NOT status. Any session with an `agent_session_id` is potentially resumable regardless of whether it's `suspended` or `exited`.
 
 **Illegal transitions (bugs if they happen):**
 - `queued -> suspended` (must run first)
-- `exited -> suspended` (already dead)
-- `suspended -> exited` (no PTY to exit)
 
 ## handleTaskMove Priority Cascade
 
@@ -93,9 +102,12 @@ Each PTY session spawns exactly one Claude Code CLI process. Two UI locations ca
 
 Resume happens in three coordinated layers:
 
-1. **Transition engine** (`src/main/engine/transition-engine.ts`, lines 135-143): Checks `sessionRepo.getLatestForTask()` -- if `status='suspended'` and `claude_session_id` exists and `session_type='claude_agent'`, uses `--resume <claude_session_id>` instead of `--session-id <uuid>`.
-2. **Session manager** (`src/main/pty/session-manager.ts`, line 146): Preserves scrollback buffer from previous session to write into new xterm on connect.
-3. **Session store** (`src/renderer/stores/session-store.ts`, lines 57-105): `syncSessions()` reconciles main process state, handling IPC updates that arrived during the async fetch gap.
+1. **Lifecycle check** (`src/main/engine/session-lifecycle.ts`, `canResume()`): Checks `agent_session_id` existence (not status) on the latest session record. Any session that started an agent and got an `agent_session_id` has a transcript that `--resume` can use.
+2. **Transition engine** (`src/main/engine/transition-engine.ts`): Calls `canResume()`, retires the old record via `retireRecord()`, spawns a new PTY with `--resume <agent_session_id>`.
+3. **Session manager** (`src/main/pty/session-manager.ts`): Preserves scrollback buffer from previous session to write into new xterm on connect.
+4. **Session store** (`src/renderer/stores/session-store.ts`): `syncSessions()` reconciles main process state, handling IPC updates that arrived during the async fetch gap.
+
+**Stale ID recovery:** If `--resume` fails silently (no JSONL found), the agent creates a fresh session with a different UUID. The `UsageTracker` detects the mismatch from the first `status.json` update and `recoverStaleSessionId()` updates the DB so the next resume uses the correct UUID.
 
 **Key rule:** Resumed sessions get `--resume <id>` ONLY -- no prompt is passed. Fresh sessions get `--session-id <uuid>` WITH prompt.
 
@@ -111,7 +123,7 @@ Resume happens in three coordinated layers:
 
 ## DB vs Live Session Divergence
 
-- **DB `SessionRecord`**: Persisted state (`status`, `claude_session_id`, `command`, `prompt`, `started_at`, `suspended_at`, `exited_at`). Source of truth for resume capability.
+- **DB `SessionRecord`**: Persisted state (`status`, `agent_session_id`, `command`, `prompt`, `started_at`, `suspended_at`, `exited_at`). Source of truth for resume capability.
 - **Live PTY `Session`**: In-memory state with PTY handle, scrollback buffer, file watchers, event cache. Source of truth for current activity.
 - **Reconciliation**: `syncSessions()` in the store merges both. DB records persist across app restarts; live sessions do not.
 
@@ -119,10 +131,12 @@ Resume happens in three coordinated layers:
 
 - **Rapid task moves during async gaps**: A task moved twice quickly can trigger two `handleTaskMove` calls that interleave. The `commandInjector.cancel()` ordering and generation counters mitigate this but don't fully prevent it.
 - **Timestamp-based ordering nondeterminism**: Sessions sorted by `startedAt` may have identical timestamps if spawned in rapid succession. Use stable secondary sort (session ID) when ordering matters.
-- **Natural Claude exit vs kill**: When Claude Code exits naturally (user types `/exit` or task completes), the PTY fires `onExit`. The handler must check if the session was already `suspended` before setting `exited` (line 284-286) to avoid overwriting the suspend state.
+- **Natural agent exit vs kill**: When the agent exits naturally (user types `/exit` or task completes), the PTY fires `onExit`. The `markRecordExited()` function uses atomic `compareAndUpdateStatus` to only transition from `running`/`queued` - it never overwrites `suspended`, which may have been set by `handleTaskMove` before the async `onExit` fires.
+- **Silent `--resume` failure**: When `--resume <uuid>` finds no matching JSONL file, it silently starts a fresh session with a new UUID. The `UsageTracker` detects this from the first `status.json` update and corrects the DB via `recoverStaleSessionId()`.
 
 ## Key Source Files
 
+- `src/main/engine/session-lifecycle.ts` -- Centralized state machine (canResume, markRecordExited, markRecordSuspended, retireRecord, promoteRecord, recoverStaleSessionId)
 - `src/main/pty/session-manager.ts` -- PTY lifecycle, spawn, suspend, kill, scrollback
 - `src/main/pty/session-queue.ts` -- Concurrency control, max concurrent sessions
 - `src/main/engine/transition-engine.ts` -- Action execution, resume logic

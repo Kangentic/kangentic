@@ -7,6 +7,7 @@ import { SessionManager } from '../pty/session-manager';
 import { interpolateTemplate } from '../agent/shared';
 import { WorktreeManager } from '../git/worktree-manager';
 import { agentRegistry } from '../agent/agent-registry';
+import { canResume as checkCanResume, retireRecord, markRecordSuspended } from './session-lifecycle';
 import { sessionOutputPaths } from './session-paths';
 import type { ActionRepository } from '../db/repositories/action-repository';
 import type { TaskRepository } from '../db/repositories/task-repository';
@@ -112,7 +113,7 @@ export class TransitionEngine {
         break;
 
       case 'kill_session':
-        this.executeKillSession(task);
+        await this.executeKillSession(task);
         break;
 
       case 'webhook':
@@ -156,23 +157,25 @@ export class TransitionEngine {
     // for demo mode where the project has never been opened in Claude Code).
     await adapter.ensureTrust(cwd);
 
-    // Check for a previous session to resume (only explicitly suspended sessions)
+    // Check for a previous session to resume. Uses agent_session_id existence
+    // (not status) to determine resumability - any session that started Claude
+    // and got an agent_session_id has a JSONL transcript that --resume can use.
     const previousSession = this.sessionRepo?.getLatestForTask(task.id);
-    const canResume = previousSession
-      && previousSession.agent_session_id
-      && previousSession.session_type !== 'run_script'
-      && previousSession.status === 'suspended';
+    const resumeCheck = this.sessionRepo
+      ? checkCanResume(task.id, this.sessionRepo)
+      : { resumable: false, agentSessionId: null };
+    const canResume = resumeCheck.resumable;
 
     console.log(
-      `[spawn_agent] task=${task.id.slice(0, 8)} previousSession=${previousSession ? `{id=${previousSession.id.slice(0, 8)}, status=${previousSession.status}, agent_id=${previousSession.agent_session_id?.slice(0, 8)}}` : 'none'} canResume=${!!canResume}`,
+      `[spawn_agent] task=${task.id.slice(0, 8)} previousSession=${previousSession ? `{id=${previousSession.id.slice(0, 8)}, status=${previousSession.status}, agent_id=${previousSession.agent_session_id?.slice(0, 8)}}` : 'none'} canResume=${canResume}`,
     );
 
     let prompt: string | undefined;
     let agentSessionId: string;
 
-    if (canResume) {
+    if (canResume && resumeCheck.agentSessionId) {
       // Resume the previous agent conversation, optionally with a preloaded command
-      agentSessionId = previousSession.agent_session_id!;
+      agentSessionId = resumeCheck.agentSessionId;
       prompt = resumePrompt;
       console.log(`[spawn_agent] RESUMING with agent_session_id=${agentSessionId.slice(0, 8)}${resumePrompt ? ` prompt="${resumePrompt.slice(0, 40)}"` : ''}`);
     } else {
@@ -226,6 +229,7 @@ export class TransitionEngine {
       eventsOutputPath,
       resuming: !!canResume,
       agentParser: adapter,
+      exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
     });
 
     this.taskRepo.update({
@@ -236,11 +240,9 @@ export class TransitionEngine {
 
     // Persist session record for resume capability
     if (this.sessionRepo) {
-      // Mark the old record as exited if we're resuming
+      // Retire the old record if we're resuming (suspended/orphaned → exited)
       if (canResume && previousSession) {
-        this.sessionRepo.updateStatus(previousSession.id, 'exited', {
-          exited_at: new Date().toISOString(),
-        });
+        retireRecord(this.sessionRepo, previousSession.id);
       }
 
       this.sessionRepo.insert({
@@ -292,21 +294,19 @@ export class TransitionEngine {
     });
   }
 
-  private executeKillSession(task: Task): void {
+  private async executeKillSession(task: Task): Promise<void> {
     if (task.session_id) {
       // Mark session as 'suspended' in DB before killing the PTY.
       // This allows a subsequent spawn_agent action (e.g. Planning → Running)
       // to resume the conversation via --resume, preserving Claude's context.
       if (this.sessionRepo) {
         const record = this.sessionRepo.getLatestForTask(task.id);
-        if (record && record.status === 'running') {
-          this.sessionRepo.updateStatus(record.id, 'suspended', {
-            suspended_at: new Date().toISOString(),
-          });
+        if (record) {
+          markRecordSuspended(this.sessionRepo, record.id, 'system');
         }
       }
 
-      this.sessionManager.suspend(task.session_id);
+      await this.sessionManager.suspend(task.session_id);
       this.taskRepo.update({
         id: task.id,
         session_id: null,

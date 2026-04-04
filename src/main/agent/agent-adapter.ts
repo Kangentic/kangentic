@@ -70,4 +70,14 @@ export interface AgentAdapter {
 
   /** Clear any cached settings (e.g. after project settings change). */
   clearSettingsCache(): void;
+
+  /**
+   * Return the sequence of strings to write to the PTY for a graceful exit.
+   * Called by SessionManager.suspend() before force-killing the PTY.
+   * Ctrl+C (\x03) interrupts in-progress work; the exit command triggers
+   * a clean shutdown that flushes conversation state (e.g. JSONL transcript).
+   *
+   * Default (if not implemented): ['\x03'] (Ctrl+C only).
+   */
+  getExitSequence?(): string[];
 }

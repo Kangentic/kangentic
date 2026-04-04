@@ -4,7 +4,6 @@ import type { ProjectGroupRepository } from '../db/repositories/project-group-re
 import type { SessionManager } from '../pty/session-manager';
 import type { ConfigManager } from '../config/config-manager';
 import type { BoardConfigManager } from '../config/board-config-manager';
-import type { ClaudeDetector, CommandBuilder } from '../agent/adapters/claude';
 import type { GitDetector } from '../agent/git-detector';
 import type { ShellResolver } from '../pty/shell-resolver';
 import type { CommandBridge } from '../agent/command-bridge';
@@ -17,10 +16,8 @@ export interface IpcContext {
   sessionManager: SessionManager;
   configManager: ConfigManager;
   boardConfigManager: BoardConfigManager;
-  claudeDetector: ClaudeDetector;
   gitDetector: GitDetector;
   shellResolver: ShellResolver;
-  commandBuilder: CommandBuilder;
   commandInjector: CommandInjector;
   currentProjectId: string | null;
   currentProjectPath: string | null;

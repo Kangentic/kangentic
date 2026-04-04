@@ -57,13 +57,23 @@ export class SessionRepository {
     };
   }
 
-  updateStatus(
+  /**
+   * Atomic compare-and-set status transition. Only updates if the current
+   * status matches one of the expected "from" statuses. Returns true if the
+   * row was actually updated (transition succeeded), false if the current
+   * status didn't match (transition rejected).
+   *
+   * This prevents race conditions between concurrent writers (e.g. suspend()
+   * setting 'suspended' while onExit sets 'exited').
+   */
+  compareAndUpdateStatus(
     id: string,
-    status: SessionRecordStatus,
+    expectedFrom: SessionRecordStatus | SessionRecordStatus[],
+    to: SessionRecordStatus,
     extra?: { exit_code?: number; suspended_at?: string; exited_at?: string; suspended_by?: SuspendedBy | null },
-  ): void {
+  ): boolean {
     const sets = ['status = ?'];
-    const params: unknown[] = [status];
+    const params: unknown[] = [to];
 
     if (extra?.exit_code !== undefined) {
       sets.push('exit_code = ?');
@@ -82,8 +92,19 @@ export class SessionRepository {
       params.push(extra.suspended_by);
     }
 
-    params.push(id);
-    this.db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+    const fromList = Array.isArray(expectedFrom) ? expectedFrom : [expectedFrom];
+    const placeholders = fromList.map(() => '?').join(', ');
+    params.push(id, ...fromList);
+
+    const result = this.db.prepare(
+      `UPDATE sessions SET ${sets.join(', ')} WHERE id = ? AND status IN (${placeholders})`,
+    ).run(...params);
+    return result.changes > 0;
+  }
+
+  /** Update the agent_session_id for a session record (stale ID recovery). */
+  updateAgentSessionId(id: string, agentSessionId: string): void {
+    this.db.prepare('UPDATE sessions SET agent_session_id = ? WHERE id = ?').run(agentSessionId, id);
   }
 
   /** Get suspended agent sessions that can be resumed */

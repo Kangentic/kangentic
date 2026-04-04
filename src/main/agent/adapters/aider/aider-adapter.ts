@@ -123,4 +123,9 @@ export class AiderAdapter implements AgentAdapter {
 
   // Aider has no merged settings - no-op
   clearSettingsCache(): void {}
+
+  getExitSequence(): string[] {
+    // Aider has no session resume mechanism. Ctrl+C exits cleanly.
+    return ['\x03'];
+  }
 }

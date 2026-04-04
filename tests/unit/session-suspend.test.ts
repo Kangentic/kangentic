@@ -89,7 +89,7 @@ describe('SessionManager suspend logic', () => {
   it('suspend sets status to suspended', async () => {
     const { session } = await spawnSession();
 
-    manager.suspend(session.id);
+    await manager.suspend(session.id);
 
     const result = manager.getSession(session.id);
     expect(result?.status).toBe('suspended');
@@ -98,7 +98,7 @@ describe('SessionManager suspend logic', () => {
   it('onExit preserves suspended status', async () => {
     const { session, triggerExit } = await spawnSession();
 
-    manager.suspend(session.id);
+    await manager.suspend(session.id);
     // Manually trigger onExit (simulates PTY process ending after kill)
     triggerExit(0);
     // Let any async callbacks fire
@@ -139,7 +139,7 @@ describe('SessionManager suspend logic', () => {
       pathsWereNullAtKill = true;
     });
 
-    manager.suspend(session.id);
+    await manager.suspend(session.id);
 
     expect(mock.mockPty.kill).toHaveBeenCalled();
     expect(pathsWereNullAtKill).toBe(true);
@@ -152,7 +152,7 @@ describe('SessionManager suspend logic', () => {
       if (id === session.id) changedStatuses.push(changedSession.status);
     });
 
-    manager.suspend(session.id);
+    await manager.suspend(session.id);
 
     expect(changedStatuses).toContain('suspended');
   });
@@ -172,7 +172,7 @@ describe('SessionManager suspend logic', () => {
     expect(manager.queuedCount).toBe(1);
     expect(queued.status).toBe('queued');
 
-    manager.suspend(queued.id);
+    await manager.suspend(queued.id);
 
     expect(manager.queuedCount).toBe(0);
     expect(manager.getSession(queued.id)?.status).toBe('suspended');
@@ -192,7 +192,7 @@ describe('SessionManager suspend logic', () => {
   it('listSessions returns suspended status', async () => {
     const { session } = await spawnSession();
 
-    manager.suspend(session.id);
+    await manager.suspend(session.id);
 
     const sessions = manager.listSessions();
     const found = sessions.find((s) => s.id === session.id);

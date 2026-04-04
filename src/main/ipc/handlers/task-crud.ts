@@ -14,6 +14,7 @@ import {
   spawnAgent,
 } from '../helpers';
 import { guardActiveNonWorktreeSessions } from './task-move';
+import { interpolateTemplate } from '../../agent/shared';
 import type { IpcContext } from '../ipc-context';
 
 export function registerTaskCrudHandlers(context: IpcContext): void {
@@ -80,7 +81,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       // Schedule auto-command for freshly spawned session
       if (finalTask?.session_id && toLane.auto_command) {
         const vars = buildAutoCommandVars(finalTask);
-        const interpolated = context.commandBuilder.interpolateTemplate(toLane.auto_command, vars);
+        const interpolated = interpolateTemplate(toLane.auto_command, vars);
         context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
       }
     }

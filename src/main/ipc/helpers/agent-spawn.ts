@@ -10,6 +10,7 @@ import { DEFAULT_AGENT } from '../../../shared/types';
 import type { Task, Swimlane } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
+import { canResume as checkCanResume } from '../../engine/session-lifecycle';
 import { ensureTaskWorktree, ensureTaskBranchCheckout } from './task-git';
 import { getProjectRepos } from './project-repos';
 
@@ -116,14 +117,13 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   // Step 2: no session after transitions - resume suspended or spawn fresh
   console.log(`[spawnAgent] No session after transitions, spawning for task ${task.id.slice(0, 8)}`);
 
-  // Determine resume vs fresh spawn for auto_command handling
-  const suspendedRecord = sessionRepo.getLatestForTask(task.id);
-  const wasSuspended = !!suspendedRecord?.agent_session_id
-    && suspendedRecord.status === 'suspended';
+  // Determine resume vs fresh spawn for auto_command handling.
+  // Uses agent_session_id existence (not status) to check resumability.
+  const resumeCheck = checkCanResume(task.id, sessionRepo);
 
   // Resume path: preload auto_command as initial resume prompt
   // Fresh path: auto_command scheduled via commandInjector after spawn
-  const resumePrompt = (toLane.auto_command?.trim() && wasSuspended)
+  const resumePrompt = (toLane.auto_command?.trim() && resumeCheck.resumable)
     ? interpolateTemplate(toLane.auto_command, buildAutoCommandVars(currentTask))
     : undefined;
 

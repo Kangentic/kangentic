@@ -354,6 +354,8 @@ export interface SessionUsage {
     id: string;
     displayName: string;
   };
+  /** Agent-reported session ID (from status.json). Used for stale ID recovery. */
+  sessionId?: string;
 }
 
 // === Usage Time Period Stats ===
@@ -969,6 +971,8 @@ export interface SpawnSessionInput {
   transient?: boolean;
   /** Agent-specific parser for status/event output. Falls back to ClaudeStatusParser if omitted. */
   agentParser?: AgentParser;
+  /** Sequence of strings to write to PTY before killing for graceful exit (e.g. ['\x03', '/exit\r']). */
+  exitSequence?: string[];
 }
 
 export interface SpawnTransientSessionInput {

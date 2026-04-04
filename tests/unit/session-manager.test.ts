@@ -35,6 +35,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
+import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
 import { EventType } from '../../src/shared/types';
 import type { ActivityState, SessionEvent } from '../../src/shared/types';
 
@@ -90,7 +91,7 @@ describe('Scrollback', () => {
 
   afterEach(async () => {
     if (spawnedSessionId) {
-      manager.suspend(spawnedSessionId);
+      await manager.suspend(spawnedSessionId);
       spawnedSessionId = null;
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -169,7 +170,7 @@ describe('Scrollback clearing on resize', () => {
 
   afterEach(async () => {
     if (spawnedSessionId) {
-      manager.suspend(spawnedSessionId);
+      await manager.suspend(spawnedSessionId);
       spawnedSessionId = null;
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -348,16 +349,15 @@ describe('SuspendAll', () => {
     return { session, ...mock };
   }
 
-  it('sends ctrl-C and /exit to all running sessions', async () => {
+  it('sends exit sequence to all running sessions', async () => {
     const { mockPty: pty1 } = await spawnSession('task-sa-1');
     const { mockPty: pty2 } = await spawnSession('task-sa-2');
 
     await manager.suspendAll(0);
 
+    // Default exit sequence is ['\x03'] (Ctrl+C only) when no exitSequence is provided
     expect(pty1.write).toHaveBeenCalledWith('\x03');
-    expect(pty1.write).toHaveBeenCalledWith('/exit\r');
     expect(pty2.write).toHaveBeenCalledWith('\x03');
-    expect(pty2.write).toHaveBeenCalledWith('/exit\r');
   });
 
   it('returns task IDs of all sessions', async () => {
@@ -837,7 +837,7 @@ describe('Data buffering', () => {
 
   afterEach(async () => {
     if (spawnedSessionId) {
-      manager.suspend(spawnedSessionId);
+      await manager.suspend(spawnedSessionId);
       spawnedSessionId = null;
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -992,7 +992,7 @@ describe('Synthetic session_end', () => {
 
   afterEach(async () => {
     if (spawnedSessionId) {
-      manager.suspend(spawnedSessionId);
+      await manager.suspend(spawnedSessionId);
       spawnedSessionId = null;
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -1018,6 +1018,7 @@ describe('Synthetic session_end', () => {
       command: '',
       cwd: tmpDir,
       eventsOutputPath: eventsPath,
+      agentParser: ClaudeStatusParser,
     });
 
     spawnedSessionId = session.id;
@@ -1031,7 +1032,7 @@ describe('Synthetic session_end', () => {
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
     await waitForWatcher();
 
-    manager.suspend(session.id);
+    await manager.suspend(session.id);
     spawnedSessionId = null; // already suspended
 
     const events = manager.getEventsForSession(session.id);
@@ -1051,7 +1052,7 @@ describe('Synthetic session_end', () => {
       (event) => event.type === EventType.SessionEnd
     ).length;
 
-    manager.suspend(session.id);
+    await manager.suspend(session.id);
     spawnedSessionId = null;
 
     const eventsAfter = manager.getEventsForSession(session.id);
@@ -1079,7 +1080,7 @@ describe('Synthetic session_end', () => {
     // Verify no events cached yet
     expect(manager.getEventsForSession(session.id)).toEqual([]);
 
-    manager.suspend(session.id);
+    await manager.suspend(session.id);
     spawnedSessionId = null;
 
     const events = manager.getEventsForSession(session.id);

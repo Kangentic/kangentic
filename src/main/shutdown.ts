@@ -1,5 +1,6 @@
 import { closeAll, getProjectDb } from './db/database';
 import { SessionRepository } from './db/repositories/session-repository';
+import { markRecordSuspended, markRecordExited } from './engine/session-lifecycle';
 import type { SessionManager } from './pty/session-manager';
 import type { BoardConfigManager } from './config/board-config-manager';
 import type { CommandInjector } from './engine/command-injector';
@@ -41,8 +42,9 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
     dependencies.getCommandInjector().cancelAll();
 
     // Mark running DB records as 'suspended' so sessions can resume on next launch.
-    // This must happen BEFORE killAll() because killAll's onExit handlers could
-    // race and overwrite status to 'exited'.
+    // This must happen BEFORE killAll() because killAll sends best-effort exit
+    // signals then force-kills. The atomic compareAndUpdateStatus prevents the
+    // onExit handler from overwriting 'suspended' back to 'exited'.
     const allSessions = sessionManager.listSessions();
     const sessionsByProject = new Map<string, typeof allSessions>();
     for (const session of allSessions) {
@@ -57,15 +59,14 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
       try {
         const db = getProjectDb(projectId);
         const sessionRepo = new SessionRepository(db);
-        const now = new Date().toISOString();
         for (const session of sessions) {
           const record = sessionRepo.getLatestForTask(session.taskId);
           if (record && record.status === 'running') {
-            sessionRepo.updateStatus(record.id, 'suspended', { suspended_at: now, suspended_by: 'system' });
+            markRecordSuspended(sessionRepo, record.id, 'system');
           } else if (record && record.status === 'queued') {
             // Queued sessions never started Claude CLI - mark as exited
             // (not suspended) since there's nothing to resume.
-            sessionRepo.updateStatus(record.id, 'exited', { exited_at: now });
+            markRecordExited(sessionRepo, record.id);
           }
         }
       } catch {
@@ -73,9 +74,9 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
       }
     }
 
-    // Kill all PTY sessions immediately. We skip the graceful suspendAll()
-    // (which sends /exit and waits up to 2s) to keep shutdown synchronous.
-    // Sessions are resumable via --resume <agent_session_id> from the DB record.
+    // Kill all PTY sessions immediately (with best-effort exit signals).
+    // Stays synchronous - no await. Sessions are resumable via --resume
+    // <agent_session_id> from the DB record marked 'suspended' above.
     sessionManager.killAll();
     sessionManager.dispose();
 

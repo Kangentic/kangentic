@@ -26,6 +26,8 @@ interface ManagedSession {
   exitCode: number | null;
   resuming: boolean;
   transient: boolean;
+  /** Sequence of strings to write to PTY for graceful exit before force-killing. */
+  exitSequence: string[];
 }
 
 export class SessionManager extends EventEmitter {
@@ -86,6 +88,15 @@ export class SessionManager extends EventEmitter {
         const detected = detectPR(scrollback);
         if (detected) {
           this.emit('pr-detected', sessionId, detected.url, detected.number);
+        }
+      },
+      onAgentSessionId: (sessionId, agentReportedId) => {
+        // Stale ID recovery: if a resuming session reports a different session_id
+        // than expected, --resume failed silently and Claude created a fresh session.
+        // Emit an event so the DB can be updated with the correct UUID for next resume.
+        const session = this.sessions.get(sessionId);
+        if (session?.resuming) {
+          this.emit('agent-session-id', sessionId, session.taskId, session.projectId, agentReportedId);
         }
       },
       requestSuspend: (sessionId) => this.suspend(sessionId),
@@ -189,6 +200,7 @@ export class SessionManager extends EventEmitter {
         exitCode: null,
         resuming: input.resuming ?? false,
         transient: input.transient ?? false,
+        exitSequence: input.exitSequence ?? ['\x03'],
       };
       this.sessions.set(id, session);
       this.sessionQueue.enqueue(inputWithId);
@@ -382,6 +394,7 @@ export class SessionManager extends EventEmitter {
         exitCode: -1,
         resuming: input.resuming ?? false,
         transient: input.transient ?? false,
+        exitSequence: input.exitSequence ?? ['\x03'],
       };
       this.sessions.set(id, failedSession);
       // Initialize buffer manager with diagnostic scrollback for failed sessions
@@ -402,6 +415,7 @@ export class SessionManager extends EventEmitter {
       exitCode: null,
       resuming: input.resuming ?? false,
       transient: input.transient ?? false,
+      exitSequence: input.exitSequence ?? ['\x03'],
     };
 
     this.sessions.set(id, session);
@@ -598,13 +612,18 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Suspend a session: kill the PTY but preserve session files on disk
-   * so the session can be resumed later (e.g. from archived/backlog state).
+   * Suspend a session: gracefully exit the agent, then kill the PTY.
+   * Preserves session files on disk so the session can be resumed later.
+   *
+   * Sends the agent's exit sequence (e.g. Ctrl+C + /exit for Claude Code)
+   * and waits up to 1500ms for the process to exit naturally. This gives
+   * the agent time to flush its conversation transcript (JSONL) to disk,
+   * which is required for --resume to work. Force-kills if still alive.
    *
    * Unlike kill(), the onExit handler will NOT clean up files because
    * file paths are nulled before the PTY is destroyed.
    */
-  suspend(sessionId: string): void {
+  async suspend(sessionId: string): Promise<void> {
     const session = this.sessions.get(sessionId);
     if (!session) return;
 
@@ -625,9 +644,43 @@ export class SessionManager extends EventEmitter {
     session.status = 'suspended';
 
     if (session.pty) {
-      const ptyRef = session.pty;
-      session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
-      ptyRef.kill();
+      // Send graceful exit sequence (e.g. Ctrl+C + /exit for Claude Code).
+      // This gives the agent time to flush its conversation JSONL to disk.
+      for (const command of session.exitSequence) {
+        try { session.pty.write(command); } catch { /* PTY may already be dead */ }
+      }
+
+      // Wait for the process to exit naturally, up to 1500ms.
+      // Claude Code typically exits within 200-500ms after /exit.
+      const exitedNaturally = await new Promise<boolean>((resolve) => {
+        const timeout = setTimeout(() => {
+          this.removeListener('exit', onExit);
+          resolve(false);
+        }, 1500);
+
+        const onExit = (exitedId: string) => {
+          if (exitedId === sessionId) {
+            clearTimeout(timeout);
+            this.removeListener('exit', onExit);
+            resolve(true);
+          }
+        };
+        this.on('exit', onExit);
+
+        // Check if it already exited between sending /exit and registering listener
+        if (!session.pty) {
+          clearTimeout(timeout);
+          this.removeListener('exit', onExit);
+          resolve(true);
+        }
+      });
+
+      // Force-kill if still alive after timeout
+      if (!exitedNaturally && session.pty) {
+        const ptyRef = session.pty;
+        session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
+        ptyRef.kill();
+      }
     }
 
     this.emit('session-changed', sessionId, this.toSession(session));
@@ -741,6 +794,7 @@ export class SessionManager extends EventEmitter {
       exitCode: null,
       resuming: false,
       transient: false,
+      exitSequence: ['\x03'],
     };
     this.sessions.set(id, session);
     return this.toSession(session);
@@ -801,14 +855,11 @@ export class SessionManager extends EventEmitter {
           hasLongRunningSession = true;
         }
 
-        // Ask Claude Code to exit gracefully: Ctrl+C interrupts any
-        // in-progress operation, then /exit triggers a clean shutdown
-        // that flushes the JSONL conversation file.
-        try {
-          session.pty.write('\x03');
-          session.pty.write('/exit\r');
-        } catch {
-          // PTY may already be dead
+        // Send agent-specific exit sequence (e.g. Ctrl+C + /exit for Claude,
+        // Ctrl+C + /quit for Gemini) to trigger a clean shutdown that flushes
+        // the conversation transcript to disk.
+        for (const command of session.exitSequence) {
+          try { session.pty.write(command); } catch { /* PTY may already be dead */ }
         }
         ptysToKill.push(session.pty);
         session.status = 'exited';
@@ -851,6 +902,13 @@ export class SessionManager extends EventEmitter {
   killAll(): void {
     for (const session of this.sessions.values()) {
       if (session.pty) {
+        // Best-effort graceful exit: send exit sequence before killing.
+        // No wait - shutdown must stay synchronous. The write buffer may
+        // flush before kill() lands, giving the agent a few ms to start
+        // saving conversation state.
+        for (const command of session.exitSequence) {
+          try { session.pty.write(command); } catch { /* already dead */ }
+        }
         const ptyRef = session.pty;
         session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
         ptyRef.kill();

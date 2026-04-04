@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import { ClaudeStatusParser } from '../agent/adapters/claude';
 import { EventType, EventTypeActivity, AgentTool } from '../../shared/types';
 import type { SessionUsage, ActivityState, SessionEvent, AgentParser } from '../../shared/types';
 import { matchesPRCommand } from './pr-connectors';
@@ -15,6 +14,8 @@ interface UsageTrackerCallbacks {
   onIdleTimeout(sessionId: string): void;
   onPlanExit(sessionId: string): void;
   onPRCandidate(sessionId: string): void;
+  /** Called when the agent reports its own session_id (from status.json). */
+  onAgentSessionId?(sessionId: string, agentReportedId: string): void;
   requestSuspend(sessionId: string): void;
   isSessionRunning(sessionId: string): boolean;
 }
@@ -37,6 +38,7 @@ export class UsageTracker {
   private lastThinkingSignal = new Map<string, number>();
 
   private sessionParsers = new Map<string, AgentParser>();
+  private agentSessionIdChecked = new Set<string>();
   private eventCache = new Map<string, SessionEvent[]>();
   private _idleTimeoutMinutes = 0;
   private idleTimeoutInterval: ReturnType<typeof setInterval> | null = null;
@@ -140,8 +142,18 @@ export class UsageTracker {
     try {
       const raw = fs.readFileSync(statusOutputPath, 'utf-8');
       const parser = this.sessionParsers.get(sessionId);
-      const usage = parser ? parser.parseStatus(raw) : ClaudeStatusParser.parseStatus(raw);
+      const usage = parser?.parseStatus(raw) ?? null;
       if (!usage) return;
+
+      // Extract agent-reported session_id from raw status.json for stale ID recovery.
+      // Only check once per session - after the first status update the DB is corrected
+      // and subsequent calls would be no-op lookups.
+      if (this.callbacks.onAgentSessionId && !this.agentSessionIdChecked.has(sessionId)) {
+        this.agentSessionIdChecked.add(sessionId);
+        if (usage.sessionId && typeof usage.sessionId === 'string') {
+          this.callbacks.onAgentSessionId(sessionId, usage.sessionId);
+        }
+      }
 
       const previousUsage = this.usageCache.get(sessionId);
 
@@ -204,7 +216,7 @@ export class UsageTracker {
 
       const parser = this.sessionParsers.get(sessionId);
       for (const line of lines) {
-        const event = parser ? parser.parseEvent(line) : ClaudeStatusParser.parseEvent(line);
+        const event = parser?.parseEvent(line) ?? null;
         if (event) {
           // Any event proves the agent is alive. Reset stale thinking timer.
           if (this.activityCache.get(sessionId) === 'thinking') {
@@ -401,6 +413,7 @@ export class UsageTracker {
     this.lastThinkingSignal.delete(sessionId);
     this.eventCache.delete(sessionId);
     this.sessionParsers.delete(sessionId);
+    this.agentSessionIdChecked.delete(sessionId);
   }
 
   dispose(): void {

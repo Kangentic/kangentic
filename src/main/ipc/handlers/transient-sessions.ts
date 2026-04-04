@@ -84,6 +84,8 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       statusOutputPath,
       eventsOutputPath,
       transient: true,
+      agentParser: adapter,
+      exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
     });
 
     trackEvent('transient_session_spawn');
