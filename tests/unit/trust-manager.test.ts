@@ -24,7 +24,7 @@ vi.mock('node:os', async () => {
   };
 });
 
-import { ensureWorktreeTrust, ensureMcpServerTrust } from '../../src/main/agent/trust-manager';
+import { ensureWorktreeTrust, ensureMcpServerTrust } from '../../src/main/agent/adapters/claude';
 
 function claudeJsonPath(): string {
   return path.join(tmpHome, '.claude.json');

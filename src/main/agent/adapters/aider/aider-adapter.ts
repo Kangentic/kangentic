@@ -1,10 +1,10 @@
 import fs from 'node:fs';
 import which from 'which';
-import { execVersion } from '../exec-version';
-import { quoteArg, isUnixLikeShell } from '../../../shared/paths';
-import { interpolateTemplate } from '../command-builder';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../agent-adapter';
-import type { SessionUsage, SessionEvent, AgentPermissionEntry, PermissionMode } from '../../../shared/types';
+import { execVersion } from '../../shared/exec-version';
+import { interpolateTemplate } from '../../shared/template-utils';
+import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
+import type { SessionUsage, SessionEvent, AgentPermissionEntry, PermissionMode } from '../../../../shared/types';
 
 /**
  * Aider CLI adapter - integrates the Aider AI pair programming tool

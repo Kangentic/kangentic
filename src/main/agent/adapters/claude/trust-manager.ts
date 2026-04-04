@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { toForwardSlash } from '../../shared/paths';
+import { toForwardSlash } from '../../../../shared/paths';
 
 // Module-level promise chain serializing all ~/.claude.json access.
 // Both ensureWorktreeTrust and ensureMcpServerTrust target the same file,
@@ -43,7 +43,7 @@ function ensureWorktreeTrustSync(worktreePath: string): void {
   }
   const projects = data.projects as Record<string, Record<string, unknown>>;
 
-  // Already trusted -- nothing to do
+  // Already trusted - nothing to do
   if (projects[resolvedPath]?.hasTrustDialogAccepted === true) {
     return;
   }

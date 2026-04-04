@@ -42,7 +42,7 @@ When spawning a PTY session, the shell type determines command construction:
 
 ## PowerShell Prompt Escaping
 
-`src/main/agent/command-builder.ts` (lines 131-138):
+`src/main/agent/adapters/claude/command-builder.ts` (lines 131-138):
 
 PowerShell interprets `\"` differently from bash. The command builder replaces double quotes with single quotes in prompts BEFORE `quoteArg()` wrapping. Without this, prompts containing quotes break PowerShell sessions.
 
@@ -126,7 +126,7 @@ Sparse-checkout excludes `.claude/commands/` from worktrees (commands walk up th
 ## Key Source Files
 
 - `src/main/pty/shell-resolver.ts` -- Shell discovery and default selection
-- `src/main/agent/command-builder.ts` -- Claude CLI command assembly, prompt sanitization
+- `src/main/agent/adapters/claude/command-builder.ts` -- Claude CLI command assembly, prompt sanitization
 - `src/main/git/worktree-manager.ts` -- Worktree CRUD with Windows retry logic
 - `src/renderer/hooks/useTerminal.ts` -- xterm setup, WebGL fallback, resize debouncing
 - `src/shared/paths.ts` -- Path normalization, shell-aware quoting, PTY sanitization

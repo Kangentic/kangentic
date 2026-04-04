@@ -14,12 +14,12 @@ vi.mock('node:fs', async (importOriginal) => {
   return { ...actual, default: { ...actual, existsSync: vi.fn().mockReturnValue(true) } };
 });
 
-vi.mock('../../src/main/agent/exec-version', () => ({
+vi.mock('../../src/main/agent/shared/exec-version', () => ({
   execVersion: vi.fn().mockResolvedValue({ stdout: 'claude 1.0.0\n', stderr: '' }),
 }));
 
-import { ClaudeDetector } from '../../src/main/agent/claude-detector';
-import { execVersion } from '../../src/main/agent/exec-version';
+import { ClaudeDetector } from '../../src/main/agent/adapters/claude';
+import { execVersion } from '../../src/main/agent/shared';
 
 describe('ClaudeDetector', () => {
   let detector: ClaudeDetector;

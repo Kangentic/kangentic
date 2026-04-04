@@ -1,4 +1,4 @@
-import type { SessionUsage, SessionEvent } from '../../shared/types';
+import type { SessionUsage, SessionEvent } from '../../../../shared/types';
 
 /**
  * Parses Claude Code status line and event bridge data.
@@ -29,7 +29,7 @@ export class ClaudeStatusParser {
    *
    * Two tiers:
    * 1. **Primary** (has `current_usage` + `context_window_size`): compute
-   *    total token percentage via Math.round -- matches Claude Code's JSON.
+   *    total token percentage via Math.round - matches Claude Code's JSON.
    * 2. **Fallback** (`used_percentage` only, no tokens): return it directly.
    */
   static computeContextPercentage(contextWindow: StatusContextWindow | null | undefined): number {
@@ -86,7 +86,7 @@ export class ClaudeStatusParser {
       const inputTokens = (cu?.input_tokens as number) ?? 0;
       const windowSize = (cw?.context_window_size as number) ?? 0;
 
-      // Total token computation -- always use raw token sums when
+      // Total token computation - always use raw token sums when
       // available for exact counts. Only estimate from used_percentage
       // when current_usage is missing (e.g. very early status updates).
       const rawUsedPercentage = (cw?.used_percentage as number) ?? 0;

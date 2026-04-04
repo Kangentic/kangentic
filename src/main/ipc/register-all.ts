@@ -6,10 +6,9 @@ import { ProjectGroupRepository } from '../db/repositories/project-group-reposit
 import { SessionManager } from '../pty/session-manager';
 import { ConfigManager } from '../config/config-manager';
 import { BoardConfigManager } from '../config/board-config-manager';
-import { ClaudeDetector } from '../agent/claude-detector';
+import { ClaudeDetector, CommandBuilder } from '../agent/adapters/claude';
 import { GitDetector } from '../agent/git-detector';
 import { ShellResolver } from '../pty/shell-resolver';
-import { CommandBuilder } from '../agent/command-builder';
 import { CommandInjector } from '../engine/command-injector';
 import {
   registerProjectHandlers,

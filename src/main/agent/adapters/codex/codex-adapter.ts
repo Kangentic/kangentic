@@ -1,8 +1,8 @@
-import { CodexDetector } from '../codex-detector';
-import { CodexCommandBuilder } from '../codex-command-builder';
-import { stripCodexHooks } from '../codex-hook-manager';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../agent-adapter';
-import type { SessionUsage, SessionEvent, AgentPermissionEntry, PermissionMode } from '../../../shared/types';
+import { CodexDetector } from './detector';
+import { CodexCommandBuilder } from './command-builder';
+import { stripCodexHooks } from './hook-manager';
+import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
+import type { SessionUsage, SessionEvent, AgentPermissionEntry, PermissionMode } from '../../../../shared/types';
 
 /**
  * Codex CLI adapter - wraps CodexDetector, CodexCommandBuilder, and

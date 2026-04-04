@@ -1,12 +1,31 @@
 import type { SessionUsage, SessionEvent, SessionRecord, AgentPermissionEntry, PermissionMode } from '../../shared/types';
-import type { ClaudeInfo } from './claude-detector';
-import type { CommandOptions } from './command-builder';
 
-/** Agent-agnostic alias for CLI detection results. */
-export type AgentInfo = ClaudeInfo;
+/** CLI detection result returned by all agent detectors. */
+export interface AgentInfo {
+  found: boolean;
+  path: string | null;
+  version: string | null;
+}
 
-/** Agent-agnostic spawn options - renames `claudePath` to `agentPath`. */
-export type SpawnCommandOptions = Omit<CommandOptions, 'claudePath'> & { agentPath: string };
+/** Options for building a CLI command to spawn an agent. */
+export interface CommandOptions {
+  cliPath: string;
+  taskId: string;
+  prompt?: string;
+  cwd: string;
+  permissionMode: PermissionMode;
+  projectRoot?: string; // main repo root (for worktree settings resolution)
+  sessionId?: string;
+  resume?: boolean; // true = --resume (existing session), false = --session-id (new session)
+  nonInteractive?: boolean;
+  statusOutputPath?: string; // path where the status bridge writes JSON
+  eventsOutputPath?: string; // path where the event bridge appends JSONL
+  shell?: string; // target shell name - controls quoting style (single vs double quotes)
+  mcpServerEnabled?: boolean; // whether to enable kangentic MCP server via --mcp-config
+}
+
+/** Agent-agnostic spawn options - renames `cliPath` to `agentPath`. */
+export type SpawnCommandOptions = Omit<CommandOptions, 'cliPath'> & { agentPath: string };
 
 /** Interface that every agent adapter must implement. */
 export interface AgentAdapter {

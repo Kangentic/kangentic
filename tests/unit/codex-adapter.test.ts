@@ -10,7 +10,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { CodexAdapter } from '../../src/main/agent/adapters/codex-adapter';
+import { CodexAdapter } from '../../src/main/agent/adapters/codex';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
 

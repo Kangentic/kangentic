@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { Task, Action, ActionConfig, AppConfig, PermissionMode } from '../../shared/types';
 import { sanitizeForPty } from '../../shared/paths';
 import { SessionManager } from '../pty/session-manager';
-import { interpolateTemplate } from '../agent/command-builder';
+import { interpolateTemplate } from '../agent/shared';
 import { WorktreeManager } from '../git/worktree-manager';
 import { agentRegistry } from '../agent/agent-registry';
 import { sessionOutputPaths } from './session-paths';

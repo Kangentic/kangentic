@@ -1,4 +1,4 @@
-import type { SessionUsage, SessionEvent } from '../../shared/types';
+import type { SessionUsage, SessionEvent } from '../../../../shared/types';
 
 /**
  * Parses Gemini CLI status and event data.

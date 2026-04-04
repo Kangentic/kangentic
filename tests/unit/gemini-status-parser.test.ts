@@ -3,7 +3,7 @@
  * (Gemini has no status line) and parseEvent handles JSONL correctly.
  */
 import { describe, it, expect } from 'vitest';
-import { GeminiStatusParser } from '../../src/main/agent/gemini-status-parser';
+import { GeminiStatusParser } from '../../src/main/agent/adapters/gemini';
 
 describe('GeminiStatusParser', () => {
   describe('parseStatus', () => {

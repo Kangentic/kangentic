@@ -16,7 +16,7 @@ description: |
   </example>
 
   <example>
-  User edits src/main/agent/command-builder.ts to change CLI argument construction.
+  User edits src/main/agent/adapters/claude/command-builder.ts to change CLI argument construction.
   -> Spawn platform-guard to verify PowerShell escaping, WSL argument splitting, and path formatting.
   </example>
 
@@ -85,7 +85,7 @@ Scan the changed files (or the full codebase if no specific scope is given) for 
 
 | # | Severity | Category | Location | Issue | Fix |
 |---|----------|----------|----------|-------|-----|
-| 1 | Critical | Shell Command | `src/main/agent/command-builder.ts:42` | Missing `& ` prefix for PowerShell | Add PowerShell detection and prefix |
+| 1 | Critical | Shell Command | `src/main/agent/adapters/claude/command-builder.ts:42` | Missing `& ` prefix for PowerShell | Add PowerShell detection and prefix |
 | 2 | High | Em-Dash | `src/main/pty/session-manager.ts:15` | Unicode em-dash in comment | Replace with ASCII `--` |
 
 ### Summary

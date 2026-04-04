@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { toForwardSlash } from '../../shared/paths';
-import { EventType } from '../../shared/types';
-import { resolveBridgeScript } from './command-builder';
+import { toForwardSlash } from '../../../../shared/paths';
+import { EventType } from '../../../../shared/types';
+import { resolveBridgeScript } from '../../shared/bridge-utils';
 
 /** A single entry in Codex's .codex/hooks.json array. */
 export interface CodexHookEntry {

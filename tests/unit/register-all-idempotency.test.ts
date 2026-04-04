@@ -62,13 +62,13 @@ vi.mock('../../src/main/pty/session-manager', () => {
     },
   };
 });
-vi.mock('../../src/main/agent/claude-detector', () => ({
+vi.mock('../../src/main/agent/adapters/claude/detector', () => ({
   ClaudeDetector: class { detect = vi.fn(); },
 }));
 vi.mock('../../src/main/agent/git-detector', () => ({
   GitDetector: class { detect = vi.fn(); },
 }));
-vi.mock('../../src/main/agent/command-builder', () => ({
+vi.mock('../../src/main/agent/adapters/claude/command-builder', () => ({
   CommandBuilder: class { build = vi.fn(); },
 }));
 vi.mock('../../src/main/config/config-manager', () => ({
@@ -90,10 +90,10 @@ vi.mock('../../src/main/engine/command-injector', () => ({
 vi.mock('../../src/main/pty/shell-resolver', () => ({
   ShellResolver: class { resolve = vi.fn(); },
 }));
-vi.mock('../../src/main/agent/trust-manager', () => ({
+vi.mock('../../src/main/agent/adapters/claude/trust-manager', () => ({
   ensureWorktreeTrust: vi.fn(),
 }));
-vi.mock('../../src/main/agent/hook-manager', () => ({
+vi.mock('../../src/main/agent/adapters/claude/hook-manager', () => ({
   buildEventHooks: vi.fn(),
   stripKangenticHooks: vi.fn(),
 }));

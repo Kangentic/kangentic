@@ -1,9 +1,9 @@
-import { GeminiDetector } from '../gemini-detector';
-import { GeminiCommandBuilder } from '../gemini-command-builder';
-import { GeminiStatusParser } from '../gemini-status-parser';
-import { stripGeminiKangenticHooks } from '../gemini-hook-manager';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../agent-adapter';
-import type { SessionUsage, SessionEvent, AgentPermissionEntry, PermissionMode } from '../../../shared/types';
+import { GeminiDetector } from './detector';
+import { GeminiCommandBuilder } from './command-builder';
+import { GeminiStatusParser } from './status-parser';
+import { stripGeminiKangenticHooks } from './hook-manager';
+import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
+import type { SessionUsage, SessionEvent, AgentPermissionEntry, PermissionMode } from '../../../../shared/types';
 
 /**
  * Gemini CLI adapter - wraps GeminiDetector, GeminiCommandBuilder,

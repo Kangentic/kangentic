@@ -8,8 +8,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { quoteArg } from '../../src/shared/paths';
-import { GeminiCommandBuilder } from '../../src/main/agent/gemini-command-builder';
-import type { GeminiCommandOptions } from '../../src/main/agent/gemini-command-builder';
+import { GeminiCommandBuilder } from '../../src/main/agent/adapters/gemini';
+import type { GeminiCommandOptions } from '../../src/main/agent/adapters/gemini';
 
 /** Minimal options for tests that don't need hooks/settings. */
 function baseOptions(overrides: Partial<GeminiCommandOptions> = {}): GeminiCommandOptions {

@@ -8,7 +8,7 @@ import { recoverSessions, reconcileSessions } from '../../engine/session-recover
 import { cleanupStaleResources } from '../../engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { WorktreeManager, isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../git/worktree-manager';
-import { stripKangenticHooks } from '../../agent/hook-manager';
+import { stripKangenticHooks } from '../../agent/adapters/claude';
 import { getProjectDb, closeProjectDb } from '../../db/database';
 import { CommandBridge } from '../../agent/command-bridge';
 import { PATHS } from '../../config/paths';

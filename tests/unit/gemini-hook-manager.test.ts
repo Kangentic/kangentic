@@ -5,7 +5,7 @@ import os from 'node:os';
 import {
   buildGeminiEventHooks,
   stripGeminiKangenticHooks,
-} from '../../src/main/agent/gemini-hook-manager';
+} from '../../src/main/agent/adapters/gemini';
 
 let tmpDir: string;
 const EVENT_BRIDGE = '/fake/.kangentic/event-bridge.js';

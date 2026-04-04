@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { ClaudeStatusParser } from '../agent/claude-status-parser';
+import { ClaudeStatusParser } from '../agent/adapters/claude';
 import { EventType, EventTypeActivity, AgentTool } from '../../shared/types';
 import type { SessionUsage, ActivityState, SessionEvent, AgentParser } from '../../shared/types';
 import { matchesPRCommand } from './pr-connectors';

@@ -1,10 +1,10 @@
-import { ClaudeDetector } from '../claude-detector';
-import { CommandBuilder } from '../command-builder';
-import { ClaudeStatusParser } from '../claude-status-parser';
-import { ensureWorktreeTrust, ensureMcpServerTrust } from '../trust-manager';
-import { stripKangenticHooks } from '../hook-manager';
-import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../agent-adapter';
-import type { SessionUsage, SessionEvent, AgentPermissionEntry, PermissionMode } from '../../../shared/types';
+import { ClaudeDetector } from './detector';
+import { CommandBuilder } from './command-builder';
+import { ClaudeStatusParser } from './status-parser';
+import { ensureWorktreeTrust, ensureMcpServerTrust } from './trust-manager';
+import { stripKangenticHooks } from './hook-manager';
+import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
+import type { SessionUsage, SessionEvent, AgentPermissionEntry, PermissionMode } from '../../../../shared/types';
 
 /**
  * Claude Code adapter - wraps ClaudeDetector, CommandBuilder,
@@ -43,7 +43,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
   buildCommand(options: SpawnCommandOptions): string {
     const { agentPath, ...rest } = options;
-    return this.commandBuilder.buildClaudeCommand({ claudePath: agentPath, ...rest });
+    return this.commandBuilder.buildClaudeCommand({ cliPath: agentPath, ...rest });
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {

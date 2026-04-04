@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { EventType } from '../../shared/types';
+import { EventType } from '../../../../shared/types';
 
 /** Hook entry in Gemini CLI's settings.json. */
 export interface GeminiHookEntry {

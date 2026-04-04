@@ -58,7 +58,7 @@ The `files` array in `electron-builder.yml` explicitly whitelists `.vite/build/*
 
 ### Bridge Script Unpacking
 
-Bridge scripts (`event-bridge.js`, `status-bridge.js`) are executed by Claude Code hooks in a separate `node` process outside Electron. Plain Node.js cannot read files inside asar archives, so `asar.unpackDir` extracts `.vite/build/` to `app.asar.unpacked/`. The `resolveBridgeScript()` function in `command-builder.ts` rewrites `app.asar` to `app.asar.unpacked` in resolved paths when running in a packaged build.
+Bridge scripts (`event-bridge.js`, `status-bridge.js`) are executed by Claude Code hooks in a separate `node` process outside Electron. Plain Node.js cannot read files inside asar archives, so `asar.unpackDir` extracts `.vite/build/` to `app.asar.unpacked/`. The `resolveBridgeScript()` function in `src/main/agent/shared/bridge-utils.ts` rewrites `app.asar` to `app.asar.unpacked` in resolved paths when running in a packaged build.
 
 ## Config Directory Locations
 

@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import which from 'which';
-import { execVersion } from './exec-version';
+import { execVersion } from '../../shared/exec-version';
+import type { AgentInfo } from '../../agent-adapter';
 
 // Common install locations that may not be on PATH when Electron launches
 // from Finder/Dock (macOS GUI apps don't inherit shell profile PATH).
@@ -10,17 +11,11 @@ const FALLBACK_PATHS = [
   '/home/linuxbrew/.linuxbrew/bin/claude', // Linuxbrew
 ];
 
-export interface ClaudeInfo {
-  found: boolean;
-  path: string | null;
-  version: string | null;
-}
-
 export class ClaudeDetector {
-  private cached: ClaudeInfo | null = null;
-  private inflight: Promise<ClaudeInfo> | null = null;
+  private cached: AgentInfo | null = null;
+  private inflight: Promise<AgentInfo> | null = null;
 
-  async detect(overridePath?: string | null): Promise<ClaudeInfo> {
+  async detect(overridePath?: string | null): Promise<AgentInfo> {
     if (this.cached) return this.cached;
     if (this.inflight) return this.inflight;
 
@@ -32,7 +27,7 @@ export class ClaudeDetector {
     }
   }
 
-  private async performDetection(overridePath?: string | null): Promise<ClaudeInfo> {
+  private async performDetection(overridePath?: string | null): Promise<AgentInfo> {
     // 1. Try the user-configured override path first
     if (overridePath) {
       const version = await this.extractVersion(overridePath);

@@ -1,7 +1,7 @@
-import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../shared/paths';
-import { interpolateTemplate } from './command-builder';
-import { writeCodexHooks } from './codex-hook-manager';
-import type { PermissionMode } from '../../shared/types';
+import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import { interpolateTemplate } from '../../shared/template-utils';
+import { writeCodexHooks } from './hook-manager';
+import type { PermissionMode } from '../../../../shared/types';
 
 export interface CodexCommandOptions {
   codexPath: string;

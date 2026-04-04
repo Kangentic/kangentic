@@ -5,7 +5,7 @@ import { AttachmentRepository } from '../../db/repositories/attachment-repositor
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { TransitionEngine } from '../../engine/transition-engine';
 import { getProjectDb } from '../../db/database';
-import { interpolateTemplate } from '../../agent/command-builder';
+import { interpolateTemplate } from '../../agent/shared';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type { Task, Swimlane } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';

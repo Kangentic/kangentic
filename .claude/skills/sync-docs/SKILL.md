@@ -16,11 +16,11 @@ Each doc file and the source files that are its authority:
 | `architecture.md` | `src/shared/ipc-channels.ts`, `src/preload/preload.ts`, `src/renderer/stores/`, `src/main/pty/session-manager.ts` |
 | `session-lifecycle.md` | `src/main/pty/session-manager.ts`, `src/main/pty/session-queue.ts`, `src/main/engine/session-recovery.ts` |
 | `configuration.md` | `src/shared/types.ts` (AppConfig, DEFAULT_CONFIG, GLOBAL_ONLY_PATHS), `src/main/config/config-manager.ts` |
-| `claude-integration.md` | `src/main/agent/command-builder.ts`, `src/main/agent/hook-manager.ts`, `src/main/agent/trust-manager.ts`, `src/main/agent/claude-detector.ts` |
+| `claude-integration.md` | `src/main/agent/adapters/claude/command-builder.ts`, `src/main/agent/adapters/claude/hook-manager.ts`, `src/main/agent/adapters/claude/trust-manager.ts`, `src/main/agent/adapters/claude/detector.ts` |
 | `transition-engine.md` | `src/main/engine/transition-engine.ts`, `src/shared/types.ts` (ActionType, ActionConfig) |
 | `database.md` | `src/main/db/migrations.ts`, `src/main/db/database.ts`, `src/main/db/repositories/*.ts` |
 | `cross-platform.md` | `src/main/pty/shell-resolver.ts`, `electron-builder.yml`, `scripts/build.js` |
-| `worktree-strategy.md` | `src/main/git/worktree-manager.ts`, `src/main/agent/hook-manager.ts`, `src/main/agent/trust-manager.ts` |
+| `worktree-strategy.md` | `src/main/git/worktree-manager.ts`, `src/main/agent/adapters/claude/hook-manager.ts`, `src/main/agent/adapters/claude/trust-manager.ts` |
 | `activity-detection.md` | `src/main/agent/event-bridge.js`, `src/shared/types.ts` (EventType, EventTypeActivity, HookEvent) |
 | `mcp-server.md` | `src/main/ipc/handlers/mcp-handlers.ts`, `src/main/mcp/`, `src/shared/types.ts` (MCP types) |
 | `overview.md` | `README.md`, high-level features |

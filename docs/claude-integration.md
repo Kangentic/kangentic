@@ -4,7 +4,7 @@ Kangentic orchestrates Claude Code CLI sessions through a layered integration: C
 
 ## CLI Detection
 
-`src/main/agent/claude-detector.ts`
+`src/main/agent/adapters/claude/detector.ts`
 
 On first use, `ClaudeDetector` locates the Claude CLI:
 
@@ -17,7 +17,7 @@ Returns `{ found: boolean, path: string | null, version: string | null }`.
 
 ## Command Building
 
-`src/main/agent/command-builder.ts`
+`src/main/agent/adapters/claude/command-builder.ts`
 
 ### New Session
 
@@ -145,7 +145,7 @@ Safety guarantees:
 
 ## Trust Management
 
-`src/main/agent/trust-manager.ts`
+`src/main/agent/adapters/claude/trust-manager.ts`
 
 When spawning an agent in a worktree (CWD differs from project root), `ensureWorktreeTrust()` pre-populates `~/.claude.json` so Claude Code doesn't prompt for trust:
 

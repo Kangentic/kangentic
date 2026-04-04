@@ -60,7 +60,10 @@ packages/
     bin/          # kangentic.js launcher script
 src/
   main/           # Electron main process
-    agent/        # Claude CLI detection & command building
+    agent/        # Agent adapter system
+      shared/     # Shared utilities (interpolateTemplate, resolveBridgeScript, execVersion)
+      adapters/   # Per-agent subfolders (claude/, codex/, gemini/, aider/)
+      commands/   # MCP command handlers
     db/           # SQLite database, migrations, repositories
     engine/       # Transition engine (action execution)
     git/          # Worktree manager

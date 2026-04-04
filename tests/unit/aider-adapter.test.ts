@@ -32,7 +32,7 @@ vi.mock('node:fs', async (importOriginal) => {
   };
 });
 
-vi.mock('../../src/main/agent/exec-version', () => ({
+vi.mock('../../src/main/agent/shared/exec-version', () => ({
   execVersion: async () => {
     execVersionCallCount++;
     if (mockExecVersionShouldFail) {
@@ -43,7 +43,7 @@ vi.mock('../../src/main/agent/exec-version', () => ({
 }));
 
 // Import after mocks are set up
-const { AiderAdapter } = await import('../../src/main/agent/adapters/aider-adapter');
+const { AiderAdapter } = await import('../../src/main/agent/adapters/aider');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

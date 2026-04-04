@@ -13,12 +13,12 @@ vi.mock('node:fs', async (importOriginal) => {
   return { ...actual, default: { ...actual, existsSync: vi.fn().mockReturnValue(true) } };
 });
 
-vi.mock('../../src/main/agent/exec-version', () => ({
+vi.mock('../../src/main/agent/shared/exec-version', () => ({
   execVersion: vi.fn().mockResolvedValue({ stdout: '1.2.3\n', stderr: '' }),
 }));
 
-import { GeminiDetector } from '../../src/main/agent/gemini-detector';
-import { execVersion } from '../../src/main/agent/exec-version';
+import { GeminiDetector } from '../../src/main/agent/adapters/gemini';
+import { execVersion } from '../../src/main/agent/shared';
 
 describe('GeminiDetector', () => {
   let detector: GeminiDetector;

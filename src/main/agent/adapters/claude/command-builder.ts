@@ -1,42 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../shared/paths';
+import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import { resolveBridgeScript } from '../../shared/bridge-utils';
+import { interpolateTemplate } from '../../shared/template-utils';
 import { buildEventHooks } from './hook-manager';
 import type { ClaudeHookEntry } from './hook-manager';
-import type { PermissionMode } from '../../shared/types';
+import type { CommandOptions } from '../../agent-adapter';
 
 /** Subset of Claude Code settings.json that we read/write. */
 interface ClaudeSettings {
   statusLine?: { type: string; command: string };
   hooks?: Record<string, ClaudeHookEntry[]>;
   [key: string]: unknown; // preserve unknown keys from user's settings
-}
-
-export interface CommandOptions {
-  claudePath: string;
-  taskId: string;
-  prompt?: string;
-  cwd: string;
-  permissionMode: PermissionMode;
-  projectRoot?: string; // main repo root (for worktree settings resolution)
-  sessionId?: string;
-  resume?: boolean; // true = --resume (existing session), false = --session-id (new session)
-  nonInteractive?: boolean;
-  statusOutputPath?: string; // path where the status bridge writes JSON
-  eventsOutputPath?: string; // path where the event bridge appends JSONL
-  shell?: string; // target shell name -- controls quoting style (single vs double quotes)
-  mcpServerEnabled?: boolean; // whether to enable kangentic MCP server via --mcp-config
-}
-
-/**
- * Replace `{{key}}` placeholders in a template string with values from `vars`.
- */
-export function interpolateTemplate(template: string, vars: Record<string, string>): string {
-  let result = template;
-  for (const [key, value] of Object.entries(vars)) {
-    result = result.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), value);
-  }
-  return result;
 }
 
 /**
@@ -69,28 +44,6 @@ function mergePermissions(
   return { allow, deny };
 }
 
-/**
- * Resolve a bridge script path using the standard 3-candidate pattern:
- * 1. Production build (next to main bundle)
- * 2. Dev build (.vite/build/ → project root)
- * 3. Fallback from CWD
- */
-export function resolveBridgeScript(name: string): string {
-  const candidates = [
-    path.join(__dirname, `${name}.js`),
-    path.resolve(__dirname, '..', '..', 'src', 'main', 'agent', `${name}.js`),
-    path.resolve(process.cwd(), 'src', 'main', 'agent', `${name}.js`),
-  ];
-  const resolved = candidates.find(p => fs.existsSync(p)) || candidates[0];
-  // Bridge scripts run in an external node process (Claude Code hooks), which
-  // cannot read files inside an asar archive. In production builds the scripts
-  // are unpacked via asarUnpack, so rewrite the path to the unpacked location.
-  if (resolved.includes('app.asar')) {
-    return resolved.replace('app.asar', 'app.asar.unpacked');
-  }
-  return resolved;
-}
-
 export class CommandBuilder {
   /** Cache of merged base settings (project + local) keyed by project root path. */
   private projectSettingsCache = new Map<string, ClaudeSettings>();
@@ -105,7 +58,7 @@ export class CommandBuilder {
 
   buildClaudeCommand(options: CommandOptions): string {
     const { shell } = options;
-    const parts = [quoteArg(options.claudePath, shell)];
+    const parts = [quoteArg(options.cliPath, shell)];
 
     // Build the --settings path. When statusOutputPath is provided we always
     // create a merged settings file that includes the statusLine config so
@@ -167,7 +120,7 @@ export class CommandBuilder {
       // with single quotes to prevent quoting breakage: quoteArg wraps in
       // "..." and escapes " as \" which PowerShell misinterprets.
       // For single-quoted shells (bash, zsh, WSL), double quotes inside
-      // single-quoted strings are preserved literally -- no replacement needed.
+      // single-quoted strings are preserved literally - no replacement needed.
       const needsDoubleQuoteReplacement = shell
         ? !isUnixLikeShell(shell)
         : process.platform === 'win32';
@@ -198,7 +151,7 @@ export class CommandBuilder {
       const raw = fs.readFileSync(projectSettingsPath, 'utf-8');
       baseSettings = JSON.parse(raw);
     } catch {
-      // No existing settings -- start fresh
+      // No existing settings - start fresh
     }
 
     // 2. Deep-merge local settings from project root (gitignored, personal)

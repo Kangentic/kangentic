@@ -29,8 +29,8 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 | Command Bridge | `src/main/agent/command-bridge.ts` | Watches commands.jsonl, processes commands via DB repositories, writes responses. |
 | Command Handlers | `src/main/agent/commands/` | Extracted per-domain handlers: task, inventory, search, analytics, backlog commands. |
 | Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers. |
-| MCP Config Delivery | `src/main/agent/command-builder.ts` | Writes session `mcp.json` and adds `--mcp-config` flag to CLI command. |
-| Trust Manager | `src/main/agent/trust-manager.ts` | Pre-approves kangentic MCP server in `~/.claude.json`. |
+| MCP Config Delivery | `src/main/agent/adapters/claude/command-builder.ts` | Writes session `mcp.json` and adds `--mcp-config` flag to CLI command. |
+| Trust Manager | `src/main/agent/adapters/claude/trust-manager.ts` | Pre-approves kangentic MCP server in `~/.claude.json`. |
 | Board Refresh | `src/main/ipc/handlers/sessions.ts` | Forwards task-created/updated/backlog-changed events to renderer via IPC. |
 
 ### Discovery

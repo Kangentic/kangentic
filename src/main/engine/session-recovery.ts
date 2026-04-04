@@ -7,11 +7,9 @@ import { TaskRepository } from '../db/repositories/task-repository';
 import { ActionRepository } from '../db/repositories/action-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { SessionManager } from '../pty/session-manager';
-import { ClaudeDetector } from '../agent/claude-detector';
-import { CommandBuilder } from '../agent/command-builder';
+import { ClaudeDetector, CommandBuilder, ensureWorktreeTrust, ensureMcpServerTrust } from '../agent/adapters/claude';
 import { ConfigManager } from '../config/config-manager';
 import type { SessionRecord, ActionConfig, Task, PermissionMode } from '../../shared/types';
-import { ensureWorktreeTrust, ensureMcpServerTrust } from '../agent/trust-manager';
 import { agentRegistry } from '../agent/agent-registry';
 import { isShuttingDown } from '../shutdown-state';
 import { sessionOutputPaths } from './session-paths';
@@ -253,7 +251,7 @@ export async function recoverSessions(
       const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 
       const command = commandBuilder.buildClaudeCommand({
-        claudePath: claude.path,
+        cliPath: claude.path,
         taskId: task.id,
         prompt,
         cwd: record.cwd,
@@ -518,7 +516,7 @@ export async function reconcileSessions(
         const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 
         const command = commandBuilder.buildClaudeCommand({
-          claudePath: claude.path,
+          cliPath: claude.path,
           taskId: task.id,
           prompt,
           cwd,

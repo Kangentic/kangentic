@@ -60,7 +60,7 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     const eventsOutputPath = path.join(sessionDirectory, 'activity.json');
 
     const command = context.commandBuilder.buildClaudeCommand({
-      claudePath: claude.path,
+      cliPath: claude.path,
       taskId: transientTaskId,
       cwd: projectRoot,
       permissionMode,

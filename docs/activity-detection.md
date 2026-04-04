@@ -212,7 +212,7 @@ All hooks use blank matchers, meaning they fire for every invocation of that hoo
 
 ## Hook Injection
 
-All sessions (main repo and worktree) use a single code path in `CommandBuilder.createMergedSettings()` (`src/main/agent/command-builder.ts`):
+All sessions (main repo and worktree) use a single code path in `CommandBuilder.createMergedSettings()` (`src/main/agent/adapters/claude/command-builder.ts`):
 
 1. Reads `.claude/settings.json` from project root (committed, shared)
 2. Deep-merges `.claude/settings.local.json` from project root (personal)
@@ -225,7 +225,7 @@ All Kangentic hooks live in `.kangentic/sessions/<id>/settings.json` -- nothing 
 
 ## Hook Cleanup
 
-`stripKangenticHooks()` in `src/main/agent/hook-manager.ts` removes all Kangentic hooks on project close or delete. This function is deprecated since the unified `--settings` approach (hooks are now in `.kangentic/sessions/<id>/settings.json`), but is kept for backward compatibility with older worktrees that may still have hooks in `.claude/settings.local.json`:
+`stripKangenticHooks()` in `src/main/agent/adapters/claude/hook-manager.ts` removes all Kangentic hooks on project close or delete. This function is deprecated since the unified `--settings` approach (hooks are now in `.kangentic/sessions/<id>/settings.json`), but is kept for backward compatibility with older worktrees that may still have hooks in `.claude/settings.local.json`:
 
 - Identifies hooks by two markers: `.kangentic` in the command AND a known bridge name (`activity-bridge` or `event-bridge`)
 - Backs up `settings.local.json` before modification

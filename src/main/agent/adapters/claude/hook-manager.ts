@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { EventType, HookEvent } from '../../shared/types';
+import { EventType, HookEvent } from '../../../../shared/types';
 
 /** Hook entry in Claude Code's settings.json. */
 export interface ClaudeHookEntry {
@@ -128,7 +128,7 @@ export function buildEventHooks(
  *
  * @deprecated Since the unified --settings approach, Kangentic no longer
  * writes hooks to `.claude/settings.local.json`. This function is kept
- * for backward compatibility -- existing worktrees created before the
+ * for backward compatibility - existing worktrees created before the
  * change may still have our hooks in their settings.local.json.
  * Called by `cleanupProject()` during project deletion.
  *
@@ -178,7 +178,7 @@ export function stripKangenticHooks(dir: string): void {
       fs.writeFileSync(p, output);
     }
 
-    // Success -- remove backup
+    // Success - remove backup
     try { fs.unlinkSync(backupPath); } catch { /* best effort */ }
   } catch (err) {
     // Restore from backup if anything went wrong

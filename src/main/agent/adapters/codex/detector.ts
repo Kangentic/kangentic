@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import which from 'which';
-import { execVersion } from './exec-version';
-import type { AgentInfo } from './agent-adapter';
+import { execVersion } from '../../shared/exec-version';
+import type { AgentInfo } from '../../agent-adapter';
 
 export class CodexDetector {
   private cached: AgentInfo | null = null;

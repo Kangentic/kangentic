@@ -1,8 +1,8 @@
 import type { AgentAdapter } from './agent-adapter';
-import { ClaudeAdapter } from './adapters/claude-adapter';
-import { CodexAdapter } from './adapters/codex-adapter';
-import { GeminiAdapter } from './adapters/gemini-adapter';
-import { AiderAdapter } from './adapters/aider-adapter';
+import { ClaudeAdapter } from './adapters/claude';
+import { CodexAdapter } from './adapters/codex';
+import { GeminiAdapter } from './adapters/gemini';
+import { AiderAdapter } from './adapters/aider';
 
 class AgentRegistry {
   private adapters = new Map<string, AgentAdapter>();

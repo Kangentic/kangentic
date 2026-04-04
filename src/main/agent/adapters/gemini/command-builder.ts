@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../shared/paths';
-import { interpolateTemplate, resolveBridgeScript } from './command-builder';
-import { buildGeminiEventHooks } from './gemini-hook-manager';
-import type { GeminiHookEntry } from './gemini-hook-manager';
-import type { PermissionMode } from '../../shared/types';
+import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import { interpolateTemplate } from '../../shared/template-utils';
+import { resolveBridgeScript } from '../../shared/bridge-utils';
+import { buildGeminiEventHooks } from './hook-manager';
+import type { GeminiHookEntry } from './hook-manager';
+import type { PermissionMode } from '../../../../shared/types';
 
 /** Gemini-specific subset of settings.json that we read/write. */
 interface GeminiSettings {

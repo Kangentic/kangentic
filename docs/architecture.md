@@ -460,7 +460,7 @@ Ephemeral notifications with auto-dismiss. Called by other stores for success/er
 
 ## Claude CLI Integration
 
-`src/main/agent/command-builder.ts`
+`src/main/agent/adapters/claude/command-builder.ts`
 
 ### Command Building
 

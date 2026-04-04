@@ -5,7 +5,7 @@ import os from 'node:os';
 import {
   buildEventHooks,
   stripKangenticHooks,
-} from '../../src/main/agent/hook-manager';
+} from '../../src/main/agent/adapters/claude';
 
 let tmpDir: string;
 const EVENT_BRIDGE = '/fake/.kangentic/event-bridge.js';

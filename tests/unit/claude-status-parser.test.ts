@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ClaudeStatusParser } from '../../src/main/agent/claude-status-parser';
+import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude';
 import { EventType } from '../../src/shared/types';
 
 describe('ClaudeStatusParser', () => {
