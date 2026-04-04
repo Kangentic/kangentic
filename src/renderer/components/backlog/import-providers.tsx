@@ -30,7 +30,7 @@ export const PROVIDERS: Provider[] = [
     sourceTypes: [
       {
         value: 'github_issues',
-        label: 'GitHub Issues',
+        label: 'Issues',
         description: 'Import from a repository issue tracker',
         placeholder: 'https://github.com/owner/repo',
         hint: 'Paste the full URL to your GitHub repository',
@@ -38,7 +38,7 @@ export const PROVIDERS: Provider[] = [
       },
       {
         value: 'github_projects',
-        label: 'GitHub Projects',
+        label: 'Projects',
         description: 'Import from a GitHub Project board',
         placeholder: 'https://github.com/orgs/owner/projects/1',
         hint: 'Paste the full URL to your GitHub Project',
