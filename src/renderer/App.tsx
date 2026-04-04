@@ -481,6 +481,13 @@ export function App() {
       }));
     }
 
+    // Spawn progress (worktree creation, branch checkout phases)
+    if (tasks?.onSpawnProgress) {
+      cleanups.push(tasks.onSpawnProgress((taskId, label) => {
+        useSessionStore.getState().setSpawnProgress(taskId, label);
+      }));
+    }
+
     // Task auto-moved (plan exit → next column)
     if (tasks?.onAutoMoved) {
       cleanups.push(tasks.onAutoMoved((autoMovedTaskId, _targetSwimlaneId, taskTitle, autoMoveProjectId) => {

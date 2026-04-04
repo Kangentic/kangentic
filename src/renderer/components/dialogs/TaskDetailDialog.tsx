@@ -7,7 +7,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
-import { useSessionDisplayState } from '../../utils/session-display-state';
+import { useTaskProgress } from '../../utils/task-progress';
 import { resolveShortcutCommand } from '../../../shared/template-vars';
 import { PriorityBadge } from '../backlog/PriorityBadge';
 import { BaseDialog } from './BaseDialog';
@@ -75,11 +75,12 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   const session = useSessionStore((s) =>
     s.sessions.find((session) => session.taskId === task.id) ?? null
   );
-  const displayState = useSessionDisplayState(session?.id);
+  const displayState = useTaskProgress(task.id, session?.id);
   const canToggle = !isInTodo && (displayState.kind === 'running' || displayState.kind === 'queued'
-    || displayState.kind === 'initializing' || displayState.kind === 'suspended');
+    || displayState.kind === 'initializing' || displayState.kind === 'suspended'
+    || displayState.kind === 'preparing');
   const isSessionActive = displayState.kind === 'running' || displayState.kind === 'queued'
-    || displayState.kind === 'initializing';
+    || displayState.kind === 'initializing' || displayState.kind === 'preparing';
   const isQueued = displayState.kind === 'queued';
   const isSuspended = displayState.kind === 'suspended';
 

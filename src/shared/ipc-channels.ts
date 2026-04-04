@@ -36,6 +36,7 @@ export const IPC = {
   TASK_CREATED_BY_AGENT: 'task:createdByAgent',
   TASK_UPDATED_BY_AGENT: 'task:updatedByAgent',
   TASK_DELETED_BY_AGENT: 'task:deletedByAgent',
+  TASK_SPAWN_PROGRESS: 'task:spawnProgress',
 
   // Attachments
   ATTACHMENT_LIST: 'attachment:list',

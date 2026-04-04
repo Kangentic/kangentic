@@ -4,23 +4,11 @@ import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from './FileDropOverlay';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
-import { useBoardStore } from '../../stores/board-store';
 import { ShimmerOverlay } from '../ShimmerOverlay';
 import { getIsHmrReload } from '../../utils/hmr-flag';
+import { useTerminalOverlay } from '../../utils/task-progress';
 
 const FIT_DELAY_MS = 100;
-
-/** Priority: pending command (explicit transition/invoke) > resuming > auto_command > default. */
-function deriveOverlayLabel(
-  pendingCommandLabel: string | null,
-  isResuming: boolean,
-  autoCommand: string | null,
-): string {
-  if (pendingCommandLabel) return pendingCommandLabel;
-  if (isResuming) return 'Resuming agent...';
-  if (autoCommand) return autoCommand;
-  return 'Starting agent...';
-}
 
 interface TerminalTabProps {
   sessionId: string;
@@ -33,13 +21,6 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
   const hasFirstOutput = useSessionStore((s) => !!s.sessionFirstOutput[sessionId]);
   const hasUsage = useSessionStore((s) => !!s.sessionUsage[sessionId]);
 
-  const isResuming = useSessionStore(
-    useCallback(
-      (s: ReturnType<typeof useSessionStore.getState>) =>
-        s.sessions.find((session) => session.id === sessionId)?.resuming ?? false,
-      [sessionId],
-    ),
-  );
   const sessionStatus = useSessionStore(
     useCallback(
       (s: ReturnType<typeof useSessionStore.getState>) =>
@@ -55,22 +36,8 @@ export function TerminalTab({ sessionId, taskId, active }: TerminalTabProps) {
     ),
   );
 
-  // Derive overlay label: pending command (set by moveTask or manual invoke) > resume state > swimlane auto_command > generic fallback.
-  // pendingCommandLabel is keyed by taskId (a prop), so it resolves on the very first render
-  // without waiting for syncSessions IPC. This prevents flicker during command invocations.
+  const { overlayLabel } = useTerminalOverlay(taskId, sessionId);
   const pendingCommandLabel = useSessionStore((s) => s.pendingCommandLabel[taskId] ?? null);
-  const autoCommand = useBoardStore(
-    useCallback(
-      (s: ReturnType<typeof useBoardStore.getState>) => {
-        const task = s.tasks.find((t) => t.session_id === sessionId);
-        if (!task) return null;
-        const swimlane = s.swimlanes.find((l) => l.id === task.swimlane_id);
-        return swimlane?.auto_command ?? null;
-      },
-      [sessionId],
-    ),
-  );
-  const overlayLabel = deriveOverlayLabel(pendingCommandLabel, isResuming, autoCommand);
 
   // Terminal is "ready" once startup noise has been cleared. Until then,
   // an overlay hides the raw command line and suppressDataRef prevents

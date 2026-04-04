@@ -5,6 +5,57 @@ import fs from 'node:fs';
 import { slugify, computeSlugBudget } from '../../shared/slugify';
 
 // ---------------------------------------------------------------------------
+// Fetch throttle cache -- avoids redundant git fetch calls for the same
+// project+branch within a short window. In-memory only (resets on restart).
+// ---------------------------------------------------------------------------
+
+const fetchCache = new Map<string, number>();
+
+/** Skip fetch if the same project+branch was fetched within this window.
+ *  Covers batch moves (5+ tasks dragged in quick succession) without
+ *  significant staleness risk for spaced-out individual moves. */
+const FETCH_THROTTLE_MS = 30 * 1000; // 30 seconds
+
+/** Background prune debounce per project. */
+const backgroundPruneTimestamps = new Map<string, number>();
+const BACKGROUND_PRUNE_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+
+/** Clear the fetch throttle cache (for testing). */
+export function clearFetchCache(): void {
+  fetchCache.clear();
+}
+
+function fetchCacheKey(projectPath: string, branch: string): string {
+  const normalizedPath = process.platform === 'win32' ? projectPath.toLowerCase() : projectPath;
+  return `${normalizedPath}:${branch}`;
+}
+
+/**
+ * Fetch from origin if the branch hasn't been fetched recently.
+ * Returns the start point to use (`origin/<branch>` or local `<branch>`).
+ */
+export async function fetchIfStale(
+  git: SimpleGit,
+  projectPath: string,
+  branch: string,
+): Promise<string> {
+  const key = fetchCacheKey(projectPath, branch);
+  const lastFetch = fetchCache.get(key);
+  if (lastFetch && Date.now() - lastFetch < FETCH_THROTTLE_MS) {
+    return `origin/${branch}`;
+  }
+
+  try {
+    await git.raw(['fetch', 'origin', branch]);
+    fetchCache.set(key, Date.now());
+    return `origin/${branch}`;
+  } catch {
+    // No remote, branch not on remote, or network unavailable -- use local branch
+    return branch;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Free functions -- lightweight checks, no simple-git dependency
 // ---------------------------------------------------------------------------
 
@@ -224,6 +275,7 @@ export class WorktreeManager {
   async ensureWorktree(
     task: { id: string; title: string; worktree_path: string | null; branch_name?: string | null; base_branch?: string | null; use_worktree?: number | null },
     gitConfig: { worktreesEnabled: boolean; defaultBaseBranch: string; copyFiles: string[] },
+    options?: { onProgress?: (phase: string) => void; signal?: AbortSignal },
   ): Promise<{ worktreePath: string; branchName: string } | null> {
     if (task.worktree_path) return null;
     const shouldUseWorktree = task.use_worktree != null
@@ -234,7 +286,7 @@ export class WorktreeManager {
     if (isInsideWorktree(this.projectPath)) return null;
 
     const baseBranch = task.base_branch || gitConfig.defaultBaseBranch || 'main';
-    return this.createWorktree(task.id, task.title, baseBranch, gitConfig.copyFiles, task.branch_name);
+    return this.createWorktree(task.id, task.title, baseBranch, gitConfig.copyFiles, task.branch_name, { onProgress: options?.onProgress, signal: options?.signal });
   }
 
   /**
@@ -251,6 +303,7 @@ export class WorktreeManager {
     baseBranch: string = 'main',
     copyFiles: string[] = [],
     customBranchName?: string | null,
+    options?: { onProgress?: (phase: string) => void; signal?: AbortSignal },
   ): Promise<{ worktreePath: string; branchName: string }> {
     const shortId = taskId.slice(0, 8);
     let branchName: string;
@@ -284,18 +337,11 @@ export class WorktreeManager {
       throw new Error(`Cannot create worktrees directory at ${worktreesDir}: ${(err as Error).message}`);
     }
 
-    // Fetch the latest from origin so worktrees start from up-to-date code
-    let startPoint = baseBranch;
-    try {
-      await this.git.raw(['fetch', 'origin', baseBranch]);
-      startPoint = `origin/${baseBranch}`;
-    } catch {
-      // No remote, branch not on remote, or network unavailable -- use local branch
-    }
-
-    // Prune stale worktree metadata (e.g. from failed cleanup on Windows where
-    // PTY file handles prevented directory removal)
-    try { await this.git.raw(['worktree', 'prune']); } catch { /* best effort */ }
+    // Fetch the latest from origin so worktrees start from up-to-date code.
+    // Uses throttle cache to skip redundant fetches within a 5-minute window.
+    const startPoint = await fetchIfStale(this.git, this.projectPath, baseBranch);
+    options?.onProgress?.('creating-worktree');
+    options?.signal?.throwIfAborted();
 
     // Check if the branch already exists (stale branch from failed cleanup,
     // or pre-existing custom branch)
@@ -306,6 +352,7 @@ export class WorktreeManager {
     } catch {
       // Branch does not exist -- will create it
     }
+    options?.signal?.throwIfAborted();
 
     // Create worktree: attach to existing branch or create a new one.
     // Callers must wrap with withLock() to serialize concurrent operations.
@@ -317,6 +364,7 @@ export class WorktreeManager {
       if (!removed) {
         throw new Error(`Cannot create worktree: stale directory at ${worktreePath} could not be removed. A process may still hold file handles. Close any terminals or editors using this path and retry.`);
       }
+      options?.signal?.throwIfAborted();
     }
     // On Windows, enable long paths to prevent "Filename too long" errors
     // when the project contains deeply nested files (e.g. .NET migrations).
@@ -332,38 +380,34 @@ export class WorktreeManager {
       console.log(`[WORKTREE] Created worktree (new branch): ${branchName} from ${startPoint}`);
     }
 
-    // Store the base branch in git config so agents can read it via
-    // `git config kangentic.baseBranch` without accessing files outside the worktree.
-    // Custom kangentic.* keys have no side effects on any git operation.
+    // Post-creation configuration: git config writes and sparse-checkout run
+    // in parallel since they operate on independent parts of the worktree's
+    // .git state. File copies and node_modules linking stay sequential after.
     const wtGit = simpleGit(worktreePath);
-    try {
-      await wtGit.raw(['config', 'kangentic.baseBranch', baseBranch]);
-    } catch {
-      // Non-fatal -- merge-back falls back to 'main'
-    }
-
-    // Persist long paths in the worktree's local config so all subsequent
-    // git operations (sparse-checkout, agent commits, merges) also work.
-    if (process.platform === 'win32') {
-      try {
-        await wtGit.raw(['config', 'core.longpaths', 'true']);
-      } catch { /* non-fatal */ }
-    }
-
-    // Exclude only .claude/commands/ from worktree via sparse-checkout.
-    // Commands walk up the directory tree from worktree CWD to the main repo's
-    // .claude/commands/, so excluding them prevents duplicate discovery.
-    // Skills and agents do NOT walk up. They are only discovered from the project
-    // root's .claude/ directory. Since the worktree is its own project root (has a
-    // .git file), skills and agents must be present in the worktree checkout.
-    // .claude/settings.json is kept so Claude resolves permissions naturally.
-    // Requires git 2.25+; older versions (some Linux distros) skip gracefully.
-    try {
-      await wtGit.raw(['sparse-checkout', 'init', '--no-cone']);
-      await wtGit.raw(['sparse-checkout', 'set', '/*', '!/.claude/commands/']);
-    } catch (sparseError) {
-      console.warn('[WORKTREE] Sparse-checkout not available (requires git 2.25+), skipping:', sparseError);
-    }
+    await Promise.all([
+      // Store the base branch in git config so agents can read it via
+      // `git config kangentic.baseBranch` without accessing files outside the worktree.
+      wtGit.raw(['config', 'kangentic.baseBranch', baseBranch]).catch(() => {
+        // Non-fatal -- merge-back falls back to 'main'
+      }),
+      // Persist long paths in the worktree's local config (Windows only)
+      process.platform === 'win32'
+        ? wtGit.raw(['config', 'core.longpaths', 'true']).catch(() => { /* non-fatal */ })
+        : Promise.resolve(),
+      // Exclude .claude/commands/ from worktree via sparse-checkout.
+      // Commands walk up the directory tree from worktree CWD to the main repo's
+      // .claude/commands/, so excluding them prevents duplicate discovery.
+      // Requires git 2.25+; older versions skip gracefully.
+      // The two sparse-checkout commands are sequential (init then set).
+      (async () => {
+        try {
+          await wtGit.raw(['sparse-checkout', 'init', '--no-cone']);
+          await wtGit.raw(['sparse-checkout', 'set', '/*', '!/.claude/commands/']);
+        } catch (sparseError) {
+          console.warn('[WORKTREE] Sparse-checkout not available (requires git 2.25+), skipping:', sparseError);
+        }
+      })(),
+    ]);
 
     // Copy specified files into the worktree (skip .claude/ entries --
     // sparse-checkout keeps .claude/ but excludes commands/,
@@ -503,6 +547,26 @@ export class WorktreeManager {
 
   async pruneWorktrees(): Promise<void> {
     await this.git.raw(['worktree', 'prune']);
+  }
+
+  /**
+   * Schedule a background prune for this project. Debounced per-project
+   * (at most once per 10 minutes). Acquires the git lock to avoid
+   * contention with concurrent worktree operations. Never throws.
+   */
+  static scheduleBackgroundPrune(projectPath: string): void {
+    const key = process.platform === 'win32' ? projectPath.toLowerCase() : projectPath;
+    const lastPrune = backgroundPruneTimestamps.get(key);
+    if (lastPrune && Date.now() - lastPrune < BACKGROUND_PRUNE_COOLDOWN_MS) return;
+    backgroundPruneTimestamps.set(key, Date.now());
+
+    WorktreeManager.withGitLock(projectPath, async () => {
+      const git = simpleGit(projectPath);
+      await git.raw(['worktree', 'prune']);
+      console.log(`[WORKTREE] Background prune completed for ${projectPath}`);
+    }).catch((error) => {
+      console.warn(`[WORKTREE] Background prune failed (non-fatal): ${(error as Error).message}`);
+    });
   }
 
   async listWorktrees(): Promise<string[]> {

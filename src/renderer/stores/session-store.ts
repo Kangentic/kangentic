@@ -66,6 +66,8 @@ interface SessionStore {
   seenIdleSessions: Record<string, boolean>;
   /** Command label to show in the terminal overlay (e.g. "/code-review") keyed by task ID */
   pendingCommandLabel: Record<string, string>;
+  /** Spawn progress label from main process (e.g. "Fetching latest...") keyed by task ID */
+  spawnProgress: Record<string, string>;
   /** Task IDs whose Changes panel is open (persists across dialog open/close) */
   changesOpenTasks: Set<string>;
   /** Last selected file in the Changes panel, keyed by task ID */
@@ -93,6 +95,7 @@ interface SessionStore {
   clearEvents: (sessionId: string) => void;
   setPendingCommandLabel: (taskId: string, label: string) => void;
   clearPendingCommandLabel: (taskId: string) => void;
+  setSpawnProgress: (taskId: string, label: string | null) => void;
   markIdleSessionsSeen: (projectId: string) => void;
   markSingleIdleSessionSeen: (sessionId: string) => void;
   toggleChangesOpen: (taskId: string) => void;
@@ -143,6 +146,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   sessionEvents: {},
   seenIdleSessions: {},
   pendingCommandLabel: {},
+  spawnProgress: {},
   changesOpenTasks: new Set(),
   changesSelectedFile: {},
   _pendingOpenTaskId: null,
@@ -307,7 +311,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         // (handles respawns where the session ID changes but taskId stays)
         sessions = [...state.sessions.filter((s) => s.taskId !== session.taskId), session];
       }
-      return { sessions, _sessionByTaskId: buildSessionByTaskId(sessions) };
+      // Clear spawn progress when a real session arrives (progress is done)
+      const { [session.taskId]: _, ...remainingProgress } = state.spawnProgress;
+      return { sessions, _sessionByTaskId: buildSessionByTaskId(sessions), spawnProgress: remainingProgress };
     });
   },
 
@@ -397,6 +403,17 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       const { [taskId]: _, ...rest } = s.pendingCommandLabel;
       return { pendingCommandLabel: rest };
     });
+  },
+
+  setSpawnProgress: (taskId, label) => {
+    if (label === null) {
+      set((s) => {
+        const { [taskId]: _, ...rest } = s.spawnProgress;
+        return { spawnProgress: rest };
+      });
+    } else {
+      set((s) => ({ spawnProgress: { ...s.spawnProgress, [taskId]: label } }));
+    }
   },
 
   markIdleSessionsSeen: (projectId) => {

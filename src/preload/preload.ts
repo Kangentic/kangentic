@@ -66,6 +66,12 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.TASK_DELETED_BY_AGENT, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_DELETED_BY_AGENT, handler);
     },
+    onSpawnProgress: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, taskId: string, label: string | null) =>
+        callback(taskId, label);
+      ipcRenderer.on(IPC.TASK_SPAWN_PROGRESS, handler);
+      return () => ipcRenderer.removeListener(IPC.TASK_SPAWN_PROGRESS, handler);
+    },
   },
 
   attachments: {

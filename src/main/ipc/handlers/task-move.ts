@@ -21,6 +21,7 @@ import { markRecordExited, markRecordSuspended } from '../../engine/session-life
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
 import { abortBacklogPromotion } from './backlog';
+import { emitSpawnProgress, clearSpawnProgress, createProgressCallback } from '../../engine/spawn-progress';
 import type { Task } from '../../../shared/types';
 
 /**
@@ -158,6 +159,10 @@ export async function handleTaskMove(
     } else {
       console.log(`[TASK_MOVE] Full cleanup for task ${task.id.slice(0, 8)} (moved to To Do, session + worktree + branch removed)`);
     }
+    // Schedule background prune to clean up stale git worktree metadata
+    if (resolvedProjectPath) {
+      WorktreeManager.scheduleBackgroundPrune(resolvedProjectPath);
+    }
     return;
   }
 
@@ -272,12 +277,14 @@ export async function handleTaskMove(
   // --- Priority 4: TASK HAS NO ACTIVE SESSION ---
   // All async operations below receive the abort signal so a newer move
   // cancels them via AbortError. Cleanup is centralized in the catch block.
+  const onProgress = createProgressCallback(context.mainWindow, task.id);
   try {
     // Create worktree if worktrees are enabled and task doesn't have one yet.
     // If worktree creation fails (e.g. duplicate branch), revert the task
     // back to its original column so it doesn't get stuck without a session.
     try {
-      await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { signal });
+      emitSpawnProgress(context.mainWindow, task.id, 'fetching');
+      await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { signal, onProgress });
     } catch (error) {
       // Let AbortError propagate to the outer catch for centralized handling
       if (isAbortError(error)) throw error;
@@ -327,14 +334,17 @@ export async function handleTaskMove(
     // Intentionally unguarded: if checkout fails, the error propagates to
     // board-store's catch block which reverts the optimistic move and shows a toast.
     guardActiveNonWorktreeSessions(context, task, tasks);
-    await ensureTaskBranchCheckout(task, resolvedProjectPath, { signal });
+    if (!task.worktree_path) emitSpawnProgress(context.mainWindow, task.id, 'fetching');
+    await ensureTaskBranchCheckout(task, resolvedProjectPath, { signal, onProgress });
 
     // Execute transition actions + ensure agent is running (handles resume/spawn/auto_command)
+    emitSpawnProgress(context.mainWindow, task.id, 'starting-agent');
     const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, resolvedProjectId, resolvedProjectPath);
     if (toLane) {
       await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId, toLane, skipPromptTemplate, signal });
     }
   } catch (error) {
+    clearSpawnProgress(context.mainWindow, task.id);
     if (isAbortError(error)) {
       // A newer move superseded this one - clean up any partially-spawned session
       console.log(`[TASK_MOVE] Aborted stale move for task ${task.id.slice(0, 8)}`);

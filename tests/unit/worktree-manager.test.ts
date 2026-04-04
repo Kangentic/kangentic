@@ -33,7 +33,7 @@ vi.mock('node:child_process', () => ({
 }));
 
 import fs from 'node:fs';
-import { WorktreeManager, isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../src/main/git/worktree-manager';
+import { WorktreeManager, isGitRepo, isInsideWorktree, isKangenticWorktree, clearFetchCache } from '../../src/main/git/worktree-manager';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -162,6 +162,7 @@ describe('WorktreeManager -- sparse-checkout', () => {
 describe('WorktreeManager -- fetch and base branch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearFetchCache();
   });
 
   it('fetches from origin and uses origin/<baseBranch> as start point when fetch succeeds', async () => {
@@ -454,6 +455,7 @@ describe('WorktreeManager -- ensureWorktree', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    clearFetchCache();
     // Default: isGitRepo returns true, isInsideWorktree returns false
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(fs.statSync).mockImplementation(() => { throw new Error('not a file'); });
@@ -570,6 +572,7 @@ describe('isKangenticWorktree', () => {
 describe('WorktreeManager -- stale branch recovery', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearFetchCache();
     mockWorktreeGit.raw.mockResolvedValue('');
   });
 
@@ -603,7 +606,7 @@ describe('WorktreeManager -- stale branch recovery', () => {
     expect(worktreeAddArgs).not.toContain('-b');
   });
 
-  it('createWorktree prunes stale worktree metadata before checking branch', async () => {
+  it('createWorktree does not inline prune (moved to background)', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);
     vi.mocked(fs.mkdirSync).mockReturnValue(undefined);
 
@@ -617,17 +620,13 @@ describe('WorktreeManager -- stale branch recovery', () => {
     const mgr = new WorktreeManager('/project');
     await mgr.createWorktree('abcd1234-0000', 'Test task');
 
-    // worktree prune should be called before rev-parse
+    // Prune should NOT be called inline during createWorktree
+    // (it's been moved to background via scheduleBackgroundPrune)
     const calls = mockProjectGit.raw.mock.calls.map((call: string[][]) => call[0]);
-    const pruneIndex = calls.findIndex(
+    const pruneCall = calls.find(
       (args: string[]) => args.includes('worktree') && args.includes('prune'),
     );
-    const revParseIndex = calls.findIndex(
-      (args: string[]) => args.includes('rev-parse') && args.includes('--verify'),
-    );
-
-    expect(pruneIndex).toBeGreaterThanOrEqual(0);
-    expect(revParseIndex).toBeGreaterThan(pruneIndex);
+    expect(pruneCall).toBeUndefined();
   });
 
   it('createWorktree cleans up stale directory before git worktree add', async () => {

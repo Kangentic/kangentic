@@ -11,21 +11,11 @@ import { useSessionStore } from '../../stores/session-store';
 import { useBacklogStore } from '../../stores/backlog-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
-import { useSessionDisplayState } from '../../utils/session-display-state';
+import { useTaskProgress } from '../../utils/task-progress';
 import { agentShortName } from '../../utils/agent-display-name';
 import { getProgressColor } from '../../utils/color-lerp';
 import { LabelPills } from '../Pill';
 import type { Task, Swimlane } from '../../../shared/types';
-
-/** Priority: pending command (set by moveTask or manual invoke) > resuming > default. */
-function deriveInitializingLabel(
-  pendingCommandLabel: string | null,
-  isResuming: boolean,
-): string {
-  if (pendingCommandLabel) return 'Running command...';
-  if (isResuming) return 'Resuming...';
-  return 'Initializing...';
-}
 
 interface TaskCardProps {
   task: Task;
@@ -187,19 +177,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
       [sessionId],
     ),
   );
-  const displayState = useSessionDisplayState(sessionId);
-
-  // Derive contextual label for the initializing state (mirrors TerminalTab logic)
-  const pendingCommandLabel = useSessionStore((s) => s.pendingCommandLabel[task.id] ?? null);
-  // Lookup by taskId via O(1) Map instead of scanning by sessionId
-  const isResuming = useSessionStore(
-    useCallback(
-      (s: ReturnType<typeof useSessionStore.getState>) =>
-        sessionId ? (s._sessionByTaskId.get(task.id)?.resuming ?? false) : false,
-      [sessionId, task.id],
-    ),
-  );
-  const initializingLabel = deriveInitializingLabel(pendingCommandLabel, isResuming);
+  const displayState = useTaskProgress(task.id, sessionId);
 
   const {
     attributes,
@@ -436,12 +414,13 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
                 </div>
               );
             }
+            case 'preparing':
             case 'initializing':
               return (
                 <div className="mt-2 pt-2 border-t border-edge" data-testid="status-bar">
                   <span className="text-xs text-fg-faint flex items-center gap-1">
                     <Loader2 size={12} className="animate-spin" />
-                    {initializingLabel}
+                    {displayState.label}
                   </span>
                 </div>
               );

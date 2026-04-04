@@ -372,7 +372,8 @@ export interface PeriodUsageStats {
 
 export type SessionDisplayState =
   | { kind: 'none' }
-  | { kind: 'initializing' }
+  | { kind: 'preparing'; label: string }
+  | { kind: 'initializing'; label: string }
   | { kind: 'queued' }
   | { kind: 'running'; activity: ActivityState; usage: SessionUsage | null }
   | { kind: 'suspended' }
@@ -1082,6 +1083,7 @@ export interface ElectronAPI {
     onCreatedByAgent: (callback: (taskId: string, taskTitle: string, columnName: string, projectId?: string) => void) => () => void;
     onUpdatedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
     onDeletedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
+    onSpawnProgress: (callback: (taskId: string, label: string | null) => void) => () => void;
   };
 
   // Attachments

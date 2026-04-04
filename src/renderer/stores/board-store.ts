@@ -232,6 +232,12 @@ const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set, get) 
       useSessionStore.getState().setPendingCommandLabel(input.taskId, targetAutoCommand);
     }
 
+    // Optimistically show spawn progress for auto-spawn columns.
+    // Main process will overwrite with real phase labels once processing starts.
+    if (isColumnChange && targetLane?.auto_spawn) {
+      useSessionStore.getState().setSpawnProgress(input.taskId, 'Initializing...');
+    }
+
     // Optimistically clear session for tasks moving to backlog
     // (the backend will destroy the session during TASK_MOVE via cleanupTaskSession)
     if (isColumnChange && targetLane?.role === 'todo') {
@@ -268,12 +274,14 @@ const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set, get) 
         // No new session was spawned (e.g. user-paused task moved to auto_command column).
         // Clear the optimistic pendingCommandLabel to prevent stale shimmer overlay.
         useSessionStore.getState().clearPendingCommandLabel(input.taskId);
+        useSessionStore.getState().setSpawnProgress(input.taskId, null);
       }
     } catch (err) {
       if (moveGeneration !== thisGen) return; // Don't clobber newer state on error
       if (targetAutoCommand) {
         useSessionStore.getState().clearPendingCommandLabel(input.taskId);
       }
+      useSessionStore.getState().setSpawnProgress(input.taskId, null);
       await get().loadBoard();
       useToastStore.getState().addToast({
         message: `Failed to move task: ${err instanceof Error ? err.message : 'Unknown error'}`,

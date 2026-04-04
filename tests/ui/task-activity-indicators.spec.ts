@@ -3,7 +3,7 @@
  *
  * When a task first spawns a session, the backend defaults activity to 'idle'
  * before any hooks fire. During this initializing phase (no usage data yet),
- * the card should show only the "Initializing..." bottom bar -- no title icon.
+ * the card should show only the "Starting agent..." bottom bar -- no title icon.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -173,7 +173,7 @@ test.describe('Task Activity Indicators', () => {
         await expect(titleRow.locator('.lucide-loader-circle')).not.toBeVisible();
 
         await expect(eventPage.locator('[data-testid="status-bar"]')).toBeVisible();
-        await expect(eventPage.locator('text=Initializing...')).toBeVisible();
+        await expect(eventPage.locator('[data-testid="status-bar"]').locator('text=Starting agent...')).toBeVisible();
       } finally {
         await eventBrowser.close();
       }
@@ -194,7 +194,7 @@ test.describe('Task Activity Indicators', () => {
         await expect(titleRow.locator('.lucide-mail')).not.toBeVisible();
 
         await expect(thinkPage.locator('[data-testid="status-bar"]')).toBeVisible();
-        await expect(thinkPage.locator('text=Initializing...')).toBeVisible();
+        await expect(thinkPage.locator('[data-testid="status-bar"]').locator('text=Starting agent...')).toBeVisible();
       } finally {
         await thinkBrowser.close();
       }
