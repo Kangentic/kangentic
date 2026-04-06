@@ -409,10 +409,10 @@ export function EditColumnDialog({ swimlane, mode, onClose }: EditColumnDialogPr
               >
                 <option value="">{projectDefaultAgentLabel}</option>
                 {agentList
-                  .filter((agent) => agent.name !== projectDefaultAgent)
+                  .filter((agent) => agent.found && agent.name !== projectDefaultAgent)
                   .map((agent) => (
                     <option key={agent.name} value={agent.name}>
-                      {agent.displayName ?? agent.name}{agent.found ? '' : ' (not found)'}
+                      {agent.displayName ?? agent.name}
                     </option>
                   ))}
               </select>
