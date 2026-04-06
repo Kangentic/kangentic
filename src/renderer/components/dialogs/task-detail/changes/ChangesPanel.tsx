@@ -4,8 +4,7 @@ import { RefreshCw } from 'lucide-react';
 import { FileTreePanel } from './FileTreePanel';
 import { DiffViewer } from './DiffViewer';
 import { useSessionStore } from '../../../../stores/session-store';
-import { useConfigStore } from '../../../../stores/config-store';
-import type { Task, GitDiffFileEntry, GitDiffFilesResult, GitFileContentResult } from '../../../../../shared/types';
+import type { GitDiffFileEntry, GitDiffFilesResult, GitFileContentResult } from '../../../../../shared/types';
 
 // Scoped error boundary prevents Monaco failures from crashing the entire app.
 class DiffErrorBoundary extends React.Component<
@@ -47,8 +46,10 @@ class DiffErrorBoundary extends React.Component<
 }
 
 interface ChangesPanelProps {
-  task: Task;
+  entityId: string;
   projectPath: string;
+  worktreePath?: string;
+  baseBranch: string;
 }
 
 interface ContentCacheEntry {
@@ -56,20 +57,16 @@ interface ContentCacheEntry {
   generation: number;
 }
 
-export function ChangesPanel({ task, projectPath }: ChangesPanelProps) {
+export function ChangesPanel({ entityId, projectPath, worktreePath, baseBranch }: ChangesPanelProps) {
   const [files, setFiles] = useState<GitDiffFileEntry[]>([]);
   const [totalInsertions, setTotalInsertions] = useState(0);
   const [totalDeletions, setTotalDeletions] = useState(0);
-  const selectedFile = useSessionStore((state) => state.changesSelectedFile[task.id] ?? null);
+  const selectedFile = useSessionStore((state) => state.changesSelectedFile[entityId] ?? null);
   const setChangesSelectedFile = useSessionStore((state) => state.setChangesSelectedFile);
-  const setSelectedFile = useCallback((filePath: string | null) => setChangesSelectedFile(task.id, filePath), [task.id, setChangesSelectedFile]);
+  const setSelectedFile = useCallback((filePath: string | null) => setChangesSelectedFile(entityId, filePath), [entityId, setChangesSelectedFile]);
   const [fileContent, setFileContent] = useState<GitFileContentResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'split' | 'inline'>('split');
-
-  const worktreePath = task.worktree_path ?? undefined;
-  const defaultBaseBranch = useConfigStore((s) => s.config.git.defaultBaseBranch);
-  const baseBranch = task.base_branch || defaultBaseBranch || 'main';
 
   // Refs for values needed inside callbacks to avoid stale closures
   // and subscription churn on every file selection or re-render.

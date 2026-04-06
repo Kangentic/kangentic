@@ -59,6 +59,7 @@ export function TaskDetailBody({
   onResetSession,
 }: TaskDetailBodyProps) {
   const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
+  const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
   const taskLabels = task.labels ?? [];
   const taskPriority = task.priority ?? 0;
   const hasLabelsOrPriority = taskPriority > 0 || taskLabels.length > 0;
@@ -124,7 +125,12 @@ export function TaskDetailBody({
           </div>
         }
       >
-        <ChangesPanel task={task} projectPath={projectPath} />
+        <ChangesPanel
+          entityId={task.id}
+          projectPath={projectPath}
+          worktreePath={task.worktree_path ?? undefined}
+          baseBranch={task.base_branch || defaultBaseBranch || 'main'}
+        />
       </Suspense>
     </div>
   );

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleStop, FolderOpen, SquareChevronRight, X, Zap } from 'lucide-react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CircleStop, FolderOpen, GitCompare, Loader2, SquareChevronRight, X, Zap } from 'lucide-react';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { ShimmerOverlay } from '../ShimmerOverlay';
 import { Pill } from '../Pill';
@@ -19,6 +19,10 @@ import { resolveProjectRoot } from '../../../shared/git-utils';
 import { getIsHmrReload } from '../../utils/hmr-flag';
 import type { AgentCommand } from '../../../shared/types';
 
+const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
+
+const COMMAND_TERMINAL_ENTITY_ID = 'command-terminal';
+
 type Phase = 'entering' | 'visible' | 'exiting';
 
 interface CommandBarOverlayProps {
@@ -36,6 +40,9 @@ export function CommandBarOverlay({ onClose }: CommandBarOverlayProps) {
   // Resolve to the main repo root if the current project is a worktree
   const projectPath = useMemo(() => rawProjectPath ? resolveProjectRoot(rawProjectPath) : null, [rawProjectPath]);
   const shortcuts = useBoardStore((s) => s.shortcuts);
+  const changesOpen = useSessionStore((s) => s.changesOpenTasks.has(COMMAND_TERMINAL_ENTITY_ID));
+  const toggleChangesOpen = useSessionStore((s) => s.toggleChangesOpen);
+  const handleToggleChanges = useCallback(() => toggleChangesOpen(COMMAND_TERMINAL_ENTITY_ID), [toggleChangesOpen]);
   const backdropMouseDown = useRef(false);
   const spawnedRef = useRef(false);
   const commandButtonRef = useRef<HTMLDivElement>(null);
@@ -174,6 +181,11 @@ export function CommandBarOverlay({ onClose }: CommandBarOverlayProps) {
     }
   }, [phase, fit, focus]);
 
+  // Re-fit terminal when changes panel toggles (container width changes)
+  useEffect(() => {
+    if (initialized.current) requestAnimationFrame(() => fit());
+  }, [changesOpen, fit]);
+
   const defaultBranch = config.git.defaultBaseBranch || 'main';
 
   // Kill current session, checkout new branch, and respawn
@@ -257,7 +269,7 @@ export function CommandBarOverlay({ onClose }: CommandBarOverlayProps) {
       data-testid="command-bar-overlay"
     >
       <div
-        className="absolute top-20 left-1/2 -translate-x-1/2 w-[70%] max-w-4xl"
+        className={`absolute top-20 left-1/2 -translate-x-1/2 transition-[width,max-width] duration-200 ${changesOpen ? 'w-[90vw] max-w-none' : 'w-[70%] max-w-4xl'}`}
         style={{ animation: contentAnimation }}
         onMouseDown={(event) => event.stopPropagation()}
       >
@@ -317,6 +329,23 @@ export function CommandBarOverlay({ onClose }: CommandBarOverlayProps) {
                 </Pill>
               )}
 
+              {projectPath && (
+                <Pill
+                  shape="square"
+                  onClick={handleToggleChanges}
+                  className={`flex-shrink-0 transition-colors border ${
+                    changesOpen
+                      ? 'bg-accent/15 text-accent-fg border-accent/30'
+                      : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
+                  }`}
+                  title={changesOpen ? 'Hide changes' : 'Show changes'}
+                  data-testid="command-bar-changes-toggle"
+                >
+                  <GitCompare size={14} />
+                  Changes
+                </Pill>
+              )}
+
               {headerShortcuts.map((action) => {
                 const ActionIcon = ICON_REGISTRY.get(action.icon ?? 'zap') ?? Zap;
                 return (
@@ -351,6 +380,13 @@ export function CommandBarOverlay({ onClose }: CommandBarOverlayProps) {
                     label="Commands"
                     onClick={() => { close(); setShowCommandPalette(true); }}
                   />
+                  {projectPath && (
+                    <KebabMenuItem
+                      icon={<GitCompare size={14} />}
+                      label={changesOpen ? 'Hide changes' : 'Show changes'}
+                      onClick={() => { close(); handleToggleChanges(); }}
+                    />
+                  )}
                   {menuShortcuts.length > 0 && (
                     <>
                       <KebabMenuDivider />
@@ -391,15 +427,37 @@ export function CommandBarOverlay({ onClose }: CommandBarOverlayProps) {
             </button>
           </div>
 
-          {/* Terminal area */}
-          <div className="relative h-[60vh]" style={{ backgroundColor: '#18181b' }}>
-            {!terminalReady && <ShimmerOverlay label="Starting Command Terminal..." />}
-            <FileDropOverlay {...fileDrop} />
-            <div
-              ref={terminalRef}
-              className="h-full"
-              data-testid="command-bar-terminal"
-            />
+          {/* Body */}
+          <div className="relative h-[60vh] flex">
+            {/* Terminal */}
+            <div className={`${changesOpen ? 'w-1/2' : 'flex-1'} relative`} style={{ backgroundColor: '#18181b' }}>
+              {!terminalReady && <ShimmerOverlay label="Starting Command Terminal..." />}
+              <FileDropOverlay {...fileDrop} />
+              <div
+                ref={terminalRef}
+                className="h-full"
+                data-testid="command-bar-terminal"
+              />
+            </div>
+
+            {/* Changes panel */}
+            {changesOpen && projectPath && (
+              <div className="w-1/2 min-h-0 border-l border-edge">
+                <Suspense
+                  fallback={
+                    <div className="flex items-center justify-center h-full">
+                      <Loader2 size={20} className="animate-spin text-fg-muted" />
+                    </div>
+                  }
+                >
+                  <ChangesPanel
+                    entityId={COMMAND_TERMINAL_ENTITY_ID}
+                    projectPath={projectPath}
+                    baseBranch="HEAD"
+                  />
+                </Suspense>
+              </div>
+            )}
           </div>
         </div>
       </div>
