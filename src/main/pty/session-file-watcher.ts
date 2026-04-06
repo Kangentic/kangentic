@@ -79,9 +79,7 @@ export class SessionFileWatcher {
       state.statusFileWatcher = new FileWatcher({
         filePath: statusOutputPath,
         onChange: () => this.callbacks.onUsageFileChanged(sessionId, statusOutputPath),
-        label: `Usage:${sessionId.slice(0, 8)}`,
         debounceMs: 100,
-        initialGracePeriodMs: 15_000,
       });
       // Immediately read any existing status.json (e.g. resumed sessions after restart)
       this.callbacks.onUsageFileChanged(sessionId, statusOutputPath);
@@ -99,9 +97,7 @@ export class SessionFileWatcher {
       state.eventsFileWatcher = new FileWatcher({
         filePath: eventsOutputPath,
         onChange: () => this.callbacks.onEventsFileChanged(sessionId, eventsOutputPath),
-        label: `Event:${sessionId.slice(0, 8)}`,
         debounceMs: 50,
-        initialGracePeriodMs: 15_000,
         isStale: () => {
           try {
             const stat = fs.statSync(eventsOutputPath);

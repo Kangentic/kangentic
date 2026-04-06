@@ -67,14 +67,12 @@ export class BoardConfigManager {
     this.teamWatcher = new FileWatcher({
       filePath: teamFilePath,
       onChange: () => this.onFileChanged(projectId, 'team'),
-      label: `kangentic.json [${projectId.slice(0, 8)}]`,
       debounceMs: 300,
     });
 
     this.localWatcher = new FileWatcher({
       filePath: localFilePath,
       onChange: () => this.onFileChanged(projectId, 'local'),
-      label: `kangentic.local.json [${projectId.slice(0, 8)}]`,
       debounceMs: 300,
     });
   }

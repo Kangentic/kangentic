@@ -74,9 +74,7 @@ export class CommandBridge {
     this.fileWatcher = new FileWatcher({
       filePath: this.commandsPath,
       onChange: () => this.processNewCommands(),
-      label: `MCP-Cmd`,
       debounceMs: 50,
-      initialGracePeriodMs: 30_000,
       isStale: () => {
         try {
           const stat = fs.statSync(this.commandsPath);

@@ -3,18 +3,20 @@ import fs from 'node:fs';
 interface FileWatcherOptions {
   filePath: string;
   onChange: () => void;
-  label: string;
   debounceMs?: number;
   pollIntervalMs?: number;
-  staleThresholdMs?: number;
   isStale?: () => boolean;
-  initialGracePeriodMs?: number;
 }
 
 /**
- * Watches a file for changes using fs.watch with automatic directory fallback
- * (when the file doesn't exist yet) and a polling safety net that detects
- * when fs.watch silently stops firing and restarts it.
+ * Watches a file for changes using fs.watch as a fast path with polling
+ * as a silent, reliable fallback.
+ *
+ * fs.watch is not consistent across platforms (Node.js docs). On Windows
+ * it can silently stop firing; on Linux/macOS it can break when a file is
+ * deleted and recreated (new inode). Rather than trying to detect and recover
+ * from these failures, polling runs continuously and processes any changes
+ * that fs.watch missed.
  */
 export class FileWatcher {
   private watcher: fs.FSWatcher | null = null;
@@ -22,28 +24,18 @@ export class FileWatcher {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private lastWatcherFireTime: number;
   private closed = false;
-  private hasLoggedStaleRecovery = false;
-  private hasReceivedFirstEvent = false;
 
   private readonly filePath: string;
   private readonly onChange: () => void;
-  private readonly label: string;
   private readonly debounceMs: number;
   private readonly pollIntervalMs: number;
-  private readonly staleThresholdMs: number;
   private readonly isStale: () => boolean;
-  private readonly initialGracePeriodMs: number;
-  private readonly constructionTime: number;
 
   constructor(options: FileWatcherOptions) {
     this.filePath = options.filePath;
     this.onChange = options.onChange;
-    this.label = options.label;
     this.debounceMs = options.debounceMs ?? 50;
-    this.pollIntervalMs = options.pollIntervalMs ?? 3000;
-    this.staleThresholdMs = options.staleThresholdMs ?? 5000;
-    this.initialGracePeriodMs = options.initialGracePeriodMs ?? 0;
-    this.constructionTime = Date.now();
+    this.pollIntervalMs = options.pollIntervalMs ?? 1000;
     this.lastWatcherFireTime = Date.now();
 
     // Default staleness check: mtime-based (good for files overwritten on each write)
@@ -81,20 +73,18 @@ export class FileWatcher {
   private onFileChange = (): void => {
     if (this.closed) return;
     this.lastWatcherFireTime = Date.now();
-    this.hasReceivedFirstEvent = true;
-    // Do NOT reset hasLoggedStaleRecovery here -- if the watcher was restarted
-    // by polling, the new fs.watch may fire once immediately (Node behavior),
-    // which would reset the flag and cause repeated log spam on the next poll.
-    // The flag is only reset when a poll cycle confirms the watcher is healthy.
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
-    this.debounceTimer = setTimeout(() => this.onChange(), this.debounceMs);
+    this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = null;
+      this.onChange();
+    }, this.debounceMs);
   };
 
   private setupWatcher(): void {
     try {
       const watcher = fs.watch(this.filePath, this.onFileChange);
-      watcher.on('error', (error: Error) => {
-        console.warn(`[WATCHER] ${this.label} watcher error:`, error.message);
+      watcher.on('error', () => {
+        // fs.watch broke - polling will cover it silently
       });
       this.watcher = watcher;
     } catch {
@@ -107,43 +97,22 @@ export class FileWatcher {
             this.onFileChange();
           }
         });
-        watcher.on('error', (error: Error) => {
-          console.warn(`[WATCHER] ${this.label} dir watcher error:`, error.message);
+        watcher.on('error', () => {
+          // fs.watch broke - polling will cover it silently
         });
         this.watcher = watcher;
       } catch {
-        // Can't watch directory either -- polling fallback will still work
+        // Can't watch directory either - polling fallback will still work
       }
     }
   }
 
   private startPolling(): void {
     this.pollTimer = setInterval(() => {
-      if (this.closed) return;
-      const timeSinceLastFire = Date.now() - this.lastWatcherFireTime;
-      if (this.isStale() && timeSinceLastFire > this.staleThresholdMs) {
-        if (!this.hasLoggedStaleRecovery) {
-          const inGracePeriod = !this.hasReceivedFirstEvent
-            && Date.now() - this.constructionTime < this.initialGracePeriodMs;
-          const logMethod = inGracePeriod ? console.debug : console.warn;
-          logMethod(`[WATCHER] ${this.label} stale (${Math.round(timeSinceLastFire / 1000)}s since last fire). Recovering.`);
-          this.hasLoggedStaleRecovery = true;
-        }
-        this.onChange();
-        this.restartWatcher();
-      } else if (this.hasLoggedStaleRecovery && !this.isStale()) {
-        // Watcher recovered -- allow future stale logs
-        this.hasLoggedStaleRecovery = false;
+      if (this.closed || this.debounceTimer) return;
+      if (this.isStale()) {
+        this.onFileChange();
       }
     }, this.pollIntervalMs);
-  }
-
-  private restartWatcher(): void {
-    if (this.watcher) {
-      this.watcher.close();
-      this.watcher = null;
-    }
-    this.lastWatcherFireTime = Date.now();
-    this.setupWatcher();
   }
 }
