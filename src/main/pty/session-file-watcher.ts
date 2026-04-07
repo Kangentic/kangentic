@@ -3,7 +3,7 @@ import path from 'node:path';
 import { FileWatcher } from './file-watcher';
 import { CommandBridge } from '../agent/command-bridge';
 import { getProjectDb } from '../db/database';
-import type { Task } from '../../shared/types';
+import type { Task, Swimlane } from '../../shared/types';
 
 interface SessionFileWatcherCallbacks {
   onUsageFileChanged(sessionId: string, statusOutputPath: string): void;
@@ -11,6 +11,8 @@ interface SessionFileWatcherCallbacks {
   onTaskCreated(sessionId: string, task: Task, columnName: string, swimlaneId: string): void;
   onTaskUpdated(sessionId: string, task: Task): void;
   onTaskDeleted(sessionId: string, task: Task): void;
+  onTaskMove(sessionId: string, input: { taskId: string; targetSwimlaneId: string; targetPosition: number }): Promise<void>;
+  onSwimlaneUpdated(sessionId: string, swimlane: Swimlane): void;
   onBacklogChanged(sessionId: string): void;
   onLabelColorsChanged(sessionId: string, colors: Record<string, string>): void;
 }
@@ -133,6 +135,12 @@ export class SessionFileWatcher {
         },
         onTaskDeleted: (task) => {
           this.callbacks.onTaskDeleted(sessionId, task);
+        },
+        onTaskMove: (input) => {
+          return this.callbacks.onTaskMove(sessionId, input);
+        },
+        onSwimlaneUpdated: (swimlane) => {
+          this.callbacks.onSwimlaneUpdated(sessionId, swimlane);
         },
         onBacklogChanged: () => {
           this.callbacks.onBacklogChanged(sessionId);

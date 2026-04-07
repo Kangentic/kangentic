@@ -51,6 +51,7 @@ export const IPC = {
   SWIMLANE_UPDATE: 'swimlane:update',
   SWIMLANE_DELETE: 'swimlane:delete',
   SWIMLANE_REORDER: 'swimlane:reorder',
+  SWIMLANE_UPDATED_BY_AGENT: 'swimlane:updatedByAgent',
 
   // Actions
   ACTION_LIST: 'action:list',

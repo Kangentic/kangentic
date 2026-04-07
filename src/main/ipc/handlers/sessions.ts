@@ -473,6 +473,39 @@ export function registerSessionHandlers(context: IpcContext): void {
     }
   });
 
+  // Task move requested by agent (MCP server move_task)
+  context.sessionManager.on('task-move-requested', async (
+    sessionId: string,
+    input: { taskId: string; targetSwimlaneId: string; targetPosition: number },
+    done: (err: Error | null) => void,
+  ) => {
+    try {
+      const projectId = context.sessionManager.getSessionProjectId(sessionId) ?? null;
+      const projectPath = context.currentProjectPath;
+      await handleTaskMove(context, input, projectId, projectPath);
+      // Notify renderer to reload
+      const movedProjectId = projectId;
+      const projectDb = movedProjectId ? getProjectDb(movedProjectId) : null;
+      const movedTask = projectDb
+        ?.prepare('SELECT id, title FROM tasks WHERE id = ?')
+        .get(input.taskId) as { id: string; title: string } | undefined;
+      if (movedTask && !context.mainWindow.isDestroyed()) {
+        context.mainWindow.webContents.send(IPC.TASK_UPDATED_BY_AGENT, movedTask.id, movedTask.title, movedProjectId);
+      }
+      done(null);
+    } catch (error) {
+      done(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
+
+  // Swimlane updated by agent (MCP server update_column)
+  context.sessionManager.on('swimlane-updated', (sessionId: string, swimlane: { id: string; name: string }) => {
+    if (!context.mainWindow.isDestroyed()) {
+      const projectId = context.sessionManager.getSessionProjectId(sessionId);
+      context.mainWindow.webContents.send(IPC.SWIMLANE_UPDATED_BY_AGENT, swimlane.id, swimlane.name, projectId);
+    }
+  });
+
   // Backlog changed by agent (MCP server created/promoted backlog tasks)
   context.sessionManager.on('backlog-changed', (sessionId: string) => {
     if (!context.mainWindow.isDestroyed()) {

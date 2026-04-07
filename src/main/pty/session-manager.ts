@@ -126,6 +126,16 @@ export class SessionManager extends EventEmitter {
       onTaskCreated: (sessionId, task, columnName, swimlaneId) => this.emit('task-created', sessionId, task, columnName, swimlaneId),
       onTaskUpdated: (sessionId, task) => this.emit('task-updated', sessionId, task),
       onTaskDeleted: (sessionId, task) => this.emit('task-deleted', sessionId, task),
+      onTaskMove: (sessionId, input) => {
+        // Forward to listener that calls handleTaskMove. Returns a promise so the
+        // CommandBridge handler can await completion before responding.
+        return new Promise<void>((resolve, reject) => {
+          this.emit('task-move-requested', sessionId, input, (err: Error | null) => {
+            if (err) reject(err); else resolve();
+          });
+        });
+      },
+      onSwimlaneUpdated: (sessionId, swimlane) => this.emit('swimlane-updated', sessionId, swimlane),
       onBacklogChanged: (sessionId) => this.emit('backlog-changed', sessionId),
       onLabelColorsChanged: (sessionId, colors) => this.emit('label-colors-changed', sessionId, colors),
     });

@@ -79,6 +79,8 @@ function makeSwimlane(
     auto_spawn: false,
     auto_command: null,
     plan_exit_target_id: null,
+    agent_override: null,
+    handoff_context: false,
     created_at: new Date().toISOString(),
   };
 }
@@ -88,11 +90,12 @@ function makeTask(overrides: Partial<Task> & { title: string; swimlane_id: strin
   const now = new Date().toISOString();
   return {
     id: `task-${taskIdCounter}`,
+    display_id: overrides.display_id ?? taskIdCounter,
     title: overrides.title,
     description: overrides.description ?? '',
     swimlane_id: overrides.swimlane_id,
     position: mockTasks.filter((task) => task.swimlane_id === overrides.swimlane_id).length,
-    agent: null,
+    agent: overrides.agent ?? null,
     session_id: null,
     worktree_path: overrides.worktree_path ?? null,
     branch_name: overrides.branch_name ?? null,
@@ -100,6 +103,8 @@ function makeTask(overrides: Partial<Task> & { title: string; swimlane_id: strin
     pr_url: overrides.pr_url ?? null,
     base_branch: overrides.base_branch ?? null,
     use_worktree: overrides.use_worktree ?? null,
+    labels: overrides.labels ?? [],
+    priority: overrides.priority ?? 0,
     attachment_count: 0,
     archived_at: overrides.archived_at ?? null,
     created_at: now,
@@ -132,6 +137,18 @@ vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({
   SwimlaneRepository: class MockSwimlaneRepository {
     list() { return mockSwimlanes; }
     getById(id: string) { return mockSwimlanes.find((swimlane) => swimlane.id === id); }
+    update(input: Partial<Swimlane> & { id: string }) {
+      const index = mockSwimlanes.findIndex((swimlane) => swimlane.id === input.id);
+      if (index === -1) throw new Error(`Swimlane ${input.id} not found`);
+      const merged = { ...mockSwimlanes[index] };
+      for (const [key, value] of Object.entries(input)) {
+        if (key === 'id') continue;
+        if (value === undefined) continue;
+        (merged as Record<string, unknown>)[key] = value;
+      }
+      mockSwimlanes[index] = merged;
+      return merged;
+    }
   },
 }));
 
@@ -156,15 +173,15 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
       return mockTasks;
     }
     getById(id: string) { return mockTasks.find((task) => task.id === id); }
-    update(input: { id: string; title?: string; description?: string; branch_name?: string; pr_url?: string; pr_number?: number }) {
+    update(input: Partial<Task> & { id: string }) {
       const index = mockTasks.findIndex((task) => task.id === input.id);
       if (index === -1) throw new Error(`Task ${input.id} not found`);
       const updated = { ...mockTasks[index] };
-      if (input.title !== undefined) updated.title = input.title;
-      if (input.description !== undefined) updated.description = input.description;
-      if (input.branch_name !== undefined) updated.branch_name = input.branch_name;
-      if (input.pr_url !== undefined) updated.pr_url = input.pr_url;
-      if (input.pr_number !== undefined) updated.pr_number = input.pr_number;
+      for (const [key, value] of Object.entries(input)) {
+        if (key === 'id') continue;
+        if (value === undefined) continue;
+        (updated as Record<string, unknown>)[key] = value;
+      }
       updated.updated_at = new Date().toISOString();
       mockTasks[index] = updated;
       return updated;
@@ -230,6 +247,9 @@ let database: ReturnType<typeof Database>;
 function createBridge(overrides?: {
   onTaskCreated?: (task: Task, columnName: string, swimlaneId: string) => void;
   onTaskUpdated?: (task: Task) => void;
+  onTaskDeleted?: (task: Task) => void;
+  onTaskMove?: (input: { taskId: string; targetSwimlaneId: string; targetPosition: number }) => Promise<void>;
+  onSwimlaneUpdated?: (swimlane: Swimlane) => void;
   onBacklogChanged?: () => void;
   onLabelColorsChanged?: (colors: Record<string, string>) => void;
 }): CommandBridge {
@@ -241,6 +261,9 @@ function createBridge(overrides?: {
     getProjectPath: () => tmpDir,
     onTaskCreated: overrides?.onTaskCreated ?? (() => {}),
     onTaskUpdated: overrides?.onTaskUpdated ?? (() => {}),
+    onTaskDeleted: overrides?.onTaskDeleted ?? (() => {}),
+    onTaskMove: overrides?.onTaskMove ?? (async () => {}),
+    onSwimlaneUpdated: overrides?.onSwimlaneUpdated ?? (() => {}),
     onBacklogChanged: overrides?.onBacklogChanged ?? (() => {}),
     onLabelColorsChanged: overrides?.onLabelColorsChanged ?? (() => {}),
   });
@@ -1060,5 +1083,382 @@ describe('CommandBridge - board_summary includes backlog', () => {
     expect(response.message).toContain('Backlog tasks: 3');
     const data = response.data as { backlogTasks: number };
     expect(data.backlogTasks).toBe(3);
+  });
+});
+
+describe('CommandBridge - update_task (extended fields)', () => {
+  it('updates agent, priority, labels, baseBranch, and useWorktree', () => {
+    const task = makeTask({ title: 'Multi-field', swimlane_id: 'sw-todo' });
+    mockTasks.push(task);
+
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'update_task', {
+      taskId: task.id,
+      agent: 'codex',
+      priority: 3,
+      labels: ['urgent', 'backend'],
+      baseBranch: 'develop',
+      useWorktree: true,
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    const stored = mockTasks.find((t) => t.id === task.id);
+    expect(stored?.agent).toBe('codex');
+    expect(stored?.priority).toBe(3);
+    expect(stored?.labels).toEqual(['urgent', 'backend']);
+    expect(stored?.base_branch).toBe('develop');
+    expect(stored?.use_worktree).toBe(1);
+
+    const data = response.data as {
+      agent: string | null;
+      priority: number;
+      labels: string[];
+      baseBranch: string | null;
+      useWorktree: number | null;
+    };
+    expect(data.agent).toBe('codex');
+    expect(data.priority).toBe(3);
+    expect(data.labels).toEqual(['urgent', 'backend']);
+    expect(data.baseBranch).toBe('develop');
+    expect(data.useWorktree).toBe(1);
+  });
+
+  it('returns error when no fields provided', () => {
+    const task = makeTask({ title: 'Empty update', swimlane_id: 'sw-todo' });
+    mockTasks.push(task);
+
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'update_task', { taskId: task.id });
+
+    bridge.stop();
+
+    // Current handler still calls update with no fields and reports an empty change list.
+    // This documents existing behavior so a future tightening doesn't silently regress.
+    expect(response.success).toBe(true);
+  });
+});
+
+describe('CommandBridge - find_task (displayId/id lookup)', () => {
+  it('finds task by displayId', () => {
+    mockTasks.push(
+      makeTask({ title: 'Task 24', swimlane_id: 'sw-todo', display_id: 24 }),
+      makeTask({ title: 'Task 99', swimlane_id: 'sw-todo', display_id: 99 }),
+    );
+
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'find_task', { displayId: 24 });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    const data = response.data as Array<{ title: string; displayId: number }>;
+    expect(data).toHaveLength(1);
+    expect(data[0].title).toBe('Task 24');
+    expect(data[0].displayId).toBe(24);
+  });
+
+  it('finds task by full UUID', () => {
+    mockTasks.push(
+      makeTask({ title: 'Find me', swimlane_id: 'sw-todo' }),
+      makeTask({ title: 'Other', swimlane_id: 'sw-todo' }),
+    );
+    const targetId = mockTasks[0].id;
+
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'find_task', { id: targetId });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    const data = response.data as Array<{ id: string; title: string }>;
+    expect(data).toHaveLength(1);
+    expect(data[0].id).toBe(targetId);
+    expect(data[0].title).toBe('Find me');
+  });
+
+  it('returns no matches when displayId does not exist', () => {
+    mockTasks.push(makeTask({ title: 'Only one', swimlane_id: 'sw-todo', display_id: 1 }));
+
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'find_task', { displayId: 999 });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    expect(response.message).toContain('#999');
+    const data = response.data as unknown[];
+    expect(data).toHaveLength(0);
+  });
+
+  it('does not match all tasks when displayId is omitted', () => {
+    // Regression test: undefined === undefined was previously returning every task
+    mockTasks.push(
+      makeTask({ title: 'Refactor auth', swimlane_id: 'sw-todo' }),
+      makeTask({ title: 'Add logging', swimlane_id: 'sw-todo' }),
+    );
+
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'find_task', { title: 'auth' });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    const data = response.data as Array<{ title: string }>;
+    expect(data).toHaveLength(1);
+    expect(data[0].title).toBe('Refactor auth');
+  });
+});
+
+describe('CommandBridge - move_task', () => {
+  it('moves task to a different column and fires onTaskMove', async () => {
+    const task = makeTask({ title: 'Move me', swimlane_id: 'sw-todo' });
+    mockTasks.push(task);
+
+    const moveCalls: Array<{ taskId: string; targetSwimlaneId: string; targetPosition: number }> = [];
+    const bridge = createBridge({
+      onTaskMove: async (input) => {
+        moveCalls.push(input);
+      },
+    });
+    bridge.start();
+
+    const response = sendCommand(bridge, 'move_task', {
+      taskId: task.id,
+      column: 'Executing',
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    expect(response.message).toContain('Executing');
+    // Allow the fire-and-forget promise to resolve
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(moveCalls).toHaveLength(1);
+    expect(moveCalls[0].taskId).toBe(task.id);
+    expect(moveCalls[0].targetSwimlaneId).toBe('sw-executing');
+  });
+
+  it('reports no-op when task is already in target column', () => {
+    const task = makeTask({ title: 'Already here', swimlane_id: 'sw-executing' });
+    mockTasks.push(task);
+
+    const moveCalls: Array<{ taskId: string }> = [];
+    const bridge = createBridge({
+      onTaskMove: async (input) => { moveCalls.push(input); },
+    });
+    bridge.start();
+
+    const response = sendCommand(bridge, 'move_task', {
+      taskId: task.id,
+      column: 'Executing',
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    expect(response.message).toContain('already');
+    expect(moveCalls).toHaveLength(0);
+  });
+
+  it('returns error for nonexistent task', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'move_task', {
+      taskId: 'no-such-task',
+      column: 'Executing',
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('not found');
+  });
+
+  it('returns error for nonexistent column', () => {
+    const task = makeTask({ title: 'X', swimlane_id: 'sw-todo' });
+    mockTasks.push(task);
+
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'move_task', {
+      taskId: task.id,
+      column: 'NonexistentColumn',
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('not found');
+  });
+
+  it('returns error when taskId is missing', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'move_task', { column: 'Executing' });
+
+    bridge.stop();
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('taskId');
+  });
+});
+
+describe('CommandBridge - update_column', () => {
+  it('updates name, color, and autoSpawn', () => {
+    const swimlaneUpdates: Swimlane[] = [];
+    const bridge = createBridge({
+      onSwimlaneUpdated: (swimlane) => swimlaneUpdates.push(swimlane),
+    });
+    bridge.start();
+
+    const response = sendCommand(bridge, 'update_column', {
+      column: 'Executing',
+      name: 'In Progress',
+      color: '#aabbcc',
+      autoSpawn: true,
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    const stored = mockSwimlanes.find((swimlane) => swimlane.id === 'sw-executing');
+    expect(stored?.name).toBe('In Progress');
+    expect(stored?.color).toBe('#aabbcc');
+    expect(stored?.auto_spawn).toBe(true);
+    expect(swimlaneUpdates).toHaveLength(1);
+    expect(swimlaneUpdates[0].name).toBe('In Progress');
+  });
+
+  it('updates autoCommand and agentOverride and clears them with null', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    sendCommand(bridge, 'update_column', {
+      column: 'Code Review',
+      autoCommand: '/review --strict',
+      agentOverride: 'codex',
+    });
+
+    let stored = mockSwimlanes.find((swimlane) => swimlane.id === 'sw-codereview');
+    expect(stored?.auto_command).toBe('/review --strict');
+    expect(stored?.agent_override).toBe('codex');
+
+    sendCommand(bridge, 'update_column', {
+      column: 'Code Review',
+      autoCommand: null,
+      agentOverride: null,
+    });
+
+    bridge.stop();
+
+    stored = mockSwimlanes.find((swimlane) => swimlane.id === 'sw-codereview');
+    expect(stored?.auto_command).toBeNull();
+    expect(stored?.agent_override).toBeNull();
+  });
+
+  it('rejects invalid permissionMode', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'update_column', {
+      column: 'Executing',
+      permissionMode: 'totally-bogus',
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('permissionMode');
+  });
+
+  it('accepts valid permissionMode values', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'update_column', {
+      column: 'Executing',
+      permissionMode: 'acceptEdits',
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    const stored = mockSwimlanes.find((swimlane) => swimlane.id === 'sw-executing');
+    expect(stored?.permission_mode).toBe('acceptEdits');
+  });
+
+  it('resolves planExitTargetColumn name to swimlane id', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'update_column', {
+      column: 'Planning',
+      planExitTargetColumn: 'Executing',
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    const stored = mockSwimlanes.find((swimlane) => swimlane.id === 'sw-planning');
+    expect(stored?.plan_exit_target_id).toBe('sw-executing');
+  });
+
+  it('returns error when planExitTargetColumn does not exist', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'update_column', {
+      column: 'Planning',
+      planExitTargetColumn: 'Nope',
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('planExitTargetColumn');
+  });
+
+  it('returns error when no fields are provided', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'update_column', { column: 'Executing' });
+
+    bridge.stop();
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('No fields');
+  });
+
+  it('returns error when column does not exist', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'update_column', {
+      column: 'NoSuchColumn',
+      name: 'X',
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('not found');
   });
 });

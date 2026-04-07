@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { Task } from '../../../shared/types';
+import type { Task, Swimlane } from '../../../shared/types';
 
 export interface CommandContext {
   getProjectDb: () => Database.Database;
@@ -7,6 +7,8 @@ export interface CommandContext {
   onTaskCreated: (task: Task, columnName: string, swimlaneId: string) => void;
   onTaskUpdated: (task: Task) => void;
   onTaskDeleted: (task: Task) => void;
+  onTaskMove: (input: { taskId: string; targetSwimlaneId: string; targetPosition: number }) => Promise<void>;
+  onSwimlaneUpdated: (swimlane: Swimlane) => void;
   onBacklogChanged: () => void;
   onLabelColorsChanged: (colors: Record<string, string>) => void;
 }

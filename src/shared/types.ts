@@ -1131,6 +1131,7 @@ export interface ElectronAPI {
     update: (input: SwimlaneUpdateInput) => Promise<Swimlane>;
     delete: (id: string) => Promise<void>;
     reorder: (ids: string[]) => Promise<void>;
+    onUpdatedByAgent: (callback: (swimlaneId: string, swimlaneName: string, projectId?: string) => void) => () => void;
   };
 
   // Actions

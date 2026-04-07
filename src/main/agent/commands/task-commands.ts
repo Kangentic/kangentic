@@ -5,6 +5,7 @@ import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
+import type { TaskUpdateInput } from '../../../shared/types';
 
 export const handleCreateTask: CommandHandler = (
   params: Record<string, unknown>,
@@ -72,6 +73,11 @@ export const handleUpdateTask: CommandHandler = (
   const newDescription = params.description as string | null;
   const newPrUrl = params.prUrl as string | null;
   const newPrNumber = params.prNumber as number | null;
+  const newAgent = params.agent as string | null;
+  const newPriority = params.priority as number | null;
+  const newLabels = params.labels as string[] | null;
+  const newBaseBranch = params.baseBranch as string | null;
+  const newUseWorktree = params.useWorktree as boolean | null;
 
   if (!taskId) {
     return { success: false, error: 'taskId is required' };
@@ -89,8 +95,13 @@ export const handleUpdateTask: CommandHandler = (
   if (newDescription !== null) updates.description = String(newDescription).slice(0, 10_000);
   if (newPrUrl !== null) updates.pr_url = String(newPrUrl);
   if (newPrNumber !== null) updates.pr_number = Number(newPrNumber);
+  if (newAgent !== null) updates.agent = newAgent;
+  if (newPriority !== null) updates.priority = Number(newPriority);
+  if (newLabels !== null) updates.labels = newLabels;
+  if (newBaseBranch !== null) updates.base_branch = newBaseBranch;
+  if (newUseWorktree !== null) updates.use_worktree = newUseWorktree ? 1 : 0;
 
-  const updated = taskRepo.update(updates as { id: string; title?: string; description?: string; pr_url?: string; pr_number?: number });
+  const updated = taskRepo.update(updates as unknown as TaskUpdateInput);
 
   context.onTaskUpdated(updated);
 
@@ -99,11 +110,84 @@ export const handleUpdateTask: CommandHandler = (
   if (newDescription !== null) changedFields.push('description');
   if (newPrUrl !== null) changedFields.push('prUrl');
   if (newPrNumber !== null) changedFields.push('prNumber');
+  if (newAgent !== null) changedFields.push('agent');
+  if (newPriority !== null) changedFields.push('priority');
+  if (newLabels !== null) changedFields.push('labels');
+  if (newBaseBranch !== null) changedFields.push('baseBranch');
+  if (newUseWorktree !== null) changedFields.push('useWorktree');
 
   return {
     success: true,
-    message: `Updated ${changedFields.join(' and ')} for "${updated.title}".`,
-    data: { id: updated.id, title: updated.title, description: updated.description, prUrl: updated.pr_url, prNumber: updated.pr_number },
+    message: `Updated ${changedFields.join(', ')} for "${updated.title}".`,
+    data: {
+      id: updated.id,
+      displayId: updated.display_id,
+      title: updated.title,
+      description: updated.description,
+      prUrl: updated.pr_url,
+      prNumber: updated.pr_number,
+      agent: updated.agent,
+      priority: updated.priority,
+      labels: updated.labels,
+      baseBranch: updated.base_branch,
+      useWorktree: updated.use_worktree,
+    },
+  };
+};
+
+export const handleMoveTask: CommandHandler = (
+  params: Record<string, unknown>,
+  context: CommandContext,
+): CommandResponse => {
+  const taskIdParam = params.taskId as string | null;
+  const columnName = params.column as string | null;
+
+  if (!taskIdParam) {
+    return { success: false, error: 'taskId is required' };
+  }
+  if (!columnName) {
+    return { success: false, error: 'column is required' };
+  }
+
+  const db = context.getProjectDb();
+  const taskRepo = new TaskRepository(db);
+  const task = resolveTask(taskRepo, taskIdParam);
+  if (!task) {
+    return { success: false, error: `Task "${taskIdParam}" not found` };
+  }
+
+  const resolution = resolveColumn(db, columnName);
+  if ('error' in resolution) {
+    return { success: false, error: resolution.error };
+  }
+  const { swimlane: targetSwimlane } = resolution;
+
+  if (task.swimlane_id === targetSwimlane.id) {
+    return {
+      success: true,
+      message: `Task "${task.title}" is already in ${targetSwimlane.name}.`,
+      data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name },
+    };
+  }
+
+  // Position at end of target column
+  const targetTasks = taskRepo.list(targetSwimlane.id);
+  const targetPosition = targetTasks.length;
+
+  // Fire-and-forget the async move (transition engine, agent spawn/suspend, worktree management).
+  // The MCP response confirms intent; the LLM should re-query to verify state if needed.
+  void context.onTaskMove({
+    taskId: task.id,
+    targetSwimlaneId: targetSwimlane.id,
+    targetPosition,
+  }).catch((error) => {
+    console.error(`[move_task] Failed for task ${task.id.slice(0, 8)}:`, error);
+  });
+
+  return {
+    success: true,
+    message: `Moving "${task.title}" (#${task.display_id}) to ${targetSwimlane.name}.`,
+    data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name },
   };
 };
 

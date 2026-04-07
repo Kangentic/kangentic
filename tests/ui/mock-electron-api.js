@@ -700,6 +700,9 @@
           if (idx >= 0) swimlanes[idx].position = i;
         });
       },
+      onUpdatedByAgent: function () {
+        return function () { };
+      },
     },
 
     actions: {

@@ -118,7 +118,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `backlogAttachment:getDataUrl` | invoke | Get data URL for display |
 | `backlogAttachment:open` | invoke | Open attachment in the system default application |
 
-### Swimlanes (5 channels)
+### Swimlanes (6 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `swimlane:list` | invoke | Fetch all swimlanes |
@@ -126,6 +126,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `swimlane:update` | invoke | Update swimlane properties |
 | `swimlane:delete` | invoke | Delete swimlane (blocked if has tasks) |
 | `swimlane:reorder` | invoke | Reorder swimlanes by ID array |
+| `swimlane:updatedByAgent` | on | Push event when an MCP agent updates a swimlane |
 
 ### Actions (4 channels)
 | Channel | Pattern | Purpose |

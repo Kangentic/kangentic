@@ -12,7 +12,7 @@ import path from 'node:path';
 import { FileWatcher } from '../pty/file-watcher';
 import { commandHandlers } from './commands';
 import type Database from 'better-sqlite3';
-import type { Task } from '../../shared/types';
+import type { Task, Swimlane } from '../../shared/types';
 import type { CommandContext, CommandResponse } from './commands';
 
 interface CommandBridgeOptions {
@@ -24,6 +24,8 @@ interface CommandBridgeOptions {
   onTaskCreated: (task: Task, columnName: string, swimlaneId: string) => void;
   onTaskUpdated: (task: Task) => void;
   onTaskDeleted: (task: Task) => void;
+  onTaskMove: (input: { taskId: string; targetSwimlaneId: string; targetPosition: number }) => Promise<void>;
+  onSwimlaneUpdated: (swimlane: Swimlane) => void;
   onBacklogChanged: () => void;
   onLabelColorsChanged: (colors: Record<string, string>) => void;
 }
@@ -54,6 +56,8 @@ export class CommandBridge {
       onTaskCreated: options.onTaskCreated,
       onTaskUpdated: options.onTaskUpdated,
       onTaskDeleted: options.onTaskDeleted,
+      onTaskMove: options.onTaskMove,
+      onSwimlaneUpdated: options.onSwimlaneUpdated,
       onBacklogChanged: options.onBacklogChanged,
       onLabelColorsChanged: options.onLabelColorsChanged,
     };

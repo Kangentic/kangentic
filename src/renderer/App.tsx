@@ -463,6 +463,21 @@ export function App() {
       }));
     }
 
+    // Swimlane updated by agent (MCP server)
+    const swimlanes = window.electronAPI?.swimlanes;
+    if (swimlanes?.onUpdatedByAgent) {
+      cleanups.push(swimlanes.onUpdatedByAgent((_swimlaneId, swimlaneName, updatedByAgentProjectId) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        if (!updatedByAgentProjectId || updatedByAgentProjectId === activeProjectId) {
+          useBoardStore.getState().loadBoard();
+        }
+        useToastStore.getState().addToast({
+          message: `Column updated by agent: "${swimlaneName}"`,
+          variant: 'info',
+        });
+      }));
+    }
+
     // Backlog changed by agent (MCP server created/promoted backlog tasks)
     const backlog = window.electronAPI?.backlog;
     if (backlog?.onChangedByAgent) {

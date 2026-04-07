@@ -73,6 +73,8 @@ export const handleFindTask: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
 ): CommandResponse => {
+  const displayId = typeof params.displayId === 'number' ? params.displayId : null;
+  const taskId = typeof params.id === 'string' && params.id ? params.id : null;
   const branch = params.branch as string | null;
   const titleQuery = (params.title as string | null)?.toLowerCase() ?? null;
   const prNumber = params.prNumber as number | null;
@@ -90,6 +92,12 @@ export const handleFindTask: CommandHandler = (
   const allTasks = [...activeTasks, ...archivedTasks];
 
   const matches = allTasks.filter((task) => {
+    if (taskId) {
+      if (task.id === taskId) return true;
+    }
+    if (displayId !== null) {
+      if (task.display_id === displayId) return true;
+    }
     if (branch) {
       const branchLower = branch.toLowerCase();
       if (task.branch_name?.toLowerCase().includes(branchLower)) return true;
@@ -105,6 +113,8 @@ export const handleFindTask: CommandHandler = (
 
   if (matches.length === 0) {
     const criteria: string[] = [];
+    if (taskId) criteria.push(`id "${taskId}"`);
+    if (displayId !== null) criteria.push(`#${displayId}`);
     if (branch) criteria.push(`branch "${branch}"`);
     if (titleQuery) criteria.push(`title "${titleQuery}"`);
     if (prNumber !== null) criteria.push(`PR #${prNumber}`);

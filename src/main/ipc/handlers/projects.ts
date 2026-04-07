@@ -14,6 +14,7 @@ import { getProjectDb, closeProjectDb } from '../../db/database';
 import { CommandBridge } from '../../agent/command-bridge';
 import { PATHS } from '../../config/paths';
 import { ensureGitignore, autoSpawnForTask } from '../helpers';
+import { handleTaskMove } from './task-move';
 import { searchProjectEntries } from '../helpers/project-entry-search';
 import { trackEvent } from '../../analytics/analytics';
 import { isShuttingDown } from '../../shutdown-state';
@@ -348,6 +349,26 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
         if (!context.mainWindow.isDestroyed()) {
           context.mainWindow.webContents.send(
             IPC.TASK_DELETED_BY_AGENT, task.id, task.title, project.id
+          );
+        }
+      },
+      onTaskMove: async (input: { taskId: string; targetSwimlaneId: string; targetPosition: number }) => {
+        await handleTaskMove(context, input, project.id, project.path);
+        // Notify renderer to reload board (handleTaskMove doesn't fire its own IPC notification
+        // because the normal IPC flow assumes the renderer triggered the move).
+        const movedTask = getProjectDb(project.id)
+          .prepare('SELECT id, title FROM tasks WHERE id = ?')
+          .get(input.taskId) as { id: string; title: string } | undefined;
+        if (movedTask && !context.mainWindow.isDestroyed()) {
+          context.mainWindow.webContents.send(
+            IPC.TASK_UPDATED_BY_AGENT, movedTask.id, movedTask.title, project.id
+          );
+        }
+      },
+      onSwimlaneUpdated: (swimlane: { id: string; name: string }) => {
+        if (!context.mainWindow.isDestroyed()) {
+          context.mainWindow.webContents.send(
+            IPC.SWIMLANE_UPDATED_BY_AGENT, swimlane.id, swimlane.name, project.id
           );
         }
       },

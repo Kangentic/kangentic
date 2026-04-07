@@ -240,8 +240,14 @@ export class CommandBuilder {
       merged.hooks = buildEventHooks(eventBridge, eventsPath, baseSettings.hooks || {});
     }
 
-    // Session directory (used for MCP server paths and merged settings file)
-    const sessionDir = path.join(projectRoot, '.kangentic', 'sessions', options.sessionId || options.taskId);
+    // Session directory (used for MCP server paths and merged settings file).
+    // Derived from statusOutputPath so it ALWAYS matches the directory that
+    // SessionFileWatcher derives independently in session-file-watcher.ts. The
+    // two must agree, otherwise the bridge watches one commands.jsonl and the
+    // MCP server writes to another, causing every MCP call to time out.
+    // statusOutputPath is required by every spawn path (transition-engine,
+    // session-recovery, transient-sessions), so the `!` is safe.
+    const sessionDir = path.dirname(options.statusOutputPath!);
 
     try {
       fs.mkdirSync(sessionDir, { recursive: true });
@@ -271,7 +277,7 @@ export class CommandBuilder {
       this.lastMcpConfigPath = mcpConfigPath;
     }
 
-    // Write to .kangentic/sessions/<sessionId>/settings.json (used with --settings flag)
+    // Write merged settings to <sessionDir>/settings.json (used with --settings flag)
     const mergedPath = path.join(sessionDir, 'settings.json');
     fs.writeFileSync(mergedPath, JSON.stringify(merged, null, 2));
 

@@ -88,6 +88,12 @@ const api: ElectronAPI = {
     update: (input) => ipcRenderer.invoke(IPC.SWIMLANE_UPDATE, input),
     delete: (id) => ipcRenderer.invoke(IPC.SWIMLANE_DELETE, id),
     reorder: (ids) => ipcRenderer.invoke(IPC.SWIMLANE_REORDER, ids),
+    onUpdatedByAgent: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, swimlaneId: string, swimlaneName: string, projectId?: string) =>
+        callback(swimlaneId, swimlaneName, projectId);
+      ipcRenderer.on(IPC.SWIMLANE_UPDATED_BY_AGENT, handler);
+      return () => ipcRenderer.removeListener(IPC.SWIMLANE_UPDATED_BY_AGENT, handler);
+    },
   },
 
   actions: {

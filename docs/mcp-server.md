@@ -91,11 +91,13 @@ Search tasks by keyword across titles and descriptions. Includes both active and
 
 ### kangentic_find_task
 
-Find a task by branch name, title keyword, or PR number.
+Find a task by display ID, UUID, branch name, title keyword, or PR number.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `branch` | string | No | Git branch name (partial match) |
+| `displayId` | number | No | Numeric task display ID shown in UI (e.g. `24` for "#24"). Exact match. |
+| `id` | string | No | Full task UUID. Exact match. |
+| `branch` | string | No | Git branch name (matches the `tasks.branch_name` column, partial) |
 | `title` | string | No | Title keyword (case-insensitive) |
 | `prNumber` | number | No | Pull request number |
 
@@ -135,17 +137,50 @@ Get detailed column configuration: auto-spawn, permission mode, plan exit target
 
 ### kangentic_update_task
 
-Update a task's title, description, or PR info.
+Update a task's title, description, PR info, agent assignment, priority, labels, base branch, or worktree toggle. To move a task between columns, use `kangentic_move_task` instead.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `taskId` | string | Yes | Task ID |
+| `taskId` | string | Yes | Task ID (numeric display ID or full UUID) |
 | `title` | string | No | New title (max 200 chars) |
 | `description` | string | No | New description (max 10000 chars) |
 | `prUrl` | string | No | Pull request URL (e.g. `https://github.com/owner/repo/pull/123`) |
 | `prNumber` | number | No | Pull request number |
+| `agent` | string | No | Agent name to assign (e.g. `"claude"`, `"codex"`). Empty string clears. |
+| `priority` | number | No | Task priority 0-4 (0=none, 4=highest) |
+| `labels` | string[] | No | Replace the task's label list. Pass `[]` to clear. |
+| `baseBranch` | string | No | Base branch the task's worktree branches from (e.g. `"main"`) |
+| `useWorktree` | boolean | No | Whether the task uses an isolated git worktree |
 
-At least one of `title`, `description`, `prUrl`, or `prNumber` is required.
+At least one updatable field is required.
+
+### kangentic_move_task
+
+Move a task to a different column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task. Moving to To Do kills the session and removes the worktree.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `taskId` | string | Yes | Task ID (numeric display ID or full UUID) |
+| `column` | string | Yes | Target column name (case-insensitive, e.g. `"Review"`, `"Done"`) |
+
+### kangentic_update_column
+
+Update a swimlane (column) configuration. Use `kangentic_get_column_detail` to inspect current values first.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `column` | string | Yes | Column name to update (case-insensitive) |
+| `name` | string | No | New column name (max 100 chars) |
+| `color` | string | No | Hex color (e.g. `"#71717a"`) |
+| `icon` | string \| null | No | Lucide icon name, or `null` to clear |
+| `autoSpawn` | boolean | No | Whether moving a task into this column auto-spawns an agent |
+| `autoCommand` | string \| null | No | Slash command template injected on agent spawn (e.g. `"/review --strict"`). `null` clears. |
+| `agentOverride` | string \| null | No | Force a specific agent for this column. `null` uses project default. |
+| `permissionMode` | string \| null | No | One of: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `auto`. `null` uses project default. |
+| `handoffContext` | boolean | No | Enable multi-agent handoff context preservation when entering this column |
+| `planExitTargetColumn` | string \| null | No | Column to auto-move the task to when an agent in plan mode exits planning. `null` disables. |
+
+At least one updatable field is required.
 
 ### kangentic_list_backlog
 

@@ -331,22 +331,26 @@ server.registerTool(
 server.registerTool(
   'kangentic_find_task',
   {
-    description: 'Find a task by branch name, title keyword, or PR number. Returns full task details including branch, worktree, PR info, and current column. Use this to check if a task exists for a given branch or feature.',
+    description: 'Find a task by display ID (e.g. 24, the "#24" shown in the UI), task UUID, branch name, title keyword, or PR number. Returns full task details including branch_name, worktree, PR info, and current column. Use displayId for the fastest exact lookup when the user references a task by its "#N" identifier.',
     inputSchema: z.object({
-      branch: z.string().optional().describe('Git branch name to search for (exact or partial match, e.g. "feature/92294" or "bugfix/login").'),
+      displayId: z.number().int().positive().optional().describe('Numeric task display ID shown in the UI (e.g. 24 for "#24"). Exact match.'),
+      id: z.string().optional().describe('Full task UUID. Exact match.'),
+      branch: z.string().optional().describe('Git branch name to search for (matches the tasks.branch_name column, exact or partial, e.g. "feature/92294").'),
       title: z.string().optional().describe('Keyword to search in task titles (case-insensitive).'),
       prNumber: z.number().optional().describe('Pull request number to search for.'),
     }),
   },
-  async ({ branch, title, prNumber }) => {
-    if (!branch && !title && prNumber === undefined) {
+  async ({ displayId, id, branch, title, prNumber }) => {
+    if (displayId === undefined && !id && !branch && !title && prNumber === undefined) {
       return {
-        content: [{ type: 'text' as const, text: 'Provide at least one search parameter: branch, title, or prNumber.' }],
+        content: [{ type: 'text' as const, text: 'Provide at least one search parameter: displayId, id, branch, title, or prNumber.' }],
         isError: true,
       };
     }
     try {
       const response = await sendCommand('find_task', {
+        displayId: displayId ?? null,
+        id: id ?? null,
         branch: branch ?? null,
         title: title ?? null,
         prNumber: prNumber ?? null,
@@ -433,19 +437,27 @@ server.registerTool(
 server.registerTool(
   'kangentic_update_task',
   {
-    description: 'Update an existing task\'s title, description, or PR info. Find the task ID first with kangentic_find_task or kangentic_search_tasks.',
+    description: 'Update an existing task. Supports title, description, PR info, agent assignment, priority, labels, base branch, and worktree toggle. To move a task between columns, use kangentic_move_task instead. Find the task ID first with kangentic_find_task.',
     inputSchema: z.object({
       taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
       title: z.string().max(200).optional().describe('New task title (max 200 characters).'),
       description: z.string().max(10000).optional().describe('New task description (markdown). Replaces the entire description.'),
       prUrl: z.string().url().optional().describe('Pull request URL (e.g. https://github.com/owner/repo/pull/123).'),
       prNumber: z.number().int().positive().optional().describe('Pull request number.'),
+      agent: z.string().optional().describe('Agent name to assign (e.g. "claude", "codex"). Pass empty string to clear.'),
+      priority: z.number().int().min(0).max(4).optional().describe('Task priority 0-4 (0 = none, 4 = highest).'),
+      labels: z.array(z.string()).optional().describe('Replace the task\'s label list. Pass [] to clear all labels.'),
+      baseBranch: z.string().optional().describe('Base branch the task\'s worktree branches from (e.g. "main").'),
+      useWorktree: z.boolean().optional().describe('Whether the task uses an isolated git worktree.'),
     }),
   },
-  async ({ taskId, title, description, prUrl, prNumber }) => {
-    if (!title && description === undefined && prUrl === undefined && prNumber === undefined) {
+  async ({ taskId, title, description, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree }) => {
+    if (
+      title === undefined && description === undefined && prUrl === undefined && prNumber === undefined &&
+      agent === undefined && priority === undefined && labels === undefined && baseBranch === undefined && useWorktree === undefined
+    ) {
       return {
-        content: [{ type: 'text' as const, text: 'Provide at least one field to update: title, description, prUrl, or prNumber.' }],
+        content: [{ type: 'text' as const, text: 'Provide at least one field to update.' }],
         isError: true,
       };
     }
@@ -456,6 +468,11 @@ server.registerTool(
         description: description ?? null,
         prUrl: prUrl ?? null,
         prNumber: prNumber ?? null,
+        agent: agent ?? null,
+        priority: priority ?? null,
+        labels: labels ?? null,
+        baseBranch: baseBranch ?? null,
+        useWorktree: useWorktree ?? null,
       });
       if (!response.success) {
         return { content: [{ type: 'text' as const, text: `Failed to update task: ${response.error}` }], isError: true };
@@ -464,6 +481,73 @@ server.registerTool(
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return { content: [{ type: 'text' as const, text: `Error updating task: ${errorMessage}` }], isError: true };
+    }
+  },
+);
+
+// --- kangentic_move_task ---
+server.registerTool(
+  'kangentic_move_task',
+  {
+    description: 'Move a task to a different column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task. Moving to To Do kills the session and removes the worktree.',
+    inputSchema: z.object({
+      taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
+      column: z.string().describe('Target column name (case-insensitive, e.g. "Review", "In Progress", "Done").'),
+    }),
+  },
+  async ({ taskId, column }) => {
+    try {
+      const response = await sendCommand('move_task', { taskId, column });
+      if (!response.success) {
+        return { content: [{ type: 'text' as const, text: `Failed to move task: ${response.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text' as const, text: response.message ?? 'Task moved.' }] };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { content: [{ type: 'text' as const, text: `Error moving task: ${errorMessage}` }], isError: true };
+    }
+  },
+);
+
+// --- kangentic_update_column ---
+server.registerTool(
+  'kangentic_update_column',
+  {
+    description: 'Update a swimlane (column) configuration. Supports renaming, recoloring, toggling auto-spawn, setting an auto-command template, overriding the agent for the column, changing permission mode, enabling handoff context, and setting a plan-exit target column. Use kangentic_get_column_detail to inspect current values first.',
+    inputSchema: z.object({
+      column: z.string().describe('Column name to update (case-insensitive, e.g. "Review").'),
+      name: z.string().max(100).optional().describe('New column name.'),
+      color: z.string().optional().describe('Hex color (e.g. "#71717a").'),
+      icon: z.string().nullable().optional().describe('Lucide icon name, or null to clear.'),
+      autoSpawn: z.boolean().optional().describe('Whether moving a task into this column auto-spawns an agent.'),
+      autoCommand: z.string().max(4000).nullable().optional().describe('Slash command template injected when an agent spawns in this column (e.g. "/review --strict"). Null to clear.'),
+      agentOverride: z.string().nullable().optional().describe('Force a specific agent for this column (e.g. "codex"). Null to use project default.'),
+      permissionMode: z.enum(['default', 'plan', 'acceptEdits', 'dontAsk', 'bypassPermissions', 'auto']).nullable().optional().describe('Permission mode for agents spawned in this column. Null to use project default.'),
+      handoffContext: z.boolean().optional().describe('Enable multi-agent handoff context preservation when entering this column.'),
+      planExitTargetColumn: z.string().nullable().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning. Null to disable.'),
+    }),
+  },
+  async ({ column, name, color, icon, autoSpawn, autoCommand, agentOverride, permissionMode, handoffContext, planExitTargetColumn }) => {
+    try {
+      const response = await sendCommand('update_column', {
+        column,
+        name: name ?? undefined,
+        color: color ?? undefined,
+        icon: icon === undefined ? undefined : icon,
+        autoSpawn: autoSpawn ?? undefined,
+        autoCommand: autoCommand === undefined ? undefined : autoCommand,
+        agentOverride: agentOverride === undefined ? undefined : agentOverride,
+        permissionMode: permissionMode === undefined ? undefined : permissionMode,
+        handoffContext: handoffContext ?? undefined,
+        planExitTargetColumn: planExitTargetColumn === undefined ? undefined : planExitTargetColumn,
+      });
+      if (!response.success) {
+        return { content: [{ type: 'text' as const, text: `Failed to update column: ${response.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text' as const, text: response.message ?? 'Column updated.' }] };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { content: [{ type: 'text' as const, text: `Error updating column: ${errorMessage}` }], isError: true };
     }
   },
 );
@@ -688,7 +772,7 @@ server.registerTool(
 server.registerTool(
   'kangentic_query_db',
   {
-    description: 'Run a read-only SQL query against the current project database. Only SELECT, PRAGMA, and WITH (CTE) statements are allowed. Returns up to 100 rows as a markdown table. Useful for debugging, inspecting internal state, and answering questions about sessions, tasks, transcripts, handoffs, and other project data. Key tables: tasks, swimlanes, sessions, session_transcripts, handoffs, actions, swimlane_transitions, backlog_items.',
+    description: 'Run a read-only SQL query against the current project database. Only SELECT, PRAGMA, and WITH (CTE) statements are allowed. Returns up to 100 rows as a markdown table. Useful for debugging, inspecting internal state, and answering questions about sessions, tasks, transcripts, handoffs, and other project data. Key tables: tasks, swimlanes, sessions, session_transcripts, handoffs, actions, swimlane_transitions, backlog_items. tasks columns: id (uuid), display_id (numeric, the "#N" shown in UI), title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name (NOT "branch"), pr_number, pr_url, base_branch, use_worktree, labels (JSON array), priority, archived_at, created_at, updated_at. Use PRAGMA table_info(<table>) to discover columns of any other table before querying.',
     inputSchema: z.object({
       sql: z.string().describe('SQL query to execute. Must be a SELECT, PRAGMA, or WITH statement. Examples: "SELECT * FROM session_transcripts", "SELECT name, sql FROM sqlite_master WHERE type=\'table\'", "PRAGMA table_info(sessions)"'),
     }),
