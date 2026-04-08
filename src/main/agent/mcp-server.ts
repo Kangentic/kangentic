@@ -366,6 +366,39 @@ server.registerTool(
   },
 );
 
+// --- kangentic_get_current_task ---
+server.registerTool(
+  'kangentic_get_current_task',
+  {
+    description: 'Resolve the Kangentic task that corresponds to the current working directory and/or git branch. Use this at the start of work in a worktree to confirm which task you are operating on (e.g. before commits, PRs, or merge-back). Pass the agent\'s CWD and/or current branch name. Matches against tasks.worktree_path (full path or .kangentic/worktrees/<slug> segment) and tasks.branch_name. Returns the same shape as kangentic_find_task.',
+    inputSchema: z.object({
+      cwd: z.string().optional().describe('Absolute working directory path. The tool extracts the worktree slug from .kangentic/worktrees/<slug> and matches against tasks.worktree_path.'),
+      branch: z.string().optional().describe('Current git branch name. Exact (case-insensitive) match against tasks.branch_name.'),
+    }),
+  },
+  async ({ cwd, branch }) => {
+    if (!cwd && !branch) {
+      return {
+        content: [{ type: 'text' as const, text: 'Provide at least one of: cwd, branch.' }],
+        isError: true,
+      };
+    }
+    try {
+      const response = await sendCommand('get_current_task', {
+        cwd: cwd ?? null,
+        branch: branch ?? null,
+      });
+      if (!response.success) {
+        return { content: [{ type: 'text' as const, text: `Failed to get current task: ${response.error}` }], isError: true };
+      }
+      return { content: [{ type: 'text' as const, text: response.message ?? JSON.stringify(response.data) }] };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { content: [{ type: 'text' as const, text: `Error getting current task: ${errorMessage}` }], isError: true };
+    }
+  },
+);
+
 // --- kangentic_board_summary ---
 server.registerTool(
   'kangentic_board_summary',

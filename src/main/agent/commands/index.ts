@@ -4,7 +4,7 @@ export { resolveColumn, listActiveSwimlanes } from './column-resolver';
 import { handleCreateTask, handleUpdateTask, handleDeleteTask, handleMoveTask } from './task-commands';
 import { handleUpdateColumn } from './column-commands';
 import { handleListColumns, handleListTasks } from './inventory-commands';
-import { handleSearchTasks, handleFindTask } from './search-commands';
+import { handleSearchTasks, handleFindTask, handleGetCurrentTask } from './search-commands';
 import { handleGetTaskStats, handleBoardSummary, handleGetSessionHistory, handleGetColumnDetail } from './analytics-commands';
 import { handleListBacklog, handleCreateBacklogTask, handleSearchBacklog, handlePromoteBacklog } from './backlog-commands';
 import { handleGetHandoffContext } from './handoff-commands';
@@ -25,6 +25,7 @@ export const commandHandlers: Record<string, CommandHandler> = {
   list_tasks: handleListTasks,
   search_tasks: handleSearchTasks,
   find_task: handleFindTask,
+  get_current_task: handleGetCurrentTask,
   get_task_stats: handleGetTaskStats,
   board_summary: handleBoardSummary,
   get_session_history: handleGetSessionHistory,

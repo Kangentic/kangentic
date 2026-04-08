@@ -103,6 +103,17 @@ Find a task by display ID, UUID, branch name, title keyword, or PR number.
 
 At least one parameter is required.
 
+### kangentic_get_current_task
+
+Resolve the task that corresponds to the current working directory and/or git branch. Use at the start of work in a worktree to confirm which task you are operating on (e.g. before commits, PRs, or merge-back).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `cwd` | string | No | Absolute working directory path. The tool extracts the worktree slug from `.kangentic/worktrees/<slug>` and matches against `tasks.worktree_path`. |
+| `branch` | string | No | Current git branch name. Exact (case-insensitive) match against `tasks.branch_name`. |
+
+At least one parameter is required. Returns the same task fields as `kangentic_find_task` (id, displayId, title, description, column, branchName, baseBranch, worktreePath, prNumber, prUrl, useWorktree, status). Returns `data: null` when no match is found, a single task object when one matches, or an array when multiple tasks match.
+
 ### kangentic_board_summary
 
 Get a high-level board overview: task counts per column, active sessions, completed tasks, and aggregate cost/token metrics.

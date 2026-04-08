@@ -157,3 +157,87 @@ export const handleFindTask: CommandHandler = (
     })),
   };
 };
+
+const normalizePath = (value: string): string => value.replace(/\\/g, '/').toLowerCase();
+
+export const handleGetCurrentTask: CommandHandler = (
+  params: Record<string, unknown>,
+  context: CommandContext,
+): CommandResponse => {
+  const cwdRaw = typeof params.cwd === 'string' && params.cwd ? params.cwd : null;
+  const branchRaw = typeof params.branch === 'string' && params.branch ? params.branch : null;
+
+  if (!cwdRaw && !branchRaw) {
+    return { success: false, error: 'Provide at least one of: cwd, branch.' };
+  }
+
+  const cwdNormalized = cwdRaw ? normalizePath(cwdRaw) : null;
+  const branchLower = branchRaw ? branchRaw.toLowerCase() : null;
+
+  let slug: string | null = null;
+  if (cwdNormalized) {
+    const slugMatch = cwdNormalized.match(/(?:^|\/)\.kangentic\/worktrees\/([^/]+)/);
+    if (slugMatch) slug = slugMatch[1];
+  }
+
+  const db = context.getProjectDb();
+  const taskRepo = new TaskRepository(db);
+  const allSwimlanes = listActiveSwimlanes(db);
+  const swimlaneMap = new Map(allSwimlanes.map((swimlane) => [swimlane.id, swimlane.name]));
+
+  const allTasks: Task[] = [];
+  for (const swimlane of allSwimlanes) {
+    allTasks.push(...taskRepo.list(swimlane.id));
+  }
+  allTasks.push(...taskRepo.listArchived());
+
+  const matches = allTasks.filter((task) => {
+    if (cwdNormalized && task.worktree_path) {
+      const taskPath = normalizePath(task.worktree_path);
+      if (taskPath === cwdNormalized) return true;
+      if (slug && taskPath.endsWith(`/${slug}`)) return true;
+    }
+    if (branchLower && task.branch_name && task.branch_name.toLowerCase() === branchLower) {
+      return true;
+    }
+    return false;
+  });
+
+  const toData = (task: Task) => ({
+    id: task.id,
+    displayId: task.display_id,
+    title: task.title,
+    description: task.description,
+    column: task.archived_at ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown'),
+    branchName: task.branch_name,
+    baseBranch: task.base_branch,
+    worktreePath: task.worktree_path,
+    prNumber: task.pr_number,
+    prUrl: task.pr_url,
+    useWorktree: task.use_worktree,
+    status: task.archived_at ? 'completed' : 'active',
+  });
+
+  if (matches.length === 0) {
+    return {
+      success: true,
+      message: 'No task found for current context.',
+      data: null,
+    };
+  }
+
+  if (matches.length === 1) {
+    const task = matches[0];
+    return {
+      success: true,
+      message: `Current task: #${task.display_id} "${task.title}" [${task.archived_at ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown')}]`,
+      data: toData(task),
+    };
+  }
+
+  return {
+    success: true,
+    message: `Ambiguous: ${matches.length} tasks match the current context. Disambiguate with displayId.`,
+    data: matches.map(toData),
+  };
+};
