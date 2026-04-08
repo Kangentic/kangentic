@@ -2,6 +2,9 @@ import { _electron as electron, type ElectronApplication, type Page } from '@pla
 import path from 'node:path';
 import fs from 'node:fs';
 import { execSync } from 'node:child_process';
+import type { Session, Swimlane, Task } from '../../src/shared/types';
+
+export type AgentName = 'claude' | 'codex' | 'gemini';
 
 // --- Test data isolation ---
 // Each test run uses its own data directory so E2E tests never pollute
@@ -202,4 +205,106 @@ export async function createTask(
   const createButton = page.getByRole('button', { name: 'Create', exact: true });
   await createButton.click();
   await page.waitForTimeout(300);
+}
+
+/**
+ * Resolve the platform-appropriate mock CLI fixture path for an agent.
+ * Used by E2E specs that need to point an agent's cliPath at a mock binary
+ * (e.g. mock-claude, mock-codex, mock-gemini).
+ */
+export function mockAgentPath(agent: AgentName): string {
+  const fixturesDir = path.join(__dirname, '..', 'fixtures');
+  if (process.platform === 'win32') {
+    return path.join(fixturesDir, `mock-${agent}.cmd`);
+  }
+  const jsPath = path.join(fixturesDir, `mock-${agent}.js`);
+  fs.chmodSync(jsPath, 0o755);
+  return jsPath;
+}
+
+/**
+ * Set the current project's default agent via IPC, then reload so the
+ * renderer picks up the change.
+ */
+export async function setProjectDefaultAgent(page: Page, agent: AgentName): Promise<void> {
+  await page.evaluate(async (agentName) => {
+    const current = await window.electronAPI.projects.getCurrent();
+    if (current?.id) {
+      await window.electronAPI.projects.setDefaultAgent(current.id, agentName);
+    }
+  }, agent);
+  await page.reload();
+  await waitForBoard(page);
+}
+
+/**
+ * Poll all live session scrollback for a marker substring. Returns the
+ * combined scrollback text once the marker appears, or throws on timeout.
+ */
+export async function waitForScrollback(page: Page, marker: string, timeoutMs = 15000): Promise<string> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const scrollback = await page.evaluate(async () => {
+      const sessions: Session[] = await window.electronAPI.sessions.list();
+      const texts: string[] = [];
+      for (const session of sessions) {
+        texts.push(await window.electronAPI.sessions.getScrollback(session.id));
+      }
+      return texts.join('\n---SESSION_BOUNDARY---\n');
+    });
+    if (scrollback.includes(marker)) return scrollback;
+    await page.waitForTimeout(500);
+  }
+  throw new Error(`Timed out waiting for scrollback containing: ${marker}`);
+}
+
+/** Wait until at least one session reports status='running' via IPC. */
+export async function waitForRunningSession(page: Page, timeoutMs = 15000): Promise<void> {
+  await page.waitForFunction(async () => {
+    const sessions: Session[] = await window.electronAPI.sessions.list();
+    return sessions.some((session) => session.status === 'running');
+  }, null, { timeout: timeoutMs });
+}
+
+/** Wait until no session reports status='running' (suspend/exit completion). */
+export async function waitForNoRunningSession(page: Page, timeoutMs = 15000): Promise<void> {
+  await page.waitForFunction(async () => {
+    const sessions: Session[] = await window.electronAPI.sessions.list();
+    return !sessions.some((session) => session.status === 'running');
+  }, null, { timeout: timeoutMs });
+}
+
+/** Look up the task ID for a given title via IPC. */
+export async function getTaskIdByTitle(page: Page, title: string): Promise<string> {
+  const taskId = await page.evaluate(async (taskTitle) => {
+    const tasks: Task[] = await window.electronAPI.tasks.list();
+    return tasks.find((task) => task.title === taskTitle)?.id ?? null;
+  }, title);
+  if (!taskId) throw new Error(`No task found with title: ${title}`);
+  return taskId;
+}
+
+/** Look up swimlane IDs by name and role. */
+export async function getSwimlaneIds(page: Page): Promise<{ planning: string; done: string }> {
+  const swimlaneIds = await page.evaluate(async () => {
+    const swimlanes: Swimlane[] = await window.electronAPI.swimlanes.list();
+    const planning = swimlanes.find((swimlane) => swimlane.name === 'Planning');
+    const done = swimlanes.find((swimlane) => swimlane.role === 'done');
+    return { planning: planning?.id ?? null, done: done?.id ?? null };
+  });
+  if (!swimlaneIds.planning || !swimlaneIds.done) {
+    throw new Error('Could not find Planning and/or Done swimlanes');
+  }
+  return { planning: swimlaneIds.planning, done: swimlaneIds.done };
+}
+
+/** Move a task to a target swimlane via IPC (no UI drag). */
+export async function moveTaskIpc(page: Page, taskId: string, targetSwimlaneId: string): Promise<void> {
+  await page.evaluate(async ({ taskId: id, targetSwimlaneId: swimlaneId }) => {
+    await window.electronAPI.tasks.move({
+      taskId: id,
+      targetSwimlaneId: swimlaneId,
+      targetPosition: 0,
+    });
+  }, { taskId, targetSwimlaneId });
 }
