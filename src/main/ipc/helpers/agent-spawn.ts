@@ -20,6 +20,7 @@ import { canResume as checkCanResume } from '../../engine/session-lifecycle';
 import { emitSpawnProgress } from '../../engine/spawn-progress';
 import { ensureTaskWorktree, ensureTaskBranchCheckout } from './task-git';
 import { getProjectRepos } from './project-repos';
+import { withTaskLock } from '../task-lifecycle-lock';
 
 /** Build template variables for auto-command interpolation. */
 export function buildAutoCommandVars(task: Task): Record<string, string> {
@@ -204,7 +205,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     // The file is written after spawn but before the agent can read it -
     // CLI startup (detect, trust, command build) takes 1-3s while this
     // runs synchronously (fs.writeFileSync) in ~1ms.
-    let currentTask = tasks.getById(task.id);
+    const currentTask = tasks.getById(task.id);
     if (currentTask?.session_id) {
       const resolvedProjectPath = handoffProjectPath ?? process.cwd();
       try {
@@ -301,57 +302,61 @@ export async function autoSpawnForTask(
   task: { id: string; title: string },
   swimlaneId: string,
 ): Promise<void> {
-  try {
-    const db = getProjectDb(projectId);
-    const swimlaneRepo = new SwimlaneRepository(db);
-    const toLane = swimlaneRepo.getById(swimlaneId);
-    if (!toLane?.auto_spawn) return;
-
-    const project = context.projectRepo.getById(projectId);
-    const projectPath = project?.path ?? null;
-    if (!projectPath) return;
-
-    const { tasks, actions, attachments } = getProjectRepos(context, projectId);
-    const fullTask = tasks.getById(task.id);
-    if (!fullTask) return;
-
+  // Serialize against any other task-lifecycle op (suspend/resume/move/kill)
+  // so an MCP-created auto-spawn can't race a user drag of the same task.
+  return withTaskLock(task.id, async () => {
     try {
-      await ensureTaskWorktree(context, fullTask, tasks, projectPath);
-    } catch (worktreeError) {
-      console.error('[MCP auto-spawn] Worktree creation failed:', worktreeError);
-      return;
-    }
+      const db = getProjectDb(projectId);
+      const swimlaneRepo = new SwimlaneRepository(db);
+      const toLane = swimlaneRepo.getById(swimlaneId);
+      if (!toLane?.auto_spawn) return;
 
-    // Checkout branch for non-worktree tasks (may fail if another session is active)
-    if (fullTask.base_branch && !fullTask.worktree_path) {
+      const project = context.projectRepo.getById(projectId);
+      const projectPath = project?.path ?? null;
+      if (!projectPath) return;
+
+      const { tasks, actions, attachments } = getProjectRepos(context, projectId);
+      const fullTask = tasks.getById(task.id);
+      if (!fullTask) return;
+
       try {
-        // Inlined from guardActiveNonWorktreeSessions to avoid circular import with task-move.ts
-        const activeSessions = context.sessionManager.listSessions()
-          .filter(session => session.taskId !== fullTask.id && (session.status === 'running' || session.status === 'queued'));
-        const otherNonWorktreeSessions = activeSessions.filter(session => {
-          const otherTask = tasks.getById(session.taskId);
-          return otherTask && !otherTask.worktree_path;
-        });
-        if (otherNonWorktreeSessions.length > 0) {
-          throw new Error(
-            `Cannot switch to branch '${fullTask.base_branch}': another task is running in the main repo. `
-            + `Enable worktree mode for branch isolation.`
-          );
-        }
-        await ensureTaskBranchCheckout(fullTask, projectPath);
-      } catch (checkoutError) {
-        console.error('[MCP auto-spawn] Branch checkout failed:', checkoutError);
+        await ensureTaskWorktree(context, fullTask, tasks, projectPath);
+      } catch (worktreeError) {
+        console.error('[MCP auto-spawn] Worktree creation failed:', worktreeError);
         return;
       }
+
+      // Checkout branch for non-worktree tasks (may fail if another session is active)
+      if (fullTask.base_branch && !fullTask.worktree_path) {
+        try {
+          // Inlined from guardActiveNonWorktreeSessions to avoid circular import with task-move.ts
+          const activeSessions = context.sessionManager.listSessions()
+            .filter(session => session.taskId !== fullTask.id && (session.status === 'running' || session.status === 'queued'));
+          const otherNonWorktreeSessions = activeSessions.filter(session => {
+            const otherTask = tasks.getById(session.taskId);
+            return otherTask && !otherTask.worktree_path;
+          });
+          if (otherNonWorktreeSessions.length > 0) {
+            throw new Error(
+              `Cannot switch to branch '${fullTask.base_branch}': another task is running in the main repo. `
+              + `Enable worktree mode for branch isolation.`
+            );
+          }
+          await ensureTaskBranchCheckout(fullTask, projectPath);
+        } catch (checkoutError) {
+          console.error('[MCP auto-spawn] Branch checkout failed:', checkoutError);
+          return;
+        }
+      }
+
+      const sessionRepo = new SessionRepository(db);
+      const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
+
+      await spawnAgent({ context, engine, tasks, sessionRepo, task: fullTask, fromSwimlaneId: '*', toLane, projectId, projectPath });
+
+      console.log(`[MCP auto-spawn] Spawned agent for "${task.title}" in ${toLane.name}`);
+    } catch (err) {
+      console.error('[MCP auto-spawn] Failed:', err);
     }
-
-    const sessionRepo = new SessionRepository(db);
-    const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
-
-    await spawnAgent({ context, engine, tasks, sessionRepo, task: fullTask, fromSwimlaneId: '*', toLane, projectId, projectPath });
-
-    console.log(`[MCP auto-spawn] Spawned agent for "${task.title}" in ${toLane.name}`);
-  } catch (err) {
-    console.error('[MCP auto-spawn] Failed:', err);
-  }
+  });
 }

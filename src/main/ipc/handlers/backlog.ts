@@ -14,6 +14,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { cleanupTaskResources, createTransitionEngine, getProjectRepos, ensureTaskWorktree, ensureTaskBranchCheckout, spawnAgent } from '../helpers';
 import { guardActiveNonWorktreeSessions } from './task-move';
 import { isAbortError } from '../../../shared/abort-utils';
+import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
 import type {
   BacklogTaskCreateInput,
@@ -181,40 +182,45 @@ export function registerBacklogHandlers(context: IpcContext): void {
             promotionControllers.set(task.id, promotionController);
             const { signal } = promotionController;
 
-            try {
+            // Serialize against any other lifecycle op (move/suspend/resume/etc)
+            // for the same task. AbortController is wired up outside the lock so
+            // a concurrent move can preempt this promotion before it acquires.
+            await withTaskLock(task.id, async () => {
               try {
-                await ensureTaskWorktree(context, task, tasks, projectPath, { signal });
-              } catch (worktreeError) {
-                if (isAbortError(worktreeError)) throw worktreeError;
-                console.error('[BACKLOG_PROMOTE] Worktree creation failed:', worktreeError);
-                continue;
-              }
+                try {
+                  await ensureTaskWorktree(context, task, tasks, projectPath, { signal });
+                } catch (worktreeError) {
+                  if (isAbortError(worktreeError)) throw worktreeError;
+                  console.error('[BACKLOG_PROMOTE] Worktree creation failed:', worktreeError);
+                  return;
+                }
 
-              try {
-                guardActiveNonWorktreeSessions(context, task, tasks);
-                await ensureTaskBranchCheckout(task, projectPath, { signal });
-              } catch (checkoutError) {
-                if (isAbortError(checkoutError)) throw checkoutError;
-                console.error('[BACKLOG_PROMOTE] Branch checkout failed:', checkoutError);
-                continue;
-              }
+                try {
+                  guardActiveNonWorktreeSessions(context, task, tasks);
+                  await ensureTaskBranchCheckout(task, projectPath, { signal });
+                } catch (checkoutError) {
+                  if (isAbortError(checkoutError)) throw checkoutError;
+                  console.error('[BACKLOG_PROMOTE] Branch checkout failed:', checkoutError);
+                  return;
+                }
 
-              const sessionRepo = new SessionRepository(db);
-              const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
-              await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane: targetSwimlane, signal });
-            } catch (error) {
-              if (isAbortError(error)) {
-                console.log(`[BACKLOG_PROMOTE] Aborted promotion for task ${task.id.slice(0, 8)}`);
-                context.sessionManager.removeByTaskId(task.id);
-                tasks.update({ id: task.id, session_id: null });
-                continue;
+                const sessionRepo = new SessionRepository(db);
+                const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
+                await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: '*', toLane: targetSwimlane, signal });
+              } catch (error) {
+                if (isAbortError(error)) {
+                  console.log(`[BACKLOG_PROMOTE] Aborted promotion for task ${task.id.slice(0, 8)}`);
+                  context.sessionManager.removeByTaskId(task.id);
+                  tasks.update({ id: task.id, session_id: null });
+                  return;
+                }
+                throw error;
+              } finally {
+                if (promotionControllers.get(task.id) === promotionController) {
+                  promotionControllers.delete(task.id);
+                }
               }
-              throw error;
-            } finally {
-              if (promotionControllers.get(task.id) === promotionController) {
-                promotionControllers.delete(task.id);
-              }
-            }
+            });
           }
         } catch (error) {
           console.error('[BACKLOG_PROMOTE] Background agent spawn failed:', error);
@@ -225,52 +231,59 @@ export function registerBacklogHandlers(context: IpcContext): void {
     return createdTasks;
   });
 
-  ipcMain.handle(IPC.BACKLOG_DEMOTE, async (_, input: BacklogDemoteInput) => {
+  ipcMain.handle(IPC.BACKLOG_DEMOTE, (_, input: BacklogDemoteInput) => {
     if (!context.currentProjectId || !context.currentProjectPath) {
       throw new Error('No project is currently open');
     }
+    const projectPath = context.currentProjectPath;
     const db = getProjectDb(context.currentProjectId);
     const backlogRepo = new BacklogRepository(db);
     const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
     const { tasks, attachments } = getProjectRepos(context);
 
-    const task = tasks.getById(input.taskId);
-    if (!task) throw new Error(`Task ${input.taskId} not found`);
+    // Cancel any in-flight backlog promotion BEFORE queueing on the lock so
+    // a stuck promotion can be aborted by this demote.
+    abortBacklogPromotion(input.taskId);
 
-    // Cancel any pending auto_command injection before cleanup
-    context.commandInjector.cancel(input.taskId);
+    return withTaskLock(input.taskId, async () => {
+      const task = tasks.getById(input.taskId);
+      if (!task) throw new Error(`Task ${input.taskId} not found`);
 
-    // Clean up session, worktree, and branch
-    await cleanupTaskResources(context, task, tasks);
+      // Cancel any pending auto_command injection before cleanup
+      context.commandInjector.cancel(input.taskId);
 
-    // Create backlog task from task, preserving labels/priority (input overrides task values)
-    const backlogTask = backlogRepo.createFromTask(
-      task.title,
-      task.description,
-      input.priority ?? task.priority,
-      input.labels ?? task.labels,
-    );
+      // Clean up session, worktree, and branch
+      await cleanupTaskResources(context, task, tasks);
 
-    // Copy task attachments to backlog task before deleting
-    const taskAttachments = attachments.list(task.id);
-    for (const taskAttachment of taskAttachments) {
-      try {
-        const buffer = fs.readFileSync(taskAttachment.file_path);
-        const base64Data = buffer.toString('base64');
-        backlogAttachmentRepo.add(context.currentProjectPath, backlogTask.id, taskAttachment.filename, base64Data, taskAttachment.media_type);
-      } catch (error) {
-        console.error(`[BACKLOG_DEMOTE] Failed to copy attachment "${taskAttachment.filename}":`, error);
+      // Create backlog task from task, preserving labels/priority (input overrides task values)
+      const backlogTask = backlogRepo.createFromTask(
+        task.title,
+        task.description,
+        input.priority ?? task.priority,
+        input.labels ?? task.labels,
+      );
+
+      // Copy task attachments to backlog task before deleting
+      const taskAttachments = attachments.list(task.id);
+      for (const taskAttachment of taskAttachments) {
+        try {
+          const buffer = fs.readFileSync(taskAttachment.file_path);
+          const base64Data = buffer.toString('base64');
+          backlogAttachmentRepo.add(projectPath, backlogTask.id, taskAttachment.filename, base64Data, taskAttachment.media_type);
+        } catch (error) {
+          console.error(`[BACKLOG_DEMOTE] Failed to copy attachment "${taskAttachment.filename}":`, error);
+        }
       }
-    }
 
-    // Remove task attachment files from disk before deleting the task
-    attachments.deleteByTaskId(task.id);
+      // Remove task attachment files from disk before deleting the task
+      attachments.deleteByTaskId(task.id);
 
-    // Delete the task from the board
-    tasks.delete(task.id);
+      // Delete the task from the board
+      tasks.delete(task.id);
 
-    // Re-fetch to get updated attachment_count
-    return backlogRepo.getById(backlogTask.id) ?? backlogTask;
+      // Re-fetch to get updated attachment_count
+      return backlogRepo.getById(backlogTask.id) ?? backlogTask;
+    });
   });
 
   ipcMain.handle(IPC.BACKLOG_REMAP_PRIORITIES, (_, mapping: Record<number, number>) => {

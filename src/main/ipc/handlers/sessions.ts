@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
+import { withTaskLock } from '../task-lifecycle-lock';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
@@ -30,7 +31,15 @@ export function registerSessionHandlers(context: IpcContext): void {
     if (!context.currentProjectId) throw new Error('Cannot spawn session: no project is currently open');
     return context.sessionManager.spawn({ ...input, projectId: context.currentProjectId });
   });
-  ipcMain.handle(IPC.SESSION_KILL, (_, id) => context.sessionManager.kill(id));
+  ipcMain.handle(IPC.SESSION_KILL, (_, id) => {
+    // Serialize against suspend/resume/reset for the same task so KILL can't
+    // race with an in-flight grace-window suspend or worktree-bound resume.
+    // If the session is unknown to the manager (already gone), fall through
+    // to the bare kill which is a no-op.
+    const taskId = context.sessionManager.getSessionTaskId(id);
+    if (!taskId) return context.sessionManager.kill(id);
+    return withTaskLock(taskId, async () => context.sessionManager.kill(id));
+  });
   ipcMain.handle(IPC.SESSION_WRITE, (_, id, data) => context.sessionManager.write(id, data));
   ipcMain.handle(IPC.SESSION_RESIZE, (_, id, cols, rows) => context.sessionManager.resize(id, cols, rows));
   ipcMain.handle(IPC.SESSION_LIST, () => context.sessionManager.listSessions());
@@ -44,138 +53,146 @@ export function registerSessionHandlers(context: IpcContext): void {
     projectId ? context.sessionManager.getEventsCacheForProject(projectId) : context.sessionManager.getEventsCache());
 
   // === Session Suspend / Resume ===
-  ipcMain.handle(IPC.SESSION_SUSPEND, async (_, taskId: string) => {
-    // Cancel any in-flight resume for this task
+  ipcMain.handle(IPC.SESSION_SUSPEND, (_, taskId: string) => {
+    // Cancel any in-flight resume BEFORE queueing on the lock - otherwise
+    // we would deadlock waiting for a resume that is stuck in worktree I/O.
     sessionResumeControllers.get(taskId)?.abort();
 
-    const resolvedProjectId = context.currentProjectId;
-    if (!resolvedProjectId) throw new Error('No project is currently open');
+    return withTaskLock(taskId, async () => {
+      const resolvedProjectId = context.currentProjectId;
+      if (!resolvedProjectId) throw new Error('No project is currently open');
 
-    const { tasks } = getProjectRepos(context, resolvedProjectId);
-    const task = tasks.getById(taskId);
-    if (!task) throw new Error(`Task ${taskId} not found`);
+      const { tasks } = getProjectRepos(context, resolvedProjectId);
+      const task = tasks.getById(taskId);
+      if (!task) throw new Error(`Task ${taskId} not found`);
 
-    if (!task.session_id) return; // nothing to suspend
-
-    const db = getProjectDb(resolvedProjectId);
-    const sessionRepo = new SessionRepository(db);
-
-    // Mark session record as suspended in DB (atomic: only transitions from running/exited)
-    const record = sessionRepo.getLatestForTask(task.id);
-    if (record && record.agent_session_id
-        && (record.status === 'running' || record.status === 'exited')) {
-      // Capture metrics before suspend (caches are still populated)
-      captureSessionMetrics(context.sessionManager, sessionRepo, task.session_id!, record.id);
-      markRecordSuspended(sessionRepo, record.id, 'user');
-    } else if (record && record.status === 'queued') {
-      // Queued sessions never started Claude CLI - mark as exited (not
-      // suspended) to avoid a failed --resume attempt on next resume click.
-      markRecordExited(sessionRepo, record.id);
-    }
-
-    // Gracefully exit agent then kill PTY, preserve session files
-    await context.sessionManager.suspend(task.session_id);
-
-    // Clear task's active session reference
-    tasks.update({ id: task.id, session_id: null });
-  });
-
-  ipcMain.handle(IPC.SESSION_RESUME, async (_, taskId: string, resumePrompt?: string) => {
-    const resolvedProjectId = context.currentProjectId;
-    const resolvedProjectPath = context.currentProjectPath;
-    if (!resolvedProjectId) throw new Error('No project is currently open');
-
-    const { tasks, actions, swimlanes, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
-    const task = tasks.getById(taskId);
-    if (!task) throw new Error(`Task ${taskId} not found`);
-
-    // Guard: don't resume if already has an active session
-    if (task.session_id) throw new Error(`Task ${taskId} already has an active session`);
-
-    const lane = swimlanes.getById(task.swimlane_id);
-
-    // To Do tasks cannot have sessions -- reject resume
-    if (lane?.role === 'todo') {
-      throw new Error('Cannot resume a session for a task in the To Do column');
-    }
-
-    // Abort any in-flight resume for this task, then create a fresh controller
-    sessionResumeControllers.get(taskId)?.abort();
-    const resumeController = new AbortController();
-    sessionResumeControllers.set(taskId, resumeController);
-    const { signal } = resumeController;
-
-    try {
-      // Create worktree if needed
-      try {
-        await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { signal });
-      } catch (worktreeError) {
-        if (isAbortError(worktreeError)) throw worktreeError;
-        const message = worktreeError instanceof Error ? worktreeError.message : String(worktreeError);
-        throw new Error(`Worktree setup failed: ${message}`);
-      }
+      if (!task.session_id) return; // nothing to suspend
 
       const db = getProjectDb(resolvedProjectId);
       const sessionRepo = new SessionRepository(db);
-      const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
 
-      await engine.resumeSuspendedSession(task, lane?.permission_mode, undefined, resumePrompt, signal);
-
-      // Re-read task to get the new session_id
-      const updated = tasks.getById(taskId);
-      if (!updated?.session_id) throw new Error('Session resume failed -- no session_id on task');
-
-      // Return the new session object
-      const newSession = context.sessionManager.getSession(updated.session_id);
-      if (!newSession) throw new Error('Session resume failed -- session not in manager');
-      return newSession;
-    } catch (error) {
-      if (isAbortError(error)) {
-        // A suspend or newer resume superseded this one - clean up partial state
-        console.log(`[SESSION_RESUME] Aborted stale resume for task ${taskId.slice(0, 8)}`);
-        context.sessionManager.removeByTaskId(taskId);
-        tasks.update({ id: taskId, session_id: null });
-        return null;
+      // Mark session record as suspended in DB (atomic: only transitions from running/exited)
+      const record = sessionRepo.getLatestForTask(task.id);
+      if (record && record.agent_session_id
+          && (record.status === 'running' || record.status === 'exited')) {
+        // Capture metrics before suspend (caches are still populated)
+        captureSessionMetrics(context.sessionManager, sessionRepo, task.session_id!, record.id);
+        markRecordSuspended(sessionRepo, record.id, 'user');
+      } else if (record && record.status === 'queued') {
+        // Queued sessions never started Claude CLI - mark as exited (not
+        // suspended) to avoid a failed --resume attempt on next resume click.
+        markRecordExited(sessionRepo, record.id);
       }
-      throw error;
-    } finally {
-      // Clean up controller only if it's still ours (not replaced by a newer resume)
-      if (sessionResumeControllers.get(taskId) === resumeController) {
-        sessionResumeControllers.delete(taskId);
-      }
-    }
+
+      // Gracefully exit agent then kill PTY, preserve session files
+      await context.sessionManager.suspend(task.session_id);
+
+      // Clear task's active session reference
+      tasks.update({ id: task.id, session_id: null });
+    });
   });
 
-  // === Session Reset (safety-net recovery for unrecoverable sessions) ===
-  ipcMain.handle(IPC.SESSION_RESET, async (_, taskId: string) => {
-    const resolvedProjectId = context.currentProjectId;
-    if (!resolvedProjectId) throw new Error('No project is currently open');
+  ipcMain.handle(IPC.SESSION_RESUME, (_, taskId: string, resumePrompt?: string) =>
+    withTaskLock(taskId, async () => {
+      const resolvedProjectId = context.currentProjectId;
+      const resolvedProjectPath = context.currentProjectPath;
+      if (!resolvedProjectId) throw new Error('No project is currently open');
 
-    // Cancel any in-flight resume
+      const { tasks, actions, swimlanes, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
+      const task = tasks.getById(taskId);
+      if (!task) throw new Error(`Task ${taskId} not found`);
+
+      // Guard: don't resume if already has an active session
+      if (task.session_id) throw new Error(`Task ${taskId} already has an active session`);
+
+      const lane = swimlanes.getById(task.swimlane_id);
+
+      // To Do tasks cannot have sessions -- reject resume
+      if (lane?.role === 'todo') {
+        throw new Error('Cannot resume a session for a task in the To Do column');
+      }
+
+      // Abort any in-flight resume for this task, then create a fresh controller
+      sessionResumeControllers.get(taskId)?.abort();
+      const resumeController = new AbortController();
+      sessionResumeControllers.set(taskId, resumeController);
+      const { signal } = resumeController;
+
+      try {
+        // Create worktree if needed
+        try {
+          await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { signal });
+        } catch (worktreeError) {
+          if (isAbortError(worktreeError)) throw worktreeError;
+          const message = worktreeError instanceof Error ? worktreeError.message : String(worktreeError);
+          throw new Error(`Worktree setup failed: ${message}`);
+        }
+
+        const db = getProjectDb(resolvedProjectId);
+        const sessionRepo = new SessionRepository(db);
+        const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
+
+        await engine.resumeSuspendedSession(task, lane?.permission_mode, undefined, resumePrompt, signal);
+
+        // Re-read task to get the new session_id
+        const updated = tasks.getById(taskId);
+        if (!updated?.session_id) throw new Error('Session resume failed -- no session_id on task');
+
+        // Return the new session object
+        const newSession = context.sessionManager.getSession(updated.session_id);
+        if (!newSession) throw new Error('Session resume failed -- session not in manager');
+        return newSession;
+      } catch (error) {
+        if (isAbortError(error)) {
+          // A suspend or newer resume superseded this one - clean up partial state
+          console.log(`[SESSION_RESUME] Aborted stale resume for task ${taskId.slice(0, 8)}`);
+          context.sessionManager.removeByTaskId(taskId);
+          tasks.update({ id: taskId, session_id: null });
+          return null;
+        }
+        throw error;
+      } finally {
+        // Clean up controller only if it's still ours (not replaced by a newer resume)
+        if (sessionResumeControllers.get(taskId) === resumeController) {
+          sessionResumeControllers.delete(taskId);
+        }
+      }
+    })
+  );
+
+  // === Session Reset (safety-net recovery for unrecoverable sessions) ===
+  ipcMain.handle(IPC.SESSION_RESET, (_, taskId: string) => {
+    // Cancel any in-flight resume BEFORE queueing on the lock - otherwise
+    // we would deadlock waiting for a resume that is stuck in worktree I/O.
     sessionResumeControllers.get(taskId)?.abort();
 
-    const { tasks } = getProjectRepos(context, resolvedProjectId);
-    const task = tasks.getById(taskId);
-    if (!task) throw new Error(`Task ${taskId} not found`);
+    return withTaskLock(taskId, async () => {
+      const resolvedProjectId = context.currentProjectId;
+      if (!resolvedProjectId) throw new Error('No project is currently open');
 
-    // Kill PTY if running
-    if (task.session_id) {
-      context.sessionManager.kill(task.session_id);
-    }
-    // Also remove any PTY registered by taskId (covers ghost sessions
-    // that were never written to the task record)
-    context.sessionManager.removeByTaskId(taskId);
+      const { tasks } = getProjectRepos(context, resolvedProjectId);
+      const task = tasks.getById(taskId);
+      if (!task) throw new Error(`Task ${taskId} not found`);
 
-    // Atomically mark latest session record as exited in DB
-    const db = getProjectDb(resolvedProjectId);
-    const sessionRepo = new SessionRepository(db);
-    const latest = sessionRepo.getLatestForTask(taskId);
-    if (latest) {
-      markRecordExited(sessionRepo, latest.id);
-    }
+      // Kill PTY if running
+      if (task.session_id) {
+        context.sessionManager.kill(task.session_id);
+      }
+      // Also remove any PTY registered by taskId (covers ghost sessions
+      // that were never written to the task record)
+      context.sessionManager.removeByTaskId(taskId);
 
-    // Clear task's session reference
-    tasks.update({ id: taskId, session_id: null });
+      // Atomically mark latest session record as exited in DB
+      const db = getProjectDb(resolvedProjectId);
+      const sessionRepo = new SessionRepository(db);
+      const latest = sessionRepo.getLatestForTask(taskId);
+      if (latest) {
+        markRecordExited(sessionRepo, latest.id);
+      }
+
+      // Clear task's session reference
+      tasks.update({ id: taskId, session_id: null });
+    });
   });
 
   // === Session Summaries ===

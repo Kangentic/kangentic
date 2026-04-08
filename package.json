@@ -114,6 +114,7 @@
     "file-uri-to-path": "^1.0.0",
     "monaco-editor": "^0.55.1",
     "node-pty": "^1.1.0",
+    "p-queue": "^9.1.2",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "remove-markdown": "^0.6.3"

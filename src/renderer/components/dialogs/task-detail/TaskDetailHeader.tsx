@@ -69,29 +69,30 @@ export function TaskDetailHeader({
     <div className="flex items-center gap-3 px-4 py-3 min-w-0">
       {/* Pause / Resume toggle */}
       {canToggle && (
-        toggling ? (
-          <Loader2 size={18} className="text-fg-muted animate-spin flex-shrink-0" />
-        ) : (
-          <button
-            onClick={onToggle}
-            className={`p-1 rounded-full transition-colors flex-shrink-0 ${
-              isQueued
+        <button
+          onClick={onToggle}
+          disabled={toggling}
+          className={`p-1 rounded-full transition-colors flex-shrink-0 disabled:cursor-not-allowed ${
+            toggling
+              ? 'text-fg-muted'
+              : isQueued
                 ? 'text-fg-muted hover:bg-surface-hover'
                 : isSessionActive
                   ? 'text-green-400 hover:bg-green-400/10'
                   : 'text-fg-faint hover:bg-surface-hover hover:text-fg-tertiary'
-            }`}
-            title={isQueued ? 'Queued (click to pause)' : isSessionActive ? 'Pause session' : 'Resume session'}
-          >
-            {isQueued ? (
-              <Clock size={18} />
-            ) : isSessionActive ? (
-              <CirclePause size={18} />
-            ) : (
-              <CirclePlay size={18} />
-            )}
-          </button>
-        )
+          }`}
+          title={toggling ? 'Working...' : isQueued ? 'Queued (click to pause)' : isSessionActive ? 'Pause session' : 'Resume session'}
+        >
+          {toggling ? (
+            <Loader2 size={18} className="animate-spin" />
+          ) : isQueued ? (
+            <Clock size={18} />
+          ) : isSessionActive ? (
+            <CirclePause size={18} />
+          ) : (
+            <CirclePlay size={18} />
+          )}
+        </button>
       )}
 
       {/* Display ID - clickable to copy */}

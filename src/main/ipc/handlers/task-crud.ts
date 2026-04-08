@@ -15,6 +15,7 @@ import {
 } from '../helpers';
 import { guardActiveNonWorktreeSessions } from './task-move';
 import { interpolateTemplate } from '../../agent/shared';
+import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
 
 export function registerTaskCrudHandlers(context: IpcContext): void {
@@ -38,52 +39,58 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     // Auto-spawn: if target column has auto_spawn, start the agent
     const toLane = swimlanes.getById(task.swimlane_id);
     if (toLane?.auto_spawn && context.currentProjectPath && context.currentProjectId) {
-      try {
-        await ensureTaskWorktree(context, task, tasks, context.currentProjectPath);
-      } catch (worktreeError) {
-        console.error('[TASK_CREATE] Worktree creation failed:', worktreeError);
-        return tasks.getById(task.id) ?? task;
-      }
-
-      // Checkout the task's branch in the main repo (non-worktree tasks only).
-      // If checkout fails, the task is still created but no agent is spawned.
-      try {
-        guardActiveNonWorktreeSessions(context, task, tasks);
-        await ensureTaskBranchCheckout(task, context.currentProjectPath);
-      } catch (checkoutError) {
-        console.error('[TASK_CREATE] Branch checkout failed:', checkoutError);
-        return tasks.getById(task.id) ?? task;
-      }
-
-      const db = getProjectDb(context.currentProjectId);
-      const sessionRepo = new SessionRepository(db);
-      const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, context.currentProjectId, context.currentProjectPath);
-
-      try {
-        // Use '*' as fromSwimlaneId -- no source column on creation, matches wildcard transitions
-        await engine.executeTransition(task, '*', toLane.id, toLane.permission_mode);
-      } catch (err) {
-        console.error('[TASK_CREATE] Transition engine error:', err);
-      }
-
-      // Re-read task; if still no session, resume suspended or spawn fresh
-      let finalTask = tasks.getById(task.id);
-      if (finalTask && !finalTask.session_id && toLane.auto_spawn) {
-        console.log(`[TASK_CREATE] Ensuring agent for task ${task.id.slice(0, 8)}`);
+      const projectPath = context.currentProjectPath;
+      const projectId = context.currentProjectId;
+      // Serialize the spawn flow against any concurrent lifecycle op (move,
+      // suspend, kill, etc.) for the freshly created task.
+      await withTaskLock(task.id, async () => {
         try {
-          await engine.resumeSuspendedSession(finalTask, toLane.permission_mode);
-          finalTask = tasks.getById(task.id);
-        } catch (err) {
-          console.error('[TASK_CREATE] Failed to start session:', err);
+          await ensureTaskWorktree(context, task, tasks, projectPath);
+        } catch (worktreeError) {
+          console.error('[TASK_CREATE] Worktree creation failed:', worktreeError);
+          return;
         }
-      }
 
-      // Schedule auto-command for freshly spawned session
-      if (finalTask?.session_id && toLane.auto_command) {
-        const vars = buildAutoCommandVars(finalTask);
-        const interpolated = interpolateTemplate(toLane.auto_command, vars);
-        context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
-      }
+        // Checkout the task's branch in the main repo (non-worktree tasks only).
+        // If checkout fails, the task is still created but no agent is spawned.
+        try {
+          guardActiveNonWorktreeSessions(context, task, tasks);
+          await ensureTaskBranchCheckout(task, projectPath);
+        } catch (checkoutError) {
+          console.error('[TASK_CREATE] Branch checkout failed:', checkoutError);
+          return;
+        }
+
+        const db = getProjectDb(projectId);
+        const sessionRepo = new SessionRepository(db);
+        const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
+
+        try {
+          // Use '*' as fromSwimlaneId -- no source column on creation, matches wildcard transitions
+          await engine.executeTransition(task, '*', toLane.id, toLane.permission_mode);
+        } catch (err) {
+          console.error('[TASK_CREATE] Transition engine error:', err);
+        }
+
+        // Re-read task; if still no session, resume suspended or spawn fresh
+        let finalTask = tasks.getById(task.id);
+        if (finalTask && !finalTask.session_id && toLane.auto_spawn) {
+          console.log(`[TASK_CREATE] Ensuring agent for task ${task.id.slice(0, 8)}`);
+          try {
+            await engine.resumeSuspendedSession(finalTask, toLane.permission_mode);
+            finalTask = tasks.getById(task.id);
+          } catch (err) {
+            console.error('[TASK_CREATE] Failed to start session:', err);
+          }
+        }
+
+        // Schedule auto-command for freshly spawned session
+        if (finalTask?.session_id && toLane.auto_command) {
+          const vars = buildAutoCommandVars(finalTask);
+          const interpolated = interpolateTemplate(toLane.auto_command, vars);
+          context.commandInjector.schedule(finalTask.id, finalTask.session_id, interpolated, { freshlySpawned: true });
+        }
+      });
     }
 
     return tasks.getById(task.id) ?? task;
@@ -127,16 +134,20 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     return tasks.update(input);
   });
 
-  ipcMain.handle(IPC.TASK_DELETE, async (_, id) => {
+  ipcMain.handle(IPC.TASK_DELETE, (_, id) => {
     const resolvedProjectId = context.currentProjectId;
     const resolvedProjectPath = context.currentProjectPath;
     const { tasks, attachments } = getProjectRepos(context, resolvedProjectId);
-    const task = tasks.getById(id);
-    if (task) {
-      attachments.deleteByTaskId(id);
-      await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
-    }
-    tasks.delete(id);
+    // Serialize against any in-flight session lifecycle op so we don't kill
+    // a PTY mid-spawn or delete the task while a resume is creating a worktree.
+    return withTaskLock(id, async () => {
+      const task = tasks.getById(id);
+      if (task) {
+        attachments.deleteByTaskId(id);
+        await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
+      }
+      tasks.delete(id);
+    });
   });
 
   ipcMain.handle(IPC.TASK_LIST_ARCHIVED, () => {
@@ -144,61 +155,66 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     return tasks.listArchived();
   });
 
-  ipcMain.handle(IPC.TASK_UNARCHIVE, async (_, input: { id: string; targetSwimlaneId: string }) => {
+  ipcMain.handle(IPC.TASK_UNARCHIVE, (_, input: { id: string; targetSwimlaneId: string }) => {
     const resolvedProjectId = context.currentProjectId;
     const resolvedProjectPath = context.currentProjectPath;
     if (!resolvedProjectId) throw new Error('No project is currently open');
 
     const { tasks, swimlanes, actions, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
 
-    // Determine position at end of target lane
-    const laneTasks = tasks.list(input.targetSwimlaneId);
-    const position = laneTasks.length;
+    // Serialize the unarchive + spawn flow against any other lifecycle op for
+    // the same task. Unarchive itself is sync DB work; the lock primarily
+    // covers the worktree/checkout/spawn awaits below.
+    return withTaskLock(input.id, async () => {
+      // Determine position at end of target lane
+      const laneTasks = tasks.list(input.targetSwimlaneId);
+      const position = laneTasks.length;
 
-    const task = tasks.unarchive(input.id, input.targetSwimlaneId, position);
+      const task = tasks.unarchive(input.id, input.targetSwimlaneId, position);
 
-    const toLane = swimlanes.getById(input.targetSwimlaneId);
+      const toLane = swimlanes.getById(input.targetSwimlaneId);
 
-    // Guard: don't resume if target doesn't auto-spawn (backlog, done, or custom with auto_spawn=false)
-    if (!toLane?.auto_spawn) {
-      return tasks.getById(input.id);
-    }
-
-    // Create worktree if needed (any non-backlog column gets an agent)
-    try {
-      await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
-    } catch (worktreeError) {
-      console.error('[TASK_UNARCHIVE] Worktree creation failed:', worktreeError);
-      return tasks.getById(input.id);
-    }
-
-    // Checkout the task's branch in the main repo (non-worktree tasks only).
-    // If checkout fails, the task is still unarchived but no agent is spawned.
-    try {
-      guardActiveNonWorktreeSessions(context, task, tasks);
-      await ensureTaskBranchCheckout(task, resolvedProjectPath);
-    } catch (checkoutError) {
-      console.error('[TASK_UNARCHIVE] Branch checkout failed:', checkoutError);
-      return tasks.getById(input.id);
-    }
-
-    // Execute transition actions + resume suspended session (or spawn fresh).
-    // Uses the consolidated spawnAgent helper which handles:
-    // - user-paused guard (won't auto-resume manually paused tasks)
-    // - correct auto_command handling (resume prompt vs commandInjector)
-    // - single source of truth for spawn/resume logic
-    if (resolvedProjectPath && toLane) {
-      const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
-      if (doneLane) {
-        const db = getProjectDb(resolvedProjectId);
-        const sessionRepo = new SessionRepository(db);
-        const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
-
-        await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: doneLane.id, toLane, skipPromptTemplate: true });
+      // Guard: don't resume if target doesn't auto-spawn (backlog, done, or custom with auto_spawn=false)
+      if (!toLane?.auto_spawn) {
+        return tasks.getById(input.id);
       }
-    }
 
-    return tasks.getById(input.id);
+      // Create worktree if needed (any non-backlog column gets an agent)
+      try {
+        await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+      } catch (worktreeError) {
+        console.error('[TASK_UNARCHIVE] Worktree creation failed:', worktreeError);
+        return tasks.getById(input.id);
+      }
+
+      // Checkout the task's branch in the main repo (non-worktree tasks only).
+      // If checkout fails, the task is still unarchived but no agent is spawned.
+      try {
+        guardActiveNonWorktreeSessions(context, task, tasks);
+        await ensureTaskBranchCheckout(task, resolvedProjectPath);
+      } catch (checkoutError) {
+        console.error('[TASK_UNARCHIVE] Branch checkout failed:', checkoutError);
+        return tasks.getById(input.id);
+      }
+
+      // Execute transition actions + resume suspended session (or spawn fresh).
+      // Uses the consolidated spawnAgent helper which handles:
+      // - user-paused guard (won't auto-resume manually paused tasks)
+      // - correct auto_command handling (resume prompt vs commandInjector)
+      // - single source of truth for spawn/resume logic
+      if (resolvedProjectPath && toLane) {
+        const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
+        if (doneLane) {
+          const db = getProjectDb(resolvedProjectId);
+          const sessionRepo = new SessionRepository(db);
+          const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
+
+          await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: doneLane.id, toLane, skipPromptTemplate: true });
+        }
+      }
+
+      return tasks.getById(input.id);
+    });
   });
 
   ipcMain.handle(IPC.TASK_BULK_DELETE, async (_, ids: string[]) => {
@@ -206,12 +222,16 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     const resolvedProjectPath = context.currentProjectPath;
     const { tasks, attachments } = getProjectRepos(context, resolvedProjectId);
     for (const id of ids) {
-      const task = tasks.getById(id);
-      if (task) {
-        attachments.deleteByTaskId(id);
-        await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
-      }
-      tasks.delete(id);
+      // Per-task lock so each delete serializes against any in-flight session
+      // op for that task, while different tasks remain independent.
+      await withTaskLock(id, async () => {
+        const task = tasks.getById(id);
+        if (task) {
+          attachments.deleteByTaskId(id);
+          await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
+        }
+        tasks.delete(id);
+      });
     }
   });
 
@@ -224,39 +244,43 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     const toLane = swimlanes.getById(targetSwimlaneId);
 
     for (const id of ids) {
-      const laneTasks = tasks.list(targetSwimlaneId);
-      const position = laneTasks.length;
-      const task = tasks.unarchive(id, targetSwimlaneId, position);
+      // Per-task lock so each unarchive+spawn serializes against any in-flight
+      // session op for that task, while different tasks remain independent.
+      await withTaskLock(id, async () => {
+        const laneTasks = tasks.list(targetSwimlaneId);
+        const position = laneTasks.length;
+        const task = tasks.unarchive(id, targetSwimlaneId, position);
 
-      if (!toLane?.auto_spawn) continue;
+        if (!toLane?.auto_spawn) return;
 
-      try {
-        await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
-      } catch (worktreeError) {
-        console.error(`[TASK_BULK_UNARCHIVE] Worktree creation failed for task ${id.slice(0, 8)}:`, worktreeError);
-        continue;
-      }
-
-      // Checkout the task's branch in the main repo (non-worktree tasks only).
-      // Catch per-task so one failure doesn't block the entire batch.
-      try {
-        guardActiveNonWorktreeSessions(context, task, tasks);
-        await ensureTaskBranchCheckout(task, resolvedProjectPath);
-      } catch (checkoutError) {
-        console.error(`[TASK_BULK_UNARCHIVE] Branch checkout failed for task ${id.slice(0, 8)}:`, checkoutError);
-        continue;
-      }
-
-      if (resolvedProjectPath && toLane) {
-        const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
-        if (doneLane) {
-          const db = getProjectDb(resolvedProjectId);
-          const sessionRepo = new SessionRepository(db);
-          const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
-
-          await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: doneLane.id, toLane, skipPromptTemplate: true });
+        try {
+          await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
+        } catch (worktreeError) {
+          console.error(`[TASK_BULK_UNARCHIVE] Worktree creation failed for task ${id.slice(0, 8)}:`, worktreeError);
+          return;
         }
-      }
+
+        // Checkout the task's branch in the main repo (non-worktree tasks only).
+        // Catch per-task so one failure doesn't block the entire batch.
+        try {
+          guardActiveNonWorktreeSessions(context, task, tasks);
+          await ensureTaskBranchCheckout(task, resolvedProjectPath);
+        } catch (checkoutError) {
+          console.error(`[TASK_BULK_UNARCHIVE] Branch checkout failed for task ${id.slice(0, 8)}:`, checkoutError);
+          return;
+        }
+
+        if (resolvedProjectPath && toLane) {
+          const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
+          if (doneLane) {
+            const db = getProjectDb(resolvedProjectId);
+            const sessionRepo = new SessionRepository(db);
+            const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
+
+            await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: doneLane.id, toLane, skipPromptTemplate: true });
+          }
+        }
+      });
     }
   });
 }

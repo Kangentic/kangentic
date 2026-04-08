@@ -54,7 +54,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   const [labels, setLabels] = useState<string[]>(task.labels ?? []);
   const [priority, setPriority] = useState(task.priority ?? 0);
   const [isEditing, setIsEditing] = useState(!!initialEdit);
-  const [toggling, setToggling] = useState(false);
+  const [pendingAction, setPendingAction] = useState<null | 'pausing' | 'resuming'>(null);
+  const toggling = pendingAction !== null;
   const [resumeFailed, setResumeFailed] = useState(false);
   const [resumeError, setResumeError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -199,9 +200,10 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
 
   const handleToggle = async () => {
     if (!canToggle || toggling) return;
-    setToggling(true);
+    const action: 'pausing' | 'resuming' = isSessionActive ? 'pausing' : 'resuming';
+    setPendingAction(action);
     try {
-      if (isSessionActive) {
+      if (action === 'pausing') {
         await suspendSession(task.id);
       } else {
         await resumeSession(task.id);
@@ -209,23 +211,40 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
         setResumeError('');
       }
       await loadBoard();
+      // Note: pendingAction is cleared by the effect below once the session
+      // store actually reflects the target state, not here. This keeps the
+      // button disabled and the label correct through the full transition.
     } catch (err) {
       console.error('Toggle session failed:', err);
       const reason = err instanceof Error ? err.message : '';
-      if (!isSessionActive) {
+      if (action === 'resuming') {
         setResumeFailed(true);
         setResumeError(reason);
       }
       useToastStore.getState().addToast({
         message: reason
-          ? `Failed to ${isSessionActive ? 'suspend' : 'resume'} session: ${reason}`
-          : `Failed to ${isSessionActive ? 'suspend' : 'resume'} session`,
+          ? `Failed to ${action === 'pausing' ? 'suspend' : 'resume'} session: ${reason}`
+          : `Failed to ${action === 'pausing' ? 'suspend' : 'resume'} session`,
         variant: 'warning',
       });
-    } finally {
-      setToggling(false);
+      setPendingAction(null);
     }
   };
+
+  // Clear pendingAction once the session store reflects the target state.
+  // Includes a 5s safety timeout in case the transition never arrives.
+  useEffect(() => {
+    if (!pendingAction) return;
+    const reached = pendingAction === 'pausing'
+      ? (isSuspended || displayState.kind === 'none' || displayState.kind === 'exited')
+      : isSessionActive;
+    if (reached) {
+      setPendingAction(null);
+      return;
+    }
+    const timer = setTimeout(() => setPendingAction(null), 5000);
+    return () => clearTimeout(timer);
+  }, [pendingAction, isSuspended, isSessionActive, displayState.kind]);
 
   const handleResetSession = async () => {
     try {
@@ -244,7 +263,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
 
   const handleCommandSelect = async (command: AgentCommand) => {
     if (!task.id || toggling) return;
-    setToggling(true);
+    setPendingAction('resuming');
     try {
       useSessionStore.getState().setPendingCommandLabel(task.id, command.displayName);
       await suspendSession(task.id);
@@ -258,8 +277,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
         variant: 'warning',
       });
       await loadBoard().catch(() => {});
-    } finally {
-      setToggling(false);
+      setPendingAction(null);
     }
   };
 
@@ -601,6 +619,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             displayKind={displayState.kind}
             isSuspended={isSuspended}
             toggling={toggling}
+            pendingAction={pendingAction}
             pendingCommandLabel={pendingCommandLabel}
             savedAttachments={attachments.savedAttachments}
             handlePreview={attachments.handlePreview}

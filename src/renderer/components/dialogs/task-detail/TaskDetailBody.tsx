@@ -24,6 +24,7 @@ interface TaskDetailBodyProps {
   displayKind: SessionDisplayState['kind'];
   isSuspended: boolean;
   toggling: boolean;
+  pendingAction: null | 'pausing' | 'resuming';
   pendingCommandLabel: string | null;
   savedAttachments: AttachmentWithPreview[];
   handlePreview: (attachment: AttachmentWithPreview) => void;
@@ -46,6 +47,7 @@ export function TaskDetailBody({
   displayKind,
   isSuspended,
   toggling,
+  pendingAction,
   pendingCommandLabel,
   savedAttachments,
   handlePreview,
@@ -185,9 +187,9 @@ export function TaskDetailBody({
       : <Play size={16} />;
     const toggleLabel = !toggling
       ? 'Resume session'
-      : isSuspended
-        ? 'Resuming agent...'
-        : 'Pausing agent...';
+      : pendingAction === 'pausing'
+        ? 'Pausing agent...'
+        : 'Resuming agent...';
     return (
       <div className="flex-1 min-h-0 flex">
         <div className={`${changesOpen ? 'w-1/2' : 'flex-1'} flex flex-col items-center justify-center gap-3 bg-surface/50`}>
