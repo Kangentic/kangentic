@@ -485,16 +485,31 @@ export function registerProjectHandlers(context: IpcContext): void {
     context.projectRepo.updateLastOpened(id);
     ensureGitignore(project.path);
 
-    // Attach board config manager for file watching and reconciliation
+    // Attach board config manager for file watching (must be synchronous --
+    // wires the watcher the renderer needs).
     context.boardConfigManager.attach(id, project.path, context.mainWindow);
-    if (context.boardConfigManager.exists()) {
-      const configWarnings = context.boardConfigManager.initialReconcile();
-      for (const warning of configWarnings) {
-        console.warn('[BOARD_CONFIG] Initial reconcile:', warning);
+
+    // Defer reconcile + disk export off the IPC critical path so the
+    // renderer can begin loading the new board immediately. The DB is the
+    // source of truth, so a deferred kangentic.json export is safe.
+    setImmediate(() => {
+      // Guard against rapid project switching: if the user has already
+      // switched to a different project, the boardConfigManager singleton
+      // is now attached to that project -- skip the deferred work to
+      // avoid exporting the wrong project's state.
+      if (context.currentProjectId !== id) return;
+      try {
+        if (context.boardConfigManager.exists()) {
+          const configWarnings = context.boardConfigManager.initialReconcile();
+          for (const warning of configWarnings) {
+            console.warn('[BOARD_CONFIG] Initial reconcile:', warning);
+          }
+        }
+        context.boardConfigManager.exportFromDb();
+      } catch (err) {
+        console.error('[PROJECT_OPEN] Deferred board config work failed:', err);
       }
-    }
-    // Always export DB state to kangentic.json so teams can commit it
-    context.boardConfigManager.exportFromDb();
+    });
 
     // Apply project config overrides (always -- config may have changed)
     const config = context.configManager.getEffectiveConfig(project.path);

@@ -179,15 +179,16 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     // IPC-delivered updates that arrive during the gap.
     const preAsyncSessions = new Map(get().sessions.map((s) => [s.id, s]));
 
-    // Sessions list is always unscoped -- sidebar needs cross-project data
-    const freshSessions = await window.electronAPI.sessions.list();
-    if (signal.aborted) return false;
-
+    // Sessions list is always unscoped -- sidebar needs cross-project data.
     // Usage/events are scoped to current project; activity is unscoped
     // because sidebar badges need cross-project activity data.
-    const cachedUsage = await window.electronAPI.sessions.getUsage(currentProjectId);
-    const cachedActivity = await window.electronAPI.sessions.getActivity();
-    const cachedEvents = await window.electronAPI.sessions.getEventsCache(currentProjectId);
+    // Parallelize all four IPC calls -- they're independent.
+    const [freshSessions, cachedUsage, cachedActivity, cachedEvents] = await Promise.all([
+      window.electronAPI.sessions.list(),
+      window.electronAPI.sessions.getUsage(currentProjectId),
+      window.electronAPI.sessions.getActivity(),
+      window.electronAPI.sessions.getEventsCache(currentProjectId),
+    ]);
     if (signal.aborted) return false;
 
     const currentState = get();

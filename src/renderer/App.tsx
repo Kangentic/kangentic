@@ -112,13 +112,15 @@ export function App() {
 
   useEffect(() => {
     if (currentProject) {
-      // Reset hydration gates before loading new project data
-      useBoardStore.setState({ hydrated: false });
-      useBacklogStore.setState({ hydrated: false });
-
-      loadBoard();
-      useBacklogStore.getState().loadBacklog();
-      loadConfig(); // Re-fetch effective config (global + project overrides)
+      // Fire all loads in parallel. Do NOT reset `hydrated` -- the stores
+      // replace state atomically when each load resolves, so the UI
+      // transitions from the previous project's board straight to the new
+      // one without a blank intermediate frame.
+      void Promise.all([
+        loadBoard(),
+        useBacklogStore.getState().loadBacklog(),
+        loadConfig(), // Re-fetch effective config (global + project overrides)
+      ]);
       useBoardStore.getState().setSearchQuery(''); // Clear search on project switch
 
       // Invalidate any in-flight syncSessions() calls from the previous project
