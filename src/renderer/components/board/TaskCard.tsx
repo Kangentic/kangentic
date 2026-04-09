@@ -451,14 +451,20 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
               const pct = usage && hasTokens && hasKnownWindow
                 ? Math.round(usage.contextWindow.usedPercentage)
                 : 0;
-              const modelLabel = resolvedModelName ?? '...';
               const progressColor = getProgressColor(pct);
               return (
                 <div className="mt-2 pt-2 border-t border-edge" data-testid="usage-bar">
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-xs text-fg-faint truncate">
-                      {modelLabel}
-                    </span>
+                    {resolvedModelName ? (
+                      <span className="text-xs text-fg-faint truncate">
+                        {resolvedModelName}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-fg-faint flex items-center gap-1 truncate">
+                        <Loader2 size={12} className="animate-spin shrink-0" />
+                        Loading agent...
+                      </span>
+                    )}
                     <span className="text-xs text-fg-faint">{pct}%</span>
                   </div>
                   <div className="w-full h-1 bg-surface-hover rounded-full overflow-hidden">

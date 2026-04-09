@@ -548,10 +548,10 @@ test.describe('Task Activity Indicators', () => {
       }
     });
 
-    test('shows placeholder "..." label with 0% bar when CLI has reported but usage is still null', async () => {
+    test('shows "Loading agent..." spinner with 0% bar when CLI has reported but usage is still null', async () => {
       // hasActivityEntry (eventCache) flips cliHasReported true while usage is
       // still null -- the running branch should render the full bar layout
-      // with a "..." placeholder label and 0%, never an empty slot.
+      // with a spinner + "Loading agent..." label and 0%, never an empty slot.
       const { browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: false, withEvents: true }),
       );
@@ -559,8 +559,9 @@ test.describe('Task Activity Indicators', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         const usageBar = page.locator(`[data-task-id="${TASK_ID}"] [data-testid="usage-bar"]`);
         await expect(usageBar).toBeVisible({ timeout: 10000 });
-        await expect(usageBar).toContainText('...');
+        await expect(usageBar).toContainText('Loading agent...');
         await expect(usageBar).toContainText('0%');
+        await expect(usageBar.locator('.lucide-loader-circle')).toBeVisible();
         await expect(usageBar).not.toContainText('Starting agent...');
         // Inner progress bar element exists at zero width
         // Inner progress bar element exists at zero width (not "visible" since 0px wide)
@@ -594,7 +595,7 @@ test.describe('Task Activity Indicators', () => {
         await expect(usageBar).toBeVisible({ timeout: 10000 });
         await expect(usageBar).toContainText('Claude Sonnet');
         await expect(usageBar).toContainText('0%');
-        await expect(usageBar).not.toContainText('...');
+        await expect(usageBar).not.toContainText('Loading agent...');
         // Inner progress bar element exists at zero width (not "visible" since 0px wide)
         await expect(usageBar.locator('div.h-full.rounded-full')).toHaveCount(1);
         await expect(usageBar.locator('div.h-full.rounded-full')).toHaveAttribute('style', /width:\s*0%/);
