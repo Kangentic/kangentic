@@ -161,6 +161,73 @@ Source: Google's published model cards. Update the table in `gemini/log-parser.t
 
 If a Gemini release breaks any of these, the parser will silently return null/empty and the card falls back to the minimal pill. Fix: update the field extraction in `gemini/session-history-parser.ts`.
 
+## Claude
+
+**File path**: `~/.claude/projects/<projectSlug>/<sessionId>.jsonl`
+
+The `<projectSlug>` is NOT a hash. It is the cwd with every `/`, `\`, `:`, and `.` character replaced individually by `-`. Each character is replaced one-for-one (not collapsed), so `C:\Users` produces `C--Users` (one dash from `:`, one from `\`). Verified empirically:
+
+| cwd | Slug |
+|---|---|
+| `C:\Users\dev\project` | `C--Users-dev-project` |
+| `/home/dev/project` | `-home-dev-project` |
+| `C:\Users\dev\my.app` | `C--Users-dev-my-app` |
+| `C:\Users\dev\proj\.kangentic\worktrees\feature-x` | `C--Users-dev-proj--kangentic-worktrees-feature-x` |
+
+**Format**: append-only JSONL. One JSON object per line. CRLF or LF tolerated. `isFullRewrite: false` - parser receives newly-appended bytes on each file-change event.
+
+**Parser**: `src/main/agent/adapters/claude/session-history-parser.ts`
+
+### Coexistence with the hook pipeline
+
+Unlike Codex and Gemini, Claude has TWO active telemetry pipelines simultaneously:
+
+1. **Hook pipeline** (`StatusFileReader`): consumes `status.json` + `events.jsonl` written by event-bridge hooks injected into Claude's `.claude/settings.json`.
+2. **Native log** (this parser): consumes `~/.claude/projects/<slug>/<sessionId>.jsonl` written by Claude Code itself.
+
+Both pipelines feed `UsageTracker.setSessionUsage`, which 3-level merges partial updates (root, contextWindow, cost, model). Last writer wins per field. The native log typically writes after the hook, so it ends up authoritative for cumulative counts.
+
+To prevent activity flicker from two sources fighting, the native-log parser deliberately returns `activity: null`. Claude's activity state remains owned by the hook-based `ActivityDetection.hooks()` strategy.
+
+The hook pipeline's `processStatusUpdate` is what triggers `sessionHistoryReader.attach()` for Claude: when the first status.json arrives, `usage.sessionId` (extracted from `session_id`) fires `onAgentSessionId`, which in turn attaches the native-log reader. No PTY scraping is needed because Claude uses caller-owned session IDs.
+
+### Line entries we depend on
+
+Each line has top-level `type`, `timestamp`, `uuid`, `sessionId`, and (for `user`/`assistant`) a nested `message` object.
+
+| `type` | Field(s) extracted | Effect |
+|---|---|---|
+| `assistant` | `message.model` | Sets `SessionUsage.model.id` and `.displayName`. |
+| `assistant` | `message.usage.{input_tokens,cache_creation_input_tokens,cache_read_input_tokens,output_tokens}` | Sets the `SessionUsage.contextWindow` fields from the most recent assistant turn in the chunk. `usedTokens = input + cache_creation + cache_read` (output excluded - it's the response, not held in context until next turn). |
+| `assistant` content blocks | `block.type === 'tool_use'`, `block.name` | Emits `SessionEvent { type: ToolStart }`. Tool name mapping is coarse - all tool uses bucket as `AgentTool.Bash`. Raw name preserved in `detail`. |
+| `user`, `system`, `summary` | (none) | Ignored. |
+
+### Context window size
+
+**Not present in the file.** The parser uses a hardcoded model-name → window-size lookup. The `[1m]` suffix on Opus 4.6 indicates the 1M-context variant.
+
+| Model prefix | Context window |
+|---|---|
+| `*[1m]` (any model with the suffix) | 1,000,000 |
+| `claude-opus-4-*` | 200,000 |
+| `claude-sonnet-4-*` | 1,000,000 |
+| `claude-haiku-4-*` | 200,000 |
+| `claude-3-*` (defensive, older sessions) | 200,000 |
+| (unknown) | `null` (graceful degrade - card hides progress bar) |
+
+Source: Anthropic's published model cards. Update the table in `claude/session-history-parser.ts` when Anthropic publishes new model specs.
+
+### Assumptions that could break on CLI upgrades
+
+- The `~/.claude/projects/<slug>/` directory layout is stable.
+- The slug transform is exactly `[/\\:.]` → `-`, applied character-wise.
+- Filenames are exactly `<sessionId>.jsonl` (no timestamp prefix).
+- JSONL format (one complete JSON object per line, ending in `\n`).
+- Assistant entries carry `message.model`, `message.usage`, and `message.content` arrays with `tool_use` blocks for tool calls.
+- `usage.cache_read_input_tokens` and `usage.cache_creation_input_tokens` are reported as raw token counts.
+
+If a Claude Code release breaks any of these, the parser will silently return null/empty and the existing hook pipeline keeps the card alive. Fix: update field extraction in `claude/session-history-parser.ts`.
+
 ## Known gaps
 
 ### WSL on Windows

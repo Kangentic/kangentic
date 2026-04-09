@@ -1,6 +1,7 @@
 import { ClaudeDetector } from './detector';
 import { CommandBuilder } from './command-builder';
 import { ClaudeStatusParser } from './status-parser';
+import { ClaudeSessionHistoryParser } from './session-history-parser';
 import { ensureWorktreeTrust, ensureMcpServerTrust } from './trust-manager';
 import { stripKangenticHooks } from './hook-manager';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
@@ -61,8 +62,16 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   // Claude uses caller-owned session IDs via --session-id, so no capture needed.
+  // The native session log at ~/.claude/projects/<slug>/<sessionId>.jsonl runs
+  // alongside the hook-based status.json/events.jsonl pipeline. Both feed
+  // UsageTracker.setSessionUsage, which merges partial updates safely.
   readonly runtime: AdapterRuntimeStrategy = {
     activity: ActivityDetection.hooks(),
+    sessionHistory: {
+      locate: ClaudeSessionHistoryParser.locate,
+      parse: ClaudeSessionHistoryParser.parse,
+      isFullRewrite: false,
+    },
   };
 
   stripHooks(directory: string): void {
