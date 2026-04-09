@@ -7,55 +7,27 @@ import type { SessionUsage, SessionEvent } from '../../../../shared/types';
  * for other agent solutions without touching session-manager.ts.
  */
 
-/** Shape of the `context_window` object from Claude Code's status line JSON. */
+/**
+ * Subset of the `context_window` object from Claude Code's status line JSON
+ * that `computeContextPercentage` consumes. `parseStatusWithMeta` reads
+ * additional fields (current_usage, context_window_size, totals) directly
+ * from the raw JSON for token-count display.
+ */
 export interface StatusContextWindow {
-  current_usage?: {
-    input_tokens?: number;
-    output_tokens?: number;
-    cache_creation_input_tokens?: number;
-    cache_read_input_tokens?: number;
-  } | null;
   used_percentage?: number;
-  context_window_size?: number;
 }
 
 export class ClaudeStatusParser {
   /**
-   * Compute context window usage as a percentage.
-   *
-   * Claude Code's `used_percentage` field uses Math.round internally.
-   * We match that behavior: compute from raw token counts when available
-   * using Math.round, falling back to the pre-rounded `used_percentage`.
-   *
-   * Two tiers:
-   * 1. **Primary** (has `current_usage` + `context_window_size`): compute
-   *    total token percentage via Math.round - matches Claude Code's JSON.
-   * 2. **Fallback** (`used_percentage` only, no tokens): return it directly.
+   * Context window usage as a percentage, taken directly from Claude Code's
+   * `used_percentage` field in `status.json`. This is the same number Claude
+   * shows in its own status line and accounts for internal overhead (system
+   * prompt, tool definitions) that raw token sums miss. Claude Code
+   * auto-updates, so we don't maintain a fallback for older versions.
    */
   static computeContextPercentage(contextWindow: StatusContextWindow | null | undefined): number {
-    if (!contextWindow) return 0;
-
-    const usage = contextWindow.current_usage;
-    const windowSize = contextWindow.context_window_size ?? 0;
-
-    // Primary: compute from raw tokens using Math.round to match Claude
-    // Code's used_percentage field.
-    if (usage && windowSize > 0) {
-      const input = usage.input_tokens ?? 0;
-      const output = usage.output_tokens ?? 0;
-      const cacheCreation = usage.cache_creation_input_tokens ?? 0;
-      const cacheRead = usage.cache_read_input_tokens ?? 0;
-      const totalUsed = input + output + cacheCreation + cacheRead;
-      return Math.min(100, Math.round((totalUsed / windowSize) * 100));
-    }
-
-    // Fallback: use pre-rounded used_percentage when tokens aren't available
-    const usedPercentage = contextWindow.used_percentage ?? 0;
-    if (usedPercentage > 0) {
-      return Math.min(100, usedPercentage);
-    }
-
-    return 0;
+    if (!contextWindow || contextWindow.used_percentage == null) return 0;
+    return Math.min(100, Math.max(0, contextWindow.used_percentage));
   }
 
   /**
