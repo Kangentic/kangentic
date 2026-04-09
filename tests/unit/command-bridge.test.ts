@@ -154,7 +154,7 @@ vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({
 
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class MockTaskRepository {
-    create(input: { title: string; description?: string; swimlane_id: string; customBranchName?: string; baseBranch?: string; useWorktree?: boolean }) {
+    create(input: { title: string; description?: string; swimlane_id: string; customBranchName?: string; baseBranch?: string; useWorktree?: boolean; labels?: string[]; priority?: number }) {
       const task = makeTask({
         title: input.title,
         description: input.description ?? '',
@@ -162,6 +162,8 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
         branch_name: input.customBranchName ?? null,
         base_branch: input.baseBranch ?? null,
         use_worktree: input.useWorktree != null ? (input.useWorktree ? 1 : 0) : null,
+        labels: input.labels ?? [],
+        priority: input.priority ?? 0,
       });
       mockTasks.push(task);
       return task;
@@ -348,7 +350,7 @@ describe('CommandBridge - create_task', () => {
     expect(mockTasks[0].swimlane_id).toBe('sw-planning');
   });
 
-  it('returns error for non-existent column', () => {
+  it('returns error for non-existent column with backlog hint', () => {
     const bridge = createBridge();
     bridge.start();
 
@@ -362,6 +364,152 @@ describe('CommandBridge - create_task', () => {
     expect(response.success).toBe(false);
     expect(response.error).toContain('Nonexistent');
     expect(response.error).toContain('Available columns');
+    expect(response.error).toContain('Backlog');
+    expect(response.error).toContain('create_task');
+  });
+
+  it('routes column="Backlog" to the backlog (not the board)', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'create_task', {
+      title: 'Future idea',
+      description: 'Worth exploring later',
+      column: 'Backlog',
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    expect(response.message).toContain('backlog task');
+    expect(response.message).toContain('Future idea');
+
+    // Verify it landed in the backlog, NOT the board
+    expect(mockBacklogTasks).toHaveLength(1);
+    expect(mockBacklogTasks[0].title).toBe('Future idea');
+    expect(mockBacklogTasks[0].description).toBe('Worth exploring later');
+    expect(mockTasks).toHaveLength(0);
+  });
+
+  it('routes column="backlog" (lowercase) to the backlog', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'create_task', {
+      title: 'lowercase test',
+      column: 'backlog',
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    expect(mockBacklogTasks).toHaveLength(1);
+    expect(mockBacklogTasks[0].title).toBe('lowercase test');
+    expect(mockTasks).toHaveLength(0);
+  });
+
+  it('routes column=" Backlog " (whitespace) to the backlog', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'create_task', {
+      title: 'padded test',
+      column: '  Backlog  ',
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    expect(mockBacklogTasks).toHaveLength(1);
+    expect(mockTasks).toHaveLength(0);
+  });
+
+  it('persists priority and labels on board tasks', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'create_task', {
+      title: 'Bug to fix',
+      priority: 3,
+      labels: ['bug', 'frontend'],
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    expect(mockTasks).toHaveLength(1);
+    expect(mockTasks[0].priority).toBe(3);
+    expect(mockTasks[0].labels).toEqual(['bug', 'frontend']);
+  });
+
+  it('accepts label objects with name and color on board tasks', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'create_task', {
+      title: 'Labeled task',
+      labels: [{ name: 'priority', color: '#ef4444' }, 'simple'],
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    expect(mockTasks).toHaveLength(1);
+    expect(mockTasks[0].labels).toEqual(['priority', 'simple']);
+  });
+
+  it('rejects priority outside 0..4 on board tasks', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'create_task', {
+      title: 'Bad priority',
+      priority: 9,
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('Priority');
+    expect(mockTasks).toHaveLength(0);
+  });
+
+  it('forwards priority and labels when routing to backlog', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    const response = sendCommand(bridge, 'create_task', {
+      title: 'Backlog with priority',
+      column: 'Backlog',
+      priority: 4,
+      labels: ['urgent'],
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    expect(mockBacklogTasks).toHaveLength(1);
+    expect(mockBacklogTasks[0].priority).toBe(4);
+    expect(mockBacklogTasks[0].labels).toEqual(['urgent']);
+  });
+
+  it('coerces null priority to 0 when routing to backlog', () => {
+    const bridge = createBridge();
+    bridge.start();
+
+    // The MCP layer sends `priority: null` when the caller omits it.
+    // Routing must coerce that to 0 so the backlog repo never sees null.
+    const response = sendCommand(bridge, 'create_task', {
+      title: 'No priority backlog',
+      column: 'Backlog',
+      priority: null,
+    });
+
+    bridge.stop();
+
+    expect(response.success).toBe(true);
+    expect(mockBacklogTasks).toHaveLength(1);
+    expect(mockBacklogTasks[0].priority).toBe(0);
   });
 
   it('returns error for empty title', () => {

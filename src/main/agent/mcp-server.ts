@@ -88,22 +88,30 @@ const server = new McpServer({
 server.registerTool(
   'kangentic_create_task',
   {
-    description: 'Create a new task on the Kangentic board in the To Do column (default). This is the primary tool for creating tasks - use it whenever the user asks to "create a task", "add a todo", "create a todo task", or similar. Tasks get a git branch and are ready to work on immediately. Use this when you identify work that should be tracked separately (bugs, refactoring opportunities, follow-ups, improvements).',
+    description: 'Create a task on the Kangentic board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool - use it whenever the user asks to "create a task", "add a todo", "add to backlog", or similar. With no `column` argument, the task always lands in the active board\'s To Do column - never the backlog. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead. Pass any other column name (e.g. "Planning", "Code Review") to land directly in that board column. Board tasks get a git branch and are ready to work on immediately.',
     inputSchema: z.object({
       title: z.string().max(200).describe('Task title (max 200 characters)'),
       description: z.string().max(10000).optional().describe('Task description. Supports markdown.'),
-      column: z.string().optional().describe('Target column name. Defaults to the To Do column. Use kangentic_list_columns to see available columns.'),
-      branchName: z.string().optional().describe('Custom git branch name for the task (e.g. "bugfix/login-screen"). If omitted, a branch name is auto-generated from the title.'),
-      baseBranch: z.string().optional().describe('Base branch to create the task branch from (e.g. "develop", "main"). Defaults to the project setting.'),
-      useWorktree: z.boolean().optional().describe('Whether to use a git worktree for isolation. Defaults to the project setting. Set false to work in the main repo.'),
+      column: z.string().optional().describe('Target column name. Defaults to the To Do column on the active board. Use kangentic_list_columns to see board columns. Pass "Backlog" (case-insensitive) to create a backlog item instead of a board task. Only route to the backlog when the user explicitly asks for the backlog.'),
+      priority: z.number().int().min(0).max(4).optional().describe('Priority: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent. Applies to both board tasks and backlog items.'),
+      labels: z.array(z.union([
+        z.string(),
+        z.object({
+          name: z.string(),
+          color: z.string().regex(/^#[0-9a-fA-F]{6}$/).describe('Hex color (e.g. "#ef4444")'),
+        }),
+      ])).optional().describe('Labels for categorization. Each entry can be a plain string or an object with name and hex color (e.g. ["bug", { "name": "frontend", "color": "#3b82f6" }]). Applies to both board tasks and backlog items.'),
+      branchName: z.string().optional().describe('Custom git branch name for the task (e.g. "bugfix/login-screen"). If omitted, a branch name is auto-generated from the title. Board tasks only - ignored for backlog.'),
+      baseBranch: z.string().optional().describe('Base branch to create the task branch from (e.g. "develop", "main"). Defaults to the project setting. Board tasks only - ignored for backlog.'),
+      useWorktree: z.boolean().optional().describe('Whether to use a git worktree for isolation. Defaults to the project setting. Set false to work in the main repo. Board tasks only - ignored for backlog.'),
       attachments: z.array(z.object({
         filePath: z.string().describe('Absolute path to the file to attach'),
         filename: z.string().optional().describe('Override display filename'),
       })).optional().describe('File attachments (array of file paths)'),
     }),
   },
-  async ({ title, description, column, branchName, baseBranch, useWorktree, attachments }) => {
-    console.error('[mcp] create_task params:', JSON.stringify({ title, description: description?.slice(0, 100) }));
+  async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments }) => {
+    console.error('[mcp] create_task params:', JSON.stringify({ title, description: description?.slice(0, 100), column }));
     if (taskCreationCount >= MAX_TASKS_PER_SESSION) {
       return {
         content: [{ type: 'text' as const, text: `Rate limit reached: maximum ${MAX_TASKS_PER_SESSION} tasks per session.` }],
@@ -116,6 +124,8 @@ server.registerTool(
         title,
         description: description ?? '',
         column: column ?? null,
+        priority: priority ?? null,
+        labels: labels ?? null,
         branchName: branchName ?? null,
         baseBranch: baseBranch ?? null,
         useWorktree: useWorktree ?? null,
@@ -130,11 +140,10 @@ server.registerTool(
       }
 
       taskCreationCount++;
-      const data = response.data as { taskId: string; displayId: number; title: string; column: string };
       return {
         content: [{
           type: 'text' as const,
-          text: response.message ?? `Created task "${data.title}" in ${data.column} column (#${data.displayId}, id: ${data.taskId})`,
+          text: response.message ?? `Created task "${title}".`,
         }],
       };
     } catch (error) {
@@ -644,56 +653,6 @@ server.registerTool(
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       return { content: [{ type: 'text' as const, text: `Error listing backlog: ${errorMessage}` }], isError: true };
-    }
-  },
-);
-
-// --- kangentic_create_backlog_task ---
-server.registerTool(
-  'kangentic_create_backlog_task',
-  {
-    description: 'Create a new task in the backlog staging area. The backlog is a parking lot for future ideas - NOT the To Do column. Only use this when the user explicitly says "backlog" or "add to backlog". If the user says "create a task" or "create a todo task", use kangentic_create_task instead. Unlike kangentic_create_task, backlog tasks do not have branches or worktrees.',
-    inputSchema: z.object({
-      title: z.string().max(200).describe('Task title (max 200 characters).'),
-      description: z.string().max(10000).optional().describe('Task description. Supports markdown.'),
-      priority: z.number().min(0).max(4).optional().describe('Priority level: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent.'),
-      labels: z.array(z.union([
-        z.string(),
-        z.object({
-          name: z.string(),
-          color: z.string().regex(/^#[0-9a-fA-F]{6}$/).describe('Hex color (e.g. "#ef4444")'),
-        }),
-      ])).optional().describe('Labels for categorization. Each entry can be a plain string or an object with name and hex color (e.g. ["bug", { "name": "frontend", "color": "#3b82f6" }]).'),
-      attachments: z.array(z.object({
-        filePath: z.string().describe('Absolute path to the file to attach'),
-        filename: z.string().optional().describe('Override display filename'),
-      })).optional().describe('File attachments (array of file paths)'),
-    }),
-  },
-  async ({ title, description, priority, labels, attachments }) => {
-    console.error('[mcp] create_backlog_task params:', JSON.stringify({ title, description: description?.slice(0, 100) }));
-    if (taskCreationCount >= MAX_TASKS_PER_SESSION) {
-      return {
-        content: [{ type: 'text' as const, text: `Rate limit reached: maximum ${MAX_TASKS_PER_SESSION} items per session.` }],
-        isError: true,
-      };
-    }
-    try {
-      const response = await sendCommand('create_backlog_task', {
-        title,
-        description: description ?? '',
-        priority: priority ?? 0,
-        labels: labels ?? [],
-        attachments: attachments ?? null,
-      });
-      if (!response.success) {
-        return { content: [{ type: 'text' as const, text: `Failed to create backlog task: ${response.error}` }], isError: true };
-      }
-      taskCreationCount++;
-      return { content: [{ type: 'text' as const, text: response.message ?? `Created backlog task "${title}".` }] };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return { content: [{ type: 'text' as const, text: `Error creating backlog task: ${errorMessage}` }], isError: true };
     }
   },
 );

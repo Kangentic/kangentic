@@ -50,21 +50,23 @@ This approach keeps `.mcp.json` completely untouched - no injection, no cleanup,
 
 ### kangentic_create_task
 
-Create a new task on the board. Defaults to the To Do column.
+Create a task on the board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead of a board task. With no `column`, the task always lands in the active board's To Do column - never the backlog.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `title` | string | Yes | Task title (max 200 chars) |
 | `description` | string | No | Task description, supports markdown (max 10000 chars) |
-| `column` | string | No | Target column name (case-insensitive). Defaults to To Do. |
-| `branchName` | string | No | Custom git branch name |
-| `baseBranch` | string | No | Base branch for the task |
-| `useWorktree` | boolean | No | Whether to use a git worktree |
+| `column` | string | No | Target column name (case-insensitive). Defaults to To Do. Pass `"Backlog"` to route to the backlog staging area instead of the board. |
+| `priority` | number | No | Priority: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent. Applies to both board tasks and backlog items. |
+| `labels` | array | No | Labels for categorization. Each entry is a string or `{ name, color }` object with hex color. Applies to both board tasks and backlog items. |
+| `branchName` | string | No | Custom git branch name. Board tasks only - ignored when routed to the backlog. |
+| `baseBranch` | string | No | Base branch for the task. Board tasks only. |
+| `useWorktree` | boolean | No | Whether to use a git worktree. Board tasks only. |
 | `attachments` | array | No | File attachments: `[{ filePath: string, filename?: string }]`. Files are read from disk and stored in the project's `.kangentic/` directory. |
 
-If the target column has `auto_spawn` enabled, creating a task there will also spawn an agent session for it.
+If the target column has `auto_spawn` enabled, creating a task there will also spawn an agent session for it. Backlog items never auto-spawn.
 
-Rate limit: 50 task creations per session.
+Rate limit: 50 task creations per session (shared across board and backlog).
 
 ### kangentic_list_columns
 
@@ -201,20 +203,6 @@ List items in the backlog staging area. Items have priority levels and labels fo
 |-----------|------|----------|-------------|
 | `priority` | number | No | Filter by priority: 0=none, 1=low, 2=medium, 3=high, 4=urgent |
 | `query` | string | No | Search keyword to filter by title, description, or labels |
-
-### kangentic_create_backlog_task
-
-Create a new task in the backlog staging area for work not yet ready for the board.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `title` | string | Yes | Task title (max 200 chars) |
-| `description` | string | No | Task description, supports markdown (max 10000 chars) |
-| `priority` | number | No | Priority: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent |
-| `labels` | array | No | String labels for categorization |
-| `attachments` | array | No | File attachments: `[{ filePath: string, filename?: string }]` |
-
-Rate limit: shared with task creation (50 per session).
 
 ### kangentic_search_backlog
 

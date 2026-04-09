@@ -4,6 +4,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
+import { handleCreateBacklogTask } from './backlog-commands';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type { TaskUpdateInput } from '../../../shared/types';
 
@@ -18,9 +19,38 @@ export const handleCreateTask: CommandHandler = (
   const baseBranch = params.baseBranch as string | null;
   const useWorktree = params.useWorktree as boolean | null;
   const attachments = params.attachments as Array<{ filePath: string; filename?: string }> | null;
+  const priority = params.priority as number | null;
+  const rawLabels = params.labels as Array<string | { name: string; color?: string }> | null;
 
   if (!title.trim()) {
     return { success: false, error: 'Task title is required' };
+  }
+
+  // Backlog routing: column="Backlog" (case-insensitive) creates a backlog
+  // item instead of a board task. The default (no column) always goes to the
+  // To Do column on the active board, never the backlog.
+  if (columnName && columnName.trim().toLowerCase() === 'backlog') {
+    return handleCreateBacklogTask({ ...params, priority: priority ?? 0 }, context);
+  }
+
+  // Normalize labels: extract names for DB storage and colors for config
+  const labelNames: string[] = [];
+  const labelColorMap: Record<string, string> = {};
+  if (rawLabels) {
+    for (const entry of rawLabels) {
+      if (typeof entry === 'string') {
+        labelNames.push(entry);
+      } else if (entry && typeof entry === 'object' && entry.name) {
+        labelNames.push(entry.name);
+        if (entry.color) {
+          labelColorMap[entry.name] = entry.color;
+        }
+      }
+    }
+  }
+
+  if (priority !== null && priority !== undefined && (priority < 0 || priority > 4)) {
+    return { success: false, error: 'Priority must be 0-4 (0=none, 1=low, 2=medium, 3=high, 4=urgent)' };
   }
 
   const db = context.getProjectDb();
@@ -39,7 +69,14 @@ export const handleCreateTask: CommandHandler = (
     ...(baseBranch ? { baseBranch } : {}),
     ...(useWorktree !== null ? { useWorktree } : {}),
     ...(branchName ? { customBranchName: branchName } : {}),
+    ...(labelNames.length > 0 ? { labels: labelNames } : {}),
+    ...(priority !== null && priority !== undefined ? { priority } : {}),
   });
+
+  // Persist label colors to config if any were provided
+  if (Object.keys(labelColorMap).length > 0) {
+    context.onLabelColorsChanged(labelColorMap);
+  }
 
   // Process file attachments if provided
   if (attachments && attachments.length > 0) {

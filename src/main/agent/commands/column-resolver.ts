@@ -33,7 +33,9 @@ export function resolveColumn(
     );
     if (!matched) {
       const available = allSwimlanes.map((lane) => lane.name).join(', ');
-      return { error: `Column "${columnName}" not found. Available columns: ${available}` };
+      return {
+        error: `Column "${columnName}" not found. Available columns: ${available}. (Backlog is not a board column - pass column: "Backlog" to create_task to create a backlog item.)`,
+      };
     }
     swimlane = matched;
   }
