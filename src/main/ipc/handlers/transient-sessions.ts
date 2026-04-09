@@ -89,6 +89,8 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       statusOutputPath,
       eventsOutputPath,
       mcpServerEnabled: config.mcpServer.enabled,
+      mcpServerUrl: context.mcpServerHandle?.urlForProject(input.projectId),
+      mcpServerToken: context.mcpServerHandle?.token,
     });
 
     const session = await context.sessionManager.spawn({

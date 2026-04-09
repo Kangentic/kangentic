@@ -6,8 +6,8 @@ import type { ConfigManager } from '../config/config-manager';
 import type { BoardConfigManager } from '../config/board-config-manager';
 import type { GitDetector } from '../agent/git-detector';
 import type { ShellResolver } from '../pty/shell-resolver';
-import type { CommandBridge } from '../agent/command-bridge';
 import type { CommandInjector } from '../engine/command-injector';
+import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 
 export interface IpcContext {
   mainWindow: BrowserWindow;
@@ -21,5 +21,10 @@ export interface IpcContext {
   commandInjector: CommandInjector;
   currentProjectId: string | null;
   currentProjectPath: string | null;
-  externalCommandBridge: CommandBridge | null;
+  /**
+   * In-process MCP HTTP server handle. Set once at app startup before
+   * any project opens; null only during the brief startup window before
+   * the server has bound its port.
+   */
+  mcpServerHandle: McpHttpServerHandle | null;
 }

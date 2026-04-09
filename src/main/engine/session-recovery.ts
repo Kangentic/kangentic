@@ -44,6 +44,7 @@ export async function recoverSessions(
   sessionManager: SessionManager,
   configManager: ConfigManager,
   projectDefaultAgent?: string | null,
+  mcpServerHandle?: import('../agent/mcp-http-server').McpHttpServerHandle | null,
 ): Promise<void> {
   if (isShuttingDown()) return;
 
@@ -289,6 +290,8 @@ export async function recoverSessions(
         eventsOutputPath,
         shell: resolvedShell,
         mcpServerEnabled: config.mcpServer?.enabled ?? true,
+        mcpServerUrl: mcpServerHandle?.urlForProject(projectId),
+        mcpServerToken: mcpServerHandle?.token,
       });
 
       spawnInputs.push({
@@ -408,6 +411,7 @@ export async function reconcileSessions(
   sessionManager: SessionManager,
   configManager: ConfigManager,
   projectDefaultAgent?: string | null,
+  mcpServerHandle?: import('../agent/mcp-http-server').McpHttpServerHandle | null,
 ): Promise<void> {
   if (isShuttingDown()) return;
 
@@ -570,6 +574,8 @@ export async function reconcileSessions(
           eventsOutputPath,
           shell: resolvedShell,
           mcpServerEnabled: config.mcpServer?.enabled ?? true,
+          mcpServerUrl: mcpServerHandle?.urlForProject(projectId),
+          mcpServerToken: mcpServerHandle?.token,
         });
 
         spawnInputs.push({

@@ -3,7 +3,9 @@ const PROCESS_START = performance.now();
 import { app, BrowserWindow, clipboard, Menu, nativeImage } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
-import { registerAllIpc, getSessionManager, getCommandInjector, getBoardConfigManager, getCurrentProjectId, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
+import { registerAllIpc, getSessionManager, getCommandInjector, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
+import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
+import { buildCommandContextForProject } from './agent/mcp-project-context';
 import { IPC } from '../shared/ipc-channels';
 import { ConfigManager } from './config/config-manager';
 import { isShuttingDown, setShuttingDown } from './shutdown-state';
@@ -87,6 +89,7 @@ if (!isEphemeral) {
 
 let mainWindow: BrowserWindow | null = null;
 let activateAllProjectsTimer: ReturnType<typeof setTimeout> | null = null;
+let mcpServerHandle: McpHttpServerHandle | null = null;
 
 // Parse --cwd=<path> from command line args
 function getCwdArg(): string | null {
@@ -178,7 +181,7 @@ const createWindow = () => {
   // Register IPC handlers early so speculative preloading (below) can use them.
   // Idempotent: on macOS dock re-activation, the guard in registerAllIpc()
   // updates the window reference without re-registering handlers.
-  registerAllIpc(mainWindow);
+  registerAllIpc(mainWindow, mcpServerHandle);
 
   // Native right-click context menu (Copy / Paste / Select All).
   // xterm.js renders to canvas/WebGL -- standard DOM copy/selectAll don't
@@ -377,6 +380,33 @@ app.whenReady().then(async () => {
   // Must run before createWindow() which triggers session recovery.
   ensureSpawnHelperPermissions();
 
+  // Start the in-process MCP HTTP server BEFORE createWindow so the URL
+  // is available when projects.ts writes per-project mcp-config.json
+  // and command-builder writes per-session mcp.json. Bound to 127.0.0.1
+  // only -- no firewall prompt, no exposure to other machines.
+  //
+  // The factory passed in here is the only path that resolves a project
+  // ID to a CommandContext. It returns null if (a) the IPC context is
+  // not yet initialized, (b) the global Settings -> MCP Server toggle is
+  // OFF, or (c) the project ID is unknown. Returning null causes the
+  // server to respond 404, which is defense in depth on top of the
+  // mcp-config.json file gating in projects.ts -- a stale config file
+  // from before the toggle was flipped off can never grant access at
+  // runtime.
+  try {
+    mcpServerHandle = await startMcpHttpServer((projectId) => {
+      const ctx = getOptionalIpcContext();
+      if (!ctx) return null;
+      const globalConfig = ctx.configManager.load();
+      if (globalConfig.mcpServer?.enabled === false) return null;
+      return buildCommandContextForProject(ctx, projectId);
+    });
+  } catch (err) {
+    console.error('[APP] Failed to start MCP HTTP server:', err);
+    // Continue without it -- agents will see "Unauthorized" or "Connection
+    // refused" but the rest of the app stays functional.
+  }
+
   createWindow();
   initUpdater(mainWindow!);
 
@@ -456,6 +486,14 @@ function getShutdownDependencies() {
       if (activateAllProjectsTimer) {
         clearTimeout(activateAllProjectsTimer);
         activateAllProjectsTimer = null;
+      }
+      // Stop accepting new MCP requests synchronously. The server's close()
+      // is non-blocking; in-flight requests are abandoned, which is fine
+      // because they're idempotent (the agent will retry on reconnect or
+      // surface an error to the user).
+      if (mcpServerHandle) {
+        mcpServerHandle.close();
+        mcpServerHandle = null;
       }
     },
     isEphemeral,

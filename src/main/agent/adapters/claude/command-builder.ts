@@ -240,13 +240,10 @@ export class CommandBuilder {
       merged.hooks = buildEventHooks(eventBridge, eventsPath, baseSettings.hooks || {});
     }
 
-    // Session directory (used for MCP server paths and merged settings file).
-    // Derived from statusOutputPath so it ALWAYS matches the directory that
-    // SessionFileWatcher derives independently in session-file-watcher.ts. The
-    // two must agree, otherwise the bridge watches one commands.jsonl and the
-    // MCP server writes to another, causing every MCP call to time out.
-    // statusOutputPath is required by every spawn path (transition-engine,
-    // session-recovery, transient-sessions), so the `!` is safe.
+    // Session directory (used for the merged Claude settings file).
+    // Derived from statusOutputPath which is required by every spawn path
+    // (transition-engine, session-recovery, transient-sessions), so the
+    // `!` is safe.
     const sessionDir = path.dirname(options.statusOutputPath!);
 
     try {
@@ -256,19 +253,19 @@ export class CommandBuilder {
       throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`);
     }
 
-    // Write kangentic MCP server config to session directory so it can be
-    // passed via --mcp-config flag. This avoids modifying .mcp.json (which
-    // may be tracked in git) and is naturally session-scoped.
-    if (options.mcpServerEnabled !== false) {
-      const mcpServerScript = toForwardSlash(resolveBridgeScript('mcp-server'));
-      const commandsPath = toForwardSlash(path.join(sessionDir, 'commands.jsonl'));
-      const responsesDir = toForwardSlash(path.join(sessionDir, 'responses'));
-
+    // Write the per-session MCP config pointing at the in-process HTTP
+    // MCP server hosted by Kangentic main. The URL contains the project
+    // ID so the server resolves the right CommandContext per request;
+    // the X-Kangentic-Token header gates access. The token is rotated
+    // on every Kangentic launch, so a stale mcp.json from a previous
+    // run can't be reused.
+    if (options.mcpServerEnabled !== false && options.mcpServerUrl && options.mcpServerToken) {
       const mcpConfig = {
         mcpServers: {
           kangentic: {
-            command: 'node',
-            args: [mcpServerScript, commandsPath, responsesDir],
+            type: 'http' as const,
+            url: options.mcpServerUrl,
+            headers: { 'X-Kangentic-Token': options.mcpServerToken },
           },
         },
       };

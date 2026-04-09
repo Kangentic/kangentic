@@ -8,6 +8,7 @@ import { WorktreeManager, isGitRepo } from '../../git/worktree-manager';
 import { deepMergeConfig } from '../../../shared/object-utils';
 import { getProjectDb } from '../../db/database';
 import { HandoffRepository } from '../../db/repositories/handoff-repository';
+import { syncProjectMcpConfig } from './projects';
 import type { NotificationInput, AgentCommand, AgentDetectionInfo, HandoffRecord } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
@@ -42,6 +43,15 @@ export function registerSystemHandlers(context: IpcContext): void {
           agentRegistry.getOrThrow(agentName).invalidateDetectionCache();
         }
       });
+    }
+    // If the user toggled the Kangentic MCP Server in Settings, refresh the
+    // current project's mcp-config.json on disk so external Claude sessions
+    // pick up the new state without needing to reopen the project. The
+    // in-process HTTP server itself also reads the toggle per request
+    // (defense in depth -- see startMcpHttpServer factory in main/index.ts),
+    // so even a stale mcp-config.json wouldn't actually grant access.
+    if (config.mcpServer && context.currentProjectId && context.currentProjectPath) {
+      syncProjectMcpConfig(context, context.currentProjectId, context.currentProjectPath);
     }
   });
 

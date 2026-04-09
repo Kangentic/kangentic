@@ -11,10 +11,8 @@ import { TranscriptRepository } from '../../db/repositories/transcript-repositor
 import { WorktreeManager, isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../git/worktree-manager';
 import { agentRegistry } from '../../agent/agent-registry';
 import { getProjectDb, closeProjectDb } from '../../db/database';
-import { CommandBridge } from '../../agent/command-bridge';
 import { PATHS } from '../../config/paths';
-import { ensureGitignore, autoSpawnForTask } from '../helpers';
-import { handleTaskMove } from './task-move';
+import { ensureGitignore } from '../helpers';
 import { searchProjectEntries } from '../helpers/project-entry-search';
 import { trackEvent } from '../../analytics/analytics';
 import { isShuttingDown } from '../../shutdown-state';
@@ -25,6 +23,60 @@ import type { ProjectRepository } from '../../db/repositories/project-repository
 import type { ConfigManager } from '../../config/config-manager';
 
 /**
+ * Sync the project-level MCP config file with the current settings.
+ * Honors the global Settings → MCP Server → Kangentic MCP Server toggle:
+ *
+ * - When enabled: writes `<project>/.kangentic/mcp-config.json` with the
+ *   in-process HTTP MCP server URL + per-launch token. External Claude
+ *   sessions launched via `claude --mcp-config <path>` pick up this file
+ *   and gain the kangentic_* tools.
+ *
+ * - When disabled: deletes any existing file so external Claude sessions
+ *   stop seeing the tools. The HTTP server itself stays bound (it costs
+ *   nothing) -- without a config file, no client knows the URL or token.
+ *
+ * Called from PROJECT_OPEN and from the global config save handler when
+ * the user flips the MCP Server toggle in Settings.
+ */
+export function syncProjectMcpConfig(context: IpcContext, projectId: string, projectPath: string): void {
+  const config = context.configManager.getEffectiveConfig(projectPath);
+  const mcpConfigPath = path.join(projectPath, '.kangentic', 'mcp-config.json');
+  const enabled = config.mcpServer?.enabled ?? true;
+
+  if (!enabled || !context.mcpServerHandle) {
+    try {
+      fs.unlinkSync(mcpConfigPath);
+    } catch (err) {
+      // ENOENT is the common case (toggle was already off, no file to
+      // delete). Anything else (EACCES, EBUSY from a transient antivirus
+      // lock on Windows) means the stale file is still on disk and could
+      // still grant access -- log so the user can investigate.
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') {
+        console.error('[syncProjectMcpConfig] Failed to delete mcp-config.json:', err);
+      }
+    }
+    return;
+  }
+
+  try {
+    fs.mkdirSync(path.dirname(mcpConfigPath), { recursive: true });
+    const mcpConfig = {
+      mcpServers: {
+        kangentic: {
+          type: 'http' as const,
+          url: context.mcpServerHandle.urlForProject(projectId),
+          headers: { 'X-Kangentic-Token': context.mcpServerHandle.token },
+        },
+      },
+    };
+    fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+  } catch (err) {
+    console.error('[syncProjectMcpConfig] Failed to write mcp-config.json:', err);
+  }
+}
+
+/**
  * Detach Kangentic from a project: kill PTY sessions, cleanly remove git
  * worktrees (branches with user code are preserved), strip our injected
  * activity hooks from `.claude/settings.local.json`, remove `.kangentic/`,
@@ -33,10 +85,11 @@ import type { ConfigManager } from '../../config/config-manager';
  * Does NOT touch the `.claude/` directory, git branches, or any user data.
  */
 export async function cleanupProject(context: IpcContext, projectId: string, projectPath: string): Promise<void> {
-  // Detach board config manager and external MCP bridge before cleanup
+  // Detach board config manager. The MCP HTTP server is global to main
+  // and shared across projects -- it has no per-project state to tear
+  // down. Once the project row is removed below, the server's per-request
+  // factory stops resolving CommandContexts for this project.
   context.boardConfigManager.detach();
-  context.externalCommandBridge?.stop();
-  context.externalCommandBridge = null;
 
   // Guard: project path must exist
   if (!fs.existsSync(projectPath)) {
@@ -291,101 +344,12 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   // Always export DB state to kangentic.json so teams can commit it
   context.boardConfigManager.exportFromDb();
 
-  // Start external MCP command bridge so Claude Code sessions running
-  // outside Kangentic can interact with this project's board.
-  // Config file at .kangentic/mcp-config.json (written by scripts/dev.js).
-  if (!isReopen) {
-    context.externalCommandBridge?.stop();
-    const externalBridgeDirectory = path.join(project.path, '.kangentic', '_mcp-bridge');
-    context.externalCommandBridge = new CommandBridge({
-      commandsPath: path.join(externalBridgeDirectory, 'commands.jsonl'),
-      responsesDir: path.join(externalBridgeDirectory, 'responses'),
-      projectId: project.id,
-      getProjectDb: () => getProjectDb(project.id),
-      getProjectPath: () => project.path,
-      onTaskCreated: (task, columnName, swimlaneId) => {
-        if (!context.mainWindow.isDestroyed()) {
-          context.mainWindow.webContents.send(
-            IPC.TASK_CREATED_BY_AGENT, task.id, task.title, columnName, project.id
-          );
-        }
-        // Auto-spawn agent if target column has auto_spawn enabled
-        autoSpawnForTask(context, project.id, task, swimlaneId).catch(err => {
-          console.error('[CommandBridge auto-spawn] Failed:', err);
-        });
-      },
-      onTaskUpdated: (task) => {
-        if (!context.mainWindow.isDestroyed()) {
-          context.mainWindow.webContents.send(
-            IPC.TASK_UPDATED_BY_AGENT, task.id, task.title, project.id
-          );
-        }
-      },
-      onTaskDeleted: (task) => {
-        // Kill PTY session
-        if (task.session_id) {
-          try {
-            context.sessionManager.kill(task.session_id);
-            context.sessionManager.remove(task.session_id);
-          } catch { /* may already be dead */ }
-        }
-        context.sessionManager.removeByTaskId(task.id);
-        // Fire-and-forget: remove worktree + branch
-        if (task.worktree_path) {
-          const worktreeManager = new WorktreeManager(project.path);
-          worktreeManager.withLock(async () => {
-            const removed = await worktreeManager.removeWorktree(task.worktree_path!);
-            if (removed && task.branch_name) {
-              const config = context.configManager.getEffectiveConfig(project.path);
-              if (config.git.autoCleanup) {
-                try { await worktreeManager.pruneWorktrees(); } catch { /* best effort */ }
-                await worktreeManager.removeBranch(task.branch_name);
-              }
-            }
-          }).catch((error) => {
-            console.error(`[MCP delete] Worktree cleanup failed for task ${task.id.slice(0, 8)}:`, error);
-          });
-        }
-        if (!context.mainWindow.isDestroyed()) {
-          context.mainWindow.webContents.send(
-            IPC.TASK_DELETED_BY_AGENT, task.id, task.title, project.id
-          );
-        }
-      },
-      onTaskMove: async (input: { taskId: string; targetSwimlaneId: string; targetPosition: number }) => {
-        await handleTaskMove(context, input, project.id, project.path);
-        // Notify renderer to reload board (handleTaskMove doesn't fire its own IPC notification
-        // because the normal IPC flow assumes the renderer triggered the move).
-        const movedTask = getProjectDb(project.id)
-          .prepare('SELECT id, title FROM tasks WHERE id = ?')
-          .get(input.taskId) as { id: string; title: string } | undefined;
-        if (movedTask && !context.mainWindow.isDestroyed()) {
-          context.mainWindow.webContents.send(
-            IPC.TASK_UPDATED_BY_AGENT, movedTask.id, movedTask.title, project.id
-          );
-        }
-      },
-      onSwimlaneUpdated: (swimlane: { id: string; name: string }) => {
-        if (!context.mainWindow.isDestroyed()) {
-          context.mainWindow.webContents.send(
-            IPC.SWIMLANE_UPDATED_BY_AGENT, swimlane.id, swimlane.name, project.id
-          );
-        }
-      },
-      onBacklogChanged: () => {
-        if (!context.mainWindow.isDestroyed()) {
-          context.mainWindow.webContents.send(IPC.BACKLOG_CHANGED_BY_AGENT, project.id);
-        }
-      },
-      onLabelColorsChanged: (colors) => {
-        context.configManager.save({ backlog: { labelColors: colors } } as Partial<AppConfig>);
-        if (!context.mainWindow.isDestroyed()) {
-          context.mainWindow.webContents.send(IPC.BACKLOG_LABEL_COLORS_CHANGED);
-        }
-      },
-    });
-    context.externalCommandBridge.start();
-  }
+  // Sync the project-level MCP config file with the current settings.
+  // Honors the global Settings → MCP Server → Kangentic MCP Server toggle:
+  // when enabled, writes <project>/.kangentic/mcp-config.json with the
+  // in-process HTTP server URL + per-launch token; when disabled, deletes
+  // any existing file so external Claude sessions stop seeing the tools.
+  syncProjectMcpConfig(context, project.id, project.path);
 
   const config = context.configManager.getEffectiveConfig(project.path);
   context.sessionManager.setMaxConcurrent(config.agent.maxConcurrentSessions);
@@ -401,9 +365,9 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     const sessionRepo = new SessionRepository(db);
     const swimlaneRepo = new SwimlaneRepository(db);
     cleanupStaleResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
-      .then(() => recoverSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent))
+      .then(() => recoverSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
       .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
-      .then(() => reconcileSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent))
+      .then(() => reconcileSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
       .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err));
   }
 
@@ -434,8 +398,8 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       const sessionRepo = new SessionRepository(db);
       const swimlaneRepo = new SwimlaneRepository(db);
       await cleanupStaleResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager);
-      await recoverSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent);
-      await reconcileSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent);
+      await recoverSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle);
+      await reconcileSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle);
     }),
   );
 
@@ -522,9 +486,9 @@ export function registerProjectHandlers(context: IpcContext): void {
       const sessionRepo = new SessionRepository(db);
       const swimlaneRepo = new SwimlaneRepository(db);
       cleanupStaleResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
-        .then(() => recoverSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent))
+        .then(() => recoverSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
         .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
-        .then(() => reconcileSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent))
+        .then(() => reconcileSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
         .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err));
     }
   });

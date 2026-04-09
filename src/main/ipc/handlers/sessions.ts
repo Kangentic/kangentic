@@ -4,13 +4,12 @@ import { withTaskLock } from '../task-lifecycle-lock';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
-import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, autoSpawnForTask } from '../helpers';
-import { WorktreeManager } from '../../git/worktree-manager';
+import { getProjectRepos, ensureTaskWorktree, createTransitionEngine } from '../helpers';
 import { handleTaskMove } from './tasks';
 import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
 import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessionId } from '../../engine/session-lifecycle';
-import type { Session, AppConfig, UsageTimePeriod } from '../../../shared/types';
+import type { Session, UsageTimePeriod } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
 import { computePeriodCutoff } from '../../../shared/period-cutoff';
@@ -429,113 +428,6 @@ export function registerSessionHandlers(context: IpcContext): void {
       } catch {
         // DB may be closed during shutdown
       }
-    }
-  });
-
-  // Forward task-created-by-agent events to renderer and trigger auto_spawn
-  context.sessionManager.on('task-created', async (sessionId: string, task: { id: string; title: string }, columnName: string, swimlaneId: string) => {
-    const projectId = context.sessionManager.getSessionProjectId(sessionId);
-
-    // Notify renderer (board refresh + toast)
-    if (!context.mainWindow.isDestroyed()) {
-      context.mainWindow.webContents.send(IPC.TASK_CREATED_BY_AGENT, task.id, task.title, columnName, projectId);
-    }
-
-    // Auto-spawn: if the target column has auto_spawn, start an agent session
-    if (projectId) {
-      autoSpawnForTask(context, projectId, task, swimlaneId).catch(err => {
-        console.error('[MCP auto-spawn] Failed:', err);
-      });
-    }
-  });
-
-  // Forward task-updated-by-agent events to renderer for board refresh
-  context.sessionManager.on('task-updated', (sessionId: string, task: { id: string; title: string }) => {
-    if (!context.mainWindow.isDestroyed()) {
-      const projectId = context.sessionManager.getSessionProjectId(sessionId);
-      context.mainWindow.webContents.send(IPC.TASK_UPDATED_BY_AGENT, task.id, task.title, projectId);
-    }
-  });
-
-  // Forward task-deleted-by-agent events to renderer for board refresh
-  context.sessionManager.on('task-deleted', (sessionId: string, task: { id: string; title: string; session_id: string | null; worktree_path: string | null; branch_name: string | null }) => {
-    // Kill PTY session if still running
-    if (task.session_id) {
-      try {
-        context.sessionManager.kill(task.session_id);
-        context.sessionManager.remove(task.session_id);
-      } catch { /* may already be dead */ }
-    }
-    context.sessionManager.removeByTaskId(task.id);
-    // Fire-and-forget: remove worktree + branch
-    const projectPath = context.currentProjectPath;
-    if (task.worktree_path && projectPath) {
-      const worktreeManager = new WorktreeManager(projectPath);
-      worktreeManager.withLock(async () => {
-        const removed = await worktreeManager.removeWorktree(task.worktree_path!);
-        if (removed && task.branch_name) {
-          const config = context.configManager.getEffectiveConfig(projectPath);
-          if (config.git.autoCleanup) {
-            try { await worktreeManager.pruneWorktrees(); } catch { /* best effort */ }
-            await worktreeManager.removeBranch(task.branch_name);
-          }
-        }
-      }).catch((error) => {
-        console.error(`[MCP delete] Worktree cleanup failed for task ${task.id.slice(0, 8)}:`, error);
-      });
-    }
-    if (!context.mainWindow.isDestroyed()) {
-      const projectId = context.sessionManager.getSessionProjectId(sessionId);
-      context.mainWindow.webContents.send(IPC.TASK_DELETED_BY_AGENT, task.id, task.title, projectId);
-    }
-  });
-
-  // Task move requested by agent (MCP server move_task)
-  context.sessionManager.on('task-move-requested', async (
-    sessionId: string,
-    input: { taskId: string; targetSwimlaneId: string; targetPosition: number },
-    done: (err: Error | null) => void,
-  ) => {
-    try {
-      const projectId = context.sessionManager.getSessionProjectId(sessionId) ?? null;
-      const projectPath = context.currentProjectPath;
-      await handleTaskMove(context, input, projectId, projectPath);
-      // Notify renderer to reload
-      const movedProjectId = projectId;
-      const projectDb = movedProjectId ? getProjectDb(movedProjectId) : null;
-      const movedTask = projectDb
-        ?.prepare('SELECT id, title FROM tasks WHERE id = ?')
-        .get(input.taskId) as { id: string; title: string } | undefined;
-      if (movedTask && !context.mainWindow.isDestroyed()) {
-        context.mainWindow.webContents.send(IPC.TASK_UPDATED_BY_AGENT, movedTask.id, movedTask.title, movedProjectId);
-      }
-      done(null);
-    } catch (error) {
-      done(error instanceof Error ? error : new Error(String(error)));
-    }
-  });
-
-  // Swimlane updated by agent (MCP server update_column)
-  context.sessionManager.on('swimlane-updated', (sessionId: string, swimlane: { id: string; name: string }) => {
-    if (!context.mainWindow.isDestroyed()) {
-      const projectId = context.sessionManager.getSessionProjectId(sessionId);
-      context.mainWindow.webContents.send(IPC.SWIMLANE_UPDATED_BY_AGENT, swimlane.id, swimlane.name, projectId);
-    }
-  });
-
-  // Backlog changed by agent (MCP server created/promoted backlog tasks)
-  context.sessionManager.on('backlog-changed', (sessionId: string) => {
-    if (!context.mainWindow.isDestroyed()) {
-      const projectId = context.sessionManager.getSessionProjectId(sessionId);
-      context.mainWindow.webContents.send(IPC.BACKLOG_CHANGED_BY_AGENT, projectId);
-    }
-  });
-
-  // Label colors changed by agent (MCP server created labels with colors)
-  context.sessionManager.on('label-colors-changed', (_sessionId: string, colors: Record<string, string>) => {
-    context.configManager.save({ backlog: { labelColors: colors } } as Partial<AppConfig>);
-    if (!context.mainWindow.isDestroyed()) {
-      context.mainWindow.webContents.send(IPC.BACKLOG_LABEL_COLORS_CHANGED);
     }
   });
 

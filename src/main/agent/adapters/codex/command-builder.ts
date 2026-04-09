@@ -17,6 +17,8 @@ export interface CodexCommandOptions {
   eventsOutputPath?: string;
   shell?: string;
   mcpServerEnabled?: boolean;
+  mcpServerUrl?: string;
+  mcpServerToken?: string;
 }
 
 /**

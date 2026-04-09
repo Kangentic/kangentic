@@ -21,6 +21,10 @@ interface TransitionEngineConfig {
   projectId: string;
   gitConfig: AppConfig['git'];
   mcpServerEnabled?: boolean;
+  /** Project-scoped URL for the in-process MCP HTTP server. */
+  mcpServerUrl?: string;
+  /** Per-launch MCP server token (X-Kangentic-Token header). */
+  mcpServerToken?: string;
   defaultAgent: string;
   cliPathOverrides: Record<string, string | null>;
 }
@@ -235,6 +239,8 @@ export class TransitionEngine {
       eventsOutputPath,
       shell,
       mcpServerEnabled: appConfig.mcpServerEnabled,
+      mcpServerUrl: appConfig.mcpServerUrl,
+      mcpServerToken: appConfig.mcpServerToken,
     });
 
     console.log(`[spawnAgent] Command: ${command.slice(0, 120)}...`);

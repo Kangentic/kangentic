@@ -14,7 +14,8 @@ import type { CommandHandler } from './types';
 
 /**
  * Registry mapping command method names to their handler functions.
- * Used by CommandBridge to dispatch incoming commands.
+ * Used by the in-process MCP HTTP server (mcp-http-server.ts) to
+ * dispatch tool calls into the right handler.
  */
 export const commandHandlers: Record<string, CommandHandler> = {
   create_task: handleCreateTask,

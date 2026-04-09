@@ -60,6 +60,8 @@ export function createTransitionEngine(
         projectId,
         gitConfig,
         mcpServerEnabled: config.mcpServer?.enabled ?? true,
+        mcpServerUrl: context.mcpServerHandle?.urlForProject(projectId),
+        mcpServerToken: context.mcpServerHandle?.token,
         defaultAgent: project?.default_agent ?? DEFAULT_AGENT,
         cliPathOverrides: config.agent.cliPaths,
       };

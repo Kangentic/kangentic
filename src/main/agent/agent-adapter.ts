@@ -22,6 +22,10 @@ export interface CommandOptions {
   eventsOutputPath?: string; // path where the event bridge appends JSONL
   shell?: string; // target shell name - controls quoting style (single vs double quotes)
   mcpServerEnabled?: boolean; // whether to enable kangentic MCP server via --mcp-config
+  /** In-process MCP HTTP server URL for this project. Required when mcpServerEnabled is true. */
+  mcpServerUrl?: string;
+  /** Per-launch MCP server token. Sent as the X-Kangentic-Token header. */
+  mcpServerToken?: string;
 }
 
 /** Agent-agnostic spawn options - renames `cliPath` to `agentPath`. */

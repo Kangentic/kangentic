@@ -27,6 +27,8 @@ export interface GeminiCommandOptions {
   eventsOutputPath?: string;
   shell?: string;
   mcpServerEnabled?: boolean;
+  mcpServerUrl?: string;
+  mcpServerToken?: string;
 }
 
 export class GeminiCommandBuilder {

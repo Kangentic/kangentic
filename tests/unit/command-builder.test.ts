@@ -1113,19 +1113,19 @@ describe('Merged Settings -- MCP Server via --mcp-config', () => {
       permissionMode: 'default',
       sessionId: 'mcp-test',
       statusOutputPath: statusOutput,
+      mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project',
+      mcpServerToken: 'deadbeef-test-token',
     });
 
-    // Session mcp.json should exist with kangentic config
+    // Session mcp.json should exist with the in-process HTTP server URL
     const sessionMcpPath = path.join(tmpDir, '.kangentic', 'sessions', 'mcp-test', 'mcp.json');
     expect(fs.existsSync(sessionMcpPath)).toBe(true);
     const mcpConfig = JSON.parse(fs.readFileSync(sessionMcpPath, 'utf-8'));
 
     expect(mcpConfig.mcpServers.kangentic).toBeDefined();
-    expect(mcpConfig.mcpServers.kangentic.command).toBe('node');
-    expect(mcpConfig.mcpServers.kangentic.args).toHaveLength(3);
-    expect(mcpConfig.mcpServers.kangentic.args[0]).toContain('mcp-server');
-    expect(mcpConfig.mcpServers.kangentic.args[1]).toContain('commands.jsonl');
-    expect(mcpConfig.mcpServers.kangentic.args[2]).toContain('responses');
+    expect(mcpConfig.mcpServers.kangentic.type).toBe('http');
+    expect(mcpConfig.mcpServers.kangentic.url).toBe('http://127.0.0.1:54321/mcp/test-project');
+    expect(mcpConfig.mcpServers.kangentic.headers['X-Kangentic-Token']).toBe('deadbeef-test-token');
 
     // --mcp-config flag should be in the command
     expect(cmd).toContain('--mcp-config');
@@ -1133,6 +1133,28 @@ describe('Merged Settings -- MCP Server via --mcp-config', () => {
 
     // .mcp.json in CWD should NOT be created or modified
     expect(fs.existsSync(path.join(tmpDir, '.mcp.json'))).toBe(false);
+  });
+
+  it('omits session mcp.json when mcpServerUrl/Token are missing', () => {
+    const builder = new CommandBuilder();
+    const statusOutput = path.join(tmpDir, '.kangentic', 'sessions', 'no-url', 'status.json');
+    fs.mkdirSync(path.dirname(statusOutput), { recursive: true });
+
+    builder.buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: 'no-url-task',
+      cwd: tmpDir,
+      permissionMode: 'default',
+      sessionId: 'no-url',
+      statusOutputPath: statusOutput,
+      // mcpServerUrl/mcpServerToken intentionally omitted -- main process
+      // hasn't published the HTTP server URL yet, so the session should
+      // spawn without an MCP config and the agent should see no kangentic
+      // tools rather than trying to hit a dead URL.
+    });
+
+    const sessionMcpPath = path.join(tmpDir, '.kangentic', 'sessions', 'no-url', 'mcp.json');
+    expect(fs.existsSync(sessionMcpPath)).toBe(false);
   });
 
   it('omits --mcp-config flag and session mcp.json when mcpServerEnabled is false', () => {

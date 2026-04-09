@@ -175,23 +175,13 @@ export class SessionManager extends EventEmitter {
       },
     });
 
-    this.fileWatcher = new SessionFileWatcher({
-      onTaskCreated: (sessionId, task, columnName, swimlaneId) => this.emit('task-created', sessionId, task, columnName, swimlaneId),
-      onTaskUpdated: (sessionId, task) => this.emit('task-updated', sessionId, task),
-      onTaskDeleted: (sessionId, task) => this.emit('task-deleted', sessionId, task),
-      onTaskMove: (sessionId, input) => {
-        // Forward to listener that calls handleTaskMove. Returns a promise so the
-        // CommandBridge handler can await completion before responding.
-        return new Promise<void>((resolve, reject) => {
-          this.emit('task-move-requested', sessionId, input, (err: Error | null) => {
-            if (err) reject(err); else resolve();
-          });
-        });
-      },
-      onSwimlaneUpdated: (sessionId, swimlane) => this.emit('swimlane-updated', sessionId, swimlane),
-      onBacklogChanged: (sessionId) => this.emit('backlog-changed', sessionId),
-      onLabelColorsChanged: (sessionId, colors) => this.emit('label-colors-changed', sessionId, colors),
-    });
+    // SessionFileWatcher is now a thin path-cleanup tracker -- the
+    // per-session command bridge it used to host has been replaced by
+    // the in-process MCP HTTP server (mcp-http-server.ts), so no
+    // callbacks are needed. The previous task-{created,updated,deleted,
+    // move,...} EventEmitter wiring lives directly on the HTTP server's
+    // CommandContext now (see mcp-project-context.ts).
+    this.fileWatcher = new SessionFileWatcher();
   }
 
   setMaxConcurrent(max: number): void {
@@ -526,8 +516,6 @@ export class SessionManager extends EventEmitter {
     this.bufferManager.initSession(id, previousScrollback, 0);
     this.fileWatcher.startAll({
       sessionId: id,
-      projectId: session.projectId,
-      cwd: effectiveCwd,
       statusOutputPath: input.statusOutputPath || null,
     });
     this.usageTracker.initSession(id, input.agentParser);

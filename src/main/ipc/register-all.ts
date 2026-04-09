@@ -26,6 +26,7 @@ import { registerSystemHandlers } from './handlers/system';
 import { registerBacklogHandlers } from './handlers/backlog';
 import { registerGitDiffHandlers } from './handlers/git-diff';
 import type { IpcContext } from './ipc-context';
+import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 
 let context: IpcContext | null = null;
 
@@ -34,12 +35,22 @@ function requireContext(): IpcContext {
   return context;
 }
 
-export function registerAllIpc(mainWindow: BrowserWindow): void {
+/**
+ * Returns the live IpcContext if it has been initialized, otherwise null.
+ * Used by the in-process MCP HTTP server to look up the current project
+ * context per request without throwing during the startup window.
+ */
+export function getOptionalIpcContext(): IpcContext | null {
+  return context;
+}
+
+export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHttpServerHandle | null = null): void {
   // Idempotent: on macOS, activate → createWindow() may call this again.
   // Just update the window reference and return. ipcMain.handle calls
   // must NOT run twice (throws "Attempted to register a second handler").
   if (context) {
     context.mainWindow = mainWindow;
+    if (mcpServerHandle) context.mcpServerHandle = mcpServerHandle;
     return;
   }
 
@@ -84,7 +95,7 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
     commandInjector,
     currentProjectId: null,
     currentProjectPath: null,
-    externalCommandBridge: null,
+    mcpServerHandle,
   };
 
   registerProjectHandlers(context);

@@ -12,5 +12,15 @@
   <true/>
   <key>com.apple.security.network.client</key>
   <true/>
+  <!--
+    Required to bind the in-process MCP HTTP server's loopback listener
+    (src/main/agent/mcp-http-server.ts). Hardened runtime denies inbound
+    network sockets without this entitlement, even on 127.0.0.1, so
+    signed/notarized builds would fail to start the MCP server. Without
+    it, every kangentic_* MCP tool call from a Claude Code session
+    spawned by Kangentic would error out at request time.
+  -->
+  <key>com.apple.security.network.server</key>
+  <true/>
 </dict>
 </plist>

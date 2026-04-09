@@ -97,42 +97,17 @@ async function start() {
       entryPoints: [path.join(projectDir, 'src/preload/preload.ts')],
       outfile: path.join(projectDir, '.vite/build/preload.js'),
     }),
-    // MCP server: TypeScript, must be bundled (runs in external node process spawned by Claude Code)
-    esbuild.build({
-      bundle: true,
-      platform: 'node',
-      target: 'node24',
-      format: 'cjs',
-      entryPoints: [path.join(projectDir, 'src/main/agent/mcp-server.ts')],
-      outfile: path.join(projectDir, '.vite/build/mcp-server.js'),
-      sourcemap: true,
-    }),
   ]);
   console.timeEnd('[dev] esbuild');
   console.log('[dev] Main + preload built');
 
-  // Write MCP config so external Claude Code sessions can interact with
-  // this instance's board via: claude --mcp-config .kangentic/mcp-config.json
-  const bridgeDir = path.join(projectDir, '.kangentic', '_mcp-bridge');
-  fs.mkdirSync(bridgeDir, { recursive: true });
-  const mcpConfig = {
-    mcpServers: {
-      kangentic: {
-        command: 'node',
-        args: [
-          path.join(projectDir, '.vite', 'build', 'mcp-server.js').replace(/\\/g, '/'),
-          path.join(bridgeDir, 'commands.jsonl').replace(/\\/g, '/'),
-          path.join(bridgeDir, 'responses').replace(/\\/g, '/'),
-        ],
-      },
-    },
-  };
-  fs.writeFileSync(
-    path.join(projectDir, '.kangentic', 'mcp-config.json'),
-    JSON.stringify(mcpConfig, null, 2)
-  );
-  console.log('[dev] MCP config written to .kangentic/mcp-config.json');
-  console.log('[dev] Use with: claude --mcp-config .kangentic/mcp-config.json');
+  // The MCP server is now hosted in-process by Electron main (see
+  // src/main/agent/mcp-http-server.ts), so we no longer need to bundle a
+  // standalone mcp-server.js or pre-write a project-level mcp-config.json
+  // here. The main process writes <project>/.kangentic/mcp-config.json
+  // on every project open with the live HTTP URL + per-launch token,
+  // which is what `claude --mcp-config .kangentic/mcp-config.json`
+  // consumes from outside Kangentic.
   if (coldCache) {
     console.log('[dev] Vite cache is cold -- warming up will take longer while Vite optimizes dependencies...');
   }

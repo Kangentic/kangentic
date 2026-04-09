@@ -1,57 +1,27 @@
 import fs from 'node:fs';
-import path from 'node:path';
-import { CommandBridge } from '../agent/command-bridge';
-import { getProjectDb } from '../db/database';
-import type { Task, Swimlane } from '../../shared/types';
-
-interface SessionFileWatcherCallbacks {
-  onTaskCreated(sessionId: string, task: Task, columnName: string, swimlaneId: string): void;
-  onTaskUpdated(sessionId: string, task: Task): void;
-  onTaskDeleted(sessionId: string, task: Task): void;
-  onTaskMove(sessionId: string, input: { taskId: string; targetSwimlaneId: string; targetPosition: number }): Promise<void>;
-  onSwimlaneUpdated(sessionId: string, swimlane: Swimlane): void;
-  onBacklogChanged(sessionId: string): void;
-  onLabelColorsChanged(sessionId: string, colors: Record<string, string>): void;
-}
 
 interface WatcherState {
-  commandBridge: CommandBridge | null;
   mergedSettingsPath: string | null;
   sessionDir: string | null;
 }
 
 /**
- * Manages per-session non-telemetry infrastructure: the MCP command
- * bridge for agent → Kangentic task operations, plus cleanup of the
- * merged Claude hook settings file and the per-session directory.
+ * Tracks per-session merged settings + session directory paths so
+ * `cleanupAndRemove` can delete them on session exit.
  *
- * Telemetry file watching (status.json, events.jsonl) is owned by
- * StatusFileReader, not this class. This class stays out of the
- * telemetry pipeline entirely.
+ * MCP server communication runs over the in-process HTTP server at
+ * `src/main/agent/mcp-http-server.ts` -- this class no longer carries
+ * any per-session command bridge state. Telemetry file watching
+ * (status.json, events.jsonl) is owned by StatusFileReader, not here.
  */
 export class SessionFileWatcher {
   private watchers = new Map<string, WatcherState>();
-  private callbacks: SessionFileWatcherCallbacks;
 
-  constructor(callbacks: SessionFileWatcherCallbacks) {
-    this.callbacks = callbacks;
-  }
-
-  /**
-   * Start the MCP command bridge for a session and record the paths
-   * that `cleanupAndRemove` is responsible for deleting on shutdown.
-   *
-   * `statusOutputPath` is used only to derive the session directory
-   * (via path.dirname) - the actual status.json watching belongs to
-   * StatusFileReader.
-   */
   startAll(info: {
     sessionId: string;
-    projectId: string;
-    cwd: string;
     statusOutputPath: string | null;
   }): void {
-    const { sessionId, projectId, statusOutputPath } = info;
+    const { sessionId, statusOutputPath } = info;
 
     // Derive session dir + merged settings path from statusOutputPath.
     // statusOutputPath = <project>/.kangentic/sessions/<sessionId>/status.json
@@ -63,62 +33,15 @@ export class SessionFileWatcher {
       mergedSettingsPath = sessionDir + '/settings.json';
     }
 
-    const state: WatcherState = {
-      commandBridge: null,
-      mergedSettingsPath,
-      sessionDir,
-    };
-    this.watchers.set(sessionId, state);
-
-    // Start command bridge for MCP server communication (if session dir exists)
-    if (sessionDir) {
-      const commandsPath = path.join(sessionDir, 'commands.jsonl');
-      const responsesDir = path.join(sessionDir, 'responses');
-
-      // Derive project path from statusOutputPath pattern:
-      // <projectPath>/.kangentic/sessions/<sessionId>/status.json
-      const projectPath = path.resolve(sessionDir, '..', '..', '..');
-
-      state.commandBridge = new CommandBridge({
-        commandsPath,
-        responsesDir,
-        projectId,
-        getProjectDb: () => getProjectDb(projectId),
-        getProjectPath: () => projectPath,
-        onTaskCreated: (task, columnName, swimlaneId) => {
-          this.callbacks.onTaskCreated(sessionId, task, columnName, swimlaneId);
-        },
-        onTaskUpdated: (task) => {
-          this.callbacks.onTaskUpdated(sessionId, task);
-        },
-        onTaskDeleted: (task) => {
-          this.callbacks.onTaskDeleted(sessionId, task);
-        },
-        onTaskMove: (input) => {
-          return this.callbacks.onTaskMove(sessionId, input);
-        },
-        onSwimlaneUpdated: (swimlane) => {
-          this.callbacks.onSwimlaneUpdated(sessionId, swimlane);
-        },
-        onBacklogChanged: () => {
-          this.callbacks.onBacklogChanged(sessionId);
-        },
-        onLabelColorsChanged: (colors) => {
-          this.callbacks.onLabelColorsChanged(sessionId, colors);
-        },
-      });
-      state.commandBridge.start();
-    }
+    this.watchers.set(sessionId, { mergedSettingsPath, sessionDir });
   }
 
-  /** Stop the command bridge but preserve session files on disk. */
-  stopAll(sessionId: string): void {
-    const state = this.watchers.get(sessionId);
-    if (!state) return;
-
-    state.commandBridge?.stop();
-    state.commandBridge = null;
-  }
+  /**
+   * No-op kept for call-site compatibility with `session-manager`. The
+   * MCP server is global to main and not per-session, so there's nothing
+   * to stop on a per-session basis.
+   */
+  stopAll(_sessionId: string): void {}
 
   /**
    * Null out the merged settings path + session dir to prevent onExit

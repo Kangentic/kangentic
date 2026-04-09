@@ -63,19 +63,9 @@ async function build() {
   );
   console.log('[build] Copied status-bridge.js + event-bridge.js');
 
-  // Bundle MCP server (TypeScript, must be bundled -- runs in external node process)
-  console.log('[build] Bundling mcp-server.ts...');
-  await esbuild.build({
-    bundle: true,
-    platform: 'node',
-    target: 'node24',
-    format: 'cjs',
-    entryPoints: [path.join(projectDir, 'src/main/agent/mcp-server.ts')],
-    outfile: path.join(projectDir, '.vite/build/mcp-server.js'),
-    sourcemap: false,
-    minify: true,
-  });
-  console.log('[build] MCP server bundled');
+  // The kangentic MCP server now runs in-process inside Electron main
+  // (see src/main/agent/mcp-http-server.ts), so we no longer bundle a
+  // standalone mcp-server.js for Claude Code to spawn as a child.
 
   console.log('[build] Done! Output in .vite/build/');
 }
