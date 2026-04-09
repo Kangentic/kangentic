@@ -153,23 +153,24 @@ The SessionManager tracks a `subagentDepth` counter per session:
 
 Two guards protect against incorrect state transitions when subagents are running:
 
-**Guard 1: idle → thinking suppression** (prevents subagent tool events from overriding idle)
+**Guard 1: idle → thinking suppression** (`suppressSubagentWakeDuringPermission`, prevents a subagent tool event from waking the state while a permission is still pending)
 
 | Condition | Result | Why |
 |-----------|--------|-----|
 | Event is `prompt` | **Allow** | User responded -- always reliable |
 | Event is `subagent_start` | **Allow** | Main agent spawning -- always reliable |
 | Subagent depth = 0 | **Allow** | No subagents running, so this `tool_start` is from the main agent |
-| Subagent depth > 0 | **Suppress** | The `tool_start` is likely from a still-running subagent (even after permission approval) |
+| `permissionIdle` is false | **Allow** | No permission outstanding -- the wake is legitimate |
+| All of: depth > 0, `permissionIdle` true | **Suppress** | Showing "thinking" would hide a still-pending permission prompt |
 
-When idle is caused by a `PermissionRequest` (detail='permission'), a `permissionIdle` flag is set on the session. Guard 1 does NOT bypass suppression at depth > 0 -- permission idle stays sticky while subagents are active. Recovery happens naturally when subagents finish (depth returns to 0) and the next `tool_start` transitions to thinking.
+Guard 1 only fires while `permissionIdle` is true. Once the `pendingPermissions` counter drains to zero via matching `tool_end` events (see "Permission idle recovery" below), `permissionIdle` is cleared and the next subagent `tool_start` cleanly wakes the state.
 
-**Guard 2: thinking → idle suppression** (prevents main agent Stop from showing idle while subagents work)
+**Guard 2: thinking → idle suppression** (`deferStopUntilSubagentFinishes`, prevents main agent Stop from showing idle while subagents work)
 
 | Condition | Result | Why |
 |-----------|--------|-----|
 | Event is `interrupted` | **Allow** | User pressed Escape -- always goes through |
-| Event detail is `permission` | **Allow** | Permission prompt blocks everything -- user must see idle immediately |
+| Event detail is `IdleReason.Permission` | **Allow** | Permission prompt blocks everything -- user must see idle immediately |
 | Subagent depth = 0 | **Allow** | No subagents running, genuine idle |
 | Subagent depth > 0 | **Defer** | Set `pendingIdleWhileSubagent` flag, emit idle when last subagent finishes |
 
@@ -177,14 +178,14 @@ When idle is caused by a `PermissionRequest` (detail='permission'), a `permissio
 - When Guard 2 suppresses an idle transition, it sets a `pendingIdleWhileSubagent` flag
 - On `subagent_stop`, if depth reaches 0 and the flag is set, emit idle
 - The flag is cleared when the main agent resumes thinking (`prompt`, `subagent_start`, or `tool_start` at depth 0)
-- Permission idles (`detail: 'permission'`) also clear the pending flag to prevent stale deferred idles after approval
+- Permission idles (`IdleReason.Permission`) also clear the pending flag to prevent stale deferred idles after approval
 
-**Permission idle recovery:**
-- When idle is caused by `PermissionRequest` (detail='permission'), a `permissionIdle` flag is set on the session
-- At depth > 0, permission idle stays sticky -- subagent tool_starts are suppressed just like normal idle
-- Recovery happens when depth returns to 0 (all subagents finish) and the next `tool_start` at depth 0 transitions to thinking
-- The flag is cleared when the transition to thinking occurs
-- Permission idles also clear the `pendingIdleWhileSubagent` flag to prevent stale deferred idles
+**Permission idle recovery (`pendingPermissions` counter):**
+- When idle is caused by `PermissionRequest` (event detail = `IdleReason.Permission`), a `permissionIdle` flag is set and a `pendingPermissions` counter increments (at `subagentDepth <= 1` only)
+- Each subsequent `tool_end` event at depth <= 1 decrements the counter while `permissionIdle` is true
+- When the counter drains to zero **from a positive value**, `permissionIdle` clears and the next subagent `tool_start` cleanly wakes the state (Guard 1 no longer suppresses)
+- At `depth >= 2` the counter is frozen (increments and decrements are gated) -- we cannot tell which subagent's `tool_end` balances which permission, so the conservative sticky behavior is preserved until depth returns to 0
+- The counter never decrements from 0: a `tool_end` with counter already at 0 is either (a) a permission fired at `depth >= 2` that was never counted, or (b) an orphan event. Clearing `permissionIdle` in that case would prematurely wake a still-pending permission
 
 **Heartbeat recovery (safety net):**
 - Claude Code's `status.json` contains cumulative token counts (`totalInputTokens`, `totalOutputTokens`) that only increase during active model inference
@@ -198,27 +199,44 @@ When idle is caused by a `PermissionRequest` (detail='permission'), a `permissio
 - If no signal (hook event or status.json update) has arrived for 45 seconds, the session transitions to idle
 - **Pending tool suppression:** If any tools are in-flight (`pendingToolCount > 0`), the timer resets instead of transitioning to idle. This prevents false idle during long-running tools (e.g. `npm run build`, `npx playwright test`) and subagent executions (the `Agent` tool stays pending for the entire subagent lifetime). The timer resumes normal behavior once all tools complete.
 - This catches cases where hooks fail to fire (e.g. Ctrl+C during model inference, not during a tool call, so no `PostToolUseFailure` hook fires)
-- A synthetic `idle` event with `detail: 'timeout'` is emitted to the activity log so the user can see why it went idle
+- A synthetic `idle` event with `detail: IdleReason.Timeout` is emitted to the activity log so the user can see why it went idle
 - Any subsequent event or usage update resets the 45-second timer
 - The timer only checks running sessions in the `thinking` state; idle sessions are ignored
 - **Nucleation guard:** Sessions that have never received usage data (no `usageCache` entry) are skipped by the stale timer. During nucleation, Claude Code reads local context before making API calls. No hooks fire and no `status.json` exists, so the 45s threshold would falsely trigger. Once the first API response arrives and `status.json` is written, the normal timer applies.
 
 ### Scenarios
 
-1. **Permission prompt + subagents running:** Permission idle bypasses Guard 2 → card shows idle immediately. `permissionIdle` flag is set. Subagent tool events remain suppressed (permission idle is sticky at depth > 0). When subagents finish (depth 0), next `tool_start` transitions to thinking (correct)
-2. **Permission approved + no subagents:** Next `tool_start` at depth 0 transitions to thinking via Guard 1 (correct)
-3. **Permission approved + subagents still running:** Card stays idle while subagents work (tool_starts suppressed at depth > 0). Recovery happens when depth returns to 0 (correct)
-4. **False idle with no event recovery:** Heartbeat detects token increase after 1s idle → card transitions to thinking (correct)
-5. **Long-running tool (e.g. npm run build):** `tool_start` fires at launch, no events during execution, `tool_end` fires on completion. `pendingToolCount > 0` suppresses the stale thinking timer throughout. Card stays thinking (correct)
-6. **Subagent thinking gap:** Agent tool_start fires at subagent launch. Subagent thinks for >45s between its own tool calls. `pendingToolCount > 0` (Agent tool still pending) suppresses the timer. Card stays thinking (correct)
-7. **Ctrl+C during model inference (no tool running):** No hook fires; stale thinking timer detects 45s without signals → card transitions to idle with `detail: 'timeout'` (correct)
-8. **User sends new message:** `prompt` always transitions regardless of depth (correct)
-9. **Main agent spawns subagent then fires Stop:** Idle suppressed, card stays thinking while subagent works (correct)
-10. **Last subagent finishes after deferred idle:** Card transitions to idle when depth reaches 0 (correct)
-11. **User presses Escape while subagents run:** `interrupted` always goes through, card shows idle immediately (correct)
-12. **Prompt fires while idle is deferred:** Pending flag cleared, no stale idle emitted when subagents finish (correct)
-13. **Nested subagents with deferred idle:** Idle only emits when ALL subagents finish (depth 0), not on intermediate stops (correct)
-14. **Long nucleation (no API call yet):** Session stays thinking throughout nucleation. Stale timer skipped because `usageCache` has no entry. Once first API response writes `status.json`, normal 45s timer applies (correct)
+1. **Permission prompt + subagents running:** Permission idle bypasses Guard 2 → card shows idle immediately. `permissionIdle` flag is set and `pendingPermissions` increments (at depth <= 1). Subagent tool_starts remain suppressed by Guard 1 while the counter is non-zero (correct)
+2. **Permission approved + subagent continues:** Each matching `tool_end` at depth <= 1 decrements the counter. When the last counted permission's `tool_end` fires, `permissionIdle` clears. The next subagent `tool_start` wakes the state to thinking -- no need to wait for depth to return to 0 (correct)
+3. **Multiple parallel permissions at depth 1:** Each `idle/permission` event increments the counter; each corresponding `tool_end` decrements it. The state wakes only after the LAST counted permission resolves, not the first -- partially-granted permissions keep the card idle (correct)
+4. **Permission at depth >= 2 (nested subagent):** The counter is frozen (increments and decrements are gated). `permissionIdle` is still set by the transition, so Guard 1 suppresses wake attempts. Recovery waits for depth to return to 0 and the next wake event (conservative but correct for the ambiguous multi-subagent case)
+5. **False idle with no event recovery:** Heartbeat detects token increase after 1s idle → card transitions to thinking (correct)
+6. **Long-running tool (e.g. npm run build):** `tool_start` fires at launch, no events during execution, `tool_end` fires on completion. `pendingToolCount > 0` suppresses the stale thinking timer throughout. Card stays thinking (correct)
+7. **Subagent thinking gap:** Agent tool_start fires at subagent launch. Subagent thinks for >45s between its own tool calls. `pendingToolCount > 0` (Agent tool still pending) suppresses the timer. Card stays thinking (correct)
+8. **Ctrl+C during model inference (no tool running):** No hook fires; stale thinking timer detects 45s without signals → card transitions to idle with `detail: IdleReason.Timeout` (correct)
+9. **User sends new message:** `prompt` always transitions regardless of depth (correct)
+10. **Main agent spawns subagent then fires Stop:** Idle suppressed, card stays thinking while subagent works (correct)
+11. **Last subagent finishes after deferred idle:** Card transitions to idle when depth reaches 0 (correct)
+12. **User presses Escape while subagents run:** `interrupted` always goes through, card shows idle immediately (correct)
+13. **Prompt fires while idle is deferred:** Pending flag cleared, no stale idle emitted when subagents finish (correct)
+14. **Nested subagents with deferred idle:** Idle only emits when ALL subagents finish (depth 0), not on intermediate stops (correct)
+15. **Long nucleation (no API call yet):** Session stays thinking throughout nucleation. Stale timer skipped because `usageCache` has no entry. Once first API response writes `status.json`, normal 45s timer applies (correct)
+
+### Idle and Prompt Sub-Reasons
+
+`src/shared/types.ts` -- `IdleReason` and `PromptReason` typed constants
+
+Idle and synthetic-prompt events carry a `detail` field with one of these documented values. Compare against the constants rather than string literals:
+
+| Constant | Value | When it fires |
+|----------|-------|---------------|
+| `IdleReason.Permission` | `'permission'` | `PermissionRequest` hook -- agent is blocked on user approval |
+| `IdleReason.Timeout` | `'timeout'` | Synthetic: the stale-thinking watchdog forced a transition after 45s without signals |
+| `IdleReason.Prompt` | `'prompt'` | Synthetic: the PTY tracker matched a known prompt pattern (e.g. `aider>`) |
+| `IdleReason.Silence` | `'silence'` | Synthetic: the PTY tracker's 10s silence timer expired |
+| `PromptReason.PtyActivity` | `'pty-activity'` | Synthetic: the PTY tracker observed output while idle and emits a synthetic `prompt` event to wake the state |
+
+Only `IdleReason.Permission` comes from a Claude Code hook. The other four are synthetic markers emitted by Kangentic's own detectors (stale-thinking watchdog, PTY activity tracker) so the activity log can distinguish hook-driven transitions from inferred ones.
 
 ## Hook Configuration
 

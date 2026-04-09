@@ -312,11 +312,49 @@ export const EventTypeActivity: Record<EventType, ActivityState | null> = {
 
 // === Session Events (Claude Code Hooks → Activity Log) ===
 
+/**
+ * Recognized reasons why a session went idle. The `detail` field on a
+ * SessionEvent is polymorphic across event types (tool_start uses it for
+ * file paths, subagent_start uses it for the subagent name), but for
+ * `idle` events the value is one of these documented reasons. Compare
+ * `event.detail` against these constants rather than string literals.
+ */
+export const IdleReason = {
+  /** PermissionRequest hook fired - agent is blocked on user approval. */
+  Permission: 'permission',
+  /** Synthetic: the stale-thinking detector forced a transition. */
+  Timeout: 'timeout',
+  /** Synthetic: the PTY tracker matched a known prompt pattern. */
+  Prompt: 'prompt',
+  /** Synthetic: the PTY tracker's silence timer expired. */
+  Silence: 'silence',
+} as const;
+export type IdleReason = typeof IdleReason[keyof typeof IdleReason];
+
+/**
+ * Recognized reasons for a synthetic `prompt` event emitted by the PTY
+ * activity tracker. Real Prompt events (from UserPromptSubmit hooks)
+ * carry no detail; synthetic ones carry this marker so the renderer can
+ * distinguish hook-driven prompts from PTY-inferred resumption.
+ */
+export const PromptReason = {
+  PtyActivity: 'pty-activity',
+} as const;
+export type PromptReason = typeof PromptReason[keyof typeof PromptReason];
+
 export interface SessionEvent {
   ts: number;
   type: EventType;
   tool?: string;    // for tool_start/tool_end/interrupted
-  detail?: string;  // file path, command, etc.
+  /**
+   * Polymorphic context for the event:
+   * - For `tool_start`/`tool_end`: tool-specific info (file path, command)
+   * - For `idle`: an `IdleReason` constant
+   * - For `prompt`: a `PromptReason` constant (synthetic PTY path only)
+   * - For `subagent_start`/`subagent_stop`: subagent type
+   * - For `notification`: notification text
+   */
+  detail?: string;
 }
 
 // === Session Usage (Claude Code Status Line) ===

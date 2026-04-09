@@ -1,3 +1,4 @@
+import { IdleReason } from '../../shared/types';
 import type { ActivityState } from '../../shared/types';
 
 /**
@@ -10,7 +11,7 @@ interface PtyActivityCallbacks {
   /** Called when PTY data indicates the agent is working. */
   onThinking(sessionId: string): void;
   /** Called when silence or a prompt pattern indicates the agent is idle. */
-  onIdle(sessionId: string, detail: string): void;
+  onIdle(sessionId: string, detail: IdleReason): void;
   /** Return current activity state for the session. */
   getActivity(sessionId: string): ActivityState | undefined;
   /** Return whether the session is still running. */
@@ -81,7 +82,7 @@ export class PtyActivityTracker {
     this.clearTimer(sessionId);
 
     if (this.callbacks.getActivity(sessionId) !== 'idle') {
-      this.callbacks.onIdle(sessionId, 'prompt');
+      this.callbacks.onIdle(sessionId, IdleReason.Prompt);
     }
   }
 
@@ -109,7 +110,7 @@ export class PtyActivityTracker {
       if (!this.callbacks.isSessionRunning(sessionId)) return;
       if (this.callbacks.getActivity(sessionId) !== 'thinking') return;
 
-      this.callbacks.onIdle(sessionId, 'silence');
+      this.callbacks.onIdle(sessionId, IdleReason.Silence);
     }, PTY_SILENCE_THRESHOLD_MS);
     timer.unref();
     this.silenceTimers.set(sessionId, timer);

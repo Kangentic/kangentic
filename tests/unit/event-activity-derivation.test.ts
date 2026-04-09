@@ -53,7 +53,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
-import { EventType } from '../../src/shared/types';
+import { EventType, IdleReason } from '../../src/shared/types';
 import type { ActivityState } from '../../src/shared/types';
 
 let tmpDir: string;
@@ -859,6 +859,393 @@ describe('Event-derived activity state', () => {
     expect(states).toEqual(['thinking', 'idle']);
   });
 
+  // Empirical regression test reproducing a real "stuck Idle" symptom
+  // captured from a long-running session. The agent's subagent issued 4
+  // parallel Read tool_starts, each one triggered a permission prompt,
+  // the user granted them one at a time, then the subagent continued
+  // with ~14 more reads and globs across ~70 wall-clock seconds.
+  //
+  // Before the fix: the activity state machine wedged at `idle` from the
+  // first permission event until the user gave up and submitted a fresh
+  // prompt 5 minutes later. The wedge happened because Guard 1 suppresses
+  // any non-Prompt/non-SubagentStart wake event at depth > 0, so the
+  // tool_starts that fired after the user resolved all permissions never
+  // unstuck the state.
+  //
+  // After the fix: at depth == 1 (single subagent), `pendingPermissions`
+  // tracks the in-flight permission count. When tool_ends balance the
+  // permission events back to zero, `permissionIdle` is cleared and
+  // Guard 1 stops suppressing. The next subagent tool_start cleanly wakes
+  // the state. At depth >= 2 the conservative sticky behavior is
+  // preserved (see 'permission idle at depth >= 2 not overridden by
+  // concurrent subagent').
+  it('subagent resumes thinking after parallel permissions resolve', async () => {
+    const { session, eventsPath } = await spawnWithEvents();
+    const states = collectActivity(manager, session.id);
+
+    // ----- pre-subagent setup (tool work in main agent) -----
+    // A series of balanced Bash/Read tool_start/tool_end pairs in the
+    // main agent. Net effect: activity = thinking, depth = 0, no
+    // permission state.
+    appendEvent(eventsPath, { ts: 1, type: EventType.ToolStart, tool: 'Bash' });
+    appendEvent(eventsPath, { ts: 2, type: EventType.ToolEnd, tool: 'Bash' });
+    appendEvent(eventsPath, { ts: 3, type: EventType.ToolStart, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 4, type: EventType.ToolEnd, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // ----- line 1515: parent invokes the Task tool (-> tool: 'Agent') -----
+    appendEvent(eventsPath, { ts: 1515, type: EventType.ToolStart, tool: 'Agent' });
+    // ----- line 1516: subagent_start (depth -> 1) -----
+    appendEvent(eventsPath, { ts: 1516, type: EventType.SubagentStart, detail: 'Explore' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // ----- lines 1517-1524: subagent's first batch of tools, all balanced -----
+    appendEvent(eventsPath, { ts: 1517, type: EventType.ToolStart, tool: 'Bash' });
+    appendEvent(eventsPath, { ts: 1518, type: EventType.ToolEnd, tool: 'Bash' });
+    appendEvent(eventsPath, { ts: 1519, type: EventType.ToolStart, tool: 'Glob' });
+    appendEvent(eventsPath, { ts: 1520, type: EventType.ToolEnd, tool: 'Glob' });
+    appendEvent(eventsPath, { ts: 1521, type: EventType.ToolStart, tool: 'Bash' });
+    appendEvent(eventsPath, { ts: 1522, type: EventType.ToolEnd, tool: 'Bash' });
+    // ----- 1523-1524: two parallel Reads requested before any permission -----
+    appendEvent(eventsPath, { ts: 1523, type: EventType.ToolStart, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 1524, type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // ----- 1525: PermissionRequest fires for one of the Reads -----
+    appendEvent(eventsPath, { ts: 1525, type: EventType.Idle, detail: IdleReason.Permission });
+    await waitForWatcher();
+    // Activity flips to idle because Guard 2's permission carve-out lets
+    // permission idles through even at depth > 0.
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // ----- 1526-1530: more parallel Reads and more permission requests -----
+    appendEvent(eventsPath, { ts: 1526, type: EventType.ToolStart, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 1527, type: EventType.Idle, detail: IdleReason.Permission });
+    appendEvent(eventsPath, { ts: 1528, type: EventType.Idle, detail: IdleReason.Permission });
+    appendEvent(eventsPath, { ts: 1529, type: EventType.ToolStart, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 1530, type: EventType.Idle, detail: IdleReason.Permission });
+    await waitForWatcher();
+    // Tool starts inside the subagent get suppressed by Guard 1 because
+    // depth > 0 and currentActivity is idle. The duplicate idle/permission
+    // events are deduped (already idle).
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // ----- 1531-1538: user grants permissions one at a time, tool_ends fire -----
+    appendEvent(eventsPath, { ts: 1531, type: EventType.Notification, detail: 'Claude needs your permission to use Read' });
+    appendEvent(eventsPath, { ts: 1532, type: EventType.ToolEnd, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 1533, type: EventType.Notification, detail: 'Claude needs your permission to use Read' });
+    appendEvent(eventsPath, { ts: 1534, type: EventType.ToolEnd, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 1535, type: EventType.Notification, detail: 'Claude needs your permission to use Read' });
+    appendEvent(eventsPath, { ts: 1536, type: EventType.ToolEnd, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 1537, type: EventType.Notification, detail: 'Claude needs your permission to use Read' });
+    appendEvent(eventsPath, { ts: 1538, type: EventType.ToolEnd, tool: 'Read' });
+    await waitForWatcher();
+    // tool_end events do not directly change activity (they map to null
+    // in EventTypeActivity). The 4 tool_ends decrement pendingPermissions
+    // back to 0, which clears the permissionIdle flag. The activity is
+    // still 'idle' here because no thinking event has fired yet - we are
+    // waiting for the next tool_start to wake it.
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // ----- 1539-1547: ~9 more tool calls fire as the subagent continues -----
+    // No more permission events here - the subagent is doing legitimate
+    // work the user already granted. The first tool_start in this window
+    // wakes the state because Guard 1 no longer suppresses (permissionIdle
+    // was cleared above). Subsequent tool_starts are deduped against the
+    // existing 'thinking' state.
+    appendEvent(eventsPath, { ts: 1539, type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    appendEvent(eventsPath, { ts: 1540, type: EventType.ToolEnd, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 1541, type: EventType.ToolStart, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 1542, type: EventType.ToolEnd, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 1543, type: EventType.ToolStart, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 1544, type: EventType.ToolEnd, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 1545, type: EventType.ToolStart, tool: 'Glob' });
+    appendEvent(eventsPath, { ts: 1546, type: EventType.ToolEnd, tool: 'Glob' });
+    appendEvent(eventsPath, { ts: 1547, type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // ----- 1556: user submits a new prompt (already thinking, deduped) -----
+    appendEvent(eventsPath, { ts: 1556, type: EventType.Prompt });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // Final activity emission timeline: thinking -> idle (first permission)
+    // -> thinking (resume after all permissions resolved). Two transitions
+    // total, no flicker.
+    expect(states).toEqual(['thinking', 'idle', 'thinking']);
+  });
+
+  it('sequential permission cycles at depth=1 reset the counter cleanly', async () => {
+    // Validates the pendingPermissions counter rhythm: a permission/tool_end
+    // cycle at depth=1 should fully clear permissionIdle so a subsequent
+    // permission within the same subagent can re-arm the wedge correctly.
+    const { session, eventsPath } = await spawnWithEvents();
+    const states = collectActivity(manager, session.id);
+
+    appendEvent(eventsPath, { ts: 1, type: EventType.ToolStart, tool: 'Agent' });
+    appendEvent(eventsPath, { ts: 2, type: EventType.SubagentStart, detail: 'Explore' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // Cycle 1: permission → tool_end → tool_start wakes
+    appendEvent(eventsPath, { ts: 3, type: EventType.ToolStart, tool: 'Bash' });
+    appendEvent(eventsPath, { ts: 4, type: EventType.Idle, detail: IdleReason.Permission });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    appendEvent(eventsPath, { ts: 5, type: EventType.ToolEnd, tool: 'Bash' });
+    appendEvent(eventsPath, { ts: 6, type: EventType.ToolStart, tool: 'Bash' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // Cycle 2: another permission, another tool_end, another wake
+    appendEvent(eventsPath, { ts: 7, type: EventType.Idle, detail: IdleReason.Permission });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    appendEvent(eventsPath, { ts: 8, type: EventType.ToolEnd, tool: 'Bash' });
+    appendEvent(eventsPath, { ts: 9, type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // Two full thinking->idle->thinking cycles, no leak.
+    expect(states).toEqual(['thinking', 'idle', 'thinking', 'idle', 'thinking']);
+  });
+
+  it('permission count exceeding tool_end count keeps the wedge sticky', async () => {
+    // 3 permission events for 3 tools, but only 1 tool_end. The user has
+    // resolved one permission but two are still outstanding -- the state
+    // must stay idle until the remaining permissions are resolved.
+    const { session, eventsPath } = await spawnWithEvents();
+    const states = collectActivity(manager, session.id);
+
+    appendEvent(eventsPath, { ts: 1, type: EventType.ToolStart, tool: 'Agent' });
+    appendEvent(eventsPath, { ts: 2, type: EventType.SubagentStart, detail: 'Explore' });
+    await waitForWatcher();
+
+    // 3 parallel reads, each requesting permission
+    appendEvent(eventsPath, { ts: 3, type: EventType.ToolStart, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 4, type: EventType.ToolStart, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 5, type: EventType.ToolStart, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 6, type: EventType.Idle, detail: IdleReason.Permission });
+    appendEvent(eventsPath, { ts: 7, type: EventType.Idle, detail: IdleReason.Permission });
+    appendEvent(eventsPath, { ts: 8, type: EventType.Idle, detail: IdleReason.Permission });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // User grants one permission only
+    appendEvent(eventsPath, { ts: 9, type: EventType.ToolEnd, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // The next tool_start (e.g. for the second still-blocked read getting
+    // through) must be suppressed - permissionIdle is still set because
+    // 2 permissions are still pending.
+    appendEvent(eventsPath, { ts: 10, type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // Single thinking -> idle transition, no premature recovery.
+    expect(states).toEqual(['thinking', 'idle']);
+  });
+
+  it('tool_end before any permission does not underflow the counter', async () => {
+    // Defensive check: tool_end events that arrive while permissionIdle is
+    // false must NOT decrement pendingPermissions below zero (Math.max
+    // floor) and must NOT clear an unset permissionIdle. This guards
+    // against accidental "wake too early" if event ordering is unusual.
+    const { session, eventsPath } = await spawnWithEvents();
+    const states = collectActivity(manager, session.id);
+
+    appendEvent(eventsPath, { ts: 1, type: EventType.ToolStart, tool: 'Agent' });
+    appendEvent(eventsPath, { ts: 2, type: EventType.SubagentStart, detail: 'Explore' });
+    await waitForWatcher();
+
+    // tool_end with no prior permission - counter stays at 0
+    appendEvent(eventsPath, { ts: 3, type: EventType.ToolStart, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 4, type: EventType.ToolEnd, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 5, type: EventType.ToolEnd, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // Now a permission fires - counter goes to 1, permissionIdle set
+    appendEvent(eventsPath, { ts: 6, type: EventType.Idle, detail: IdleReason.Permission });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // tool_start is suppressed (the prior orphan tool_ends did not clear
+    // permissionIdle erroneously)
+    appendEvent(eventsPath, { ts: 7, type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // One real tool_end balances the one real permission, recovery works
+    appendEvent(eventsPath, { ts: 8, type: EventType.ToolEnd, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 9, type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    expect(states).toEqual(['thinking', 'idle', 'thinking']);
+  });
+
+  it('depth-2 tool_ends do not decrement the permission counter', async () => {
+    // Validates the `depth <= 1` gating in pendingPermissions:
+    //   - At depth 2 we cannot tell whose tool_end balances whose
+    //     permission, so the counter is frozen.
+    //   - The conservative sticky behavior at depth >= 2 is preserved.
+    //
+    // Setup: starts a fresh single subagent at depth 1, drives it
+    // straight to permission idle, then spawns a second subagent. Note
+    // SubagentStart is itself a Guard 1 wake exception, so the activity
+    // immediately flips back to thinking when depth becomes 2 - the
+    // important assertion is that the depth-2 tool_ends do NOT touch the
+    // permission counter, which we verify by re-entering idle (via the
+    // existing depth-2 sticky path) and confirming a depth-1 wake still
+    // requires its OWN tool_end to balance.
+    const { session, eventsPath } = await spawnWithEvents();
+
+    appendEvent(eventsPath, { ts: 1, type: EventType.ToolStart, tool: 'Agent' });
+    appendEvent(eventsPath, { ts: 2, type: EventType.SubagentStart, detail: 'Explore' });
+    appendEvent(eventsPath, { ts: 3, type: EventType.ToolStart, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 4, type: EventType.Idle, detail: IdleReason.Permission });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // Inner subagent spawns. SubagentStart bypasses Guard 1 and wakes
+    // the state to thinking. The depth-2 tool_ends below MUST NOT
+    // decrement the (still-set) pendingPermissions counter, because at
+    // depth 2 we can't disambiguate which subagent's tool ended.
+    appendEvent(eventsPath, { ts: 5, type: EventType.SubagentStart, detail: 'Plan' });
+    appendEvent(eventsPath, { ts: 6, type: EventType.ToolStart, tool: 'Glob' });
+    appendEvent(eventsPath, { ts: 7, type: EventType.ToolEnd, tool: 'Glob' });
+    appendEvent(eventsPath, { ts: 8, type: EventType.ToolStart, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 9, type: EventType.ToolEnd, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // Inner subagent finishes, back to depth 1. The counter is still
+    // at 1 (the depth-2 tool_ends did not decrement it). To verify
+    // that, we fire ANOTHER permission - the counter increments to 2.
+    // Then we balance with TWO tool_ends. After the second tool_end,
+    // the counter returns to 0 and permissionIdle clears. If the
+    // depth-2 freezing had failed, the counter would already be at -1
+    // (clamped to 0), the second permission would set it to 1, and
+    // only ONE tool_end would be needed -- which would let the
+    // permissionIdle clear prematurely.
+    appendEvent(eventsPath, { ts: 10, type: EventType.SubagentStop, detail: 'Plan' });
+    appendEvent(eventsPath, { ts: 11, type: EventType.Idle, detail: IdleReason.Permission });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // First tool_end at depth=1 decrements counter from 2 to 1.
+    // permissionIdle is still set. Next tool_start should be suppressed.
+    appendEvent(eventsPath, { ts: 12, type: EventType.ToolEnd, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 13, type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // Second tool_end at depth=1 decrements counter from 1 to 0.
+    // permissionIdle clears. Next tool_start wakes.
+    appendEvent(eventsPath, { ts: 14, type: EventType.ToolEnd, tool: 'Read' });
+    appendEvent(eventsPath, { ts: 15, type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+  });
+
+  it('depth-2-only permission does not false-wake on depth-1 tool_end', async () => {
+    // Edge case captured during code review of the permission counter
+    // fix. If a permission fires ONLY at depth >= 2 (never counted by
+    // pendingPermissions because of the depth gate), a later tool_end
+    // at depth 1 must NOT prematurely clear permissionIdle. The
+    // conservative sticky behavior is preserved for the uncounted
+    // permission by only clearing when the counter actually decrements
+    // from a positive value.
+    const { session, eventsPath } = await spawnWithEvents();
+
+    // Start a top-level subagent at depth 1, no permission yet.
+    appendEvent(eventsPath, { ts: 1, type: EventType.ToolStart, tool: 'Agent' });
+    appendEvent(eventsPath, { ts: 2, type: EventType.SubagentStart, detail: 'Explore' });
+    appendEvent(eventsPath, { ts: 3, type: EventType.ToolStart, tool: 'Bash' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // Escalate to depth 2 via a nested subagent. SubagentStart is a
+    // Guard 1 wake exception so we stay thinking.
+    appendEvent(eventsPath, { ts: 4, type: EventType.SubagentStart, detail: 'Plan' });
+    await waitForWatcher();
+
+    // Permission fires at depth 2. Transition sets permissionIdle=true
+    // but the counter is gated (not incremented) at depth > 1.
+    appendEvent(eventsPath, { ts: 5, type: EventType.Idle, detail: IdleReason.Permission });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // Nested subagent finishes, depth drops to 1. permissionIdle is
+    // still true (untouched).
+    appendEvent(eventsPath, { ts: 6, type: EventType.SubagentStop, detail: 'Plan' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // tool_end fires at depth 1. Before the fix, this would call
+    // Math.max(0, 0 - 1) = 0 and clear permissionIdle - a false wake.
+    // With the fix, the decrement branch is skipped because the
+    // counter was already 0. permissionIdle stays set.
+    appendEvent(eventsPath, { ts: 7, type: EventType.ToolEnd, tool: 'Bash' });
+    appendEvent(eventsPath, { ts: 8, type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+    // Still idle - the depth-1 tool_end did NOT prematurely clear
+    // permissionIdle, and the subsequent tool_start is correctly
+    // suppressed by Guard 1.
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    // Normal recovery paths still work: a user prompt wakes the state.
+    appendEvent(eventsPath, { ts: 9, type: EventType.Prompt });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+  });
+
+  it('background tool semantics: backgrounded Bash + Stop produces idle (current behavior)', async () => {
+    // Documents current engine behavior for ctrl+b backgrounded tools.
+    // When the agent backgrounds a long-running Bash, Claude Code fires
+    // PostToolUse immediately (control returned to agent), then if the
+    // agent has nothing else to do, Stop fires and the activity goes idle.
+    // The backgrounded process is still running but the engine has no
+    // signal for it. This test pins the current behavior so a future
+    // background-tool feature is a deliberate change, not an accidental
+    // regression.
+    const { session, eventsPath } = await spawnWithEvents();
+    const states = collectActivity(manager, session.id);
+
+    // Agent decides to background a long-running command
+    appendEvent(eventsPath, { ts: 1, type: EventType.ToolStart, tool: 'Bash' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // PostToolUse fires immediately when the bash is backgrounded
+    appendEvent(eventsPath, { ts: 2, type: EventType.ToolEnd, tool: 'Bash' });
+    await waitForWatcher();
+    // Activity stays thinking - tool_end alone does not flip state
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    // Agent has nothing else to do. Stop fires.
+    appendEvent(eventsPath, { ts: 3, type: EventType.Idle });
+    await waitForWatcher();
+    // Activity flips to idle even though the backgrounded process is
+    // still running. This is a known UX limitation - the engine has no
+    // signal that there's a background process. A fix would require
+    // explicit background-tool tracking.
+    expect(manager.getActivityCache()[session.id]).toBe('idle');
+
+    expect(states).toEqual(['thinking', 'idle']);
+  });
+
   it('prompt overrides idle at depth > 0 (via interrupted)', async () => {
     const { session, eventsPath } = await spawnWithEvents();
     const states = collectActivity(manager, session.id);
@@ -1019,7 +1406,7 @@ describe('Event-derived activity state', () => {
     await waitForWatcher();
 
     // 3. permission idle → emitted immediately (bypasses Guard 2)
-    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: 'permission' });
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: IdleReason.Permission });
     await waitForWatcher();
 
     expect(manager.getActivityCache()[session.id]).toBe('idle');
@@ -1039,7 +1426,7 @@ describe('Event-derived activity state', () => {
     await waitForWatcher();
 
     // 3. permission idle → emitted (bypasses Guard 2)
-    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: 'permission' });
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: IdleReason.Permission });
     await waitForWatcher();
     expect(manager.getActivityCache()[session.id]).toBe('idle');
 
@@ -1064,7 +1451,7 @@ describe('Event-derived activity state', () => {
     await waitForWatcher();
 
     // 3. permission idle → emitted
-    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: 'permission' });
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: IdleReason.Permission });
     await waitForWatcher();
 
     // 4. tool_start at depth > 0 → suppressed (permission idle is sticky)
@@ -1093,7 +1480,7 @@ describe('Event-derived activity state', () => {
     await waitForWatcher();
 
     // 3. permission idle → emitted
-    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: 'permission' });
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: IdleReason.Permission });
     await waitForWatcher();
 
     // 4. subagent_stop → depth 0, but no special recovery → stays idle
@@ -1133,7 +1520,7 @@ describe('Event-derived activity state', () => {
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
 
     // 4. permission idle → emitted, clears pending flag
-    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: 'permission' });
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: IdleReason.Permission });
     await waitForWatcher();
     expect(manager.getActivityCache()[session.id]).toBe('idle');
 
@@ -1186,7 +1573,7 @@ describe('Event-derived activity state', () => {
 
     // 3. Permission prompt fires (Bash needs approval) → idle with detail='permission'
     //    Bypasses Guard 2 → UI shows idle badge immediately
-    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: 'permission' });
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: IdleReason.Permission });
     await waitForWatcher();
     expect(manager.getActivityCache()[session.id]).toBe('idle');
 
@@ -1226,7 +1613,7 @@ describe('Event-derived activity state', () => {
     await waitForWatcher();
 
     // 3. Permission idle → emitted (bypasses Guard 2)
-    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: 'permission' });
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: IdleReason.Permission });
     await waitForWatcher();
     expect(manager.getActivityCache()[session.id]).toBe('idle');
 
@@ -1257,7 +1644,7 @@ describe('Event-derived activity state', () => {
     await waitForWatcher();
 
     // 3. permission idle → emitted
-    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: 'permission' });
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: IdleReason.Permission });
     await waitForWatcher();
     expect(manager.getActivityCache()[session.id]).toBe('idle');
 
@@ -1278,7 +1665,7 @@ describe('Event-derived activity state', () => {
     await waitForWatcher();
 
     // 2. permission idle at depth 0 (no subagents)
-    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: 'permission' });
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle, detail: IdleReason.Permission });
     await waitForWatcher();
     expect(manager.getActivityCache()[session.id]).toBe('idle');
 

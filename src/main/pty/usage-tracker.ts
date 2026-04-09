@@ -1,12 +1,31 @@
 import fs from 'node:fs';
-import { EventType, EventTypeActivity, AgentTool } from '../../shared/types';
+import { EventType, EventTypeActivity, AgentTool, IdleReason, PromptReason } from '../../shared/types';
 import type { SessionUsage, ActivityState, SessionEvent, AgentParser } from '../../shared/types';
 import { matchesPRCommand } from './pr-connectors';
 import { PtyActivityTracker } from './pty-activity-tracker';
+import { ActivityStateMachine } from './activity-state-machine';
 
 const MAX_EVENTS_PER_SESSION = 500; // Cap rendered events in renderer
 const STALE_THINKING_THRESHOLD_MS = 45_000;
 const STALE_THINKING_CHECK_MS = 15_000;
+
+/**
+ * Safely extract the `hookContext` string from a raw JSONL line written
+ * by event-bridge.js. Returns null for any parse failure or unexpected
+ * shape. Type-safe alternative to `JSON.parse(line).hookContext` which
+ * would be `any` and hide runtime errors.
+ */
+function extractHookContext(line: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const hookContext = (parsed as { hookContext?: unknown }).hookContext;
+  return typeof hookContext === 'string' ? hookContext : null;
+}
 
 interface UsageTrackerCallbacks {
   onUsageChange(sessionId: string, usage: SessionUsage): void;
@@ -24,20 +43,15 @@ interface UsageTrackerCallbacks {
 /**
  * Tracks per-session usage data, activity state machine, and event log.
  *
- * Owns all caches (usage, activity, events) and timing logic (idle timeouts,
- * stale thinking detection). SessionManager wires callbacks in its constructor.
+ * Owns the non-activity caches (usage, events) and timing logic (idle
+ * timeouts, stale thinking detection). The activity state machine itself
+ * lives in `ActivityStateMachine` and is delegated to here.
+ *
+ * SessionManager wires callbacks in its constructor.
  */
 export class UsageTracker {
   private usageCache = new Map<string, SessionUsage>();
-  private activityCache = new Map<string, ActivityState>();
-  private subagentDepth = new Map<string, number>();
-  private pendingToolCount = new Map<string, number>();
-  private pendingIdleWhileSubagent = new Map<string, boolean>();
-  private pendingPRCommand = new Map<string, boolean>();
-  private permissionIdle = new Map<string, boolean>();
-  private idleTimestamp = new Map<string, number>();
-  private lastThinkingSignal = new Map<string, number>();
-  private firstThinkingTimestamp = new Map<string, number>();
+  private activityStateMachine: ActivityStateMachine;
 
   private sessionParsers = new Map<string, AgentParser>();
   private agentSessionIdChecked = new Set<string>();
@@ -51,10 +65,15 @@ export class UsageTracker {
 
   constructor(callbacks: UsageTrackerCallbacks) {
     this.callbacks = callbacks;
+    this.activityStateMachine = new ActivityStateMachine({
+      onActivityChange: (sessionId, activity, permissionIdle) => {
+        this.callbacks.onActivityChange(sessionId, activity, permissionIdle);
+      },
+    });
     this.ptyTracker = new PtyActivityTracker({
       onThinking: (sessionId) => this.handlePtyThinking(sessionId),
       onIdle: (sessionId, detail) => this.handlePtyIdle(sessionId, detail),
-      getActivity: (sessionId) => this.activityCache.get(sessionId),
+      getActivity: (sessionId) => this.activityStateMachine.getState(sessionId)?.activity,
       isSessionRunning: (sessionId) => callbacks.isSessionRunning(sessionId),
     });
     this.staleThinkingInterval = setInterval(
@@ -91,58 +110,51 @@ export class UsageTracker {
     const timeoutMs = this._idleTimeoutMinutes * 60_000;
     const now = Date.now();
 
-    for (const [sessionId, activity] of this.activityCache) {
-      if (activity !== 'idle') continue;
-      if (!this.callbacks.isSessionRunning(sessionId)) continue;
+    this.activityStateMachine.forEachState((sessionId, state) => {
+      if (state.activity !== 'idle') return;
+      if (!this.callbacks.isSessionRunning(sessionId)) return;
 
-      const idleStart = this.idleTimestamp.get(sessionId);
+      const idleStart = state.idleTimestamp;
       if (idleStart && (now - idleStart) > timeoutMs) {
         this.callbacks.requestSuspend(sessionId);
         this.callbacks.onIdleTimeout(sessionId);
       }
-    }
+    });
   }
 
   private checkStaleThinking(): void {
     const now = Date.now();
-    for (const [sessionId, activity] of this.activityCache) {
-      if (activity !== 'thinking') continue;
-      if (!this.callbacks.isSessionRunning(sessionId)) continue;
+    this.activityStateMachine.forEachState((sessionId, state) => {
+      if (state.activity !== 'thinking') return;
+      if (!this.callbacks.isSessionRunning(sessionId)) return;
 
       // Skip sessions still in nucleation (first 45s after entering thinking).
       // During nucleation, agents read local context before making API calls.
       // No hooks fire initially, so the stale threshold doesn't apply yet.
       // Time-based guard works for all agents (not just Claude Code which has usageCache).
-      const firstThinking = this.firstThinkingTimestamp.get(sessionId);
-      if (firstThinking && (now - firstThinking) < STALE_THINKING_THRESHOLD_MS) continue;
+      const firstThinking = state.firstThinkingTimestamp;
+      if (firstThinking && (now - firstThinking) < STALE_THINKING_THRESHOLD_MS) return;
 
-      const lastSignal = this.lastThinkingSignal.get(sessionId);
+      const lastSignal = state.lastThinkingSignal;
       if (lastSignal && (now - lastSignal) > STALE_THINKING_THRESHOLD_MS) {
         // If tools are in-flight, the agent is busy (not stale). Reset the
         // timer and re-check later instead of transitioning to idle.
-        if ((this.pendingToolCount.get(sessionId) || 0) > 0) {
-          this.lastThinkingSignal.set(sessionId, now);
-          continue;
+        if (state.pendingToolCount > 0) {
+          this.activityStateMachine.markThinkingSignal(sessionId);
+          return;
         }
 
-        this.activityCache.set(sessionId, 'idle');
-        this.permissionIdle.set(sessionId, false);
-        this.idleTimestamp.set(sessionId, Date.now());
-        this.lastThinkingSignal.delete(sessionId);
-
-        // Emit a synthetic idle event so the activity log shows why it went idle
-        const timeoutEvent: SessionEvent = { ts: Date.now(), type: EventType.Idle, detail: 'timeout' };
-        let events = this.eventCache.get(sessionId);
-        if (!events) {
-          events = [];
-          this.eventCache.set(sessionId, events);
-        }
-        events.push(timeoutEvent);
-        this.callbacks.onEvent(sessionId, timeoutEvent);
-
-        this.callbacks.onActivityChange(sessionId, 'idle', false);
+        // Push the synthetic idle event FIRST so that listeners see the
+        // activity log entry before the state transition callback fires.
+        // This preserves the original tracker's callback ordering:
+        // onEvent -> onActivityChange. Then force the transition without
+        // going through the guards (stale-thinking recovery bypasses
+        // Guard 2, matching the non-refactored behavior).
+        const timeoutEvent: SessionEvent = { ts: Date.now(), type: EventType.Idle, detail: IdleReason.Timeout };
+        this.pushEvent(sessionId, timeoutEvent);
+        this.activityStateMachine.forceIdle(sessionId);
       }
-    }
+    });
   }
 
   /**
@@ -171,27 +183,25 @@ export class UsageTracker {
       this.usageCache.set(sessionId, usage);
       this.callbacks.onUsageChange(sessionId, usage);
 
+      const state = this.activityStateMachine.getOrCreateState(sessionId);
+
       // Usage update proves the agent is working. Reset stale thinking timer.
-      if (this.activityCache.get(sessionId) === 'thinking') {
-        this.lastThinkingSignal.set(sessionId, Date.now());
+      if (state.activity === 'thinking') {
+        this.activityStateMachine.markThinkingSignal(sessionId);
       }
 
       // Heartbeat recovery: if tokens increased while idle for >1s, agent resumed work.
       // During any true idle, the model is blocked and token counts are frozen.
       // Only when work genuinely resumes do tokens climb. The 1-second grace period
       // prevents race conditions from status updates arriving slightly after an idle event.
-      if (previousUsage && this.activityCache.get(sessionId) === 'idle') {
+      if (previousUsage && state.activity === 'idle') {
         const previousTokens = previousUsage.contextWindow.totalInputTokens
                              + previousUsage.contextWindow.totalOutputTokens;
         const currentTokens = usage.contextWindow.totalInputTokens
                             + usage.contextWindow.totalOutputTokens;
-        const idleStart = this.idleTimestamp.get(sessionId);
+        const idleStart = state.idleTimestamp;
         if (currentTokens > previousTokens && idleStart && (Date.now() - idleStart) > 1000) {
-          this.activityCache.set(sessionId, 'thinking');
-          this.lastThinkingSignal.set(sessionId, Date.now());
-          this.idleTimestamp.delete(sessionId);
-          this.permissionIdle.delete(sessionId);
-          this.callbacks.onActivityChange(sessionId, 'thinking', false);
+          this.activityStateMachine.forceThinking(sessionId);
         }
       }
     } catch {
@@ -227,157 +237,21 @@ export class UsageTracker {
 
       const parser = this.sessionParsers.get(sessionId);
       for (const line of lines) {
-        // Extract agent session ID from hookContext (written by event-bridge.js).
-        // Each adapter's runtime.sessionId.fromHook() parses agent-specific fields.
-        const fromHook = parser?.runtime?.sessionId?.fromHook;
-        if (!this.agentSessionIdChecked.has(sessionId) && fromHook) {
-          try {
-            const rawEvent = JSON.parse(line);
-            if (rawEvent.hookContext) {
-              const capturedId = fromHook(rawEvent.hookContext);
-              if (capturedId) {
-                this.agentSessionIdChecked.add(sessionId);
-                this.callbacks.onAgentSessionId?.(sessionId, capturedId);
-              }
-            }
-          } catch { /* best effort - line may not be valid JSON */ }
-        }
+        this.tryCaptureAgentSessionId(sessionId, line, parser);
 
         const event = parser?.parseEvent(line) ?? null;
-        if (event) {
-          // Any event proves the agent is alive. Reset stale thinking timer.
-          if (this.activityCache.get(sessionId) === 'thinking') {
-            this.lastThinkingSignal.set(sessionId, Date.now());
-          }
+        if (!event) continue;
 
-          events.push(event);
-          this.callbacks.onEvent(sessionId, event);
+        events.push(event);
+        this.callbacks.onEvent(sessionId, event);
 
-          // Track pending tool count so checkStaleThinking() knows when
-          // a long-running tool (e.g. npm run build) is legitimately active.
-          if (event.type === EventType.ToolStart) {
-            const currentCount = this.pendingToolCount.get(sessionId) || 0;
-            this.pendingToolCount.set(sessionId, currentCount + 1);
-          } else if (event.type === EventType.ToolEnd || event.type === EventType.Interrupted) {
-            const currentCount = this.pendingToolCount.get(sessionId) || 0;
-            this.pendingToolCount.set(sessionId, Math.max(0, currentCount - 1));
-          }
+        this.maybeSuppressPtyTracker(sessionId, event, parser);
+        this.detectExitPlanMode(sessionId, event);
+        this.detectPRCommand(sessionId, event);
 
-          // Detect ExitPlanMode -> emit plan-exit
-          // Uses ToolStart (PreToolUse) because ExitPlanMode is a mode-transition
-          // tool that may not fire PostToolUse (ToolEnd).
-          if (event.type === EventType.ToolStart && event.tool === AgentTool.ExitPlanMode) {
-            this.callbacks.onPlanExit(sessionId);
-          }
-
-          // Detect GitHub PR commands -> scan scrollback on tool_end.
-          // On tool_start for Bash with a gh pr command, set a flag.
-          // On the corresponding tool_end, fire the callback so the
-          // session manager can scan scrollback for PR URLs.
-          if (event.type === EventType.ToolStart
-              && event.tool === AgentTool.Bash
-              && event.detail
-              && matchesPRCommand(event.detail)) {
-            this.pendingPRCommand.set(sessionId, true);
-          } else if (event.type === EventType.ToolEnd
-              && event.tool === AgentTool.Bash
-              && this.pendingPRCommand.get(sessionId)) {
-            this.pendingPRCommand.delete(sessionId);
-            this.callbacks.onPRCandidate(sessionId);
-          }
-
-          // Track subagent nesting depth so we can distinguish main-agent
-          // tool events from subagent tool events during idle state.
-          if (event.type === EventType.SubagentStart) {
-            const currentDepth = this.subagentDepth.get(sessionId) || 0;
-            this.subagentDepth.set(sessionId, currentDepth + 1);
-          } else if (event.type === EventType.SubagentStop) {
-            const currentDepth = this.subagentDepth.get(sessionId) || 0;
-            const newDepth = Math.max(0, currentDepth - 1);
-            this.subagentDepth.set(sessionId, newDepth);
-
-            // Emit deferred idle when the last subagent finishes
-            if (newDepth === 0 && this.pendingIdleWhileSubagent.get(sessionId)) {
-              this.pendingIdleWhileSubagent.delete(sessionId);
-              if (this.activityCache.get(sessionId) !== 'idle') {
-                this.activityCache.set(sessionId, 'idle');
-                this.callbacks.onActivityChange(sessionId, 'idle', false);
-              }
-            }
-          }
-
-          // Derive activity state from events via declarative lookup.
-          // Only emit when state actually changes (dedup defense-in-depth
-          // against multiple hooks firing the same state).
-          const newActivity = EventTypeActivity[event.type];
-
-          // For 'hooks_and_pty' agents, suppress PTY detection once hooks
-          // prove they work (by delivering at least one thinking event).
-          // Pure 'pty' agents never get hook events; pure 'hooks' agents
-          // don't have PTY detection enabled.
-          if (newActivity === 'thinking') {
-            const parser = this.sessionParsers.get(sessionId);
-            if (parser?.runtime?.activity?.kind === 'hooks_and_pty') {
-              this.ptyTracker.suppress(sessionId);
-            }
-          }
-
-          // Clear pending idle flag when the main agent resumes thinking
-          // (prompt or subagent_start), even if deduped.
-          if (newActivity === 'thinking'
-              && (event.type === EventType.Prompt
-                  || event.type === EventType.SubagentStart
-                  || (this.subagentDepth.get(sessionId) || 0) === 0)) {
-            this.pendingIdleWhileSubagent.delete(sessionId);
-          }
-
-          if (newActivity && this.activityCache.get(sessionId) !== newActivity) {
-            // Subagent-aware transition guard: when transitioning from
-            // idle -> thinking, suppress the transition if it's caused by
-            // a subagent's tool event (not the main agent resuming).
-            const currentActivity = this.activityCache.get(sessionId);
-            const depth = this.subagentDepth.get(sessionId) || 0;
-            if (currentActivity === 'idle' && newActivity === 'thinking'
-                && event.type !== EventType.Prompt
-                && event.type !== EventType.SubagentStart
-                && depth > 0) {
-              // Suppress: subagent tool event while main agent is idle
-              continue;
-            }
-
-            // Guard 2: thinking -> idle suppression while subagents are active.
-            if (currentActivity === 'thinking' && newActivity === 'idle'
-                && event.type !== EventType.Interrupted
-                && event.detail !== 'permission'
-                && depth > 0) {
-              this.pendingIdleWhileSubagent.set(sessionId, true);
-              continue;
-            }
-
-            // Clear stale pending idle when permission idle bypasses Guard 2
-            if (newActivity === 'idle' && event.detail === 'permission') {
-              this.pendingIdleWhileSubagent.delete(sessionId);
-            }
-
-            this.activityCache.set(sessionId, newActivity);
-
-            // Track permission-idle flag and idle timestamp for recovery
-            if (newActivity === 'idle') {
-              this.lastThinkingSignal.delete(sessionId);
-              this.permissionIdle.set(sessionId, event.detail === 'permission');
-              this.idleTimestamp.set(sessionId, Date.now());
-            } else if (newActivity === 'thinking') {
-              this.lastThinkingSignal.set(sessionId, Date.now());
-              if (!this.firstThinkingTimestamp.has(sessionId)) {
-                this.firstThinkingTimestamp.set(sessionId, Date.now());
-              }
-              this.permissionIdle.delete(sessionId);
-              this.idleTimestamp.delete(sessionId);
-            }
-
-            this.callbacks.onActivityChange(sessionId, newActivity, newActivity === 'idle' && event.detail === 'permission');
-          }
-        }
+        // All activity state transitions (guards, counters, timestamps)
+        // happen inside the state machine.
+        this.activityStateMachine.processEvent(sessionId, event);
       }
 
       // Cap cached events per session
@@ -393,24 +267,85 @@ export class UsageTracker {
     }
   }
 
+  // ==== Per-event side detectors ====
+  //
+  // These run for each parsed event inside the main read loop. Each one
+  // handles a single unrelated concern so that the loop body itself stays
+  // a linear list of labeled steps.
+
+  /**
+   * One-shot capture of the agent's own session ID from the hook stdin
+   * payload (event-bridge.js writes the raw hookContext alongside the
+   * parsed event). The adapter's `runtime.sessionId.fromHook` extracts
+   * an agent-specific field. Silently ignores malformed lines.
+   */
+  private tryCaptureAgentSessionId(sessionId: string, line: string, parser: AgentParser | undefined): void {
+    if (this.agentSessionIdChecked.has(sessionId)) return;
+    const fromHook = parser?.runtime?.sessionId?.fromHook;
+    if (!fromHook) return;
+    const hookContext = extractHookContext(line);
+    if (!hookContext) return;
+    const capturedId = fromHook(hookContext);
+    if (!capturedId) return;
+    this.agentSessionIdChecked.add(sessionId);
+    this.callbacks.onAgentSessionId?.(sessionId, capturedId);
+  }
+
+  /**
+   * For `hooks_and_pty` agents, suppress PTY-based activity detection
+   * once hooks prove they are working (by delivering at least one
+   * thinking event). Pure `pty` agents never get hook events; pure
+   * `hooks` agents don't have PTY detection enabled. Must run before
+   * processEvent so a thinking event suppresses PTY in the same tick
+   * it transitions the state.
+   */
+  private maybeSuppressPtyTracker(sessionId: string, event: SessionEvent, parser: AgentParser | undefined): void {
+    if (EventTypeActivity[event.type] !== 'thinking') return;
+    if (parser?.runtime?.activity?.kind !== 'hooks_and_pty') return;
+    this.ptyTracker.suppress(sessionId);
+  }
+
+  /**
+   * Detect `ExitPlanMode` tool invocations. Uses ToolStart (PreToolUse)
+   * because ExitPlanMode is a mode-transition tool that may not fire
+   * PostToolUse (ToolEnd).
+   */
+  private detectExitPlanMode(sessionId: string, event: SessionEvent): void {
+    if (event.type !== EventType.ToolStart) return;
+    if (event.tool !== AgentTool.ExitPlanMode) return;
+    this.callbacks.onPlanExit(sessionId);
+  }
+
+  /**
+   * Detect GitHub PR commands so SessionManager can scan scrollback for
+   * the printed PR URL on the corresponding ToolEnd. On ToolStart for a
+   * Bash with a `gh pr ...` command, flip the flag; on the matching
+   * ToolEnd, fire the callback.
+   */
+  private detectPRCommand(sessionId: string, event: SessionEvent): void {
+    if (event.type === EventType.ToolStart
+        && event.tool === AgentTool.Bash
+        && event.detail
+        && matchesPRCommand(event.detail)) {
+      this.activityStateMachine.setPendingPRCommand(sessionId, true);
+    } else if (event.type === EventType.ToolEnd
+        && event.tool === AgentTool.Bash
+        && this.activityStateMachine.hasPendingPRCommand(sessionId)) {
+      this.activityStateMachine.setPendingPRCommand(sessionId, false);
+      this.callbacks.onPRCandidate(sessionId);
+    }
+  }
+
   /**
    * Initialize tracking state for a new session.
-   * Sets default activity to 'idle' and clears all tracking maps.
+   * Sets default activity to 'idle' and resets all per-session state.
    */
   initSession(sessionId: string, agentParser?: AgentParser): void {
     if (agentParser) {
       this.sessionParsers.set(sessionId, agentParser);
     }
-    this.activityCache.set(sessionId, 'idle');
-    this.subagentDepth.delete(sessionId);
-    this.pendingToolCount.delete(sessionId);
-    this.pendingIdleWhileSubagent.delete(sessionId);
-    this.permissionIdle.delete(sessionId);
-    this.idleTimestamp.set(sessionId, Date.now());
-    this.lastThinkingSignal.delete(sessionId);
-    this.firstThinkingTimestamp.delete(sessionId);
+    this.activityStateMachine.initSession(sessionId);
     this.ptyTracker.clearSession(sessionId);
-    this.callbacks.onActivityChange(sessionId, 'idle', false);
   }
 
   /** True if an agent session ID has already been captured for this session. */
@@ -453,38 +388,28 @@ export class UsageTracker {
 
   /** Check if a PR command was flagged but ToolEnd was never processed. */
   hasPendingPRCommand(sessionId: string): boolean {
-    return this.pendingPRCommand.get(sessionId) === true;
+    return this.activityStateMachine.hasPendingPRCommand(sessionId);
   }
 
   /** Clear the pending PR command flag (used by fallback scan on exit). */
   clearPendingPRCommand(sessionId: string): void {
-    this.pendingPRCommand.delete(sessionId);
+    this.activityStateMachine.setPendingPRCommand(sessionId, false);
   }
 
-  /** Clear subagent depth and pending state (used by suspend). */
+  /**
+   * Clear all per-session tracking state (used by suspend). Keeps the
+   * eventCache and sessionParsers entries because the session record may
+   * be reused on resume.
+   */
   clearSessionTracking(sessionId: string): void {
-    this.subagentDepth.delete(sessionId);
-    this.pendingToolCount.delete(sessionId);
-    this.pendingIdleWhileSubagent.delete(sessionId);
-    this.pendingPRCommand.delete(sessionId);
-    this.permissionIdle.delete(sessionId);
-    this.idleTimestamp.delete(sessionId);
-    this.lastThinkingSignal.delete(sessionId);
-    this.firstThinkingTimestamp.delete(sessionId);
+    this.activityStateMachine.deleteSession(sessionId);
     this.ptyTracker.clearSession(sessionId);
   }
 
-  /** Delete all maps for a session (full removal). */
+  /** Delete all state for a session (full removal). */
   removeSession(sessionId: string): void {
     this.usageCache.delete(sessionId);
-    this.activityCache.delete(sessionId);
-    this.subagentDepth.delete(sessionId);
-    this.pendingToolCount.delete(sessionId);
-    this.pendingIdleWhileSubagent.delete(sessionId);
-    this.permissionIdle.delete(sessionId);
-    this.idleTimestamp.delete(sessionId);
-    this.lastThinkingSignal.delete(sessionId);
-    this.firstThinkingTimestamp.delete(sessionId);
+    this.activityStateMachine.deleteSession(sessionId);
     this.ptyTracker.clearSession(sessionId);
     this.eventCache.delete(sessionId);
     this.sessionParsers.delete(sessionId);
@@ -506,29 +431,20 @@ export class UsageTracker {
 
   /** Callback from PtyActivityTracker: PTY data indicates agent is working. */
   private handlePtyThinking(sessionId: string): void {
-    this.activityCache.set(sessionId, 'thinking');
-    this.lastThinkingSignal.set(sessionId, Date.now());
-    if (!this.firstThinkingTimestamp.has(sessionId)) {
-      this.firstThinkingTimestamp.set(sessionId, Date.now());
-    }
-    this.idleTimestamp.delete(sessionId);
-    this.permissionIdle.delete(sessionId);
-
-    const event: SessionEvent = { ts: Date.now(), type: EventType.Prompt, detail: 'pty-activity' };
+    // Preserve original ordering: push the synthetic event (onEvent) first,
+    // then fire the activity transition (onActivityChange) via forceThinking.
+    const event: SessionEvent = { ts: Date.now(), type: EventType.Prompt, detail: PromptReason.PtyActivity };
     this.pushEvent(sessionId, event);
-    this.callbacks.onActivityChange(sessionId, 'thinking', false);
+    this.activityStateMachine.forceThinking(sessionId);
   }
 
   /** Callback from PtyActivityTracker: silence or prompt detected. */
-  private handlePtyIdle(sessionId: string, detail: string): void {
-    this.activityCache.set(sessionId, 'idle');
-    this.permissionIdle.set(sessionId, false);
-    this.idleTimestamp.set(sessionId, Date.now());
-    this.lastThinkingSignal.delete(sessionId);
-
+  private handlePtyIdle(sessionId: string, detail: IdleReason): void {
+    // Preserve original ordering: push the synthetic event (onEvent) first,
+    // then fire the activity transition (onActivityChange) via forceIdle.
     const event: SessionEvent = { ts: Date.now(), type: EventType.Idle, detail };
     this.pushEvent(sessionId, event);
-    this.callbacks.onActivityChange(sessionId, 'idle', false);
+    this.activityStateMachine.forceIdle(sessionId);
   }
 
   /** Append an event to the session cache and notify listeners. */
@@ -562,11 +478,7 @@ export class UsageTracker {
 
   /** Return cached activity state for all sessions. */
   getActivityCache(): Record<string, ActivityState> {
-    const result: Record<string, ActivityState> = {};
-    for (const [id, state] of this.activityCache) {
-      result[id] = state;
-    }
-    return result;
+    return this.activityStateMachine.getActivityCache();
   }
 
   /** Return cached events for a specific session. */

@@ -3,7 +3,7 @@ import { ChevronDown } from 'lucide-react';
 import { format } from 'date-fns';
 import { useShallow } from 'zustand/react/shallow';
 import { useSessionStore } from '../../stores/session-store';
-import { EventType } from '../../../shared/types';
+import { EventType, IdleReason } from '../../../shared/types';
 import type { SessionEvent } from '../../../shared/types';
 
 const MAX_RENDERED_EVENTS = 500;
@@ -338,7 +338,7 @@ function EventLine({ event, label, colorClass, showLabel }: EventLineProps) {
       return <BadgeLine {...common} badge={`${event.tool || 'Tool'} interrupted`} detail={event.detail} variant="warn" />;
 
     case EventType.Idle:
-      return <DimLine {...common} text={event.detail === 'timeout' ? 'Idle (no activity detected)' : 'Idle (waiting for input)'} />;
+      return <DimLine {...common} text={event.detail === IdleReason.Timeout ? 'Idle (no activity detected)' : 'Idle (waiting for input)'} />;
 
     case EventType.Prompt:
       return (
