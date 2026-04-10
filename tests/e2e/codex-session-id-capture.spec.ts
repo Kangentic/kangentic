@@ -68,6 +68,9 @@ test.describe('Codex Agent -- Session ID Capture via Filesystem', () => {
 
   test.beforeAll(async () => {
     process.env.MOCK_CODEX_NO_HEADER = '1';
+    // Suppress the mock's own rollout JSONL so the test can plant its
+    // own file with a known UUID for deterministic resume verification.
+    process.env.MOCK_CODEX_NO_ROLLOUT = '1';
     tmpDir = createTempProject(TEST_NAME);
     dataDir = getTestDataDir(TEST_NAME);
     fs.writeFileSync(
@@ -91,6 +94,7 @@ test.describe('Codex Agent -- Session ID Capture via Filesystem', () => {
 
   test.afterAll(async () => {
     delete process.env.MOCK_CODEX_NO_HEADER;
+    delete process.env.MOCK_CODEX_NO_ROLLOUT;
     if (rolloutFilePath) {
       try { fs.unlinkSync(rolloutFilePath); } catch { /* ignore */ }
     }

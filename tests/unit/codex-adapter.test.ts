@@ -466,6 +466,32 @@ describe('Codex Adapter', () => {
     });
   });
 
+  describe('runtime.statusFile', () => {
+    it('is defined with parseStatus, parseEvent, and isFullRewrite', () => {
+      const statusFile = adapter.runtime.statusFile;
+      expect(statusFile).toBeDefined();
+      expect(statusFile!.parseStatus).toBeTypeOf('function');
+      expect(statusFile!.parseEvent).toBeTypeOf('function');
+      expect(statusFile!.isFullRewrite).toBe(false);
+    });
+
+    it('parseStatus returns null (Codex has no statusline)', () => {
+      expect(adapter.runtime.statusFile!.parseStatus('')).toBeNull();
+      expect(adapter.runtime.statusFile!.parseStatus('{"some":"data"}')).toBeNull();
+    });
+
+    it('parseEvent parses valid event-bridge JSONL into SessionEvent', () => {
+      const line = JSON.stringify({ ts: 1234567890, type: 'tool_start', tool: 'bash' });
+      const event = adapter.runtime.statusFile!.parseEvent(line);
+      expect(event).toEqual({ ts: 1234567890, type: 'tool_start', tool: 'bash' });
+    });
+
+    it('parseEvent returns null for malformed JSON', () => {
+      expect(adapter.runtime.statusFile!.parseEvent('not json')).toBeNull();
+      expect(adapter.runtime.statusFile!.parseEvent('')).toBeNull();
+    });
+  });
+
   describe('extractSessionId', () => {
     it('extracts thread_id from hookContext JSON', () => {
       const hookContext = JSON.stringify({ thread_id: 'thr_abc123' });

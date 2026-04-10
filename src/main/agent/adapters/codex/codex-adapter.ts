@@ -2,6 +2,7 @@ import { CodexDetector } from './detector';
 import { CodexCommandBuilder } from './command-builder';
 import { removeHooks as removeCodexHooks } from './hook-manager';
 import { CodexSessionHistoryParser } from './session-history-parser';
+import { CodexStatusParser } from './status-parser';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -64,6 +65,17 @@ export class CodexAdapter implements AgentAdapter {
    *   for real-time model, context window, and token counts. See CodexSessionHistoryParser.
    */
   readonly runtime: AdapterRuntimeStrategy = {
+    // Hook-driven events.jsonl pipeline. Codex has no status line
+    // (parseStatus returns null), but the event-bridge hook output is
+    // parsed via parseEvent so tool_start/idle events drive activity
+    // transitions when hooks fire. Codex 0.118 does not honor
+    // .codex/hooks.json, but newer versions may - this wiring ensures
+    // hook events flow into the state machine when available.
+    statusFile: {
+      parseStatus: CodexStatusParser.parseStatus,
+      parseEvent: CodexStatusParser.parseEvent,
+      isFullRewrite: false,
+    },
     activity: ActivityDetection.pty((data: string) => {
       // Patterns derived from real Codex 0.118 PTY captures (see
       // tests/unit/agent-pty-detection.test.ts and the .bin fixtures).
