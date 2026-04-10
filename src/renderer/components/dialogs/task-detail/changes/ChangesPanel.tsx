@@ -181,10 +181,21 @@ export function ChangesPanel({ entityId, projectPath, worktreePath, baseBranch, 
   // fetchFiles completes and flips initialFetchDoneRef (refs don't trigger renders).
   const restoredRef = useRef(false);
   useEffect(() => {
-    if (restoredRef.current || !initialFetchDoneRef.current || !selectedFile) return;
-    restoredRef.current = true;
-    fetchFileContentRef.current(selectedFile);
-  }, [files, selectedFile]);
+    if (restoredRef.current || !initialFetchDoneRef.current) return;
+    // Honor the persisted selection only if that file still exists in the
+    // current diff. Otherwise fall through to auto-select the first file so
+    // the diff viewer isn't blank on open (and isn't stuck on a deleted path).
+    if (selectedFile && files.some((file) => file.path === selectedFile)) {
+      restoredRef.current = true;
+      fetchFileContentRef.current(selectedFile);
+      return;
+    }
+    if (files.length > 0) {
+      restoredRef.current = true;
+      setSelectedFile(files[0].path);
+      fetchFileContentRef.current(files[0].path);
+    }
+  }, [files, selectedFile, setSelectedFile]);
 
   // Subscribe to live updates via fs.watch.
   // Uses refs for selectedFile/files/fetchers to avoid re-subscribing.
