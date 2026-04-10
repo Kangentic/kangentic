@@ -74,7 +74,7 @@ function TaskContextMenu({ position, task, swimlanes, onEdit, onShowChanges, onM
       <button
         type="button"
         onClick={() => {
-          navigator.clipboard.writeText(String(task.display_id));
+          navigator.clipboard.writeText(`Task #${task.display_id}`);
           useToastStore.getState().addToast({ message: `Copied Task ID #${task.display_id}` });
           onClose();
         }}

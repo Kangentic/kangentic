@@ -10,7 +10,7 @@ export function useCopyDisplayId(displayId: number) {
   }, []);
 
   const copy = useCallback(() => {
-    navigator.clipboard.writeText(String(displayId));
+    navigator.clipboard.writeText(`Task #${displayId}`);
     useToastStore.getState().addToast({ message: `Copied Task ID #${displayId}` });
     setCopied(true);
     if (timerRef.current) clearTimeout(timerRef.current);
