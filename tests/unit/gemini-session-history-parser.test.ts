@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { GeminiSessionHistoryParser } from '../../src/main/agent/adapters/gemini/session-history-parser';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { GeminiSessionHistoryParser, clearDiscoveredSessionPaths } from '../../src/main/agent/adapters/gemini/session-history-parser';
 
 /**
  * GeminiSessionHistoryParser unit tests. Uses inline JSON fixtures derived from
@@ -161,6 +164,148 @@ describe('GeminiSessionHistoryParser', () => {
       });
       const result = GeminiSessionHistoryParser.parse(json, 'full');
       expect(result.activity).toBeNull();
+    });
+  });
+
+  describe('captureSessionIdFromFilesystem', () => {
+    let chatsDir: string;
+    let cwd: string;
+    const createdDirs: string[] = [];
+
+    function writeSessionFile(sessionId: string, startTime: Date): string {
+      const shortId = sessionId.slice(0, 8);
+      const timestamp = startTime.toISOString().replace(/[:.]/g, '-').replace('Z', '');
+      const filename = `session-${timestamp}${shortId}.json`;
+      const filePath = path.join(chatsDir, filename);
+      const content = JSON.stringify({
+        sessionId,
+        projectHash: 'abcd1234',
+        startTime: startTime.toISOString(),
+        lastUpdated: startTime.toISOString(),
+        messages: [
+          { type: 'user', content: [{ text: 'hello' }] },
+          {
+            type: 'gemini',
+            model: 'gemini-3-flash-preview',
+            content: 'Hello!',
+            tokens: { input: 100, output: 10, total: 110 },
+          },
+        ],
+      });
+      fs.writeFileSync(filePath, content);
+      return filePath;
+    }
+
+    beforeEach(() => {
+      clearDiscoveredSessionPaths();
+      // Build the path the parser expects: ~/.gemini/tmp/<basename>/chats/
+      // We create a temporary cwd whose basename matches our testProjectName.
+      cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'gemini-cwd-'));
+      // The parser uses basename(cwd).toLowerCase() as the directory name.
+      // Since mkdtemp adds random chars, we need the chats dir to match
+      // the actual basename. Build it under ~/.gemini/tmp/.
+      const projectDirName = path.basename(cwd).toLowerCase();
+      chatsDir = path.join(os.homedir(), '.gemini', 'tmp', projectDirName, 'chats');
+      fs.mkdirSync(chatsDir, { recursive: true });
+      createdDirs.push(path.join(os.homedir(), '.gemini', 'tmp', projectDirName));
+    });
+
+    afterEach(() => {
+      for (const directory of createdDirs) {
+        try { fs.rmSync(directory, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
+      createdDirs.length = 0;
+      try { fs.rmSync(cwd, { recursive: true, force: true }); } catch { /* ignore */ }
+    });
+
+    it('captures session ID from a matching session file', async () => {
+      const sessionId = 'aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee';
+      const now = new Date();
+      writeSessionFile(sessionId, now);
+
+      const result = await GeminiSessionHistoryParser.captureSessionIdFromFilesystem({
+        spawnedAt: new Date(now.getTime() - 1000),
+        cwd,
+        maxAttempts: 2,
+      });
+      expect(result).toBe(sessionId);
+    });
+
+    it('returns null when no matching session file exists', async () => {
+      const result = await GeminiSessionHistoryParser.captureSessionIdFromFilesystem({
+        spawnedAt: new Date(),
+        cwd,
+        maxAttempts: 1,
+      });
+      expect(result).toBeNull();
+    });
+
+    it('populates locate() cache so locate() returns immediately', async () => {
+      const sessionId = 'bbbb2222-cccc-dddd-eeee-ffffffffffff';
+      const now = new Date();
+      const filePath = writeSessionFile(sessionId, now);
+
+      // Step 1: captureSessionIdFromFilesystem finds the file and caches it
+      const capturedId = await GeminiSessionHistoryParser.captureSessionIdFromFilesystem({
+        spawnedAt: new Date(now.getTime() - 1000),
+        cwd,
+        maxAttempts: 2,
+      });
+      expect(capturedId).toBe(sessionId);
+
+      // Step 2: locate() should return immediately from cache (no polling needed)
+      const locatedPath = await GeminiSessionHistoryParser.locate({
+        agentSessionId: sessionId,
+        cwd,
+      });
+      expect(locatedPath).toBe(filePath);
+    });
+
+    it('locate() still polls when cache has no entry', async () => {
+      const sessionId = 'cccc3333-dddd-eeee-ffff-aaaaaaaaaaaa';
+      const now = new Date();
+      writeSessionFile(sessionId, now);
+
+      // Don't call captureSessionIdFromFilesystem - no cache entry
+      // locate() should still find the file via directory scanning
+      const locatedPath = await GeminiSessionHistoryParser.locate({
+        agentSessionId: sessionId,
+        cwd,
+      });
+      expect(locatedPath).not.toBeNull();
+      expect(locatedPath!.endsWith('.json')).toBe(true);
+    });
+
+    it('logs warning when polling budget exhausts without finding a file', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await GeminiSessionHistoryParser.captureSessionIdFromFilesystem({
+        spawnedAt: new Date(),
+        cwd,
+        maxAttempts: 1,
+      });
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('no matching session file found after'),
+      );
+      warnSpy.mockRestore();
+    });
+
+    it('ignores session files with startTime outside the time window', async () => {
+      const sessionId = 'dddd4444-eeee-ffff-aaaa-bbbbbbbbbbbb';
+      // Create a file with startTime 2 minutes ago - outside the +-30s window
+      const oldTime = new Date(Date.now() - 120_000);
+      const filePath = writeSessionFile(sessionId, oldTime);
+      // Touch mtime to now so it passes the mtime pre-filter
+      const now = new Date();
+      fs.utimesSync(filePath, now, now);
+
+      const result = await GeminiSessionHistoryParser.captureSessionIdFromFilesystem({
+        spawnedAt: new Date(),
+        cwd,
+        maxAttempts: 1,
+      });
+      expect(result).toBeNull();
     });
   });
 });

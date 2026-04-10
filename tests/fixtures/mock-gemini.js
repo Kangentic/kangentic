@@ -22,6 +22,9 @@
  */
 
 const { randomUUID } = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
 
 const args = process.argv.slice(2);
 
@@ -52,6 +55,74 @@ for (let i = 0; i < args.length; i++) {
 
 if (!sessionId) sessionId = randomUUID();
 
+// ---------- Session JSON file ----------
+// Writes a realistic session JSON to ~/.gemini/tmp/<basename(cwd)>/chats/
+// so the session history reader pipeline (captureSessionIdFromFilesystem ->
+// locate -> parse) is exercised end-to-end. Cleaned up on process exit.
+//
+// Env knobs:
+//   MOCK_GEMINI_NO_SESSION_FILE=1 -> suppress session file creation
+let sessionFilePath = null;
+
+function writeSessionFile() {
+  if (process.env.MOCK_GEMINI_NO_SESSION_FILE) return;
+  if (resumed) return; // Resume reuses existing session file
+
+  const spawnCwd = process.cwd();
+  const projectDirName = path.basename(spawnCwd).toLowerCase();
+  const chatsDir = path.join(os.homedir(), '.gemini', 'tmp', projectDirName, 'chats');
+  fs.mkdirSync(chatsDir, { recursive: true });
+
+  const now = new Date();
+  const shortId = sessionId.slice(0, 8);
+  const timestamp = now.toISOString().replace(/[:.]/g, '-').replace('Z', '');
+  const fileName = 'session-' + timestamp + shortId + '.json';
+  sessionFilePath = path.join(chatsDir, fileName);
+
+  const content = JSON.stringify({
+    sessionId: sessionId,
+    projectHash: 'mock-hash',
+    startTime: now.toISOString(),
+    lastUpdated: now.toISOString(),
+    messages: [
+      {
+        id: 'user-1',
+        timestamp: now.toISOString(),
+        type: 'user',
+        content: [{ text: prompt || 'hello' }],
+      },
+      {
+        id: 'gemini-1',
+        timestamp: now.toISOString(),
+        type: 'gemini',
+        content: 'Hello! I am mock Gemini.',
+        tokens: { input: 11199, output: 47, cached: 0, thoughts: 0, tool: 0, total: 11246 },
+        model: 'gemini-3-flash-preview',
+      },
+    ],
+    kind: 'main',
+  }, null, 2);
+
+  fs.writeFileSync(sessionFilePath, content);
+}
+
+function cleanupSessionFile() {
+  if (!sessionFilePath) return;
+  const toDelete = sessionFilePath;
+  sessionFilePath = null; // Prevent double-cleanup
+  try { fs.unlinkSync(toDelete); } catch { /* may already be gone */ }
+  // Clean up the chats directory if empty
+  try {
+    const parentDir = path.dirname(toDelete);
+    const remaining = fs.readdirSync(parentDir);
+    if (remaining.length === 0) fs.rmSync(parentDir, { recursive: true, force: true });
+  } catch { /* ignore */ }
+}
+
+writeSessionFile();
+
+// ---------- PTY output ----------
+
 if (!process.env.MOCK_GEMINI_NO_HEADER) {
   console.log('Session ID: ' + sessionId);
 }
@@ -69,9 +140,10 @@ if (prompt) {
 // Hide-cursor escape so detectFirstOutput() returns true.
 process.stdout.write('\x1b[?25l');
 
-const timeout = setTimeout(() => process.exit(0), 30000);
-process.on('SIGTERM', () => { clearTimeout(timeout); process.exit(0); });
-process.on('SIGINT', () => { clearTimeout(timeout); process.exit(0); });
+const timeout = setTimeout(() => { cleanupSessionFile(); process.exit(0); }, 30000);
+process.on('SIGTERM', () => { clearTimeout(timeout); cleanupSessionFile(); process.exit(0); });
+process.on('SIGINT', () => { clearTimeout(timeout); cleanupSessionFile(); process.exit(0); });
+process.on('exit', cleanupSessionFile);
 
 process.stdin.resume();
 process.stdin.setEncoding('utf8');

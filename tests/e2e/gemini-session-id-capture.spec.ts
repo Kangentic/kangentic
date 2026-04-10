@@ -71,6 +71,9 @@ test.describe('Gemini Agent -- Session ID Capture via Hook Pipeline', () => {
 
   test.beforeAll(async () => {
     process.env.MOCK_GEMINI_NO_HEADER = '1';
+    // Suppress mock-gemini's session file so fromFilesystem doesn't race
+    // ahead of the hook injection. This test isolates the hook pipeline.
+    process.env.MOCK_GEMINI_NO_SESSION_FILE = '1';
     tmpDir = createTempProject(TEST_NAME);
     dataDir = getTestDataDir(TEST_NAME);
     fs.writeFileSync(
@@ -94,6 +97,7 @@ test.describe('Gemini Agent -- Session ID Capture via Hook Pipeline', () => {
 
   test.afterAll(async () => {
     delete process.env.MOCK_GEMINI_NO_HEADER;
+    delete process.env.MOCK_GEMINI_NO_SESSION_FILE;
     await app?.close();
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);

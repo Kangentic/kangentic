@@ -79,20 +79,32 @@ export class GeminiSessionHistoryParser {
     const directory = path.join(os.homedir(), '.gemini', 'tmp', projectDirName, 'chats');
     const pattern = /^session-.*\.json$/;
 
-    const maxAttempts = options.maxAttempts ?? 20;
+    const maxAttempts = options.maxAttempts ?? 60;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const entries = safeReaddirWithStats(directory)
         .filter((entry) => pattern.test(entry.name) && entry.mtimeMs >= mtimeFloorMs);
 
+      if (attempt === 0 && entries.length === 0) {
+        console.log(`[gemini] captureSessionId: scanning ${directory} (no matching files yet)`);
+      }
+
       for (const entry of entries) {
-        const meta = readGeminiSessionMeta(path.join(directory, entry.name));
+        const filePath = path.join(directory, entry.name);
+        const meta = readGeminiSessionMeta(filePath);
         if (!meta) continue;
         if (meta.startTimeMs < startTimeFloorMs) continue;
         if (meta.startTimeMs > startTimeCeilMs) continue;
+        // Cache the discovered path so locate() can skip its own scan.
+        discoveredSessionPaths.set(meta.sessionId, filePath);
+        console.log(`[gemini] captureSessionId: found session ${meta.sessionId.slice(0, 8)} on attempt ${attempt}`);
         return meta.sessionId;
       }
       await sleep(500);
     }
+    console.warn(
+      `[gemini] captureSessionId: no matching session file found after `
+      + `${Math.round(maxAttempts * 500 / 1000)}s in ${directory}`,
+    );
     return null;
   }
 
@@ -120,6 +132,14 @@ export class GeminiSessionHistoryParser {
     // UUID and never fired.
     const shortId = agentSessionId.slice(0, 8).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const pattern = new RegExp(`^session-.*${shortId}\\.json$`, 'i');
+
+    // Fast path: captureSessionIdFromFilesystem already found this file.
+    // Return the cached path immediately instead of re-scanning.
+    const cached = discoveredSessionPaths.get(agentSessionId);
+    if (cached) {
+      discoveredSessionPaths.delete(agentSessionId);
+      if (fs.existsSync(cached)) return cached;
+    }
 
     const maxAttempts = 10;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -356,6 +376,19 @@ function readGeminiSessionMeta(filePath: string): { sessionId: string; startTime
   } catch {
     return null;
   }
+}
+
+/**
+ * Module-level cache populated by `captureSessionIdFromFilesystem` and consumed
+ * by `locate()`. Eliminates the redundant directory scan that otherwise happens
+ * when the session-manager pipeline calls capture -> notify -> attach -> locate
+ * in sequence on the same file.
+ */
+const discoveredSessionPaths = new Map<string, string>();
+
+/** Exported for testing only - clears the module-level path cache. */
+export function clearDiscoveredSessionPaths(): void {
+  discoveredSessionPaths.clear();
 }
 
 /** Simple async sleep helper for polling loops. */
