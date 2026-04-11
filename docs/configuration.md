@@ -165,6 +165,7 @@ IPC channels for shortcuts are in the Board Config group: `boardConfig:getShortc
 | `contextBar.showTokens` | boolean | `true` | Show token usage (input + output) |
 | `contextBar.showContextFraction` | boolean | `true` | Show the context window usage percentage |
 | `contextBar.showProgressBar` | boolean | `true` | Show the context window progress bar |
+| `contextBar.showRateLimits` | boolean | `true` | Show Claude Code 5-hour and weekly plan-usage quota bars (Claude only) |
 
 All context bar settings are global-only and cannot be overridden per-project.
 

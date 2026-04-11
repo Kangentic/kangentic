@@ -324,7 +324,7 @@ function TerminalTab({ config, globalConfig, shells }: { config: AppConfig; glob
         searchIds={[
           'contextBar.showShell', 'contextBar.showVersion', 'contextBar.showModel',
           'contextBar.showCost', 'contextBar.showTokens', 'contextBar.showContextFraction',
-          'contextBar.showProgressBar',
+          'contextBar.showProgressBar', 'contextBar.showRateLimits',
         ]}
       />
       <CompactToggleList items={[
@@ -335,6 +335,7 @@ function TerminalTab({ config, globalConfig, shells }: { config: AppConfig; glob
         { label: 'Token Counts', description: 'Input / output totals', checked: globalConfig.contextBar.showTokens, onChange: (value) => updateGlobal({ contextBar: { showTokens: value } }), searchId: 'contextBar.showTokens' },
         { label: 'Context Window', description: 'Used / total tokens', checked: globalConfig.contextBar.showContextFraction, onChange: (value) => updateGlobal({ contextBar: { showContextFraction: value } }), searchId: 'contextBar.showContextFraction' },
         { label: 'Progress Bar', description: 'Usage bar and percentage', checked: globalConfig.contextBar.showProgressBar, onChange: (value) => updateGlobal({ contextBar: { showProgressBar: value } }), searchId: 'contextBar.showProgressBar' },
+        { label: 'Rate Limits', description: 'Claude 5h / weekly quota bars', checked: globalConfig.contextBar.showRateLimits, onChange: (value) => updateGlobal({ contextBar: { showRateLimits: value } }), searchId: 'contextBar.showRateLimits' },
       ]} />
     </>
   );

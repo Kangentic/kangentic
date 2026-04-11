@@ -67,6 +67,7 @@
       showTokens: true,
       showContextFraction: true,
       showProgressBar: true,
+      showRateLimits: true,
     },
     notifications: {
       desktop: {
@@ -118,6 +119,10 @@
     return taskList.map(withAttachmentCount);
   }
 
+  // Intentionally simpler than src/shared/object-utils.ts deepMerge: this mock
+  // always recurses key-by-key and never replaces flat maps. That means typed
+  // struct merge bugs (e.g. the contextBar showRateLimits regression) cannot be
+  // caught here -- guard them with a unit test on the real deepMerge instead.
   function deepMerge(base, overrides) {
     var result = Object.assign({}, base);
     for (var key in overrides) {

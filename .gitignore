@@ -115,4 +115,5 @@ test-results/
 playwright-report/
 .kangentic-test-sandbox-*
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 kangentic.local.json

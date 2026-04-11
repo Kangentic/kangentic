@@ -61,21 +61,44 @@ interface DeepMergeOptions {
    *  Set to false for config overlay operations where partial overrides
    *  should merge into the base without dropping unmentioned keys. */
   replaceFlatMaps?: boolean;
+  /** Dotted paths whose object value should always be REPLACED wholesale rather
+   *  than merged key-by-key. Use this for true dictionary fields (Record-like)
+   *  where deletion via partial update must work, even when `replaceFlatMaps`
+   *  is false (e.g. typed configs that contain a few dictionary children). */
+  dictionaryPaths?: ReadonlyArray<string>;
 }
 
 /** Deep-merge source into target (returns new object). Allows null to override.
- *  Flat maps (objects with only primitive values) are replaced entirely, not merged key-by-key.
- *  This allows key deletion in flat maps like `labelColors: Record<string, string>`. */
+ *
+ *  Default behavior: flat maps (objects with only primitive values) are replaced
+ *  entirely, not merged key-by-key. This allows key deletion in dictionary-style
+ *  maps like `labelColors: Record<string, string>`.
+ *
+ *  Two options modify the heuristic:
+ *  - `replaceFlatMaps: false` -- forces key-by-key merge for ALL flat maps. Use
+ *    this when partial updates to typed structs (e.g. `contextBar: { showShell, showVersion, ... }`)
+ *    must preserve unmentioned keys.
+ *  - `dictionaryPaths: string[]` -- forces wholesale REPLACE at specific dotted
+ *    paths regardless of `replaceFlatMaps`. Use this with `replaceFlatMaps: false`
+ *    to opt specific dictionary fields back into replace semantics (so deletion
+ *    via partial update still works) while keeping merge semantics elsewhere. */
 export function deepMerge<T extends object>(target: T, source: Partial<T>, options?: DeepMergeOptions): T {
+  return deepMergeInternal(target, source, options, '');
+}
+
+function deepMergeInternal<T extends object>(target: T, source: Partial<T>, options: DeepMergeOptions | undefined, currentPath: string): T {
   const replaceFlatMaps = options?.replaceFlatMaps !== false;
+  const dictionaryPaths = options?.dictionaryPaths;
   const result = { ...target } as Record<string, unknown>;
   for (const [key, value] of Object.entries(source)) {
     if (value === undefined) continue;
+    const path = currentPath ? `${currentPath}.${key}` : key;
     if (value !== null && typeof value === 'object' && !Array.isArray(value) && typeof result[key] === 'object') {
-      if (replaceFlatMaps && isFlatMap(value) && isFlatMap(result[key])) {
+      const isExplicitDictionary = dictionaryPaths?.includes(path) ?? false;
+      if (isExplicitDictionary || (replaceFlatMaps && isFlatMap(value) && isFlatMap(result[key]))) {
         result[key] = { ...value as Record<string, unknown> };
       } else {
-        result[key] = deepMerge(result[key] as Record<string, unknown>, value as Record<string, unknown>, options);
+        result[key] = deepMergeInternal(result[key] as Record<string, unknown>, value as Record<string, unknown>, options, path);
       }
     } else {
       result[key] = value;

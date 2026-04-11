@@ -81,6 +81,26 @@ export class ClaudeStatusParser {
       const modelId = (model?.id as string) ?? '';
       const sessionId = typeof data.session_id === 'string' ? data.session_id : undefined;
 
+      // Claude Code emits session (5h) and weekly (7d) plan-usage countdowns
+      // alongside context_window. resets_at is Unix epoch seconds.
+      const rateLimitsRaw = data.rate_limits as Record<string, unknown> | undefined;
+      const fiveHourRaw = rateLimitsRaw?.five_hour as Record<string, unknown> | undefined;
+      const sevenDayRaw = rateLimitsRaw?.seven_day as Record<string, unknown> | undefined;
+      const finiteOrZero = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+      const clampPercentage = (value: unknown): number => Math.min(100, Math.max(0, finiteOrZero(value)));
+      const rateLimits = (fiveHourRaw && sevenDayRaw)
+        ? {
+            fiveHour: {
+              usedPercentage: clampPercentage(fiveHourRaw.used_percentage),
+              resetsAt: finiteOrZero(fiveHourRaw.resets_at),
+            },
+            sevenDay: {
+              usedPercentage: clampPercentage(sevenDayRaw.used_percentage),
+              resetsAt: finiteOrZero(sevenDayRaw.resets_at),
+            },
+          }
+        : undefined;
+
       return {
         usage: {
           contextWindow: {
@@ -102,6 +122,7 @@ export class ClaudeStatusParser {
             displayName: (model?.display_name as string) ?? '',
           },
           sessionId,
+          rateLimits,
         },
         meta: { modelId, rawUsedPercentage },
       };

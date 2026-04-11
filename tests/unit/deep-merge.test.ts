@@ -133,6 +133,42 @@ describe('deepMerge', () => {
       expect(result.terminal.fontSize).toBe(14);
     });
 
+    it('dictionaryPaths replaces flat maps at explicit paths even when replaceFlatMaps is false', () => {
+      const target = {
+        contextBar: { showShell: true, showVersion: true, showModel: true, showCost: true },
+        backlog: { labelColors: { foo: '#ff0000', bar: '#00ff00' } },
+      };
+      // Toggle a single contextBar key AND delete a labelColor at the same time
+      const source = {
+        contextBar: { showCost: false },
+        backlog: { labelColors: { foo: '#ff0000' } },
+      };
+      const result = deepMerge(target, source, {
+        replaceFlatMaps: false,
+        dictionaryPaths: ['backlog.labelColors'],
+      });
+      // contextBar is a typed struct -> merge: only showCost changes, others preserved
+      expect(result.contextBar).toEqual({ showShell: true, showVersion: true, showModel: true, showCost: false });
+      // backlog.labelColors is in dictionaryPaths -> replaced: 'bar' is gone
+      expect(result.backlog.labelColors).toEqual({ foo: '#ff0000' });
+      expect('bar' in result.backlog.labelColors).toBe(false);
+    });
+
+    it('dictionaryPaths matches nested paths only at the exact dotted location', () => {
+      const target = {
+        agent: { cliPaths: { claude: '/usr/bin/claude', codex: '/usr/bin/codex' }, permissionMode: 'acceptEdits' },
+      };
+      const source = { agent: { cliPaths: { claude: '/new/claude' } } };
+      const result = deepMerge(target, source, {
+        replaceFlatMaps: false,
+        dictionaryPaths: ['agent.cliPaths'],
+      });
+      // cliPaths is replaced (codex is gone)
+      expect(result.agent.cliPaths).toEqual({ claude: '/new/claude' });
+      // permissionMode is unchanged
+      expect(result.agent.permissionMode).toBe('acceptEdits');
+    });
+
     it('deepMergeConfig uses replaceFlatMaps: false', () => {
       const base = { terminal: { shell: null, fontSize: 14, fontFamily: 'Menlo', scrollbackLines: 5000, cursorStyle: 'block' } };
       const overrides = { terminal: { shell: 'powershell' } };

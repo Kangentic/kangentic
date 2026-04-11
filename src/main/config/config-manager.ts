@@ -5,6 +5,12 @@ import type { AppConfig, PermissionMode } from '../../shared/types';
 import { DEFAULT_CONFIG } from '../../shared/types';
 import { deepMerge, deepMergeConfig } from '../../shared/object-utils';
 
+/** Dotted paths in AppConfig that are true `Record<string, ...>` dictionaries.
+ *  These must be REPLACED on partial update so that key deletion works, while
+ *  every other typed-struct field gets MERGE semantics. Update this list when
+ *  adding a new dictionary-shaped field to AppConfig. */
+const CONFIG_DICTIONARY_PATHS = ['backlog.labelColors', 'agent.cliPaths'] as const;
+
 export class ConfigManager {
   private config: AppConfig | null = null;
 
@@ -61,7 +67,13 @@ export class ConfigManager {
 
   save(partial: Partial<AppConfig>): void {
     const current = this.load();
-    this.config = deepMerge(current, partial);
+    // Use merge semantics so partial updates to typed structs (e.g. contextBar)
+    // preserve unmentioned keys. Dictionary paths (Record<string, ...>) still
+    // replace wholesale so deletion of map entries works.
+    this.config = deepMerge(current, partial, {
+      replaceFlatMaps: false,
+      dictionaryPaths: CONFIG_DICTIONARY_PATHS,
+    });
     ensureDirs();
     fs.writeFileSync(PATHS.configFile, JSON.stringify(this.config, null, 2));
   }

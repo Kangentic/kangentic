@@ -117,6 +117,66 @@ describe('ClaudeStatusParser', () => {
       expect(usage!.model.id).toBe('');
     });
 
+    it('parses rate_limits when present', () => {
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 10, context_window_size: 200_000 },
+        cost: { total_cost_usd: 0 },
+        model: { id: 'claude-opus-4-6', display_name: 'Opus 4.6' },
+        rate_limits: {
+          five_hour: { used_percentage: 18, resets_at: 1775883600 },
+          seven_day: { used_percentage: 4, resets_at: 1776452400 },
+        },
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.rateLimits).toBeDefined();
+      expect(usage!.rateLimits!.fiveHour).toEqual({ usedPercentage: 18, resetsAt: 1775883600 });
+      expect(usage!.rateLimits!.sevenDay).toEqual({ usedPercentage: 4, resetsAt: 1776452400 });
+    });
+
+    it('omits rateLimits when rate_limits is absent', () => {
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 10 },
+        cost: { total_cost_usd: 0 },
+        model: { id: 'claude-opus-4-6' },
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.rateLimits).toBeUndefined();
+    });
+
+    it('defaults rate_limits values to 0 when non-numeric or NaN', () => {
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 0 },
+        cost: {},
+        model: {},
+        rate_limits: {
+          five_hour: { used_percentage: 'broken', resets_at: null },
+          seven_day: { used_percentage: NaN, resets_at: 'tomorrow' },
+        },
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.rateLimits!.fiveHour).toEqual({ usedPercentage: 0, resetsAt: 0 });
+      expect(usage!.rateLimits!.sevenDay).toEqual({ usedPercentage: 0, resetsAt: 0 });
+    });
+
+    it('clamps rate_limits used_percentage to 0..100', () => {
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 0 },
+        cost: {},
+        model: {},
+        rate_limits: {
+          five_hour: { used_percentage: 150, resets_at: 1 },
+          seven_day: { used_percentage: -5, resets_at: 2 },
+        },
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.rateLimits!.fiveHour.usedPercentage).toBe(100);
+      expect(usage!.rateLimits!.sevenDay.usedPercentage).toBe(0);
+    });
+
     it('real-world: 14% raw shows 14% on bar (not inflated)', () => {
       const raw = JSON.stringify({
         context_window: {

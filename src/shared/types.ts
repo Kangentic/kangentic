@@ -380,6 +380,11 @@ export interface SessionUsage {
   };
   /** Agent-reported session ID (from status.json). Used for stale ID recovery. */
   sessionId?: string;
+  /** Claude-only. Other adapters do not set this field. */
+  rateLimits?: {
+    fiveHour: { usedPercentage: number; resetsAt: number };
+    sevenDay: { usedPercentage: number; resetsAt: number };
+  };
 }
 
 // === Usage Time Period Stats ===
@@ -603,6 +608,7 @@ export interface AppConfig {
     showTokens: boolean;
     showContextFraction: boolean;
     showProgressBar: boolean;
+    showRateLimits: boolean;
   };
 
   notifications: NotificationConfig;
@@ -671,6 +677,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     showTokens: true,
     showContextFraction: true,
     showProgressBar: true,
+    showRateLimits: true,
   },
   notifications: {
     desktop: {

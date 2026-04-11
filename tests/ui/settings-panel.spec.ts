@@ -121,6 +121,14 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
+  test('Terminal tab Context Bar section exposes Rate Limits toggle', async () => {
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await expect(page.getByText('Rate Limits', { exact: true })).toBeVisible();
+    await expect(page.getByText('Claude 5h / weekly quota bars')).toBeVisible();
+    await closeSettings();
+  });
+
   test('shows Git tab with worktree and branch settings', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Git' }).click();

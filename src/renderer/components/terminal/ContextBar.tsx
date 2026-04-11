@@ -1,10 +1,10 @@
-import { ArrowUp, ArrowDown, Loader2 } from 'lucide-react';
+import { ArrowUp, ArrowDown, Loader2, Clock, Calendar } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { getProgressColor } from '../../utils/color-lerp';
 import { formatTokenCount } from '../../utils/format-tokens';
-import { formatCost } from '../../utils/format-session';
+import { formatCost, formatDuration } from '../../utils/format-session';
 import { agentDisplayName } from '../../utils/agent-display-name';
 import { shellDisplayName } from '../../utils/shell-display-name';
 import { useValuePulse } from '../../hooks/useValuePulse';
@@ -15,6 +15,13 @@ interface ContextBarProps {
 }
 
 const pill = 'px-2 py-0.5 rounded bg-surface-raised whitespace-nowrap select-none';
+
+function formatResetTime(epochSeconds: number): string {
+  const ms = epochSeconds * 1000 - Date.now();
+  if (ms <= 0) return 'Resets now';
+  if (ms < 24 * 60 * 60 * 1000) return `Resets in ${formatDuration(ms)}`;
+  return `Resets ${new Date(epochSeconds * 1000).toLocaleString()}`;
+}
 
 /**
  * Visual context window usage bar displayed below terminal areas.
@@ -41,6 +48,10 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
   const tokenRef = useValuePulse(tokenKey);
   const pctRef = useValuePulse(usage ? Math.round(usage.contextWindow.usedPercentage) : 0);
   const fractionRef = useValuePulse(usage?.contextWindow.usedTokens);
+  const rateLimitsKey = usage?.rateLimits
+    ? `${Math.round(usage.rateLimits.fiveHour.usedPercentage)}-${Math.round(usage.rateLimits.sevenDay.usedPercentage)}`
+    : '';
+  const rateLimitsRef = useValuePulse(rateLimitsKey);
 
   // Model is "resolved" only when the CLI status line has reported a real
   // displayName. Until then we show a single spinner pill instead of flashing
@@ -82,9 +93,10 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
   const showTokens = !compact && contextBarConfig.showTokens;
   const showFraction = contextBarConfig.showContextFraction;
   const showProgressBar = contextBarConfig.showProgressBar;
+  const showRateLimits = !!usage.rateLimits && contextBarConfig.showRateLimits;
 
-  // Left pills: shell, version, model, cost. Right pills: tokens, fraction, progress bar.
-  const hasLeftPills = showShell || showVersion || showModel || showCost;
+  // Left pills: shell, version, model, rate limits, cost. Right pills: tokens, fraction, progress bar.
+  const hasLeftPills = showShell || showVersion || showModel || showRateLimits || showCost;
   const hasRightPills = showTokens || showFraction || showProgressBar;
 
   // Return null if everything is hidden
@@ -96,12 +108,9 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
       data-testid="usage-bar"
     >
       {showShell && (
-        <>
-          <span className={`${pill} text-fg-faint`} title={sessionShell as string}>
-            {shellDisplayName(sessionShell as string)}
-          </span>
-          <div className="w-px h-3.5 bg-surface-hover flex-shrink-0" />
-        </>
+        <span className={`${pill} text-fg-faint`} title={sessionShell as string}>
+          {shellDisplayName(sessionShell as string)}
+        </span>
       )}
       {showVersion && (
         <span className={`${pill} text-fg-muted`}>
@@ -112,11 +121,40 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
         </span>
       )}
       {showModel && <span className={`${pill} text-fg-muted`}>{modelName}</span>}
+      {showRateLimits && usage.rateLimits && (() => {
+        const rateLimits = usage.rateLimits;
+        return (
+          <span
+            ref={rateLimitsRef}
+            className={`${pill} text-fg-muted tabular-nums flex items-center gap-2`}
+            title={`5h session: ${formatResetTime(rateLimits.fiveHour.resetsAt)}\n7d weekly: ${formatResetTime(rateLimits.sevenDay.resetsAt)}`}
+            data-testid="rate-limits-pill"
+          >
+            {(['fiveHour', 'sevenDay'] as const).map((key) => {
+              const row = rateLimits[key];
+              const Icon = key === 'fiveHour' ? Clock : Calendar;
+              const pctRow = Math.round(row.usedPercentage);
+              return (
+                <span key={key} className="flex items-center gap-1.5">
+                  <Icon size={11} className="text-fg-faint" aria-label={key === 'fiveHour' ? '5h session' : '7d weekly'} />
+                  <span className="w-20 h-1.5 bg-surface-hover rounded-full overflow-hidden">
+                    <span
+                      className="block h-full rounded-full transition-[width,background-color] duration-300"
+                      style={{
+                        width: `${Math.min(pctRow, 100)}%`,
+                        minWidth: pctRow > 0 ? '2px' : undefined,
+                        backgroundColor: getProgressColor(pctRow),
+                      }}
+                    />
+                  </span>
+                  <span>{pctRow}%</span>
+                </span>
+              );
+            })}
+          </span>
+        );
+      })()}
       {showCost && <span ref={costRef} className={`${pill} text-fg-muted tabular-nums`} title="Session API cost">{formatCost(usage.cost.totalCostUsd)}</span>}
-
-      {hasLeftPills && hasRightPills && (
-        <div className="w-px h-3.5 bg-surface-hover flex-shrink-0" />
-      )}
 
       {showTokens && (
         <span ref={tokenRef} className={`${pill} text-fg-muted tabular-nums flex items-center gap-3`} title="Input / output tokens">

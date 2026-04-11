@@ -41,7 +41,7 @@ const SESSION_ID = 'sess-activity-test';
 const SWIMLANE_ID = 'lane-backlog';
 
 /** Base pre-configure that creates a project with a task linked to a running session */
-function makePreConfig(opts: { sessionStatus: string; activity: string; withUsage: boolean; nullSessionId?: boolean; withEvents?: boolean; noActivityCache?: boolean }): string {
+function makePreConfig(opts: { sessionStatus: string; activity: string; withUsage: boolean; nullSessionId?: boolean; withEvents?: boolean; noActivityCache?: boolean; withRateLimits?: boolean }): string {
   return `
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
@@ -120,6 +120,10 @@ function makePreConfig(opts: { sessionStatus: string; activity: string; withUsag
         model: { id: 'claude-sonnet', displayName: 'Claude Sonnet' },
         contextWindow: { usedPercentage: 25, usedTokens: 1500, cacheTokens: 0, totalInputTokens: 1000, totalOutputTokens: 500, contextWindowSize: 200000 },
         cost: { totalCostUsd: 0.01, totalDurationMs: 5000 },
+        ${opts.withRateLimits ? `rateLimits: {
+          fiveHour: { usedPercentage: 18, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
+          sevenDay: { usedPercentage: 4, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
+        },` : ''}
       };
       return result;
     };
@@ -222,7 +226,7 @@ test.describe('Task Activity Indicators', () => {
       await expect(cardEl.locator('[data-testid="status-bar"]')).not.toBeVisible();
     });
 
-    test('context bar places separator between cost and token counts', async () => {
+    test('context bar renders cost before token counts', async () => {
       await page.locator('text=Test Initializing Task').first().click();
       await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
 
@@ -231,19 +235,14 @@ test.describe('Task Activity Indicators', () => {
 
       const children = usageBar.locator('> *');
       const texts = await children.evaluateAll((els) =>
-        els.map((el) => ({
-          text: el.textContent?.trim() || '',
-          isSeparator: el.classList.contains('bg-surface-hover') && el.classList.contains('w-px'),
-        }))
+        els.map((el) => el.textContent?.trim() || '')
       );
 
-      const costIdx = texts.findIndex((t) => t.text.includes('$'));
-      const separatorIdx = texts.findIndex((t, i) => i > costIdx && t.isSeparator);
-      const tokensIdx = texts.findIndex((t) => t.text.includes('1k'));
+      const costIdx = texts.findIndex((t) => t.includes('$'));
+      const tokensIdx = texts.findIndex((t) => t.includes('1k'));
 
       expect(costIdx).toBeGreaterThanOrEqual(0);
-      expect(separatorIdx).toBeGreaterThan(costIdx);
-      expect(tokensIdx).toBeGreaterThan(separatorIdx);
+      expect(tokensIdx).toBeGreaterThan(costIdx);
 
       // Click the backdrop overlay to close (Escape may be captured by terminal in view mode)
       await page.locator('.fixed.inset-0').first().click({ position: { x: 5, y: 5 } });
@@ -619,6 +618,58 @@ test.describe('Task Activity Indicators', () => {
         await expect(usageBar).toBeVisible({ timeout: 10000 });
         await expect(usageBar).toContainText('Resuming agent...');
         await expect(usageBar.locator('.lucide-loader-circle')).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
+  // Group: rate-limits pill (Claude-only field, ContextBar component)
+  test.describe('rate limits pill', () => {
+    test('renders 5h and 7d bars in task detail ContextBar when usage.rateLimits is present', async () => {
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true })
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Open the task detail dialog -- ContextBar is the .h-8 usage-bar inside it
+        await page.locator('text=Test Initializing Task').first().click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+        const contextBar = page.locator('[data-testid="usage-bar"].h-8');
+        await expect(contextBar).toBeVisible({ timeout: 10000 });
+
+        const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
+        await expect(pill).toBeVisible();
+        await expect(pill).toContainText('18%');
+        await expect(pill).toContainText('4%');
+        // Clock icon for 5h session, CalendarDays icon for 7d weekly
+        await expect(pill.locator('svg')).toHaveCount(2);
+
+        await page.locator('.fixed.inset-0').first().click({ position: { x: 5, y: 5 } });
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('does not render pill when usage.rateLimits is absent', async () => {
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true })
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.locator('text=Test Initializing Task').first().click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+        const contextBar = page.locator('[data-testid="usage-bar"].h-8');
+        await expect(contextBar).toBeVisible({ timeout: 10000 });
+        await expect(contextBar.locator('[data-testid="rate-limits-pill"]')).toHaveCount(0);
+
+        await page.locator('.fixed.inset-0').first().click({ position: { x: 5, y: 5 } });
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
       } finally {
         await browser.close();
       }
