@@ -57,13 +57,16 @@ export class SessionManager extends EventEmitter {
   private fileWatcher: SessionFileWatcher;
   private usageTracker: UsageTracker;
   /**
-   * Per-session last-seen stripped PTY content for TUI redraw dedup.
-   * TUI agents (Codex, Gemini) repaint the entire screen every ~500ms
-   * even when idle. If the stripped text is identical to the previous
-   * frame, it's a redraw that should not reset the silence timer.
+   * Per-session ring buffer of recent normalized PTY content for TUI
+   * redraw dedup. TUI agents (Codex, Gemini) redraw the screen on resize
+   * (panel mount/unmount, project switch). Codex specifically rotates
+   * input placeholder text on each redraw, so byte-comparison against
+   * just the last frame fails. Storing the last N normalized frames lets
+   * us catch redraws even when the placeholder text differs.
    * Agent-agnostic - applies to all PTY-based strategies automatically.
    */
-  private lastPtyContent = new Map<string, string>();
+  private lastPtyContent = new Map<string, string[]>();
+  private static readonly PTY_DEDUP_HISTORY_SIZE = 16;
   private sessionHistoryReader: SessionHistoryReader;
   private statusFileReader: StatusFileReader;
   private firstOutputEmitted = new Set<string>();
@@ -621,24 +624,29 @@ export class SessionManager extends EventEmitter {
         if (strategy.detectIdle?.(data)) {
           this.usageTracker.notifyPtyIdle(id);
         } else if (data.length > 0) {
-          // Content dedup: TUI agents (Codex, Gemini) repaint the entire
-          // screen when idle, when the terminal is resized, and when
-          // panels mount/unmount. Strip ANSI escapes AND collapse all
-          // whitespace, then compare against the last frame. If the
-          // normalized text is identical, the chunk is a redraw that
-          // should not reset the silence timer.
+          // Content dedup: TUI agents (Codex, Gemini) redraw the screen
+          // when resized (panel mount/unmount, project switch). Codex
+          // additionally rotates input placeholder text on each redraw,
+          // so comparing against just the last frame fails. We keep a
+          // ring buffer of the last N normalized frames - if the new
+          // chunk matches ANY of them, it's a redraw that should not
+          // reset the silence timer.
           //
-          // Whitespace normalization is critical: a resize-induced redraw
-          // contains the same words but different positioning (cursor
-          // movements, line breaks at different columns). Byte-for-byte
-          // comparison would miss the duplicate. Normalizing collapses
-          // these layout differences while preserving the actual content.
+          // Normalization (strip ANSI + collapse whitespace) handles
+          // layout differences. The history buffer handles content
+          // variations like rotating placeholder hints.
           const stripped = data.includes('\x1b') ? stripAnsiEscapes(data) : data;
           const normalized = stripped.replace(/\s+/g, ' ').trim();
-          const previousContent = this.lastPtyContent.get(id);
-          if (normalized.length > 0 && normalized !== previousContent) {
-            this.lastPtyContent.set(id, normalized);
-            this.usageTracker.notifyPtyData(id);
+          if (normalized.length > 0) {
+            const history = this.lastPtyContent.get(id) ?? [];
+            if (!history.includes(normalized)) {
+              history.push(normalized);
+              if (history.length > SessionManager.PTY_DEDUP_HISTORY_SIZE) {
+                history.shift();
+              }
+              this.lastPtyContent.set(id, history);
+              this.usageTracker.notifyPtyData(id);
+            }
           }
         }
       }
