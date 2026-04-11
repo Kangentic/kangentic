@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { CodexSessionHistoryParser } from '../../src/main/agent/adapters/codex/session-history-parser';
 import { Activity, EventType } from '../../src/shared/types';
@@ -278,6 +280,88 @@ describe('CodexSessionHistoryParser', () => {
       expect(result.usage!.contextWindow.totalOutputTokens).toBe(6);
       expect(result.usage!.contextWindow.cacheTokens).toBe(11136);
       expect(result.usage!.contextWindow.usedPercentage).toBeCloseTo(11246 / 258400 * 100, 2);
+    });
+
+    it('extracts usage from event_msg-wrapped task_started + token_count (Codex 0.118+)', () => {
+      // Regression test for the "Codex 0% context" bug. Codex 0.118+
+      // wraps lifecycle events inside an `event_msg` envelope - the
+      // outer entry.type is "event_msg" and the real event name moved
+      // to payload.type. Inner field layout (model_context_window,
+      // info.last_token_usage, ...) is unchanged. Before the parser
+      // unwrap, none of the dispatch branches matched these lines and
+      // usage stayed null all the way to the ContextBar - showing 0%
+      // for the entire session.
+      const jsonl = [
+        JSON.stringify({
+          timestamp: '2026-04-11T04:10:55.785Z',
+          type: 'event_msg',
+          payload: {
+            type: 'task_started',
+            turn_id: '019d7abc-5120-7be0-be2b-30cc72b45e80',
+            model_context_window: 258400,
+            collaboration_mode_kind: 'default',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-11T04:10:55.786Z',
+          type: 'turn_context',
+          payload: {
+            turn_id: '019d7abc-5120-7be0-be2b-30cc72b45e80',
+            model: 'gpt-5.3-codex',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-11T04:10:56.464Z',
+          type: 'event_msg',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: { input_tokens: 21122, cached_input_tokens: 10496, output_tokens: 334, total_tokens: 21456 },
+              last_token_usage: { input_tokens: 10569, cached_input_tokens: 10496, output_tokens: 328, total_tokens: 10897 },
+              model_context_window: 258400,
+            },
+            rate_limits: null,
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-04-11T04:10:56.465Z',
+          type: 'event_msg',
+          payload: { type: 'task_complete', turn_id: '019d7abc-5120-7be0-be2b-30cc72b45e80', last_agent_message: '...' },
+        }),
+      ].join('\n') + '\n';
+
+      const result = CodexSessionHistoryParser.parse(jsonl, 'append');
+
+      // Pre-fix this is the assertion that fails: result.usage is null
+      // because no branch matched the wrapped event_msg shape.
+      expect(result.usage).not.toBeNull();
+      expect(result.usage!.model.id).toBe('gpt-5.3-codex');
+      expect(result.usage!.contextWindow.contextWindowSize).toBe(258400);
+      expect(result.usage!.contextWindow.totalInputTokens).toBe(10569);
+      expect(result.usage!.contextWindow.usedTokens).toBe(10569);
+      expect(result.usage!.contextWindow.usedPercentage).toBeCloseTo(10569 / 258400 * 100, 2);
+      // task_complete was the last activity event in the chunk.
+      expect(result.activity).toBe(Activity.Idle);
+    });
+
+    it('replays a sanitized real Codex 0.118 rollout fixture and gets non-zero usage', () => {
+      // Empirical reproduction of the bug. The fixture is a hand-trimmed,
+      // PII-stripped copy of an actual ~/.codex/sessions/.../rollout-*.jsonl
+      // written by Codex CLI v0.118.0. Pre-fix the parser silently dropped
+      // every event_msg-wrapped line and returned null usage; post-fix it
+      // produces a real percentage. Catches future format drift the same
+      // day Codex ships it - update the fixture, the test fails, we fix
+      // the parser.
+      const fixturePath = path.join(__dirname, '..', 'fixtures', 'codex-rollout-event-msg.jsonl');
+      const content = fs.readFileSync(fixturePath, 'utf-8');
+      const result = CodexSessionHistoryParser.parse(content, 'append');
+
+      expect(result.usage).not.toBeNull();
+      expect(result.usage!.contextWindow.contextWindowSize).toBe(258400);
+      expect(result.usage!.contextWindow.usedPercentage).toBeGreaterThan(0);
+      expect(result.usage!.contextWindow.usedTokens).toBeGreaterThan(0);
+      // Last activity event in the fixture is task_complete.
+      expect(result.activity).toBe(Activity.Idle);
     });
   });
 });

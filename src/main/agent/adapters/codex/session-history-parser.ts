@@ -169,8 +169,25 @@ export class CodexSessionHistoryParser {
       }
       if (!isRecord(entry)) continue;
 
-      const entryType = entry.type;
+      // Codex 0.118+ wraps lifecycle events (task_started, token_count,
+      // task_complete, agent_message, user_message, ...) inside an
+      // `event_msg` envelope. The real event name moved to `payload.type`
+      // but the inner field layout (model_context_window, info.last_token_usage,
+      // turn_id, ...) is unchanged. `response_item` and `turn_context` are
+      // still emitted at the outer level, so the unwrap only fires when the
+      // outer type is `event_msg` AND payload carries a `type` discriminator.
+      const rawOuterType = entry.type;
       const payload = entry.payload;
+      const rawDispatchType = rawOuterType === 'event_msg' && isRecord(payload) && typeof payload.type === 'string'
+        ? payload.type
+        : rawOuterType;
+      // Narrow to the typed dispatch union. Unknown types (Codex
+      // internal-only events we don't care about, future additions we
+      // haven't taught the parser yet) are skipped silently here. The
+      // typed `entryType` makes every comparison below a type-checked
+      // string-literal match - mistyping a branch is a TS error.
+      if (!isCodexDispatchType(rawDispatchType)) continue;
+      const entryType: CodexDispatchType = rawDispatchType;
       const timestamp = parseTimestamp(entry.timestamp);
 
       if (entryType === 'turn_context' && isRecord(payload)) {
@@ -245,6 +262,33 @@ export class CodexSessionHistoryParser {
 }
 
 // ---------- Internal helpers ----------
+
+/**
+ * Single source of truth for the Codex rollout entry types this parser
+ * dispatches on. `event_msg` is intentionally absent - it's an envelope
+ * that gets unwrapped to one of these inner types before dispatch, so it
+ * never reaches the if/else chain. `session_meta` is also absent because
+ * it's read separately by `captureSessionIdFromFilesystem` (first line
+ * only) rather than through `parse()`.
+ *
+ * Adding a new entry type means: (1) add it here, (2) add an else-if
+ * branch in `parse()`. TypeScript catches a typo in the branch literal
+ * because the comparison narrows against `CodexDispatchType`.
+ */
+const CODEX_DISPATCH_TYPES = [
+  'turn_context',
+  'task_started',
+  'token_count',
+  'task_complete',
+  'response_item',
+] as const;
+
+type CodexDispatchType = typeof CODEX_DISPATCH_TYPES[number];
+
+function isCodexDispatchType(value: unknown): value is CodexDispatchType {
+  return typeof value === 'string'
+    && (CODEX_DISPATCH_TYPES as readonly string[]).includes(value);
+}
 
 /** Type guard for a plain JSON object (not null, not array). */
 function isRecord(value: unknown): value is Record<string, unknown> {
