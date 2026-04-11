@@ -1,5 +1,15 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { IdleReason } from '../../shared/types';
 import type { ActivityState } from '../../shared/types';
+
+const PTY_DEBUG_LOG = path.join(os.tmpdir(), 'kangentic-pty-debug.log');
+function trackerLog(message: string): void {
+  const timestamp = new Date().toISOString().slice(11, 23);
+  const line = `[${timestamp}] [tracker] ${message}\n`;
+  try { fs.appendFileSync(PTY_DEBUG_LOG, line); } catch { /* ignore */ }
+}
 
 /**
  * Timeout in ms before silence is interpreted as idle.
@@ -62,20 +72,21 @@ export class PtyActivityTracker {
    */
   onData(sessionId: string): void {
     if (this.suppressed.has(sessionId)) {
-      console.log(`[pty-tracker] ${sessionId.slice(0, 8)} SUPPRESSED`);
+      trackerLog(`${sessionId.slice(0, 8)} onData SUPPRESSED`);
       return;
     }
     if (!this.callbacks.isSessionRunning(sessionId)) {
-      console.log(`[pty-tracker] ${sessionId.slice(0, 8)} onData SKIP (not running)`);
+      trackerLog(`${sessionId.slice(0, 8)} onData NOT-RUNNING`);
       return;
     }
 
     const currentActivity = this.callbacks.getActivity(sessionId);
     if (currentActivity === 'idle') {
-      console.log(`[pty-tracker] ${sessionId.slice(0, 8)} onData: idle->thinking`);
+      trackerLog(`${sessionId.slice(0, 8)} onData idle->thinking`);
       this.callbacks.onThinking(sessionId);
     }
 
+    trackerLog(`${sessionId.slice(0, 8)} resetSilenceTimer (${PTY_SILENCE_THRESHOLD_MS}ms)`);
     this.resetSilenceTimer(sessionId);
   }
 
@@ -114,11 +125,12 @@ export class PtyActivityTracker {
 
     const timer = setTimeout(() => {
       this.silenceTimers.delete(sessionId);
-      if (this.suppressed.has(sessionId)) { console.log(`[pty-tracker] ${sessionId.slice(0, 8)} silence timer: SUPPRESSED`); return; }
-      if (!this.callbacks.isSessionRunning(sessionId)) { console.log(`[pty-tracker] ${sessionId.slice(0, 8)} silence timer: NOT RUNNING`); return; }
-      if (this.callbacks.getActivity(sessionId) !== 'thinking') { console.log(`[pty-tracker] ${sessionId.slice(0, 8)} silence timer: state=${this.callbacks.getActivity(sessionId)} (not thinking)`); return; }
+      if (this.suppressed.has(sessionId)) { trackerLog(`${sessionId.slice(0, 8)} TIMER: suppressed`); return; }
+      if (!this.callbacks.isSessionRunning(sessionId)) { trackerLog(`${sessionId.slice(0, 8)} TIMER: not running`); return; }
+      const activity = this.callbacks.getActivity(sessionId);
+      if (activity !== 'thinking') { trackerLog(`${sessionId.slice(0, 8)} TIMER: skip (state=${activity})`); return; }
 
-      console.log(`[pty-tracker] ${sessionId.slice(0, 8)} silence timer: FIRING -> idle`);
+      trackerLog(`${sessionId.slice(0, 8)} TIMER: FIRING -> idle`);
       this.callbacks.onIdle(sessionId, IdleReason.Silence);
     }, PTY_SILENCE_THRESHOLD_MS);
     timer.unref();
