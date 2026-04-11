@@ -1,4 +1,4 @@
-const { flipFuses, FuseVersion, FuseV2Options } = require('@electron/fuses');
+const { flipFuses, FuseVersion, FuseV1Options } = require('@electron/fuses');
 const fs = require('fs');
 const path = require('path');
 
@@ -68,12 +68,12 @@ module.exports = async function afterPack(context) {
   }
 
   await flipFuses(electronBinaryPath, {
-    version: FuseVersion.V2,
-    [FuseV2Options.RunAsNode]: false,
-    [FuseV2Options.EnableCookieEncryption]: true,
-    [FuseV2Options.EnableNodeOptionsEnvironmentVariable]: false,
-    [FuseV2Options.EnableNodeCliInspectArguments]: false,
-    [FuseV2Options.EnableEmbeddedAsarIntegrityValidation]: true,
-    [FuseV2Options.OnlyLoadAppFromAsar]: true,
+    version: FuseVersion.V1,
+    [FuseV1Options.RunAsNode]: false,
+    [FuseV1Options.EnableCookieEncryption]: true,
+    [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
+    [FuseV1Options.EnableNodeCliInspectArguments]: false,
+    [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
+    [FuseV1Options.OnlyLoadAppFromAsar]: true,
   });
 };

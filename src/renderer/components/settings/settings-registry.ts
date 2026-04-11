@@ -46,6 +46,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'contextBar.showTokens', tabId: 'terminal', label: 'Token Counts', description: 'Input / output totals', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
   { id: 'contextBar.showContextFraction', tabId: 'terminal', label: 'Context Window', description: 'Used / total tokens', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
   { id: 'contextBar.showProgressBar', tabId: 'terminal', label: 'Progress Bar', description: 'Usage bar and percentage', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showRateLimits', tabId: 'terminal', label: 'Rate Limits', description: 'Claude 5h / weekly quota bars', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'claude', 'quota', 'plan', 'limit', '5h', 'weekly'] },
 
   // ── Agent ──
   { id: 'project.defaultAgent', tabId: 'agent', label: 'Default Agent', description: 'Which agent CLI to use for new sessions', scope: 'project', keywords: ['agent', 'claude', 'default'] },

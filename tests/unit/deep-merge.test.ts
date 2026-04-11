@@ -169,6 +169,54 @@ describe('deepMerge', () => {
       expect(result.agent.permissionMode).toBe('acceptEdits');
     });
 
+    it('preserves contextBar.showRateLimits when toggling another contextBar key', () => {
+      // Regression guard: contextBar is a typed struct, not a dictionary.
+      // Partial updates from the Settings UI must preserve unmentioned keys,
+      // so toggling `showShell` on its own must not wipe `showRateLimits`.
+      const target = {
+        contextBar: {
+          showShell: true,
+          showVersion: true,
+          showModel: true,
+          showCost: true,
+          showTokens: true,
+          showContextFraction: true,
+          showProgressBar: true,
+          showRateLimits: true,
+        },
+      };
+      const source = { contextBar: { showShell: false } };
+      const result = deepMergeConfig(target, source);
+      expect(result.contextBar.showShell).toBe(false);
+      expect(result.contextBar.showRateLimits).toBe(true);
+      expect(result.contextBar.showProgressBar).toBe(true);
+      expect(result.contextBar.showContextFraction).toBe(true);
+    });
+
+    it('persists showRateLimits=false through a subsequent unrelated partial update', () => {
+      // Two-step regression guard: simulates ConfigManager.save() being called
+      // twice. First the user disables Rate Limits, then toggles an unrelated
+      // key. The `false` value must survive the second merge.
+      const initial = {
+        contextBar: {
+          showShell: true,
+          showVersion: true,
+          showModel: true,
+          showCost: true,
+          showTokens: true,
+          showContextFraction: true,
+          showProgressBar: true,
+          showRateLimits: true,
+        },
+      };
+      const afterDisableRateLimits = deepMergeConfig(initial, { contextBar: { showRateLimits: false } });
+      expect(afterDisableRateLimits.contextBar.showRateLimits).toBe(false);
+      const afterTogglingCost = deepMergeConfig(afterDisableRateLimits, { contextBar: { showCost: false } });
+      expect(afterTogglingCost.contextBar.showRateLimits).toBe(false);
+      expect(afterTogglingCost.contextBar.showCost).toBe(false);
+      expect(afterTogglingCost.contextBar.showShell).toBe(true);
+    });
+
     it('deepMergeConfig uses replaceFlatMaps: false', () => {
       const base = { terminal: { shell: null, fontSize: 14, fontFamily: 'Menlo', scrollbackLines: 5000, cursorStyle: 'block' } };
       const overrides = { terminal: { shell: 'powershell' } };

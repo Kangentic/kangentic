@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
-## [Unreleased]
+## [v0.15.0] - 2026-04-11
 
 ### Features
 
@@ -101,6 +101,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Deps: upgrade core dependencies to latest stable (03b8747)
 - Tests: add Codex and Gemini agent-parity E2E specs + `ActivityStateMachine` unit tests (7d6bb41)
+- Tests: speed up E2E suite 36% and replace branch-rename E2E with unit tests (0dd683b)
 - CI: prevent partial releases and fix macOS build OOM (27c2f5b)
 
 ## [v0.14.0] - 2026-04-01

@@ -168,7 +168,7 @@ Index: `idx_transitions_from_to` on (from_swimlane_id, to_swimlane_id).
 | lines_removed | INTEGER | | NULL |
 | files_changed | INTEGER | | NULL |
 
-Valid session_type values: `claude_agent`, `codex_agent`, `gemini_agent`, `run_script`.
+Valid session_type values: `claude_agent`, `codex_agent`, `gemini_agent`, `aider_agent`, `run_script`.
 
 Valid status values: `running`, `queued`, `suspended`, `exited`, `orphaned`.
 
@@ -253,6 +253,7 @@ No foreign key constraint on `session_id`. Cascade cleanup is handled via a DELE
 | from_agent | TEXT | NOT NULL | |
 | to_agent | TEXT | NOT NULL | |
 | trigger | TEXT | NOT NULL | |
+| packet_json | TEXT | NOT NULL | |
 | session_history_path | TEXT | | |
 | created_at | TEXT | NOT NULL | |
 
