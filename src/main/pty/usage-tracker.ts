@@ -556,6 +556,11 @@ export class UsageTracker {
     return this.activityStateMachine.getActivityCache();
   }
 
+  /** Return current activity for a single session (efficient O(1) lookup). */
+  getSessionActivity(sessionId: string): ActivityState | undefined {
+    return this.activityStateMachine.getState(sessionId)?.activity;
+  }
+
   /** Return cached events for a specific session. */
   getEventsForSession(sessionId: string): SessionEvent[] {
     return this.eventCache.get(sessionId) || [];

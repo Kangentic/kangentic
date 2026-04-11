@@ -67,6 +67,22 @@ export class SessionManager extends EventEmitter {
    */
   private lastPtyContent = new Map<string, string[]>();
   private static readonly PTY_DEDUP_HISTORY_SIZE = 16;
+  /**
+   * Per-session timestamp of the last PTY resize. Used to suppress
+   * idle->thinking transitions for a brief window after a resize, since
+   * resize triggers the child process (TUI) to redraw the entire screen.
+   * Without this, switching projects (which remounts the panel and triggers
+   * a fit/resize) causes a brief active flicker even when nothing changed.
+   */
+  private lastResizeTime = new Map<string, number>();
+  private static readonly RESIZE_GRACE_PERIOD_MS = 1500;
+  /**
+   * Sessions that have been woken at least once via PTY data. Used to
+   * gate the resize grace period - we only suppress idle->thinking
+   * transitions for sessions that were already settled-idle (not for
+   * brand new sessions where the very first output IS the initial wake).
+   */
+  private sessionsEverWoken = new Set<string>();
   private sessionHistoryReader: SessionHistoryReader;
   private statusFileReader: StatusFileReader;
   private firstOutputEmitted = new Set<string>();
@@ -624,28 +640,51 @@ export class SessionManager extends EventEmitter {
         if (strategy.detectIdle?.(data)) {
           this.usageTracker.notifyPtyIdle(id);
         } else if (data.length > 0) {
-          // Content dedup: TUI agents (Codex, Gemini) redraw the screen
-          // when resized (panel mount/unmount, project switch). Codex
-          // additionally rotates input placeholder text on each redraw,
-          // so comparing against just the last frame fails. We keep a
-          // ring buffer of the last N normalized frames - if the new
-          // chunk matches ANY of them, it's a redraw that should not
-          // reset the silence timer.
+          // TUI agents (Codex, Gemini) redraw the screen on resize (panel
+          // mount/unmount, project switch). The redraw produces "new" PTY
+          // chunks that would otherwise trigger an idle->thinking flicker.
+          //
+          // Two layers of defense (both agent-agnostic):
+          //
+          // 1. Resize grace period: if a resize happened within the last
+          //    1.5s AND the session is currently idle, treat all incoming
+          //    data as redraw noise. Add it to the dedup buffer (so any
+          //    future identical chunks are filtered) but do NOT call
+          //    notifyPtyData. This prevents the first-encounter flicker.
+          //
+          // 2. Content dedup ring buffer: even outside the grace period,
+          //    if the normalized content matches any of the last N frames
+          //    we've seen, treat as a redraw and skip notification. Catches
+          //    redraws that fall outside the grace window (e.g. delayed
+          //    refreshes) and Codex's rotating placeholder text.
           //
           // Normalization (strip ANSI + collapse whitespace) handles
-          // layout differences. The history buffer handles content
-          // variations like rotating placeholder hints.
+          // layout differences from cursor positioning and line wrapping.
           const stripped = data.includes('\x1b') ? stripAnsiEscapes(data) : data;
           const normalized = stripped.replace(/\s+/g, ' ').trim();
           if (normalized.length > 0) {
             const history = this.lastPtyContent.get(id) ?? [];
-            if (!history.includes(normalized)) {
+            const isContentNew = !history.includes(normalized);
+            if (isContentNew) {
               history.push(normalized);
               if (history.length > SessionManager.PTY_DEDUP_HISTORY_SIZE) {
                 history.shift();
               }
               this.lastPtyContent.set(id, history);
-              this.usageTracker.notifyPtyData(id);
+            }
+            if (isContentNew) {
+              const lastResize = this.lastResizeTime.get(id) ?? 0;
+              const inResizeGrace = (Date.now() - lastResize) < SessionManager.RESIZE_GRACE_PERIOD_MS;
+              const currentActivity = this.usageTracker.getSessionActivity(id);
+              const hasBeenWoken = this.sessionsEverWoken.has(id);
+              // Only suppress if the session was already settled-idle.
+              // Brand new sessions (never woken) need their first output
+              // to wake them, regardless of resize timing.
+              const suppressForResize = inResizeGrace && currentActivity === 'idle' && hasBeenWoken;
+              if (!suppressForResize) {
+                this.sessionsEverWoken.add(id);
+                this.usageTracker.notifyPtyData(id);
+              }
             }
           }
         }
@@ -758,6 +797,9 @@ export class SessionManager extends EventEmitter {
 
     const colsChanged = this.bufferManager.onResize(sessionId, clampedCols);
     session.pty.resize(clampedCols, clampedRows);
+    // Mark resize time so the dispatch can suppress idle->thinking
+    // transitions during the redraw burst that follows.
+    this.lastResizeTime.set(sessionId, Date.now());
     return { colsChanged };
   }
 
@@ -793,6 +835,8 @@ export class SessionManager extends EventEmitter {
     this.usageTracker.removeSession(sessionId);
     this.firstOutputEmitted.delete(sessionId);
     this.lastPtyContent.delete(sessionId);
+    this.lastResizeTime.delete(sessionId);
+    this.sessionsEverWoken.delete(sessionId);
   }
 
   /**
