@@ -608,6 +608,7 @@ export class SessionManager extends EventEmitter {
       const strategy = input.agentParser?.runtime?.activity;
       if (strategy && strategy.kind !== 'hooks') {
         if (strategy.detectIdle?.(data)) {
+          console.log(`[pty-dedup] ${id.slice(0, 8)} IDLE-MATCH detectIdle fired`);
           this.usageTracker.notifyPtyIdle(id);
         } else if (data.length > 0) {
           // Content dedup: TUI agents (Codex, Gemini) repaint the entire
@@ -620,7 +621,12 @@ export class SessionManager extends EventEmitter {
           const previousContent = this.lastPtyContent.get(id);
           if (stripped.length > 0 && stripped !== previousContent) {
             this.lastPtyContent.set(id, stripped);
+            console.log(`[pty-dedup] ${id.slice(0, 8)} NEW ${stripped.length}B "${stripped.slice(0, 60).replace(/\n/g, '\\n')}"`);
             this.usageTracker.notifyPtyData(id);
+          } else if (stripped.length > 0) {
+            console.log(`[pty-dedup] ${id.slice(0, 8)} DUP ${stripped.length}B (same as prev)`);
+          } else {
+            console.log(`[pty-dedup] ${id.slice(0, 8)} ANSI ${data.length}B (empty after strip)`);
           }
         }
       }

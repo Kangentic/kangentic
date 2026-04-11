@@ -61,10 +61,18 @@ export class PtyActivityTracker {
    * the silence timer. No-op if suppressed or session not running.
    */
   onData(sessionId: string): void {
-    if (this.suppressed.has(sessionId)) return;
-    if (!this.callbacks.isSessionRunning(sessionId)) return;
+    if (this.suppressed.has(sessionId)) {
+      console.log(`[pty-tracker] ${sessionId.slice(0, 8)} onData SUPPRESSED (hooks working)`);
+      return;
+    }
+    if (!this.callbacks.isSessionRunning(sessionId)) {
+      console.log(`[pty-tracker] ${sessionId.slice(0, 8)} onData SKIP (not running)`);
+      return;
+    }
 
-    if (this.callbacks.getActivity(sessionId) === 'idle') {
+    const currentActivity = this.callbacks.getActivity(sessionId);
+    if (currentActivity === 'idle') {
+      console.log(`[pty-tracker] ${sessionId.slice(0, 8)} onData: idle->thinking`);
       this.callbacks.onThinking(sessionId);
     }
 
@@ -106,10 +114,11 @@ export class PtyActivityTracker {
 
     const timer = setTimeout(() => {
       this.silenceTimers.delete(sessionId);
-      if (this.suppressed.has(sessionId)) return;
-      if (!this.callbacks.isSessionRunning(sessionId)) return;
-      if (this.callbacks.getActivity(sessionId) !== 'thinking') return;
+      if (this.suppressed.has(sessionId)) { console.log(`[pty-tracker] ${sessionId.slice(0, 8)} silence timer: SUPPRESSED`); return; }
+      if (!this.callbacks.isSessionRunning(sessionId)) { console.log(`[pty-tracker] ${sessionId.slice(0, 8)} silence timer: NOT RUNNING`); return; }
+      if (this.callbacks.getActivity(sessionId) !== 'thinking') { console.log(`[pty-tracker] ${sessionId.slice(0, 8)} silence timer: state=${this.callbacks.getActivity(sessionId)} (not thinking)`); return; }
 
+      console.log(`[pty-tracker] ${sessionId.slice(0, 8)} silence timer: FIRING -> idle`);
       this.callbacks.onIdle(sessionId, IdleReason.Silence);
     }, PTY_SILENCE_THRESHOLD_MS);
     timer.unref();
