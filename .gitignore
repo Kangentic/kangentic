@@ -119,3 +119,7 @@ e2e-timings*.json
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 kangentic.local.json
+
+# Marketing captures output (regenerated on release tags)
+/captures/
+tests/captures/fixtures/scrollback-*.json

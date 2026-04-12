@@ -59,6 +59,17 @@ export default defineConfig({
       // to avoid PR-blocking transients.
       retries: process.env.CI ? 1 : 0,
     },
+    {
+      name: 'captures',
+      testDir: './tests/captures',
+      testMatch: '**/*.capture.ts',
+      timeout: 30_000,
+      workers: 1,
+      use: {
+        browserName: 'chromium',
+        headless: true,
+      },
+    },
   ],
   webServer: {
     command: `npx vite --port ${vitePort}`,
