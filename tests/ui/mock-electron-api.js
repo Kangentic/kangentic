@@ -983,6 +983,18 @@
             ],
             defaultPermission: 'default',
           },
+          {
+            name: 'copilot', displayName: 'GitHub Copilot CLI', found: false, path: null, version: null,
+            permissions: [
+              { mode: 'plan', label: 'Plan (Read-Only)' },
+              { mode: 'dontAsk', label: 'Plan Non-Interactive (CI)' },
+              { mode: 'default', label: 'Default (Confirm Actions)' },
+              { mode: 'acceptEdits', label: 'Allow All Tools' },
+              { mode: 'auto', label: 'Autopilot (Allow All Tools)' },
+              { mode: 'bypassPermissions', label: 'YOLO (Full Access)' },
+            ],
+            defaultPermission: 'acceptEdits',
+          },
         ];
       },
     },
