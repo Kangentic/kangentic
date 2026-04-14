@@ -2,7 +2,7 @@ import React, { useCallback, useState, useRef, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Loader2, Trash2, CirclePause, Mail, Paperclip, GitPullRequest, Inbox, Pencil, Archive, Copy, GitCompare } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { formatRelativeTime } from '../../lib/datetime';
 import { TaskDetailDialog } from '../dialogs/TaskDetailDialog';
 import { TaskChangesDialog } from '../dialogs/TaskChangesDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
@@ -350,7 +350,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           {task.archived_at && (
             <div className="mt-0.5">
               <span className="text-xs text-fg-disabled">
-                {formatDistanceToNow(new Date(task.archived_at), { addSuffix: true })}
+                {formatRelativeTime(task.archived_at)}
               </span>
             </div>
           )}

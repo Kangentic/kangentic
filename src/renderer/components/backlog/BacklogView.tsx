@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { Plus, Search, SquareArrowRight, Trash2, Inbox, Filter, Pencil, X, ExternalLink, GripVertical } from 'lucide-react';
 import { GitHubIcon } from '../icons/GitHubIcon';
-import { formatDistanceToNow } from 'date-fns';
+import { formatRelativeTime } from '../../lib/datetime';
 import { DndContext, DragOverlay } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { DataTable } from '../DataTable';
@@ -331,7 +331,7 @@ export function BacklogView() {
       sortValue: (item) => item.created_at,
       render: (item) => (
         <span className="text-fg-faint text-xs whitespace-nowrap">
-          {formatDistanceToNow(new Date(item.created_at), { addSuffix: true })}
+          {formatRelativeTime(item.created_at)}
         </span>
       ),
     },

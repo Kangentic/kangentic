@@ -133,6 +133,7 @@ All runtime data lives under `<project>/.kangentic/` (auto-added to `.gitignore`
 - Global DB (`<configDir>/index.db`) for projects list — configDir is `%APPDATA%/kangentic/` (Win), `~/Library/Application Support/kangentic/` (Mac), `~/.config/kangentic/` (Linux)
 - Per-project DB (`<configDir>/projects/<projectId>.db`) for tasks, swimlanes, actions, sessions
 - Migrations run automatically on open
+- **Timestamps are stored as UTC ISO 8601 strings** (`TEXT` columns like `created_at`, `updated_at`, `archived_at`, `started_at`, `exited_at`). Always write via `new Date().toISOString()` - never use SQLite's `DEFAULT CURRENT_TIMESTAMP` (emits `YYYY-MM-DD HH:MM:SS` with no `Z` suffix; JS parses that as local time, not UTC) or naive strings like `new Date().toString()`. Display formatting is the renderer's job (`src/renderer/lib/datetime.ts`) - the DB only holds UTC instants.
 
 ### Testing
 

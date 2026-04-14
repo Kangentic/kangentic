@@ -230,6 +230,39 @@ test.describe('Session Summary Panel', () => {
     }
   });
 
+  test('Timeline row renders non-empty formatted dates on both sides of the arrow', async () => {
+    // The summary fixture sets taskCreatedAt and exitedAt. SessionSummaryPanel renders:
+    //   <timelineStart> <ArrowRight/> <formatShortDateTime(exitedAt)>
+    // We assert both sides are non-empty text. We deliberately do NOT assert exact
+    // locale output -- that is covered by the unit tier datetime.test.ts tests.
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, exitCode: 0 }));
+    try {
+      await page.locator('[data-swimlane-name="Done"]').waitFor({ state: 'visible', timeout: 10000 });
+      await page.locator('text=Completed Test Task').click();
+
+      const summaryPanel = page.locator('[data-testid="session-summary"]');
+      await expect(summaryPanel).toBeVisible({ timeout: 5000 });
+
+      // Find the Timeline row value cell -- it is a flex span with gap-1.5 (unique
+      // among the flex value cells; Tokens and Lines changed use gap-2).
+      // It contains: start date text, an ArrowRight svg, end date text.
+      const timelineValue = summaryPanel.locator('span.tabular-nums.flex.items-center.gap-1\\.5');
+      await expect(timelineValue).toBeVisible({ timeout: 5000 });
+
+      // Extract the text content of the span; svg elements contribute no text so
+      // the result is the concatenation of both formatted date strings.
+      const fullText = await timelineValue.textContent();
+      expect(fullText).toBeTruthy();
+      // Both dates should produce non-empty strings. We check the overall text is
+      // longer than 1 character as a baseline -- a single empty string would be "".
+      expect((fullText ?? '').trim().length).toBeGreaterThan(1);
+      // Dates always contain digits.
+      expect(fullText).toMatch(/\d/);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('shows Completed badge for null exit code (suspended path)', async () => {
     const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, exitCode: null }));
     try {

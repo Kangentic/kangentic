@@ -1,16 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { DollarSign, Cpu, Wrench, CheckCircle2, XCircle, Hash, ArrowUp, ArrowDown, ArrowRight, Calendar, Clock, Hourglass, Fingerprint, GitBranch, FileCode, Copy, Check } from 'lucide-react';
-import { format, formatDistance } from 'date-fns';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatDuration, formatCost } from '../../utils/format-session';
+import { formatShortDateTime, formatDurationBetween } from '../../lib/datetime';
 import type { SessionSummary } from '../../../shared/types';
 
 interface SessionSummaryPanelProps {
   taskId: string;
-}
-
-function formatDateTime(iso: string): string {
-  return format(new Date(iso), 'MMM d, h:mm a');
 }
 
 /**
@@ -82,7 +78,7 @@ export function SessionSummaryPanel({ taskId }: SessionSummaryPanelProps) {
 
   // Timeline: task creation -> completion (full lifecycle)
   if (summary.taskCreatedAt) {
-    const timelineStart = formatDateTime(summary.taskCreatedAt);
+    const timelineStart = formatShortDateTime(summary.taskCreatedAt);
     metricRows.push({
       icon: <Calendar size={13} />,
       label: 'Timeline',
@@ -91,7 +87,7 @@ export function SessionSummaryPanel({ taskId }: SessionSummaryPanelProps) {
           <span className="text-fg-secondary tabular-nums flex items-center gap-1.5">
             {timelineStart}
             <ArrowRight size={10} className="text-fg-disabled" />
-            {formatDateTime(summary.exitedAt)}
+            {formatShortDateTime(summary.exitedAt)}
           </span>
         )
         : <span className="text-fg-secondary tabular-nums">{timelineStart}</span>,
@@ -104,7 +100,7 @@ export function SessionSummaryPanel({ taskId }: SessionSummaryPanelProps) {
       label: 'Duration',
       value: (
         <span className="text-fg-secondary tabular-nums font-medium">
-          {formatDistance(new Date(summary.taskCreatedAt), new Date(summary.exitedAt))}
+          {formatDurationBetween(summary.taskCreatedAt, summary.exitedAt)}
         </span>
       ),
     });

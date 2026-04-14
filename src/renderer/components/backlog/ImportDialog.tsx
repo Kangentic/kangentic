@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Check, Loader2, Paperclip, Search, AlertCircle, X, RefreshCw, EyeOff, Eye } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { formatRelativeTime } from '../../lib/datetime';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { Pill } from '../Pill';
 import { MultiSelectDropdown } from '../MultiSelectDropdown';
@@ -608,7 +608,7 @@ function ImportIssueRow({
           )}
           {!isProject && issue.createdAt && (
             <span className="text-[11px] text-fg-faint ml-auto shrink-0">
-              {formatDistanceToNow(new Date(issue.createdAt), { addSuffix: true })}
+              {formatRelativeTime(issue.createdAt)}
             </span>
           )}
         </div>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { format } from 'date-fns';
 import { useShallow } from 'zustand/react/shallow';
+import { formatTime } from '../../lib/datetime';
 import { useSessionStore } from '../../stores/session-store';
 import { Select } from '../settings/shared';
 import { EventType, IdleReason } from '../../../shared/types';
@@ -260,10 +260,6 @@ function FilterPill({
       </Select>
     </div>
   );
-}
-
-function formatTime(ts: number): string {
-  return format(ts, 'HH:mm:ss');
 }
 
 interface EventLineProps {

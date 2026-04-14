@@ -5,6 +5,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { getProgressColor } from '../../utils/color-lerp';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
+import { formatDateTime } from '../../lib/datetime';
 import { agentDisplayName } from '../../utils/agent-display-name';
 import { shellDisplayName } from '../../utils/shell-display-name';
 import { useValuePulse } from '../../hooks/useValuePulse';
@@ -20,7 +21,7 @@ function formatResetTime(epochSeconds: number): string {
   const ms = epochSeconds * 1000 - Date.now();
   if (ms <= 0) return 'Resets now';
   if (ms < 24 * 60 * 60 * 1000) return `Resets in ${formatDuration(ms)}`;
-  return `Resets ${new Date(epochSeconds * 1000).toLocaleString()}`;
+  return `Resets ${formatDateTime(epochSeconds * 1000)}`;
 }
 
 /**

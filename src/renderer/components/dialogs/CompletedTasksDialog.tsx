@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Search, ArrowUp, ArrowDown, ClipboardList, RotateCcw, Trash2, Eye } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { formatRelativeTime } from '../../lib/datetime';
 import { BaseDialog } from './BaseDialog';
 import { TaskDetailDialog } from './TaskDetailDialog';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -510,7 +510,7 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
         row.task.archived_at ? (
           <span className="text-fg-faint text-xs flex items-center justify-end whitespace-nowrap">
             <StalenessIndicator archivedAt={row.task.archived_at} />
-            {formatDistanceToNow(new Date(row.task.archived_at), { addSuffix: true })}
+            {formatRelativeTime(row.task.archived_at)}
           </span>
         ) : (
           <span className="text-fg-disabled">-</span>

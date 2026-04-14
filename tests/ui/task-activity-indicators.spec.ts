@@ -674,5 +674,39 @@ test.describe('Task Activity Indicators', () => {
         await browser.close();
       }
     });
+
+    test('pill tooltip title contains "Resets " text for a reset time more than 24 h in the future', async () => {
+      // sevenDay.resetsAt is set to Date.now()/1000 + 5 days in makePreConfig withRateLimits:true.
+      // formatResetTime returns `Resets ${formatDateTime(...)}` when ms > 24 h.
+      // We assert the pill title contains "Resets " (from the sevenDay line) followed by
+      // non-empty text -- we deliberately do NOT assert exact locale output since that
+      // is covered by the unit tier datetime.test.ts tests.
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true })
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.locator('text=Test Initializing Task').first().click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+        const contextBar = page.locator('[data-testid="usage-bar"].h-8');
+        await expect(contextBar).toBeVisible({ timeout: 10000 });
+
+        const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
+        await expect(pill).toBeVisible();
+
+        const titleAttr = await pill.getAttribute('title');
+        expect(titleAttr).toBeTruthy();
+        // The title is "5h session: <reset>\n7d weekly: <reset>".
+        // sevenDay resets in 5 days so its line uses "Resets <formatted date>".
+        expect(titleAttr).toMatch(/Resets [^\s]/);
+
+        await page.locator('.fixed.inset-0').first().click({ position: { x: 5, y: 5 } });
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
   });
 });
