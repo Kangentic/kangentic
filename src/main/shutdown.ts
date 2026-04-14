@@ -45,6 +45,11 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
     // This must happen BEFORE killAll() because killAll sends best-effort exit
     // signals then force-kills. The atomic compareAndUpdateStatus prevents the
     // onExit handler from overwriting 'suspended' back to 'exited'.
+    //
+    // Tag with suspended_by='user' so recoverSessions/reconcileSessions leave
+    // them paused on next launch. Nothing auto-resumes or auto-spawns until
+    // the user explicitly clicks resume. This gives the user a clean slate
+    // on every restart instead of a stampede of recovered/reconciled agents.
     const allSessions = sessionManager.listSessions();
     const sessionsByProject = new Map<string, typeof allSessions>();
     for (const session of allSessions) {
@@ -62,7 +67,7 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
         for (const session of sessions) {
           const record = sessionRepo.getLatestForTask(session.taskId);
           if (record && record.status === 'running') {
-            markRecordSuspended(sessionRepo, record.id, 'system');
+            markRecordSuspended(sessionRepo, record.id, 'user');
           } else if (record && record.status === 'queued') {
             // Queued sessions never started Claude CLI - mark as exited
             // (not suspended) since there's nothing to resume.

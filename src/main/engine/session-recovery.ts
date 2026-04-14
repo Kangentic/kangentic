@@ -148,11 +148,25 @@ export async function recoverSessions(
       continue;
     }
 
-    // Skip user-paused sessions -- they should stay suspended until manually resumed.
+    // Pause everything on restart: users get a clean slate and nothing
+    // auto-resumes until they click Resume. Covers:
+    //   - user-paused (suspended + suspended_by='user')
+    //   - graceful shutdown (also suspended + suspended_by='user' as of
+    //     shutdown.ts; see syncShutdownCleanup)
+    //   - crash-orphaned (status='orphaned') -- upgrade to suspended_by='user'
+    //     in DB so reconcileSessions also leaves them alone.
     // Register a suspended placeholder so the renderer shows "Paused" state
     // and the "Resume session" button. task.session_id stays null (cleared on
     // suspend) so the SESSION_RESUME guard still passes when the user clicks resume.
-    if (record.status === 'suspended' && record.suspended_by === 'user') {
+    if (record.status === 'suspended' || record.status === 'orphaned') {
+      if (record.status === 'orphaned') {
+        sessionRepo.compareAndUpdateStatus(
+          record.id,
+          'orphaned',
+          'suspended',
+          { suspended_by: 'user', suspended_at: now },
+        );
+      }
       sessionManager.registerSuspendedPlaceholder({
         taskId: record.task_id,
         projectId,
