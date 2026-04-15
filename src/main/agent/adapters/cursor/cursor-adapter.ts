@@ -1,6 +1,7 @@
 import { AgentDetector } from '../../shared/agent-detector';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import { CursorStreamParser } from './stream-parser';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -35,7 +36,13 @@ export class CursorAdapter implements AgentAdapter {
     { mode: 'default', label: 'Interactive (Confirm Changes)' },
     { mode: 'bypassPermissions', label: 'Non-Interactive (Full Access)' },
   ];
-  readonly defaultPermission: PermissionMode = 'default';
+  // Default to non-interactive (`--output-format stream-json`). The init
+  // event on the first NDJSON line is the only place Cursor exposes the
+  // model + session ID together over a documented public schema, so this
+  // mode is what lets ContextBar resolve the model pill and what lets
+  // `--resume=<id>` work reliably. Interactive mode is still selectable
+  // by the user but produces no machine-readable telemetry.
+  readonly defaultPermission: PermissionMode = 'bypassPermissions';
 
   // Cursor CLI uses the shared AgentDetector via composition.
   // The binary is called `agent` - a generic name that may collide
@@ -108,25 +115,33 @@ export class CursorAdapter implements AgentAdapter {
   }
 
   /**
-   * Runtime strategy: Cursor CLI has no hooks and no caller-owned session IDs.
+   * Runtime strategy: Cursor CLI has no hooks, no caller-owned session
+   * IDs, and no native session-history file format we can read. Every
+   * runtime signal we get comes from the NDJSON stream emitted by
+   * `--output-format stream-json` (active by default - see
+   * `defaultPermission`).
    *
-   * - Activity: PTY silence timer only. Cursor CLI does not expose a
-   *   known idle prompt pattern in interactive mode that we can regex-match.
-   * - Session ID: captured from PTY output via two strategies:
-   *   1. Non-interactive (stream-json): parse the NDJSON init event
-   *      {"type":"system","subtype":"init","session_id":"<uuid>"}
-   *   2. Interactive: match `--resume="<uuid>"` hint in output (if printed)
+   * - Activity: tool_call started/completed events from streamOutput
+   *   drive Thinking/Idle through the activity state machine, with PTY
+   *   silence-timer fallback for any interactive sessions.
+   * - Session ID: parsed from the same NDJSON init event that carries
+   *   the model:
+   *     {"type":"system","subtype":"init","session_id":"<uuid>",
+   *      "model":"<display>",...}
+   * - streamOutput: same init event populates SessionUsage.model so
+   *   ContextBar can lift its "Starting agent..." spinner.
    */
   readonly runtime: AdapterRuntimeStrategy = {
     activity: ActivityDetection.pty(),
     sessionId: {
       fromOutput(data: string): string | null {
-        // Strategy 1: NDJSON init event from --output-format stream-json
-        // Each line is a JSON object; the init event has session_id.
         const initMatch = data.match(/"session_id"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"/);
         if (initMatch) return initMatch[1];
         return null;
       },
+    },
+    streamOutput: {
+      createParser: () => new CursorStreamParser(),
     },
   };
 

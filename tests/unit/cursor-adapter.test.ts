@@ -89,8 +89,19 @@ describe('CursorAdapter', () => {
     expect(adapter.supportsCallerSessionId).toBe(false);
   });
 
-  it('has default permission mode "default"', () => {
-    expect(adapter.defaultPermission).toBe('default');
+  it('defaults to bypassPermissions so stream-json telemetry is on', () => {
+    // Stream-json's init event is the only documented surface that
+    // exposes Cursor's resolved model + session_id together. Defaulting
+    // to bypassPermissions ensures the ContextBar model pill resolves
+    // and `--resume=<id>` works without the user opting in manually.
+    expect(adapter.defaultPermission).toBe('bypassPermissions');
+  });
+
+  it('exposes a streamOutput parser factory', () => {
+    expect(adapter.runtime.streamOutput).toBeDefined();
+    const parser = adapter.runtime.streamOutput?.createParser();
+    expect(parser).toBeDefined();
+    expect(typeof parser?.parseTelemetry).toBe('function');
   });
 
   // ── Detection ────────────────────────────────────────────────────────────

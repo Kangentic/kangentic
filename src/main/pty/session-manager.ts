@@ -46,6 +46,10 @@ interface ManagedSession {
   sessionIdScanner?: import('./session-id-scanner').SessionIdScanner;
   /** One-shot timer that warns if session-ID capture fails within the timeout. */
   sessionIdCaptureTimer?: ReturnType<typeof setTimeout>;
+  /** Per-session telemetry parser for adapters that emit machine-readable
+   *  output over the PTY (e.g. Cursor's stream-json). Built on first PTY
+   *  data via `agentParser.runtime.streamOutput.createParser()`. */
+  streamParser?: import('../../shared/types').StreamOutputParser;
 }
 
 /**
@@ -658,6 +662,23 @@ export class SessionManager extends EventEmitter {
         if (capturedId) {
           session.sessionIdScanner.reset();
           this.usageTracker.notifyAgentSessionId(id, capturedId);
+        }
+      }
+      // Per-adapter stream telemetry (e.g. Cursor stream-json: model from
+      // the init event, ToolStart/ToolEnd events for activity tracking).
+      // Each adapter owns whatever carry-over state it needs across PTY
+      // chunks (the parser is constructed lazily on first chunk).
+      const streamFactory = input.agentParser?.runtime?.streamOutput;
+      if (streamFactory) {
+        if (!session.streamParser) {
+          session.streamParser = streamFactory.createParser();
+        }
+        const result = session.streamParser.parseTelemetry(data);
+        if (result?.usage) {
+          this.usageTracker.setSessionUsage(id, result.usage);
+        }
+        if (result?.events && result.events.length > 0) {
+          this.usageTracker.ingestEvents(id, result.events);
         }
       }
       // PTY-based activity detection for agents using 'pty' or 'hooks_and_pty'
