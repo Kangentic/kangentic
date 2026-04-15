@@ -2,7 +2,7 @@
 
 ## What is Kangentic?
 
-Kangentic is a cross-platform desktop Kanban application purpose-built for orchestrating AI coding agents. It supports Claude Code, Codex, Gemini CLI, and Aider. Dragging a task card between columns can spawn, suspend, resume, or terminate agent sessions - turning a familiar Kanban workflow into a powerful multi-agent control plane.
+Kangentic is a cross-platform desktop Kanban application purpose-built for orchestrating AI coding agents. It supports Claude Code, Codex CLI, Gemini CLI, Cursor CLI, GitHub Copilot CLI, Aider, and Oz CLI (Warp). Dragging a task card between columns can spawn, suspend, resume, or terminate agent sessions - turning a familiar Kanban workflow into a powerful multi-agent control plane.
 
 ## The Problem
 
@@ -16,7 +16,7 @@ Kangentic replaces terminal tab chaos with a drag-and-drop board. Each task card
 
 ### Multi-Agent Support
 
-Orchestrate Claude Code, Codex, Gemini CLI, and Aider from a single board. Set a default agent per project, or override it per column. When a task moves between columns with different agents, Kangentic automatically packages the outgoing agent's context (transcript, git changes, metrics) and hands it off to the incoming agent. No manual copy-paste between tools.
+Orchestrate Claude Code, Codex CLI, Gemini CLI, Cursor CLI, GitHub Copilot CLI, Aider, and Oz CLI (Warp) from a single board. Set a default agent per project, or override it per column. When a task moves between columns with different agents, Kangentic automatically packages the outgoing agent's context (transcript, git changes, metrics) and hands it off to the incoming agent. No manual copy-paste between tools.
 
 ### Visual Agent Orchestration
 

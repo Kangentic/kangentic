@@ -317,7 +317,7 @@ The context bar is a status line displayed below the terminal showing session me
 
 | Setting | Description |
 |---------|-------------|
-| Default Agent | Which agent CLI to use for new sessions in this project. Supported agents: Claude Code, Codex, Gemini CLI, Aider. Per-project setting. |
+| Default Agent | Which agent CLI to use for new sessions in this project. Supported agents: Claude Code, Codex CLI, Gemini CLI, Cursor CLI, GitHub Copilot CLI, Aider, Oz CLI (Warp). Per-project setting. |
 | CLI Path | Path to agent CLI binary (auto-detected if empty) |
 | Idle Timeout (minutes) | Auto-suspend sessions after N minutes idle; 0 to disable |
 | Permissions | Default permission mode for all sessions. Options vary by agent (e.g., Claude Code has Plan, Don't Ask, Default, Accept Edits, Auto, and Bypass; Aider has Interactive and Auto-Approve) |

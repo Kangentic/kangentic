@@ -20,7 +20,7 @@
 
 ---
 
-<p align="center">One board for Claude Code, Codex, Gemini, and Aider.</p>
+<p align="center">One board for Claude Code, Codex CLI, Gemini CLI, Cursor CLI, GitHub Copilot CLI, Aider, and Oz CLI.</p>
 
 <p align="center">Managing multiple coding agents across terminal tabs is chaotic. Kangentic replaces that with a drag-and-drop board where every column transition controls agent lifecycle automatically. Free to use, fully local, no accounts required.</p>
 
@@ -61,12 +61,12 @@ Run any of these coding agent CLIs from a single Kanban board:
 | Agent | Status |
 |-------|--------|
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Supported |
-| [OpenAI Codex](https://github.com/openai/codex) | Supported |
+| [Codex CLI](https://developers.openai.com/codex/cli) | Supported |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Supported |
+| [Cursor CLI](https://cursor.com/docs/cli/overview) | Supported |
+| [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/cli-getting-started) | Supported |
 | [Aider](https://aider.chat/) | Supported |
-| GitHub Copilot | Coming soon |
-| Cursor | Coming soon |
-| Warp | Coming soon |
+| [Oz CLI](https://docs.warp.dev/reference/cli/cli) (Warp) | Supported |
 
 ## Import Sources
 

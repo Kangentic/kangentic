@@ -103,7 +103,7 @@ PermissionMode values:
 - `auto` -- `--permission-mode auto` (classifier-based auto-approval)
 - `bypassPermissions` -- `--dangerously-skip-permissions` (no prompts at all)
 
-All six modes are available in both the global App Settings "Permissions" dropdown and the per-column Edit Column dialog. The dropdown shows only the modes supported by the active agent (e.g., Aider only shows Interactive and Auto-Approve).
+All six modes are available in both the global App Settings "Permissions" dropdown and the per-column Edit Column dialog. The dropdown shows only the modes supported by the active agent (e.g., Cursor CLI only exposes Interactive and Non-Interactive; Oz CLI exposes Plan, Default, and Auto via Warp agent profiles).
 
 ### git.*
 
