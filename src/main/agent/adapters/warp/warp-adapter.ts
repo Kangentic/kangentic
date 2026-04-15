@@ -22,7 +22,7 @@ import { ActivityDetection } from '../../../../shared/types';
  */
 export class WarpAdapter implements AgentAdapter {
   readonly name = 'warp';
-  readonly displayName = 'Warp';
+  readonly displayName = 'Oz CLI';
   readonly sessionType = 'warp_agent';
   readonly supportsCallerSessionId = false;
   // Warp manages permissions via agent profiles (--profile <ID>), not

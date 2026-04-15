@@ -80,8 +80,8 @@ describe('WarpAdapter', () => {
     expect(adapter.name).toBe('warp');
   });
 
-  it('has displayName "Warp"', () => {
-    expect(adapter.displayName).toBe('Warp');
+  it('has displayName "Oz CLI"', () => {
+    expect(adapter.displayName).toBe('Oz CLI');
   });
 
   it('has sessionType "warp_agent"', () => {

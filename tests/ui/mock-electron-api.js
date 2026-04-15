@@ -989,7 +989,7 @@
             defaultPermission: 'default',
           },
           {
-            name: 'warp', displayName: 'Warp', found: false, path: null, version: null,
+            name: 'warp', displayName: 'Oz CLI', found: false, path: null, version: null,
             permissions: [
               { mode: 'plan', label: 'Plan Only (Read-Only)' },
               { mode: 'default', label: 'Default' },

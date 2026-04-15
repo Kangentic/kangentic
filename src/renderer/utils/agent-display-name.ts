@@ -34,8 +34,8 @@ const AGENT_META: Record<string, AgentMeta> = {
     installUrl: 'https://aider.chat',
   },
   warp: {
-    display: 'Warp',
-    short: 'Warp',
+    display: 'Oz CLI',
+    short: 'Oz',
     installUrl: 'https://docs.warp.dev/reference/cli/cli',
   },
   copilot: {
