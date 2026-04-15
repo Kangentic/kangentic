@@ -103,11 +103,22 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `backlog:importCheckCli` | invoke | Check if the CLI tool for a source is available and authenticated |
-| `backlog:importFetch` | invoke | Fetch items from an external source (GitHub Issues, GitHub Projects, Azure DevOps) |
+| `backlog:importFetch` | invoke | Fetch items from an external source (GitHub Issues, GitHub Projects, Azure DevOps, Asana) |
 | `backlog:importExecute` | invoke | Import selected items into the backlog with attachment download |
 | `backlog:importSourcesList` | invoke | List saved import sources for the current project |
-| `backlog:importSourcesAdd` | invoke | Add a new import source (persisted in project config) |
+| `backlog:importSourcesAdd` | invoke | Add a new import source (persisted in project config). Providers with an optional `resolveLabel` hook (e.g. Asana) enrich the stored label with a human-readable name. |
 | `backlog:importSourcesRemove` | invoke | Remove a saved import source |
+
+### Board Auth - Asana (7 channels)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `boards:asana:authStatus` | invoke | Report Asana connection state: `{connected, configured, appConfigured, email?}` |
+| `boards:asana:getAppConfig` | invoke | Fetch stored app credentials status: `{clientId, clientSecretSet}` (secret is never echoed) |
+| `boards:asana:setAppConfig` | invoke | Persist encrypted Asana OAuth app credentials (clientId + clientSecret); invalidates existing tokens |
+| `boards:asana:clearAppConfig` | invoke | Remove stored app credentials and any cached access token |
+| `boards:asana:oauthStart` | invoke | Begin PKCE OAuth flow, open browser, return `{pendingId}` |
+| `boards:asana:oauthComplete` | invoke | Exchange pasted code + code_verifier for tokens; persists encrypted credential |
+| `boards:asana:clearCredential` | invoke | Remove the stored OAuth access/refresh token (keeps app credentials) |
 
 ### Backlog Attachments (5 channels)
 | Channel | Pattern | Purpose |
@@ -558,7 +569,10 @@ src/main/boards/
     github-issues/    # adapter.ts, url-parser.ts (status: stable)
     github-projects/  # adapter.ts, url-parser.ts (status: stable)
     azure-devops/     # adapter.ts, client.ts, url-parser.ts (status: stable)
-    asana/            # stub (status: stub) - tracked in #480
+    asana/            # adapter.ts, client.ts, oauth.ts, mapper.ts, url-parser.ts,
+                      # credential-store.ts, app-config-store.ts, ipc-handlers.ts,
+                      # constants.ts (status: stable) - OAuth 2.0 PKCE with per-user
+                      # app credentials; dedicated boards:asana:* IPC group
     jira/             # stub (status: stub) - tracked in #481
     linear/           # stub (status: stub) - tracked in #482
     trello/           # stub (status: stub) - tracked in #483
@@ -574,7 +588,7 @@ src/main/boards/
 - Required import methods: `fetch()`, `downloadImages()`. Optional `downloadFileAttachments()` for providers with explicit attachment relations (Azure DevOps).
 - Optional future methods: `authenticate()`, `listProjects()`, `listIssues()`, `pushUpdates()`. Reserved for live discovery and write-back. No provider implements these yet.
 
-Stub adapters (`asana`, `jira`, `linear`, `trello`) implement the required surface with method bodies that throw `Error('<Provider> adapter is not yet implemented')`. The IPC handler short-circuits stubs by checking `adapter.status === 'stub'` before dispatch, returning a structured error to the renderer.
+Stub adapters (`jira`, `linear`, `trello`) implement the required surface with method bodies that throw `Error('<Provider> adapter is not yet implemented')`. The IPC handler short-circuits stubs by checking `adapter.status === 'stub'` before dispatch, returning a structured error to the renderer.
 
 ### Adding a new provider
 
@@ -588,6 +602,8 @@ No edits to IPC handlers or the renderer are required - dispatch is registry-dri
 ### IPC channels
 
 Backlog Import group (6 channels): `backlog:importCheckCli`, `backlog:importFetch`, `backlog:importExecute`, `backlog:importSourcesList`, `backlog:importSourcesAdd`, `backlog:importSourcesRemove`. All dispatch through `boardRegistry.getOrThrow(source)` in `src/main/ipc/handlers/backlog.ts`.
+
+Asana ships an additional `boards:asana:*` group (7 channels: `authStatus`, `getAppConfig`, `setAppConfig`, `clearAppConfig`, `oauthStart`, `oauthComplete`, `clearCredential`) for its OAuth lifecycle. Handlers live in `src/main/boards/adapters/asana/ipc-handlers.ts` and are registered by `registerAsanaIpcHandlers()` from the backlog handler. Keeping the surface adapter-local means Asana specifics never leak into the generic backlog handler.
 
 ## See Also
 

@@ -1,6 +1,6 @@
 # Board Integration
 
-Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps) into the backlog, and is being extended to four more providers (Asana, Jira, Linear, Trello). Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
+Kangentic imports issues from external boards (GitHub Issues, GitHub Projects, Azure DevOps, Asana) into the backlog, and is being extended to three more providers (Jira, Linear, Trello). Each provider is wrapped behind a common `BoardAdapter` interface so auth, fetching, mapping, and download logic stay isolated to a single folder per provider.
 
 This doc covers the adapter system and how to add a new board provider.
 
@@ -20,7 +20,7 @@ src/main/boards/
     github-issues/
     github-projects/
     azure-devops/
-    asana/            # stub
+    asana/            # OAuth 2.0 PKCE, per-user app credentials, dedicated IPC group
     jira/             # stub
     linear/           # stub
     trello/           # stub
@@ -100,12 +100,12 @@ The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if
 | GitHub Issues | stable | `gh` | Issues API via `gh api`. |
 | GitHub Projects | stable | `gh` | Projects v2 via `gh project item-list`. Requires `project` scope. |
 | Azure DevOps | stable | `az` | Work items via `az boards`. Requires `azure-devops` extension. |
-| Asana | stub | - | Tracked in #480. |
+| Asana | stable | none (OAuth) | OAuth 2.0 + PKCE. Per-user app credentials (clientId + clientSecret) collected via in-app wizard and encrypted with `safeStorage`. Ships its own `boards:asana:*` IPC group. |
 | Jira | stub | - | Tracked in #481. |
 | Linear | stub | - | Tracked in #482. |
 | Trello | stub | - | Tracked in #483. |
 
-Stubs are registered so `boardRegistry.list()` enumerates all 7 providers - the settings UI can render them as "coming soon" entries. IPC handlers refuse to dispatch to a stub before any throwing method runs.
+The registry enumerates all 7 providers. Stable providers dispatch normally; stub providers (`jira`, `linear`, `trello`) are rendered as "coming soon" in the settings UI, and IPC handlers short-circuit them before any throwing method runs.
 
 ## See Also
 

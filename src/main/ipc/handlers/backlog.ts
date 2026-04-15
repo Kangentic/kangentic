@@ -27,6 +27,7 @@ import type {
   Task,
 } from '../../../shared/types';
 import { boardRegistry, ImportSourceStore } from '../../boards';
+import { registerAsanaIpcHandlers } from '../../boards/adapters/asana';
 
 /**
  * Per-task AbortControllers for in-flight backlog promotions.
@@ -450,13 +451,37 @@ export function registerBacklogHandlers(context: IpcContext): void {
     return new ImportSourceStore(context.currentProjectPath).list();
   });
 
-  ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_ADD, (_, input: { source: ExternalSource; url: string }) => {
+  ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_ADD, async (_, input: { source: ExternalSource; url: string }) => {
     if (!context.currentProjectPath) throw new Error('No project is currently open');
-    return new ImportSourceStore(context.currentProjectPath).add(input.source, input.url);
+    const store = new ImportSourceStore(context.currentProjectPath);
+    const source = store.add(input.source, input.url);
+
+    // Let the adapter enrich the label with a human-readable name if it can
+    // (e.g. Asana: project GID -> project name). Best-effort; any failure
+    // keeps the sync label produced by the URL parser.
+    const adapter = boardRegistry.get(input.source);
+    if (adapter?.resolveLabel) {
+      try {
+        const resolved = await adapter.resolveLabel(source.repository);
+        if (resolved && resolved !== source.label) {
+          const updated = store.updateLabel(source.id, resolved);
+          if (updated) return updated;
+        }
+      } catch {
+        /* keep the placeholder label */
+      }
+    }
+    return source;
   });
 
   ipcMain.handle(IPC.BACKLOG_IMPORT_SOURCES_REMOVE, (_, id: string) => {
     if (!context.currentProjectPath) throw new Error('No project is currently open');
     new ImportSourceStore(context.currentProjectPath).remove(id);
   });
+
+  // Asana board integration owns its own IPC surface under
+  // src/main/boards/adapters/asana/ipc-handlers.ts so the adapter folder is
+  // self-contained. Register it here because Asana auth is part of the
+  // backlog import flow.
+  registerAsanaIpcHandlers();
 }

@@ -890,6 +890,43 @@ export interface ImportExecuteResult {
   items: BacklogTask[];
 }
 
+export interface AsanaAuthStatus {
+  /** True when the user has completed an OAuth token exchange. */
+  connected: boolean;
+  /** True when the app is configured (client_id + client_secret available). */
+  configured: boolean;
+  /** True when the user supplied app credentials via the setup wizard. */
+  appConfigured: boolean;
+  email?: string;
+  message?: string;
+}
+
+export interface AsanaAppConfigInput {
+  clientId: string;
+  clientSecret: string;
+}
+
+/** Result of getAppConfig. `clientSecret` is never returned - only whether one is set. */
+export interface AsanaAppConfigStatus {
+  clientId: string;
+  clientSecretSet: boolean;
+}
+
+export interface AsanaOAuthStartResult {
+  pendingId: string;
+}
+
+export interface AsanaOAuthCompleteResult {
+  ok: boolean;
+  email?: string;
+  error?: string;
+}
+
+export interface AsanaSetAppConfigResult {
+  ok: boolean;
+  error?: string;
+}
+
 export interface ImportCheckCliResult {
   available: boolean;
   authenticated: boolean;
@@ -1573,6 +1610,15 @@ export interface ElectronAPI {
     importSourcesList: () => Promise<ImportSource[]>;
     importSourcesAdd: (input: { source: ExternalSource; url: string }) => Promise<ImportSource>;
     importSourcesRemove: (id: string) => Promise<void>;
+    asana: {
+      authStatus: () => Promise<AsanaAuthStatus>;
+      getAppConfig: () => Promise<AsanaAppConfigStatus>;
+      setAppConfig: (input: AsanaAppConfigInput) => Promise<AsanaSetAppConfigResult>;
+      clearAppConfig: () => Promise<void>;
+      oauthStart: () => Promise<AsanaOAuthStartResult>;
+      oauthComplete: (input: { pendingId: string; code: string }) => Promise<AsanaOAuthCompleteResult>;
+      clearCredential: () => Promise<void>;
+    };
   };
 
   // Board Config

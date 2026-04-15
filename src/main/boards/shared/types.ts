@@ -139,6 +139,15 @@ export interface BoardAdapter {
     skippedCount: number;
   }>;
 
+  /**
+   * Resolve a human-readable label from a repository identifier. Called by
+   * the backlog handler after a source is added so providers that can fetch
+   * a nicer display name (e.g. Asana: project GID -> project name) get one
+   * persisted. Best-effort: returning null keeps the sync label built by
+   * the URL parser.
+   */
+  resolveLabel?(repository: string): Promise<string | null>;
+
   /** Future: initiate an auth flow (PAT, OAuth, CLI). Not wired up yet. */
   authenticate?(input: AuthInput): Promise<AuthResult>;
 

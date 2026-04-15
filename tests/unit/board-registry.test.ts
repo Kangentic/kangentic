@@ -55,14 +55,14 @@ describe('boardRegistry', () => {
     }
   });
 
-  it('the existing 3 providers are status: stable', () => {
+  it('stable providers report status: stable (Asana is stable - its config is runtime, not build-time)', () => {
     expect(boardRegistry.getOrThrow('github_issues').status).toBe('stable');
     expect(boardRegistry.getOrThrow('github_projects').status).toBe('stable');
     expect(boardRegistry.getOrThrow('azure_devops').status).toBe('stable');
+    expect(boardRegistry.getOrThrow('asana').status).toBe('stable');
   });
 
-  it('the 4 new providers are status: stub', () => {
-    expect(boardRegistry.getOrThrow('asana').status).toBe('stub');
+  it('the 3 remaining placeholder providers are status: stub', () => {
     expect(boardRegistry.getOrThrow('jira').status).toBe('stub');
     expect(boardRegistry.getOrThrow('linear').status).toBe('stub');
     expect(boardRegistry.getOrThrow('trello').status).toBe('stub');
@@ -73,13 +73,21 @@ describe('boardRegistry', () => {
   });
 
   it('stub adapters return an unauthenticated checkCli result instead of throwing', async () => {
-    for (const id of ['asana', 'jira', 'linear', 'trello'] as const) {
+    for (const id of ['jira', 'linear', 'trello'] as const) {
       const adapter = boardRegistry.getOrThrow(id);
       const result = await adapter.checkCli();
       expect(result.available).toBe(false);
       expect(result.authenticated).toBe(false);
       expect(result.error).toContain('not yet implemented');
     }
+  });
+
+  it('asana reports not-configured via checkCli when no client_id is stored (not a stub)', async () => {
+    const adapter = boardRegistry.getOrThrow('asana');
+    const result = await adapter.checkCli();
+    expect(result.available).toBe(false);
+    expect(result.authenticated).toBe(false);
+    expect(result.error).toMatch(/set up/i);
   });
 
   it('stub adapter fetch() throws not-implemented', async () => {
@@ -112,9 +120,10 @@ describe('boardRegistry.requireStable()', () => {
     expect(adapter.status).toBe('stable');
   });
 
-  it('throws for asana (stub) with displayName in the message', () => {
-    const asanaAdapter = boardRegistry.getOrThrow('asana');
-    expect(() => boardRegistry.requireStable('asana')).toThrow(asanaAdapter.displayName);
+  it('returns the adapter for asana (runtime-configured, not a stub)', () => {
+    const adapter = boardRegistry.requireStable('asana');
+    expect(adapter.id).toBe('asana');
+    expect(adapter.status).toBe('stable');
   });
 
   it('throws for jira (stub) with displayName in the message', () => {

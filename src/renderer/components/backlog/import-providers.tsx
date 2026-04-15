@@ -18,6 +18,8 @@ export interface Provider {
   icon: React.ReactNode;
   available: boolean;
   comingSoon?: boolean;
+  /** When true, the popover shows an auth phase (Connect + paste code) before the URL input. */
+  requiresAuth?: boolean;
   sourceTypes: SourceTypeOption[];
 }
 
@@ -58,6 +60,23 @@ export const PROVIDERS: Provider[] = [
         description: 'Import from Azure DevOps boards',
         placeholder: 'https://dev.azure.com/org/project',
         hint: 'Paste any Azure DevOps project URL (boards, sprints, backlogs, etc.)',
+        icon: <KanbanSquare size={16} />,
+      },
+    ],
+  },
+  {
+    id: 'asana',
+    label: 'Asana',
+    icon: <KanbanSquare size={18} />,
+    available: true,
+    requiresAuth: true,
+    sourceTypes: [
+      {
+        value: 'asana',
+        label: 'Project',
+        description: 'Import tasks from an Asana project',
+        placeholder: 'https://app.asana.com/0/1234567890/list',
+        hint: 'Paste any Asana project URL (list, board, or calendar view).',
         icon: <KanbanSquare size={16} />,
       },
     ],

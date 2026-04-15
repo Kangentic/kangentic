@@ -1,0 +1,134 @@
+{
+  "data": [
+    {
+      "gid": "1200000000000101",
+      "resource_type": "task",
+      "name": "Fix login bug",
+      "notes": "Users report 500 errors after SSO redirect.\n\nReproduce by clicking **Sign in with Google** on a logged-out session.",
+      "completed": false,
+      "permalink_url": "https://app.asana.com/0/1199999999999999/1200000000000101",
+      "created_at": "2026-01-05T12:34:56.789Z",
+      "modified_at": "2026-01-10T08:22:11.456Z",
+      "due_on": "2026-02-15",
+      "num_attachments": 2,
+      "assignee": {
+        "gid": "1100000000000001",
+        "resource_type": "user",
+        "name": "Dana Developer"
+      },
+      "tags": [
+        { "gid": "1301000000000001", "resource_type": "tag", "name": "bug" },
+        { "gid": "1301000000000002", "resource_type": "tag", "name": "regression" }
+      ],
+      "memberships": [
+        {
+          "project": { "gid": "1199999999999999", "resource_type": "project", "name": "Launch Prep" },
+          "section": { "gid": "1401000000000001", "resource_type": "section", "name": "In Progress" }
+        }
+      ],
+      "custom_fields": [
+        {
+          "gid": "1501000000000001",
+          "name": "Priority",
+          "type": "enum",
+          "resource_subtype": "enum",
+          "display_value": "High",
+          "enum_value": { "gid": "1502000000000003", "name": "High", "enabled": true, "color": "red" },
+          "resource_type": "custom_field"
+        },
+        {
+          "gid": "1501000000000002",
+          "name": "Effort",
+          "type": "number",
+          "resource_subtype": "number",
+          "display_value": "8",
+          "number_value": 8,
+          "resource_type": "custom_field"
+        }
+      ]
+    },
+    {
+      "gid": "1200000000000102",
+      "resource_type": "task",
+      "name": "Ship release notes",
+      "notes": "",
+      "completed": true,
+      "permalink_url": "https://app.asana.com/0/1199999999999999/1200000000000102",
+      "created_at": "2025-12-20T03:14:15.000Z",
+      "modified_at": "2026-01-08T18:00:00.000Z",
+      "due_on": null,
+      "num_attachments": 0,
+      "assignee": null,
+      "tags": [],
+      "memberships": [
+        {
+          "project": { "gid": "1199999999999999", "resource_type": "project", "name": "Launch Prep" },
+          "section": { "gid": "1401000000000002", "resource_type": "section", "name": "Done" }
+        }
+      ],
+      "custom_fields": [
+        {
+          "gid": "1501000000000003",
+          "name": "Platforms",
+          "type": "multi_enum",
+          "resource_subtype": "multi_enum",
+          "display_value": "Web, iOS",
+          "multi_enum_values": [
+            { "gid": "1503000000000001", "name": "Web", "enabled": true, "color": "blue" },
+            { "gid": "1503000000000002", "name": "iOS", "enabled": true, "color": "purple" }
+          ],
+          "resource_type": "custom_field"
+        }
+      ]
+    },
+    {
+      "gid": "1200000000000103",
+      "resource_type": "task",
+      "name": "Design onboarding illustrations",
+      "notes": "Needs 3 illustrations at 1x and 2x.\n\n![draft](https://app.asana.com/0/attachments/draft-1.png)",
+      "completed": false,
+      "permalink_url": "https://app.asana.com/0/1199999999999999/1200000000000103",
+      "created_at": "2026-01-03T09:00:00.000Z",
+      "modified_at": "2026-01-09T14:11:00.000Z",
+      "due_on": "2026-03-01",
+      "num_attachments": 1,
+      "assignee": {
+        "gid": "1100000000000002",
+        "resource_type": "user",
+        "name": "Robin Designer"
+      },
+      "tags": [{ "gid": "1301000000000003", "resource_type": "tag", "name": "design" }],
+      "memberships": [
+        {
+          "project": { "gid": "1199999999999999", "resource_type": "project", "name": "Launch Prep" },
+          "section": { "gid": "1401000000000003", "resource_type": "section", "name": "New Issues" }
+        }
+      ],
+      "custom_fields": [
+        {
+          "gid": "1501000000000004",
+          "name": "Target date",
+          "type": "date",
+          "resource_subtype": "date",
+          "display_value": "2026-06-30",
+          "date_value": { "date": "2026-06-30", "date_time": null },
+          "resource_type": "custom_field"
+        },
+        {
+          "gid": "1501000000000005",
+          "name": "Empty field",
+          "type": "text",
+          "resource_subtype": "text",
+          "display_value": null,
+          "text_value": null,
+          "resource_type": "custom_field"
+        }
+      ]
+    }
+  ],
+  "next_page": {
+    "offset": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.fake-opaque-cursor",
+    "path": "/projects/1199999999999999/tasks?limit=100&offset=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.fake-opaque-cursor",
+    "uri": "https://app.asana.com/api/1.0/projects/1199999999999999/tasks?limit=100&offset=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.fake-opaque-cursor"
+  }
+}

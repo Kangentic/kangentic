@@ -81,6 +81,21 @@ export class ImportSourceStore {
     this.writeConfig({ ...config, importSources: filtered });
   }
 
+  /** Patch the display label for an existing source. Used by providers that
+   * can lazily resolve a nicer name (e.g. Asana project GID -> project name). */
+  updateLabel(id: string, newLabel: string): ImportSource | null {
+    const trimmed = newLabel.trim();
+    if (trimmed.length === 0) return null;
+    const config = this.readConfig();
+    const sources = config.importSources ?? [];
+    const index = sources.findIndex((source) => source.id === id);
+    if (index < 0) return null;
+    const updated: ImportSource = { ...sources[index], label: trimmed };
+    sources[index] = updated;
+    this.writeConfig({ ...config, importSources: sources });
+    return updated;
+  }
+
   private readConfig(): ProjectImportConfig {
     try {
       const raw = fs.readFileSync(this.configPath, 'utf-8');
