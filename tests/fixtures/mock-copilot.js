@@ -93,6 +93,19 @@ if (prompt) {
 // Hide-cursor escape so detectFirstOutput() returns true and the shimmer overlay clears.
 process.stdout.write('\x1b[?25l');
 
+// Env knobs:
+//   MOCK_COPILOT_TUI_STATUS=1 -> emit a realistic ANSI status-bar fragment
+//     containing "GPT-5 mini (medium)" once, mimicking a real Copilot TUI
+//     ConPTY render. Opt-in so it does not affect existing tests. This knob
+//     drives the CopilotStreamParser PTY-regex path in E2E smoke tests.
+if (process.env.MOCK_COPILOT_TUI_STATUS) {
+  // Mirrors the real ConPTY output captured in debug-traces/copilot-ptyout.log.
+  // The format is: CSI row;col H  <path> [<branch>%] <model> (quality)
+  process.stdout.write(
+    '\x1b[25;1H ~\\Documents\\GitHub\\project [\\u2387 main%] GPT-5 mini (medium) \x1b[?25l'
+  );
+}
+
 // Non-interactive mode: print output and exit
 if (nonInteractive) {
   console.log('Mock Copilot response for: ' + (prompt || '(no prompt)'));
@@ -100,11 +113,15 @@ if (nonInteractive) {
 }
 
 // Stay alive to simulate a running interactive session (30s gives tests time to interact)
-const timeout = setTimeout(() => process.exit(0), 30000);
+const timeout = setTimeout(() => { cleanup(); process.exit(0); }, 30000);
+
+function cleanup() {
+  clearTimeout(timeout);
+}
 
 // Exit cleanly on SIGTERM/SIGINT
-process.on('SIGTERM', () => { clearTimeout(timeout); process.exit(0); });
-process.on('SIGINT', () => { clearTimeout(timeout); process.exit(0); });
+process.on('SIGTERM', () => { cleanup(); process.exit(0); });
+process.on('SIGINT', () => { cleanup(); process.exit(0); });
 
 // Keep stdin open so PTY doesn't close
 process.stdin.resume();
@@ -112,7 +129,7 @@ process.stdin.setEncoding('utf8');
 process.stdin.on('data', (data) => {
   // Respond to /exit, /quit, or Ctrl+C
   if (data.includes('/exit') || data.includes('/quit') || data.includes('\x03')) {
-    clearTimeout(timeout);
+    cleanup();
     process.exit(0);
   }
 });

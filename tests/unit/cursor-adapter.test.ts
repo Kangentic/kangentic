@@ -244,16 +244,26 @@ describe('CursorAdapter', () => {
     // ── Permission mode mapping ─────────────────────────────────────────
 
     describe('permission mode mapping', () => {
-      const nonInteractiveModes: PermissionMode[] = ['bypassPermissions'];
-      const interactiveModes: PermissionMode[] = ['default', 'plan', 'dontAsk', 'acceptEdits', 'auto'];
+      // Only `default` explicitly means "interactive TUI, user confirms".
+      // Every other mode (bypassPermissions + any Kangentic-level mode
+      // like project-settings, plan, acceptEdits, ...) must emit
+      // `--output-format stream-json`. Cursor's docs say stream-json
+      // only works with --print, so without this the init event never
+      // lands and ContextBar is stuck on "Starting agent..." forever.
+      const streamJsonModes: PermissionMode[] = [
+        'bypassPermissions', 'plan', 'dontAsk', 'acceptEdits', 'auto',
+      ];
+      const interactiveModes: PermissionMode[] = ['default'];
 
-      for (const mode of nonInteractiveModes) {
-        it(`uses -p for ${mode}`, () => {
+      for (const mode of streamJsonModes) {
+        it(`emits -p and --output-format stream-json for ${mode}`, () => {
           const command = adapter.buildCommand(makeOptions({
             permissionMode: mode,
             prompt: 'test',
           }));
           expect(command).toContain('-p');
+          expect(command).toContain('--output-format');
+          expect(command).toContain('stream-json');
         });
       }
 
@@ -267,6 +277,16 @@ describe('CursorAdapter', () => {
           expect(command).not.toContain('--output-format');
         });
       }
+
+      it('uses stream-json when nonInteractive is explicitly requested', () => {
+        const command = adapter.buildCommand(makeOptions({
+          permissionMode: 'default',
+          nonInteractive: true,
+          prompt: 'test',
+        }));
+        expect(command).toContain('-p');
+        expect(command).toContain('stream-json');
+      });
     });
 
     // ── Shell quoting ───────────────────────────────────────────────────

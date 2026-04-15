@@ -94,7 +94,20 @@ export class CursorAdapter implements AgentAdapter {
         )
       : null;
 
-    if (options.permissionMode === 'bypassPermissions' || options.nonInteractive) {
+    // Cursor CLI only natively distinguishes two permission modes:
+    //   default           → interactive TUI, user confirms changes
+    //   bypassPermissions → non-interactive, full access, stream-json
+    //
+    // Upstream may pass Kangentic-level modes (`project-settings`,
+    // `acceptEdits`, `plan`, etc.) that Cursor does not recognize. If we
+    // treated every unknown value as interactive, those spawns would
+    // silently drop `--output-format stream-json`, the init event would
+    // never arrive, and ContextBar would be stuck on "Starting agent...".
+    // Treat anything other than an explicit interactive `default` as
+    // bypassPermissions so stream-json is always emitted when reasonable.
+    const interactive = options.permissionMode === 'default' && !options.nonInteractive;
+
+    if (!interactive) {
       // Non-interactive mode: agent -p "prompt" --output-format stream-json
       // Has full write access. Uses stream-json (NDJSON) so the runtime
       // sessionId.fromOutput parser can capture the session_id from the

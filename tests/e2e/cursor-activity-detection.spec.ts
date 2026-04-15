@@ -109,18 +109,27 @@ test.describe('Cursor Agent - Activity Detection', () => {
     expect(scrollback).toContain('MOCK_CURSOR_PROMPT:');
   });
 
-  test('interactive mode is used with default permission', async () => {
+  test('plan permission mode emits stream-json (non-interactive)', async () => {
+    // Cursor CLI does not have a native --plan flag. Cursor's
+    // --output-format stream-json is the only way to surface the model
+    // and session_id to the ContextBar, and it requires --print. The
+    // default Planning swimlane ships with permission_mode='plan'
+    // (see src/main/db/migrations/project-schema.ts:229), so the Cursor
+    // adapter routes it to -p + --output-format stream-json. An
+    // interactive-but-telemetry-less spawn would leave ContextBar stuck
+    // on "Starting agent...".
     const title = `Cursor Mode ${runId}`;
-    await createTask(page, title, 'Verify interactive mode');
+    await createTask(page, title, 'Verify non-interactive stream-json mode');
 
     const swimlaneIds = await getSwimlaneIds(page);
     const taskId = await getTaskIdByTitle(page, title);
 
     await moveTaskIpc(page, taskId, swimlaneIds.planning);
 
-    // The default permission mode is 'default' which maps to interactive mode
     const scrollback = await waitForScrollback(page, 'MOCK_CURSOR_MODE:', 15000);
-    expect(scrollback).toContain('MOCK_CURSOR_MODE:interactive');
+    expect(scrollback).toContain('MOCK_CURSOR_MODE:noninteractive');
+    // And the stream-json init event is present so ContextBar can light up.
+    expect(scrollback).toContain('"subtype":"init"');
   });
 });
 

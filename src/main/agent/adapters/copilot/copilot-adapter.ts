@@ -3,6 +3,7 @@ import { CopilotDetector } from './detector';
 import { CopilotCommandBuilder } from './command-builder';
 import { removeSessionConfig } from './hook-manager';
 import { CopilotStatusParser } from './status-parser';
+import { CopilotStreamParser } from './stream-parser';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -98,15 +99,25 @@ export class CopilotAdapter implements AgentAdapter {
    *
    * - Activity: hooks primary (Copilot's preToolUse/postToolUse/agentStop),
    *   PTY silence timer as fallback.
-   * - StatusFile: Copilot supports the same statusLine config as Claude Code.
-   *   parseStatus is initially null (format unverified); parseEvent handles
-   *   generic event-bridge JSONL.
+   * - StatusFile: Copilot's statusLine is best-effort - empirically it
+   *   does not fire in every PTY session (tested against v1.0.27 on Windows
+   *   ConPTY), so we wire it but don't depend on it.
+   * - StreamOutput: primary telemetry path. Parses (a) the NDJSON stream
+   *   Copilot emits when invoked with `--output-format json`, and (b) the
+   *   interactive TUI's bottom status bar for a known Copilot model label
+   *   via regex. Either path populates `SessionUsage.model` so ContextBar
+   *   lifts its "Starting agent..." spinner within the first few PTY
+   *   chunks regardless of whether the user is running the agent
+   *   interactively or headlessly.
    */
   readonly runtime: AdapterRuntimeStrategy = {
     statusFile: {
       parseStatus: CopilotStatusParser.parseStatus,
       parseEvent: CopilotStatusParser.parseEvent,
       isFullRewrite: true,
+    },
+    streamOutput: {
+      createParser: () => new CopilotStreamParser(),
     },
     activity: ActivityDetection.hooksAndPty(),
   };

@@ -132,7 +132,12 @@ if (nonInteractive) {
   console.log('MOCK_CURSOR_MODE:interactive');
 }
 
-if (prompt && !nonInteractive) {
+// Always emit the prompt marker regardless of mode - it's a test
+// observability hook, not a behavioral flag. Non-interactive mode
+// delivers the prompt via the NDJSON `{"type":"user",...}` event above,
+// so without this line the prompt test couldn't tell the difference
+// between "prompt missing" and "prompt delivered through the other path".
+if (prompt) {
   console.log('MOCK_CURSOR_PROMPT:' + prompt);
 }
 

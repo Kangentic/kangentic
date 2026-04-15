@@ -123,3 +123,8 @@ kangentic.local.json
 # Marketing captures output (regenerated on release tags)
 /captures/
 tests/captures/fixtures/scrollback-*.json
+
+# Ad-hoc empirical capture traces (e.g. PTY output, parser probes). These
+# are written by scripts/verify-*.js / scripts/capture-*.js for local
+# bug-reproduction work and are not checked in.
+/debug-traces/

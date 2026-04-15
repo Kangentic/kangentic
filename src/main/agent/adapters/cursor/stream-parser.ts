@@ -62,8 +62,18 @@ export class CursorStreamParser implements StreamOutputParser {
     let usage: Partial<SessionUsage> | undefined;
     let events: SessionEvent[] | undefined;
 
-    for (const line of lines) {
-      if (line.length === 0) continue;
+    for (const rawLine of lines) {
+      if (rawLine.length === 0) continue;
+      // Real Cursor PTY output prefixes the very first JSON line with
+      // terminal init sequences (`\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J\x1b[m\x1b[H`
+      // on Windows ConPTY) and can intersperse OSC title updates between
+      // later lines too. JSON.parse would reject the whole line for those
+      // leading bytes, so locate the first `{` and parse from there.
+      // Anything before that brace is guaranteed to be non-JSON because
+      // Cursor's stream-json events are one balanced object per line.
+      const jsonStart = rawLine.indexOf('{');
+      if (jsonStart < 0) continue;
+      const line = rawLine.slice(jsonStart);
       let entry: unknown;
       try {
         entry = JSON.parse(line);

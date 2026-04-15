@@ -121,6 +121,32 @@ describe('CursorStreamParser', () => {
     expect(result?.events?.[0].type).toBe(EventType.ToolStart);
   });
 
+  it('parses init line prefixed with real-world ConPTY init escapes', () => {
+    // Captured from scripts/verify-copilot-cursor-stall.js -> cursor-bypass-ptyout.log
+    // on Windows, 2026-04-15. Cursor's first chunk under a ConPTY is:
+    //   `\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J\x1b[m\x1b[H{"type":"system",...}\n`
+    // Without ANSI-tolerant parsing, JSON.parse rejects this line and the
+    // init event is silently dropped -> ContextBar stays on the spinner.
+    const parser = new CursorStreamParser();
+    const prefixedInit =
+      '\x1b[?9001h\x1b[?1004h\x1b[?25l\x1b[2J\x1b[m\x1b[H' + initLine + '\n';
+    const result = parser.parseTelemetry(prefixedInit);
+    expect(result?.usage?.model?.displayName).toBe('Claude 4 Sonnet');
+  });
+
+  it('skips interleaved OSC title updates between JSON events', () => {
+    // On Windows, Cursor writes `\x1b]0;C:\\WINDOWS\\system32\\cmd.exe\x07`
+    // title-change sequences between JSON lines. The parser must tolerate
+    // those prefixes on later lines too, not just the first one.
+    const parser = new CursorStreamParser();
+    const interleaved =
+      initLine + '\n' +
+      '\x1b]0;C:\\WINDOWS\\system32\\cmd.exe\x07' + toolStartLine + '\n';
+    const result = parser.parseTelemetry(interleaved);
+    expect(result?.usage?.model?.displayName).toBe('Claude 4 Sonnet');
+    expect(result?.events).toHaveLength(1);
+  });
+
   it('processes the documented full-session sequence end-to-end', () => {
     const parser = new CursorStreamParser();
     const stream = [initLine, toolStartLine, toolEndLine, resultLine].join('\n') + '\n';

@@ -246,6 +246,20 @@ describe('CopilotAdapter - runtime strategy', () => {
   it('runtime.activity is defined', () => {
     expect(adapter.runtime.activity).toBeDefined();
   });
+
+  it('runtime.streamOutput is wired so ContextBar can light up the model pill', () => {
+    // Primary telemetry path: the statusLine doesn't fire reliably in
+    // Copilot v1.0.27 PTY sessions, so the adapter falls back to
+    // parsing the TUI status bar + `--output-format json` NDJSON via
+    // CopilotStreamParser. Without this, Kangentic's ContextBar would
+    // be stuck on "Starting agent..." forever because SessionUsage.model
+    // is never set. See src/main/agent/adapters/copilot/stream-parser.ts.
+    expect(adapter.runtime.streamOutput).toBeDefined();
+    const parser = adapter.runtime.streamOutput!.createParser();
+    expect(typeof parser.parseTelemetry).toBe('function');
+    const result = parser.parseTelemetry(' [⎇ main%] GPT-5 mini (medium) ');
+    expect(result?.usage?.model?.displayName).toBe('GPT-5 mini');
+  });
 });
 
 // ── CopilotAdapter exit sequence ─────────────────────────────────────────────
