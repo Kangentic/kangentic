@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { CountBadge } from '../CountBadge';
-import { LabelsPopover, PrioritiesPopover } from '../backlog/ManageLabelsDialog';
+import { LabelsPopover } from '../backlog/manage-labels/LabelsPopover';
+import { PrioritiesPopover } from '../backlog/manage-labels/PrioritiesPopover';
 import { EditColumnDialog } from '../dialogs/EditColumnDialog';
 import { useBoardStore } from '../../stores/board-store';
 import { useBacklogStore } from '../../stores/backlog-store';

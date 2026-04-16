@@ -3,12 +3,12 @@ import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type D
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Plus, Trash2, GripVertical, ChevronDown, ChevronRight, Info, Zap } from 'lucide-react';
-import { useBoardStore } from '../../stores/board-store';
-import { IconPickerDialog } from '../dialogs/IconPickerDialog';
-import { ICON_REGISTRY } from '../../utils/swimlane-icons';
-import { SectionHeader, Select, INPUT_CLASS } from './shared';
-import { Pill } from '../Pill';
-import type { ShortcutConfig, ShortcutDisplay } from '../../../shared/types';
+import { useBoardStore } from '../../../stores/board-store';
+import { IconPickerDialog } from '../../dialogs/IconPickerDialog';
+import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
+import { SectionHeader, Select, INPUT_CLASS } from '../shared';
+import { Pill } from '../../Pill';
+import type { ShortcutConfig, ShortcutDisplay } from '../../../../shared/types';
 
 interface ShortcutEditState extends ShortcutConfig {
   source: 'team' | 'local';

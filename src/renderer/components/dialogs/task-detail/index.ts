@@ -5,5 +5,7 @@ export { ImagePreviewOverlay } from './ImagePreviewOverlay';
 export { useAttachments } from './useAttachments';
 export { useBranchConfig } from './useBranchConfig';
 export { useCopyDisplayId } from './useCopyDisplayId';
+export { useTaskSessionState } from './useTaskSessionState';
+export { useTaskActions } from './useTaskActions';
 export type { AttachmentWithPreview, AttachmentsState } from './useAttachments';
 export type { BranchConfigState } from './useBranchConfig';

@@ -1,13 +1,9 @@
-import { useState, useLayoutEffect, useRef, useEffect, useMemo, useCallback } from 'react';
-import { flushSync } from 'react-dom';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Check, Copy, Pencil, Trash2 } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
-import { useBacklogStore } from '../../stores/backlog-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
-import { useToastStore } from '../../stores/toast-store';
-import { useTaskProgress } from '../../utils/task-progress';
 import { resolveShortcutCommand } from '../../../shared/template-vars';
 import { PriorityBadge } from '../backlog/PriorityBadge';
 import { BaseDialog } from './BaseDialog';
@@ -20,8 +16,10 @@ import {
   useAttachments,
   useBranchConfig,
   useCopyDisplayId,
+  useTaskSessionState,
+  useTaskActions,
 } from './task-detail';
-import type { Task, AgentCommand, ShortcutConfig } from '../../../shared/types';
+import type { Task, ShortcutConfig } from '../../../shared/types';
 
 interface TaskDetailDialogProps {
   task: Task;
@@ -41,7 +39,6 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   const killSession = useSessionStore((s) => s.killSession);
   const suspendSession = useSessionStore((s) => s.suspendSession);
   const resumeSession = useSessionStore((s) => s.resumeSession);
-  const setDialogSessionId = useSessionStore((s) => s.setDialogSessionId);
   const pendingCommandLabel = useSessionStore((s) => s.pendingCommandLabel[task.id] ?? null);
   const loadBoard = useBoardStore((s) => s.loadBoard);
   const archiveTask = useBoardStore((s) => s.archiveTask);
@@ -54,46 +51,76 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   const [labels, setLabels] = useState<string[]>(task.labels ?? []);
   const [priority, setPriority] = useState(task.priority ?? 0);
   const [isEditing, setIsEditing] = useState(!!initialEdit);
-  const [pendingAction, setPendingAction] = useState<null | 'pausing' | 'resuming'>(null);
-  const toggling = pendingAction !== null;
-  const [resumeFailed, setResumeFailed] = useState(false);
-  const [resumeError, setResumeError] = useState('');
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [showEnableWorktreeConfirm, setShowEnableWorktreeConfirm] = useState(false);
   const changesOpen = useSessionStore((s) => s.changesOpenTasks.has(task.id));
   const toggleChangesOpen = useSessionStore((s) => s.toggleChangesOpen);
-  const pendingSaveRef = useRef<(() => Promise<void>) | null>(null);
 
   const isArchived = task.archived_at !== null;
   const currentSwimlane = swimlanes.find((s) => s.id === task.swimlane_id);
   const isInTodo = currentSwimlane?.role === 'todo';
 
-  // Hooks
   const attachments = useAttachments(task.id, updateAttachmentCount);
   const branchConfig = useBranchConfig(task, title, isInTodo);
 
-  // Session state
-  const session = useSessionStore((s) =>
-    s.sessions.find((session) => session.taskId === task.id) ?? null
-  );
-  const displayState = useTaskProgress(task.id, session?.id);
-  const canToggle = !isInTodo && (displayState.kind === 'running' || displayState.kind === 'queued'
-    || displayState.kind === 'initializing' || displayState.kind === 'suspended'
-    || displayState.kind === 'preparing');
-  const isSessionActive = displayState.kind === 'running' || displayState.kind === 'queued'
-    || displayState.kind === 'initializing' || displayState.kind === 'preparing';
-  const isQueued = displayState.kind === 'queued';
-  const isSuspended = displayState.kind === 'suspended';
+  // Session state + related side effects live in a dedicated hook.
+  const sessionState = useTaskSessionState({
+    task,
+    isEditing,
+    isArchived,
+    isInTodo: isInTodo ?? false,
+    currentSwimlaneRole: currentSwimlane?.role,
+  });
 
-  // Use large dialog when there's an active session OR a suspended one (but not for archived tasks)
-  const hasSessionContext = !isArchived && ((displayState.kind !== 'none' && displayState.kind !== 'exited') || toggling);
-  const isInDone = currentSwimlane?.role === 'done';
-  // Show Changes button when the task isn't in a terminal column.
-  // Works with or without a branch/worktree - tasks on main show uncommitted working tree changes.
-  const canShowChanges = !isArchived && !isInTodo && !isInDone;
+  // Action handlers + their transient state (pendingAction, confirmations,
+  // pendingSaveRef) are split into a hook to keep this file focused on
+  // layout. The hook uses the session state we computed above, and the
+  // dialog then ORs `toggling` with `hasSessionContext` below to keep
+  // the large layout active during a suspend/resume transition.
+  const actions = useTaskActions({
+    task,
+    onClose,
+    initialEdit,
+    title,
+    description,
+    prUrl,
+    labels,
+    priority,
+    setTitle,
+    setDescription,
+    setPrUrl,
+    setLabels,
+    setPriority,
+    setIsEditing,
+    branchConfig,
+    session: sessionState.session,
+    isSessionActive: sessionState.isSessionActive,
+    hasSessionContext: sessionState.hasSessionContext,
+    isSuspended: sessionState.isSuspended,
+    canToggle: sessionState.canToggle,
+    displayState: sessionState.displayState,
+    isArchived,
+    isInTodo: isInTodo ?? false,
+    swimlanes,
+    updateTask,
+    deleteTask,
+    moveTask,
+    unarchiveTask,
+    archiveTask,
+    loadBoard,
+    killSession,
+    suspendSession,
+    resumeSession,
+    skipDeleteConfirm,
+    updateConfig,
+  });
+
+  // Keep the dialog in large mode during a pending suspend/resume
+  // transition even if displayState briefly reports 'exited'.
+  const hasSessionContext = sessionState.hasSessionContext || actions.toggling;
+
+  // Dialog sizing depends on session/edit state.
   const needsLargeDialog = hasSessionContext || changesOpen;
   const dialogSizeClass = isEditing || !needsLargeDialog
-    ? (isQueued ? 'w-[520px] h-[320px]' : 'w-[700px]')
+    ? (sessionState.isQueued ? 'w-[520px] h-[320px]' : 'w-[700px]')
     : 'w-[90vw] h-[85vh]';
 
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
@@ -103,9 +130,9 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
 
   // Columns available as move targets: exclude current column and Done column (for archived tasks)
   const moveTargets = useMemo(() =>
-    swimlanes.filter((s) => {
-      if (s.id === task.swimlane_id) return false;
-      if (isArchived && s.role === 'done') return false;
+    swimlanes.filter((candidate) => {
+      if (candidate.id === task.swimlane_id) return false;
+      if (isArchived && candidate.role === 'done') return false;
       return true;
     }),
     [swimlanes, task.swimlane_id, isArchived],
@@ -132,18 +159,6 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
     window.electronAPI.shell.exec(resolved, cwd);
   }, [task, projectPath]);
 
-  // Register this session with the store so the bottom panel unmounts its
-  // TerminalTab BEFORE any terminal effects fire. useLayoutEffect runs
-  // synchronously after DOM mutations but before paint.
-  useLayoutEffect(() => {
-    if (session?.id) {
-      if (useSessionStore.getState().dialogSessionId !== session.id) {
-        setDialogSessionId(session.id);
-      }
-      return () => setDialogSessionId(null);
-    }
-  }, [session?.id, setDialogSessionId]);
-
   // Auto-save and exit edit mode when a session appears
   const hadSessionContext = useRef(hasSessionContext);
   const editingRef = useRef(isEditing);
@@ -158,7 +173,13 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   priorityRef.current = priority;
   useEffect(() => {
     if (!hadSessionContext.current && hasSessionContext && editingRef.current) {
-      updateTask({ id: task.id, title: titleRef.current, description: descriptionRef.current, labels: labelsRef.current, priority: priorityRef.current });
+      updateTask({
+        id: task.id,
+        title: titleRef.current,
+        description: descriptionRef.current,
+        labels: labelsRef.current,
+        priority: priorityRef.current,
+      });
       setIsEditing(false);
     }
     hadSessionContext.current = hasSessionContext;
@@ -167,9 +188,9 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
   // Capture-phase Escape listener: close dialog when mouse is outside content
   useEffect(() => {
     if (!hasSessionContext || isEditing) return;
-    const handleEscapeCapture = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !mouseInsideDialog.current && !attachments.previewOpenRef.current) {
-        e.stopPropagation();
+    const handleEscapeCapture = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !mouseInsideDialog.current && !attachments.previewOpenRef.current) {
+        event.stopPropagation();
         onClose();
       }
     };
@@ -177,287 +198,9 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
     return () => document.removeEventListener('keydown', handleEscapeCapture, true);
   }, [hasSessionContext, isEditing, onClose, attachments.previewOpenRef]);
 
-  // Refit terminal when session resumes
-  useEffect(() => {
-    if (session?.status === 'running') {
-      const id = setTimeout(() => {
-        window.dispatchEvent(new Event('terminal-panel-resize'));
-      }, 300);
-      return () => clearTimeout(id);
-    }
-  }, [session?.status]);
-
-  // Refit terminal when edit mode toggles
-  useEffect(() => {
-    if (!session) return;
-    const id = setTimeout(() => {
-      window.dispatchEvent(new Event('terminal-panel-resize'));
-    }, 100);
-    return () => clearTimeout(id);
-  }, [isEditing, session?.id]);
-
-  // -- Action handlers --
-
-  const handleToggle = async () => {
-    if (!canToggle || toggling) return;
-    const action: 'pausing' | 'resuming' = isSessionActive ? 'pausing' : 'resuming';
-    setPendingAction(action);
-    try {
-      if (action === 'pausing') {
-        await suspendSession(task.id);
-      } else {
-        await resumeSession(task.id);
-        setResumeFailed(false);
-        setResumeError('');
-      }
-      await loadBoard();
-      // Note: pendingAction is cleared by the effect below once the session
-      // store actually reflects the target state, not here. This keeps the
-      // button disabled and the label correct through the full transition.
-    } catch (err) {
-      console.error('Toggle session failed:', err);
-      const reason = err instanceof Error ? err.message : '';
-      if (action === 'resuming') {
-        setResumeFailed(true);
-        setResumeError(reason);
-      }
-      useToastStore.getState().addToast({
-        message: reason
-          ? `Failed to ${action === 'pausing' ? 'suspend' : 'resume'} session: ${reason}`
-          : `Failed to ${action === 'pausing' ? 'suspend' : 'resume'} session`,
-        variant: 'warning',
-      });
-      setPendingAction(null);
-    }
-  };
-
-  // Clear pendingAction once the session store reflects the target state.
-  // Includes a 5s safety timeout in case the transition never arrives.
-  useEffect(() => {
-    if (!pendingAction) return;
-    const reached = pendingAction === 'pausing'
-      ? (isSuspended || displayState.kind === 'none' || displayState.kind === 'exited')
-      : isSessionActive;
-    if (reached) {
-      setPendingAction(null);
-      return;
-    }
-    const timer = setTimeout(() => setPendingAction(null), 5000);
-    return () => clearTimeout(timer);
-  }, [pendingAction, isSuspended, isSessionActive, displayState.kind]);
-
-  const handleResetSession = async () => {
-    try {
-      await useSessionStore.getState().resetSession(task.id);
-      setResumeFailed(false);
-      setResumeError('');
-      await loadBoard();
-    } catch (err) {
-      console.error('Reset session failed:', err);
-      useToastStore.getState().addToast({
-        message: 'Failed to reset session',
-        variant: 'warning',
-      });
-    }
-  };
-
-  const handleCommandSelect = async (command: AgentCommand) => {
-    if (!task.id || toggling) return;
-    setPendingAction('resuming');
-    try {
-      useSessionStore.getState().setPendingCommandLabel(task.id, command.displayName);
-      await suspendSession(task.id);
-      await resumeSession(task.id, command.displayName);
-      await loadBoard();
-    } catch (error) {
-      console.error('Command invocation failed:', error);
-      useSessionStore.getState().clearPendingCommandLabel(task.id);
-      useToastStore.getState().addToast({
-        message: `Failed to invoke ${command.displayName}`,
-        variant: 'warning',
-      });
-      await loadBoard().catch(() => {});
-      setPendingAction(null);
-    }
-  };
-
-  const handleMoveTo = async (targetSwimlaneId: string) => {
-    const targetName = swimlanes.find((s) => s.id === targetSwimlaneId)?.name ?? 'column';
-    if (isArchived) {
-      onClose();
-      await unarchiveTask({ id: task.id, targetSwimlaneId });
-    } else {
-      const laneTasks = useBoardStore.getState().tasks.filter(
-        (t) => t.swimlane_id === targetSwimlaneId,
-      );
-      await moveTask({ taskId: task.id, targetSwimlaneId, targetPosition: laneTasks.length });
-      // If a confirmation dialog was triggered, moveTask returns early without
-      // moving. Don't close the detail dialog or show a toast in that case.
-      if (useBoardStore.getState().pendingMoveConfirm) return;
-      onClose();
-    }
-    useToastStore.getState().addToast({
-      message: `Moved "${task.title}" to ${targetName}`,
-      variant: 'success',
-    });
-  };
-
-  const handleCancel = () => {
-    if (initialEdit && !session) {
-      onClose();
-      return;
-    }
-    setTitle(task.title);
-    setDescription(task.description);
-    setPrUrl(task.pr_url ?? '');
-    setLabels(task.labels ?? []);
-    setPriority(task.priority ?? 0);
-    branchConfig.resetToTask();
-    setIsEditing(false);
-  };
-
-  const handleSave = async () => {
-    const trimmedBranch = branchConfig.baseBranch.trim();
-    const originalBranch = task.base_branch || '';
-    const branchChanged = trimmedBranch !== originalBranch;
-    const originalWorktree = task.use_worktree != null ? Boolean(task.use_worktree) : null;
-    const worktreeChanged = branchConfig.useWorktree !== originalWorktree;
-    const enablingWorktree = !task.worktree_path && branchConfig.useWorktree === true && (originalWorktree !== true);
-
-    if (enablingWorktree && hasSessionContext) {
-      pendingSaveRef.current = async () => {
-        await executeSave(branchChanged, worktreeChanged, enablingWorktree, trimmedBranch);
-      };
-      setShowEnableWorktreeConfirm(true);
-      return;
-    }
-
-    await executeSave(branchChanged, worktreeChanged, enablingWorktree, trimmedBranch);
-  };
-
-  /** Build pr_url/pr_number fields if the PR URL changed. */
-  const buildPrUrlFields = (): Pick<Parameters<typeof updateTask>[0], 'pr_url' | 'pr_number'> => {
-    const trimmedPrUrl = prUrl.trim();
-    if (trimmedPrUrl === (task.pr_url ?? '')) return {};
-    if (trimmedPrUrl) {
-      const prNumberMatch = trimmedPrUrl.match(/\/pull\/(\d+)/);
-      return { pr_url: trimmedPrUrl, pr_number: prNumberMatch ? parseInt(prNumberMatch[1], 10) : null };
-    }
-    return { pr_url: null, pr_number: null };
-  };
-
-  const executeSave = async (
-    branchChanged: boolean,
-    worktreeChanged: boolean,
-    enablingWorktree: boolean,
-    trimmedBranch: string,
-  ) => {
-    const needsSwitchBranch = (task.worktree_path && branchChanged) || enablingWorktree;
-    const prUrlFields = buildPrUrlFields();
-
-    if (needsSwitchBranch) {
-      try {
-        await window.electronAPI.tasks.switchBranch({
-          taskId: task.id,
-          newBaseBranch: trimmedBranch,
-          enableWorktree: enablingWorktree || undefined,
-        });
-        if (title !== task.title || description !== task.description || prUrlFields.pr_url !== undefined
-          || JSON.stringify(labels) !== JSON.stringify(task.labels ?? []) || priority !== (task.priority ?? 0)) {
-          await updateTask({ id: task.id, title, description, labels, priority, ...prUrlFields });
-        }
-        await useBoardStore.getState().loadBoard();
-      } catch (error) {
-        console.error('switchBranch failed:', error);
-        useToastStore.getState().addToast({
-          message: `Failed to switch branch: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          variant: 'warning',
-        });
-        return;
-      }
-    } else {
-      const payload: Parameters<typeof updateTask>[0] = { id: task.id, title, description, labels, priority, ...prUrlFields };
-
-      if (!isSessionActive && !isArchived) {
-        if (branchChanged) {
-          payload.base_branch = trimmedBranch || null;
-        }
-        if (worktreeChanged) {
-          payload.use_worktree = branchConfig.useWorktree != null ? (branchConfig.useWorktree ? 1 : 0) : null;
-        }
-        if (isInTodo) {
-          const trimmedCustomBranch = branchConfig.customBranchName.trim();
-          payload.branch_name = trimmedCustomBranch || null;
-        }
-      }
-      await updateTask(payload);
-    }
-
-    if (!session) {
-      onClose();
-    } else {
-      setIsEditing(false);
-    }
-  };
-
-  const [confirmSendToBacklog, setConfirmSendToBacklog] = useState(false);
-
-  const executeSendToBacklog = async () => {
-    setConfirmSendToBacklog(false);
-    const taskTitle = task.title;
-    onClose();
-    await useBacklogStore.getState().demoteTask({ taskId: task.id });
-    useToastStore.getState().addToast({
-      message: `Sent "${taskTitle}" to backlog`,
-      variant: 'info',
-    });
-  };
-
-  const handleSendToBacklog = () => {
-    const hasResources = !!task.session_id || !!task.worktree_path;
-    if (!hasResources || skipDeleteConfirm) {
-      executeSendToBacklog();
-    } else {
-      setConfirmSendToBacklog(true);
-    }
-  };
-
-  const handleArchive = async () => {
-    const doneLane = swimlanes.find((s) => s.role === 'done');
-    if (!doneLane) return;
-    const taskTitle = task.title;
-    const taskId = task.id;
-    flushSync(() => {
-      onClose();
-    });
-    archiveTask(taskId);
-    const laneTasks = useBoardStore.getState().tasks.filter(
-      (t) => t.swimlane_id === doneLane.id,
-    );
-    await window.electronAPI.tasks.move({ taskId, targetSwimlaneId: doneLane.id, targetPosition: laneTasks.length });
-    useToastStore.getState().addToast({
-      message: `Archived "${taskTitle}"`,
-      variant: 'info',
-    });
-  };
-
-  const handleDelete = async (dontAskAgain: boolean) => {
-    if (dontAskAgain) updateConfig({ skipDeleteConfirm: true });
-    const taskTitle = task.title;
-    onClose();
-    if (session) {
-      await killSession(session.id);
-    }
-    await deleteTask(task.id);
-    useToastStore.getState().addToast({
-      message: `Deleted task "${taskTitle}"`,
-      variant: 'info',
-    });
-  };
-
   // -- Render --
 
-  if (confirmSendToBacklog) {
+  if (actions.confirmSendToBacklog) {
     return (
       <ConfirmDialog
         title="Send to Backlog"
@@ -469,14 +212,14 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
         showDontAskAgain
         onConfirm={(dontAskAgain) => {
           if (dontAskAgain) updateConfig({ skipDeleteConfirm: true });
-          executeSendToBacklog();
+          actions.executeSendToBacklog();
         }}
-        onCancel={() => setConfirmSendToBacklog(false)}
+        onCancel={() => actions.setConfirmSendToBacklog(false)}
       />
     );
   }
 
-  if (confirmDelete) {
+  if (actions.confirmDelete) {
     return (
       <ConfirmDialog
         title="Delete task"
@@ -487,8 +230,8 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
         confirmLabel="Delete"
         variant="danger"
         showDontAskAgain
-        onConfirm={handleDelete}
-        onCancel={() => setConfirmDelete(false)}
+        onConfirm={actions.handleDelete}
+        onCancel={() => actions.setConfirmDelete(false)}
       />
     );
   }
@@ -499,23 +242,23 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
       onClose={onClose}
       isEditing={isEditing}
       setIsEditing={setIsEditing}
-      canToggle={canToggle}
-      isSessionActive={isSessionActive}
-      isQueued={isQueued}
+      canToggle={sessionState.canToggle}
+      isSessionActive={sessionState.isSessionActive}
+      isQueued={sessionState.isQueued}
       isArchived={isArchived}
-      toggling={toggling}
-      onToggle={handleToggle}
-      onCommandSelect={handleCommandSelect}
-      onArchive={handleArchive}
-      onSendToBacklog={handleSendToBacklog}
-      onDelete={() => skipDeleteConfirm ? handleDelete(false) : setConfirmDelete(true)}
-      onMoveTo={handleMoveTo}
+      toggling={actions.toggling}
+      onToggle={actions.handleToggle}
+      onCommandSelect={actions.handleCommandSelect}
+      onArchive={actions.handleArchive}
+      onSendToBacklog={actions.handleSendToBacklog}
+      onDelete={() => skipDeleteConfirm ? actions.handleDelete(false) : actions.setConfirmDelete(true)}
+      onMoveTo={actions.handleMoveTo}
       moveTargets={moveTargets}
       headerShortcuts={headerShortcuts}
       menuShortcuts={menuShortcuts}
       executeShortcut={executeShortcut}
       projectPath={projectPath}
-      canShowChanges={canShowChanges}
+      canShowChanges={sessionState.canShowChanges}
       changesOpen={changesOpen}
       onToggleChanges={() => toggleChangesOpen(task.id)}
     />
@@ -559,7 +302,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
           <div className={`flex ${isInTodo ? 'justify-between' : 'justify-end'} items-center`}>
             {isInTodo && (
               <button
-                onClick={() => skipDeleteConfirm ? handleDelete(false) : setConfirmDelete(true)}
+                onClick={() => skipDeleteConfirm ? actions.handleDelete(false) : actions.setConfirmDelete(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-fg-faint hover:text-red-400 hover:bg-red-400/10 rounded transition-colors"
               >
                 <Trash2 size={14} />
@@ -568,13 +311,13 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             )}
             <div className="flex items-center gap-2">
               <button
-                onClick={handleCancel}
+                onClick={actions.handleCancel}
                 className="px-3 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
               >
                 Cancel
               </button>
               <button
-                onClick={handleSave}
+                onClick={actions.handleSave}
                 disabled={!!branchConfig.branchNameError}
                 className={`px-3 py-1.5 text-xs rounded transition-colors ${
                   branchConfig.branchNameError
@@ -603,7 +346,7 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             setPriority={setPriority}
             attachments={attachments}
             branchConfig={branchConfig}
-            isSessionActive={isSessionActive}
+            isSessionActive={sessionState.isSessionActive}
             isArchived={isArchived}
             isInTodo={isInTodo}
           />
@@ -615,43 +358,43 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
             isArchived={isArchived}
             isInTodo={isInTodo}
             hasSessionContext={hasSessionContext}
-            sessionId={session?.id ?? null}
-            displayKind={displayState.kind}
-            isSuspended={isSuspended}
-            toggling={toggling}
-            pendingAction={pendingAction}
+            sessionId={sessionState.session?.id ?? null}
+            displayKind={sessionState.displayState.kind}
+            isSuspended={sessionState.isSuspended}
+            toggling={actions.toggling}
+            pendingAction={actions.pendingAction}
             pendingCommandLabel={pendingCommandLabel}
             savedAttachments={attachments.savedAttachments}
             handlePreview={attachments.handlePreview}
             handleOpenExternal={attachments.handleOpenExternal}
             removeAttachment={attachments.removeAttachment}
-            handleToggle={handleToggle}
+            handleToggle={actions.handleToggle}
             changesOpen={changesOpen}
             projectPath={projectPath ?? ''}
-            resumeFailed={resumeFailed}
-            resumeError={resumeError}
-            onResetSession={handleResetSession}
+            resumeFailed={actions.resumeFailed}
+            resumeError={actions.resumeError}
+            onResetSession={actions.handleResetSession}
           />
         )}
       </BaseDialog>
 
       {/* Enable worktree confirmation */}
-      {showEnableWorktreeConfirm && (
+      {actions.showEnableWorktreeConfirm && (
         <ConfirmDialog
           title="Enable worktree?"
           message="This will create an isolated worktree for this task. Your session history will be preserved and the agent will continue from where it left off in the new worktree."
           confirmLabel="Enable"
           variant="default"
           onConfirm={async () => {
-            setShowEnableWorktreeConfirm(false);
-            if (pendingSaveRef.current) {
-              await pendingSaveRef.current();
-              pendingSaveRef.current = null;
+            actions.setShowEnableWorktreeConfirm(false);
+            if (actions.pendingSaveRef.current) {
+              await actions.pendingSaveRef.current();
+              actions.pendingSaveRef.current = null;
             }
           }}
           onCancel={() => {
-            setShowEnableWorktreeConfirm(false);
-            pendingSaveRef.current = null;
+            actions.setShowEnableWorktreeConfirm(false);
+            actions.pendingSaveRef.current = null;
           }}
         />
       )}
