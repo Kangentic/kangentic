@@ -10,25 +10,68 @@ const RETRY_DELAY_MS = 30_000; // 30 seconds before retry
 let checkTimeout: ReturnType<typeof setTimeout> | null = null;
 let checkInterval: ReturnType<typeof setInterval> | null = null;
 let updaterWindow: BrowserWindow | null = null;
-let retrying = false;
+let checkRetrying = false;
+let downloadRetrying = false;
 
 /**
- * Check for updates with a single retry on failure. Transient network errors
- * (DNS timeout, GitHub API blip) resolve on retry without waiting 4 hours.
+ * Returns true if the error is a known-transient download/network failure
+ * that should not surface as `app_error` telemetry. Structural failures
+ * (signature mismatch, bad manifest, disk full, permission denied, 4xx
+ * client errors) still propagate so real bugs stay visible.
  */
-async function checkWithRetry(): Promise<void> {
+export function isTransientUpdaterError(error: Error): boolean {
+  const errorCode = (error as NodeJS.ErrnoException).code;
+  const errorMessage = error.message ?? '';
+
+  if (errorCode === 'ECONNRESET' || errorCode === 'ETIMEDOUT'
+      || errorCode === 'EAI_AGAIN' || errorCode === 'ENOTFOUND'
+      || errorCode === 'ENETUNREACH' || errorCode === 'EPIPE') {
+    return true;
+  }
+
+  if (errorCode && /^HTTP_ERROR_(5\d\d|408|429|618)$/.test(errorCode)) {
+    return true;
+  }
+
+  if (/net::ERR_/.test(errorMessage)) return true;
+  if (/Request has been aborted by the server/i.test(errorMessage)) return true;
+  if (/Cannot pipe ".*":/i.test(errorMessage)) return true;
+
+  return false;
+}
+
+/** @internal Exported for testing. */
+export async function checkWithRetry(): Promise<void> {
   try {
     await autoUpdater.checkForUpdates();
   } catch {
     console.log('[UPDATER] Check failed, retrying in 30s...');
-    retrying = true;
+    checkRetrying = true;
     await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
     try {
       await autoUpdater.checkForUpdates();
     } catch (retryError) {
       console.error('[UPDATER] Check failed after retry:', retryError);
     } finally {
-      retrying = false;
+      checkRetrying = false;
+    }
+  }
+}
+
+/** @internal Exported for testing. */
+export async function downloadWithRetry(): Promise<void> {
+  try {
+    await autoUpdater.downloadUpdate();
+  } catch (firstError) {
+    console.log('[UPDATER] Download failed, retrying in 30s:', firstError);
+    downloadRetrying = true;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      await autoUpdater.downloadUpdate();
+    } catch (retryError) {
+      console.error('[UPDATER] Download failed after retry:', retryError);
+    } finally {
+      downloadRetrying = false;
     }
   }
 }
@@ -47,6 +90,17 @@ export function initUpdater(mainWindow: BrowserWindow): void {
   // Install pending updates silently when the user quits normally
   autoUpdater.autoInstallOnAppQuit = true;
 
+  // macOS differential download reads a cached update.zip from
+  // ~/Library/Caches/<appId>-updater/pending/, which macOS evicts under
+  // disk pressure. That race produces a bare `ENOENT: no such file or
+  // directory, open '<path>'` error, historically our dominant updater
+  // failure. Full redownload is an acceptable tradeoff for eliminating
+  // the flakiness. See MacUpdater.js:88-103 for the cached-zip read
+  // path we are bypassing.
+  if (process.platform === 'darwin') {
+    autoUpdater.disableDifferentialDownload = true;
+  }
+
   // IPC handlers for renderer
   ipcMain.handle(IPC.UPDATE_CHECK, () => checkWithRetry());
 
@@ -54,12 +108,10 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     autoUpdater.quitAndInstall(true, true);
   });
 
-  // When an update is available, start downloading immediately
+  // When an update is available, start downloading immediately (with retry).
   autoUpdater.on('update-available', () => {
     console.log('[UPDATER] Update available, downloading...');
-    autoUpdater.downloadUpdate().catch((error) => {
-      console.error('[UPDATER] Download failed:', error);
-    });
+    void downloadWithRetry();
   });
 
   // When download completes, notify the renderer
@@ -72,14 +124,21 @@ export function initUpdater(mainWindow: BrowserWindow): void {
 
   // Log errors but never surface to user. Skip analytics during retry to
   // avoid double-counting transient failures that resolve on second attempt.
+  // Also filter known-transient failure classes so network blips and presigned
+  // URL expiries do not pollute the app_error signal.
   autoUpdater.on('error', (error) => {
     console.error('[UPDATER] Error:', error);
-    if (!retrying) {
-      trackEvent('app_error', {
-        source: 'updater',
-        message: sanitizeErrorMessage(error.message),
-      });
+    if (checkRetrying || downloadRetrying) return;
+    if (isTransientUpdaterError(error)) {
+      const errorCode = (error as NodeJS.ErrnoException).code;
+      console.log('[UPDATER] Suppressing transient error telemetry:',
+        errorCode ?? error.message.slice(0, 80));
+      return;
     }
+    trackEvent('app_error', {
+      source: 'updater',
+      message: sanitizeErrorMessage(error.message),
+    });
   });
 
   // Schedule checks

@@ -38,6 +38,7 @@ extraResources:
 # We rebuild better-sqlite3 manually; node-pty uses NAPI prebuilts
 npmRebuild: false
 afterPack: build/afterPack.js
+afterSign: build/afterSign.js
 
 win:
   target: nsis
