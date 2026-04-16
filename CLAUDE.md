@@ -173,6 +173,11 @@ Three test tiers — prefer **unit tests** for pure logic, **UI tests** for anyt
 - Needs real IPC, PTY, or session spawning → add to `tests/e2e/`
 - The mock in `tests/ui/mock-electron-api.js` supports full CRUD — extend it if new API methods are added
 
+#### When to test (column discipline)
+- **Executing / Code Review:** Run `npm run typecheck` freely. Quick single-file validation is OK (`npx playwright test tests/ui/specific.spec.ts`) but do NOT run `/test` or full-tier runs. Save full testing for the Tests column.
+- **Tests column:** Has `auto_command: /test` configured. When a task enters this column, Smart Run fires automatically - detects changed files and runs only relevant tiers. If tests fail, fix them in place - do not move the task backward to re-enter Tests.
+- **Pre-commit:** `/merge-back` runs typecheck automatically. The Tests column should have already validated the full suite.
+
 ### Performance
 
 - **Terminal ownership handoff:** Each PTY session spawns exactly one Claude Code CLI process. The bottom panel and task detail dialog share that single process but never render simultaneously — when the dialog opens, it claims the session via `dialogSessionId` and the panel unmounts its xterm instance. On close, the panel recreates its xterm from the PTY scrollback buffer. This prevents duplicate xterm instances from sending conflicting resize calls (different container widths garble TUI output) and ensures one CLI process per task regardless of which view is active.
