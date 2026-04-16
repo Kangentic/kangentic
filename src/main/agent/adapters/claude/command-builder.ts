@@ -242,7 +242,7 @@ export class CommandBuilder {
 
     // Session directory (used for the merged Claude settings file).
     // Derived from statusOutputPath which is required by every spawn path
-    // (transition-engine, session-recovery, transient-sessions), so the
+    // (transition-engine, session-startup, transient-sessions), so the
     // `!` is safe.
     const sessionDir = path.dirname(options.statusOutputPath!);
 

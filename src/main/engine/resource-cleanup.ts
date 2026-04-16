@@ -24,8 +24,8 @@ const execFileAsync = promisify(execFile);
  *  3. Remove orphaned worktree, session, and task directories
  *
  * Async to avoid blocking the Electron main thread during startup.
- * This is the single source of truth for resource cleanup - session-recovery.ts
- * only handles session lifecycle (resume, reconcile).
+ * This is the single source of truth for resource cleanup - session-startup/
+ * only handles session lifecycle (resume, auto-spawn).
  */
 export async function cleanupStaleResources(
   projectPath: string,

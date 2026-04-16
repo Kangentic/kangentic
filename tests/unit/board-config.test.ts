@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validateBoardConfig, mergeBoardConfigs } from '../../src/main/config/board-config-manager';
+import { validateBoardConfig, mergeBoardConfigs } from '../../src/main/config/board-config/config-helpers';
 import type { BoardConfig } from '../../src/shared/types';
 
 function makeValidConfig(overrides: Partial<BoardConfig> = {}): BoardConfig {

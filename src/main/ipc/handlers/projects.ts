@@ -4,7 +4,7 @@ import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { recoverSessions, reconcileSessions } from '../../engine/session-recovery';
+import { resumeSuspendedSessions, autoSpawnTasks } from '../../engine/session-startup';
 import { cleanupStaleResources } from '../../engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { TranscriptRepository } from '../../db/repositories/transcript-repository';
@@ -336,7 +336,7 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   // Attach board config manager for file watching and reconciliation
   context.boardConfigManager.attach(project.id, project.path, context.mainWindow);
   if (context.boardConfigManager.exists()) {
-    const configWarnings = context.boardConfigManager.initialReconcile();
+    const configWarnings = context.boardConfigManager.applyConfigOnOpen();
     for (const warning of configWarnings) {
       console.warn('[BOARD_CONFIG] Initial reconcile:', warning);
     }
@@ -365,9 +365,9 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     const sessionRepo = new SessionRepository(db);
     const swimlaneRepo = new SwimlaneRepository(db);
     cleanupStaleResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
-      .then(() => recoverSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
+      .then(() => resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
       .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
-      .then(() => reconcileSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
+      .then(() => autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
       .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err));
   }
 
@@ -398,8 +398,8 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       const sessionRepo = new SessionRepository(db);
       const swimlaneRepo = new SwimlaneRepository(db);
       await cleanupStaleResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager);
-      await recoverSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle);
-      await reconcileSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle);
+      await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle);
+      await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle);
     }),
   );
 
@@ -464,7 +464,7 @@ export function registerProjectHandlers(context: IpcContext): void {
       if (context.currentProjectId !== id) return;
       try {
         if (context.boardConfigManager.exists()) {
-          const configWarnings = context.boardConfigManager.initialReconcile();
+          const configWarnings = context.boardConfigManager.applyConfigOnOpen();
           for (const warning of configWarnings) {
             console.warn('[BOARD_CONFIG] Initial reconcile:', warning);
           }
@@ -486,9 +486,9 @@ export function registerProjectHandlers(context: IpcContext): void {
       const sessionRepo = new SessionRepository(db);
       const swimlaneRepo = new SwimlaneRepository(db);
       cleanupStaleResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
-        .then(() => recoverSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
+        .then(() => resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
         .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
-        .then(() => reconcileSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
+        .then(() => autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
         .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err));
     }
   });
