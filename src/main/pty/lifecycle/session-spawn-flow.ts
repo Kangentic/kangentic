@@ -69,14 +69,14 @@ export interface SpawnFlowContext {
  */
 export async function performSpawn(
   input: SpawnSessionInput,
-  ctx: SpawnFlowContext,
+  context: SpawnFlowContext,
 ): Promise<Session> {
   if (isShuttingDown()) {
     throw new Error('Cannot spawn session during shutdown');
   }
 
-  const shell = await ctx.getShell();
-  const existing = input.taskId ? ctx.registry.findByTaskId(input.taskId) : null;
+  const shell = await context.getShell();
+  const existing = input.taskId ? context.registry.findByTaskId(input.taskId) : null;
 
   // Use the caller-provided ID, or generate a fresh one as fallback.
   // For queue promotions, the ID was set on the input when the placeholder
@@ -98,11 +98,11 @@ export async function performSpawn(
     // nullify paths so the old session's onExit handler cannot
     // race-delete files the new spawn is about to reuse. See
     // SessionFileManager.detachPreservingFiles.
-    ctx.sessionFiles.detachPreservingFiles(existing.id);
+    context.sessionFiles.detachPreservingFiles(existing.id);
     // Cancel the old session's diagnostic timer and drop its scanner
     // so a spurious "session ID not captured" warning cannot fire
     // 30s after respawn.
-    ctx.sessionIdManager.removeSession(existing.id);
+    context.sessionIdManager.removeSession(existing.id);
     // Tear down any adapter-attached work from the previous spawn.
     disposeAdapterAttachment(existing);
   }
@@ -111,15 +111,15 @@ export async function performSpawn(
   // is preserved across respawns (including resume). Claude CLI's TUI uses
   // full-screen draws that overwrite the active viewport without corrupting
   // scroll history.
-  const previousScrollback = existing ? ctx.bufferManager.getRawScrollback(existing.id) : '';
+  const previousScrollback = existing ? context.bufferManager.getRawScrollback(existing.id) : '';
 
   // Remove old session from map and caches so findByTaskId returns
   // the new session, and stale usage/activity data doesn't persist.
   if (existing) {
-    ctx.registry.delete(existing.id);
-    ctx.usageTracker.removeSession(existing.id);
-    ctx.bufferManager.removeSession(existing.id);
-    ctx.sessionFiles.removeSession(existing.id);
+    context.registry.delete(existing.id);
+    context.usageTracker.removeSession(existing.id);
+    context.bufferManager.removeSession(existing.id);
+    context.sessionFiles.removeSession(existing.id);
   }
 
   // Shell invocation (exe + args) and spawn env. See pty-spawn.ts.
@@ -153,9 +153,9 @@ export async function performSpawn(
       effectiveCwd,
       previousScrollback,
     }, {
-      registry: ctx.registry,
-      bufferManager: ctx.bufferManager,
-      emit: ctx.emit,
+      registry: context.registry,
+      bufferManager: context.bufferManager,
+      emit: context.emit,
     });
   }
 
@@ -176,15 +176,15 @@ export async function performSpawn(
     agentName: input.agentName ?? 'agent',
   };
 
-  ctx.registry.set(id, session);
+  context.registry.set(id, session);
 
   // Initialize extracted modules for this session
-  ctx.bufferManager.initSession(id, previousScrollback, 0);
-  ctx.sessionFiles.register({
+  context.bufferManager.initSession(id, previousScrollback, 0);
+  context.sessionFiles.register({
     sessionId: id,
     statusOutputPath: input.statusOutputPath || null,
   });
-  ctx.usageTracker.initSession(id, input.agentParser);
+  context.usageTracker.initSession(id, input.agentParser);
   // Attach the status-file telemetry reader for sessions that provide
   // status/events file paths (today only Claude). The reader owns the
   // FileWatcher instances and dispatches parsed telemetry via the
@@ -193,7 +193,7 @@ export async function performSpawn(
   // startup file cleanup (delete stale status.json, truncate stale
   // events.jsonl) but skips watcher setup.
   if (input.statusOutputPath || input.eventsOutputPath) {
-    ctx.statusFileReader.attach({
+    context.statusFileReader.attach({
       sessionId: id,
       statusOutputPath: input.statusOutputPath || null,
       eventsOutputPath: input.eventsOutputPath || null,
@@ -204,7 +204,7 @@ export async function performSpawn(
   // Session-ID capture: arm the diagnostic timer and kick off the
   // filesystem-based pathway. See SessionIdManager for the
   // full capture strategy.
-  ctx.sessionIdManager.init(id, input.agentParser, effectiveCwd, session.agentName ?? 'agent');
+  context.sessionIdManager.init(id, input.agentParser, effectiveCwd, session.agentName ?? 'agent');
 
   // Generic adapter lifecycle hook. See adapter-lifecycle.ts for the
   // contract. The attachment is disposed on PTY exit and on remove()
@@ -212,8 +212,8 @@ export async function performSpawn(
   const adapterContext: SessionContext = {
     sessionId: id,
     applyUsage: (usage) => {
-      if (!ctx.registry.has(id)) return;
-      ctx.usageTracker.setSessionUsage(id, usage);
+      if (!context.registry.has(id)) return;
+      context.usageTracker.setSessionUsage(id, usage);
     },
   };
   attachAdapter(session, adapterContext);
@@ -226,19 +226,19 @@ export async function performSpawn(
   //   - Stream telemetry parser (adapter-specific, lazy init on first chunk).
   //   - PTY activity detection (yields to hook-based for 'hooks_and_pty').
   ptyProcess.onData((data: string) => {
-    ctx.bufferManager.onData(id, data);
+    context.bufferManager.onData(id, data);
 
     // Transient sessions (command terminal) have no DB row - the
     // TranscriptWriter's lazy init will fail silently on first flush
     // (caught by try/catch in flush()), so we skip them entirely.
     if (!session.transient) {
-      ctx.getTranscriptWriter()?.onData(id, data);
+      context.getTranscriptWriter()?.onData(id, data);
     }
 
     // Per-adapter session ID capture from PTY output. Handles chunk-
     // boundary safety (rolling buffer) and ANSI stripping (Windows
     // ConPTY cursor positioning that defeats raw regexes).
-    ctx.sessionIdManager.onData(id, data, session.agentParser);
+    context.sessionIdManager.onData(id, data, session.agentParser);
 
     // Per-adapter stream telemetry (e.g. Cursor stream-json: model from
     // the init event, ToolStart/ToolEnd events for activity tracking).
@@ -251,10 +251,10 @@ export async function performSpawn(
       }
       const result = session.streamParser.parseTelemetry(data);
       if (result?.usage) {
-        ctx.usageTracker.setSessionUsage(id, result.usage);
+        context.usageTracker.setSessionUsage(id, result.usage);
       }
       if (result?.events && result.events.length > 0) {
-        ctx.usageTracker.ingestEvents(id, result.events);
+        context.usageTracker.ingestEvents(id, result.events);
       }
     }
 
@@ -264,11 +264,11 @@ export async function performSpawn(
     const strategy = input.agentParser?.runtime?.activity;
     if (strategy && strategy.kind !== 'hooks') {
       if (strategy.detectIdle?.(data)) {
-        ctx.usageTracker.notifyPtyIdle(id);
+        context.usageTracker.notifyPtyIdle(id);
       } else if (data.length > 0) {
-        const currentActivity = ctx.usageTracker.getSessionActivity(id);
-        if (ctx.resizeManager.shouldNotifyOnData(id, data, currentActivity)) {
-          ctx.usageTracker.notifyPtyData(id);
+        const currentActivity = context.usageTracker.getSessionActivity(id);
+        if (context.resizeManager.shouldNotifyOnData(id, data, currentActivity)) {
+          context.usageTracker.notifyPtyData(id);
         }
       }
     }
@@ -280,23 +280,23 @@ export async function performSpawn(
     if (session.status !== 'suspended') {
       session.status = 'exited';
       // Synthetic session_end - Claude Code's hook won't fire on kill
-      ctx.usageTracker.emitSessionEnd(id);
+      context.usageTracker.emitSessionEnd(id);
     }
     session.exitCode = exitCode;
     session.pty = null;
 
     // Cancel the session-ID diagnostic timer but keep the scanner so
     // the scrollback fallback in suspend() can still use its buffer.
-    ctx.sessionIdManager.clearDiagnostic(id);
+    context.sessionIdManager.clearDiagnostic(id);
     disposeAdapterAttachment(session);
 
     // Flush transcript to DB before closing out the session
-    ctx.getTranscriptWriter()?.finalize(id);
+    context.getTranscriptWriter()?.finalize(id);
 
     // Final flush: process any unread events written before PTY exited.
     // Catches the common race where the agent writes ToolEnd just before
     // the PTY exits, but fs.watch hasn't fired the callback yet.
-    ctx.statusFileReader.flushPendingEvents(id);
+    context.statusFileReader.flushPendingEvents(id);
 
     // Strip agent hooks from the project's settings file so they don't
     // accumulate across sessions. See adapter-lifecycle.removeAdapterHooks.
@@ -306,25 +306,25 @@ export async function performSpawn(
     // needed for crash recovery. Files are cleaned up by
     // pruneStaleResources(), remove(), or killAll(). See
     // SessionFileManager.detachOnPtyExit.
-    ctx.sessionFiles.detachOnPtyExit(id);
+    context.sessionFiles.detachOnPtyExit(id);
 
     // Fallback PR scan: if a PR command was flagged (ToolStart seen) but
     // ToolEnd was never processed (event lost or never written), scan the
     // scrollback now as a last resort before the session is fully closed.
-    if (ctx.usageTracker.hasPendingPRCommand(id)) {
-      ctx.usageTracker.clearPendingPRCommand(id);
-      const scrollback = ctx.bufferManager.getRawScrollback(id);
+    if (context.usageTracker.hasPendingPRCommand(id)) {
+      context.usageTracker.clearPendingPRCommand(id);
+      const scrollback = context.bufferManager.getRawScrollback(id);
       const detected = detectPR(scrollback);
       if (detected) {
-        ctx.emit('pr-detected', id, detected.url, detected.number);
+        context.emit('pr-detected', id, detected.url, detected.number);
       }
     }
 
-    ctx.emit('exit', id, exitCode);
-    ctx.sessionQueue.notifySlotFreed();
+    context.emit('exit', id, exitCode);
+    context.sessionQueue.notifySlotFreed();
   });
 
-  ctx.emit('session-changed', id, toSession(session));
+  context.emit('session-changed', id, toSession(session));
 
   // If there's a command to run, send it after a brief delay
   if (input.command) {

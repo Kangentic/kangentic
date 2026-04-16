@@ -27,7 +27,9 @@ vi.mock('../../src/main/config/paths', () => ({
   },
 }));
 
-vi.mock('../../src/main/git/worktree-manager', () => ({
+// pruneStaleWorktreeProjects now imports isKangenticWorktree from git-checks
+// (moved out of worktree-manager in the git-module-split refactor).
+vi.mock('../../src/main/git/git-checks', () => ({
   isKangenticWorktree: mockIsKangenticWorktree,
 }));
 

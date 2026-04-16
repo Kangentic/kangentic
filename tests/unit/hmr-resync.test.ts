@@ -37,12 +37,27 @@ describe('HMR store re-sync', () => {
     expect(hmrMatch, 'Could not find vite:afterUpdate HMR handler in App.tsx').toBeTruthy();
     const hmrBlock = hmrMatch![1];
 
-    // Scan all store files for load*/sync* method definitions
-    const storeFiles = fs.readdirSync(STORES_DIR).filter((f) => f.endsWith('-store.ts'));
+    // Scan top-level store files + per-store slice subfolders for
+    // load*/sync* method definitions. The slice split means methods live
+    // in e.g. board-store/board-hydration-slice.ts, not board-store.ts
+    // directly - the test must recurse into those subfolders to preserve
+    // coverage.
+    const storeSourcePaths: string[] = [];
+    for (const entry of fs.readdirSync(STORES_DIR, { withFileTypes: true })) {
+      if (entry.isFile() && entry.name.endsWith('-store.ts')) {
+        storeSourcePaths.push(path.join(STORES_DIR, entry.name));
+      } else if (entry.isDirectory() && entry.name.endsWith('-store')) {
+        for (const sliceEntry of fs.readdirSync(path.join(STORES_DIR, entry.name))) {
+          if (sliceEntry.endsWith('.ts')) {
+            storeSourcePaths.push(path.join(STORES_DIR, entry.name, sliceEntry));
+          }
+        }
+      }
+    }
     const missingMethods: string[] = [];
 
-    for (const storeFile of storeFiles) {
-      const storeSource = fs.readFileSync(path.join(STORES_DIR, storeFile), 'utf-8');
+    for (const storeSourcePath of storeSourcePaths) {
+      const storeSource = fs.readFileSync(storeSourcePath, 'utf-8');
       // Match method definitions like "loadBoard: async () =>" or "syncSessions: async () =>"
       const methodRegex = /^\s+(load\w+|sync\w+):\s*async/gm;
       let match;
@@ -50,7 +65,8 @@ describe('HMR store re-sync', () => {
         const methodName = match[1];
         if (EXCLUDED_METHODS.has(methodName)) continue;
         if (!hmrBlock.includes(`.${methodName}(`)) {
-          missingMethods.push(`${storeFile} -> ${methodName}()`);
+          const relativePath = path.relative(STORES_DIR, storeSourcePath).replace(/\\/g, '/');
+          missingMethods.push(`${relativePath} -> ${methodName}()`);
         }
       }
     }

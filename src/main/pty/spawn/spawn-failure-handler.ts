@@ -47,7 +47,7 @@ export interface SpawnFailureContext {
 export function handleSpawnFailure(
   err: unknown,
   attempt: SpawnAttempt,
-  ctx: SpawnFailureContext,
+  context: SpawnFailureContext,
 ): Session {
   const { id, input, shell, shellExe, shellArgs, effectiveCwd, previousScrollback } = attempt;
 
@@ -83,9 +83,9 @@ export function handleSpawnFailure(
     exitSequence: input.exitSequence ?? ['\x03'],
     agentParser: input.agentParser,
   };
-  ctx.registry.set(id, failedSession);
+  context.registry.set(id, failedSession);
   // Initialize buffer manager with diagnostic scrollback for failed sessions
-  ctx.bufferManager.initSession(id, diagnosticScrollback, 120);
-  ctx.emit('exit', id, -1);
+  context.bufferManager.initSession(id, diagnosticScrollback, 120);
+  context.emit('exit', id, -1);
   return toSession(failedSession);
 }

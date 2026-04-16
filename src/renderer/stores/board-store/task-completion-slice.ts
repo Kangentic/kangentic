@@ -27,8 +27,8 @@ export const createTaskCompletionSlice: StateCreator<BoardStore, [], [], TaskCom
 
   setCompletingTask: (task) => {
     // If another task is already completing, finalize it immediately
-    const prev = get().completingTask;
-    if (prev) {
+    const previousCompleting = get().completingTask;
+    if (previousCompleting) {
       get().finalizeCompletion();
     }
     // Remove the task from the tasks array so no column renders it during flight.

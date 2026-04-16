@@ -69,6 +69,9 @@ vi.mock('../../src/main/agent/adapters/claude/hook-manager', () => ({
 vi.mock('../../src/main/git/worktree-manager', () => ({
   removeNodeModulesJunction: vi.fn(),
 }));
+vi.mock('../../src/main/git/node-modules-link', () => ({
+  removeNodeModulesJunction: vi.fn(),
+}));
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
 vi.mock('simple-git', () => ({ default: vi.fn(() => ({})) }));
