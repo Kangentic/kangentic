@@ -1,6 +1,11 @@
 import { create } from 'zustand';
-import type { Session, SessionUsage, ActivityState, SessionEvent, SpawnSessionInput, UsageTimePeriod, PeriodUsageStats } from '../../shared/types';
+import type { Session, SessionUsage, ActivityState, SessionEvent } from '../../shared/types';
 import { useProjectStore } from './project-store';
+import type { SessionStore } from './session-store/types';
+import { buildSessionByTaskId } from './session-store/session-index';
+import { createTaskChangesPanelSlice } from './session-store/task-changes-panel-slice';
+import { createUsagePeriodSlice } from './session-store/usage-period-slice';
+import { createTransientSessionSlice } from './session-store/transient-session-slice';
 
 const MAX_EVENTS_PER_SESSION = 500;
 
@@ -41,107 +46,23 @@ export function cancelSync(): void {
   syncController = null;
 }
 
-/** Build a taskId→Session lookup Map from the sessions array. */
-function buildSessionByTaskId(sessions: Session[]): Map<string, Session> {
-  const map = new Map<string, Session>();
-  for (const session of sessions) {
-    map.set(session.taskId, session);
-  }
-  return map;
-}
-
-interface SessionStore {
-  sessions: Session[];
-  /** Derived O(1) lookup: taskId → Session. Rebuilt whenever `sessions` changes. */
-  _sessionByTaskId: Map<string, Session>;
-  // ACTIVITY_TAB = activity log tab; session UUID = individual tab; null = none
-  activeSessionId: string | null;
-  detailTaskId: string | null;
-  dialogSessionId: string | null;
-  sessionUsage: Record<string, SessionUsage>;
-  /** Tracks sessions whose PTY has activated the alternate screen buffer (TUI ready). */
-  sessionFirstOutput: Record<string, boolean>;
-  sessionActivity: Record<string, ActivityState>;
-  sessionEvents: Record<string, SessionEvent[]>;
-  seenIdleSessions: Record<string, boolean>;
-  /** Command label to show in the terminal overlay (e.g. "/code-review") keyed by task ID */
-  pendingCommandLabel: Record<string, string>;
-  /** Spawn progress label from main process (e.g. "Fetching latest...") keyed by task ID */
-  spawnProgress: Record<string, string>;
-  /** Task IDs whose Changes panel is open (persists across dialog open/close) */
-  changesOpenTasks: Set<string>;
-  /** Last selected file in the Changes panel, keyed by task ID */
-  changesSelectedFile: Record<string, string>;
-  /** View mode for the task-detail Changes panel, keyed by task ID (default 'split') */
-  changesViewMode: Record<string, 'split' | 'expanded'>;
-  _pendingOpenTaskId: string | null;
-  /** One-shot flag set by notification click for transient (Command Terminal) sessions.
-   *  Consumed by useCommandBar to open the overlay (and reattach to the preserved PTY). */
-  _pendingOpenCommandTerminal: boolean;
-  setPendingOpenCommandTerminal: (value: boolean) => void;
-
-  syncSessions: () => Promise<boolean>;
-  setPendingOpenTaskId: (id: string | null) => void;
-  setDetailTaskId: (id: string | null) => void;
-  spawnSession: (input: SpawnSessionInput) => Promise<Session>;
-  killSession: (id: string) => Promise<void>;
-  resetSession: (taskId: string) => Promise<void>;
-  suspendSession: (taskId: string) => Promise<void>;
-  resumeSession: (taskId: string, resumePrompt?: string) => Promise<Session>;
-  setActiveSession: (id: string | null) => void;
-  setDialogSessionId: (id: string | null) => void;
-  upsertSession: (session: Session) => void;
-  updateSessionStatus: (id: string, updates: Partial<Session>) => void;
-  updateUsage: (sessionId: string, data: SessionUsage) => void;
-  markFirstOutput: (sessionId: string) => void;
-  updateActivity: (sessionId: string, state: ActivityState) => void;
-  addEvent: (sessionId: string, event: SessionEvent) => void;
-  batchUpdateUsage: (entries: Map<string, SessionUsage>) => void;
-  batchAddEvents: (entries: Array<{ sessionId: string; event: SessionEvent }>) => void;
-  clearEvents: (sessionId: string) => void;
-  setPendingCommandLabel: (taskId: string, label: string) => void;
-  clearPendingCommandLabel: (taskId: string) => void;
-  setSpawnProgress: (taskId: string, label: string | null) => void;
-  markIdleSessionsSeen: (projectId: string) => void;
-  markSingleIdleSessionSeen: (sessionId: string) => void;
-  toggleChangesOpen: (taskId: string) => void;
-  setChangesSelectedFile: (taskId: string, filePath: string | null) => void;
-  setChangesViewMode: (taskId: string, mode: 'split' | 'expanded') => void;
-
-  // Transient session (command bar) - per-project map + convenience pointers
-  /** Whether the command bar overlay is currently visible (drives focused-session priority) */
-  commandBarVisible: boolean;
-  setCommandBarVisible: (visible: boolean) => void;
-  /** Per-project transient session tracking: projectId -> { sessionId, branch } */
-  transientSessions: Record<string, { sessionId: string; branch: string | null }>;
-  /** Current project's transient session ID (convenience pointer into transientSessions) */
-  transientSessionId: string | null;
-  /** Current project's transient branch (convenience pointer into transientSessions) */
-  transientBranch: string | null;
-  spawnTransientSession: (branch?: string) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
-  killTransientSession: () => Promise<void>;
-  /** Clear transient session ID without IPC call (session already exited naturally). */
-  clearTransientSession: () => void;
-  /** Stash current project's transient session pointers (keep PTY alive for later restore). */
-  stashTransientSession: () => void;
-  /** Restore a project's transient session from the map (if still alive). */
-  restoreTransientSession: (projectId: string) => void;
-  /** Kill a specific project's transient session and clean up all data. */
-  killTransientSessionForProject: (projectId: string) => Promise<void>;
-
-  /** Selected time period for status bar usage stats */
-  selectedPeriod: UsageTimePeriod;
-  /** Aggregated DB stats for the selected period (excludes live sessions) */
-  periodStats: PeriodUsageStats | null;
-  setSelectedPeriod: (period: UsageTimePeriod) => void;
-  fetchPeriodStats: (period?: UsageTimePeriod) => Promise<void>;
-
-  getRunningCount: () => number;
-  getQueuedCount: () => number;
-  getQueuePosition: (sessionId: string) => { position: number; total: number } | null;
-}
-
-export const useSessionStore = create<SessionStore>((set, get) => ({
+/**
+ * Session store composition. Three self-contained concerns are
+ * extracted to slices under ./session-store/ (task-changes-panel,
+ * usage-period, transient-session). The rest (session CRUD, sync, usage/events/activity,
+ * UI hints, derived helpers) stays inline here because it's tightly
+ * coupled and hard to split cleanly.
+ *
+ * HMR preservation: syncController (AbortController) and the three
+ * transient-session pointers survive module replacement via
+ * `import.meta.hot.dispose`. Without this, hot reload orphans live
+ * PTY processes and breaks in-flight project switches.
+ *
+ * HMR re-sync: the `vite:afterUpdate` handler in App.tsx calls
+ * `syncSessions()` after hot reload. Renaming syncSessions would
+ * require updating that handler + the hmr-resync.test.ts unit test.
+ */
+export const useSessionStore = create<SessionStore>((set, get, api) => ({
   sessions: [],
   _sessionByTaskId: new Map(),
   activeSessionId: null,
@@ -154,19 +75,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   seenIdleSessions: {},
   pendingCommandLabel: {},
   spawnProgress: {},
-  changesOpenTasks: new Set(),
-  changesSelectedFile: {},
-  changesViewMode: {},
   _pendingOpenTaskId: null,
   _pendingOpenCommandTerminal: false,
   setPendingOpenCommandTerminal: (value) => set({ _pendingOpenCommandTerminal: value }),
-  commandBarVisible: false,
-  setCommandBarVisible: (visible) => set({ commandBarVisible: visible }),
-  transientSessions: preservedTransientState?.transientSessions ?? {},
-  transientSessionId: preservedTransientState?.transientSessionId ?? null,
-  transientBranch: preservedTransientState?.transientBranch ?? null,
-  selectedPeriod: 'live',
-  periodStats: null,
 
   setPendingOpenTaskId: (id) => set({ _pendingOpenTaskId: id }),
 
@@ -323,7 +234,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         sessions = [...state.sessions.filter((s) => s.taskId !== session.taskId), session];
       }
       // Clear spawn progress when a real session arrives (progress is done)
-      const { [session.taskId]: _, ...remainingProgress } = state.spawnProgress;
+      const { [session.taskId]: _removed, ...remainingProgress } = state.spawnProgress;
       return { sessions, _sessionByTaskId: buildSessionByTaskId(sessions), spawnProgress: remainingProgress };
     });
   },
@@ -356,7 +267,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
       };
       // When session resumes thinking, remove from seen so next idle is fresh
       if (state === 'thinking') {
-        const { [sessionId]: _, ...rest } = s.seenIdleSessions;
+        const { [sessionId]: _removed, ...rest } = s.seenIdleSessions;
         updates.seenIdleSessions = rest;
       }
       return updates;
@@ -375,7 +286,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     });
   },
 
-  batchUpdateUsage: (entries) => {
+  batchUpdateUsage: (entries: Map<string, SessionUsage>) => {
     set((s) => {
       const merged = { ...s.sessionUsage };
       for (const [sessionId, data] of entries) {
@@ -385,7 +296,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     });
   },
 
-  batchAddEvents: (entries) => {
+  batchAddEvents: (entries: Array<{ sessionId: string; event: SessionEvent }>) => {
     set((s) => {
       const merged = { ...s.sessionEvents };
       for (const { sessionId, event } of entries) {
@@ -401,7 +312,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
   clearEvents: (sessionId) => {
     set((s) => {
-      const { [sessionId]: _, ...rest } = s.sessionEvents;
+      const { [sessionId]: _removed, ...rest } = s.sessionEvents;
       return { sessionEvents: rest };
     });
   },
@@ -411,7 +322,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
   clearPendingCommandLabel: (taskId) => {
     set((s) => {
-      const { [taskId]: _, ...rest } = s.pendingCommandLabel;
+      const { [taskId]: _removed, ...rest } = s.pendingCommandLabel;
       return { pendingCommandLabel: rest };
     });
   },
@@ -419,7 +330,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   setSpawnProgress: (taskId, label) => {
     if (label === null) {
       set((s) => {
-        const { [taskId]: _, ...rest } = s.spawnProgress;
+        const { [taskId]: _removed, ...rest } = s.spawnProgress;
         return { spawnProgress: rest };
       });
     } else {
@@ -447,177 +358,6 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }
   },
 
-  toggleChangesOpen: (taskId) => {
-    const next = new Set(get().changesOpenTasks);
-    const viewMode = { ...get().changesViewMode };
-    if (next.has(taskId)) {
-      next.delete(taskId);
-      delete viewMode[taskId];
-    } else {
-      next.add(taskId);
-      viewMode[taskId] = 'split';
-    }
-    set({ changesOpenTasks: next, changesViewMode: viewMode });
-  },
-
-  setChangesViewMode: (taskId, mode) => {
-    set({ changesViewMode: { ...get().changesViewMode, [taskId]: mode } });
-  },
-
-  setChangesSelectedFile: (taskId, filePath) => {
-    const current = get().changesSelectedFile;
-    if (filePath === null) {
-      if (!(taskId in current)) return;
-      const { [taskId]: _, ...rest } = current;
-      set({ changesSelectedFile: rest });
-    } else {
-      set({ changesSelectedFile: { ...current, [taskId]: filePath } });
-    }
-  },
-
-  spawnTransientSession: async (branch?) => {
-    const currentProject = useProjectStore.getState().currentProject;
-    if (!currentProject) throw new Error('No project is currently open');
-    const result = await window.electronAPI.sessions.spawnTransient({
-      projectId: currentProject.id,
-      branch,
-    });
-    set((state) => ({
-      transientSessions: {
-        ...state.transientSessions,
-        [currentProject.id]: { sessionId: result.session.id, branch: result.branch },
-      },
-      transientSessionId: result.session.id,
-      transientBranch: result.branch,
-    }));
-    return result;
-  },
-
-  killTransientSession: async () => {
-    const transientSessionId = get().transientSessionId;
-    if (transientSessionId) {
-      await window.electronAPI.sessions.killTransient(transientSessionId);
-      get().clearTransientSession();
-    }
-  },
-
-  clearTransientSession: () => {
-    const transientSessionId = get().transientSessionId;
-    if (transientSessionId) {
-      set((state) => {
-        const { [transientSessionId]: _usage, ...restUsage } = state.sessionUsage;
-        const { [transientSessionId]: _firstOutput, ...restFirstOutput } = state.sessionFirstOutput;
-        const { [transientSessionId]: _activity, ...restActivity } = state.sessionActivity;
-        const { [transientSessionId]: _events, ...restEvents } = state.sessionEvents;
-        const { [transientSessionId]: _seen, ...restSeen } = state.seenIdleSessions;
-        const sessions = state.sessions.filter((s) => s.id !== transientSessionId);
-
-        // Remove owning project's entry from the per-project map
-        const updatedTransientSessions = { ...state.transientSessions };
-        for (const [projectId, entry] of Object.entries(updatedTransientSessions)) {
-          if (entry.sessionId === transientSessionId) {
-            delete updatedTransientSessions[projectId];
-            break;
-          }
-        }
-
-        return {
-          sessions,
-          _sessionByTaskId: buildSessionByTaskId(sessions),
-          sessionUsage: restUsage,
-          sessionFirstOutput: restFirstOutput,
-          sessionActivity: restActivity,
-          sessionEvents: restEvents,
-          seenIdleSessions: restSeen,
-          transientSessions: updatedTransientSessions,
-          transientSessionId: null,
-          transientBranch: null,
-        };
-      });
-    } else {
-      set({ transientSessionId: null, transientBranch: null });
-    }
-  },
-
-  stashTransientSession: () => {
-    // Null the convenience pointers only. The map entry and all session data
-    // (usage, activity, events, firstOutput) stay in the store keyed by sessionId.
-    set({ transientSessionId: null, transientBranch: null });
-  },
-
-  restoreTransientSession: (projectId) => {
-    const entry = get().transientSessions[projectId];
-    if (entry) {
-      // Verify the session is still alive
-      const session = get().sessions.find((s) => s.id === entry.sessionId && s.status === 'running');
-      if (session) {
-        set({ transientSessionId: entry.sessionId, transientBranch: entry.branch });
-      } else {
-        // Session died while stashed - clean up the map entry
-        set((state) => {
-          const { [projectId]: _, ...rest } = state.transientSessions;
-          return { transientSessions: rest, transientSessionId: null, transientBranch: null };
-        });
-      }
-    } else {
-      set({ transientSessionId: null, transientBranch: null });
-    }
-  },
-
-  killTransientSessionForProject: async (projectId) => {
-    const entry = get().transientSessions[projectId];
-    if (!entry) return;
-    try {
-      await window.electronAPI.sessions.killTransient(entry.sessionId);
-    } catch {
-      // Best-effort
-    }
-    set((state) => {
-      const { [projectId]: _, ...restTransient } = state.transientSessions;
-      const { [entry.sessionId]: _usage, ...restUsage } = state.sessionUsage;
-      const { [entry.sessionId]: _firstOutput, ...restFirst } = state.sessionFirstOutput;
-      const { [entry.sessionId]: _activity, ...restActivity } = state.sessionActivity;
-      const { [entry.sessionId]: _events, ...restEvents } = state.sessionEvents;
-      const { [entry.sessionId]: _seen, ...restSeen } = state.seenIdleSessions;
-      const sessions = state.sessions.filter((s) => s.id !== entry.sessionId);
-      const isCurrentTransient = state.transientSessionId === entry.sessionId;
-      return {
-        transientSessions: restTransient,
-        transientSessionId: isCurrentTransient ? null : state.transientSessionId,
-        transientBranch: isCurrentTransient ? null : state.transientBranch,
-        sessions,
-        _sessionByTaskId: buildSessionByTaskId(sessions),
-        sessionUsage: restUsage,
-        sessionFirstOutput: restFirst,
-        sessionActivity: restActivity,
-        sessionEvents: restEvents,
-        seenIdleSessions: restSeen,
-      };
-    });
-  },
-
-  setSelectedPeriod: (period) => {
-    if (period === 'live') {
-      set({ selectedPeriod: period, periodStats: null });
-    } else {
-      set({ selectedPeriod: period });
-      get().fetchPeriodStats(period);
-    }
-    // Persist selection to config (fire-and-forget)
-    window.electronAPI.config.set({ statusBarPeriod: period });
-  },
-
-  fetchPeriodStats: async (period?) => {
-    const targetPeriod = period ?? get().selectedPeriod;
-    if (targetPeriod === 'live') return;
-    try {
-      const stats = await window.electronAPI.sessions.getPeriodStats(targetPeriod);
-      set({ periodStats: stats });
-    } catch {
-      // Ignore - project may have been closed
-    }
-  },
-
   getRunningCount: () => get().sessions.filter((s) => s.status === 'running').length,
   getQueuedCount: () => get().sessions.filter((s) => s.status === 'queued').length,
   getQueuePosition: (sessionId) => {
@@ -628,4 +368,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     if (idx === -1) return null;
     return { position: idx + 1, total: queued.length };
   },
+
+  ...createTaskChangesPanelSlice(set, get, api),
+  ...createUsagePeriodSlice(set, get, api),
+  ...createTransientSessionSlice(preservedTransientState)(set, get, api),
 }));

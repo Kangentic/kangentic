@@ -1,5 +1,5 @@
 /**
- * Unit-style tests for the CompletionSlice in board-store.ts, run in the UI
+ * Unit-style tests for the TaskCompletionSlice in board-store.ts, run in the UI
  * tier so the Zustand store has its real browser environment (import.meta.hot,
  * window.electronAPI mock).
  *
@@ -225,7 +225,7 @@ async function buildCompletingTask(
 // Tests
 // ---------------------------------------------------------------------------
 
-test.describe('CompletionSlice - state machine invariants', () => {
+test.describe('TaskCompletionSlice - state machine invariants', () => {
   // ------------------------------------------------------------------
   // Test 1: setCompletingTask atomicity
   // ------------------------------------------------------------------
