@@ -22,15 +22,27 @@ export function parseWarpVersion(output: string): string | null {
 /**
  * Run `<binary> dump-debug-info` and extract the version.
  * Uses exec() on Windows (for .cmd shim support) and execFile() elsewhere.
+ *
+ * candidatePath flows from `which('oz')` or a user-configured override. On
+ * Windows the `.cmd` shim case requires shell invocation, which means the
+ * path is concatenated into a shell command string. Reject paths containing
+ * shell metacharacters before invoking the shell so a crafted override path
+ * cannot break out of the quoting.
  */
 export async function execWarpVersion(candidatePath: string, timeout = 5000): Promise<string | null> {
   try {
     if (!fs.existsSync(candidatePath)) return null;
-    const { stdout, stderr } = process.platform === 'win32'
-      ? await execAsync(`"${candidatePath}" dump-debug-info`, { timeout })
-      : await execFileAsync(candidatePath, ['dump-debug-info'], { timeout });
-    const raw = stdout || stderr || '';
-    return parseWarpVersion(raw);
+    if (process.platform === 'win32') {
+      // Windows does not allow " in filenames, but other shell metacharacters
+      // (`&`, `|`, `^`, `%`, `<`, `>`, newline) are theoretically valid. Reject
+      // them rather than attempting to escape, since this path is a binary
+      // location and should never contain them in practice.
+      if (/["&|^%<>\n\r`$]/.test(candidatePath)) return null;
+      const { stdout, stderr } = await execAsync(`"${candidatePath}" dump-debug-info`, { timeout });
+      return parseWarpVersion(stdout || stderr || '');
+    }
+    const { stdout, stderr } = await execFileAsync(candidatePath, ['dump-debug-info'], { timeout });
+    return parseWarpVersion(stdout || stderr || '');
   } catch {
     return null;
   }

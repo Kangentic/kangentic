@@ -127,10 +127,10 @@ export function registerAsanaIpcHandlers(): void {
           }
         }
         saveAsanaCredential(credential);
-        return { ok: true as const, email: credential.userEmail || undefined };
+        return { ok: true, email: credential.userEmail || undefined };
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Asana authentication failed';
-        return { ok: false as const, error: message };
+        return { ok: false, error: message };
       }
     },
   );

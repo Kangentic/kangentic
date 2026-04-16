@@ -221,6 +221,23 @@ describe('AiderSessionHistoryParser', () => {
       expect(result.usage!.cost.totalCostUsd).toBe(0);
     });
 
+    it('handles split-line Tokens/Cost format with cache tokens', () => {
+      // Aider prints Cost on a separate unquoted line when the preceding
+      // Tokens line carries cache-write/cache-hit fields. The regex must
+      // accept `Cost:` with or without the `> ` blockquote prefix.
+      const content = [
+        '> Tokens: 1.8k sent, 500 cache write, 1.1k cache hit, 234 received.',
+        'Cost: $0.02 message, $0.05 session.',
+      ].join('\n');
+
+      const result = AiderSessionHistoryParser.parse(content, 'full');
+      expect(result.usage).not.toBeNull();
+      expect(result.usage!.cost.totalCostUsd).toBe(0.05);
+      expect(result.usage!.contextWindow.totalInputTokens).toBe(1800);
+      expect(result.usage!.contextWindow.totalOutputTokens).toBe(234);
+      expect(result.usage!.contextWindow.cacheTokens).toBe(1600);
+    });
+
     // ── Real-shape fixture regression test ────────────────────────────────
     // Replays a realistic .aider.chat.history.md file to catch format drift.
     // See tests/fixtures/aider-chat-history.md for the fixture source.

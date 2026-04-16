@@ -12,7 +12,6 @@ import type { AsanaCredential } from './credential-store';
 
 interface PendingAuth {
   verifier: string;
-  state: string;
   createdAt: number;
 }
 
@@ -52,14 +51,14 @@ export async function startAsanaOAuth(): Promise<OAuthStartResult> {
   const { clientId } = appCredentials;
 
   const verifier = generateVerifier();
-  // `state` is retained for spec compliance even though Asana's oob redirect
-  // never round-trips it back to us (the user pastes the code directly, there
-  // is no callback). CSRF protection for this flow comes from PKCE's
-  // code_verifier + the short-lived server-side pendingId, not `state`.
-  const state = crypto.randomBytes(16).toString('base64url');
   const pendingId = crypto.randomBytes(16).toString('base64url');
-  pending.set(pendingId, { verifier, state, createdAt: Date.now() });
+  pending.set(pendingId, { verifier, createdAt: Date.now() });
 
+  // Asana's oob redirect never round-trips `state` back to us (the user pastes
+  // the code into the UI; there is no callback). CSRF protection for this flow
+  // comes from PKCE's code_verifier plus the short-lived server-side pendingId.
+  // We still send a `state` value because the AS requires it for spec compliance.
+  const state = crypto.randomBytes(16).toString('base64url');
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: ASANA_OAUTH_REDIRECT_URI,
@@ -126,6 +125,9 @@ export async function completeAsanaOAuth(
   if (!payload.access_token || !payload.refresh_token) {
     throw new Error('Asana token exchange returned incomplete credentials.');
   }
+  if (typeof payload.expires_in !== 'number' || !Number.isFinite(payload.expires_in)) {
+    throw new Error('Asana token exchange returned no expires_in.');
+  }
 
   return {
     accessToken: payload.access_token,
@@ -169,6 +171,9 @@ export async function refreshAsanaToken(
   const payload = (await response.json()) as AsanaTokenResponse;
   if (!payload.access_token) {
     throw new Error('Asana token refresh returned no access_token.');
+  }
+  if (typeof payload.expires_in !== 'number' || !Number.isFinite(payload.expires_in)) {
+    throw new Error('Asana token refresh returned no expires_in.');
   }
 
   return {

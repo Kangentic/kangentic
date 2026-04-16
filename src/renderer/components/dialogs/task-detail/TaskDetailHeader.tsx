@@ -126,7 +126,14 @@ export function TaskDetailHeader({
 
       {/* Scrollable pills container - hidden for archived tasks */}
       {!isArchived ? (
-        <div className={`flex items-center flex-wrap gap-3 min-w-0 flex-shrink-0${showCommandPalette ? '' : ' overflow-hidden max-h-8'}`}>
+        <div
+          className={[
+            'flex items-center flex-wrap gap-3 min-w-0 flex-shrink-0',
+            // Clip the row to a single line until the command palette opens so
+            // its popover isn't cut off by overflow-hidden.
+            showCommandPalette ? '' : 'overflow-hidden max-h-8',
+          ].filter(Boolean).join(' ')}
+        >
           {/* Commands button */}
           {!isEditing && (
             <div className="relative flex-shrink-0" ref={commandButtonRef}>

@@ -65,6 +65,13 @@ export interface ListTasksResult {
 /** HTTP request timeout in milliseconds. Matches the downloadFile helper. */
 const REQUEST_TIMEOUT_MS = 30_000;
 
+export class AsanaError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = 'AsanaError';
+  }
+}
+
 /**
  * Return a human-friendly error message for known Asana HTTP failure modes,
  * or null if the raw `Asana ... failed (status): ...` format is fine.
@@ -319,8 +326,8 @@ export class AsanaClient {
     return withBackoff(async () => this.requestOnce<T>(method, pathAndQuery, body), {
       maxAttempts: 3,
       shouldRetry: (error) => {
-        const status = (error as { status?: number }).status;
-        if (status === undefined) return false;
+        if (!(error instanceof AsanaError)) return false;
+        const { status } = error;
         return status === 429 || (status >= 500 && status < 600);
       },
     });
@@ -367,11 +374,8 @@ export class AsanaClient {
     if (!response.ok) {
       const text = await response.text().catch(() => '');
       const friendly = friendlyAsanaError(response.status, text);
-      const error = new Error(
-        friendly ?? `Asana ${method} ${pathAndQuery} failed (${response.status}): ${text.slice(0, 500)}`,
-      ) as Error & { status?: number };
-      error.status = response.status;
-      throw error;
+      const message = friendly ?? `Asana ${method} ${pathAndQuery} failed (${response.status}): ${text.slice(0, 500)}`;
+      throw new AsanaError(message, response.status);
     }
     return (await response.json()) as T;
   }
