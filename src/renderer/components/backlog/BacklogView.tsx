@@ -1,15 +1,8 @@
-import React, { useState, useMemo, useCallback, useRef } from 'react';
-import { Plus, Search, SquareArrowRight, Trash2, Inbox, Filter, Pencil, X, ExternalLink, GripVertical } from 'lucide-react';
-import { GitHubIcon } from '../icons/GitHubIcon';
-import { formatRelativeTime } from '../../lib/datetime';
+import { useState, useMemo, useCallback } from 'react';
+import { Plus, Search, Inbox, Filter, X, GripVertical } from 'lucide-react';
 import { DndContext, DragOverlay } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { DataTable } from '../DataTable';
-import type { DataTableColumn } from '../DataTable';
-import { Pill } from '../Pill';
-import { PriorityBadge } from './PriorityBadge';
-import { PromotePopover } from './PromotePopover';
-import { stripMarkdown } from '../../utils/strip-markdown';
 import { BacklogContextMenu } from './BacklogContextMenu';
 import { BacklogBulkToolbar } from './BacklogBulkToolbar';
 import { NewBacklogTaskDialog } from './NewBacklogTaskDialog';
@@ -25,75 +18,7 @@ import { useBacklogStore } from '../../stores/backlog-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import type { BacklogTask } from '../../../shared/types';
-
-type SortKey = 'select' | 'priority' | 'title' | 'labels' | 'created' | 'actions';
-
-// --- Row actions ---
-
-function RowActions({
-  itemId,
-  swimlanes,
-  onMoveToBoard,
-  onEdit,
-  onDelete,
-}: {
-  itemId: string;
-  swimlanes: ReturnType<typeof useBoardStore.getState>['swimlanes'];
-  onMoveToBoard: (itemId: string, swimlaneId: string) => void;
-  onEdit: (itemId: string) => void;
-  onDelete: (itemId: string) => void;
-}) {
-  const [showPicker, setShowPicker] = useState(false);
-  const moveButtonRef = useRef<HTMLButtonElement>(null);
-
-  return (
-    <div className="flex items-center justify-end gap-1 relative" onClick={(event) => event.stopPropagation()}>
-      <div className="relative">
-        <button
-          ref={moveButtonRef}
-          type="button"
-          onClick={() => setShowPicker(!showPicker)}
-          className="p-1.5 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
-          title="Move to board"
-          data-testid="move-to-board-btn"
-        >
-          <SquareArrowRight size={15} />
-        </button>
-        {showPicker && (
-          <PromotePopover
-            triggerRef={moveButtonRef}
-            swimlanes={swimlanes}
-            onSelect={(swimlaneId) => {
-              setShowPicker(false);
-              onMoveToBoard(itemId, swimlaneId);
-            }}
-            onClose={() => setShowPicker(false)}
-          />
-        )}
-      </div>
-      <button
-        type="button"
-        onClick={() => onEdit(itemId)}
-        className="p-1.5 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/40 rounded transition-colors"
-        title="Edit item"
-        data-testid="edit-item-btn"
-      >
-        <Pencil size={14} />
-      </button>
-      <button
-        type="button"
-        onClick={() => onDelete(itemId)}
-        className="p-1.5 text-fg-disabled hover:text-red-400 hover:bg-surface-hover/40 rounded transition-colors"
-        title="Delete item"
-        data-testid="delete-item-btn"
-      >
-        <Trash2 size={15} />
-      </button>
-    </div>
-  );
-}
-
-// --- Main component ---
+import { useBacklogColumns, type SortKey } from './view/useBacklogColumns';
 
 export function BacklogView() {
   const hydrated = useBacklogStore((state) => state.hydrated);
@@ -236,120 +161,16 @@ export function BacklogView() {
 
   // --- Columns ---
 
-  const columns: DataTableColumn<BacklogTask, SortKey>[] = useMemo(() => [
-    {
-      key: 'select' as SortKey,
-      label: '',
-      width: 'w-[40px]',
-      render: (item) => (
-        <label className="flex items-center justify-center p-1 cursor-pointer" onClick={(event) => event.stopPropagation()}>
-          <input
-            type="checkbox"
-            checked={selectedIds.has(item.id)}
-            onChange={() => toggleSelected(item.id)}
-            className="w-3 h-3 accent-accent-fg cursor-pointer"
-            data-testid="backlog-task-checkbox"
-          />
-        </label>
-      ),
-      headerRender: (data: BacklogTask[]) => (
-        <label className="flex items-center justify-center p-1 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={data.length > 0 && data.every((item) => selectedIds.has(item.id))}
-            onChange={() => selectAll(data.map((item) => item.id))}
-            className="w-3 h-3 accent-accent-fg cursor-pointer"
-            data-testid="backlog-select-all"
-          />
-        </label>
-      ),
-    },
-    {
-      key: 'priority' as SortKey,
-      label: 'Priority',
-      width: 'w-[80px]',
-      sortValue: (item) => item.priority,
-      render: (item) => <PriorityBadge priority={item.priority} showLabel />,
-    },
-    {
-      key: 'title' as SortKey,
-      label: 'Title',
-      width: 'min-w-[300px]',
-      sortValue: (item) => item.title.toLowerCase(),
-      render: (item) => (
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            {item.external_source && item.external_url && (
-              <button
-                type="button"
-                className="shrink-0 text-fg-faint hover:text-fg transition-colors"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  window.electronAPI.shell.openExternal(item.external_url!);
-                }}
-                title={`Open in ${item.external_source?.startsWith('github') ? 'GitHub' : item.external_source}`}
-              >
-                {item.external_source?.startsWith('github') ? <GitHubIcon size={13} /> : <ExternalLink size={13} />}
-              </button>
-            )}
-            <span className="text-fg font-medium truncate">{item.title}</span>
-          </div>
-          {item.description && (
-            <div className="text-xs text-fg-faint truncate mt-0.5">{stripMarkdown(item.description)}</div>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: 'labels' as SortKey,
-      label: 'Labels',
-      width: 'w-[200px]',
-      render: (item) =>
-        item.labels.length > 0 ? (
-          <div className="flex flex-wrap gap-1">
-            {item.labels.map((label) => {
-              const color = labelColors[label];
-              return (
-                <Pill
-                  key={label}
-                  size="sm"
-                  className={color ? 'bg-surface-hover/60 font-medium' : 'bg-surface-hover/60 text-fg-muted'}
-                  style={color ? { color } : undefined}
-                >
-                  {label}
-                </Pill>
-              );
-            })}
-          </div>
-        ) : null,
-    },
-    {
-      key: 'created' as SortKey,
-      label: 'Created',
-      align: 'right',
-      width: 'w-[160px]',
-      sortValue: (item) => item.created_at,
-      render: (item) => (
-        <span className="text-fg-faint text-xs whitespace-nowrap">
-          {formatRelativeTime(item.created_at)}
-        </span>
-      ),
-    },
-    {
-      key: 'actions' as SortKey,
-      label: '',
-      width: 'w-[100px]',
-      render: (item) => (
-        <RowActions
-          itemId={item.id}
-          swimlanes={swimlanes}
-          onMoveToBoard={handleMoveSingle}
-          onEdit={handleEdit}
-          onDelete={handleDelete}
-        />
-      ),
-    },
-  ], [selectedIds, toggleSelected, selectAll, swimlanes, handleMoveSingle, handleEdit, handleDelete, labelColors]);
+  const columns = useBacklogColumns({
+    selectedIds,
+    swimlanes,
+    labelColors,
+    toggleSelected,
+    selectAll,
+    handleMoveSingle,
+    handleEdit,
+    handleDelete,
+  });
 
   // --- Drag-to-reorder ---
   // Drag is allowed with filters/search (slot algorithm preserves hidden items),
