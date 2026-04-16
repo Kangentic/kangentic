@@ -8,6 +8,7 @@ import {
   type BoardAdapter,
   type AdapterStatus,
   type DownloadedAttachment,
+  type FileAttachmentRef,
   type PrerequisiteResult,
   prerequisiteToCheckCli,
   registerSourceUrlParser,
@@ -127,7 +128,7 @@ export class AzureDevOpsAdapter implements BoardAdapter {
   }
 
   async downloadFileAttachments(
-    attachments: Array<{ url: string; filename: string; sizeBytes: number }>,
+    attachments: Array<FileAttachmentRef>,
   ): Promise<{ attachments: DownloadedAttachment[]; skippedCount: number }> {
     if (attachments.length === 0) {
       return { attachments: [], skippedCount: 0 };

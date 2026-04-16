@@ -20,7 +20,7 @@ src/main/boards/
     github-issues/
     github-projects/
     azure-devops/
-    asana/            # OAuth 2.0 PKCE, per-user app credentials, dedicated IPC group
+    asana/            # Personal Access Token auth, dedicated IPC group
     jira/             # stub
     linear/           # stub
     trello/           # stub
@@ -44,11 +44,22 @@ The pattern intentionally mirrors `src/main/agent/adapters/` (one folder per CLI
 | `checkCli()` | yes | Legacy wrapper for the import IPC flow. Returns the older `{ available, authenticated, error? }` shape. Implementations can delegate to `prerequisiteToCheckCli(await this.checkPrerequisites())`. |
 | `fetch(input, findAlreadyImported)` | yes | Fetch a page of issues. The callback returns the set of external IDs already imported so the UI can mark duplicates. |
 | `downloadImages(markdownBody)` | yes | Download inline markdown images referenced in an issue body. |
-| `downloadFileAttachments(...)` | optional | Download authenticated file attachments. Implemented by Azure DevOps for `AttachedFile` relations. |
+| `downloadFileAttachments(...)` | optional | Download authenticated file attachments. Takes `Array<FileAttachmentRef>` (see below). Implemented by Azure DevOps for `AttachedFile` relations and by Asana for inline images and uploaded attachments. |
 | `authenticate(input)` | optional | Future: PAT / OAuth flow. Not wired to any IPC handler yet. |
 | `listProjects(credentials)` | optional | Future: list boards/projects the user can pick from. |
 | `listIssues(credentials, ref, filter?)` | optional | Future: discovery method paired with `listProjects`. |
 | `pushUpdates(tasks, credentials)` | optional | Future: write task updates back to the remote. |
+
+### `FileAttachmentRef`
+
+Reference to an attachment to download. Defined in `src/shared/types.ts`:
+
+| Field | Required | Purpose |
+|-------|----------|---------|
+| `url` | yes | The time-of-fetch URL. Adequate for providers whose URLs do not expire. |
+| `filename` | yes | Display name for the saved attachment. |
+| `sizeBytes` | yes | Used for skipping oversize files before download. `0` if unknown. |
+| `externalRef` | optional | Adapter-specific identifier for re-resolving a fresh URL at download time. Asana sets this to the attachment GID because Asana's `download_url` expires within ~2 minutes of being returned by the API. The Asana client calls `/attachments/{gid}` to refresh the URL just before downloading. |
 
 ### `Credentials`
 
@@ -100,7 +111,7 @@ The contract is locked in by `tests/unit/board-registry.test.ts`, which fails if
 | GitHub Issues | stable | `gh` | Issues API via `gh api`. |
 | GitHub Projects | stable | `gh` | Projects v2 via `gh project item-list`. Requires `project` scope. |
 | Azure DevOps | stable | `az` | Work items via `az boards`. Requires `azure-devops` extension. |
-| Asana | stable | none (OAuth) | OAuth 2.0 + PKCE. Per-user app credentials (clientId + clientSecret) collected via in-app wizard and encrypted with `safeStorage`. Ships its own `boards:asana:*` IPC group. |
+| Asana | stable | none | Personal Access Token. User creates the token at `app.asana.com/0/my-apps`, pastes it into the setup dialog; the token is validated against `/users/me` and stored encrypted via `safeStorage`. Ships its own `boards:asana:*` IPC group. |
 | Jira | stub | - | Tracked in #481. |
 | Linear | stub | - | Tracked in #482. |
 | Trello | stub | - | Tracked in #483. |

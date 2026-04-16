@@ -1272,12 +1272,22 @@
         return { available: true, authenticated: true };
       },
       importFetch: async function (/* input */) {
+        var preset = (typeof window !== 'undefined' && window.__mockImportFetchPreset) || null;
+        if (preset) return preset;
         return { issues: [], totalCount: 0, hasNextPage: false };
       },
-      importExecute: async function (/* input */) {
+      importExecute: async function (input) {
+        // Capture the last call argument so tests can inspect the payload.
+        if (typeof window !== 'undefined') {
+          window.__lastImportExecuteInput = input;
+        }
+        var preset = (typeof window !== 'undefined' && window.__mockImportExecutePreset) || null;
+        if (preset) return preset;
         return { imported: 0, skippedDuplicates: 0, skippedAttachments: 0, items: [] };
       },
       importSourcesList: async function () {
+        var preset = (typeof window !== 'undefined' && window.__mockImportSourcesPreset) || null;
+        if (preset) return preset;
         return [];
       },
       importSourcesAdd: async function (input) {
@@ -1296,74 +1306,38 @@
         // preset values are read on every call so tests can inject after
         // the mock loads (addInitScript runs before, page.evaluate after).
         const state = {
-          clientId: '',
-          clientSecret: '',
           connected: false,
           email: undefined,
         };
         function preset() {
           return (typeof window !== 'undefined' && window.__mockAsanaPreset) || {};
         }
-        function isAppConfigured() { return state.clientId.length > 0 && state.clientSecret.length > 0; }
         return {
           authStatus: async function () {
             const p = preset();
             if (p.state) Object.assign(state, p.state);
             return {
-              configured: isAppConfigured(),
               connected: state.connected,
-              appConfigured: isAppConfigured(),
               email: state.email,
             };
           },
-          getAppConfig: async function () {
-            return {
-              clientId: state.clientId,
-              clientSecretSet: state.clientSecret.length > 0,
-            };
-          },
-          setAppConfig: async function (input) {
-            const clientId = typeof input?.clientId === 'string' ? input.clientId.trim() : '';
-            let clientSecret = typeof input?.clientSecret === 'string' ? input.clientSecret.trim() : '';
-            if (clientId.length === 0) return { ok: false, error: 'Client ID cannot be empty.' };
-            if (!/^\d{6,32}$/.test(clientId)) {
-              return { ok: false, error: 'Client ID must be the numeric value Asana displayed.' };
+          setPat: async function (input) {
+            const token = typeof input?.token === 'string' ? input.token.trim() : '';
+            if (token.length === 0) {
+              return { ok: false, error: 'Personal Access Token cannot be empty.' };
             }
-            if (clientSecret.length === 0) {
-              if (state.clientSecret.length > 0) {
-                clientSecret = state.clientSecret;
-              } else {
-                return { ok: false, error: 'Client Secret cannot be empty.' };
-              }
-            } else if (clientSecret.length < 16) {
-              return { ok: false, error: 'Client Secret looks too short. Copy it from the Asana app settings page.' };
+            if (token.length < 30 || /\s/.test(token)) {
+              return {
+                ok: false,
+                error: 'That does not look like an Asana Personal Access Token. Copy the full token from app.asana.com/0/my-apps.',
+              };
             }
-            state.clientId = clientId;
-            state.clientSecret = clientSecret;
-            state.connected = false;
-            state.email = undefined;
-            return { ok: true };
-          },
-          clearAppConfig: async function () {
-            state.clientId = '';
-            state.clientSecret = '';
-            state.connected = false;
-            state.email = undefined;
-          },
-          oauthStart: async function () {
-            if (!isAppConfigured()) throw new Error('Asana OAuth is not configured.');
-            return { pendingId: 'mock-pending-' + Date.now() };
-          },
-          oauthComplete: async function (input) {
-            if (!input || !input.pendingId || !input.code) {
-              return { ok: false, error: 'Missing pendingId or code' };
-            }
-            const invalidCode = preset().invalidCode;
-            if (invalidCode && input.code === invalidCode) {
-              return { ok: false, error: 'Invalid authorization code' };
+            const invalidToken = preset().invalidToken;
+            if (invalidToken && token === invalidToken) {
+              return { ok: false, error: 'Asana token validation failed (401): invalid token' };
             }
             state.connected = true;
-            state.email = 'mock-user@example.com';
+            state.email = preset().email || 'mock-user@example.com';
             return { ok: true, email: state.email };
           },
           clearCredential: async function () {

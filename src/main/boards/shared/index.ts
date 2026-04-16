@@ -3,6 +3,7 @@ export type {
   AdapterStatus,
   Credentials,
   DownloadedAttachment,
+  FileAttachmentRef,
   PrerequisiteResult,
   RemoteIssue,
   RemoteProject,

@@ -109,16 +109,12 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `backlog:importSourcesAdd` | invoke | Add a new import source (persisted in project config). Providers with an optional `resolveLabel` hook (e.g. Asana) enrich the stored label with a human-readable name. |
 | `backlog:importSourcesRemove` | invoke | Remove a saved import source |
 
-### Board Auth - Asana (7 channels)
+### Board Auth - Asana (3 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `boards:asana:authStatus` | invoke | Report Asana connection state: `{connected, configured, appConfigured, email?}` |
-| `boards:asana:getAppConfig` | invoke | Fetch stored app credentials status: `{clientId, clientSecretSet}` (secret is never echoed) |
-| `boards:asana:setAppConfig` | invoke | Persist encrypted Asana OAuth app credentials (clientId + clientSecret); invalidates existing tokens |
-| `boards:asana:clearAppConfig` | invoke | Remove stored app credentials and any cached access token |
-| `boards:asana:oauthStart` | invoke | Begin PKCE OAuth flow, open browser, return `{pendingId}` |
-| `boards:asana:oauthComplete` | invoke | Exchange pasted code + code_verifier for tokens; persists encrypted credential |
-| `boards:asana:clearCredential` | invoke | Remove the stored OAuth access/refresh token (keeps app credentials) |
+| `boards:asana:authStatus` | invoke | Report Asana connection state: `{connected, email?}` |
+| `boards:asana:setPat` | invoke | Validate a Personal Access Token via `/users/me` and persist it encrypted; returns `{ok, email?, error?}` |
+| `boards:asana:clearCredential` | invoke | Remove the stored Personal Access Token |
 
 ### Backlog Attachments (5 channels)
 | Channel | Pattern | Purpose |
@@ -569,10 +565,10 @@ src/main/boards/
     github-issues/    # adapter.ts, url-parser.ts (status: stable)
     github-projects/  # adapter.ts, url-parser.ts (status: stable)
     azure-devops/     # adapter.ts, client.ts, url-parser.ts (status: stable)
-    asana/            # adapter.ts, client.ts, oauth.ts, mapper.ts, url-parser.ts,
-                      # credential-store.ts, app-config-store.ts, ipc-handlers.ts,
-                      # constants.ts (status: stable) - OAuth 2.0 PKCE with per-user
-                      # app credentials; dedicated boards:asana:* IPC group
+    asana/            # adapter.ts, client.ts, mapper.ts, url-parser.ts,
+                      # credential-store.ts, ipc-handlers.ts, constants.ts
+                      # (status: stable) - Personal Access Token auth;
+                      # dedicated boards:asana:* IPC group
     jira/             # stub (status: stub) - tracked in #481
     linear/           # stub (status: stub) - tracked in #482
     trello/           # stub (status: stub) - tracked in #483
@@ -603,7 +599,7 @@ No edits to IPC handlers or the renderer are required - dispatch is registry-dri
 
 Backlog Import group (6 channels): `backlog:importCheckCli`, `backlog:importFetch`, `backlog:importExecute`, `backlog:importSourcesList`, `backlog:importSourcesAdd`, `backlog:importSourcesRemove`. All dispatch through `boardRegistry.getOrThrow(source)` in `src/main/ipc/handlers/backlog.ts`.
 
-Asana ships an additional `boards:asana:*` group (7 channels: `authStatus`, `getAppConfig`, `setAppConfig`, `clearAppConfig`, `oauthStart`, `oauthComplete`, `clearCredential`) for its OAuth lifecycle. Handlers live in `src/main/boards/adapters/asana/ipc-handlers.ts` and are registered by `registerAsanaIpcHandlers()` from the backlog handler. Keeping the surface adapter-local means Asana specifics never leak into the generic backlog handler.
+Asana ships an additional `boards:asana:*` group (3 channels: `authStatus`, `setPat`, `clearCredential`) for its Personal Access Token lifecycle. Handlers live in `src/main/boards/adapters/asana/ipc-handlers.ts` and are registered by `registerAsanaIpcHandlers()` from the backlog handler. Keeping the surface adapter-local means Asana specifics never leak into the generic backlog handler.
 
 ## See Also
 

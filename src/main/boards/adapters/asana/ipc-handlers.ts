@@ -1,22 +1,11 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../../../shared/ipc-channels';
 import type {
-  AsanaAppConfigInput,
-  AsanaAppConfigStatus,
   AsanaAuthStatus,
-  AsanaSetAppConfigResult,
+  AsanaSetPatInput,
+  AsanaSetPatResult,
 } from '../../../../shared/types';
-import {
-  clearAsanaAppCredentials,
-  loadAsanaAppCredentials,
-  saveAsanaAppCredentials,
-} from './app-config-store';
-import {
-  clearAsanaCredential,
-  loadAsanaCredential,
-  saveAsanaCredential,
-} from './credential-store';
-import { completeAsanaOAuth, isOAuthConfigured, startAsanaOAuth } from './oauth';
+import { clearAsanaCredential } from './credential-store';
 import { AsanaClient } from './client';
 
 /**
@@ -26,110 +15,40 @@ import { AsanaClient } from './client';
  */
 export function registerAsanaIpcHandlers(): void {
   ipcMain.handle(IPC.BOARDS_ASANA_AUTH_STATUS, async (): Promise<AsanaAuthStatus> => {
-    const appCredentials = loadAsanaAppCredentials();
-    const appConfigured = appCredentials !== null;
-    const configured = isOAuthConfigured();
-    if (!configured) {
-      return { connected: false, configured: false, appConfigured };
-    }
-    const credential = loadAsanaCredential();
-    if (!credential) {
-      return { connected: false, configured: true, appConfigured };
+    const client = new AsanaClient();
+    if (!client.hasCredential()) {
+      return { connected: false };
     }
     return {
       connected: true,
-      configured: true,
-      appConfigured,
-      email: credential.userEmail || undefined,
-    };
-  });
-
-  ipcMain.handle(IPC.BOARDS_ASANA_GET_APP_CONFIG, async (): Promise<AsanaAppConfigStatus> => {
-    const appCredentials = loadAsanaAppCredentials();
-    return {
-      clientId: appCredentials?.clientId ?? '',
-      // Never echo the secret back to the renderer - only whether one is set.
-      clientSecretSet: Boolean(appCredentials?.clientSecret),
+      email: client.getCredentialEmail() || undefined,
     };
   });
 
   ipcMain.handle(
-    IPC.BOARDS_ASANA_SET_APP_CONFIG,
-    async (_, input: AsanaAppConfigInput): Promise<AsanaSetAppConfigResult> => {
-      const clientId = typeof input?.clientId === 'string' ? input.clientId.trim() : '';
-      let clientSecret = typeof input?.clientSecret === 'string' ? input.clientSecret.trim() : '';
-
-      if (clientId.length === 0) return { ok: false, error: 'Client ID cannot be empty.' };
-
-      // Asana client IDs are 16+ digit decimals. Reject obvious pastes like
-      // URLs, quoted values, or placeholder text; Asana itself surfaces any
-      // syntactically-valid ID that turns out to be wrong.
-      if (!/^\d{6,32}$/.test(clientId)) {
-        return {
-          ok: false,
-          error: 'Client ID must be the numeric value Asana displayed (no URL, no quotes).',
-        };
+    IPC.BOARDS_ASANA_SET_PAT,
+    async (_, input: AsanaSetPatInput): Promise<AsanaSetPatResult> => {
+      const token = typeof input?.token === 'string' ? input.token.trim() : '';
+      if (token.length === 0) {
+        return { ok: false, error: 'Personal Access Token cannot be empty.' };
       }
-
-      // Allow the user to leave the secret blank when reconfiguring to keep
-      // the previously-stored one. This way changing only the client_id
-      // doesn't force them to fetch the secret from Asana again.
-      if (clientSecret.length === 0) {
-        const existing = loadAsanaAppCredentials();
-        if (existing?.clientSecret) {
-          clientSecret = existing.clientSecret;
-        } else {
-          return { ok: false, error: 'Client Secret cannot be empty.' };
-        }
-      } else if (clientSecret.length < 16) {
+      // Sanity check the format. Asana PATs are long (>30 chars) and Base64URL-ish.
+      // Reject obvious pastes like quoted values or full URLs.
+      if (token.length < 30 || /\s/.test(token)) {
         return {
           ok: false,
-          error: 'Client Secret looks too short. Copy it from the Asana app settings page.',
+          error: 'That does not look like an Asana Personal Access Token. Copy the full token from app.asana.com/0/my-apps.',
         };
       }
 
       try {
-        saveAsanaAppCredentials({ clientId, clientSecret });
-        // A freshly-changed app identity invalidates any saved user tokens.
-        clearAsanaCredential();
-        return { ok: true };
+        const client = new AsanaClient();
+        const user = await client.validateToken(token);
+        const email = user.email ?? '';
+        client.saveCredential(token, email);
+        return { ok: true, email: email || undefined };
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to save app credentials.';
-        return { ok: false, error: message };
-      }
-    },
-  );
-
-  ipcMain.handle(IPC.BOARDS_ASANA_CLEAR_APP_CONFIG, async () => {
-    clearAsanaAppCredentials();
-    clearAsanaCredential();
-  });
-
-  ipcMain.handle(IPC.BOARDS_ASANA_OAUTH_START, async () => {
-    return startAsanaOAuth();
-  });
-
-  ipcMain.handle(
-    IPC.BOARDS_ASANA_OAUTH_COMPLETE,
-    async (_, input: { pendingId: string; code: string }) => {
-      try {
-        const credential = await completeAsanaOAuth(input.pendingId, input.code);
-        // Prefer the email from the token response. If missing (older scopes,
-        // or the workspace doesn't expose email), hit /users/me once to fill
-        // it in so the UI has something to display.
-        if (!credential.userEmail) {
-          try {
-            const client = new AsanaClient(credential);
-            const user = await client.getMe();
-            if (user.email) credential.userEmail = user.email;
-          } catch {
-            /* email enrichment is best-effort */
-          }
-        }
-        saveAsanaCredential(credential);
-        return { ok: true, email: credential.userEmail || undefined };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Asana authentication failed';
+        const message = error instanceof Error ? error.message : 'Asana token validation failed.';
         return { ok: false, error: message };
       }
     },

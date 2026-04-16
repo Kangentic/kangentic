@@ -10,6 +10,7 @@ export interface AsanaTaskRaw {
   gid: string;
   name?: string | null;
   notes?: string | null;
+  html_notes?: string | null;
   completed?: boolean;
   permalink_url?: string;
   created_at?: string;
@@ -50,7 +51,10 @@ function mapOne(task: AsanaTaskRaw, alreadyImported: boolean): ExternalIssue {
   const body = bodyParts.join('\n\n');
 
   const sectionName = firstSectionName(task.memberships);
-  const inlineImageCount = extractInlineImageUrls(notes).length;
+  // Asana renders embedded images as <img> tags in `html_notes`, not as
+  // markdown in `notes`. Count from html_notes so the badge reflects what
+  // the user actually sees on the Asana task.
+  const inlineImageCount = extractInlineImageUrls(task.html_notes ?? '').length;
   const attachmentCount = (task.num_attachments ?? 0) + inlineImageCount;
 
   return {

@@ -82,12 +82,14 @@ describe('boardRegistry', () => {
     }
   });
 
-  it('asana reports not-configured via checkCli when no client_id is stored (not a stub)', async () => {
+  it('asana reports not-connected via checkCli when no PAT is stored (not a stub)', async () => {
     const adapter = boardRegistry.getOrThrow('asana');
     const result = await adapter.checkCli();
-    expect(result.available).toBe(false);
+    // PAT auth needs no CLI install, so `available` stays true even when
+    // not connected. The user just needs to paste a token.
+    expect(result.available).toBe(true);
     expect(result.authenticated).toBe(false);
-    expect(result.error).toMatch(/set up/i);
+    expect(result.error).toMatch(/connect|personal access token/i);
   });
 
   it('stub adapter fetch() throws not-implemented', async () => {

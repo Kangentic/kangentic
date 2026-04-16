@@ -1,11 +1,14 @@
 import type {
   ExternalIssue,
   ExternalSource,
+  FileAttachmentRef,
   ImportCheckCliResult,
   ImportFetchInput,
   ImportFetchResult,
   Task,
 } from '../../../shared/types';
+
+export type { FileAttachmentRef } from '../../../shared/types';
 
 /** Downloaded attachment from a board adapter. */
 export interface DownloadedAttachment {
@@ -133,7 +136,7 @@ export interface BoardAdapter {
    * that expose explicit file attachments (e.g. Azure DevOps AttachedFile).
    */
   downloadFileAttachments?(
-    attachments: Array<{ url: string; filename: string; sizeBytes: number }>,
+    attachments: Array<FileAttachmentRef>,
   ): Promise<{
     attachments: DownloadedAttachment[];
     skippedCount: number;

@@ -187,11 +187,7 @@ export const IPC = {
 
   // Board Auth - Asana
   BOARDS_ASANA_AUTH_STATUS: 'boards:asana:authStatus',
-  BOARDS_ASANA_GET_APP_CONFIG: 'boards:asana:getAppConfig',
-  BOARDS_ASANA_SET_APP_CONFIG: 'boards:asana:setAppConfig',
-  BOARDS_ASANA_CLEAR_APP_CONFIG: 'boards:asana:clearAppConfig',
-  BOARDS_ASANA_OAUTH_START: 'boards:asana:oauthStart',
-  BOARDS_ASANA_OAUTH_COMPLETE: 'boards:asana:oauthComplete',
+  BOARDS_ASANA_SET_PAT: 'boards:asana:setPat',
   BOARDS_ASANA_CLEAR_CREDENTIAL: 'boards:asana:clearCredential',
 
   // Backlog Attachments

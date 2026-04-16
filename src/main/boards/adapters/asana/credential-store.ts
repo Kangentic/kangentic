@@ -4,10 +4,10 @@ import { PATHS } from '../../../config/paths';
 import { decryptSecret, encryptSecret } from '../../shared';
 
 /**
- * OAuth credential persisted for the Asana integration. Stored globally (not
- * per-project) because the token represents the Kangentic user's Asana
- * identity, and we want a single "Connect Asana" handshake to work across
- * every project.
+ * Personal Access Token persisted for the Asana integration. Stored globally
+ * (not per-project) because the token represents the Kangentic user's Asana
+ * identity, and we want a single "Connect Asana" save to work across every
+ * project.
  *
  * On disk the JSON file contains only an `encrypted` field whose value is the
  * output of `encryptSecret(JSON.stringify(AsanaCredential))`. If safeStorage
@@ -17,8 +17,6 @@ import { decryptSecret, encryptSecret } from '../../shared';
  */
 export interface AsanaCredential {
   accessToken: string;
-  refreshToken: string;
-  expiresAt: string;
   userEmail: string;
   savedAt: string;
 }
@@ -41,7 +39,14 @@ export function loadAsanaCredential(): AsanaCredential | null {
     const parsed = JSON.parse(raw) as StoredShape;
     if (!parsed.encrypted) return null;
     const decrypted = decryptSecret(parsed.encrypted);
-    return JSON.parse(decrypted) as AsanaCredential;
+    const credential = JSON.parse(decrypted) as AsanaCredential;
+    // Guard against legacy or malformed stored data. accessToken must be a
+    // non-empty string, otherwise sending it as a Bearer header would silently
+    // fail on the first Asana API call instead of surfacing "not connected".
+    if (typeof credential?.accessToken !== 'string' || credential.accessToken.length === 0) {
+      return null;
+    }
+    return credential;
   } catch (error) {
     console.warn('[asana/credential-store] failed to load credential:', error);
     return null;

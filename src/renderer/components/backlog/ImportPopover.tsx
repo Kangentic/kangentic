@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Download, Plus, Trash2, ChevronRight, ArrowLeft, Loader2, X, Settings } from 'lucide-react';
+import { Download, Plus, Trash2, ChevronRight, ArrowLeft, Loader2, X } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { PROVIDERS, getSourceLabel, getSourceIcon } from './import-providers';
 import type { Provider, SourceTypeOption } from './import-providers';
@@ -11,7 +11,7 @@ interface ImportPopoverProps {
 }
 
 // --- Add source flow phases ---
-type AddPhase = 'provider' | 'auth' | 'sourceType' | 'url';
+type AddPhase = 'provider' | 'sourceType' | 'url';
 
 export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
   const [open, setOpen] = useState(false);
@@ -25,13 +25,9 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Auth phase state (only used for providers with requiresAuth=true)
-  const [authAppConfigured, setAuthAppConfigured] = useState(false);
-  const [authPendingId, setAuthPendingId] = useState<string | null>(null);
-  const [authCode, setAuthCode] = useState('');
+  // Asana PAT setup dialog. Opened inline when the user picks Asana and is
+  // not yet connected; the dialog handles paste-PAT-and-validate end to end.
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
-  const [setupDialogInitialClientId, setSetupDialogInitialClientId] = useState('');
-  const [setupDialogInitialClientSecretSet, setSetupDialogInitialClientSecretSet] = useState(false);
 
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -91,12 +87,6 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
         } else if (addPhase === 'sourceType') {
           setAddPhase('provider');
           setSelectedProvider(null);
-        } else if (addPhase === 'auth') {
-          setAddPhase('provider');
-          setSelectedProvider(null);
-          setAuthPendingId(null);
-          setAuthCode('');
-          setError(null);
         } else if (addPhase === 'provider') {
           resetAddFlow();
         } else {
@@ -114,14 +104,11 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
     setSelectedSourceType(null);
     setNewSourceUrl('');
     setError(null);
-    setAuthPendingId(null);
-    setAuthCode('');
-    setAuthAppConfigured(false);
   };
 
   /**
-   * Advance past the auth/provider selection step to either sourceType or
-   * url, matching the single-sourceType fast-path in handleSelectProvider.
+   * Advance past the provider selection step to either sourceType or url,
+   * matching the single-sourceType fast-path in handleSelectProvider.
    */
   const advanceAfterProvider = (provider: Provider) => {
     if (provider.sourceTypes.length === 1) {
@@ -140,28 +127,15 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
     if (provider.requiresAuth && provider.id === 'asana') {
       try {
         const status = await window.electronAPI.backlog.asana.authStatus();
-        setAuthAppConfigured(status.appConfigured);
-        if (!status.appConfigured) {
-          // First-time setup: open the wizard. The popover stays mounted and
-          // picks up with the Connect step once the user saves credentials.
-          const existing = await window.electronAPI.backlog.asana.getAppConfig();
-          setSetupDialogInitialClientId(existing.clientId);
-          setSetupDialogInitialClientSecretSet(existing.clientSecretSet);
-          setAddPhase('auth');
+        if (!status.connected) {
+          // Not connected yet - open the PAT setup dialog. After the user
+          // pastes a valid token the dialog calls onSaved and we advance.
           setSetupDialogOpen(true);
           return;
         }
-        // Route to auth phase whenever we can't safely proceed: either the
-        // user is not connected, or the build has no app config (so even a
-        // "connected" token would fail on the next API call).
-        if (!status.connected || !status.configured) {
-          setAddPhase('auth');
-          return;
-        }
       } catch (statusError) {
-        console.warn('[ImportPopover] Asana authStatus IPC failed; falling back to auth phase', statusError);
-        setAuthAppConfigured(false);
-        setAddPhase('auth');
+        console.warn('[ImportPopover] Asana authStatus IPC failed; opening setup dialog', statusError);
+        setSetupDialogOpen(true);
         return;
       }
     }
@@ -169,66 +143,17 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
     advanceAfterProvider(provider);
   };
 
-  const handleSetupDialogSaved = async () => {
+  const handleSetupDialogSaved = () => {
     setSetupDialogOpen(false);
-    // Pull fresh auth state so the popover reflects the newly-set app config.
-    try {
-      const status = await window.electronAPI.backlog.asana.authStatus();
-      setAuthAppConfigured(status.appConfigured);
-    } catch {
-      setAuthAppConfigured(true);
-    }
+    if (selectedProvider) advanceAfterProvider(selectedProvider);
   };
 
-  const handleReconfigureAsana = async () => {
-    try {
-      const existing = await window.electronAPI.backlog.asana.getAppConfig();
-      setSetupDialogInitialClientId(existing.clientId);
-      setSetupDialogInitialClientSecretSet(existing.clientSecretSet);
-    } catch {
-      setSetupDialogInitialClientId('');
-      setSetupDialogInitialClientSecretSet(false);
-    }
-    setAuthPendingId(null);
-    setAuthCode('');
-    setError(null);
-    setSetupDialogOpen(true);
-  };
-
-  const handleStartAsanaOAuth = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await window.electronAPI.backlog.asana.oauthStart();
-      setAuthPendingId(result.pendingId);
-    } catch (startError: unknown) {
-      setError(startError instanceof Error ? startError.message : 'Failed to start Asana sign-in');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCompleteAsanaOAuth = async () => {
-    if (!authPendingId || !authCode.trim() || !selectedProvider) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await window.electronAPI.backlog.asana.oauthComplete({
-        pendingId: authPendingId,
-        code: authCode.trim(),
-      });
-      if (!result.ok) {
-        setError(result.error ?? 'Asana authentication failed');
-        return;
-      }
-      setAuthPendingId(null);
-      setAuthCode('');
-      advanceAfterProvider(selectedProvider);
-    } catch (completeError: unknown) {
-      setError(completeError instanceof Error ? completeError.message : 'Asana authentication failed');
-    } finally {
-      setLoading(false);
-    }
+  const handleSetupDialogClosed = () => {
+    // User dismissed the PAT dialog without connecting. Drop the selection
+    // so they're back on the bare provider list instead of a half-completed flow.
+    setSetupDialogOpen(false);
+    setSelectedProvider(null);
+    setAddPhase('provider');
   };
 
   const handleSelectSourceType = (sourceType: SourceTypeOption) => {
@@ -376,121 +301,6 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
             </div>
           )}
 
-          {/* Phase 1.5: Auth (only when selected provider requires auth and is not connected) */}
-          {addPhase === 'auth' && selectedProvider && (
-            <div className="px-3 py-2.5" data-testid="import-auth-phase">
-              <div className="flex items-center gap-2.5 mb-2">
-                <span className="w-5 flex justify-center text-fg-muted shrink-0">{selectedProvider.icon}</span>
-                <span className="text-xs font-medium text-fg">Connect {selectedProvider.label}</span>
-              </div>
-
-              {!authAppConfigured && (
-                <>
-                  <p className="text-[11px] text-fg-faint mb-2" data-testid="asana-needs-setup">
-                    Kangentic needs a one-time {selectedProvider.label} app registration before it can connect.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setSetupDialogOpen(true)}
-                    className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors"
-                    data-testid="asana-open-setup-btn"
-                  >
-                    <Settings size={14} />
-                    Set up {selectedProvider.label}
-                  </button>
-                </>
-              )}
-
-              {authAppConfigured && authPendingId === null && (
-                <>
-                  <p className="text-[11px] text-fg-faint mb-2">
-                    Click Connect to open {selectedProvider.label} in your browser, approve access, then paste the code back here.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleStartAsanaOAuth}
-                    disabled={loading}
-                    className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
-                    data-testid="asana-connect-btn"
-                  >
-                    {loading ? <Loader2 size={14} className="animate-spin" /> : null}
-                    Connect {selectedProvider.label}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleReconfigureAsana}
-                    className="mt-2 w-full flex items-center justify-center gap-1 px-2 py-1 text-[11px] text-fg-faint hover:text-fg transition-colors"
-                    data-testid="asana-reconfigure-btn"
-                  >
-                    <Settings size={11} />
-                    Change {selectedProvider.label} app
-                  </button>
-                </>
-              )}
-
-              {authAppConfigured && authPendingId !== null && (
-                <>
-                  <p className="text-[11px] text-fg-faint mb-2">
-                    Approved access? Paste the code {selectedProvider.label} displayed.
-                  </p>
-                  <input
-                    type="text"
-                    value={authCode}
-                    onChange={(event) => setAuthCode(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') handleCompleteAsanaOAuth();
-                    }}
-                    placeholder="Paste authorization code"
-                    className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-disabled px-2.5 py-1.5 outline-none focus:border-edge-input mb-2"
-                    data-testid="asana-auth-code-input"
-                    autoFocus
-                  />
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={handleCompleteAsanaOAuth}
-                      disabled={loading || !authCode.trim()}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
-                      data-testid="asana-auth-continue-btn"
-                    >
-                      {loading ? <Loader2 size={14} className="animate-spin" /> : null}
-                      Continue
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setAuthPendingId(null); setAuthCode(''); setError(null); }}
-                      className="flex items-center gap-1 px-3 py-1.5 text-xs text-fg-muted hover:text-fg border border-edge/50 rounded transition-colors"
-                    >
-                      <ArrowLeft size={12} />
-                      Back
-                    </button>
-                  </div>
-                </>
-              )}
-
-              {error && (
-                <p className="text-xs text-danger mt-2" data-testid="asana-auth-error">{error}</p>
-              )}
-
-              <div className="px-0 py-2 border-t border-edge/50 mt-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAddPhase('provider');
-                    setSelectedProvider(null);
-                    setAuthPendingId(null);
-                    setAuthCode('');
-                    setError(null);
-                  }}
-                  className="flex items-center gap-1 text-xs text-fg-faint hover:text-fg transition-colors"
-                >
-                  <ArrowLeft size={12} />
-                  Back
-                </button>
-              </div>
-            </div>
-          )}
-
           {/* Phase 2: Source type selection within provider */}
           {addPhase === 'sourceType' && selectedProvider && (
             <div>
@@ -596,10 +406,8 @@ export function ImportPopover({ onOpenImportDialog }: ImportPopoverProps) {
 
       {setupDialogOpen && (
         <AsanaSetupDialog
-          onClose={() => setSetupDialogOpen(false)}
+          onClose={handleSetupDialogClosed}
           onSaved={handleSetupDialogSaved}
-          initialClientId={setupDialogInitialClientId}
-          initialClientSecretSet={setupDialogInitialClientSecretSet}
         />
       )}
     </div>

@@ -851,7 +851,21 @@ export interface ExternalIssue {
   updatedAt: string;
   alreadyImported: boolean;
   attachmentCount: number;
-  fileAttachments?: Array<{ url: string; filename: string; sizeBytes: number }>;
+  fileAttachments?: Array<FileAttachmentRef>;
+}
+
+/**
+ * Reference to an attachment to download. `url` is the time-of-fetch URL
+ * (good for the immediate download path). `externalRef` is an opaque,
+ * adapter-specific identifier the adapter can use to re-resolve a fresh URL
+ * at download time -- needed for providers like Asana whose `download_url`
+ * expires within ~2 minutes of being returned by the API.
+ */
+export interface FileAttachmentRef {
+  url: string;
+  filename: string;
+  sizeBytes: number;
+  externalRef?: string;
 }
 
 export interface ImportFetchInput {
@@ -879,7 +893,7 @@ export interface ImportExecuteInput {
     body: string;
     labels: string[];
     assignee: string | null;
-    fileAttachments?: Array<{ url: string; filename: string; sizeBytes: number }>;
+    fileAttachments?: Array<FileAttachmentRef>;
   }>;
 }
 
@@ -891,39 +905,19 @@ export interface ImportExecuteResult {
 }
 
 export interface AsanaAuthStatus {
-  /** True when the user has completed an OAuth token exchange. */
+  /** True when a Personal Access Token is saved and validated. */
   connected: boolean;
-  /** True when the app is configured (client_id + client_secret available). */
-  configured: boolean;
-  /** True when the user supplied app credentials via the setup wizard. */
-  appConfigured: boolean;
   email?: string;
   message?: string;
 }
 
-export interface AsanaAppConfigInput {
-  clientId: string;
-  clientSecret: string;
+export interface AsanaSetPatInput {
+  token: string;
 }
 
-/** Result of getAppConfig. `clientSecret` is never returned - only whether one is set. */
-export interface AsanaAppConfigStatus {
-  clientId: string;
-  clientSecretSet: boolean;
-}
-
-export interface AsanaOAuthStartResult {
-  pendingId: string;
-}
-
-export interface AsanaOAuthCompleteResult {
+export interface AsanaSetPatResult {
   ok: boolean;
   email?: string;
-  error?: string;
-}
-
-export interface AsanaSetAppConfigResult {
-  ok: boolean;
   error?: string;
 }
 
@@ -1656,11 +1650,7 @@ export interface ElectronAPI {
     importSourcesRemove: (id: string) => Promise<void>;
     asana: {
       authStatus: () => Promise<AsanaAuthStatus>;
-      getAppConfig: () => Promise<AsanaAppConfigStatus>;
-      setAppConfig: (input: AsanaAppConfigInput) => Promise<AsanaSetAppConfigResult>;
-      clearAppConfig: () => Promise<void>;
-      oauthStart: () => Promise<AsanaOAuthStartResult>;
-      oauthComplete: (input: { pendingId: string; code: string }) => Promise<AsanaOAuthCompleteResult>;
+      setPat: (input: AsanaSetPatInput) => Promise<AsanaSetPatResult>;
       clearCredential: () => Promise<void>;
     };
   };

@@ -295,11 +295,7 @@ const api: ElectronAPI = {
     importSourcesRemove: (id) => ipcRenderer.invoke(IPC.BACKLOG_IMPORT_SOURCES_REMOVE, id),
     asana: {
       authStatus: () => ipcRenderer.invoke(IPC.BOARDS_ASANA_AUTH_STATUS),
-      getAppConfig: () => ipcRenderer.invoke(IPC.BOARDS_ASANA_GET_APP_CONFIG),
-      setAppConfig: (input) => ipcRenderer.invoke(IPC.BOARDS_ASANA_SET_APP_CONFIG, input),
-      clearAppConfig: () => ipcRenderer.invoke(IPC.BOARDS_ASANA_CLEAR_APP_CONFIG),
-      oauthStart: () => ipcRenderer.invoke(IPC.BOARDS_ASANA_OAUTH_START),
-      oauthComplete: (input) => ipcRenderer.invoke(IPC.BOARDS_ASANA_OAUTH_COMPLETE, input),
+      setPat: (input) => ipcRenderer.invoke(IPC.BOARDS_ASANA_SET_PAT, input),
       clearCredential: () => ipcRenderer.invoke(IPC.BOARDS_ASANA_CLEAR_CREDENTIAL),
     },
   },

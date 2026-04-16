@@ -11,7 +11,6 @@ import {
   saveAsanaCredential,
   type AsanaCredential,
 } from './credential-store';
-import { refreshAsanaToken, shouldRefresh } from './oauth';
 import type { AsanaTaskRaw } from './mapper';
 import {
   downloadFile,
@@ -19,6 +18,7 @@ import {
   mediaTypeFromFilename,
   withBackoff,
   type DownloadedAttachment,
+  type FileAttachmentRef,
 } from '../../shared';
 
 interface AsanaListResponse<T> {
@@ -72,43 +72,10 @@ export class AsanaError extends Error {
   }
 }
 
-/**
- * Return a human-friendly error message for known Asana HTTP failure modes,
- * or null if the raw `Asana ... failed (status): ...` format is fine.
- * Catches the common cases that appear during first-run setup so users get
- * an actionable instruction instead of inline JSON.
- */
-function friendlyAsanaError(status: number, rawBody: string): string | null {
-  if (status !== 403) return null;
-  try {
-    const parsed = JSON.parse(rawBody) as { errors?: Array<{ message?: string }> };
-    const message = parsed.errors?.[0]?.message ?? '';
-    const scopeMatch = /scopes? must be present[^:]*:\s*(.+)/i.exec(message);
-    if (scopeMatch) {
-      const missing = scopeMatch[1].trim().replace(/\.$/, '');
-      return (
-        `Your Asana app is missing the required scope(s): ${missing}. ` +
-        `Open your Asana app settings at app.asana.com/0/my-apps, enable the scope, ` +
-        `then click "Change Asana app" in Kangentic to re-authorize.`
-      );
-    }
-  } catch {
-    /* non-JSON body, fall through to raw message */
-  }
-  return null;
-}
-
 export class AsanaClient {
   private credential: AsanaCredential | null = null;
   private readonly cursorCache = new Map<string, Map<number, string>>();
   private readonly projectCache = new Map<string, AsanaProjectRaw>();
-  /**
-   * Holds the in-flight refresh promise. Concurrent requests that hit
-   * `shouldRefresh` within the same microtask (e.g. parallel workers from
-   * `fetchAttachmentsForTasks`) await the same refresh instead of kicking
-   * off duplicate token-endpoint calls.
-   */
-  private refreshInFlight: Promise<void> | null = null;
 
   constructor(credential?: AsanaCredential | null) {
     this.credential = credential ?? null;
@@ -122,12 +89,37 @@ export class AsanaClient {
     return this.ensureCredential(false)?.userEmail ?? null;
   }
 
+  /**
+   * Validate a Personal Access Token by hitting `/users/me` with it. Returns
+   * the user object on success, throws on any failure. Does NOT touch the
+   * stored credential - callers decide whether to persist after success.
+   */
+  async validateToken(token: string): Promise<AsanaUserRaw> {
+    const response = await fetch(`${ASANA_API_BASE}/users/me`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new AsanaError(
+        `Asana token validation failed (${response.status}): ${text.slice(0, 500)}`,
+        response.status,
+      );
+    }
+    const payload = (await response.json()) as AsanaSingleResponse<AsanaUserRaw>;
+    return payload.data;
+  }
+
   private ensureCredential(required: boolean): AsanaCredential | null {
     if (!this.credential) {
       this.credential = loadAsanaCredential();
     }
     if (!this.credential && required) {
-      throw new Error('Not connected to Asana. Click "Connect Asana" to sign in.');
+      throw new Error('Not connected to Asana. Click "Connect Asana" to paste a Personal Access Token.');
     }
     return this.credential;
   }
@@ -230,6 +222,26 @@ export class AsanaClient {
   }
 
   /**
+   * Fetch a single attachment's metadata, including a freshly-issued
+   * `download_url`. Used at download time because Asana's `download_url`
+   * expires roughly 2 minutes after it is returned (per Asana docs).
+   */
+  async getAttachment(attachmentGid: string): Promise<AsanaAttachmentRaw | null> {
+    const params = new URLSearchParams();
+    params.set('opt_fields', 'name,size,download_url,resource_subtype');
+    try {
+      const response = await this.request<AsanaSingleResponse<AsanaAttachmentRaw>>(
+        'GET',
+        `/attachments/${attachmentGid}?${params.toString()}`,
+      );
+      return response.data ?? null;
+    } catch (error) {
+      console.warn(`[asana/client] failed to fetch attachment ${attachmentGid}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * List attachments for every task that reports `num_attachments > 0`, in
    * parallel with a small concurrency cap so a single page fetch doesn't
    * fan out unbounded requests. Tasks that fail to list degrade to an empty
@@ -266,22 +278,11 @@ export class AsanaClient {
     const refs = extractInlineImageUrls(markdownBody);
     if (refs.length === 0) return { attachments: [], skippedCount: 0 };
 
-    const credential = this.ensureCredential(false);
     const attachments: DownloadedAttachment[] = [];
     let skippedCount = 0;
 
     for (const ref of refs) {
-      let host = '';
-      try {
-        host = new URL(ref.url).host;
-      } catch {
-        skippedCount++;
-        continue;
-      }
-      const headers = credential && isAsanaAuthedDownloadHost(host)
-        ? { Authorization: `Bearer ${credential.accessToken}` }
-        : undefined;
-      const result = await downloadFile(ref.url, ref.filename, headers ? { headers } : undefined);
+      const result = await this.downloadOne(ref.url, ref.filename);
       if (result) {
         attachments.push(result);
       } else {
@@ -293,19 +294,55 @@ export class AsanaClient {
   }
 
   async downloadFileAttachments(
-    attachments: Array<{ url: string; filename: string; sizeBytes: number }>,
+    attachments: FileAttachmentRef[],
   ): Promise<{ attachments: DownloadedAttachment[]; skippedCount: number }> {
     const results: DownloadedAttachment[] = [];
     let skippedCount = 0;
     for (const attachment of attachments) {
-      const downloaded = await downloadFile(attachment.url, attachment.filename);
+      // Asana's `download_url` is only valid for ~2 minutes from the time
+      // the attachments API returned it. The user can easily spend more than
+      // that reviewing the import list before clicking Import, so refresh
+      // the URL right before downloading whenever we have the gid.
+      let downloadUrl = attachment.url;
+      if (attachment.externalRef) {
+        const fresh = await this.getAttachment(attachment.externalRef);
+        if (fresh?.download_url) {
+          downloadUrl = fresh.download_url;
+        }
+      }
+      const downloaded = await this.downloadOne(downloadUrl, attachment.filename);
       if (downloaded) {
-        results.push({ ...downloaded, mediaType: mediaTypeFromFilename(attachment.filename) });
+        results.push(downloaded);
       } else {
         skippedCount++;
       }
     }
     return { attachments: results, skippedCount };
+  }
+
+  /**
+   * Single-attachment download with conditional Bearer-token auth. The
+   * Asana attachment `download_url` for files uploaded directly to Asana is
+   * a redirector at `app.asana.com/api/1.0/attachments/{gid}/...` that
+   * returns 401 without a Bearer header. With the header it 302-redirects
+   * to a pre-signed `asana-user-private-*.s3.amazonaws.com` URL. Cross-
+   * domain redirects in `downloadFile` strip the auth header automatically,
+   * so adding it here is safe even when the URL is already pre-signed.
+   */
+  private async downloadOne(url: string, filename: string): Promise<DownloadedAttachment | null> {
+    const credential = this.ensureCredential(false);
+    let host = '';
+    try {
+      host = new URL(url).host;
+    } catch {
+      return null;
+    }
+    const headers = credential && isAsanaAuthedDownloadHost(host)
+      ? { Authorization: `Bearer ${credential.accessToken}` }
+      : undefined;
+    const result = await downloadFile(url, filename, headers ? { headers } : undefined);
+    if (!result) return null;
+    return { ...result, mediaType: mediaTypeFromFilename(filename) };
   }
 
   private async buildSearchPath(projectGid: string): Promise<string> {
@@ -335,26 +372,29 @@ export class AsanaClient {
 
   private async requestOnce<T>(method: 'GET' | 'POST', pathAndQuery: string, body?: unknown): Promise<T> {
     const credential = this.ensureCredential(true)!;
-
-    if (shouldRefresh(credential)) {
-      await this.refresh(credential);
+    const response = await this.fetchWithAuth(method, pathAndQuery, credential.accessToken, body);
+    if (response.status === 401) {
+      // The user revoked the PAT or it was deleted. Drop the stored credential
+      // so the next call surfaces "not connected" instead of looping on a dead token.
+      clearAsanaCredential();
+      this.credential = null;
+      const text = await response.text().catch(() => '');
+      throw new AsanaError(
+        `Asana authentication failed. Re-paste your Personal Access Token. (${text.slice(0, 200)})`,
+        401,
+      );
     }
-
-    const response = await this.fetchWithAuth(method, pathAndQuery, body);
-    if (response.status !== 401) {
-      return this.parseResponse<T>(response, method, pathAndQuery);
-    }
-
-    // Reactive refresh: access token may have been invalidated early.
-    await this.refresh(this.credential!);
-    const retry = await this.fetchWithAuth(method, pathAndQuery, body);
-    return this.parseResponse<T>(retry, method, pathAndQuery);
+    return this.parseResponse<T>(response, method, pathAndQuery);
   }
 
-  private async fetchWithAuth(method: 'GET' | 'POST', pathAndQuery: string, body?: unknown): Promise<Response> {
-    const credential = this.credential!;
+  private async fetchWithAuth(
+    method: 'GET' | 'POST',
+    pathAndQuery: string,
+    accessToken: string,
+    body?: unknown,
+  ): Promise<Response> {
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${credential.accessToken}`,
+      Authorization: `Bearer ${accessToken}`,
       accept: 'application/json',
     };
     let serialisedBody: BodyInit | undefined;
@@ -373,34 +413,23 @@ export class AsanaClient {
   private async parseResponse<T>(response: Response, method: string, pathAndQuery: string): Promise<T> {
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      const friendly = friendlyAsanaError(response.status, text);
-      const message = friendly ?? `Asana ${method} ${pathAndQuery} failed (${response.status}): ${text.slice(0, 500)}`;
-      throw new AsanaError(message, response.status);
+      throw new AsanaError(
+        `Asana ${method} ${pathAndQuery} failed (${response.status}): ${text.slice(0, 500)}`,
+        response.status,
+      );
     }
     return (await response.json()) as T;
   }
 
-  private async refresh(credential: AsanaCredential): Promise<void> {
-    if (this.refreshInFlight) return this.refreshInFlight;
-
-    this.refreshInFlight = (async () => {
-      try {
-        const refreshed = await refreshAsanaToken(credential.refreshToken);
-        const next: AsanaCredential = { ...credential, ...refreshed };
-        saveAsanaCredential(next);
-        this.credential = next;
-      } catch (error) {
-        // Refresh failure means the user needs to re-authenticate. Clear the
-        // stale credential so the next request surfaces the "not connected"
-        // error instead of looping on a dead token.
-        clearAsanaCredential();
-        this.credential = null;
-        throw error;
-      } finally {
-        this.refreshInFlight = null;
-      }
-    })();
-
-    return this.refreshInFlight;
+  /** Persist a validated PAT. Replaces any existing credential. */
+  saveCredential(accessToken: string, userEmail: string): AsanaCredential {
+    const credential: AsanaCredential = {
+      accessToken,
+      userEmail,
+      savedAt: new Date().toISOString(),
+    };
+    saveAsanaCredential(credential);
+    this.credential = credential;
+    return credential;
   }
 }

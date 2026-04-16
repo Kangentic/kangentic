@@ -117,13 +117,25 @@ describe('mapAsanaTasks', () => {
     expect(second.alreadyImported).toBe(true);
   });
 
-  it('counts inline markdown images plus num_attachments', () => {
-    const notes = 'Here is a screenshot: ![shot](https://app.asana.com/abc.png)';
+  it('counts inline <img> tags from html_notes plus num_attachments', () => {
+    // Asana embeds inline images in html_notes as <img> tags. The plain
+    // notes field downgrades them to bare URLs, so the mapper must count
+    // from html_notes to match what the user sees on the Asana task.
+    const html_notes = '<body>Here is a screenshot:<img src="https://app.asana.com/abc.png"/></body>';
     const [issue] = mapAsanaTasks(
-      [makeTask({ notes, num_attachments: 2 })],
+      [makeTask({ html_notes, num_attachments: 2 })],
       new Set(),
     );
     expect(issue.attachmentCount).toBe(3);
+  });
+
+  it('does not count bare URLs in plain notes as inline images', () => {
+    // Bare URLs in `notes` should NOT inflate the count - that's html_notes' job.
+    const [issue] = mapAsanaTasks(
+      [makeTask({ notes: 'See https://app.asana.com/abc.png', num_attachments: 1 })],
+      new Set(),
+    );
+    expect(issue.attachmentCount).toBe(1);
   });
 
   it('omits empty labels, null assignee, and missing title safely', () => {
@@ -190,7 +202,7 @@ describe('mapAsanaTasks - real-shape fixture', () => {
     expect(issue.body).not.toContain('**Due:**');
   });
 
-  it('counts an inline markdown image in attachmentCount alongside num_attachments', () => {
+  it('counts an inline <img> from html_notes in attachmentCount alongside num_attachments', () => {
     const issues = mapAsanaTasks(fixture.data, new Set());
     const issue = issues[2];
     expect(issue.title).toBe('Design onboarding illustrations');
