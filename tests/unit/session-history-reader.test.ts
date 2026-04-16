@@ -6,7 +6,7 @@ import {
   SessionHistoryReader,
   dispatchSessionHistoryResult,
   type SessionHistoryReaderCallbacks,
-} from '../../src/main/pty/session-history-reader';
+} from '../../src/main/pty/readers/session-history-reader';
 import { Activity, EventType, type SessionHistoryParseResult, type SessionEvent } from '../../src/shared/types';
 
 /**

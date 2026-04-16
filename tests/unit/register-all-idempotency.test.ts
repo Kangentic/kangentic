@@ -87,7 +87,7 @@ vi.mock('../../src/main/engine/command-injector', () => ({
     cancelAll = vi.fn();
   },
 }));
-vi.mock('../../src/main/pty/shell-resolver', () => ({
+vi.mock('../../src/main/pty/spawn/shell-resolver', () => ({
   ShellResolver: class { resolve = vi.fn(); },
 }));
 vi.mock('../../src/main/agent/adapters/claude/trust-manager', () => ({

@@ -1,20 +1,29 @@
-import fs from 'node:fs';
-import os from 'node:os';
 import * as pty from 'node-pty';
 import { EventEmitter } from 'node:events';
 import { v4 as uuidv4 } from 'uuid';
-import { ShellResolver } from './shell-resolver';
+import { ShellResolver } from './spawn/shell-resolver';
 import { SessionQueue } from './session-queue';
-import { PtyBufferManager } from './pty-buffer-manager';
-import { SessionFileWatcher } from './session-file-watcher';
-import { SessionHistoryReader } from './session-history-reader';
-import { StatusFileReader } from './status-file-reader';
-import { UsageTracker } from './usage-tracker';
-import { TranscriptWriter, stripAnsiEscapes } from './transcript-writer';
-import { SessionIdScanner } from './session-id-scanner';
-import { detectPR } from './pr-connectors';
-import { adaptCommandForShell, isUncPath } from '../../shared/paths';
-import { trackEvent, sanitizeErrorMessage } from '../analytics/analytics';
+import { PtyBufferManager } from './buffer/pty-buffer-manager';
+import { SessionHistoryReader } from './readers/session-history-reader';
+import { StatusFileReader } from './readers/status-file-reader';
+import { UsageTracker } from './activity/usage-tracker';
+import { TranscriptWriter } from './buffer/transcript-writer';
+import { SessionIdManager } from './lifecycle/session-id-manager';
+import { SessionFileManager } from './lifecycle/session-file-manager';
+import { gracefulPtyShutdown } from './shutdown/session-suspend';
+import { suspendAllSessions, killAllSessions } from './shutdown/session-shutdown';
+import { ResizeManager } from './lifecycle/resize-manager';
+import { FirstOutputTracker } from './lifecycle/first-output-tracker';
+import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
+import {
+  resolveShellArgs,
+  buildSpawnEnv,
+  resolveSpawnCwd,
+  diagnoseSpawnFailure,
+  recordSpawnFailure,
+} from './spawn/pty-spawn';
+import { detectPR } from './pr/pr-connectors';
+import { adaptCommandForShell } from '../../shared/paths';
 import { isShuttingDown } from '../shutdown-state';
 import type { TranscriptRepository } from '../db/repositories/transcript-repository';
 import type {
@@ -49,11 +58,6 @@ interface ManagedSession {
    *  "gemini"). Used for diagnostic logs - survives minification unlike
    *  `agentParser.constructor.name`. */
   agentName?: string;
-  /** Per-session session-ID scanner (rolling buffer + ANSI strip). Reset on
-   *  first successful capture. */
-  sessionIdScanner?: import('./session-id-scanner').SessionIdScanner;
-  /** One-shot timer that warns if session-ID capture fails within the timeout. */
-  sessionIdCaptureTimer?: ReturnType<typeof setTimeout>;
   /** Per-session telemetry parser for adapters that emit machine-readable
    *  output over the PTY (e.g. Cursor's stream-json). Built on first PTY
    *  data via `agentParser.runtime.streamOutput.createParser()`. */
@@ -100,45 +104,20 @@ export class SessionManager extends EventEmitter {
   private shellResolver = new ShellResolver();
   private configuredShell: string | null = null;
   private bufferManager: PtyBufferManager;
-  private fileWatcher: SessionFileWatcher;
   private usageTracker: UsageTracker;
   /**
-   * Per-session ring buffer of recent normalized PTY content for TUI
-   * redraw dedup. TUI agents (Codex, Gemini) redraw the screen on resize
-   * (panel mount/unmount, project switch). Codex specifically rotates
-   * input placeholder text on each redraw, so byte-comparison against
-   * just the last frame fails. Storing the last N normalized frames lets
-   * us catch redraws even when the placeholder text differs.
-   * Agent-agnostic - applies to all PTY-based strategies automatically.
+   * TUI redraw suppression: dedup ring buffer + resize grace window.
+   * See ResizeManager for the full contract.
    */
-  private lastPtyContent = new Map<string, string[]>();
-  private static readonly PTY_DEDUP_HISTORY_SIZE = 16;
-  /**
-   * Per-session timestamp of the last PTY resize. Used to suppress
-   * idle->thinking transitions for a brief window after a resize, since
-   * resize triggers the child process (TUI) to redraw the entire screen.
-   * Without this, switching projects (which remounts the panel and triggers
-   * a fit/resize) causes a brief active flicker even when nothing changed.
-   */
-  private lastResizeTime = new Map<string, number>();
-  private static readonly RESIZE_GRACE_PERIOD_MS = 1500;
-  /**
-   * Sessions that have been woken at least once via PTY data. Used to
-   * gate the resize grace period - we only suppress idle->thinking
-   * transitions for sessions that were already settled-idle (not for
-   * brand new sessions where the very first output IS the initial wake).
-   */
-  private sessionsEverWoken = new Set<string>();
+  private resizeManager = new ResizeManager();
   private sessionHistoryReader: SessionHistoryReader;
   private statusFileReader: StatusFileReader;
-  private firstOutputEmitted = new Set<string>();
-
-  /** Rolling buffer size for session-ID capture. Must be at least 2x the max
-   *  PTY chunk size so any UUID straddling a single chunk boundary is preserved
-   *  after slicing. Windows ConPTY flushes at 4KB, so 8KB gives a safe margin. */
-  private static readonly SESSION_ID_BUFFER_MAX = 8192;
-  /** Capture diagnostic timeout: warn if session-ID capture hasn't fired by then. */
-  private static readonly SESSION_ID_CAPTURE_TIMEOUT_MS = 30_000;
+  private firstOutputTracker = new FirstOutputTracker();
+  private sessionIdManager = new SessionIdManager({
+    hasAgentSessionId: (id) => this.usageTracker.hasAgentSessionId(id),
+    notifyAgentSessionId: (id, capturedId) => this.usageTracker.notifyAgentSessionId(id, capturedId),
+    sessionExists: (id) => this.sessions.has(id),
+  });
 
   /**
    * Sessions currently visible in the renderer (terminal panel + command bar overlay).
@@ -149,6 +128,7 @@ export class SessionManager extends EventEmitter {
    */
   private focusedSessionIds = new Set<string>();
   private transcriptWriter: TranscriptWriter | null = null;
+  private sessionFiles!: SessionFileManager;
 
   constructor() {
     super();
@@ -160,24 +140,18 @@ export class SessionManager extends EventEmitter {
 
     this.bufferManager = new PtyBufferManager({
       onFlush: (sessionId, data) => {
-        // Detect first meaningful output using the adapter's detection logic.
-        // Claude checks for alternate screen buffer (\x1b[?1049h), other agents
-        // default to any non-empty output. This lifts the shimmer overlay.
-        if (!this.firstOutputEmitted.has(sessionId)) {
-          const session = this.sessions.get(sessionId);
-          const isReady = session?.agentParser
-            ? session.agentParser.detectFirstOutput(data)
-            : data.length > 0;
-          if (isReady) {
-            this.firstOutputEmitted.add(sessionId);
-            this.emit('first-output', sessionId);
-            // Clear the resuming flag once the resumed CLI has actually
-            // produced output. This unblocks card / overlay labels for
-            // adapters (Codex, Gemini) that don't emit a usage statusline.
-            if (session && session.resuming) {
-              session.resuming = false;
-              this.emit('session-changed', sessionId, this.toSession(session));
-            }
+        const session = this.sessions.get(sessionId);
+        const detector = session?.agentParser
+          ? (chunk: string) => session.agentParser!.detectFirstOutput(chunk)
+          : undefined;
+        if (this.firstOutputTracker.consume(sessionId, data, detector)) {
+          this.emit('first-output', sessionId);
+          // Clear the resuming flag once the resumed CLI has actually
+          // produced output. This unblocks card / overlay labels for
+          // adapters (Codex, Gemini) that don't emit a usage statusline.
+          if (session && session.resuming) {
+            session.resuming = false;
+            this.emit('session-changed', sessionId, this.toSession(session));
           }
         }
         // Only emit IPC data for focused sessions. Background sessions
@@ -259,13 +233,10 @@ export class SessionManager extends EventEmitter {
       },
     });
 
-    // SessionFileWatcher is now a thin path-cleanup tracker -- the
-    // per-session command bridge it used to host has been replaced by
-    // the in-process MCP HTTP server (mcp-http-server.ts), so no
-    // callbacks are needed. The previous task-{created,updated,deleted,
-    // move,...} EventEmitter wiring lives directly on the HTTP server's
-    // CommandContext now (see mcp-project-context.ts).
-    this.fileWatcher = new SessionFileWatcher();
+    this.sessionFiles = new SessionFileManager(
+      this.sessionHistoryReader,
+      this.statusFileReader,
+    );
   }
 
   setMaxConcurrent(max: number): void {
@@ -405,36 +376,18 @@ export class SessionManager extends EventEmitter {
       safeKillPty(ptyRef);
     }
 
-    // Stop any existing watchers for this task
     if (existing) {
-      this.fileWatcher.stopAll(existing.id);
-      // Detach the old session-history + status-file readers WITHOUT
-      // deleting their files. The new session is about to reuse the
-      // same paths, so deleting here would race with its attach.
-      this.sessionHistoryReader.detach(existing.id);
-      this.statusFileReader.detachWithoutCleanup(existing.id);
-    }
-
-    // Null out file paths on the old session object to prevent its
-    // onExit callback (which runs asynchronously after ptyRef.kill())
-    // from deleting files that the new session will create at the same
-    // paths. This race occurs when resuming a session: the old and new
-    // sessions share the same claudeSessionId, so the merged settings
-    // files all resolve to the same path. Status/events file races are
-    // handled by statusFileReader.detachWithoutCleanup above.
-    if (existing) {
-      this.fileWatcher.nullifyPaths(existing.id);
-      // Cancel the old session's diagnostic timer so it can't fire a
-      // spurious "session ID not captured" warning 30s after respawn.
-      if (existing.sessionIdCaptureTimer) {
-        clearTimeout(existing.sessionIdCaptureTimer);
-        existing.sessionIdCaptureTimer = undefined;
-      }
+      // Detach watchers and readers but preserve files on disk and
+      // nullify paths so the old session's onExit handler cannot
+      // race-delete files the new spawn is about to reuse. See
+      // SessionFileManager.detachPreservingFiles.
+      this.sessionFiles.detachPreservingFiles(existing.id);
+      // Cancel the old session's diagnostic timer and drop its scanner
+      // so a spurious "session ID not captured" warning cannot fire
+      // 30s after respawn.
+      this.sessionIdManager.removeSession(existing.id);
       // Tear down any adapter-attached work from the previous spawn.
-      if (existing.adapterAttachment) {
-        existing.adapterAttachment.dispose();
-        existing.adapterAttachment = undefined;
-      }
+      disposeAdapterAttachment(existing);
     }
 
     // Carry over previous scrollback BEFORE removing state so scroll history
@@ -449,55 +402,20 @@ export class SessionManager extends EventEmitter {
       this.sessions.delete(existing.id);
       this.usageTracker.removeSession(existing.id);
       this.bufferManager.removeSession(existing.id);
-      this.fileWatcher.removeSession(existing.id);
+      this.sessionFiles.removeSession(existing.id);
     }
 
-    // Determine shell args and actual executable based on shell type
+    // Shell invocation (exe + args) and spawn env. See pty-spawn.ts.
     const shellName = shell.toLowerCase();
-    let shellExe = shell;
-    let shellArgs: string[];
+    const { exe: shellExe, args: shellArgs } = resolveShellArgs(shell);
+    const cleanEnv = buildSpawnEnv(input.env);
 
-    if (shellName.startsWith('wsl ')) {
-      // WSL: e.g. "wsl -d Ubuntu" - split into exe + args
-      const parts = shell.split(/\s+/);
-      shellExe = parts[0];
-      shellArgs = parts.slice(1);
-    } else if (shellName.includes('cmd')) {
-      shellArgs = [];
-    } else if (shellName.includes('powershell') || shellName.includes('pwsh')) {
-      shellArgs = ['-NoLogo'];
-    } else if (shellName.includes('fish') || shellName.includes('nu')) {
-      shellArgs = [];
-    } else {
-      shellArgs = ['--login'];
-    }
-
-    // Strip CLAUDECODE so spawned Claude CLI sessions don't refuse to start
-    // when Kangentic itself was launched from inside a Claude Code session.
-    const { CLAUDECODE: _, ...cleanEnv } = { ...process.env, ...input.env };
-
-    // Validate CWD exists before spawning. If the project directory was
-    // deleted or moved, fall back to home directory (a session in ~ is
-    // strictly better than a dead session with exitCode: -1).
-    let effectiveCwd = input.cwd;
-    if (!fs.existsSync(input.cwd)) {
-      effectiveCwd = os.homedir();
-      trackEvent('app_error', {
-        source: 'pty_spawn_cwd_missing',
-        message: 'CWD does not exist, falling back to home directory',
-        platform: process.platform,
-      });
-    }
-
-    // cmd.exe does not support UNC paths as working directory. It prints
-    // "UNC paths are not supported" and defaults to C:\Windows. Use pushd
-    // which auto-maps a temporary drive letter (e.g. Z: -> \\server\share).
-    // Other shells (PowerShell, Git Bash) handle UNC natively.
-    let uncPushdPrefix: string | null = null;
-    if (process.platform === 'win32' && isUncPath(effectiveCwd) && shellName.includes('cmd')) {
-      uncPushdPrefix = `pushd "${effectiveCwd}"`;
-      effectiveCwd = os.homedir();
-    }
+    // Validate cwd + apply Windows UNC fallback for cmd.exe. See pty-spawn.ts.
+    const { effectiveCwd, uncPushdPrefix } = resolveSpawnCwd({
+      requestedCwd: input.cwd,
+      shellName,
+      platform: process.platform,
+    });
 
     let ptyProcess: pty.IPty;
     try {
@@ -506,55 +424,23 @@ export class SessionManager extends EventEmitter {
         cols: 120,
         rows: 30,
         cwd: effectiveCwd,
-        env: cleanEnv as Record<string, string>,
+        env: cleanEnv,
       });
     } catch (err) {
-      // Track PTY spawn failures with full diagnostics
-      const spawnError = err instanceof Error ? err.message : String(err);
-      const errnoCode = (err as NodeJS.ErrnoException).code || '';
-      const errnoNumber = (err as NodeJS.ErrnoException).errno ?? '';
-
-      // Check original CWD (not effectiveCwd) so the diagnostic reveals
-      // whether the fallback was triggered. existsSync doesn't throw for
-      // valid string args, so no try/catch needed.
-      const cwdExists = fs.existsSync(input.cwd);
-      const shellExists = fs.existsSync(shellExe);
-
-      console.error(`[PTY] spawn failed session=${id.slice(0, 8)} task=${input.taskId.slice(0, 8)} shell=${shellExe} error=${spawnError} errno=${errnoCode || errnoNumber} cwdExists=${cwdExists} shellExists=${shellExists}`);
-
-      trackEvent('app_error', {
-        source: 'pty_spawn',
-        message: sanitizeErrorMessage(spawnError),
-        shell: shellExe,
-        shellArgs: shellArgs.join(' '),
-        cwdExists: String(cwdExists),
-        shellExists: String(shellExists),
-        errno: errnoCode || String(errnoNumber),
-        platform: process.platform,
-        arch: process.arch,
+      const diagnostic = diagnoseSpawnFailure({
+        err,
+        shellExe,
+        effectiveCwd,
+        originalCwd: input.cwd,
       });
+      console.error(`[PTY] spawn failed session=${id.slice(0, 8)} task=${input.taskId.slice(0, 8)} shell=${shellExe} error=${diagnostic.errorMessage} errno=${diagnostic.errno} cwdExists=${diagnostic.cwdExists} shellExists=${diagnostic.shellExists}`);
+      recordSpawnFailure({ diagnostic, shellExe, shellArgs });
 
-      // Write a diagnostic message into the scrollback so the user sees
-      // actionable guidance in the terminal panel instead of a blank screen.
+      // Append actionable guidance to scrollback (empty suffix if no
+      // known recipe for this error shape).
       let diagnosticScrollback = previousScrollback;
-      if (spawnError.includes('posix_spawnp')) {
-        const isPackaged = shellExe.includes('app.asar') || effectiveCwd.includes('app.asar');
-        const fixInstructions = isPackaged
-          ? '  Reinstalling the app should resolve this.'
-          : '  find node_modules/node-pty -name spawn-helper -exec chmod +x {} \\;';
-        const diagnostic = [
-          '',
-          '\x1b[1;31mError: Failed to spawn shell process (posix_spawnp failed)\x1b[0m',
-          '',
-          'This is likely caused by node-pty\'s spawn-helper binary missing',
-          'execute permissions. To fix:',
-          '',
-          fixInstructions,
-          '',
-          'Then restart the app. See https://github.com/Kangentic/kangentic/issues/3',
-          '',
-        ].join('\r\n');
-        diagnosticScrollback += diagnostic;
+      if (diagnostic.scrollbackSuffix) {
+        diagnosticScrollback += diagnostic.scrollbackSuffix;
         console.error(`[PTY] posix_spawnp failed for shell "${shellExe}" in "${effectiveCwd}". Likely missing +x on spawn-helper.`);
       }
 
@@ -603,7 +489,7 @@ export class SessionManager extends EventEmitter {
 
     // Initialize extracted modules for this session
     this.bufferManager.initSession(id, previousScrollback, 0);
-    this.fileWatcher.startAll({
+    this.sessionFiles.register({
       sessionId: id,
       statusOutputPath: input.statusOutputPath || null,
     });
@@ -624,60 +510,22 @@ export class SessionManager extends EventEmitter {
       });
     }
 
-    // Arm diagnostic timer: if the agent supports session-ID capture but
-    // nothing fires by the timeout, something upstream is broken. Surface
-    // it in logs so dogfooding catches regressions early.
-    const sessionIdStrategy = input.agentParser?.runtime?.sessionId;
-    const hasCapturePath = !!(sessionIdStrategy?.fromHook
-      || sessionIdStrategy?.fromOutput
-      || sessionIdStrategy?.fromFilesystem);
-    if (hasCapturePath) {
-      session.sessionIdCaptureTimer = setTimeout(() => {
-        session.sessionIdCaptureTimer = undefined;
-        if (!this.usageTracker.hasAgentSessionId(id)) {
-          console.warn(
-            `[session-manager] ${session.agentName} session ID not captured after `
-            + `${SessionManager.SESSION_ID_CAPTURE_TIMEOUT_MS / 1000}s for session `
-            + `${id.slice(0, 8)} - --resume will not work.`,
-          );
-        }
-      }, SessionManager.SESSION_ID_CAPTURE_TIMEOUT_MS);
-      session.sessionIdCaptureTimer.unref();
-    }
+    // Session-ID capture: arm the diagnostic timer and kick off the
+    // filesystem-based pathway. See SessionIdManager for the
+    // full capture strategy.
+    this.sessionIdManager.init(id, input.agentParser, effectiveCwd, session.agentName ?? 'agent');
 
-    // Fire-and-forget filesystem-based session-ID capture. Primary
-    // path for Codex 0.118 (PTY output and hooks both unavailable).
-    if (sessionIdStrategy?.fromFilesystem) {
-      const spawnedAt = new Date();
-      sessionIdStrategy.fromFilesystem({ spawnedAt, cwd: effectiveCwd })
-        .then((capturedId) => {
-          if (!capturedId || this.usageTracker.hasAgentSessionId(id) || !this.sessions.has(id)) return;
-          console.log(`[${session.agentName}] Captured session ID from filesystem: ${capturedId.slice(0, 16)}...`);
-          this.usageTracker.notifyAgentSessionId(id, capturedId);
-        })
-        .catch((err) => {
-          console.warn(`[session-manager] fromFilesystem capture failed for session=${id.slice(0, 8)}:`, err);
-        });
-    }
-
-    // Generic adapter lifecycle hook. Adapters that need per-session
-    // orchestration outside the declarative `runtime` surface
-    // (e.g. out-of-band CLI queries, external event subscriptions)
-    // implement `attachSession`. The context exposes only generic
-    // primitives - SessionManager never inspects what the adapter
-    // does inside. The returned attachment is disposed on session
-    // end so fire-and-forget work can be cancelled cleanly.
-    if (input.agentParser?.attachSession) {
-      const context: SessionContext = {
-        sessionId: id,
-        applyUsage: (usage) => {
-          if (!this.sessions.has(id)) return;
-          this.usageTracker.setSessionUsage(id, usage);
-        },
-      };
-      const attachment = input.agentParser.attachSession(context);
-      if (attachment) session.adapterAttachment = attachment;
-    }
+    // Generic adapter lifecycle hook. See adapter-lifecycle.ts for the
+    // contract. The attachment is disposed on PTY exit and on remove()
+    // so adapter fire-and-forget work is cancelled cleanly.
+    const adapterContext: SessionContext = {
+      sessionId: id,
+      applyUsage: (usage) => {
+        if (!this.sessions.has(id)) return;
+        this.usageTracker.setSessionUsage(id, usage);
+      },
+    };
+    attachAdapter(session, adapterContext);
 
     // Batched data output (~60fps)
     ptyProcess.onData((data: string) => {
@@ -688,20 +536,10 @@ export class SessionManager extends EventEmitter {
       if (!session.transient) {
         this.transcriptWriter?.onData(id, data);
       }
-      // Per-adapter session ID capture from PTY output. The scanner handles
-      // chunk-boundary safety (rolling buffer) and ANSI stripping (Windows
-      // ConPTY cursor-positioning that defeats raw regexes).
-      const fromOutput = input.agentParser?.runtime?.sessionId?.fromOutput;
-      if (fromOutput && !this.usageTracker.hasAgentSessionId(id)) {
-        if (!session.sessionIdScanner) {
-          session.sessionIdScanner = new SessionIdScanner(SessionManager.SESSION_ID_BUFFER_MAX);
-        }
-        const capturedId = session.sessionIdScanner.scanChunk(data, fromOutput);
-        if (capturedId) {
-          session.sessionIdScanner.reset();
-          this.usageTracker.notifyAgentSessionId(id, capturedId);
-        }
-      }
+      // Per-adapter session ID capture from PTY output. Handles chunk-
+      // boundary safety (rolling buffer) and ANSI stripping (Windows
+      // ConPTY cursor positioning that defeats raw regexes).
+      this.sessionIdManager.onData(id, data, session.agentParser);
       // Per-adapter stream telemetry (e.g. Cursor stream-json: model from
       // the init event, ToolStart/ToolEnd events for activity tracking).
       // Each adapter owns whatever carry-over state it needs across PTY
@@ -727,52 +565,9 @@ export class SessionManager extends EventEmitter {
         if (strategy.detectIdle?.(data)) {
           this.usageTracker.notifyPtyIdle(id);
         } else if (data.length > 0) {
-          // TUI agents (Codex, Gemini) redraw the screen on resize (panel
-          // mount/unmount, project switch). The redraw produces "new" PTY
-          // chunks that would otherwise trigger an idle->thinking flicker.
-          //
-          // Two layers of defense (both agent-agnostic):
-          //
-          // 1. Resize grace period: if a resize happened within the last
-          //    1.5s AND the session is currently idle, treat all incoming
-          //    data as redraw noise. Add it to the dedup buffer (so any
-          //    future identical chunks are filtered) but do NOT call
-          //    notifyPtyData. This prevents the first-encounter flicker.
-          //
-          // 2. Content dedup ring buffer: even outside the grace period,
-          //    if the normalized content matches any of the last N frames
-          //    we've seen, treat as a redraw and skip notification. Catches
-          //    redraws that fall outside the grace window (e.g. delayed
-          //    refreshes) and Codex's rotating placeholder text.
-          //
-          // Normalization (strip ANSI + collapse whitespace) handles
-          // layout differences from cursor positioning and line wrapping.
-          const stripped = data.includes('\x1b') ? stripAnsiEscapes(data) : data;
-          const normalized = stripped.replace(/\s+/g, ' ').trim();
-          if (normalized.length > 0) {
-            const history = this.lastPtyContent.get(id) ?? [];
-            const isContentNew = !history.includes(normalized);
-            if (isContentNew) {
-              history.push(normalized);
-              if (history.length > SessionManager.PTY_DEDUP_HISTORY_SIZE) {
-                history.shift();
-              }
-              this.lastPtyContent.set(id, history);
-            }
-            if (isContentNew) {
-              const lastResize = this.lastResizeTime.get(id) ?? 0;
-              const inResizeGrace = (Date.now() - lastResize) < SessionManager.RESIZE_GRACE_PERIOD_MS;
-              const currentActivity = this.usageTracker.getSessionActivity(id);
-              const hasBeenWoken = this.sessionsEverWoken.has(id);
-              // Only suppress if the session was already settled-idle.
-              // Brand new sessions (never woken) need their first output
-              // to wake them, regardless of resize timing.
-              const suppressForResize = inResizeGrace && currentActivity === 'idle' && hasBeenWoken;
-              if (!suppressForResize) {
-                this.sessionsEverWoken.add(id);
-                this.usageTracker.notifyPtyData(id);
-              }
-            }
+          const currentActivity = this.usageTracker.getSessionActivity(id);
+          if (this.resizeManager.shouldNotifyOnData(id, data, currentActivity)) {
+            this.usageTracker.notifyPtyData(id);
           }
         }
       }
@@ -787,14 +582,10 @@ export class SessionManager extends EventEmitter {
       }
       session.exitCode = exitCode;
       session.pty = null;
-      if (session.sessionIdCaptureTimer) {
-        clearTimeout(session.sessionIdCaptureTimer);
-        session.sessionIdCaptureTimer = undefined;
-      }
-      if (session.adapterAttachment) {
-        session.adapterAttachment.dispose();
-        session.adapterAttachment = undefined;
-      }
+      // Cancel the session-ID diagnostic timer but keep the scanner so
+      // the scrollback fallback in suspend() can still use its buffer.
+      this.sessionIdManager.clearDiagnostic(id);
+      disposeAdapterAttachment(session);
 
       // Flush transcript to DB before closing out the session
       this.transcriptWriter?.finalize(id);
@@ -805,23 +596,14 @@ export class SessionManager extends EventEmitter {
       this.flushPendingEvents(id);
 
       // Strip agent hooks from the project's settings file so they don't
-      // accumulate across sessions. Gemini writes hooks to <cwd>/.gemini/
-      // settings.json (shared project-level, no --settings flag), so each
-      // session must clean up its own hooks on exit. Without this, hooks
-      // pile up and Gemini executes N copies per event. The adapter uses
-      // taskId as a reference key so double-calls (suspend + onExit) for
-      // the same task are idempotent and concurrent sessions in the same
-      // cwd do not clobber each other's hooks.
-      if (session.agentParser?.removeHooks) {
-        session.agentParser.removeHooks(session.cwd, session.taskId);
-      }
+      // accumulate across sessions. See adapter-lifecycle.removeAdapterHooks.
+      removeAdapterHooks(session);
 
-      // Close watchers but preserve session files on disk - they are needed
-      // for crash recovery (the status-file reader reads status.json on
-      // resume). Files are cleaned up by pruneStaleResources(), remove(),
-      // or killAll().
-      this.fileWatcher.stopAll(id);
-      this.statusFileReader.detachWithoutCleanup(id);
+      // Close watchers but preserve session files on disk - they are
+      // needed for crash recovery. Files are cleaned up by
+      // pruneStaleResources(), remove(), or killAll(). See
+      // SessionFileManager.detachOnPtyExit.
+      this.sessionFiles.detachOnPtyExit(id);
 
       // Fallback PR scan: if a PR command was flagged (ToolStart seen) but
       // ToolEnd was never processed (event lost or never written), scan the
@@ -893,7 +675,7 @@ export class SessionManager extends EventEmitter {
     session.pty.resize(clampedCols, clampedRows);
     // Mark resize time so the dispatch can suppress idle->thinking
     // transitions during the redraw burst that follows.
-    this.lastResizeTime.set(sessionId, Date.now());
+    this.resizeManager.notifyResize(sessionId);
     return { colsChanged };
   }
 
@@ -915,26 +697,17 @@ export class SessionManager extends EventEmitter {
     // kill() may emit 'exit' events that depend on the session still being
     // in the map (the exit handler looks up the session by ID). Delete AFTER.
     const session = this.sessions.get(sessionId);
-    if (session?.sessionIdCaptureTimer) {
-      clearTimeout(session.sessionIdCaptureTimer);
-      session.sessionIdCaptureTimer = undefined;
-    }
-    if (session?.adapterAttachment) {
-      session.adapterAttachment.dispose();
-      session.adapterAttachment = undefined;
-    }
-    this.sessionHistoryReader.detach(sessionId);
-    this.statusFileReader.detach(sessionId);
+    this.sessionIdManager.removeSession(sessionId);
+    if (session) disposeAdapterAttachment(session);
     this.kill(sessionId);
-    this.fileWatcher.cleanupAndRemove(sessionId);
+    // Full cleanup including file deletion - the session is not coming back.
+    this.sessionFiles.detachAndDelete(sessionId);
     this.sessions.delete(sessionId);
     this.bufferManager.removeSession(sessionId);
     this.transcriptWriter?.remove(sessionId);
     this.usageTracker.removeSession(sessionId);
-    this.firstOutputEmitted.delete(sessionId);
-    this.lastPtyContent.delete(sessionId);
-    this.lastResizeTime.delete(sessionId);
-    this.sessionsEverWoken.delete(sessionId);
+    this.firstOutputTracker.removeSession(sessionId);
+    this.resizeManager.removeSession(sessionId);
   }
 
   /**
@@ -1039,26 +812,16 @@ export class SessionManager extends EventEmitter {
     if (!session) return;
 
     // Strip agent hooks from the project's settings file before
-    // closing down. Prevents hook accumulation across sessions. This
-    // path and the PTY onExit handler both call removeHooks; adapters
-    // key on taskId so the second call is idempotent for shared-file
-    // agents (Codex, Gemini).
-    if (session.agentParser?.removeHooks) {
-      session.agentParser.removeHooks(session.cwd, session.taskId);
-    }
+    // closing down. Prevents hook accumulation across sessions. Both
+    // this path and the onExit handler call removeAdapterHooks;
+    // adapters key on taskId so the duplicate call is idempotent.
+    removeAdapterHooks(session);
 
-    // Close watchers - no longer need real-time updates
-    this.fileWatcher.stopAll(sessionId);
-    // Detach telemetry readers WITHOUT deleting files - they persist
-    // for resume (the next spawn reads them back).
-    this.sessionHistoryReader.detach(sessionId);
-    this.statusFileReader.detachWithoutCleanup(sessionId);
-
-    // Null out merged-settings path BEFORE killing so the onExit
-    // handler's cleanup skips settings.json deletion - it persists for
-    // resume. Status/events path races are handled by the telemetry
-    // reader detach calls above.
-    this.fileWatcher.nullifyPaths(sessionId);
+    // Close watchers and detach telemetry readers WITHOUT deleting
+    // files - they persist for resume. Null out paths so the onExit
+    // handler's cleanup skips settings.json deletion. See
+    // SessionFileManager.detachPreservingFiles.
+    this.sessionFiles.detachPreservingFiles(sessionId);
 
     // Flush transcript to DB before killing PTY
     this.transcriptWriter?.finalize(sessionId);
@@ -1073,85 +836,27 @@ export class SessionManager extends EventEmitter {
     session.status = 'suspended';
 
     if (session.pty) {
-      // Send graceful exit sequence (e.g. Ctrl+C + /exit for Claude Code).
-      // This gives the agent time to flush its conversation JSONL to disk.
-      for (const command of session.exitSequence) {
-        try { session.pty.write(command); } catch { /* PTY may already be dead */ }
-      }
-
-      // Wait for the process to exit naturally, up to 1500ms.
-      // Claude Code typically exits within 200-500ms after /exit.
-      const exitedNaturally = await new Promise<boolean>((resolve) => {
-        const timeout = setTimeout(() => {
-          this.removeListener('exit', onExit);
-          resolve(false);
-        }, 1500);
-
-        const onExit = (exitedId: string) => {
-          if (exitedId === sessionId) {
-            clearTimeout(timeout);
-            this.removeListener('exit', onExit);
-            resolve(true);
-          }
-        };
-        this.on('exit', onExit);
-
-        // Check if it already exited between sending /exit and registering listener
-        if (!session.pty) {
-          clearTimeout(timeout);
-          this.removeListener('exit', onExit);
-          resolve(true);
-        }
+      // Send exit sequence, wait up to 1500ms for natural exit, then
+      // force-kill and wait another 1500ms for kill propagation so
+      // callers that immediately delete the CWD (worktree removal on
+      // move-to-Done) don't race Windows ConPTY still holding handles.
+      // See session-suspend.gracefulPtyShutdown.
+      await gracefulPtyShutdown({
+        ptyRef: session.pty,
+        exitSequence: session.exitSequence,
+        emitter: this,
+        sessionId,
+        clearPty: () => { session.pty = null; },
+        killPty: safeKillPty,
       });
-
-      // Force-kill if still alive after timeout
-      if (!exitedNaturally && session.pty) {
-        const ptyRef = session.pty;
-        session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
-        const killLanded = safeKillPty(ptyRef);
-
-        // Wait for the kill to propagate into an 'exit' event before returning.
-        // Otherwise callers that immediately delete the session's CWD (worktree
-        // removal on move-to-Done) race against conhost still holding CWD
-        // handles on Windows. Bounded at 1500ms so a hung exit never blocks
-        // shutdown; removeWorktree's own retry handles the remaining cases.
-        //
-        // Skip the wait entirely if kill reported EACCES/ESRCH (already dead):
-        // the 'exit' event already fired before we got here, so awaiting it
-        // would just burn the full 1500ms timeout.
-        if (killLanded) {
-          await new Promise<void>((resolve) => {
-            const timeout = setTimeout(() => {
-              this.removeListener('exit', onExit);
-              resolve();
-            }, 1500);
-            const onExit = (exitedSessionId: string) => {
-              if (exitedSessionId === sessionId) {
-                clearTimeout(timeout);
-                this.removeListener('exit', onExit);
-                resolve();
-              }
-            };
-            this.on('exit', onExit);
-          });
-        }
-      }
     }
 
     // Last-resort: scan full scrollback for agent session ID if not yet
     // captured. Handles Gemini printing session ID at shutdown, Codex
-    // startup header missed by streaming handler, etc.
-    const scrollbackFromOutput = session.agentParser?.runtime?.sessionId?.fromOutput;
-    if (!this.usageTracker.hasAgentSessionId(sessionId) && scrollbackFromOutput) {
-      // Use getRawScrollback() (not getScrollback()) so pre-TUI content like
-      // Codex's startup header "session id: <uuid>" remains in scope.
-      const rawScrollback = this.bufferManager.getRawScrollback(sessionId);
-      const scanner = session.sessionIdScanner ?? new SessionIdScanner();
-      const capturedId = scanner.scanScrollback(rawScrollback, scrollbackFromOutput);
-      if (capturedId) {
-        this.usageTracker.notifyAgentSessionId(sessionId, capturedId);
-      }
-    }
+    // startup header missed by streaming handler, etc. Uses raw (pre-TUI)
+    // scrollback so startup headers remain in scope.
+    const rawScrollback = this.bufferManager.getRawScrollback(sessionId);
+    this.sessionIdManager.scanScrollback(sessionId, session.agentParser, rawScrollback);
 
     this.emit('session-changed', sessionId, this.toSession(session));
 
@@ -1321,90 +1026,26 @@ export class SessionManager extends EventEmitter {
    * Returns task IDs so the caller can mark them as 'suspended' in the DB.
    */
   async suspendAll(timeoutMs = 2000): Promise<string[]> {
-    const taskIds: string[] = [];
-    const ptysToKill: pty.IPty[] = [];
-    const freshSessionThresholdMs = 10_000;
-    const now = Date.now();
-    let hasLongRunningSession = false;
-
-    for (const session of this.sessions.values()) {
-      if (session.pty && session.status === 'running') {
-        taskIds.push(session.taskId);
-
-        // Check if this session has been running long enough to have
-        // meaningful conversation state worth waiting for
-        const sessionAge = now - new Date(session.startedAt).getTime();
-        if (sessionAge >= freshSessionThresholdMs) {
-          hasLongRunningSession = true;
-        }
-
-        // Send agent-specific exit sequence (e.g. Ctrl+C + /exit for Claude,
-        // Ctrl+C + /quit for Gemini) to trigger a clean shutdown that flushes
-        // the conversation transcript to disk.
-        for (const command of session.exitSequence) {
-          try { session.pty.write(command); } catch { /* PTY may already be dead */ }
-        }
-        ptysToKill.push(session.pty);
-        session.status = 'exited';
-      }
-    }
-
-    // Also count queued sessions as suspended
-    for (const session of this.sessions.values()) {
-      if (session.status === 'queued') {
-        taskIds.push(session.taskId);
-        session.status = 'exited';
-      }
-    }
-    this.sessionQueue.clear();
-
-    // Wait for graceful exit, then force-kill any remaining.
-    // Use a short timeout for freshly spawned sessions (e.g. recovery just started)
-    // since they have minimal conversation state to save.
-    if (ptysToKill.length > 0) {
-      const effectiveTimeout = hasLongRunningSession ? timeoutMs : 200;
-      await new Promise((resolve) => setTimeout(resolve, effectiveTimeout));
-    }
-    for (const session of this.sessions.values()) {
-      // Close watchers but preserve session files -
-      // sessions will be resumed on next app launch via session recovery
-      this.fileWatcher.stopAll(session.id);
-      this.sessionHistoryReader.detach(session.id);
-      this.statusFileReader.detachWithoutCleanup(session.id);
-
-      if (session.pty) {
-        const ptyRef = session.pty;
-        session.pty = null;
-        // Null file paths before kill so onExit doesn't clean them up
-        this.fileWatcher.nullifyPaths(session.id);
-        safeKillPty(ptyRef);
-      }
-    }
-
-    return taskIds;
+    return suspendAllSessions(this.shutdownContext(), timeoutMs);
   }
 
+  /**
+   * Synchronously kill every PTY and clean up. Runs from Electron's
+   * `before-quit` handler. Must NOT become async - see
+   * session-shutdown.killAllSessions and the "Shutdown (CRITICAL)"
+   * section in CLAUDE.md.
+   */
   killAll(): void {
-    for (const session of this.sessions.values()) {
-      if (session.pty) {
-        // Best-effort graceful exit: send exit sequence before killing.
-        // No wait - shutdown must stay synchronous. The write buffer may
-        // flush before kill() lands, giving the agent a few ms to start
-        // saving conversation state.
-        for (const command of session.exitSequence) {
-          try { session.pty.write(command); } catch { /* already dead */ }
-        }
-        const ptyRef = session.pty;
-        session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
-        safeKillPty(ptyRef);
-      }
-      // Clean up watchers and files
-      this.fileWatcher.cleanupAndRemove(session.id);
-      this.sessionHistoryReader.detach(session.id);
-      this.statusFileReader.detach(session.id);
-    }
-    this.sessions.clear();
-    this.sessionQueue.clear();
-    this.firstOutputEmitted.clear();
+    killAllSessions(this.shutdownContext());
+  }
+
+  private shutdownContext() {
+    return {
+      sessions: this.sessions,
+      sessionQueue: this.sessionQueue,
+      sessionFiles: this.sessionFiles,
+      firstOutputTracker: this.firstOutputTracker,
+      killPty: safeKillPty,
+    };
   }
 }

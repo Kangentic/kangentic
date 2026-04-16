@@ -5,7 +5,7 @@ import type { SessionManager } from '../pty/session-manager';
 import type { ConfigManager } from '../config/config-manager';
 import type { BoardConfigManager } from '../config/board-config-manager';
 import type { GitDetector } from '../agent/git-detector';
-import type { ShellResolver } from '../pty/shell-resolver';
+import type { ShellResolver } from '../pty/spawn/shell-resolver';
 import type { CommandInjector } from '../engine/command-injector';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 

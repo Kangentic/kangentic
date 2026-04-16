@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SessionIdScanner } from '../../src/main/pty/session-id-scanner';
+import { SessionIdScanner } from '../../src/main/pty/lifecycle/session-id-manager';
 
 const UUID_REGEX = /session id:\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 const fromOutput = (data: string): string | null => {

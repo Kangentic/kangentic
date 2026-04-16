@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripAnsiEscapes } from '../../src/main/pty/transcript-writer';
+import { stripAnsiEscapes } from '../../src/main/pty/buffer/transcript-writer';
 
 describe('stripAnsiEscapes', () => {
   it('strips SGR color codes', () => {

@@ -1,4 +1,4 @@
-import type { TranscriptRepository } from '../db/repositories/transcript-repository';
+import type { TranscriptRepository } from '../../db/repositories/transcript-repository';
 
 /**
  * Hardened ANSI escape code stripper.

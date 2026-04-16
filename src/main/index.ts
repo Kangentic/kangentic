@@ -41,7 +41,7 @@ process.on('unhandledRejection', (reason) => {
 });
 
 import { initUpdater, updateUpdaterWindow, stopUpdaterTimers } from './updater';
-import { ensureSpawnHelperPermissions } from './pty/spawn-helper-permissions';
+import { ensureSpawnHelperPermissions } from './pty/spawn/spawn-helper-permissions';
 
 // Initialize anonymous analytics BEFORE app.whenReady() -- the SDK requires this
 // to register protocol schemes. The analytics module decides whether to activate

@@ -9,7 +9,7 @@
  * itself without the surrounding PTY and file-watcher plumbing.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { ActivityStateMachine } from '../../src/main/pty/activity-state-machine';
+import { ActivityStateMachine } from '../../src/main/pty/activity/activity-state-machine';
 import { EventType, IdleReason } from '../../src/shared/types';
 import type { ActivityState, SessionEvent } from '../../src/shared/types';
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { UsageTracker } from '../../src/main/pty/usage-tracker';
+import { UsageTracker } from '../../src/main/pty/activity/usage-tracker';
 import type { SessionUsage } from '../../src/shared/types';
 
 /**

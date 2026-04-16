@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TranscriptWriter, stripAnsiEscapes } from '../../src/main/pty/transcript-writer';
+import { TranscriptWriter, stripAnsiEscapes } from '../../src/main/pty/buffer/transcript-writer';
 
 // --- TranscriptWriter class ---
 

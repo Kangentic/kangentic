@@ -15,7 +15,7 @@ vi.mock('node-pty', () => ({
   spawn: vi.fn(),
 }));
 
-vi.mock('../../src/main/pty/shell-resolver', () => {
+vi.mock('../../src/main/pty/spawn/shell-resolver', () => {
   class MockShellResolver {
     async getDefaultShell() { return '/bin/bash'; }
   }

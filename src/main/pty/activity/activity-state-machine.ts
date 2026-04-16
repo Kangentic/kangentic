@@ -1,5 +1,5 @@
-import { EventType, EventTypeActivity, IdleReason } from '../../shared/types';
-import type { ActivityState, SessionEvent } from '../../shared/types';
+import { EventType, EventTypeActivity, IdleReason } from '../../../shared/types';
+import type { ActivityState, SessionEvent } from '../../../shared/types';
 
 /**
  * Per-session bookkeeping used by the activity state machine. All fields

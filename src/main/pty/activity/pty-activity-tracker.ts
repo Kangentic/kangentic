@@ -1,5 +1,5 @@
-import { IdleReason } from '../../shared/types';
-import type { ActivityState } from '../../shared/types';
+import { IdleReason } from '../../../shared/types';
+import type { ActivityState } from '../../../shared/types';
 
 /**
  * Timeout in ms before silence is interpreted as idle.

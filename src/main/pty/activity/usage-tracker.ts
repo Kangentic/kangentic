@@ -1,6 +1,6 @@
-import { EventType, EventTypeActivity, AgentTool, IdleReason, PromptReason, Activity } from '../../shared/types';
-import type { SessionUsage, ActivityState, SessionEvent, AgentParser } from '../../shared/types';
-import { matchesPRCommand } from './pr-connectors';
+import { EventType, EventTypeActivity, AgentTool, IdleReason, PromptReason, Activity } from '../../../shared/types';
+import type { SessionUsage, ActivityState, SessionEvent, AgentParser } from '../../../shared/types';
+import { matchesPRCommand } from '../pr/pr-connectors';
 import { PtyActivityTracker } from './pty-activity-tracker';
 import { ActivityStateMachine } from './activity-state-machine';
 

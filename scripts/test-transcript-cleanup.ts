@@ -18,7 +18,7 @@
 
 import * as pty from 'node-pty';
 import { execSync } from 'node:child_process';
-import { stripAnsiEscapes } from '../src/main/pty/transcript-writer';
+import { stripAnsiEscapes } from '../src/main/pty/buffer/transcript-writer';
 import { cleanTranscriptForHandoff } from '../src/main/agent/handoff/transcript-cleanup';
 
 const PROMPT = 'Tell me about 3 birds. Be brief - one sentence each.';

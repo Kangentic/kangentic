@@ -27,7 +27,7 @@ vi.mock('node:fs', () => ({
   },
 }));
 
-import { FileWatcher } from '../../src/main/pty/file-watcher';
+import { FileWatcher } from '../../src/main/pty/readers/file-watcher';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

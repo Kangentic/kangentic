@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { FileWatcher } from './file-watcher';
-import type { SessionUsage, SessionEvent, AdapterRuntimeStrategy } from '../../shared/types';
+import type { SessionUsage, SessionEvent, AdapterRuntimeStrategy } from '../../../shared/types';
 
 /**
  * Adapter-owned hook describing how to decode the contents of

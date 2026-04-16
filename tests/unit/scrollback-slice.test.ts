@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findSafeStartIndex } from '../../src/main/pty/scrollback-utils';
+import { findSafeStartIndex } from '../../src/main/pty/buffer/scrollback-utils';
 
 describe('findSafeStartIndex', () => {
   it('returns 0 for empty string', () => {

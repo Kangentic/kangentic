@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { PtyBufferManager } from '../../src/main/pty/pty-buffer-manager';
+import { PtyBufferManager } from '../../src/main/pty/buffer/pty-buffer-manager';
 
 describe('PtyBufferManager', () => {
   const SESSION = 'test-session';

@@ -6,7 +6,7 @@ import {
   StatusFileReader,
   type StatusFileReaderCallbacks,
   type StatusFileHook,
-} from '../../src/main/pty/status-file-reader';
+} from '../../src/main/pty/readers/status-file-reader';
 import {
   EventType,
   type SessionUsage,

@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import { FileWatcher } from './file-watcher';
-import { Activity } from '../../shared/types';
+import { Activity } from '../../../shared/types';
 import type {
   SessionUsage,
   SessionEvent,
   SessionHistoryParseResult,
   AdapterRuntimeStrategy,
-} from '../../shared/types';
+} from '../../../shared/types';
 
 type SessionHistoryHook = NonNullable<AdapterRuntimeStrategy['sessionHistory']>;
 

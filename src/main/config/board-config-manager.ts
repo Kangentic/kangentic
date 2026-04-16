@@ -4,7 +4,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
 import type { BrowserWindow } from 'electron';
-import { FileWatcher } from '../pty/file-watcher';
+import { FileWatcher } from '../pty/readers/file-watcher';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { ActionRepository } from '../db/repositories/action-repository';
 import { getProjectDb } from '../db/database';
