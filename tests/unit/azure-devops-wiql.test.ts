@@ -1,25 +1,8 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-
-// These are private functions, so we test them via dynamic import to access the module internals.
-// We re-export them here for testing by importing the module and calling the exported convertHtmlToMarkdown
-// as a proxy to verify the module loads, then test WIQL building via the public API behavior.
-// Since buildWiqlQuery and escapeWiqlString are not exported, we test their behavior indirectly
-// through the importer's fetchWorkItems method shape, or we can test them directly by importing the module.
-
-// For direct testing, we'll use a workaround: re-implement the logic here and test it.
-// Better approach: export these functions for testing.
-
-// Actually, let's just test the escaping and query building logic directly by extracting them.
-// The functions are module-private, so we'll test the patterns they implement.
+import { buildWiqlQuery, escapeWiqlString } from '../../src/main/boards/adapters/azure-devops/wiql';
 
 describe('WIQL query building', () => {
-  // These tests validate the WIQL patterns used by buildWiqlQuery
-
   describe('escapeWiqlString', () => {
-    function escapeWiqlString(value: string): string {
-      return value.replace(/'/g, "''");
-    }
-
     it('escapes single quotes by doubling them', () => {
       expect(escapeWiqlString("O'Brien")).toBe("O''Brien");
     });
@@ -34,6 +17,45 @@ describe('WIQL query building', () => {
 
     it('handles empty string', () => {
       expect(escapeWiqlString('')).toBe('');
+    });
+  });
+
+  describe('buildWiqlQuery', () => {
+    it('builds a base query with project filter only', () => {
+      const query = buildWiqlQuery('MyProject');
+      expect(query).toContain(`[System.TeamProject] = 'MyProject'`);
+      expect(query).toContain('FROM WorkItems');
+      expect(query).toContain('ORDER BY [System.ChangedDate] DESC');
+    });
+
+    it('adds open-state filter', () => {
+      const query = buildWiqlQuery('MyProject', 'open');
+      expect(query).toContain(`[System.State] NOT IN ('Closed', 'Done', 'Removed', 'Resolved')`);
+    });
+
+    it('adds closed-state filter', () => {
+      const query = buildWiqlQuery('MyProject', 'closed');
+      expect(query).toContain(`[System.State] IN ('Closed', 'Done', 'Removed', 'Resolved')`);
+    });
+
+    it('adds title search filter and trims whitespace', () => {
+      const query = buildWiqlQuery('MyProject', undefined, '  bug fix  ');
+      expect(query).toContain(`[System.Title] CONTAINS 'bug fix'`);
+    });
+
+    it('adds iteration-path filter with UNDER operator', () => {
+      const query = buildWiqlQuery('MyProject', undefined, undefined, 'MyProject\\Sprint 1');
+      expect(query).toContain(`[System.IterationPath] UNDER 'MyProject\\Sprint 1'`);
+    });
+
+    it('escapes single quotes in project name', () => {
+      const query = buildWiqlQuery("Cust'om");
+      expect(query).toContain(`[System.TeamProject] = 'Cust''om'`);
+    });
+
+    it('ignores empty or whitespace-only search queries', () => {
+      const query = buildWiqlQuery('MyProject', undefined, '   ');
+      expect(query).not.toContain('[System.Title] CONTAINS');
     });
   });
 });

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { AzureDevOpsImporter, convertHtmlToMarkdown } from '../../src/main/boards/adapters/azure-devops/client';
+import { AzureDevOpsImporter } from '../../src/main/boards/adapters/azure-devops/client';
 import type { AzureDevOpsComment } from '../../src/main/boards/adapters/azure-devops/client';
+import { convertHtmlToMarkdown } from '../../src/main/boards/adapters/azure-devops/html-to-markdown';
 
 describe('Azure DevOps comments and attachments', () => {
   const importer = new AzureDevOpsImporter();
