@@ -1762,12 +1762,14 @@ describe('Event-derived activity state', () => {
       // invoke UsageTracker.processStatusUpdate - exactly what the
       // reader's handleStatusChange does under the hood.
       const internals = sessionManager as unknown as {
-        sessions: Map<string, { agentParser?: { runtime?: { statusFile?: { parseStatus(raw: string): unknown } } } }>;
+        registry: {
+          get(id: string): { agentParser?: { runtime?: { statusFile?: { parseStatus(raw: string): unknown } } } } | undefined;
+        };
         usageTracker: {
           processStatusUpdate: (sessionId: string, usage: unknown) => void;
         };
       };
-      const managedSession = internals.sessions.get(sessionId);
+      const managedSession = internals.registry.get(sessionId);
       const raw = fs.readFileSync(statusPath, 'utf-8');
       const usage = managedSession?.agentParser?.runtime?.statusFile?.parseStatus(raw) ?? null;
       if (usage) internals.usageTracker.processStatusUpdate(sessionId, usage);
