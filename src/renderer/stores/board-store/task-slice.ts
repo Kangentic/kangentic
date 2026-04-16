@@ -80,18 +80,35 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
     const prevTask = get().tasks.find((t) => t.id === input.taskId);
     const prevSessionId = prevTask?.session_id ?? null;
 
-    // Optimistic update - move card to target column immediately so it
+    // Moves into a Done-role lane archive the task on the backend. Extend the
+    // completingTaskIds guard (originally scoped to the animated FlyingCard
+    // path in setCompletingTask) to this direct path as well, so every
+    // moveTask-to-Done is covered by DoneSwimlane's filter. Also remove the
+    // task from state.tasks so it doesn't flash as an active card in the Done
+    // column while the IPC is in flight.
+    const targetLane = get().swimlanes.find((lane) => lane.id === input.targetSwimlaneId);
+    const isCrossColumnToDone = targetLane?.role === 'done' && prevTask?.swimlane_id !== input.targetSwimlaneId;
+    if (isCrossColumnToDone) {
+      get().addCompletingTaskId(input.taskId);
+    }
+
+    // Optimistic update: move card to target column immediately so it
     // doesn't snap back to the origin while a confirmation dialog is open.
+    // For Done moves, remove from the active tasks array entirely so no
+    // swimlane renders it during the IPC window.
     set((s) => {
-      const tasks = [...s.tasks];
-      const taskIndex = tasks.findIndex((t) => t.id === input.taskId);
+      const taskIndex = s.tasks.findIndex((t) => t.id === input.taskId);
       if (taskIndex < 0) return s;
 
-      const task = { ...tasks[taskIndex] };
+      if (isCrossColumnToDone) {
+        return { tasks: s.tasks.filter((t) => t.id !== input.taskId) };
+      }
+
+      const task = { ...s.tasks[taskIndex] };
       task.swimlane_id = input.targetSwimlaneId;
       task.position = input.targetPosition;
+      const tasks = [...s.tasks];
       tasks[taskIndex] = task;
-
       return { tasks };
     });
 
@@ -141,7 +158,6 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
     // pendingCommandLabel so the overlay shows the command name instead of
     // generic "Resuming agent...". Skip within-column reorders.
     const isColumnChange = prevTask?.swimlane_id !== input.targetSwimlaneId;
-    const targetLane = get().swimlanes.find((s) => s.id === input.targetSwimlaneId);
     if (isColumnChange && targetLane?.auto_spawn && targetLane.auto_command?.trim()) {
       useSessionStore.getState().setPendingCommandLabel(input.taskId, targetLane.auto_command.trim());
     }
@@ -205,6 +221,13 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
         message: `Failed to move task: ${err instanceof Error ? err.message : 'Unknown error'}`,
         variant: 'error',
       });
+    } finally {
+      // Release the completingTaskIds guard regardless of success/failure so
+      // DoneSwimlane's filter lets future reloads re-render the task if
+      // anything above bailed early.
+      if (isCrossColumnToDone) {
+        get().removeCompletingTaskId(input.taskId);
+      }
     }
   },
 

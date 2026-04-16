@@ -138,7 +138,19 @@ export async function handleTaskMove(
     // Move the task in the database
     tasks.move(input);
 
-    // Within-column reorder -- no side effects needed
+    // Atomic archive for Done-role target: run synchronously in the same tick
+    // as tasks.move so no reader can observe the intermediate state
+    // (swimlane_id=Done, archived_at=NULL). better-sqlite3 is synchronous, so
+    // a concurrent IPC handler cannot interleave SQL between these two calls.
+    // Without this, a failure or hang in the downstream suspend/worktree-delete
+    // leaves the task stuck as an active Done-column card.
+    const isCrossColumnToDone = toLane?.role === 'done' && fromSwimlaneId !== input.targetSwimlaneId;
+    if (isCrossColumnToDone) {
+      tasks.archive(input.taskId);
+      console.log(`[TASK_MOVE] Auto-archived task ${input.taskId.slice(0, 8)} (moved to Done)`);
+    }
+
+    // Within-column reorder: no side effects needed
     if (fromSwimlaneId === input.targetSwimlaneId) return;
 
     // Analytics: track critical-path transitions only
@@ -233,8 +245,7 @@ export async function handleTaskMove(
         }
       }
 
-      tasks.archive(input.taskId);
-      console.log(`[TASK_MOVE] Auto-archived task ${input.taskId.slice(0, 8)} (moved to Done)`);
+      // Archive already happened synchronously right after tasks.move above.
       return;
     }
 

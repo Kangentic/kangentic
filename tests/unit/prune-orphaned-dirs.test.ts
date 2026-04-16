@@ -66,7 +66,8 @@ vi.mock('../../src/main/agent/adapters/claude/hook-manager', () => ({
   buildHooks: vi.fn(),
   removeHooks: vi.fn(),
 }));
-vi.mock('../../src/main/git/worktree-manager', () => ({
+vi.mock('../../src/main/git/worktree-manager', () => ({}));
+vi.mock('../../src/main/git/node-modules-link', () => ({
   removeNodeModulesJunction: vi.fn(),
 }));
 vi.mock('../../src/main/git/node-modules-link', () => ({

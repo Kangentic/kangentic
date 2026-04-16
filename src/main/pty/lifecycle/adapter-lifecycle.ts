@@ -23,9 +23,13 @@ export interface AdapterAttachable {
  * No-op for adapters that do not implement `attachSession`.
  */
 export function attachAdapter(session: AdapterAttachable, context: SessionContext): void {
-  const hook = session.agentParser?.attachSession;
-  if (!hook) return;
-  const attachment = hook(context);
+  // Invoke via method syntax (`parser.attachSession(...)`) rather than via a
+  // destructured reference so `this` stays bound to the adapter instance.
+  // Cursor's attachSession calls `this.fetchAboutUsage()`; a destructured
+  // invocation throws `Cannot read properties of undefined (reading 'fetchAboutUsage')`.
+  const parser = session.agentParser;
+  if (!parser?.attachSession) return;
+  const attachment = parser.attachSession(context);
   if (attachment) session.adapterAttachment = attachment;
 }
 
