@@ -7,7 +7,7 @@ import { TaskRepository } from '../db/repositories/task-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { SessionManager } from '../pty/session-manager';
 import { slugify } from '../../shared/slugify';
-import { removeNodeModulesJunction } from '../git/worktree-manager';
+import { removeNodeModulesJunction } from '../git/node-modules-link';
 
 const execFileAsync = promisify(execFile);
 

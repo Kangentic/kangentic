@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { isGitRepo, isFileTracked } from '../../git/worktree-manager';
+import { isGitRepo, isFileTracked } from '../../git/git-checks';
 
 /**
  * Ensure `.kangentic/` and `.claude/settings.local.json` are listed in the

@@ -33,7 +33,9 @@ vi.mock('node:child_process', () => ({
 }));
 
 import fs from 'node:fs';
-import { WorktreeManager, isGitRepo, isInsideWorktree, isKangenticWorktree, clearFetchCache } from '../../src/main/git/worktree-manager';
+import { WorktreeManager } from '../../src/main/git/worktree-manager';
+import { isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../src/main/git/git-checks';
+import { clearFetchCache } from '../../src/main/git/fetch-throttle';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

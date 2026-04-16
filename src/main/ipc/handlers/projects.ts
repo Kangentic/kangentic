@@ -8,7 +8,8 @@ import { resumeSuspendedSessions, autoSpawnTasks } from '../../engine/session-st
 import { cleanupStaleResources } from '../../engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { TranscriptRepository } from '../../db/repositories/transcript-repository';
-import { WorktreeManager, isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../git/worktree-manager';
+import { WorktreeManager } from '../../git/worktree-manager';
+import { isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../git/git-checks';
 import { agentRegistry } from '../../agent/agent-registry';
 import { getProjectDb, closeProjectDb } from '../../db/database';
 import { PATHS } from '../../config/paths';

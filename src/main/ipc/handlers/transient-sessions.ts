@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import simpleGit from 'simple-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { resolveProjectRoot } from '../../../shared/git-utils';
-import { fetchIfStale } from '../../git/worktree-manager';
+import { fetchIfStale } from '../../git/fetch-throttle';
 import { trackEvent } from '../../analytics/analytics';
 import { agentRegistry } from '../../agent/agent-registry';
 import { DEFAULT_AGENT } from '../../../shared/types';
