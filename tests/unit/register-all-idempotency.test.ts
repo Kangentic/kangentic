@@ -65,7 +65,7 @@ vi.mock('../../src/main/pty/session-manager', () => {
 vi.mock('../../src/main/agent/adapters/claude/detector', () => ({
   ClaudeDetector: class { detect = vi.fn(); },
 }));
-vi.mock('../../src/main/agent/git-detector', () => ({
+vi.mock('../../src/main/git/git-detector', () => ({
   GitDetector: class { detect = vi.fn(); },
 }));
 vi.mock('../../src/main/agent/adapters/claude/command-builder', () => ({
