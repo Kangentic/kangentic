@@ -8,11 +8,22 @@ import { quoteArg } from '../../src/shared/paths';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
 
-// Mock which, fs, and exec-version before importing adapter
+// Mock which, fs, exec-version, and child_process before importing adapter
 let mockWhichResult: string | Error = '/usr/local/bin/agent';
 let mockExecVersionStdout = '0.50.3\n';
 let mockExecVersionShouldFail = false;
 let execVersionCallCount = 0;
+
+// Controls for `child_process.execFile` used by sessionBootstrap
+// (`agent about --format json`). Tests rewrite these to simulate
+// various Cursor CLI responses.
+let mockAboutShouldFail = false;
+let mockAboutStdout = JSON.stringify({
+  cliVersion: '2026.04.15-dccdccd',
+  model: 'Auto',
+  subscriptionTier: 'Free',
+});
+const aboutCallLog: Array<{ path: string; args: readonly string[] }> = [];
 
 vi.mock('which', () => ({
   default: async () => {
@@ -42,6 +53,65 @@ vi.mock('../../src/main/agent/shared/exec-version', () => ({
   },
 }));
 
+vi.mock('node:child_process', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:child_process')>();
+  // Replace both execFile (unix path) and exec (Windows .cmd shim path)
+  // with test-controlled fakes that play nicely with `util.promisify`.
+  // Node's native execFile exposes a `util.promisify.custom` returning
+  // `{ stdout, stderr }`; we mirror that so adapter code written as
+  // `const { stdout } = await execAsync(...)` works against the mock
+  // without touching the real CLI, on every platform.
+  const promisifyCustom = Symbol.for('nodejs.util.promisify.custom');
+  type ExecCallback = (err: Error | null, stdout?: string, stderr?: string) => void;
+  type ExecResult = Promise<{ stdout: string; stderr: string }>;
+  type LogEntry = { path: string; args: readonly string[] };
+
+  const makeMock = (recordCall: (entry: LogEntry) => void) => Object.assign(
+    // Sync callback form: only hit if production code bypasses
+    // promisify and calls execFile/exec directly with a callback.
+    // The adapter uses the promisified form exclusively, so this
+    // branch exists only to satisfy the function signature.
+    (...mockArgs: unknown[]) => {
+      const callback = mockArgs.find((candidate): candidate is ExecCallback => typeof candidate === 'function');
+      if (callback) callback(null, mockAboutStdout, '');
+    },
+    {
+      [promisifyCustom]: (firstArg: string, secondArg?: readonly string[] | unknown): ExecResult => {
+        const pathArg = firstArg;
+        const args = Array.isArray(secondArg) ? (secondArg as readonly string[]) : [];
+        recordCall({ path: pathArg, args });
+        if (mockAboutShouldFail) {
+          return Promise.reject(new Error('agent about failed'));
+        }
+        return Promise.resolve({ stdout: mockAboutStdout, stderr: '' });
+      },
+    },
+  );
+
+  // `execFile(path, args)` on unix → aboutCallLog entry preserves args.
+  const mockExecFile = makeMock(({ path: pathArg, args }) => {
+    aboutCallLog.push({ path: pathArg, args });
+  });
+
+  // `exec(cmdString)` on Windows → parse the quoted path + args back
+  // out of the single command string so tests can still assert on them
+  // uniformly. Expected shape: `"<path>" about --format json`.
+  const mockExec = makeMock(({ path: cmdString }) => {
+    const match = cmdString.match(/^"([^"]+)"\s+(.*)$/);
+    if (match) {
+      aboutCallLog.push({ path: match[1], args: match[2].split(/\s+/) });
+    } else {
+      aboutCallLog.push({ path: cmdString, args: [] });
+    }
+  });
+
+  return {
+    ...original,
+    execFile: mockExecFile,
+    exec: mockExec,
+  };
+});
+
 // Import after mocks are set up
 const { CursorAdapter } = await import('../../src/main/agent/adapters/cursor');
 
@@ -69,6 +139,13 @@ describe('CursorAdapter', () => {
     mockExecVersionStdout = '0.50.3\n';
     mockExecVersionShouldFail = false;
     execVersionCallCount = 0;
+    mockAboutShouldFail = false;
+    mockAboutStdout = JSON.stringify({
+      cliVersion: '2026.04.15-dccdccd',
+      model: 'Auto',
+      subscriptionTier: 'Free',
+    });
+    aboutCallLog.length = 0;
   });
 
   // ── Identity ─────────────────────────────────────────────────────────────
@@ -337,6 +414,203 @@ describe('CursorAdapter', () => {
 
     it('has no status file', () => {
       expect(adapter.runtime.statusFile).toBeUndefined();
+    });
+
+    it('does not export a sessionBootstrap runtime hook', () => {
+      // Adapter-specific lifecycle work lives in `attachSession`, not in
+      // the declarative runtime surface.
+      expect((adapter.runtime as { sessionBootstrap?: unknown }).sessionBootstrap).toBeUndefined();
+    });
+
+    it('exposes an attachSession lifecycle hook', () => {
+      expect(typeof adapter.attachSession).toBe('function');
+    });
+  });
+
+  // ── attachSession ─────────────────────────────────────────────────────────
+
+  describe('attachSession', () => {
+    type UsagePatch = Partial<import('../../src/shared/types').SessionUsage>;
+
+    function makeContext() {
+      const applied: UsagePatch[] = [];
+      return {
+        context: {
+          sessionId: 'test-session-id',
+          applyUsage: (usage: UsagePatch) => { applied.push(usage); },
+        },
+        applied,
+      };
+    }
+
+    async function flushPromises() {
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    it('invokes `agent about --format json` on the detected CLI path', async () => {
+      const { context } = makeContext();
+      adapter.attachSession!(context);
+      await flushPromises();
+      expect(aboutCallLog).toHaveLength(1);
+      expect(aboutCallLog[0].path).toBe('/usr/local/bin/agent');
+      expect(aboutCallLog[0].args).toEqual(['about', '--format', 'json']);
+    });
+
+    it('applies usage with model from the about payload', async () => {
+      mockAboutStdout = JSON.stringify({
+        cliVersion: '2026.04.15-dccdccd',
+        model: 'Auto',
+      });
+      const { context, applied } = makeContext();
+      adapter.attachSession!(context);
+      await flushPromises();
+      expect(applied).toEqual([{ model: { id: 'auto', displayName: 'Auto' } }]);
+    });
+
+    it('lowercases the id but preserves the displayName casing', async () => {
+      mockAboutStdout = JSON.stringify({ model: 'Claude 4.6 Sonnet' });
+      const { context, applied } = makeContext();
+      adapter.attachSession!(context);
+      await flushPromises();
+      expect(applied).toEqual([
+        { model: { id: 'claude 4.6 sonnet', displayName: 'Claude 4.6 Sonnet' } },
+      ]);
+    });
+
+    it('applies nothing when the about command fails', async () => {
+      mockAboutShouldFail = true;
+      const { context, applied } = makeContext();
+      adapter.attachSession!(context);
+      await flushPromises();
+      expect(applied).toHaveLength(0);
+    });
+
+    it('applies nothing when stdout is not valid JSON', async () => {
+      mockAboutStdout = 'not-json-at-all';
+      const { context, applied } = makeContext();
+      adapter.attachSession!(context);
+      await flushPromises();
+      expect(applied).toHaveLength(0);
+    });
+
+    it('applies nothing when the model field is missing', async () => {
+      mockAboutStdout = JSON.stringify({ cliVersion: 'x' });
+      const { context, applied } = makeContext();
+      adapter.attachSession!(context);
+      await flushPromises();
+      expect(applied).toHaveLength(0);
+    });
+
+    it('applies nothing when the model field is an empty string', async () => {
+      mockAboutStdout = JSON.stringify({ model: '' });
+      const { context, applied } = makeContext();
+      adapter.attachSession!(context);
+      await flushPromises();
+      expect(applied).toHaveLength(0);
+    });
+
+    it('applies nothing when the model field is non-string', async () => {
+      mockAboutStdout = JSON.stringify({ model: 42 });
+      const { context, applied } = makeContext();
+      adapter.attachSession!(context);
+      await flushPromises();
+      expect(applied).toHaveLength(0);
+    });
+
+    it('applies nothing when the CLI is not detected', async () => {
+      mockWhichResult = new Error('not found');
+      adapter.invalidateDetectionCache();
+      const { context, applied } = makeContext();
+      adapter.attachSession!(context);
+      await flushPromises();
+      expect(applied).toHaveLength(0);
+      // Should not even attempt the about call without a resolved path.
+      expect(aboutCallLog).toHaveLength(0);
+    });
+
+    it('dispose() prevents a late-arriving about result from being applied', async () => {
+      // Delay the mock so dispose can land first.
+      let resolveExec: ((result: { stdout: string; stderr: string }) => void) | null = null;
+      const slowPromise = new Promise<{ stdout: string; stderr: string }>((resolve) => {
+        resolveExec = resolve;
+      });
+      // Overwrite the promisified mock to return our pending promise.
+      const promisifyCustom = Symbol.for('nodejs.util.promisify.custom');
+      const cp = await import('node:child_process');
+      const previous = (cp.exec as unknown as Record<symbol, unknown>)[promisifyCustom];
+      (cp.exec as unknown as Record<symbol, unknown>)[promisifyCustom] = () => slowPromise;
+      (cp.execFile as unknown as Record<symbol, unknown>)[promisifyCustom] = () => slowPromise;
+      try {
+        const { context, applied } = makeContext();
+        const attachment = adapter.attachSession!(context);
+        if (attachment) attachment.dispose();
+        resolveExec?.({ stdout: JSON.stringify({ model: 'Auto' }), stderr: '' });
+        await flushPromises();
+        expect(applied).toHaveLength(0);
+      } finally {
+        (cp.exec as unknown as Record<symbol, unknown>)[promisifyCustom] = previous;
+        (cp.execFile as unknown as Record<symbol, unknown>)[promisifyCustom] = previous;
+      }
+    });
+
+    it('returns an attachment with a dispose method', () => {
+      const { context } = makeContext();
+      const attachment = adapter.attachSession!(context);
+      expect(attachment).toBeDefined();
+      expect(typeof (attachment as import('../../src/shared/types').SessionAttachment).dispose).toBe('function');
+    });
+
+    it('two attachments on the same instance are independent - first dispose does not affect second', async () => {
+      // Two sessions sharing the same adapter instance (normal when two tasks
+      // use Cursor). Each gets a separate dispose flag, so disposing the first
+      // attachment must not block the second attachment's applyUsage call.
+      const { context: contextA, applied: appliedA } = makeContext();
+      const { context: contextB, applied: appliedB } = makeContext();
+
+      const attachmentA = adapter.attachSession!(contextA);
+      const attachmentB = adapter.attachSession!(contextB);
+
+      // Dispose the first attachment immediately
+      if (attachmentA) attachmentA.dispose();
+
+      await flushPromises();
+
+      // First: disposed, so nothing applied
+      expect(appliedA).toHaveLength(0);
+
+      // Second: untouched, so the model should resolve normally
+      expect(appliedB).toEqual([{ model: { id: 'auto', displayName: 'Auto' } }]);
+
+      // Dispose the second cleanly
+      if (attachmentB) attachmentB.dispose();
+    });
+
+    it('applyUsage called from a microtask BEFORE dispose sets the flag is still applied', async () => {
+      // Scenario: the about promise resolves synchronously (microtask), but
+      // test code queues dispose() to run in the NEXT microtask via
+      // setImmediate. The race: applyUsage resolves before dispose flips
+      // the flag, so usage must be applied.
+      //
+      // This is the exact race described in audit gap 7: the .then() callback
+      // that calls applyUsage is queued before dispose(), so disposed=false
+      // when applyUsage executes. The flag is only set after the microtask
+      // queue drains.
+      const { context, applied } = makeContext();
+
+      // Attach session (fires the about query immediately)
+      const attachment = adapter.attachSession!(context);
+
+      // Flush the about promise (.then resolves in microtask queue)
+      await new Promise((resolve) => setImmediate(resolve));
+
+      // Dispose AFTER the microtask that called applyUsage has run
+      if (attachment) attachment.dispose();
+
+      // Since the about result arrived before dispose flipped the flag,
+      // usage must have been applied.
+      expect(applied).toHaveLength(1);
+      expect(applied[0]).toHaveProperty('model');
     });
   });
 

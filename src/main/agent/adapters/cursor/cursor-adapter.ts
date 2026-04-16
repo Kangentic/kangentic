@@ -1,10 +1,63 @@
+import { exec, execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { AgentDetector } from '../../shared/agent-detector';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { CursorStreamParser } from './stream-parser';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
-import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy } from '../../../../shared/types';
+import type {
+  AgentPermissionEntry,
+  PermissionMode,
+  AdapterRuntimeStrategy,
+  SessionUsage,
+  SessionContext,
+  SessionAttachment,
+} from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
+
+const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+/**
+ * Run `<cursorPath> about --format json` and return stdout.
+ *
+ * On Windows, npm/installer-generated shims (`agent.cmd`, `agent.bat`)
+ * cannot be invoked via `execFile` directly since Node's CVE-2024-27980
+ * mitigation refuses to execute .cmd/.bat without a shell. We use `exec`
+ * with a quoted command string on Windows (same pattern as
+ * `shared/exec-version.ts`) and keep `execFile` on macOS/Linux where
+ * the binary is a native ELF/Mach-O.
+ */
+async function runAgentAbout(cursorPath: string): Promise<string> {
+  if (process.platform === 'win32') {
+    const { stdout } = await execAsync(`"${cursorPath}" about --format json`, {
+      timeout: 5000,
+      windowsHide: true,
+    });
+    return stdout;
+  }
+  const { stdout } = await execFileAsync(cursorPath, ['about', '--format', 'json'], {
+    timeout: 5000,
+    windowsHide: true,
+  });
+  return stdout;
+}
+
+/**
+ * Narrow an unknown `JSON.parse(...)` result to the subset of the
+ * `agent about --format json` payload we actually consume: a record
+ * with a non-empty string `model` field. Other fields (cliVersion,
+ * subscriptionTier, osPlatform, ...) exist but we ignore them.
+ */
+function isAboutPayload(value: unknown): value is { model: string } {
+  return (
+    typeof value === 'object'
+    && value !== null
+    && 'model' in value
+    && typeof (value as { model: unknown }).model === 'string'
+    && (value as { model: string }).model.length > 0
+  );
+}
 
 /**
  * Cursor CLI adapter - integrates the Cursor terminal agent
@@ -157,6 +210,45 @@ export class CursorAdapter implements AgentAdapter {
       createParser: () => new CursorStreamParser(),
     },
   };
+
+  /**
+   * Kick off an out-of-band model bootstrap when a session starts.
+   * Cursor's `--output-format stream-json` requires `--print`, so
+   * interactive TUI spawns (permissionMode === 'default') emit no
+   * NDJSON init event and the ContextBar spinner would otherwise hang
+   * forever. `agent about --format json` is a documented, stable CLI
+   * command that returns `{ "model": "<name>", ... }` in under a
+   * second and works in every permission mode.
+   *
+   * The fetch is fire-and-forget. `dispose()` sets a cancel flag so a
+   * late-arriving result does not push usage into a torn-down session.
+   */
+  attachSession(context: SessionContext): SessionAttachment {
+    let disposed = false;
+    this.fetchAboutUsage()
+      .then((usage) => {
+        if (disposed || !usage) return;
+        context.applyUsage(usage);
+      })
+      .catch(() => {
+        // Older Cursor CLI versions may lack `--format json` or the
+        // `about` subcommand. Silently skip: the stream-json path
+        // still covers `--print` spawns and nothing is worse than
+        // the pre-fix behavior.
+      });
+    return {
+      dispose: () => { disposed = true; },
+    };
+  }
+
+  private async fetchAboutUsage(): Promise<Partial<SessionUsage> | null> {
+    const detection = await this.detector.detect();
+    if (!detection.found || !detection.path) return null;
+    const stdout = await runAgentAbout(detection.path);
+    const payload: unknown = JSON.parse(stdout);
+    if (!isAboutPayload(payload)) return null;
+    return { model: { id: payload.model.toLowerCase(), displayName: payload.model } };
+  }
 
   // Cursor CLI does not use hooks - no-op
   removeHooks(_directory: string): void {}

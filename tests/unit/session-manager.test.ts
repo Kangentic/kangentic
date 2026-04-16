@@ -1594,3 +1594,220 @@ describe('safeKillPty behavior', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// 15. attachSession dispatch contract
+// ---------------------------------------------------------------------------
+
+describe('attachSession dispatch contract', () => {
+  let manager: SessionManager;
+
+  beforeEach(() => {
+    manager = new SessionManager();
+  });
+
+  afterEach(async () => {
+    manager.killAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  async function spawnWithAdapter(
+    taskId: string,
+    adapter: import('../../src/shared/types').AgentParser & {
+      attachSession?(context: import('../../src/shared/types').SessionContext): import('../../src/shared/types').SessionAttachment | void;
+    },
+  ) {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId,
+      projectId: 'project-attach-test',
+      command: '',
+      cwd: tmpDir,
+      agentParser: adapter as unknown as Parameters<typeof manager.spawn>[0]['agentParser'],
+    });
+    return { session, ...mock };
+  }
+
+  it('calls attachSession with a SessionContext whose sessionId matches the spawned session', async () => {
+    const capturedContexts: import('../../src/shared/types').SessionContext[] = [];
+
+    const adapter = {
+      ...claudeAdapter,
+      attachSession(context: import('../../src/shared/types').SessionContext) {
+        capturedContexts.push(context);
+        return { dispose: vi.fn() };
+      },
+    };
+
+    const { session } = await spawnWithAdapter('task-attach-context', adapter);
+
+    expect(capturedContexts).toHaveLength(1);
+    expect(capturedContexts[0].sessionId).toBe(session.id);
+    expect(typeof capturedContexts[0].applyUsage).toBe('function');
+  });
+
+  it('stores the returned attachment on the session (dispose called when session exits via onExit)', async () => {
+    const disposeSpy = vi.fn();
+
+    const adapter = {
+      ...claudeAdapter,
+      attachSession() {
+        return { dispose: disposeSpy };
+      },
+    };
+
+    const { triggerExit } = await spawnWithAdapter('task-attach-dispose-exit', adapter);
+
+    expect(disposeSpy).not.toHaveBeenCalled();
+
+    triggerExit(0);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('applyUsage inside the context calls usageTracker.setSessionUsage and emits usage event', async () => {
+    let capturedContext: import('../../src/shared/types').SessionContext | null = null;
+
+    const adapter = {
+      ...claudeAdapter,
+      attachSession(context: import('../../src/shared/types').SessionContext) {
+        capturedContext = context;
+        return { dispose: vi.fn() };
+      },
+    };
+
+    const { session } = await spawnWithAdapter('task-attach-apply-usage', adapter);
+
+    const usageEvents: Array<{ sessionId: string; usage: Partial<import('../../src/shared/types').SessionUsage> }> = [];
+    manager.on('usage', (sessionId: string, usage: import('../../src/shared/types').SessionUsage) => {
+      usageEvents.push({ sessionId, usage });
+    });
+
+    expect(capturedContext).not.toBeNull();
+
+    capturedContext!.applyUsage({ model: { id: 'cursor-small', displayName: 'Cursor Small' } });
+
+    // UsageTracker.setSessionUsage triggers the onUsageChange callback which emits 'usage'
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(usageEvents.some((e) => e.sessionId === session.id)).toBe(true);
+    const usageCache = manager.getUsageCache();
+    expect(usageCache[session.id]?.model?.id).toBe('cursor-small');
+  });
+
+  it('applyUsage is a no-op once the session has been removed (torn-down guard)', async () => {
+    let capturedContext: import('../../src/shared/types').SessionContext | null = null;
+
+    const adapter = {
+      ...claudeAdapter,
+      attachSession(context: import('../../src/shared/types').SessionContext) {
+        capturedContext = context;
+        return { dispose: vi.fn() };
+      },
+    };
+
+    const { session } = await spawnWithAdapter('task-attach-noop-after-remove', adapter);
+
+    manager.remove(session.id);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // This should not throw and should not write to any tracker
+    expect(() => capturedContext!.applyUsage({ model: { id: 'zombie', displayName: 'Zombie' } })).not.toThrow();
+
+    // Session is gone - usage cache entry must not exist
+    expect(manager.getUsageCache()['zombie']).toBeUndefined();
+  });
+
+  it('adapterAttachment.dispose called on remove()', async () => {
+    const disposeSpy = vi.fn();
+
+    const adapter = {
+      ...claudeAdapter,
+      attachSession() {
+        return { dispose: disposeSpy };
+      },
+    };
+
+    const { session } = await spawnWithAdapter('task-attach-dispose-remove', adapter);
+
+    expect(disposeSpy).not.toHaveBeenCalled();
+
+    manager.remove(session.id);
+
+    expect(disposeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('adapterAttachment.dispose called on respawn (replace-existing path) before second attachSession fires', async () => {
+    const callOrder: string[] = [];
+    const disposeFirstSpy = vi.fn(() => { callOrder.push('dispose-first'); });
+
+    let attachCallCount = 0;
+    const adapter = {
+      ...claudeAdapter,
+      attachSession() {
+        attachCallCount++;
+        if (attachCallCount === 1) {
+          callOrder.push('attach-first');
+          return { dispose: disposeFirstSpy };
+        }
+        callOrder.push('attach-second');
+        return { dispose: vi.fn() };
+      },
+    };
+
+    // First spawn
+    const { session: firstSession } = await spawnWithAdapter('task-attach-respawn', adapter);
+    expect(firstSession.taskId).toBe('task-attach-respawn');
+    expect(attachCallCount).toBe(1);
+
+    // Respawn (same taskId, triggers replace-existing path)
+    const mock2 = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock2.mockPty as unknown as pty.IPty);
+    await manager.spawn({
+      taskId: 'task-attach-respawn',
+      projectId: 'project-attach-test',
+      command: '',
+      cwd: tmpDir,
+      agentParser: adapter as unknown as Parameters<typeof manager.spawn>[0]['agentParser'],
+    });
+
+    expect(attachCallCount).toBe(2);
+    // dispose must have been called before the second attachSession fires
+    const disposeIdx = callOrder.indexOf('dispose-first');
+    const attachSecondIdx = callOrder.indexOf('attach-second');
+    expect(disposeFirstSpy).toHaveBeenCalledTimes(1);
+    expect(disposeIdx).toBeLessThan(attachSecondIdx);
+  });
+
+  it('adapter WITHOUT attachSession method spawns without error (optional-chain regression guard)', async () => {
+    // Use a minimal adapter that explicitly has no attachSession property
+    const adapterWithoutAttach = {
+      ...claudeAdapter,
+      attachSession: undefined,
+    };
+
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+
+    let spawnError: unknown = null;
+    try {
+      await manager.spawn({
+        taskId: 'task-no-attach',
+        projectId: 'project-no-attach',
+        command: '',
+        cwd: tmpDir,
+        agentParser: adapterWithoutAttach as unknown as Parameters<typeof manager.spawn>[0]['agentParser'],
+      });
+    } catch (error) {
+      spawnError = error;
+    }
+
+    expect(spawnError).toBeNull();
+    // Session should be running
+    const sessions = manager.listSessions();
+    const spawnedSession = sessions.find((s) => s.taskId === 'task-no-attach');
+    expect(spawnedSession?.status).toBe('running');
+  });
+});

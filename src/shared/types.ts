@@ -1055,6 +1055,14 @@ export interface AgentParser {
    * and stay idempotent on double-releases (suspend + onExit).
    */
   removeHooks(directory: string, taskId?: string): void;
+  /**
+   * Optional per-session lifecycle hook. When present, session manager
+   * calls it once per spawn and disposes the returned attachment on
+   * session end. All adapter-specific orchestration that can't be
+   * expressed declaratively through `runtime` lives here. See
+   * `AgentAdapter.attachSession` for full contract.
+   */
+  attachSession?(context: SessionContext): SessionAttachment | void;
 }
 
 /**
@@ -1228,6 +1236,42 @@ export interface AdapterRuntimeStrategy {
     /** Build a fresh parser bound to a single session. */
     createParser(): StreamOutputParser;
   };
+}
+
+/**
+ * Narrow, generic surface the session manager hands to an adapter's
+ * `attachSession` hook. Everything an adapter needs to push telemetry
+ * into the runtime without knowing anything about UsageTracker,
+ * IPC, or the session map - so adapter-specific orchestration can
+ * live inside the adapter module, not inside session-manager.ts.
+ *
+ * Keep this interface minimal - expand only when a new adapter has
+ * a concrete need.
+ */
+export interface SessionContext {
+  /** Stable internal session ID for diagnostic logging. */
+  readonly sessionId: string;
+
+  /**
+   * Merge a partial SessionUsage patch into the session's
+   * UsageTracker state. Safe to call from async callbacks - a no-op
+   * once the session has been torn down. Used by adapters that
+   * resolve telemetry out-of-band (secondary CLI queries, HTTP
+   * probes, etc.) and want to seed ContextBar before the PTY
+   * produces parseable output.
+   */
+  applyUsage(usage: Partial<SessionUsage>): void;
+}
+
+/**
+ * Handle returned from `AgentAdapter.attachSession` that lets the
+ * session manager cancel pending adapter work when the session ends.
+ * Adapters using fire-and-forget promises can implement this as a
+ * flag flip; adapters subscribing to timers, watchers, or streams
+ * should clear those here.
+ */
+export interface SessionAttachment {
+  dispose(): void;
 }
 
 /**

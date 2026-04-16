@@ -1,4 +1,11 @@
-import type { SessionRecord, AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy } from '../../shared/types';
+import type {
+  SessionRecord,
+  AgentPermissionEntry,
+  PermissionMode,
+  AdapterRuntimeStrategy,
+  SessionContext,
+  SessionAttachment,
+} from '../../shared/types';
 
 /** CLI detection result returned by all agent detectors. */
 export interface AgentInfo {
@@ -119,4 +126,23 @@ export interface AgentAdapter {
    * at runtime. See AdapterRuntimeStrategy for details.
    */
   readonly runtime: AdapterRuntimeStrategy;
+
+  /**
+   * Optional session lifecycle hook called once per PTY spawn, after
+   * the session is live. Adapters that need to do per-session work
+   * outside the declarative `runtime` hooks (e.g. fire an out-of-band
+   * CLI query to resolve the active model, subscribe to an external
+   * event stream, set up a file watcher this adapter uniquely needs)
+   * implement this method. The returned `SessionAttachment.dispose`
+   * is called when the session ends so adapters can cancel pending
+   * work cleanly.
+   *
+   * SessionManager passes a narrow `SessionContext` that exposes only
+   * generic primitives (`applyUsage`, the session ID). It does not
+   * know what the adapter does inside this method - all adapter
+   * specifics stay in the adapter module.
+   *
+   * Adapters that do not need per-session work can omit this.
+   */
+  attachSession?(context: SessionContext): SessionAttachment | void;
 }

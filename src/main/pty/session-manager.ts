@@ -17,7 +17,15 @@ import { adaptCommandForShell, isUncPath } from '../../shared/paths';
 import { trackEvent, sanitizeErrorMessage } from '../analytics/analytics';
 import { isShuttingDown } from '../shutdown-state';
 import type { TranscriptRepository } from '../db/repositories/transcript-repository';
-import type { Session, SessionStatus, SessionUsage, ActivityState, SessionEvent, SpawnSessionInput } from '../../shared/types';
+import type {
+  Session,
+  SessionStatus,
+  SessionUsage,
+  ActivityState,
+  SessionEvent,
+  SpawnSessionInput,
+  SessionContext,
+} from '../../shared/types';
 
 interface ManagedSession {
   id: string;
@@ -50,6 +58,12 @@ interface ManagedSession {
    *  output over the PTY (e.g. Cursor's stream-json). Built on first PTY
    *  data via `agentParser.runtime.streamOutput.createParser()`. */
   streamParser?: import('../../shared/types').StreamOutputParser;
+  /** Handle returned from the adapter's optional `attachSession` hook.
+   *  Disposed on session end so fire-and-forget adapter work can be
+   *  cancelled cleanly. Adapters drive all their own per-session
+   *  orchestration through this; SessionManager never inspects the
+   *  attachment. */
+  adapterAttachment?: import('../../shared/types').SessionAttachment;
 }
 
 /**
@@ -416,6 +430,11 @@ export class SessionManager extends EventEmitter {
         clearTimeout(existing.sessionIdCaptureTimer);
         existing.sessionIdCaptureTimer = undefined;
       }
+      // Tear down any adapter-attached work from the previous spawn.
+      if (existing.adapterAttachment) {
+        existing.adapterAttachment.dispose();
+        existing.adapterAttachment = undefined;
+      }
     }
 
     // Carry over previous scrollback BEFORE removing state so scroll history
@@ -641,6 +660,25 @@ export class SessionManager extends EventEmitter {
         });
     }
 
+    // Generic adapter lifecycle hook. Adapters that need per-session
+    // orchestration outside the declarative `runtime` surface
+    // (e.g. out-of-band CLI queries, external event subscriptions)
+    // implement `attachSession`. The context exposes only generic
+    // primitives - SessionManager never inspects what the adapter
+    // does inside. The returned attachment is disposed on session
+    // end so fire-and-forget work can be cancelled cleanly.
+    if (input.agentParser?.attachSession) {
+      const context: SessionContext = {
+        sessionId: id,
+        applyUsage: (usage) => {
+          if (!this.sessions.has(id)) return;
+          this.usageTracker.setSessionUsage(id, usage);
+        },
+      };
+      const attachment = input.agentParser.attachSession(context);
+      if (attachment) session.adapterAttachment = attachment;
+    }
+
     // Batched data output (~60fps)
     ptyProcess.onData((data: string) => {
       this.bufferManager.onData(id, data);
@@ -752,6 +790,10 @@ export class SessionManager extends EventEmitter {
       if (session.sessionIdCaptureTimer) {
         clearTimeout(session.sessionIdCaptureTimer);
         session.sessionIdCaptureTimer = undefined;
+      }
+      if (session.adapterAttachment) {
+        session.adapterAttachment.dispose();
+        session.adapterAttachment = undefined;
       }
 
       // Flush transcript to DB before closing out the session
@@ -876,6 +918,10 @@ export class SessionManager extends EventEmitter {
     if (session?.sessionIdCaptureTimer) {
       clearTimeout(session.sessionIdCaptureTimer);
       session.sessionIdCaptureTimer = undefined;
+    }
+    if (session?.adapterAttachment) {
+      session.adapterAttachment.dispose();
+      session.adapterAttachment = undefined;
     }
     this.sessionHistoryReader.detach(sessionId);
     this.statusFileReader.detach(sessionId);
