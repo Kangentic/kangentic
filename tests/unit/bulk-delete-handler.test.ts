@@ -164,7 +164,7 @@ vi.mock('../../src/main/config/config-manager', () => ({
 // Import under test (after all mocks are registered)
 // ---------------------------------------------------------------------------
 
-import { registerTaskHandlers } from '../../src/main/ipc/handlers/tasks';
+import { registerTaskCrudHandlers } from '../../src/main/ipc/handlers/task-crud';
 import { IPC } from '../../src/shared/ipc-channels';
 
 // ---------------------------------------------------------------------------
@@ -301,7 +301,7 @@ describe('TASK_BULK_DELETE handler', () => {
     // (mainWindow, currentProjectId/Path, sessionManager, configManager,
     // commandInjector). The `as never` cast sidesteps the shape check for
     // unused fields like projectRepo, gitDetector, shellResolver, etc.
-    registerTaskHandlers(context as never);
+    registerTaskCrudHandlers(context as never);
   });
 
   // -------------------------------------------------------------------------

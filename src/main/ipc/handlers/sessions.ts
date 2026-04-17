@@ -5,7 +5,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, ensureTaskWorktree, createTransitionEngine } from '../helpers';
-import { handleTaskMove } from './tasks';
+import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
 import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessionId } from '../../engine/session-lifecycle';

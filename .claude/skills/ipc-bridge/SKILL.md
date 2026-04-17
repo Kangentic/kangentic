@@ -140,7 +140,10 @@ export function registerAllIpc(mainWindow: BrowserWindow): void {
 
   // Register by domain
   registerProjectHandlers(context);
-  registerTaskHandlers(context);
+  registerTaskCrudHandlers(context);
+  registerTaskArchiveHandlers(context);
+  registerTaskMoveHandlers(context);
+  registerTaskBranchHandlers(context);
   registerSessionHandlers(context);
   registerBoardHandlers(context);
   registerSystemHandlers(context);

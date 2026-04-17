@@ -18,7 +18,10 @@ import {
   activateAllProjects as activateAllProjectsImpl,
   getLastOpenedProject as getLastOpenedProjectImpl,
 } from './handlers/projects';
-import { registerTaskHandlers } from './handlers/tasks';
+import { registerTaskCrudHandlers } from './handlers/task-crud';
+import { registerTaskArchiveHandlers } from './handlers/task-archive';
+import { registerTaskMoveHandlers } from './handlers/task-move';
+import { registerTaskBranchHandlers } from './handlers/task-branch';
 import { registerSessionHandlers } from './handlers/sessions';
 import { registerTransientSessionHandlers } from './handlers/transient-sessions';
 import { registerBoardHandlers } from './handlers/board';
@@ -99,7 +102,10 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   };
 
   registerProjectHandlers(context);
-  registerTaskHandlers(context);
+  registerTaskCrudHandlers(context);
+  registerTaskArchiveHandlers(context);
+  registerTaskMoveHandlers(context);
+  registerTaskBranchHandlers(context);
   registerSessionHandlers(context);
   registerTransientSessionHandlers(context);
   registerBoardHandlers(context);

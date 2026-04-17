@@ -173,10 +173,26 @@ Three test tiers — prefer **unit tests** for pure logic, **UI tests** for anyt
 - Needs real IPC, PTY, or session spawning → add to `tests/e2e/`
 - The mock in `tests/ui/mock-electron-api.js` supports full CRUD — extend it if new API methods are added
 
-#### When to test (column discipline)
-- **Executing / Code Review:** Run `npm run typecheck` freely. Quick single-file validation is OK (`npx playwright test tests/ui/specific.spec.ts`) but do NOT run `/test` or full-tier runs. Save full testing for the Tests column.
-- **Tests column:** Has `auto_command: /test` configured. When a task enters this column, Smart Run fires automatically - detects changed files and runs only relevant tiers. If tests fail, fix them in place - do not move the task backward to re-enter Tests.
-- **Pre-commit:** `/merge-back` runs typecheck automatically. The Tests column should have already validated the full suite.
+#### When to test
+
+Full-tier runs are reserved for the `/test` command or explicit user request. While working on a task, stay scoped to what you changed.
+
+**Always fine:**
+- `npm run typecheck` - run freely at any point.
+- Running tests you just added or modified, scoped to those files:
+  - `npx vitest run tests/unit/my-new.test.ts`
+  - `npx playwright test tests/ui/my-new.spec.ts`
+- Single-file validation of an existing test directly affected by your change (same scoped form).
+
+**Never run unless the user explicitly asks, or `/test` / `/merge-back` is executing:**
+- `npm test`
+- `npm run test:unit` (unscoped vitest)
+- `npx vitest run` (no file path)
+- `npx playwright test` and `npx playwright test --project=ui` (no spec path)
+
+If a run would execute tests you did not add or modify, it is a full-tier run. Stop and let `/test` handle it.
+
+**Pre-commit:** `/merge-back` runs typecheck automatically. Full-tier validation is the `/test` command's job.
 
 ### Performance
 

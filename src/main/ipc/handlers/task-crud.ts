@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { ipcMain } from 'electron';
+import PQueue from 'p-queue';
 import { IPC } from '../../../shared/ipc-channels';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { WorktreeManager } from '../../git/worktree-manager';
@@ -12,12 +13,79 @@ import {
   ensureTaskBranchCheckout,
   createTransitionEngine,
   cleanupTaskResources,
-  spawnAgent,
 } from '../helpers';
 import { guardActiveNonWorktreeSessions } from './task-move';
 import { interpolateTemplate } from '../../agent/shared';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
+import type { TaskBulkDeleteFailure, TaskBulkDeleteResult, TaskBulkDeleteProgress } from '../../../shared/types';
+
+/**
+ * Cap on concurrent bulk-delete workers. Git mutations serialize through the
+ * per-project queue in WorktreeManager.withGitLock, so the fan-out here only
+ * helps during the non-git phase (PTY kill, session-dir rm, DB writes). A
+ * lower number (2) is deliberately chosen: with higher concurrency, many
+ * workers enter the sync DB + fs portion of cleanupTaskSession at the same
+ * tick, producing a burst of sync work that starves other IPC handlers and
+ * makes the renderer feel unresponsive even though its own event loop is
+ * fine. 2 gives us some overlap without the burst effect.
+ */
+const BULK_DELETE_CONCURRENCY = 2;
+
+/**
+ * Minimum wall-clock gap between TASK_BULK_DELETE_PROGRESS emissions. Below
+ * this the renderer gets flooded with re-renders that compete with user
+ * interactions for the React scheduler. The final emission is always sent
+ * unthrottled so the UI always reflects the terminal state.
+ */
+const PROGRESS_THROTTLE_MS = 100;
+
+/**
+ * Hard ceiling on how long a single task's cleanup can block the batch.
+ *
+ * `cleanupTaskResources` can hang if a git child process started by
+ * `simple-git` never resolves (stdio pipe stall, stale `.git/worktrees/*`
+ * metadata pointing at an unreachable path, or similar). Because
+ * `WorktreeManager.withGitLock` serializes every git operation for the
+ * project through a promise chain, a single hung op holds the lock forever
+ * and every subsequent task queues behind it - the whole batch freezes
+ * even though the outer queue still has workers ready.
+ *
+ * 30 seconds is comfortably longer than any legitimate single-task cleanup
+ * on a sane repo (git worktree remove + prune + branch -D on a ~200-
+ * worktree parent repo completes in under 5s), so the timeout only fires
+ * on genuine hangs. When it does, the task's DB row is still deleted (the
+ * user's delete intent is honored) and a failure entry captures the
+ * condition so the UI can surface it.
+ */
+const TASK_CLEANUP_TIMEOUT_MS = 30_000;
+
+/**
+ * Race an operation against a wall-clock deadline. Resolves with the
+ * operation's value if it completes in time, otherwise rejects with a
+ * descriptive Error. The operation keeps running in the background after
+ * the timeout - Node has no generic way to cancel an in-flight simple-git
+ * child process, so the best we can do is abandon the promise and let the
+ * process exit on its own schedule. This is acceptable because the stuck
+ * resource is already broken; we're just refusing to block the batch on it.
+ */
+function withDeadline<T>(
+  operation: () => Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(
+      () => reject(new Error(`Timed out after ${timeoutMs}ms: ${timeoutMessage}`)),
+      timeoutMs,
+    );
+  });
+  return Promise.race([
+    operation().finally(() => { if (timeoutHandle) clearTimeout(timeoutHandle); }),
+    deadline,
+  ]);
+}
 
 export function registerTaskCrudHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.TASK_LIST, (_, swimlaneId?) => {
@@ -42,8 +110,10 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     if (toLane?.auto_spawn && context.currentProjectPath && context.currentProjectId) {
       const projectPath = context.currentProjectPath;
       const projectId = context.currentProjectId;
-      // Serialize the spawn flow against any concurrent lifecycle op (move,
-      // suspend, kill, etc.) for the freshly created task.
+      // Serialize the spawn flow against any other in-flight lifecycle op
+      // (move, suspend, kill, delete) for this freshly created task. Without
+      // the lock, a concurrent TASK_DELETE could clean up resources mid-spawn
+      // or a TASK_MOVE could race the transition engine.
       await withTaskLock(task.id, async () => {
         try {
           await ensureTaskWorktree(context, task, tasks, projectPath);
@@ -67,7 +137,7 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
         const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
 
         try {
-          // Use '*' as fromSwimlaneId -- no source column on creation, matches wildcard transitions
+          // Use '*' as fromSwimlaneId - no source column on creation, matches wildcard transitions
           await engine.executeTransition(task, '*', toLane.id, toLane.permission_mode);
         } catch (err) {
           console.error('[TASK_CREATE] Transition engine error:', err);
@@ -115,9 +185,9 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       const isThinking = taskSession && activityCache[taskSession.id] === 'thinking';
 
       if (isThinking) {
-        console.log(`[TASK_UPDATE] Skipping branch rename -- task ${input.id.slice(0, 8)} agent is thinking`);
+        console.log(`[TASK_UPDATE] Skipping branch rename - task ${input.id.slice(0, 8)} agent is thinking`);
       } else if (!fs.existsSync(existing.worktree_path)) {
-        console.log(`[TASK_UPDATE] Skipping branch rename -- worktree path missing: ${existing.worktree_path}`);
+        console.log(`[TASK_UPDATE] Skipping branch rename - worktree path missing: ${existing.worktree_path}`);
       } else {
         const worktreeManager = new WorktreeManager(resolvedProjectPath);
         const effectiveConfig = context.configManager.getEffectiveConfig(resolvedProjectPath);
@@ -141,13 +211,13 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     return tasks.update(input);
   });
 
-  ipcMain.handle(IPC.TASK_DELETE, (_, id) => {
+  ipcMain.handle(IPC.TASK_DELETE, async (_, id) => {
     const resolvedProjectId = context.currentProjectId;
     const resolvedProjectPath = context.currentProjectPath;
     const { tasks, attachments } = getProjectRepos(context, resolvedProjectId);
-    // Serialize against any in-flight session lifecycle op so we don't kill
-    // a PTY mid-spawn or delete the task while a resume is creating a worktree.
-    return withTaskLock(id, async () => {
+    // Serialize against any in-flight session lifecycle op for this task so
+    // the long awaits inside cleanup don't race with spawn/resume/etc.
+    await withTaskLock(id, async () => {
       const task = tasks.getById(id);
       if (task) {
         attachments.deleteByTaskId(id);
@@ -157,181 +227,119 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     });
   });
 
-  ipcMain.handle(IPC.TASK_LIST_ARCHIVED, () => {
-    const { tasks } = getProjectRepos(context);
-    return tasks.listArchived();
-  });
-
-  ipcMain.handle(IPC.TASK_UNARCHIVE, (_, input: { id: string; targetSwimlaneId: string }) => {
-    const resolvedProjectId = context.currentProjectId;
-    const resolvedProjectPath = context.currentProjectPath;
-    if (!resolvedProjectId) throw new Error('No project is currently open');
-
-    const { tasks, swimlanes, actions, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
-
-    // Serialize the unarchive + spawn flow against any other lifecycle op for
-    // the same task. Unarchive itself is sync DB work; the lock primarily
-    // covers the worktree/checkout/spawn awaits below.
-    return withTaskLock(input.id, async () => {
-      // Determine position at end of target lane
-      const laneTasks = tasks.list(input.targetSwimlaneId);
-      const position = laneTasks.length;
-
-      const task = tasks.unarchive(input.id, input.targetSwimlaneId, position);
-
-      const toLane = swimlanes.getById(input.targetSwimlaneId);
-
-      // Recreate the worktree whenever the target column expects code to
-      // exist on disk (anything other than To Do / Done / missing lane).
-      // Done drops delete the worktree but preserve branch_name + session
-      // records; ensureTaskWorktree restores the directory from that branch.
-      const needsWorktree = !!toLane
-        && toLane.role !== 'todo'
-        && toLane.role !== 'done';
-      if (needsWorktree) {
-        try {
-          await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
-        } catch (worktreeError) {
-          // Revert the unarchive so the task doesn't end up stranded in a
-          // custom column with no worktree and no way for the user to tell
-          // something went wrong. Move it back to the Done swimlane and
-          // re-archive so it lands in the Completed list again. Rethrow so
-          // the renderer surfaces a toast.
-          console.error('[TASK_UNARCHIVE] Worktree recreation failed, reverting unarchive:', worktreeError);
-          try {
-            const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
-            if (doneLane) {
-              tasks.move({ taskId: input.id, targetSwimlaneId: doneLane.id, targetPosition: 0 });
-            }
-            tasks.archive(input.id);
-          } catch (revertError) {
-            console.error('[TASK_UNARCHIVE] Failed to revert unarchive:', revertError);
-          }
-          const message = worktreeError instanceof Error ? worktreeError.message : String(worktreeError);
-          throw new Error(`Worktree recreation failed: ${message}`);
-        }
-      }
-
-      // Guard: don't resume if target doesn't auto-spawn (todo, done, or custom with auto_spawn=false)
-      if (!toLane?.auto_spawn) {
-        return tasks.getById(input.id);
-      }
-
-      // Checkout the task's branch in the main repo (non-worktree tasks only).
-      // If checkout fails, the task is still unarchived but no agent is spawned.
-      try {
-        guardActiveNonWorktreeSessions(context, task, tasks);
-        await ensureTaskBranchCheckout(task, resolvedProjectPath);
-      } catch (checkoutError) {
-        console.error('[TASK_UNARCHIVE] Branch checkout failed:', checkoutError);
-        return tasks.getById(input.id);
-      }
-
-      // Execute transition actions + resume suspended session (or spawn fresh).
-      // Uses the consolidated spawnAgent helper which handles:
-      // - user-paused guard (won't auto-resume manually paused tasks)
-      // - correct auto_command handling (resume prompt vs commandInjector)
-      // - single source of truth for spawn/resume logic
-      if (resolvedProjectPath && toLane) {
-        const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
-        if (doneLane) {
-          const db = getProjectDb(resolvedProjectId);
-          const sessionRepo = new SessionRepository(db);
-          const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
-
-          await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: doneLane.id, toLane, skipPromptTemplate: true });
-        }
-      }
-
-      return tasks.getById(input.id);
-    });
-  });
-
-  ipcMain.handle(IPC.TASK_BULK_DELETE, async (_, ids: string[]) => {
+  ipcMain.handle(IPC.TASK_BULK_DELETE, async (_, ids: string[]): Promise<TaskBulkDeleteResult> => {
     const resolvedProjectId = context.currentProjectId;
     const resolvedProjectPath = context.currentProjectPath;
     const { tasks, attachments } = getProjectRepos(context, resolvedProjectId);
-    for (const id of ids) {
-      // Per-task lock so each delete serializes against any in-flight session
-      // op for that task, while different tasks remain independent.
-      await withTaskLock(id, async () => {
-        const task = tasks.getById(id);
-        if (task) {
-          attachments.deleteByTaskId(id);
-          await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
-        }
-        tasks.delete(id);
-      });
+    const failures: TaskBulkDeleteFailure[] = [];
+    const total = ids.length;
+    let completed = 0;
+
+    let lastEmitAt = 0;
+    const sendProgress = (): void => {
+      if (context.mainWindow.isDestroyed()) return;
+      const payload: TaskBulkDeleteProgress = {
+        completed,
+        total,
+        failures: failures.slice(),
+      };
+      context.mainWindow.webContents.send(IPC.TASK_BULK_DELETE_PROGRESS, payload);
+      lastEmitAt = Date.now();
+    };
+    // Throttled emit: per-task progress during the loop is coalesced so the
+    // renderer isn't hammered with hundreds of re-renders while a large batch
+    // runs. The initial emit (completed=0) and final emit (completed=total)
+    // bypass the throttle so the UI always shows start + end states.
+    const emitProgress = (options?: { force?: boolean }): void => {
+      if (options?.force || Date.now() - lastEmitAt >= PROGRESS_THROTTLE_MS) {
+        sendProgress();
+      }
+    };
+
+    if (total === 0) {
+      return { deleted: 0, failures: [] };
     }
-  });
 
-  ipcMain.handle(IPC.TASK_BULK_UNARCHIVE, async (_, ids: string[], targetSwimlaneId: string) => {
-    const resolvedProjectId = context.currentProjectId;
-    const resolvedProjectPath = context.currentProjectPath;
-    if (!resolvedProjectId) throw new Error('No project is currently open');
+    // Fan out with a concurrency cap. Per-task work is already serialized via
+    // withTaskLock, and git mutations serialize through the per-project queue
+    // inside WorktreeManager.withGitLock, so parallel workers here just
+    // overlap the non-git work (PTY exit awaits, session DB writes,
+    // attachment deletes) and yield between async boundaries to keep the main
+    // process event loop responsive.
+    const queue = new PQueue({ concurrency: BULK_DELETE_CONCURRENCY });
+    emitProgress({ force: true });
 
-    const { tasks, swimlanes, actions, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
-    const toLane = swimlanes.getById(targetSwimlaneId);
+    await queue.addAll(
+      ids.map((id) => async () => {
+        const shortId = id.slice(0, 8);
+        const startedAt = Date.now();
+        let cleanupError: unknown = null;
+        let worktreePathBefore: string | null = null;
+        console.log(`[TASK_BULK_DELETE] start ${shortId}`);
 
-    for (const id of ids) {
-      // Per-task lock so each unarchive+spawn serializes against any in-flight
-      // session op for that task, while different tasks remain independent.
-      await withTaskLock(id, async () => {
-        const laneTasks = tasks.list(targetSwimlaneId);
-        const position = laneTasks.length;
-        const task = tasks.unarchive(id, targetSwimlaneId, position);
-
-        // Recreate the worktree whenever the target column expects code to
-        // exist on disk (anything other than To Do / Done). Matches single-
-        // task TASK_UNARCHIVE semantics.
-        const needsWorktree = !!toLane
-          && toLane.role !== 'todo'
-          && toLane.role !== 'done';
-        if (needsWorktree) {
-          try {
-            await ensureTaskWorktree(context, task, tasks, resolvedProjectPath);
-          } catch (worktreeError) {
-            // Revert this task's unarchive so it stays in Done rather than
-            // stranding in the target column without a worktree. Bulk
-            // operations swallow per-task errors so the rest of the batch
-            // continues; the user can retry the failed task individually.
-            console.error(`[TASK_BULK_UNARCHIVE] Worktree recreation failed for task ${id.slice(0, 8)}, reverting:`, worktreeError);
-            try {
-              const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
-              if (doneLane) {
-                tasks.move({ taskId: id, targetSwimlaneId: doneLane.id, targetPosition: 0 });
-              }
-              tasks.archive(id);
-            } catch (revertError) {
-              console.error(`[TASK_BULK_UNARCHIVE] Failed to revert unarchive for task ${id.slice(0, 8)}:`, revertError);
-            }
-            return;
-          }
-        }
-
-        if (!toLane?.auto_spawn) return;
-
-        // Checkout the task's branch in the main repo (non-worktree tasks only).
-        // Catch per-task so one failure doesn't block the entire batch.
         try {
-          guardActiveNonWorktreeSessions(context, task, tasks);
-          await ensureTaskBranchCheckout(task, resolvedProjectPath);
-        } catch (checkoutError) {
-          console.error(`[TASK_BULK_UNARCHIVE] Branch checkout failed for task ${id.slice(0, 8)}:`, checkoutError);
-          return;
-        }
+          await withTaskLock(id, async () => {
+            const task = tasks.getById(id);
+            worktreePathBefore = task?.worktree_path ?? null;
+            if (task) {
+              // Cleanup may legitimately take time (git worktree remove + prune)
+              // but MUST NOT hang indefinitely. If a simple-git child process
+              // stalls, the per-project git lock stays held and every subsequent
+              // task queues forever behind it - the whole batch freezes. Deadline
+              // ensures we abandon the stuck op and keep draining the queue.
+              try {
+                await withDeadline(
+                  () => cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath),
+                  TASK_CLEANUP_TIMEOUT_MS,
+                  `cleanupTaskResources for task ${shortId}`,
+                );
+              } catch (error) {
+                cleanupError = error;
+                const message = error instanceof Error ? error.message : String(error);
+                console.warn(
+                  `[TASK_BULK_DELETE] cleanup failed ${shortId}: ${message}. `
+                  + `Proceeding with DB delete; orphaned fs state will be reported.`,
+                );
+              }
+            }
+            // DB deletion always runs - the user's delete intent is honored even
+            // when filesystem cleanup fails or times out. Any orphaned fs state
+            // (worktree directory, session dirs) is surfaced via failures[] so
+            // the user sees exactly what needs manual cleanup.
+            attachments.deleteByTaskId(id);
+            tasks.delete(id);
+          });
 
-        if (resolvedProjectPath && toLane) {
-          const doneLane = swimlanes.list().find((lane) => lane.role === 'done');
-          if (doneLane) {
-            const db = getProjectDb(resolvedProjectId);
-            const sessionRepo = new SessionRepository(db);
-            const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
-
-            await spawnAgent({ context, engine, tasks, sessionRepo, task, fromSwimlaneId: doneLane.id, toLane, skipPromptTemplate: true });
+          if (cleanupError) {
+            const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+            failures.push({ id, error: message });
+          } else if (worktreePathBefore && fs.existsSync(worktreePathBefore)) {
+            // cleanupTaskResources succeeded but the directory survived - orphan.
+            failures.push({
+              id,
+              error: `Worktree directory could not be removed: ${worktreePathBefore}`,
+            });
           }
+        } catch (error) {
+          // Reaches here only if withTaskLock itself failed (unexpected).
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`[TASK_BULK_DELETE] lock failure ${shortId}:`, error);
+          failures.push({ id, error: message });
+        } finally {
+          completed += 1;
+          const elapsed = Date.now() - startedAt;
+          const status = cleanupError ? 'done-with-cleanup-failure' : 'done';
+          console.log(`[TASK_BULK_DELETE] ${status} ${shortId} in ${elapsed}ms (${completed}/${total})`);
+          // Throttled during the loop; the final emit below forces a send
+          // so the renderer always sees completed === total.
+          emitProgress();
         }
-      });
-    }
+      }),
+    );
+
+    // Guarantee the renderer observes the terminal state (bypasses throttle).
+    emitProgress({ force: true });
+
+    return { deleted: total - failures.length, failures };
   });
 }

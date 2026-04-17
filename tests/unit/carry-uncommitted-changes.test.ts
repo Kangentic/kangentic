@@ -61,7 +61,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: vi.fn() }));
 vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({ captureSessionMetrics: vi.fn() }));
 
 import fs from 'node:fs';
-import { carryUncommittedChanges } from '../../src/main/ipc/handlers/tasks';
+import { carryUncommittedChanges } from '../../src/main/ipc/handlers/task-branch';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 

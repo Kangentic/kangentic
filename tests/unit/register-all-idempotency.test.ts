@@ -119,8 +119,17 @@ vi.mock('../../src/main/ipc/handlers/projects', () => ({
   activateAllProjects: vi.fn(),
   getLastOpenedProject: vi.fn(),
 }));
-vi.mock('../../src/main/ipc/handlers/tasks', () => ({
-  registerTaskHandlers: vi.fn(),
+vi.mock('../../src/main/ipc/handlers/task-crud', () => ({
+  registerTaskCrudHandlers: vi.fn(),
+}));
+vi.mock('../../src/main/ipc/handlers/task-archive', () => ({
+  registerTaskArchiveHandlers: vi.fn(),
+}));
+vi.mock('../../src/main/ipc/handlers/task-move', () => ({
+  registerTaskMoveHandlers: vi.fn(),
+}));
+vi.mock('../../src/main/ipc/handlers/task-branch', () => ({
+  registerTaskBranchHandlers: vi.fn(),
 }));
 vi.mock('../../src/main/ipc/handlers/sessions', () => ({
   registerSessionHandlers: vi.fn(),
@@ -159,14 +168,20 @@ describe('registerAllIpc idempotency', () => {
   it('first call initializes context and registers handlers', async () => {
     const { registerAllIpc, getSessionManager } = await import('../../src/main/ipc/register-all');
     const { registerProjectHandlers } = await import('../../src/main/ipc/handlers/projects');
-    const { registerTaskHandlers } = await import('../../src/main/ipc/handlers/tasks');
+    const { registerTaskCrudHandlers } = await import('../../src/main/ipc/handlers/task-crud');
+    const { registerTaskArchiveHandlers } = await import('../../src/main/ipc/handlers/task-archive');
+    const { registerTaskMoveHandlers } = await import('../../src/main/ipc/handlers/task-move');
+    const { registerTaskBranchHandlers } = await import('../../src/main/ipc/handlers/task-branch');
 
     const window = makeMockWindow(1);
     registerAllIpc(window);
 
     // Handler registration functions were called
     expect(registerProjectHandlers).toHaveBeenCalledTimes(1);
-    expect(registerTaskHandlers).toHaveBeenCalledTimes(1);
+    expect(registerTaskCrudHandlers).toHaveBeenCalledTimes(1);
+    expect(registerTaskArchiveHandlers).toHaveBeenCalledTimes(1);
+    expect(registerTaskMoveHandlers).toHaveBeenCalledTimes(1);
+    expect(registerTaskBranchHandlers).toHaveBeenCalledTimes(1);
 
     // Context is initialized (wrappers don't throw)
     expect(() => getSessionManager()).not.toThrow();
@@ -175,7 +190,10 @@ describe('registerAllIpc idempotency', () => {
   it('second call updates mainWindow without re-registering handlers', async () => {
     const { registerAllIpc } = await import('../../src/main/ipc/register-all');
     const { registerProjectHandlers } = await import('../../src/main/ipc/handlers/projects');
-    const { registerTaskHandlers } = await import('../../src/main/ipc/handlers/tasks');
+    const { registerTaskCrudHandlers } = await import('../../src/main/ipc/handlers/task-crud');
+    const { registerTaskArchiveHandlers } = await import('../../src/main/ipc/handlers/task-archive');
+    const { registerTaskMoveHandlers } = await import('../../src/main/ipc/handlers/task-move');
+    const { registerTaskBranchHandlers } = await import('../../src/main/ipc/handlers/task-branch');
     const { registerSessionHandlers } = await import('../../src/main/ipc/handlers/sessions');
     const { registerTransientSessionHandlers } = await import('../../src/main/ipc/handlers/transient-sessions');
     const { registerBoardHandlers } = await import('../../src/main/ipc/handlers/board');
@@ -201,7 +219,10 @@ describe('registerAllIpc idempotency', () => {
     // list in sync with register-all.ts; a missing entry here means a new
     // handler module can silently double-register on macOS re-activate.
     expect(registerProjectHandlers).toHaveBeenCalledTimes(1);
-    expect(registerTaskHandlers).toHaveBeenCalledTimes(1);
+    expect(registerTaskCrudHandlers).toHaveBeenCalledTimes(1);
+    expect(registerTaskArchiveHandlers).toHaveBeenCalledTimes(1);
+    expect(registerTaskMoveHandlers).toHaveBeenCalledTimes(1);
+    expect(registerTaskBranchHandlers).toHaveBeenCalledTimes(1);
     expect(registerSessionHandlers).toHaveBeenCalledTimes(1);
     expect(registerTransientSessionHandlers).toHaveBeenCalledTimes(1);
     expect(registerBoardHandlers).toHaveBeenCalledTimes(1);
