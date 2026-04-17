@@ -475,4 +475,258 @@ test.describe('Command Terminal', () => {
       }
     });
   });
+
+  test.describe('ContextBar in overlay', () => {
+    // These tests verify the two changes introduced by the branch:
+    //
+    // 1. CommandBarOverlay renders <ContextBar sessionId={sessionId} agentFallback={projectAgent} />
+    //    only AFTER sessionId is set (i.e. after spawnTransient resolves).
+    //    Before the session is spawned, no [data-testid="usage-bar"] should appear
+    //    inside the overlay.
+    //
+    // 2. ContextBar receives agentFallback=projectAgent. Transient sessions have no
+    //    task row in the board store, so the board-store lookup for session_id yields
+    //    undefined. The nullish-coalesce (?? agentFallback) must then fall through to
+    //    projectAgent, so the version pill shows the project's agent display name
+    //    (e.g. "Claude Code") instead of the generic "Agent" string.
+
+    test('ContextBar is absent while spawnTransient is pending', async () => {
+      // Use a preconfig with NO pre-existing transient session so the overlay
+      // has no transientSessionId to reattach to. Then intercept spawnTransient
+      // with a promise that never resolves, keeping sessionId === null.
+      // The ContextBar should not mount at all during this window.
+      //
+      // We use twoProjectPreConfig() as the base because it has no pre-injected
+      // transient sessions in the session list, unlike preConfigWithTransientSession().
+      const preConfigWithHangingSpawn = twoProjectPreConfig() + `
+        window.electronAPI.sessions.spawnTransient = function () {
+          // Never resolves - keeps the overlay in the pre-spawn phase indefinitely.
+          return new Promise(function () {});
+        };
+      `;
+      const { browser, page } = await launchWithState(preConfigWithHangingSpawn);
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Open the overlay
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+
+        // ContextBar should NOT be present - sessionId is still null.
+        // Intentional fixed wait: we cannot poll for non-occurrence.
+        // 800ms is enough for the microtask queue to flush if the spawn had resolved.
+        await page.waitForTimeout(800);
+        await expect(
+          page.getByTestId('command-bar-overlay').locator('[data-testid="usage-bar"]')
+        ).not.toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('ContextBar mounts inside overlay once session is spawned', async () => {
+      // The transient session ID is generated at runtime by spawnTransient.
+      // We override spawnTransient to return a deterministic ID, then use
+      // page.evaluate() to push usage data directly into the Zustand store
+      // for that ID. This avoids the Proxy-spread problem (a Proxy is not
+      // enumerable, so { ...proxy } produces an empty object and the store
+      // never sees the usage) and avoids relying on the onUsage IPC event
+      // (which the mock returns as noop and never fires).
+      const TRANSIENT_ID = 'transient-overlay-test-1';
+      const preConfigWithDeterministicSpawn = twoProjectPreConfig() + `
+        window.electronAPI.sessions.spawnTransient = async function (input) {
+          var session = {
+            id: '${TRANSIENT_ID}',
+            taskId: '${TRANSIENT_ID}',
+            projectId: input.projectId,
+            pid: null,
+            status: 'running',
+            shell: '/bin/bash',
+            cwd: '/mock/project',
+            startedAt: new Date().toISOString(),
+            exitCode: null,
+            resuming: false,
+            transient: true,
+          };
+          return { session: session, branch: 'main' };
+        };
+      `;
+
+      const { browser, page } = await launchWithState(preConfigWithDeterministicSpawn);
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Open the overlay - spawnTransient fires immediately with our deterministic ID.
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+
+        // ContextBar mounts (showing the spinner pill) once sessionId is set.
+        const overlayContextBar = page.getByTestId('command-bar-overlay').locator('[data-testid="usage-bar"]');
+        await expect(overlayContextBar).toBeVisible({ timeout: 5000 });
+
+        // Push usage directly into the session store using the known session ID.
+        // This simulates what the onUsage IPC event would do in production.
+        await page.evaluate((sessionId) => {
+          const stores = (window as unknown as { __zustandStores?: { session?: { getState: () => { updateUsage: (id: string, data: object) => void } } } }).__zustandStores;
+          stores?.session?.getState().updateUsage(sessionId, {
+            model: { id: 'claude-opus', displayName: 'Claude Opus' },
+            contextWindow: {
+              usedPercentage: 10,
+              usedTokens: 500,
+              cacheTokens: 0,
+              totalInputTokens: 400,
+              totalOutputTokens: 100,
+              contextWindowSize: 200000,
+            },
+            cost: { totalCostUsd: 0.002, totalDurationMs: 1200 },
+          });
+        }, TRANSIENT_ID);
+
+        // After usage lands the ContextBar should show the model name, not the spinner.
+        await expect(overlayContextBar).toContainText('Claude Opus', { timeout: 3000 });
+        await expect(overlayContextBar).not.toContainText('Starting agent...');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('ContextBar version pill shows project agent name via agentFallback', async () => {
+      // The key regression this tests: transient sessions have no task row in the
+      // board store. Before the agentFallback fix, the version pill showed "Agent"
+      // because agentDisplayName(null) was called. After the fix it shows the
+      // project's default_agent display name ("Claude Code" for agent="claude").
+      //
+      // The board store lookup:
+      //   tasks.find(t => t.session_id === sessionId)?.agent
+      // returns undefined for transient sessions (no task row in the board store).
+      // The nullish coalesce (undefined ?? agentFallback) uses agentFallback = "claude".
+      // agentDisplayName("claude") = "Claude Code".
+      const TRANSIENT_ID = 'transient-overlay-test-2';
+      const preConfigForFallback = twoProjectPreConfig() + `
+        // Ensure Project Alpha's default_agent is "claude".
+        window.__mockPreConfigure(function (state) {
+          var project = state.projects.find(function (p) { return p.id === '${PROJECT_A_ID}'; });
+          if (project) project.default_agent = 'claude';
+        });
+
+        window.electronAPI.sessions.spawnTransient = async function (input) {
+          var session = {
+            id: '${TRANSIENT_ID}',
+            taskId: '${TRANSIENT_ID}',
+            projectId: input.projectId,
+            pid: null,
+            status: 'running',
+            shell: '/bin/bash',
+            cwd: '/mock/project',
+            startedAt: new Date().toISOString(),
+            exitCode: null,
+            resuming: false,
+            transient: true,
+          };
+          return { session: session, branch: 'main' };
+        };
+      `;
+
+      const { browser, page } = await launchWithState(preConfigForFallback);
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+
+        const overlayContextBar = page.getByTestId('command-bar-overlay').locator('[data-testid="usage-bar"]');
+        await expect(overlayContextBar).toBeVisible({ timeout: 5000 });
+
+        // Push usage so the version pill renders (it only shows when resolvedModelName is set).
+        await page.evaluate((sessionId) => {
+          const stores = (window as unknown as { __zustandStores?: { session?: { getState: () => { updateUsage: (id: string, data: object) => void } } } }).__zustandStores;
+          stores?.session?.getState().updateUsage(sessionId, {
+            model: { id: 'claude-opus', displayName: 'Claude Opus' },
+            contextWindow: {
+              usedPercentage: 5,
+              usedTokens: 200,
+              cacheTokens: 0,
+              totalInputTokens: 150,
+              totalOutputTokens: 50,
+              contextWindowSize: 200000,
+            },
+            cost: { totalCostUsd: 0.001, totalDurationMs: 500 },
+          });
+        }, TRANSIENT_ID);
+
+        // The version pill shows agentDisplayName(taskAgent ?? agentFallback).
+        // taskAgent: board store has no task with session_id === TRANSIENT_ID -> undefined.
+        // agentFallback: projectAgent from useProjectStore = "claude".
+        // agentDisplayName("claude") = "Claude Code".
+        await expect(overlayContextBar).toContainText('Claude Code', { timeout: 3000 });
+        await expect(overlayContextBar).not.toContainText('Starting agent...');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('version pill shows "Agent" when project has no default_agent set', async () => {
+      // Baseline: if projectAgent is null, agentFallback is null, and the board
+      // store finds no task row, then agentDisplayName(null) returns "Agent".
+      // This confirms the test above is not a false positive - the component
+      // actually reads agentFallback and uses it when the project agent is null.
+      const TRANSIENT_ID = 'transient-overlay-test-3';
+      const preConfigWithNullAgent = twoProjectPreConfig() + `
+        window.__mockPreConfigure(function (state) {
+          var project = state.projects.find(function (p) { return p.id === '${PROJECT_A_ID}'; });
+          if (project) project.default_agent = null;
+        });
+
+        window.electronAPI.sessions.spawnTransient = async function (input) {
+          var session = {
+            id: '${TRANSIENT_ID}',
+            taskId: '${TRANSIENT_ID}',
+            projectId: input.projectId,
+            pid: null,
+            status: 'running',
+            shell: '/bin/bash',
+            cwd: '/mock/project',
+            startedAt: new Date().toISOString(),
+            exitCode: null,
+            resuming: false,
+            transient: true,
+          };
+          return { session: session, branch: 'main' };
+        };
+      `;
+
+      const { browser, page } = await launchWithState(preConfigWithNullAgent);
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+
+        const overlayContextBar = page.getByTestId('command-bar-overlay').locator('[data-testid="usage-bar"]');
+        await expect(overlayContextBar).toBeVisible({ timeout: 5000 });
+
+        // Push usage so the version pill renders.
+        await page.evaluate((sessionId) => {
+          const stores = (window as unknown as { __zustandStores?: { session?: { getState: () => { updateUsage: (id: string, data: object) => void } } } }).__zustandStores;
+          stores?.session?.getState().updateUsage(sessionId, {
+            model: { id: 'claude-opus', displayName: 'Claude Opus' },
+            contextWindow: {
+              usedPercentage: 5,
+              usedTokens: 200,
+              cacheTokens: 0,
+              totalInputTokens: 150,
+              totalOutputTokens: 50,
+              contextWindowSize: 200000,
+            },
+            cost: { totalCostUsd: 0.001, totalDurationMs: 500 },
+          });
+        }, TRANSIENT_ID);
+
+        // null agentFallback -> agentDisplayName(null) -> "Agent"
+        await expect(overlayContextBar).toContainText('Agent', { timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+  });
 });

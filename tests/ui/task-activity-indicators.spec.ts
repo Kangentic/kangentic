@@ -230,7 +230,7 @@ test.describe('Task Activity Indicators', () => {
       await page.locator('text=Test Initializing Task').first().click();
       await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
 
-      const usageBar = page.locator('[data-testid="usage-bar"].h-8');
+      const usageBar = page.locator('[data-testid="usage-bar"].min-h-8');
       await expect(usageBar).toBeVisible();
 
       const children = usageBar.locator('> *');
@@ -637,7 +637,7 @@ test.describe('Task Activity Indicators', () => {
         await page.locator('text=Test Initializing Task').first().click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
 
-        const contextBar = page.locator('[data-testid="usage-bar"].h-8');
+        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
         await expect(contextBar).toBeVisible({ timeout: 10000 });
 
         const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
@@ -664,7 +664,7 @@ test.describe('Task Activity Indicators', () => {
         await page.locator('text=Test Initializing Task').first().click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
 
-        const contextBar = page.locator('[data-testid="usage-bar"].h-8');
+        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
         await expect(contextBar).toBeVisible({ timeout: 10000 });
         await expect(contextBar.locator('[data-testid="rate-limits-pill"]')).toHaveCount(0);
 
@@ -690,7 +690,7 @@ test.describe('Task Activity Indicators', () => {
         await page.locator('text=Test Initializing Task').first().click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
 
-        const contextBar = page.locator('[data-testid="usage-bar"].h-8');
+        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
         await expect(contextBar).toBeVisible({ timeout: 10000 });
 
         const pill = contextBar.locator('[data-testid="rate-limits-pill"]');

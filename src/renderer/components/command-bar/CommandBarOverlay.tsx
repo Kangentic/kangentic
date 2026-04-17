@@ -8,6 +8,7 @@ import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopo
 import { useTerminal } from '../../hooks/useTerminal';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from '../terminal/FileDropOverlay';
+import { ContextBar } from '../terminal/ContextBar';
 import { useSessionStore } from '../../stores/session-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
@@ -37,6 +38,7 @@ export function CommandBarOverlay({ onClose }: CommandBarOverlayProps) {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const config = useConfigStore((s) => s.config);
   const rawProjectPath = useProjectStore((s) => s.currentProject?.path ?? null);
+  const projectAgent = useProjectStore((s) => s.currentProject?.default_agent ?? null);
   // Resolve to the main repo root if the current project is a worktree
   const projectPath = useMemo(() => rawProjectPath ? resolveProjectRoot(rawProjectPath) : null, [rawProjectPath]);
   const shortcuts = useBoardStore((s) => s.shortcuts);
@@ -459,6 +461,8 @@ export function CommandBarOverlay({ onClose }: CommandBarOverlayProps) {
               </div>
             )}
           </div>
+
+          {sessionId && <ContextBar sessionId={sessionId} agentFallback={projectAgent} />}
         </div>
       </div>
     </div>

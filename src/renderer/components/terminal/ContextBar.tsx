@@ -13,9 +13,12 @@ import { useValuePulse } from '../../hooks/useValuePulse';
 interface ContextBarProps {
   sessionId: string;
   compact?: boolean; // hide version label -- used in the bottom panel
+  /** Fallback agent identifier when the session has no task row (e.g. transient command-terminal sessions). */
+  agentFallback?: string | null;
 }
 
 const pill = 'px-2 py-0.5 rounded bg-surface-raised whitespace-nowrap select-none';
+const containerClass = 'min-h-8 bg-surface/80 border-t border-edge flex flex-wrap items-center px-3 py-1.5 gap-x-2 gap-y-2 text-xs flex-shrink-0';
 
 function formatResetTime(epochSeconds: number): string {
   const ms = epochSeconds * 1000 - Date.now();
@@ -32,12 +35,12 @@ function formatResetTime(epochSeconds: number): string {
  * A fraction pill (e.g. "28k / 200k") shows absolute context usage.
  * Tooltip on the bar shows cache vs conversation breakdown.
  */
-export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
+export function ContextBar({ sessionId, compact = false, agentFallback = null }: ContextBarProps) {
   const usage = useSessionStore((s) => s.sessionUsage[sessionId]);
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId));
   const sessionShell = session?.shell;
   const isResuming = session?.resuming ?? false;
-  const taskAgent = useBoardStore((s) => s.tasks.find((t) => t.session_id === sessionId)?.agent ?? null);
+  const taskAgent = useBoardStore((s) => s.tasks.find((t) => t.session_id === sessionId)?.agent) ?? agentFallback;
   const agentVersionNumber = useConfigStore((s) => s.agentVersionNumber);
   const contextBarConfig = useConfigStore((s) => s.config.contextBar);
 
@@ -63,7 +66,7 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
     const spinnerLabel = isResuming ? 'Resuming agent...' : 'Starting agent...';
     return (
       <div
-        className="h-8 bg-surface/80 border-t border-edge flex items-center px-3 gap-2 text-xs flex-shrink-0"
+        className={containerClass}
         data-testid="usage-bar"
       >
         <span className={`${pill} text-fg-muted flex items-center gap-1.5`}>
@@ -105,7 +108,7 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
 
   return (
     <div
-      className="h-8 bg-surface/80 border-t border-edge flex items-center px-3 gap-2 text-xs flex-shrink-0"
+      className={containerClass}
       data-testid="usage-bar"
     >
       {showShell && (
@@ -127,7 +130,7 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
         return (
           <span
             ref={rateLimitsRef}
-            className={`${pill} text-fg-muted tabular-nums flex items-center gap-2`}
+            className={`${pill} text-fg-muted tabular-nums flex items-center gap-2 flex-1 basis-64 min-w-[200px] max-w-[360px]`}
             title={`5h session: ${formatResetTime(rateLimits.fiveHour.resetsAt)}\n7d weekly: ${formatResetTime(rateLimits.sevenDay.resetsAt)}`}
             data-testid="rate-limits-pill"
           >
@@ -136,9 +139,9 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
               const Icon = key === 'fiveHour' ? Clock : Calendar;
               const pctRow = Math.round(row.usedPercentage);
               return (
-                <span key={key} className="flex items-center gap-1.5">
-                  <Icon size={11} className="text-fg-faint" aria-label={key === 'fiveHour' ? '5h session' : '7d weekly'} />
-                  <span className="w-20 h-1.5 bg-surface-hover rounded-full overflow-hidden">
+                <span key={key} className="flex items-center gap-1.5 flex-1 min-w-0">
+                  <Icon size={11} className="text-fg-faint flex-shrink-0" aria-label={key === 'fiveHour' ? '5h session' : '7d weekly'} />
+                  <span className="flex-1 min-w-[40px] h-1.5 bg-surface-hover rounded-full overflow-hidden">
                     <span
                       className="block h-full rounded-full transition-[width,background-color] duration-300"
                       style={{
@@ -148,7 +151,7 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
                       }}
                     />
                   </span>
-                  <span>{pctRow}%</span>
+                  <span className="flex-shrink-0">{pctRow}%</span>
                 </span>
               );
             })}
@@ -177,7 +180,7 @@ export function ContextBar({ sessionId, compact = false }: ContextBarProps) {
       )}
 
       {showProgressBar && (
-        <div className="flex items-center gap-2 flex-1 min-w-0">
+        <div className={`${pill} text-fg-muted flex items-center gap-2 flex-1 min-w-[140px]`}>
           <div className="flex-1 h-1.5 bg-surface-hover rounded-full overflow-hidden" title={barTooltip}>
             <div
               className="h-full rounded-full transition-[width,background-color] duration-300"
