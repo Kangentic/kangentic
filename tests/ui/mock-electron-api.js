@@ -20,6 +20,7 @@
   let currentProjectId = null;
   let projectConfigs = {};
   let nextDisplayId = 1;
+  let bulkDeleteProgressCallbacks = [];
 
   let config = Object.assign({
     theme: 'dark',
@@ -592,6 +593,13 @@
       onSpawnProgress: function () {
         return noop;
       },
+      onBulkDeleteProgress: function (callback) {
+        bulkDeleteProgressCallbacks.push(callback);
+        return function () {
+          var idx = bulkDeleteProgressCallbacks.indexOf(callback);
+          if (idx >= 0) bulkDeleteProgressCallbacks.splice(idx, 1);
+        };
+      },
       unarchive: async function (input) {
         var idx = archivedTasks.findIndex(function (t) {
           return t.id === input.id;
@@ -607,13 +615,49 @@
         tasks.push(task);
         return task;
       },
+      // Test hook: expose the live count of registered progress listeners so
+      // specs can verify that the renderer's `finally { unsubscribe() }` block
+      // actually runs and drops its subscriber after the operation settles.
+      __getBulkDeleteCallbackCount: function () {
+        return bulkDeleteProgressCallbacks.length;
+      },
       bulkDelete: async function (ids) {
-        for (var i = 0; i < ids.length; i++) {
-          var idx = archivedTasks.findIndex(function (t) { return t.id === ids[i]; });
-          if (idx >= 0) archivedTasks.splice(idx, 1);
-          var tIdx = tasks.findIndex(function (t) { return t.id === ids[i]; });
-          if (tIdx >= 0) tasks.splice(tIdx, 1);
+        // Test hook: simulate a hard IPC throw (e.g. no project open).
+        // Set window.__mockBulkDeleteThrow = 'error message' before calling.
+        if (typeof window !== 'undefined' && window.__mockBulkDeleteThrow) {
+          var throwMsg = window.__mockBulkDeleteThrow;
+          window.__mockBulkDeleteThrow = null;
+          throw new Error(throwMsg);
         }
+
+        // Test hook: simulate partial worktree-cleanup failures.
+        // Set window.__mockBulkDeleteFailureIds = ['id1', 'id2'] before calling.
+        // Those IDs will be included in failures[] but still removed from the DB.
+        var forcedFailureIds = (typeof window !== 'undefined' && window.__mockBulkDeleteFailureIds) || [];
+        if (typeof window !== 'undefined') window.__mockBulkDeleteFailureIds = null;
+
+        var failures = [];
+        var total = ids.length;
+        function emit(completed) {
+          var payload = { completed: completed, total: total, failures: failures.slice() };
+          for (var j = 0; j < bulkDeleteProgressCallbacks.length; j++) {
+            try { bulkDeleteProgressCallbacks[j](payload); } catch (_) { /* noop */ }
+          }
+        }
+        emit(0);
+        for (var i = 0; i < ids.length; i++) {
+          var taskId = ids[i];
+          var idx = archivedTasks.findIndex(function (t) { return t.id === taskId; });
+          if (idx >= 0) archivedTasks.splice(idx, 1);
+          var tIdx = tasks.findIndex(function (t) { return t.id === taskId; });
+          if (tIdx >= 0) tasks.splice(tIdx, 1);
+          // Inject worktree-cleanup failure for forced IDs
+          if (forcedFailureIds.indexOf(taskId) !== -1) {
+            failures.push({ id: taskId, error: 'Worktree directory could not be removed: /mock/worktrees/' + taskId.slice(0, 8) });
+          }
+          emit(i + 1);
+        }
+        return { deleted: total - failures.length, failures: failures };
       },
       switchBranch: async function (input) {
         var idx = tasks.findIndex(function (t) { return t.id === input.taskId; });

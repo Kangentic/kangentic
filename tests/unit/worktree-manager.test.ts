@@ -298,88 +298,12 @@ describe('WorktreeManager -- removal', () => {
     ]);
   });
 
-  it('removeWorktree falls back to rmSync + prune on failure with retry', async () => {
-    vi.mocked(fs.existsSync).mockReturnValue(true);
-
-    mockProjectGit.raw.mockImplementation((args: string[]) => {
-      if (args[0] === 'worktree' && args[1] === 'remove') {
-        return Promise.reject(new Error('worktree remove failed'));
-      }
-      return Promise.resolve('');
-    });
-
-    const mgr = new WorktreeManager('/project');
-    const wtPath = '/project/.kangentic/worktrees/test-abcd1234';
-    await runWithTimers(mgr.removeWorktree(wtPath));
-
-    // Should have called rmSync (first retry succeeds)
-    expect(fs.rmSync).toHaveBeenCalledWith(wtPath, { recursive: true, force: true });
-
-    // Should have called git worktree prune
-    expect(mockProjectGit.raw).toHaveBeenCalledWith(['worktree', 'prune']);
-  });
-
-  it('removeWorktree retries rmSync on EPERM then succeeds', async () => {
-    vi.mocked(fs.existsSync).mockReturnValue(true);
-
-    mockProjectGit.raw.mockImplementation((args: string[]) => {
-      if (args[0] === 'worktree' && args[1] === 'remove') {
-        return Promise.reject(new Error('worktree remove failed'));
-      }
-      return Promise.resolve('');
-    });
-
-    // rmSync fails once (EPERM), then succeeds on second attempt
-    let rmSyncCount = 0;
-    vi.mocked(fs.rmSync).mockImplementation(() => {
-      rmSyncCount++;
-      if (rmSyncCount < 2) {
-        const err = new Error('EPERM') as NodeJS.ErrnoException;
-        err.code = 'EPERM';
-        throw err;
-      }
-    });
-
-    const mgr = new WorktreeManager('/project');
-    await runWithTimers(mgr.removeWorktree('/project/.kangentic/worktrees/test-abcd1234'));
-
-    // rmSync called 2 times (1 failure + 1 success)
-    expect(fs.rmSync).toHaveBeenCalledTimes(2);
-    expect(mockProjectGit.raw).toHaveBeenCalledWith(['worktree', 'prune']);
-  });
-
-  it('removeWorktree logs warning when all retries exhausted', async () => {
-    vi.mocked(fs.existsSync).mockReturnValue(true);
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-    mockProjectGit.raw.mockImplementation((args: string[]) => {
-      if (args[0] === 'worktree' && args[1] === 'remove') {
-        return Promise.reject(new Error('worktree remove failed'));
-      }
-      return Promise.resolve('');
-    });
-
-    // rmSync always fails
-    vi.mocked(fs.rmSync).mockImplementation(() => {
-      const err = new Error('EPERM') as NodeJS.ErrnoException;
-      err.code = 'EPERM';
-      throw err;
-    });
-
-    const mgr = new WorktreeManager('/project');
-    const wtPath = '/project/.kangentic/worktrees/test-abcd1234';
-
-    // Should not throw -- logs warning and returns false
-    const result = await runWithTimers(mgr.removeWorktree(wtPath));
-
-    expect(result).toBe(false);
-    // 2 attempts (immediate + one 500ms retry)
-    expect(fs.rmSync).toHaveBeenCalledTimes(2);
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Could not remove worktree after retries'),
-    );
-    warnSpy.mockRestore();
-  });
+  // Async fs.promises.rm fallback paths (both success + exhaustion + warning)
+  // are covered by tests/unit/remove-worktree.test.ts with cleaner mocks. The
+  // prior sync-rmSync + manual-delay tests were tied to the retry loop that
+  // was removed when removeWorktree switched to fs.promises.rm + built-in
+  // maxRetries, and had nothing more to assert beyond what the dedicated
+  // file already covers.
 
   it('removeWorktree no-ops when path does not exist', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(false);

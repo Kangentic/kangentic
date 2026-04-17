@@ -275,8 +275,8 @@ export class WorktreeManager {
     if (!fs.existsSync(worktreePath)) return true;
 
     // Remove node_modules junction BEFORE any recursive operation to prevent
-    // git worktree remove (or rmSync) from traversing the junction and
-    // deleting the main repo's node_modules.
+    // git worktree remove (or the async rm below) from traversing the junction
+    // and deleting the main repo's node_modules.
     removeNodeModulesPath(path.join(worktreePath, 'node_modules'));
 
     try {
@@ -286,27 +286,29 @@ export class WorktreeManager {
       console.log(`[WORKTREE] git worktree remove failed, falling back to manual removal: ${(error as Error).message}`);
     }
 
-    // Callers should have awaited process exit before calling removeWorktree,
-    // so handles should be released. Single attempt + one short NTFS flush
-    // retry (500ms) as a safety net.
-    const delays = [0, 500];
-    for (const delay of delays) {
-      if (delay > 0) {
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-      try {
-        fs.rmSync(worktreePath, { recursive: true, force: true });
-        await this.git.raw(['worktree', 'prune']);
-        return true;
-      } catch (error) {
-        console.log(`[WORKTREE] rmSync retry failed (waited ${delay}ms): ${(error as Error).message}`);
-      }
+    // Async fs.promises.rm with built-in retry budget. `maxRetries` +
+    // `retryDelay` handle Windows NTFS transient locks (EBUSY, ENOTEMPTY,
+    // EPERM) on .git/objects/pack/* and child processes that haven't
+    // released handles yet. On macOS/Linux the retries are effectively
+    // no-ops since those errors are rare. Async variant yields to the
+    // event loop between attempts so the main process stays responsive
+    // during bulk operations. Total ceiling: 10 * 200ms = 2s per worktree.
+    try {
+      await fs.promises.rm(worktreePath, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 200,
+      });
+      await this.git.raw(['worktree', 'prune']);
+      return true;
+    } catch (error) {
+      console.warn(`[WorktreeManager] Could not remove worktree after retries: ${worktreePath} (${(error as Error).message})`);
+      // Best-effort prune so git's worktree metadata is consistent even when
+      // the directory itself couldn't be removed.
+      try { await this.git.raw(['worktree', 'prune']); } catch { /* best effort */ }
+      return false;
     }
-
-    // Both attempts exhausted - prune what we can, log the stale path
-    try { await this.git.raw(['worktree', 'prune']); } catch { /* best effort */ }
-    console.warn(`[WorktreeManager] Could not remove worktree after retries: ${worktreePath}`);
-    return false;
   }
 
   async removeBranch(branchName: string): Promise<void> {

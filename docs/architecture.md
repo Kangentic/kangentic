@@ -54,7 +54,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `projectGroup:reorder` | invoke | Reorder groups by ID array |
 | `projectGroup:setCollapsed` | invoke | Toggle group collapsed state |
 
-### Tasks (15 channels)
+### Tasks (16 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |
@@ -65,6 +65,7 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `task:list-archived` | invoke | Fetch archived tasks |
 | `task:unarchive` | invoke | Restore archived task |
 | `task:bulk-delete` | invoke | Delete multiple archived tasks by ID array |
+| `task:bulk-delete-progress` | on | Event: progress payload during bulk task delete (completed/total/failures) |
 | `task:bulk-unarchive` | invoke | Restore multiple archived tasks to a target swimlane |
 | `task:switchBranch` | invoke | Switch base branch or enable worktree for a task |
 | `task:autoMoved` | on | Event: task was auto-moved by transition engine |

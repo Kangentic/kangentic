@@ -1,11 +1,13 @@
 import { type StateCreator } from 'zustand';
-import type { Task, TaskUnarchiveInput } from '../../../shared/types';
+import type { Task, TaskUnarchiveInput, TaskBulkDeleteProgress } from '../../../shared/types';
 import { useSessionStore } from '../session-store';
 import { useToastStore } from '../toast-store';
 import type { BoardStore } from './types';
 
 export interface ArchivedTasksSlice {
   archivedTasks: Task[];
+  /** Non-null while a bulk delete is in flight; rendered as a progress indicator. */
+  bulkDeleteProgress: TaskBulkDeleteProgress | null;
   loadArchivedTasks: () => Promise<void>;
   archiveTask: (id: string) => void;
   unarchiveTask: (input: TaskUnarchiveInput) => Promise<void>;
@@ -16,6 +18,7 @@ export interface ArchivedTasksSlice {
 
 export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], ArchivedTasksSlice> = (set, get) => ({
   archivedTasks: [],
+  bulkDeleteProgress: null,
 
   loadArchivedTasks: async () => {
     const archivedTasks = await window.electronAPI.tasks.listArchived();
@@ -97,19 +100,45 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
     // Optimistic removal
     set((state) => ({
       archivedTasks: state.archivedTasks.filter((task) => !idSet.has(task.id)),
+      bulkDeleteProgress: { completed: 0, total: ids.length, failures: [] },
     }));
+
+    // Subscribe to per-task progress events so the UI can show a running
+    // counter during long deletes (hundreds of tasks with worktree cleanup).
+    const unsubscribe = window.electronAPI.tasks.onBulkDeleteProgress((progress) => {
+      set({ bulkDeleteProgress: progress });
+    });
+
     try {
-      await window.electronAPI.tasks.bulkDelete(ids);
-      // Clean up sessions
+      const result = await window.electronAPI.tasks.bulkDelete(ids);
+
+      // Always clear sessions for fully-deleted tasks. Partial-failure tasks
+      // still had their DB row deleted (cleanup just left worktree files
+      // behind), so dropping the session is correct either way.
       useSessionStore.setState((state) => ({
         sessions: state.sessions.filter((session) => !idSet.has(session.taskId)),
       }));
+
+      if (result.failures.length > 0) {
+        // Partial success: keep the successfully deleted tasks removed from
+        // the dialog, surface the failure count.
+        useToastStore.getState().addToast({
+          message: `Deleted ${result.deleted} task${result.deleted === 1 ? '' : 's'}. `
+            + `Failed to clean up ${result.failures.length} worktree${result.failures.length === 1 ? '' : 's'} - check logs.`,
+          variant: 'error',
+        });
+      }
     } catch (error) {
+      // Hard failure (IPC threw - e.g. no project open). Revert optimistic
+      // removal since we can't trust any partial state.
       set({ archivedTasks: prevArchived });
       useToastStore.getState().addToast({
         message: `Failed to delete tasks: ${error instanceof Error ? error.message : 'Unknown error'}`,
         variant: 'error',
       });
+    } finally {
+      unsubscribe();
+      set({ bulkDeleteProgress: null });
     }
   },
 

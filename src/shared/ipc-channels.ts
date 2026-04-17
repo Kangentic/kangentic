@@ -30,6 +30,7 @@ export const IPC = {
   TASK_LIST_ARCHIVED: 'task:list-archived',
   TASK_UNARCHIVE: 'task:unarchive',
   TASK_BULK_DELETE: 'task:bulk-delete',
+  TASK_BULK_DELETE_PROGRESS: 'task:bulk-delete-progress',
   TASK_BULK_UNARCHIVE: 'task:bulk-unarchive',
   TASK_SWITCH_BRANCH: 'task:switchBranch',
   TASK_AUTO_MOVED: 'task:autoMoved',

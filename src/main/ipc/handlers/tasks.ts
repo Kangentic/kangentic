@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import { ipcMain } from 'electron';
+import PQueue from 'p-queue';
 import { simpleGit } from 'simple-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { SessionRepository } from '../../db/repositories/session-repository';
@@ -19,7 +20,17 @@ import { carryUncommittedChanges } from './task-branch';
 import { interpolateTemplate } from '../../agent/shared';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
-import type { TaskSwitchBranchInput } from '../../../shared/types';
+import type { TaskSwitchBranchInput, TaskBulkDeleteFailure, TaskBulkDeleteResult, TaskBulkDeleteProgress } from '../../../shared/types';
+
+/**
+ * Cap on concurrent bulk-delete workers. Non-git work (PTY kill, DB writes)
+ * parallelizes safely; actual git mutations still serialize through the
+ * per-project queue in WorktreeManager.withGitLock, so higher concurrency
+ * here only costs a handful of file handles and DB statement slots. 8 is a
+ * conservative ceiling that keeps Node's libuv thread pool healthy on all
+ * three platforms without tuning UV_THREADPOOL_SIZE.
+ */
+const BULK_DELETE_CONCURRENCY = 8;
 
 // Re-export for backward compatibility (tests import from this module)
 export { carryUncommittedChanges } from './task-branch';
@@ -242,37 +253,73 @@ export function registerTaskHandlers(context: IpcContext): void {
     return tasks.getById(input.id);
   });
 
-  ipcMain.handle(IPC.TASK_BULK_DELETE, async (_, ids: string[]) => {
+  ipcMain.handle(IPC.TASK_BULK_DELETE, async (_, ids: string[]): Promise<TaskBulkDeleteResult> => {
     const resolvedProjectId = context.currentProjectId;
     const resolvedProjectPath = context.currentProjectPath;
     const { tasks, attachments } = getProjectRepos(context, resolvedProjectId);
-    const failures: Array<{ id: string; error: string }> = [];
-    for (const id of ids) {
-      try {
-        // Per-task lock so each delete serializes against any in-flight
-        // session op for that task while different tasks stay independent.
-        await withTaskLock(id, async () => {
-          const task = tasks.getById(id);
-          if (task) {
-            attachments.deleteByTaskId(id);
-            await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
-          }
-          tasks.delete(id);
-        });
-      } catch (error) {
-        // One failure should not abort the whole batch. Collect and report
-        // aggregate at the end.
-        const message = error instanceof Error ? error.message : String(error);
-        console.error(`[TASK_BULK_DELETE] Failed for task ${id.slice(0, 8)}:`, error);
-        failures.push({ id, error: message });
-      }
+    const failures: TaskBulkDeleteFailure[] = [];
+    const total = ids.length;
+    let completed = 0;
+
+    const emitProgress = (): void => {
+      if (context.mainWindow.isDestroyed()) return;
+      const payload: TaskBulkDeleteProgress = {
+        completed,
+        total,
+        failures: failures.slice(),
+      };
+      context.mainWindow.webContents.send(IPC.TASK_BULK_DELETE_PROGRESS, payload);
+    };
+
+    if (total === 0) {
+      return { deleted: 0, failures: [] };
     }
-    if (failures.length > 0) {
-      throw new Error(
-        `Bulk delete completed with ${failures.length} failure${failures.length === 1 ? '' : 's'}: `
-        + failures.map((failure) => `${failure.id.slice(0, 8)} (${failure.error})`).join(', '),
-      );
-    }
+
+    // Fan out with a concurrency cap. Per-task work is already serialized via
+    // withTaskLock, and git mutations serialize through the per-project queue
+    // inside WorktreeManager.withGitLock, so parallel workers here just
+    // overlap the non-git work (PTY exit awaits, session DB writes,
+    // attachment deletes) and yield between async boundaries to keep the main
+    // process event loop responsive.
+    const queue = new PQueue({ concurrency: BULK_DELETE_CONCURRENCY });
+    emitProgress();
+
+    await queue.addAll(
+      ids.map((id) => async () => {
+        try {
+          await withTaskLock(id, async () => {
+            const task = tasks.getById(id);
+            // Capture the worktree path BEFORE cleanup so we can verify
+            // on-disk removal afterward. cleanupTaskResources swallows
+            // worktree-removal failures (by design - partial cleanup
+            // should not block the DB delete), so the only reliable
+            // signal is a stat check once it returns.
+            const worktreePathBefore = task?.worktree_path ?? null;
+            if (task) {
+              attachments.deleteByTaskId(id);
+              await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
+            }
+            tasks.delete(id);
+            if (worktreePathBefore && fs.existsSync(worktreePathBefore)) {
+              // DB row is gone but the directory survived - orphan.
+              failures.push({
+                id,
+                error: `Worktree directory could not be removed: ${worktreePathBefore}`,
+              });
+            }
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          console.error(`[TASK_BULK_DELETE] Failed for task ${id.slice(0, 8)}:`, error);
+          failures.push({ id, error: message });
+        } finally {
+          completed += 1;
+          emitProgress();
+        }
+      }),
+    );
+
+    return { deleted: total - failures.length, failures };
   });
 
   ipcMain.handle(IPC.TASK_BULK_UNARCHIVE, async (_, ids: string[], targetSwimlaneId: string) => {

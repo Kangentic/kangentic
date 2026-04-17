@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, Session, SessionUsage, ActivityState, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod } from '../shared/types';
+import type { ElectronAPI, NotificationInput, Project, Session, SessionUsage, ActivityState, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, TaskBulkDeleteProgress } from '../shared/types';
 
 const api: ElectronAPI = {
   projects: {
@@ -71,6 +71,12 @@ const api: ElectronAPI = {
         callback(taskId, label);
       ipcRenderer.on(IPC.TASK_SPAWN_PROGRESS, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_SPAWN_PROGRESS, handler);
+    },
+    onBulkDeleteProgress: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: TaskBulkDeleteProgress) =>
+        callback(progress);
+      ipcRenderer.on(IPC.TASK_BULK_DELETE_PROGRESS, handler);
+      return () => ipcRenderer.removeListener(IPC.TASK_BULK_DELETE_PROGRESS, handler);
     },
   },
 

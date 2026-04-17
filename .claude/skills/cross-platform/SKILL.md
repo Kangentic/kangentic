@@ -52,17 +52,23 @@ Additionally, `--` (end-of-options) is inserted before the prompt to prevent con
 
 Windows holds file handles longer than Unix after process termination. This affects worktree cleanup:
 
-**Retry pattern** (`src/main/git/worktree-manager.ts`, lines 190-203):
+**Retry pattern** (`src/main/git/worktree-manager.ts`, `removeWorktree`):
 ```
-Attempt 1: fs.rmSync({ recursive: true, force: true })
-  fail -> wait 200ms -> git worktree prune
-Attempt 2: retry
-  fail -> wait 500ms -> git worktree prune
-Attempt 3: retry
-  fail -> wait 1500ms -> git worktree prune -> log warning
+1. git worktree remove --force (release git's tracking + directory)
+2. On failure, fall back to async fs.promises.rm with built-in retries:
+     { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }
+3. On final failure, best-effort `git worktree prune` so metadata stays
+   consistent even if the directory survived.
 ```
 
-Always use `fs.rmSync({ force: true })` on Windows -- never plain `fs.rmSync()` which throws EPERM on locked files.
+The `maxRetries` / `retryDelay` parameters give the kernel up to 2s total
+(10 * 200ms) to release handles on Windows NTFS (EBUSY, ENOTEMPTY, EPERM).
+Async `fs.promises.rm` is required (not `fs.rmSync`) so the main process
+event loop stays responsive during bulk operations - hundreds of
+sequential sync deletes would freeze the UI.
+
+Always use `{ force: true }` on Windows -- never plain recursive removal
+which throws EPERM on locked files.
 
 ## Em-Dash Encoding
 

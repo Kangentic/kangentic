@@ -980,6 +980,22 @@ export interface TaskUnarchiveInput {
   targetSwimlaneId: string;
 }
 
+export interface TaskBulkDeleteFailure {
+  id: string;
+  error: string;
+}
+
+export interface TaskBulkDeleteResult {
+  deleted: number;
+  failures: TaskBulkDeleteFailure[];
+}
+
+export interface TaskBulkDeleteProgress {
+  completed: number;
+  total: number;
+  failures: TaskBulkDeleteFailure[];
+}
+
 export interface SwimlaneCreateInput {
   name: string;
   color?: string;
@@ -1457,7 +1473,7 @@ export interface ElectronAPI {
     move: (input: TaskMoveInput) => Promise<void>;
     listArchived: () => Promise<Task[]>;
     unarchive: (input: TaskUnarchiveInput) => Promise<Task>;
-    bulkDelete: (ids: string[]) => Promise<void>;
+    bulkDelete: (ids: string[]) => Promise<TaskBulkDeleteResult>;
     bulkUnarchive: (ids: string[], targetSwimlaneId: string) => Promise<void>;
     switchBranch: (input: TaskSwitchBranchInput) => Promise<Task>;
     onAutoMoved: (callback: (taskId: string, targetSwimlaneId: string, taskTitle: string, projectId?: string) => void) => () => void;
@@ -1465,6 +1481,7 @@ export interface ElectronAPI {
     onUpdatedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
     onDeletedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
     onSpawnProgress: (callback: (taskId: string, label: string | null) => void) => () => void;
+    onBulkDeleteProgress: (callback: (progress: TaskBulkDeleteProgress) => void) => () => void;
   };
 
   // Attachments

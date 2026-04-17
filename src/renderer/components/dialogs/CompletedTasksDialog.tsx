@@ -23,6 +23,7 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
   const deleteArchivedTask = useBoardStore((state) => state.deleteArchivedTask);
   const bulkDeleteArchivedTasks = useBoardStore((state) => state.bulkDeleteArchivedTasks);
   const bulkUnarchiveTasks = useBoardStore((state) => state.bulkUnarchiveTasks);
+  const bulkDeleteProgress = useBoardStore((state) => state.bulkDeleteProgress);
   const skipDeleteConfirm = useConfigStore((state) => state.config.skipDeleteConfirm);
   const updateConfig = useConfigStore((state) => state.updateConfig);
 
@@ -260,13 +261,31 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
             rowTestId="completed-task-row"
             virtualized
           />
-          {selectedIds.size > 0 && (
+          {selectedIds.size > 0 && !bulkDeleteProgress && (
             <BulkToolbar
               selectedCount={selectedIds.size}
               swimlanes={swimlanes}
               onRestore={handleBulkRestore}
               onDelete={handleBulkDelete}
             />
+          )}
+          {bulkDeleteProgress && (
+            <div
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 bg-surface-raised border border-edge rounded-lg shadow-xl px-4 py-2.5 flex items-center gap-3 min-w-[280px]"
+              data-testid="bulk-delete-progress"
+              role="status"
+              aria-live="polite"
+            >
+              <div className="w-4 h-4 border-2 border-edge border-t-accent rounded-full animate-spin" />
+              <span className="text-sm text-fg-muted font-medium tabular-nums">
+                Deleting {bulkDeleteProgress.completed} of {bulkDeleteProgress.total}
+                {bulkDeleteProgress.failures.length > 0 && (
+                  <span className="text-red-400 ml-2">
+                    ({bulkDeleteProgress.failures.length} failed)
+                  </span>
+                )}
+              </span>
+            </div>
           )}
         </div>
       </BaseDialog>
