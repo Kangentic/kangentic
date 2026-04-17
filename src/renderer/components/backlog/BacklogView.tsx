@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Plus, Search, Inbox, Filter, X, GripVertical } from 'lucide-react';
 import { DndContext, DragOverlay } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -20,6 +20,12 @@ import { useConfigStore } from '../../stores/config-store';
 import type { BacklogTask } from '../../../shared/types';
 import { useBacklogColumns, type SortKey } from './view/useBacklogColumns';
 
+/** Debounce between keystroke and filter recompute. Keeps the input responsive
+ *  while deferring the filtering pass (which walks all backlog items + tests
+ *  title/description/labels) until the user pauses typing. Matches the board
+ *  search debounce in BoardSearchBar. */
+const BACKLOG_SEARCH_DEBOUNCE_MS = 120;
+
 export function BacklogView() {
   const hydrated = useBacklogStore((state) => state.hydrated);
   const items = useBacklogStore((state) => state.items);
@@ -34,12 +40,50 @@ export function BacklogView() {
   const promoteItems = useBacklogStore((state) => state.promoteItems);
   const swimlanes = useBoardStore((state) => state.swimlanes);
   const boardTasks = useBoardStore((state) => state.tasks);
-  const config = useConfigStore((state) => state.config);
-  const skipDeleteConfirm = config.skipDeleteConfirm;
+  // Narrow config subscriptions: previously subscribed to the whole `config`
+  // object, so any unrelated config change (notification toggle, theme,
+  // statusBarPeriod) re-rendered the whole backlog view. Split into the three
+  // fields actually used here.
+  const skipDeleteConfirm = useConfigStore((state) => state.config.skipDeleteConfirm);
+  const priorities = useConfigStore((state) => state.config.backlog.priorities);
+  const labelColors = useConfigStore((state) => state.config.backlog.labelColors);
   const updateConfig = useConfigStore((state) => state.updateConfig);
-  const labelColors = config.backlog?.labelColors ?? {};
 
+  // `searchInput` is the immediate input value (updates per keystroke).
+  // `searchQuery` is the debounced value that drives filtering. Keeps typing
+  // smooth even when an import recently replaced `items`.
+  const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSearchChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextValue = event.target.value;
+    setSearchInput(nextValue);
+    if (searchDebounceRef.current !== null) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      searchDebounceRef.current = null;
+      setSearchQuery(nextValue);
+    }, BACKLOG_SEARCH_DEBOUNCE_MS);
+  }, []);
+
+  const handleSearchClear = useCallback(() => {
+    if (searchDebounceRef.current !== null) {
+      clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = null;
+    }
+    setSearchInput('');
+    setSearchQuery('');
+  }, []);
+
+  useEffect(() => () => {
+    if (searchDebounceRef.current !== null) {
+      clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = null;
+    }
+  }, []);
+
   const {
     priorityFilters, labelFilters, hasActiveFilters,
     showFilterPopover, setShowFilterPopover,
@@ -52,15 +96,6 @@ export function BacklogView() {
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ position: { x: number; y: number }; item: BacklogTask } | null>(null);
   const [importSource, setImportSource] = useState<ImportSource | null>(null);
-
-  // Config-driven priorities
-  const priorities = config.backlog?.priorities ?? [
-    { label: 'None', color: '#6b7280' },
-    { label: 'Low', color: '#6b7280' },
-    { label: 'Medium', color: '#eab308' },
-    { label: 'High', color: '#f97316' },
-    { label: 'Urgent', color: '#ef4444' },
-  ];
 
   // All unique labels across backlog tasks and board tasks
   const allLabels = useMemo(() => {
@@ -213,16 +248,16 @@ export function BacklogView() {
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-disabled" />
           <input
             type="text"
-            value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
+            value={searchInput}
+            onChange={handleSearchChange}
             placeholder="Search backlog..."
             className="w-56 bg-surface/50 border border-edge/50 rounded-md text-sm text-fg placeholder-fg-disabled pl-8 pr-8 py-1.5 outline-none focus:border-edge-input"
             data-testid="backlog-search"
           />
-          {searchQuery && (
+          {searchInput && (
             <button
               type="button"
-              onClick={() => setSearchQuery('')}
+              onClick={handleSearchClear}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-disabled hover:text-fg-muted transition-colors"
               data-testid="backlog-search-clear"
             >

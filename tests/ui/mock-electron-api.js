@@ -84,6 +84,16 @@
       },
       cooldownSeconds: 10,
     },
+    backlog: {
+      priorities: [
+        { label: 'None', color: '#6b7280' },
+        { label: 'Low', color: '#3b82f6' },
+        { label: 'Medium', color: '#eab308' },
+        { label: 'High', color: '#f97316' },
+        { label: 'Urgent', color: '#ef4444' },
+      ],
+      labelColors: {},
+    },
     hasCompletedFirstRun: true,
     showBoardSearch: true,
     skipDeleteConfirm: false,

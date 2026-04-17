@@ -181,34 +181,44 @@ export class WorktreeManager {
       console.log(`[WORKTREE] Created worktree (new branch): ${branchName} from ${startPoint}`);
     }
 
-    // Post-creation configuration: git config writes and sparse-checkout run
-    // in parallel since they operate on independent parts of the worktree's
-    // .git state. File copies and node_modules linking stay sequential after.
+    // Post-creation configuration: these steps all write to the new
+    // worktree's `.git/config` (base-branch key, Windows longpaths, and
+    // sparse-checkout's `extensions.worktreeConfig`). They were previously
+    // wrapped in Promise.all under the assumption they touched independent
+    // parts of the .git state - but on Windows concurrent writes to the same
+    // config file intermittently race on the lock ("could not lock config
+    // file... File exists"), silently swallowing sparse-checkout init and
+    // leaving `.claude/commands/` materialized. Serial execution costs a
+    // handful of milliseconds and eliminates the race.
     const wtGit = simpleGit(worktreePath);
-    await Promise.all([
-      // Store the base branch in git config so agents can read it via
-      // `git config kangentic.baseBranch` without accessing files outside the worktree.
-      wtGit.raw(['config', 'kangentic.baseBranch', baseBranch]).catch(() => {
-        // Non-fatal -- merge-back falls back to 'main'
-      }),
-      // Persist long paths in the worktree's local config (Windows only)
-      process.platform === 'win32'
-        ? wtGit.raw(['config', 'core.longpaths', 'true']).catch(() => { /* non-fatal */ })
-        : Promise.resolve(),
-      // Exclude .claude/commands/ from worktree via sparse-checkout.
-      // Commands walk up the directory tree from worktree CWD to the main repo's
-      // .claude/commands/, so excluding them prevents duplicate discovery.
-      // Requires git 2.25+; older versions skip gracefully.
-      // The two sparse-checkout commands are sequential (init then set).
-      (async () => {
-        try {
-          await wtGit.raw(['sparse-checkout', 'init', '--no-cone']);
-          await wtGit.raw(['sparse-checkout', 'set', '/*', '!/.claude/commands/']);
-        } catch (sparseError) {
-          console.warn('[WORKTREE] Sparse-checkout not available (requires git 2.25+), skipping:', sparseError);
-        }
-      })(),
-    ]);
+
+    // Store the base branch in git config so agents can read it via
+    // `git config kangentic.baseBranch` without accessing files outside the worktree.
+    try {
+      await wtGit.raw(['config', 'kangentic.baseBranch', baseBranch]);
+    } catch {
+      // Non-fatal -- merge-back falls back to 'main'
+    }
+
+    // Persist long paths in the worktree's local config (Windows only).
+    if (process.platform === 'win32') {
+      try {
+        await wtGit.raw(['config', 'core.longpaths', 'true']);
+      } catch {
+        // non-fatal
+      }
+    }
+
+    // Exclude .claude/commands/ from worktree via sparse-checkout.
+    // Commands walk up the directory tree from worktree CWD to the main repo's
+    // .claude/commands/, so excluding them prevents duplicate discovery.
+    // Requires git 2.25+; older versions skip gracefully.
+    try {
+      await wtGit.raw(['sparse-checkout', 'init', '--no-cone']);
+      await wtGit.raw(['sparse-checkout', 'set', '/*', '!/.claude/commands/']);
+    } catch (sparseError) {
+      console.warn('[WORKTREE] Sparse-checkout not available (requires git 2.25+), skipping:', sparseError);
+    }
 
     // Copy specified files into the worktree (skip .claude/ entries --
     // sparse-checkout keeps .claude/ but excludes commands/,

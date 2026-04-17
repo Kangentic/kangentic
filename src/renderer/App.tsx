@@ -435,14 +435,47 @@ export function App() {
       }));
     }
 
-    // Task created by agent (MCP server)
+    // Unified debouncers for agent-driven board/backlog reloads. MCP bulk
+    // operations and external imports emit one event per task/item touched; a
+    // 50-issue GitHub import or a scripted `kangentic_create_task` loop
+    // previously fired one full loadBoard() per event. 250ms coalesces rapid
+    // bursts into a single reload while staying below the user-noticeable
+    // threshold. Toasts are intentionally NOT debounced - they are the live
+    // user feedback.
+    let pendingBoardReload: ReturnType<typeof setTimeout> | null = null;
+    let pendingBacklogReload: ReturnType<typeof setTimeout> | null = null;
+    const scheduleBoardReload = () => {
+      if (pendingBoardReload !== null) clearTimeout(pendingBoardReload);
+      pendingBoardReload = setTimeout(() => {
+        pendingBoardReload = null;
+        useBoardStore.getState().loadBoard();
+      }, 250);
+    };
+    const scheduleBacklogReload = () => {
+      if (pendingBacklogReload !== null) clearTimeout(pendingBacklogReload);
+      pendingBacklogReload = setTimeout(() => {
+        pendingBacklogReload = null;
+        useBacklogStore.getState().loadBacklog();
+      }, 250);
+    };
+    cleanups.push(() => {
+      if (pendingBoardReload !== null) {
+        clearTimeout(pendingBoardReload);
+        pendingBoardReload = null;
+      }
+      if (pendingBacklogReload !== null) {
+        clearTimeout(pendingBacklogReload);
+        pendingBacklogReload = null;
+      }
+    });
+
     const tasks = window.electronAPI?.tasks;
     if (tasks?.onCreatedByAgent) {
       cleanups.push(tasks.onCreatedByAgent((_taskId, taskTitle, columnName, createdByAgentProjectId) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (!createdByAgentProjectId || createdByAgentProjectId === activeProjectId) {
-          useBoardStore.getState().loadBoard();
-          useBacklogStore.getState().loadBacklog();
+          scheduleBoardReload();
+          scheduleBacklogReload();
         }
         useToastStore.getState().addToast({
           message: `Task created by agent: "${taskTitle}" in ${columnName}`,
@@ -451,12 +484,11 @@ export function App() {
       }));
     }
 
-    // Task updated by agent (MCP server)
     if (tasks?.onUpdatedByAgent) {
       cleanups.push(tasks.onUpdatedByAgent((_taskId, taskTitle, updatedByAgentProjectId) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (!updatedByAgentProjectId || updatedByAgentProjectId === activeProjectId) {
-          useBoardStore.getState().loadBoard();
+          scheduleBoardReload();
         }
         useToastStore.getState().addToast({
           message: `Task updated by agent: "${taskTitle}"`,
@@ -465,12 +497,11 @@ export function App() {
       }));
     }
 
-    // Task deleted by agent (MCP server)
     if (tasks?.onDeletedByAgent) {
       cleanups.push(tasks.onDeletedByAgent((_taskId, taskTitle, deletedByAgentProjectId) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (!deletedByAgentProjectId || deletedByAgentProjectId === activeProjectId) {
-          useBoardStore.getState().loadBoard();
+          scheduleBoardReload();
         }
         useToastStore.getState().addToast({
           message: `Task deleted by agent: "${taskTitle}"`,
@@ -479,13 +510,12 @@ export function App() {
       }));
     }
 
-    // Swimlane updated by agent (MCP server)
     const swimlanes = window.electronAPI?.swimlanes;
     if (swimlanes?.onUpdatedByAgent) {
       cleanups.push(swimlanes.onUpdatedByAgent((_swimlaneId, swimlaneName, updatedByAgentProjectId) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (!updatedByAgentProjectId || updatedByAgentProjectId === activeProjectId) {
-          useBoardStore.getState().loadBoard();
+          scheduleBoardReload();
         }
         useToastStore.getState().addToast({
           message: `Column updated by agent: "${swimlaneName}"`,
@@ -494,14 +524,12 @@ export function App() {
       }));
     }
 
-    // Backlog changed by agent (MCP server created/promoted backlog tasks)
     const backlog = window.electronAPI?.backlog;
     if (backlog?.onChangedByAgent) {
       cleanups.push(backlog.onChangedByAgent((changedProjectId) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
-        if (!changedProjectId || changedProjectId === activeProjectId) {
-          useBacklogStore.getState().loadBacklog();
-        }
+        if (changedProjectId && changedProjectId !== activeProjectId) return;
+        scheduleBacklogReload();
       }));
     }
 
@@ -522,7 +550,7 @@ export function App() {
     // Task auto-moved (plan exit → next column)
     if (tasks?.onAutoMoved) {
       cleanups.push(tasks.onAutoMoved((autoMovedTaskId, _targetSwimlaneId, taskTitle, autoMoveProjectId) => {
-        useBoardStore.getState().loadBoard();
+        scheduleBoardReload();
 
         const notifyConfig = useConfigStore.getState().config.notifications;
         if (notifyConfig.toasts.onPlanComplete) {
@@ -552,7 +580,7 @@ export function App() {
 }
 
 // Dev-only: re-sync all IPC-backed Zustand stores after Vite HMR updates.
-// When HMR replaces a module, its Zustand store reverts to defaults (e.g.
+// When HMR replaces a store module, its Zustand store reverts to defaults (e.g.
 // config resets to DEFAULT_CONFIG, projects list empties). Re-fetching from the
 // main process restores the correct state.
 //

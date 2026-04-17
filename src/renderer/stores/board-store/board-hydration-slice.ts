@@ -1,6 +1,7 @@
 import { type StateCreator } from 'zustand';
 import type { ShortcutConfig } from '../../../shared/types';
 import type { BoardStore } from './types';
+import { applyStructuralSharing } from './structural-sharing';
 
 export interface BoardHydrationSlice {
   loading: boolean;
@@ -25,12 +26,22 @@ export const createBoardHydrationSlice: StateCreator<BoardStore, [], [], BoardHy
   loadBoard: async () => {
     set({ loading: true });
     try {
-      const [tasks, swimlanes, archivedTasks] = await Promise.all([
+      const [nextTasks, swimlanes, nextArchivedTasks] = await Promise.all([
         window.electronAPI.tasks.list(),
         window.electronAPI.swimlanes.list(),
         window.electronAPI.tasks.listArchived(),
       ]);
-      set({ tasks, swimlanes, archivedTasks, loading: false, hydrated: true });
+      // Reuse object references for unchanged tasks so React.memo on TaskCard
+      // can short-circuit. Every IPC roundtrip returns fresh JSON objects - if
+      // we set them directly, 100 cards all re-render on every agent event even
+      // when only one task actually changed.
+      set((state) => ({
+        tasks: applyStructuralSharing(state.tasks, nextTasks),
+        swimlanes,
+        archivedTasks: applyStructuralSharing(state.archivedTasks, nextArchivedTasks),
+        loading: false,
+        hydrated: true,
+      }));
     } catch (error) {
       console.error('[board-store] Failed to load board:', error);
       set({ loading: false, hydrated: true });

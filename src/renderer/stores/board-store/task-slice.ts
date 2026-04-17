@@ -5,6 +5,7 @@ import { useConfigStore } from '../config-store';
 import { useSessionStore } from '../session-store';
 import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
+import { applyStructuralSharing } from './structural-sharing';
 import type { BoardStore } from './types';
 
 export interface TaskSlice {
@@ -182,16 +183,22 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       if (moveGeneration !== thisGen) return; // Skip stale reload
 
       // Reload tasks and archived tasks (sessions arrive via push-based session-changed events)
-      const [tasks, archivedTasks] = await Promise.all([
+      const [nextTasks, nextArchivedTasks] = await Promise.all([
         window.electronAPI.tasks.list(),
         window.electronAPI.tasks.listArchived(),
       ]);
       if (moveGeneration !== thisGen) return; // Skip stale reload
 
-      set({ tasks, archivedTasks });
+      // Preserve references for unchanged tasks so sibling TaskCards (the
+      // majority, since only the moved task changed swimlane/position) skip
+      // their memo and don't re-render on every drag drop.
+      set((state) => ({
+        tasks: applyStructuralSharing(state.tasks, nextTasks),
+        archivedTasks: applyStructuralSharing(state.archivedTasks, nextArchivedTasks),
+      }));
 
       // Detect if the moved task now has a new/different session
-      const movedTask = tasks.find((t) => t.id === input.taskId);
+      const movedTask = nextTasks.find((t) => t.id === input.taskId);
       if (movedTask?.session_id && movedTask.session_id !== prevSessionId) {
         useSessionStore.setState({ activeSessionId: movedTask.session_id });
         // Explicitly clear spawn progress - the session-changed IPC push event
@@ -276,9 +283,11 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       if (moveGeneration !== thisGen) return; // Skip stale reload
 
       // Lightweight reload -- only tasks (no session changes for same-column reorder)
-      const tasks = await window.electronAPI.tasks.list();
+      const nextTasks = await window.electronAPI.tasks.list();
       if (moveGeneration !== thisGen) return; // Skip stale reload
-      set({ tasks });
+      // Preserve refs for every untouched task; only the reordered ones
+      // actually changed `position`.
+      set((state) => ({ tasks: applyStructuralSharing(state.tasks, nextTasks) }));
     } catch (err) {
       if (moveGeneration !== thisGen) return; // Don't clobber newer state on error
       await get().loadBoard();

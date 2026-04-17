@@ -1,10 +1,15 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useState } from 'react';
 import { Search, X, EyeOff } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
 
 const modifierKey = window.electronAPI.platform === 'darwin' ? '⌘' : 'Ctrl';
+
+/** Debounce window between keystroke and store update. Keeps the input value
+ *  fully responsive while deferring the tasksPerLane refilter + re-render
+ *  cascade until the user pauses typing. */
+const SEARCH_DEBOUNCE_MS = 120;
 
 interface BoardSearchBarProps {
   totalCount: number;
@@ -19,6 +24,35 @@ export const BoardSearchBar = React.memo(function BoardSearchBar({ totalCount, m
   const setSearchQuery = useBoardStore((state) => state.setSearchQuery);
   const updateConfig = useConfigStore((state) => state.updateConfig);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [inputValue, setInputValue] = useState(searchQuery);
+
+  // External resets (project switch, Esc, Clear button) must sync the input.
+  // Skip when an outgoing debounced update is pending, otherwise the local edit
+  // would bounce back to the older store value mid-type.
+  //
+  // Invariant: the only external writers of searchQuery in-tree are
+  //   (a) this component's own flushPendingSearch / debounced setter
+  //   (b) the project-switch effect in App.tsx (setSearchQuery('') on switch)
+  // Case (b) is safe because project switch unmounts the board tree and this
+  // component remounts with pendingTimerRef === null. If a future caller
+  // writes searchQuery during an active debounce window, extend
+  // flushPendingSearch to also observe that external write.
+  useEffect(() => {
+    if (pendingTimerRef.current === null) {
+      setInputValue(searchQuery);
+    }
+  }, [searchQuery]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingTimerRef.current !== null) {
+        clearTimeout(pendingTimerRef.current);
+        pendingTimerRef.current = null;
+      }
+    };
+  }, []);
 
   // Auto-focus only when explicitly requested (e.g., bar just became visible via Ctrl+F)
   useEffect(() => {
@@ -27,24 +61,45 @@ export const BoardSearchBar = React.memo(function BoardSearchBar({ totalCount, m
     }
   }, [autoFocus]);
 
-  const handleClear = useCallback(() => {
-    setSearchQuery('');
-    inputRef.current?.focus();
+  const flushPendingSearch = useCallback((next: string) => {
+    if (pendingTimerRef.current !== null) {
+      clearTimeout(pendingTimerRef.current);
+      pendingTimerRef.current = null;
+    }
+    setInputValue(next);
+    setSearchQuery(next);
   }, [setSearchQuery]);
 
+  const handleChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextValue = event.target.value;
+    setInputValue(nextValue);
+    if (pendingTimerRef.current !== null) {
+      clearTimeout(pendingTimerRef.current);
+    }
+    pendingTimerRef.current = setTimeout(() => {
+      pendingTimerRef.current = null;
+      setSearchQuery(nextValue);
+    }, SEARCH_DEBOUNCE_MS);
+  }, [setSearchQuery]);
+
+  const handleClear = useCallback(() => {
+    flushPendingSearch('');
+    inputRef.current?.focus();
+  }, [flushPendingSearch]);
+
   const handleDismiss = useCallback(() => {
-    setSearchQuery('');
+    flushPendingSearch('');
     updateConfig({ showBoardSearch: false });
     useToastStore.getState().addToast({
       message: `Press ${modifierKey}+F to search`,
       variant: 'info',
     });
-  }, [setSearchQuery, updateConfig]);
+  }, [flushPendingSearch, updateConfig]);
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent) => {
     if (event.key === 'Escape') {
-      if (searchQuery) {
-        setSearchQuery('');
+      if (inputValue) {
+        flushPendingSearch('');
       } else {
         inputRef.current?.blur();
       }
@@ -53,15 +108,15 @@ export const BoardSearchBar = React.memo(function BoardSearchBar({ totalCount, m
     if ((event.ctrlKey || event.metaKey) && event.key === 'f') {
       event.preventDefault();
       event.stopPropagation();
-      if (!searchQuery) {
+      if (!inputValue) {
         handleDismiss();
       } else {
         inputRef.current?.select();
       }
     }
-  }, [searchQuery, handleDismiss]);
+  }, [inputValue, flushPendingSearch, handleDismiss]);
 
-  const hasQuery = searchQuery.length > 0;
+  const hasQuery = inputValue.length > 0;
 
   return (
     <div
@@ -73,8 +128,8 @@ export const BoardSearchBar = React.memo(function BoardSearchBar({ totalCount, m
         ref={inputRef}
         data-testid="board-search-input"
         type="text"
-        value={searchQuery}
-        onChange={(event) => setSearchQuery(event.target.value)}
+        value={inputValue}
+        onChange={handleChange}
         onKeyDown={handleKeyDown}
         placeholder="Search tasks..."
         className="flex-1 min-w-0 bg-transparent text-sm text-fg placeholder-fg-disabled outline-none"

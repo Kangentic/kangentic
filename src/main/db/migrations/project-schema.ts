@@ -535,6 +535,16 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE handoffs ADD COLUMN session_history_path TEXT');
   }
 
+  // Hot-path indices for session lookups.
+  // - sessions(task_id, started_at): getLatestForTask, cost summaries, per-task history
+  // - sessions(status): getResumable, getOrphaned, markRunningAsOrphaned
+  // - sessions(agent_session_id): findByIdOrAgentSessionId (resume-by-agent-id path)
+  // - tasks(session_id): listBySessionId used by session-changed IPC events
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_task_started ON sessions(task_id, started_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions(status)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_agent_session_id ON sessions(agent_session_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_session_id ON tasks(session_id)');
+
   // Seed default swimlanes if empty (must run after all ALTER TABLE migrations)
   const laneCount = db.prepare('SELECT COUNT(*) as c FROM swimlanes').get() as { c: number };
   if (laneCount.c === 0) {

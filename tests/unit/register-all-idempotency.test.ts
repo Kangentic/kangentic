@@ -105,7 +105,11 @@ vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
 vi.mock('simple-git', () => ({ default: vi.fn(() => ({})) }));
 
-// Mock all handler registration functions (they call ipcMain.handle internally)
+// Mock every handler-registration function that `registerAllIpc` imports.
+// If `register-all.ts` grows a new `registerXxxHandlers` call, add a mock
+// here - otherwise the real implementation runs, pulls its full dependency
+// graph into the test worker, and the import either times out or pollutes
+// parallel test files' module state.
 vi.mock('../../src/main/ipc/handlers/projects', () => ({
   registerProjectHandlers: vi.fn(),
   cleanupProject: vi.fn(),
@@ -121,8 +125,17 @@ vi.mock('../../src/main/ipc/handlers/tasks', () => ({
 vi.mock('../../src/main/ipc/handlers/sessions', () => ({
   registerSessionHandlers: vi.fn(),
 }));
+vi.mock('../../src/main/ipc/handlers/transient-sessions', () => ({
+  registerTransientSessionHandlers: vi.fn(),
+}));
 vi.mock('../../src/main/ipc/handlers/board', () => ({
   registerBoardHandlers: vi.fn(),
+}));
+vi.mock('../../src/main/ipc/handlers/backlog', () => ({
+  registerBacklogHandlers: vi.fn(),
+}));
+vi.mock('../../src/main/ipc/handlers/git-diff', () => ({
+  registerGitDiffHandlers: vi.fn(),
 }));
 vi.mock('../../src/main/ipc/handlers/system', () => ({
   registerSystemHandlers: vi.fn(),
@@ -164,7 +177,10 @@ describe('registerAllIpc idempotency', () => {
     const { registerProjectHandlers } = await import('../../src/main/ipc/handlers/projects');
     const { registerTaskHandlers } = await import('../../src/main/ipc/handlers/tasks');
     const { registerSessionHandlers } = await import('../../src/main/ipc/handlers/sessions');
+    const { registerTransientSessionHandlers } = await import('../../src/main/ipc/handlers/transient-sessions');
     const { registerBoardHandlers } = await import('../../src/main/ipc/handlers/board');
+    const { registerBacklogHandlers } = await import('../../src/main/ipc/handlers/backlog');
+    const { registerGitDiffHandlers } = await import('../../src/main/ipc/handlers/git-diff');
     const { registerSystemHandlers } = await import('../../src/main/ipc/handlers/system');
 
     const window1 = makeMockWindow(1);
@@ -176,15 +192,21 @@ describe('registerAllIpc idempotency', () => {
 
     registerAllIpc(window2);
 
-    // No additional ipcMain.handle or ipcMain.on calls
+    // No additional ipcMain.handle or ipcMain.on calls -- this is the load-bearing
+    // invariant (ipcMain throws on duplicate channel registration).
     expect(mockHandle).toHaveBeenCalledTimes(handleCountAfterFirst);
     expect(mockOn).toHaveBeenCalledTimes(onCountAfterFirst);
 
-    // Handler registration functions were NOT called a second time
+    // Every handler-registration function was called exactly once. Keep this
+    // list in sync with register-all.ts; a missing entry here means a new
+    // handler module can silently double-register on macOS re-activate.
     expect(registerProjectHandlers).toHaveBeenCalledTimes(1);
     expect(registerTaskHandlers).toHaveBeenCalledTimes(1);
     expect(registerSessionHandlers).toHaveBeenCalledTimes(1);
+    expect(registerTransientSessionHandlers).toHaveBeenCalledTimes(1);
     expect(registerBoardHandlers).toHaveBeenCalledTimes(1);
+    expect(registerBacklogHandlers).toHaveBeenCalledTimes(1);
+    expect(registerGitDiffHandlers).toHaveBeenCalledTimes(1);
     expect(registerSystemHandlers).toHaveBeenCalledTimes(1);
   });
 

@@ -111,7 +111,7 @@ Valid role values: `todo`, `done`, or NULL (custom column).
 | created_at | TEXT | NOT NULL | |
 | updated_at | TEXT | NOT NULL | |
 
-Indexes: `idx_tasks_swimlane_position` on (swimlane_id, position), `idx_tasks_display_id` on (display_id) UNIQUE.
+Indexes: `idx_tasks_swimlane_position` on (swimlane_id, position), `idx_tasks_display_id` on (display_id) UNIQUE, `idx_tasks_session_id` on (session_id).
 
 ### actions table
 
@@ -175,6 +175,8 @@ Valid status values: `running`, `queued`, `suspended`, `exited`, `orphaned`.
 Valid suspended_by values: `user` (explicit pause button), `system` (shutdown, task move, idle timeout), or `NULL` (legacy records, treated as `system`).
 
 Valid permission_mode values: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `auto` (see `PermissionMode` type in `src/shared/types.ts`).
+
+Indexes: `idx_sessions_task_started` on (task_id, started_at DESC), `idx_sessions_status` on (status), `idx_sessions_agent_session_id` on (agent_session_id).
 
 ### task_attachments table
 
@@ -307,6 +309,7 @@ Listed in execution order within `runProjectMigrations()`:
 28. **`handoffs` table** -- creates the table for tracking cross-agent context handoffs. FK on `task_id` with CASCADE delete, FKs on `from_session_id` and `to_session_id` with SET NULL. Indexed on `task_id`.
 29. **`agent_override` column on swimlanes** -- adds per-column agent override support. When set, tasks moving into this column use the specified agent instead of the project default.
 30. **`handoff_context` column on swimlanes** -- adds per-column toggle for cross-agent handoff context packaging. Default `0` (off) - users must opt in. When enabled, agent transitions package transcript, git diff, and metrics for the target agent.
+31. **Performance indices on sessions and tasks** -- adds four idempotent hot-path indices: `idx_sessions_task_started` on (task_id, started_at DESC) for per-task session lookups and cost summaries, `idx_sessions_status` on (status) for getResumable/getOrphaned/markRunningAsOrphaned, `idx_sessions_agent_session_id` on (agent_session_id) for the resume-by-agent-id path, and `idx_tasks_session_id` on (session_id) for session-change IPC events. Targets startup reconciliation and live board state lookups under accumulated session history.
 
 ### Key Migrations (Global DB)
 

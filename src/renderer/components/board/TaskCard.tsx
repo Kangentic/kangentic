@@ -1,4 +1,5 @@
 import React, { useCallback, useState, useRef, useEffect } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Loader2, CirclePause, Mail, Paperclip, GitPullRequest, FolderMinus, Trash2 } from 'lucide-react';
@@ -26,55 +27,30 @@ interface TaskCardProps {
 }
 
 const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete }: TaskCardProps) {
-  const showDetail = useSessionStore(
-    useCallback(
-      (s: ReturnType<typeof useSessionStore.getState>) => s.detailTaskId === task.id,
-      [task.id],
+  // A single `useShallow`-gated selector replaces six individual subscriptions.
+  // Scaling: 100 cards × 6 subs each = 600 selector invocations per session-store
+  // update; with one selector it drops to 100, and shallow equality still skips
+  // re-renders when the projected object hasn't actually changed.
+  const { showDetail, sessionId, isHighlighted, isResuming, hasFirstOutput, hasActivityEntry } = useSessionStore(
+    useShallow(
+      useCallback(
+        (s: ReturnType<typeof useSessionStore.getState>) => {
+          const resolvedSessionId = s._sessionByTaskId.get(task.id)?.id;
+          return {
+            showDetail: s.detailTaskId === task.id,
+            sessionId: resolvedSessionId,
+            isHighlighted: !!resolvedSessionId && resolvedSessionId === s.activeSessionId,
+            isResuming: s._sessionByTaskId.get(task.id)?.resuming ?? false,
+            hasFirstOutput: resolvedSessionId ? !!s.sessionFirstOutput[resolvedSessionId] : false,
+            hasActivityEntry: resolvedSessionId ? s.sessionActivity[resolvedSessionId] !== undefined : false,
+          };
+        },
+        [task.id],
+      ),
     ),
   );
   const setDetailTaskId = useSessionStore((s) => s.setDetailTaskId);
-
-  // Extract sessionId once via O(1) Map lookup -- all other selectors derive from this
-  const sessionId = useSessionStore(
-    useCallback(
-      (s: ReturnType<typeof useSessionStore.getState>) =>
-        s._sessionByTaskId.get(task.id)?.id,
-      [task.id],
-    ),
-  );
-  // Simple primitive comparison -- no array scan needed
-  const isHighlighted = useSessionStore(
-    useCallback(
-      (s: ReturnType<typeof useSessionStore.getState>) =>
-        !!sessionId && sessionId === s.activeSessionId,
-      [sessionId],
-    ),
-  );
   const displayState = useTaskProgress(task.id, sessionId);
-  const isResuming = useSessionStore(
-    useCallback(
-      (s: ReturnType<typeof useSessionStore.getState>) =>
-        s._sessionByTaskId.get(task.id)?.resuming ?? false,
-      [task.id],
-    ),
-  );
-  const hasFirstOutput = useSessionStore(
-    useCallback(
-      (s: ReturnType<typeof useSessionStore.getState>) =>
-        sessionId ? !!s.sessionFirstOutput[sessionId] : false,
-      [sessionId],
-    ),
-  );
-  // Raw activity entry presence (not the falling-back value from useTaskProgress).
-  // If the activity cache has an entry for this session, the CLI has reported
-  // at least one activity transition - i.e. it's past the boot phase.
-  const hasActivityEntry = useSessionStore(
-    useCallback(
-      (s: ReturnType<typeof useSessionStore.getState>) =>
-        sessionId ? s.sessionActivity[sessionId] !== undefined : false,
-      [sessionId],
-    ),
-  );
 
   const {
     attributes,
