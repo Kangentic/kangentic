@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { slugify, computeSlugBudget, computeAutoBranchName } from '../../shared/slugify';
 import { isGitRepo, isInsideWorktree } from './git-checks';
-import { linkNodeModules, removeNodeModulesJunction } from './node-modules-link';
+import { linkNodeModules, removeNodeModulesPath } from './node-modules-link';
 import { fetchIfStale } from './fetch-throttle';
 
 /** Background prune debounce per project. */
@@ -267,7 +267,7 @@ export class WorktreeManager {
     // Remove node_modules junction BEFORE any recursive operation to prevent
     // git worktree remove (or rmSync) from traversing the junction and
     // deleting the main repo's node_modules.
-    removeNodeModulesJunction(path.join(worktreePath, 'node_modules'));
+    removeNodeModulesPath(path.join(worktreePath, 'node_modules'));
 
     try {
       await this.git.raw(['worktree', 'remove', worktreePath, '--force']);

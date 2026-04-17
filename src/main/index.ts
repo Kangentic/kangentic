@@ -21,7 +21,22 @@ mark('process_start');
 
 // Global error handlers -- keep the app running through transient IPC/PTY errors.
 // During shutdown, skip analytics calls to avoid new network requests that block exit.
+//
+// Benign shutdown-window write errors (EAGAIN/EPIPE/ERR_IPC_CHANNEL_CLOSED) can
+// bubble from async pipe write completions when a PTY pipe or IPC channel is
+// torn down while a write is still in flight. writeExitSequence's try/catch only
+// traps sync throws; node-pty does not expose its internal pipe handle so we
+// cannot attach an 'error' listener there. Suppressing these at the global
+// handler is the narrowest fix: the filter requires isShuttingDown()=true AND
+// a known-benign code, so normal-operation errors still log and fire analytics.
+function isBenignShutdownStreamError(error: unknown): boolean {
+  if (!isShuttingDown()) return false;
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'EAGAIN' || code === 'EPIPE' || code === 'ERR_IPC_CHANNEL_CLOSED';
+}
+
 process.on('uncaughtException', (error) => {
+  if (isBenignShutdownStreamError(error)) return;
   console.error('[APP] Uncaught exception:', error);
   if (!isShuttingDown()) {
     trackEvent('app_error', {
@@ -31,6 +46,7 @@ process.on('uncaughtException', (error) => {
   }
 });
 process.on('unhandledRejection', (reason) => {
+  if (isBenignShutdownStreamError(reason)) return;
   console.error('[APP] Unhandled rejection:', reason);
   if (!isShuttingDown()) {
     trackEvent('app_error', {

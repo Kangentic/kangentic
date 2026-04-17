@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isVersionAtLeast } from '../../src/main/agent/git-detector';
+import { isVersionAtLeast } from '../../src/main/git/git-detector';
 
 describe('isVersionAtLeast', () => {
   it('returns true when versions are equal', () => {

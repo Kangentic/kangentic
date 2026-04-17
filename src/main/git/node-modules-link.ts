@@ -15,7 +15,7 @@ import fs from 'node:fs';
  * Removal in particular is subtle: `fs.rmSync(junction, { recursive:
  * true })` traverses the junction on Windows and deletes the TARGET
  * directory's contents - i.e. it would nuke the main repo's
- * node_modules. `removeNodeModulesJunction` avoids this.
+ * node_modules. `removeNodeModulesPath` avoids this.
  */
 
 /** Check whether a path is a junction (Windows) by attempting readlink. */
@@ -29,31 +29,51 @@ function isJunction(targetPath: string): boolean {
 }
 
 /**
- * Remove a junction or symlink without following it into the target directory.
+ * Remove `<worktree>/node_modules` in whatever form it takes, without
+ * ever traversing into a junction's target.
  *
- * On Windows, `fs.rmSync(junction, { recursive: true })` traverses the junction
- * and deletes the TARGET directory's contents (e.g. the main repo's node_modules).
- * This helper removes just the link itself using non-recursive rmSync.
+ * Handles four cases, in order:
+ *   1. Windows junction  -> rmdirSync (removes just the reparse point)
+ *   2. POSIX symlink     -> rmSync (symlinks are file-like)
+ *   3. Real directory    -> rmSync recursive (worktree ran `npm install`)
+ *   4. Regular file      -> rmSync (defensive)
  *
- * Exported so resource-cleanup can use it before recursive worktree removal.
+ * The junction check comes FIRST on Windows because `fs.rmSync(junction,
+ * { recursive: true })` traverses the reparse point and deletes the
+ * TARGET's contents (e.g. the main repo's node_modules). `rmdirSync`
+ * calls RemoveDirectoryW which correctly removes the link only.
+ *
+ * Exported so resource-cleanup and worktree-manager can use it before
+ * recursive worktree removal.
  */
-export function removeNodeModulesJunction(junctionPath: string): void {
+export function removeNodeModulesPath(targetPath: string): void {
   try {
-    fs.lstatSync(junctionPath);
-    // Check Windows junction FIRST - lstatSync().isSymbolicLink() can return
-    // true for junctions on some Node.js/Windows versions, which would route
-    // to rmSync (fails with EISDIR on directory reparse points). rmdirSync
-    // calls RemoveDirectoryW which correctly removes the junction link.
-    if (process.platform === 'win32' && isJunction(junctionPath)) {
-      fs.rmdirSync(junctionPath);
+    const stat = fs.lstatSync(targetPath);
+    // Windows junction check MUST come first - lstatSync().isSymbolicLink()
+    // can return true OR false for junctions depending on Node.js/Windows
+    // version, and .isDirectory() returns true for junctions, so only the
+    // readlinkSync probe reliably identifies them. rmdirSync removes the
+    // reparse point without following it into the target.
+    if (process.platform === 'win32' && isJunction(targetPath)) {
+      fs.rmdirSync(targetPath);
+    } else if (stat.isSymbolicLink()) {
+      // POSIX symlinks (and Windows symlinks, not junctions): file-like,
+      // non-recursive rmSync works and doesn't follow the link.
+      fs.rmSync(targetPath, { force: true });
+    } else if (stat.isDirectory()) {
+      // Real directory - e.g. worktree ran `npm install` instead of
+      // relying on the junction. Recursive removal is safe because
+      // we've already ruled out reparse points above.
+      fs.rmSync(targetPath, { recursive: true, force: true });
     } else {
-      // POSIX symlinks: rmSync works (they're file-like)
-      fs.rmSync(junctionPath, { force: true });
+      // Regular file / fifo / socket. Should be unreachable for a path
+      // named node_modules, but handle it defensively.
+      fs.rmSync(targetPath, { force: true });
     }
   } catch (error) {
-    // ENOENT is expected (junction already gone)
+    // ENOENT is expected (already gone)
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.warn(`[WORKTREE] Failed to remove junction ${junctionPath}: ${(error as Error).message}`);
+      console.warn(`[WORKTREE] Failed to remove ${targetPath}: ${(error as Error).message}`);
     }
   }
 }
@@ -83,7 +103,7 @@ export function linkNodeModules(worktreePath: string, rootPath: string): void {
       if (target === rootReal) return; // Already correct
       // Points elsewhere. Remove just the link (not recursive - avoids
       // traversing into the target and deleting the main repo's modules).
-      removeNodeModulesJunction(worktreeModules);
+      removeNodeModulesPath(worktreeModules);
     } else {
       // Real directory (e.g. from a previous npm install). Remove it.
       fs.rmSync(worktreeModules, { recursive: true, force: true });

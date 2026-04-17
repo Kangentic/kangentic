@@ -7,7 +7,7 @@ import { TaskRepository } from '../db/repositories/task-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { SessionManager } from '../pty/session-manager';
 import { slugify } from '../../shared/slugify';
-import { removeNodeModulesJunction } from '../git/node-modules-link';
+import { removeNodeModulesPath } from '../git/node-modules-link';
 
 const execFileAsync = promisify(execFile);
 
@@ -151,7 +151,7 @@ async function cleanBacklogTaskResources(
 
     for (const worktreePath of pathsToRemove) {
       if (!fs.existsSync(worktreePath)) continue;
-      removeNodeModulesJunction(path.join(worktreePath, 'node_modules'));
+      removeNodeModulesPath(path.join(worktreePath, 'node_modules'));
       await removeWorktreeDirectory(worktreePath, projectPath);
     }
 
@@ -267,7 +267,7 @@ async function pruneDirectory(
     console.log(`[RESOURCE_CLEANUP] Removing orphaned ${label} directory: ${entry.name}`);
 
     if (hasJunctions) {
-      removeNodeModulesJunction(path.join(dirPath, 'node_modules'));
+      removeNodeModulesPath(path.join(dirPath, 'node_modules'));
     }
 
     let removed = false;

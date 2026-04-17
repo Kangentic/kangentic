@@ -68,10 +68,10 @@ vi.mock('../../src/main/agent/adapters/claude/hook-manager', () => ({
 }));
 vi.mock('../../src/main/git/worktree-manager', () => ({}));
 vi.mock('../../src/main/git/node-modules-link', () => ({
-  removeNodeModulesJunction: vi.fn(),
+  removeNodeModulesPath: vi.fn(),
 }));
 vi.mock('../../src/main/git/node-modules-link', () => ({
-  removeNodeModulesJunction: vi.fn(),
+  removeNodeModulesPath: vi.fn(),
 }));
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
