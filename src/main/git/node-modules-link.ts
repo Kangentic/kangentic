@@ -33,20 +33,28 @@ function isJunction(targetPath: string): boolean {
  * ever traversing into a junction's target.
  *
  * Handles four cases, in order:
- *   1. Windows junction  -> rmdirSync (removes just the reparse point)
- *   2. POSIX symlink     -> rmSync (symlinks are file-like)
- *   3. Real directory    -> rmSync recursive (worktree ran `npm install`)
- *   4. Regular file      -> rmSync (defensive)
+ *   1. Windows junction  -> rmdirSync (removes just the reparse point; fast)
+ *   2. POSIX symlink     -> rmSync (symlinks are file-like; fast)
+ *   3. Real directory    -> fs.promises.rm recursive (worktree ran `npm install`;
+ *                           potentially thousands of files, so async to keep
+ *                           the event loop responsive during bulk cleanup)
+ *   4. Regular file      -> rmSync (defensive; fast)
  *
- * The junction check comes FIRST on Windows because `fs.rmSync(junction,
+ * The junction check comes FIRST on Windows because `fs.rm(junction,
  * { recursive: true })` traverses the reparse point and deletes the
  * TARGET's contents (e.g. the main repo's node_modules). `rmdirSync`
  * calls RemoveDirectoryW which correctly removes the link only.
  *
+ * Cases 1, 2, and 4 stay synchronous because they're bounded: a reparse
+ * point or file-like removal completes in microseconds and the value of
+ * returning a promise for them doesn't offset the cost of the extra tick.
+ * Only Case 3 is unbounded (scales with the directory contents), so only
+ * that path awaits.
+ *
  * Exported so resource-cleanup and worktree-manager can use it before
  * recursive worktree removal.
  */
-export function removeNodeModulesPath(targetPath: string): void {
+export async function removeNodeModulesPath(targetPath: string): Promise<void> {
   try {
     const stat = fs.lstatSync(targetPath);
     // Windows junction check MUST come first - lstatSync().isSymbolicLink()
@@ -62,9 +70,16 @@ export function removeNodeModulesPath(targetPath: string): void {
       fs.rmSync(targetPath, { force: true });
     } else if (stat.isDirectory()) {
       // Real directory - e.g. worktree ran `npm install` instead of
-      // relying on the junction. Recursive removal is safe because
-      // we've already ruled out reparse points above.
-      fs.rmSync(targetPath, { recursive: true, force: true });
+      // relying on the junction. Can contain thousands of files; use
+      // async fs.promises.rm so the main-process event loop stays free
+      // during bulk-delete batches. Recursive is safe here because we've
+      // already ruled out reparse points above.
+      await fs.promises.rm(targetPath, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
     } else {
       // Regular file / fifo / socket. Should be unreachable for a path
       // named node_modules, but handle it defensively.
@@ -85,7 +100,7 @@ export function removeNodeModulesPath(targetPath: string): void {
  *
  * Non-fatal: logs a warning on failure but never throws.
  */
-export function linkNodeModules(worktreePath: string, rootPath: string): void {
+export async function linkNodeModules(worktreePath: string, rootPath: string): Promise<void> {
   const rootModules = path.join(rootPath, 'node_modules');
   const worktreeModules = path.join(worktreePath, 'node_modules');
 
@@ -103,10 +118,17 @@ export function linkNodeModules(worktreePath: string, rootPath: string): void {
       if (target === rootReal) return; // Already correct
       // Points elsewhere. Remove just the link (not recursive - avoids
       // traversing into the target and deleting the main repo's modules).
-      removeNodeModulesPath(worktreeModules);
+      await removeNodeModulesPath(worktreeModules);
     } else {
-      // Real directory (e.g. from a previous npm install). Remove it.
-      fs.rmSync(worktreeModules, { recursive: true, force: true });
+      // Real directory (e.g. from a previous npm install). Async rm so a
+      // large existing node_modules doesn't stall the main thread during
+      // worktree creation.
+      await fs.promises.rm(worktreeModules, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
     }
   } catch (error: unknown) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {

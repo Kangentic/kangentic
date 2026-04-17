@@ -47,15 +47,34 @@ export async function cleanupTaskSession(
     const db = getProjectDb(resolvedProjectId);
     const sessionRepo = new SessionRepository(db);
 
-    // Best-effort disk cleanup (non-fatal -- DB records are the source of truth)
+    // Best-effort disk cleanup (non-fatal -- DB records are the source of truth).
+    // Uses async fs.promises.rm so the event loop stays responsive during bulk
+    // operations. The previous sync rmSync in a tight loop caused a multi-second
+    // event-loop stall when many tasks with multiple session records each
+    // landed in the bulk-delete handler concurrently - every IPC call from the
+    // renderer (including the click that triggered delete) queued up behind
+    // the sync work. Promise.all lets the kernel parallelize while keeping
+    // the main thread free to service other handlers.
     if (resolvedProjectPath) {
       const records = db.prepare(
         'SELECT id FROM sessions WHERE task_id = ?'
       ).all(task.id) as Array<{ id: string }>;
-      for (const { id } of records) {
+      await Promise.all(records.map(({ id }) => {
         const sessionDir = path.join(resolvedProjectPath, '.kangentic', 'sessions', id);
-        try { fs.rmSync(sessionDir, { recursive: true, force: true }); } catch { /* may not exist */ }
-      }
+        return fs.promises.rm(sessionDir, {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 100,
+        }).catch((error: NodeJS.ErrnoException) => {
+          // force: true already silences ENOENT, so anything surfacing here is
+          // a genuine problem (EACCES, EPERM, EBUSY post-retry). Best-effort:
+          // log and continue so the task DELETE still proceeds.
+          if (error.code !== 'ENOENT') {
+            console.warn(`[CLEANUP] Failed to remove session dir ${sessionDir}: ${error.message}`);
+          }
+        });
+      }));
     }
 
     // Always delete DB records -- this must succeed for task DELETE to pass FK check

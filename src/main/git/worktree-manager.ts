@@ -235,7 +235,7 @@ export class WorktreeManager {
 
     // Link node_modules from root so worktree agents can run typecheck/test
     // without a slow npm install. Non-fatal if it fails.
-    linkNodeModules(worktreePath, this.projectPath);
+    await linkNodeModules(worktreePath, this.projectPath);
 
     return { worktreePath, branchName };
   }
@@ -276,8 +276,9 @@ export class WorktreeManager {
 
     // Remove node_modules junction BEFORE any recursive operation to prevent
     // git worktree remove (or the async rm below) from traversing the junction
-    // and deleting the main repo's node_modules.
-    removeNodeModulesPath(path.join(worktreePath, 'node_modules'));
+    // and deleting the main repo's node_modules. Async so a real (non-junction)
+    // node_modules with many files doesn't block the main-process event loop.
+    await removeNodeModulesPath(path.join(worktreePath, 'node_modules'));
 
     try {
       await this.git.raw(['worktree', 'remove', worktreePath, '--force']);

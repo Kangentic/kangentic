@@ -151,7 +151,7 @@ async function cleanBacklogTaskResources(
 
     for (const worktreePath of pathsToRemove) {
       if (!fs.existsSync(worktreePath)) continue;
-      removeNodeModulesPath(path.join(worktreePath, 'node_modules'));
+      await removeNodeModulesPath(path.join(worktreePath, 'node_modules'));
       await removeWorktreeDirectory(worktreePath, projectPath);
     }
 
@@ -267,7 +267,7 @@ async function pruneDirectory(
     console.log(`[RESOURCE_CLEANUP] Removing orphaned ${label} directory: ${entry.name}`);
 
     if (hasJunctions) {
-      removeNodeModulesPath(path.join(dirPath, 'node_modules'));
+      await removeNodeModulesPath(path.join(dirPath, 'node_modules'));
     }
 
     let removed = false;

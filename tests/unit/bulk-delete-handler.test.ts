@@ -321,7 +321,7 @@ describe('TASK_BULK_DELETE handler', () => {
   // Happy path: all tasks deleted cleanly
   // -------------------------------------------------------------------------
 
-  it('deletes all tasks cleanly, returns deleted=N, failures=[], emits N+1 progress events', async () => {
+  it('deletes all tasks cleanly, returns deleted=N, failures=[], forces start and end progress emits', async () => {
     const tasks = [
       createMockTask('task-a'),
       createMockTask('task-b'),
@@ -346,19 +346,22 @@ describe('TASK_BULK_DELETE handler', () => {
     expect(attachmentRepo.deleteByTaskId).toHaveBeenCalledTimes(3);
     expect(mockCleanupTaskResources).toHaveBeenCalledTimes(3);
 
-    // One initial emit (completed=0) + one per task (completed=1,2,3) = 4 total
+    // Contract: the handler forces a progress emit at start (completed=0) and
+    // at end (completed=total). Mid-loop emits are throttled and may or may
+    // not fire depending on elapsed wall-clock time - we only assert the
+    // guaranteed first + last.
     const progressCalls = context.mainWindow.webContents.send.mock.calls.filter(
       (call) => call[0] === IPC.TASK_BULK_DELETE_PROGRESS,
     );
-    expect(progressCalls).toHaveLength(4);
+    expect(progressCalls.length).toBeGreaterThanOrEqual(2);
 
-    // First emit: completed=0, total=3
     const firstPayload = progressCalls[0][1] as { completed: number; total: number };
     expect(firstPayload.completed).toBe(0);
     expect(firstPayload.total).toBe(3);
 
-    // Last emit: completed=3
-    const lastPayload = progressCalls[3][1] as { completed: number; total: number };
+    const lastPayload = progressCalls[progressCalls.length - 1][1] as {
+      completed: number; total: number; failures: Array<{ id: string; error: string }>;
+    };
     expect(lastPayload.completed).toBe(3);
     expect(lastPayload.total).toBe(3);
     expect(lastPayload.failures).toHaveLength(0);

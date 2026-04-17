@@ -23,14 +23,24 @@ import type { IpcContext } from '../ipc-context';
 import type { TaskSwitchBranchInput, TaskBulkDeleteFailure, TaskBulkDeleteResult, TaskBulkDeleteProgress } from '../../../shared/types';
 
 /**
- * Cap on concurrent bulk-delete workers. Non-git work (PTY kill, DB writes)
- * parallelizes safely; actual git mutations still serialize through the
- * per-project queue in WorktreeManager.withGitLock, so higher concurrency
- * here only costs a handful of file handles and DB statement slots. 8 is a
- * conservative ceiling that keeps Node's libuv thread pool healthy on all
- * three platforms without tuning UV_THREADPOOL_SIZE.
+ * Cap on concurrent bulk-delete workers. Git mutations serialize through the
+ * per-project queue in WorktreeManager.withGitLock, so the fan-out here only
+ * helps during the non-git phase (PTY kill, session-dir rm, DB writes). A
+ * lower number (2) is deliberately chosen: with higher concurrency, many
+ * workers enter the sync DB + fs portion of cleanupTaskSession at the same
+ * tick, producing a burst of sync work that starves other IPC handlers and
+ * makes the renderer feel unresponsive even though its own event loop is
+ * fine. 2 gives us some overlap without the burst effect.
  */
-const BULK_DELETE_CONCURRENCY = 8;
+const BULK_DELETE_CONCURRENCY = 2;
+
+/**
+ * Minimum wall-clock gap between TASK_BULK_DELETE_PROGRESS emissions. Below
+ * this the renderer gets flooded with re-renders that compete with user
+ * interactions for the React scheduler. The final emission is always sent
+ * unthrottled so the UI always reflects the terminal state.
+ */
+const PROGRESS_THROTTLE_MS = 100;
 
 // Re-export for backward compatibility (tests import from this module)
 export { carryUncommittedChanges } from './task-branch';
@@ -261,7 +271,8 @@ export function registerTaskHandlers(context: IpcContext): void {
     const total = ids.length;
     let completed = 0;
 
-    const emitProgress = (): void => {
+    let lastEmitAt = 0;
+    const sendProgress = (): void => {
       if (context.mainWindow.isDestroyed()) return;
       const payload: TaskBulkDeleteProgress = {
         completed,
@@ -269,6 +280,16 @@ export function registerTaskHandlers(context: IpcContext): void {
         failures: failures.slice(),
       };
       context.mainWindow.webContents.send(IPC.TASK_BULK_DELETE_PROGRESS, payload);
+      lastEmitAt = Date.now();
+    };
+    // Throttled emit: per-task progress during the loop is coalesced so the
+    // renderer isn't hammered with hundreds of re-renders while a large batch
+    // runs. The initial emit (completed=0) and final emit (completed=total)
+    // bypass the throttle so the UI always shows start + end states.
+    const emitProgress = (options?: { force?: boolean }): void => {
+      if (options?.force || Date.now() - lastEmitAt >= PROGRESS_THROTTLE_MS) {
+        sendProgress();
+      }
     };
 
     if (total === 0) {
@@ -282,7 +303,7 @@ export function registerTaskHandlers(context: IpcContext): void {
     // attachment deletes) and yield between async boundaries to keep the main
     // process event loop responsive.
     const queue = new PQueue({ concurrency: BULK_DELETE_CONCURRENCY });
-    emitProgress();
+    emitProgress({ force: true });
 
     await queue.addAll(
       ids.map((id) => async () => {
@@ -314,10 +335,15 @@ export function registerTaskHandlers(context: IpcContext): void {
           failures.push({ id, error: message });
         } finally {
           completed += 1;
+          // Throttled during the loop; the final emit below forces a send
+          // so the renderer always sees completed === total.
           emitProgress();
         }
       }),
     );
+
+    // Guarantee the renderer observes the terminal state (bypasses throttle).
+    emitProgress({ force: true });
 
     return { deleted: total - failures.length, failures };
   });
