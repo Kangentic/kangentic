@@ -42,6 +42,53 @@ const BULK_DELETE_CONCURRENCY = 2;
  */
 const PROGRESS_THROTTLE_MS = 100;
 
+/**
+ * Hard ceiling on how long a single task's cleanup can block the batch.
+ *
+ * `cleanupTaskResources` can hang if a git child process started by
+ * `simple-git` never resolves (stdio pipe stall, stale `.git/worktrees/*`
+ * metadata pointing at an unreachable path, or similar). Because
+ * `WorktreeManager.withGitLock` serializes every git operation for the
+ * project through a promise chain, a single hung op holds the lock forever
+ * and every subsequent task queues behind it - the whole batch freezes
+ * even though the outer queue still has workers ready.
+ *
+ * 30 seconds is comfortably longer than any legitimate single-task cleanup
+ * on a sane repo (git worktree remove + prune + branch -D on a ~200-
+ * worktree parent repo completes in under 5s), so the timeout only fires
+ * on genuine hangs. When it does, the task's DB row is still deleted (the
+ * user's delete intent is honored) and a failure entry captures the
+ * condition so the UI can surface it.
+ */
+const TASK_CLEANUP_TIMEOUT_MS = 30_000;
+
+/**
+ * Race an operation against a wall-clock deadline. Resolves with the
+ * operation's value if it completes in time, otherwise rejects with a
+ * descriptive Error. The operation keeps running in the background after
+ * the timeout - Node has no generic way to cancel an in-flight simple-git
+ * child process, so the best we can do is abandon the promise and let the
+ * process exit on its own schedule. This is acceptable because the stuck
+ * resource is already broken; we're just refusing to block the batch on it.
+ */
+function withDeadline<T>(
+  operation: () => Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(
+      () => reject(new Error(`Timed out after ${timeoutMs}ms: ${timeoutMessage}`)),
+      timeoutMs,
+    );
+  });
+  return Promise.race([
+    operation().finally(() => { if (timeoutHandle) clearTimeout(timeoutHandle); }),
+    deadline,
+  ]);
+}
+
 // Re-export for backward compatibility (tests import from this module)
 export { carryUncommittedChanges } from './task-branch';
 export type { CarryResult } from './task-branch';
@@ -307,34 +354,65 @@ export function registerTaskHandlers(context: IpcContext): void {
 
     await queue.addAll(
       ids.map((id) => async () => {
+        const shortId = id.slice(0, 8);
+        const startedAt = Date.now();
+        let cleanupError: unknown = null;
+        let worktreePathBefore: string | null = null;
+        console.log(`[TASK_BULK_DELETE] start ${shortId}`);
+
         try {
           await withTaskLock(id, async () => {
             const task = tasks.getById(id);
-            // Capture the worktree path BEFORE cleanup so we can verify
-            // on-disk removal afterward. cleanupTaskResources swallows
-            // worktree-removal failures (by design - partial cleanup
-            // should not block the DB delete), so the only reliable
-            // signal is a stat check once it returns.
-            const worktreePathBefore = task?.worktree_path ?? null;
+            worktreePathBefore = task?.worktree_path ?? null;
             if (task) {
-              attachments.deleteByTaskId(id);
-              await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
+              // Cleanup may legitimately take time (git worktree remove + prune)
+              // but MUST NOT hang indefinitely. If a simple-git child process
+              // stalls, the per-project git lock stays held and every subsequent
+              // task queues forever behind it - the whole batch freezes. Deadline
+              // ensures we abandon the stuck op and keep draining the queue.
+              try {
+                await withDeadline(
+                  () => cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath),
+                  TASK_CLEANUP_TIMEOUT_MS,
+                  `cleanupTaskResources for task ${shortId}`,
+                );
+              } catch (error) {
+                cleanupError = error;
+                const message = error instanceof Error ? error.message : String(error);
+                console.warn(
+                  `[TASK_BULK_DELETE] cleanup failed ${shortId}: ${message}. `
+                  + `Proceeding with DB delete; orphaned fs state will be reported.`,
+                );
+              }
             }
+            // DB deletion always runs - the user's delete intent is honored even
+            // when filesystem cleanup fails or times out. Any orphaned fs state
+            // (worktree directory, session dirs) is surfaced via failures[] so
+            // the user sees exactly what needs manual cleanup.
+            attachments.deleteByTaskId(id);
             tasks.delete(id);
-            if (worktreePathBefore && fs.existsSync(worktreePathBefore)) {
-              // DB row is gone but the directory survived - orphan.
-              failures.push({
-                id,
-                error: `Worktree directory could not be removed: ${worktreePathBefore}`,
-              });
-            }
           });
+
+          if (cleanupError) {
+            const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+            failures.push({ id, error: message });
+          } else if (worktreePathBefore && fs.existsSync(worktreePathBefore)) {
+            // cleanupTaskResources succeeded but the directory survived - orphan.
+            failures.push({
+              id,
+              error: `Worktree directory could not be removed: ${worktreePathBefore}`,
+            });
+          }
         } catch (error) {
+          // Reaches here only if withTaskLock itself failed (unexpected).
           const message = error instanceof Error ? error.message : String(error);
-          console.error(`[TASK_BULK_DELETE] Failed for task ${id.slice(0, 8)}:`, error);
+          console.error(`[TASK_BULK_DELETE] lock failure ${shortId}:`, error);
           failures.push({ id, error: message });
         } finally {
           completed += 1;
+          const elapsed = Date.now() - startedAt;
+          const status = cleanupError ? 'done-with-cleanup-failure' : 'done';
+          console.log(`[TASK_BULK_DELETE] ${status} ${shortId} in ${elapsed}ms (${completed}/${total})`);
           // Throttled during the loop; the final emit below forces a send
           // so the renderer always sees completed === total.
           emitProgress();
