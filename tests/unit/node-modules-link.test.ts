@@ -9,11 +9,15 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const { mockLstat, mockReadlink, mockRmdir, mockRm } = vi.hoisted(() => ({
+const { mockLstat, mockReadlink, mockRmdir, mockRm, mockPromisesRm } = vi.hoisted(() => ({
   mockLstat: vi.fn(),
   mockReadlink: vi.fn(),
   mockRmdir: vi.fn(),
   mockRm: vi.fn(),
+  // Real-directory Case 3 uses async fs.promises.rm so the event loop stays
+  // responsive during bulk-delete batches over worktrees with real (not
+  // junction) node_modules.
+  mockPromisesRm: vi.fn(async () => {}),
 }));
 
 vi.mock('node:fs', () => ({
@@ -22,6 +26,9 @@ vi.mock('node:fs', () => ({
     readlinkSync: mockReadlink,
     rmdirSync: mockRmdir,
     rmSync: mockRm,
+    promises: {
+      rm: mockPromisesRm,
+    },
   },
 }));
 
@@ -77,7 +84,7 @@ describe('removeNodeModulesPath', () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it('Windows real directory (npm install ran in worktree): removes recursively', () => {
+  it('Windows real directory (npm install ran in worktree): removes recursively via fs.promises.rm', async () => {
     setPlatform('win32');
     // Real directory on Windows: lstatSync says isDirectory, but readlinkSync
     // throws EINVAL because there's no reparse point to read.
@@ -86,12 +93,16 @@ describe('removeNodeModulesPath', () => {
       throw makeErrnoException('EINVAL', 'EINVAL: invalid argument, readlink');
     });
 
-    removeNodeModulesPath('C:\\Users\\dev\\project\\.kangentic\\worktrees\\task-abc\\node_modules');
+    await removeNodeModulesPath('C:\\Users\\dev\\project\\.kangentic\\worktrees\\task-abc\\node_modules');
 
-    expect(mockRm).toHaveBeenCalledWith(
+    // Real-directory Case 3 uses async fs.promises.rm (not sync rmSync) so
+    // the event loop stays free during bulk cleanup on worktrees that have
+    // a real populated node_modules rather than a junction.
+    expect(mockPromisesRm).toHaveBeenCalledWith(
       'C:\\Users\\dev\\project\\.kangentic\\worktrees\\task-abc\\node_modules',
-      { recursive: true, force: true },
+      expect.objectContaining({ recursive: true, force: true }),
     );
+    expect(mockRm).not.toHaveBeenCalled();
     expect(mockRmdir).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
   });
@@ -127,16 +138,17 @@ describe('removeNodeModulesPath', () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it('POSIX real directory (npm install ran in worktree): removes recursively', () => {
+  it('POSIX real directory (npm install ran in worktree): removes recursively via fs.promises.rm', async () => {
     setPlatform('linux');
     mockLstat.mockReturnValue(makeStat({ isDirectory: true }));
 
-    removeNodeModulesPath('/home/dev/project/.kangentic/worktrees/task-abc/node_modules');
+    await removeNodeModulesPath('/home/dev/project/.kangentic/worktrees/task-abc/node_modules');
 
-    expect(mockRm).toHaveBeenCalledWith(
+    expect(mockPromisesRm).toHaveBeenCalledWith(
       '/home/dev/project/.kangentic/worktrees/task-abc/node_modules',
-      { recursive: true, force: true },
+      expect.objectContaining({ recursive: true, force: true }),
     );
+    expect(mockRm).not.toHaveBeenCalled();
     expect(mockRmdir).not.toHaveBeenCalled();
     expect(warnSpy).not.toHaveBeenCalled();
   });
@@ -165,14 +177,16 @@ describe('removeNodeModulesPath', () => {
     expect(warnSpy).not.toHaveBeenCalled();
   });
 
-  it('Non-ENOENT rm errors are logged as warnings', () => {
+  it('Non-ENOENT rm errors are logged as warnings', async () => {
     setPlatform('linux');
     mockLstat.mockReturnValue(makeStat({ isDirectory: true }));
-    mockRm.mockImplementation(() => {
-      throw makeErrnoException('EPERM', 'EPERM: operation not permitted, rm');
-    });
+    // Real-directory case now uses async fs.promises.rm, so the rejection
+    // must be surfaced on that mock for the outer try/catch to log it.
+    mockPromisesRm.mockRejectedValueOnce(
+      makeErrnoException('EPERM', 'EPERM: operation not permitted, rm'),
+    );
 
-    removeNodeModulesPath('/protected/node_modules');
+    await removeNodeModulesPath('/protected/node_modules');
 
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith(

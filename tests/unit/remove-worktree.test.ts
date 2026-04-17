@@ -21,10 +21,72 @@ const {
   mockExistsSync,
   mockFsRm,
   mockRemoveNodeModulesPath,
-} = vi.hoisted(() => ({
-  mockExistsSync: vi.fn((): boolean => false),
-  mockFsRm: vi.fn(async () => {}),
-  mockRemoveNodeModulesPath: vi.fn(),
+  mockSpawn,
+  recordedSpawnCalls,
+  spawnOverrides,
+} = vi.hoisted(() => {
+  // Controllable spawn mock for the new runGitWithTimeout helper. Per-test
+  // tweaks live in spawnOverrides - a list of predicates + behaviors that
+  // decide how each call resolves. Default: close(code=0).
+  type SpawnBehavior = {
+    exitCode?: number;
+    signal?: NodeJS.Signals | null;
+    stderr?: string;
+    stdout?: string;
+    error?: Error;
+  };
+  const recordedSpawnCalls: Array<{ command: string; args: readonly string[]; cwd: string }> = [];
+  const spawnOverrides: Array<{
+    match: (args: readonly string[]) => boolean;
+    behavior: SpawnBehavior;
+  }> = [];
+
+  return {
+    mockExistsSync: vi.fn((): boolean => false),
+    mockFsRm: vi.fn(async () => {}),
+    mockRemoveNodeModulesPath: vi.fn(),
+    mockSpawn: vi.fn((command: string, args: readonly string[], options: { cwd: string }) => {
+      recordedSpawnCalls.push({ command, args, cwd: options.cwd });
+      const override = spawnOverrides.find((entry) => entry.match(args));
+      const behavior = override?.behavior ?? { exitCode: 0 };
+
+      // Minimal ChildProcess surface: EventEmitter for stdout/stderr/close/error
+      const EventEmitter = require('node:events').EventEmitter;
+      const child: {
+        stdout: typeof EventEmitter.prototype;
+        stderr: typeof EventEmitter.prototype;
+        on: (event: string, handler: (...args: unknown[]) => void) => void;
+        emit: (event: string, ...args: unknown[]) => boolean;
+        kill: (signal?: string) => void;
+      } = Object.assign(new EventEmitter(), {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+        kill: vi.fn(),
+      });
+
+      // queueMicrotask (not setImmediate) so the mock still works when
+      // vi.useFakeTimers() is active anywhere up the stack - fake timers
+      // don't affect microtasks. Also settles async so runGitWithTimeout
+      // can attach its listeners first.
+      queueMicrotask(() => {
+        if (behavior.error) {
+          child.emit('error', behavior.error);
+          return;
+        }
+        if (behavior.stdout) child.stdout.emit('data', Buffer.from(behavior.stdout, 'utf8'));
+        if (behavior.stderr) child.stderr.emit('data', Buffer.from(behavior.stderr, 'utf8'));
+        child.emit('close', behavior.exitCode ?? 0, behavior.signal ?? null);
+      });
+
+      return child;
+    }),
+    recordedSpawnCalls,
+    spawnOverrides,
+  };
+});
+
+vi.mock('node:child_process', () => ({
+  spawn: mockSpawn,
 }));
 
 vi.mock('node:fs', () => ({
@@ -108,6 +170,8 @@ describe('WorktreeManager.removeWorktree', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGitInstances.length = 0;
+    recordedSpawnCalls.length = 0;
+    spawnOverrides.length = 0;
     manager = new WorktreeManager(PROJECT_PATH);
   });
 
@@ -119,25 +183,23 @@ describe('WorktreeManager.removeWorktree', () => {
 
     expect(result).toBe(true);
     // No git commands or fs operations should be attempted
-    expect(mockGitRaw).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
     expect(mockFsRm).not.toHaveBeenCalled();
     // node_modules junction cleanup is also skipped (path not present)
     expect(mockRemoveNodeModulesPath).not.toHaveBeenCalled();
   });
 
-  // Branch 2: git worktree remove succeeds
+  // Branch 2: git worktree remove succeeds (spawn resolves with exit 0)
   it('returns true when git worktree remove succeeds', async () => {
     mockExistsSync.mockReturnValue(true);
-    mockGitRaw.mockResolvedValue('');
 
     const result = await manager.removeWorktree(WORKTREE_PATH);
 
     expect(result).toBe(true);
     // node_modules junction must be removed BEFORE any recursive operation
     expect(mockRemoveNodeModulesPath).toHaveBeenCalledWith(`${WORKTREE_PATH}/node_modules`);
-    const calls = mockGitRaw.mock.calls.map((call) => call[0]);
-    const worktreeRemoveCall = calls.find(
-      (args) => args[0] === 'worktree' && args[1] === 'remove',
+    const worktreeRemoveCall = recordedSpawnCalls.find(
+      (call) => call.args[0] === 'worktree' && call.args[1] === 'remove',
     );
     expect(worktreeRemoveCall).toBeDefined();
     // fs.promises.rm should NOT be called when git succeeded
@@ -147,27 +209,22 @@ describe('WorktreeManager.removeWorktree', () => {
   // Branch 3: git worktree remove fails, fs.promises.rm fallback succeeds
   it('falls back to fs.promises.rm when git worktree remove fails, returns true', async () => {
     mockExistsSync.mockReturnValue(true);
-    mockGitRaw.mockImplementation(async (args: string[]) => {
-      if (args[0] === 'worktree' && args[1] === 'remove') {
-        throw new Error('fatal: git worktree remove failed');
-      }
-      // worktree prune and any other git calls succeed
-      return '';
+    spawnOverrides.push({
+      match: (args) => args[0] === 'worktree' && args[1] === 'remove',
+      behavior: { exitCode: 1, stderr: 'fatal: git worktree remove failed' },
     });
     mockFsRm.mockResolvedValue(undefined);
 
     const result = await manager.removeWorktree(WORKTREE_PATH);
 
     expect(result).toBe(true);
-    // fs.rm should be called with the worktree path
     expect(mockFsRm).toHaveBeenCalledWith(
       WORKTREE_PATH,
       expect.objectContaining({ recursive: true, force: true }),
     );
     // worktree prune should also be called after the manual rm
-    const calls = mockGitRaw.mock.calls.map((call) => call[0]);
-    const pruneCall = calls.find(
-      (args) => args[0] === 'worktree' && args[1] === 'prune',
+    const pruneCall = recordedSpawnCalls.find(
+      (call) => call.args[0] === 'worktree' && call.args[1] === 'prune',
     );
     expect(pruneCall).toBeDefined();
   });
@@ -175,12 +232,9 @@ describe('WorktreeManager.removeWorktree', () => {
   // Branch 4: both git worktree remove and fs.promises.rm fail - returns false
   it('returns false when both git and fs.rm fail', async () => {
     mockExistsSync.mockReturnValue(true);
-    mockGitRaw.mockImplementation(async (args: string[]) => {
-      if (args[0] === 'worktree' && args[1] === 'remove') {
-        throw new Error('fatal: unable to remove worktree');
-      }
-      // prune call is best-effort and may succeed
-      return '';
+    spawnOverrides.push({
+      match: (args) => args[0] === 'worktree' && args[1] === 'remove',
+      behavior: { exitCode: 1, stderr: 'fatal: unable to remove worktree' },
     });
     mockFsRm.mockRejectedValue(new Error('EPERM: operation not permitted'));
 
@@ -197,11 +251,13 @@ describe('WorktreeManager.removeWorktree', () => {
     mockRemoveNodeModulesPath.mockImplementation(() => {
       callOrder.push('removeNodeModulesPath');
     });
-    mockGitRaw.mockImplementation(async (args: string[]) => {
+    // Record the first spawn call's order
+    const originalSpawn = mockSpawn.getMockImplementation();
+    mockSpawn.mockImplementation((command: string, args: readonly string[], options: { cwd: string }) => {
       if (args[0] === 'worktree' && args[1] === 'remove') {
         callOrder.push('gitWorktreeRemove');
       }
-      return '';
+      return originalSpawn!(command, args, options);
     });
 
     await manager.removeWorktree(WORKTREE_PATH);

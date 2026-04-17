@@ -1,10 +1,85 @@
 import simpleGit, { SimpleGit } from 'simple-git';
 import path from 'node:path';
 import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 import { slugify, computeSlugBudget, computeAutoBranchName } from '../../shared/slugify';
 import { isGitRepo, isInsideWorktree } from './git-checks';
 import { linkNodeModules, removeNodeModulesPath } from './node-modules-link';
 import { fetchIfStale } from './fetch-throttle';
+
+/**
+ * Hard wall-clock ceiling for single git operations in the worktree-removal
+ * path. simple-git's `.raw()` method awaits its child process with no
+ * generic way to cancel; if the child stalls (stdio buffer hang, waiting on
+ * a Windows file handle held by our own running process, etc.), the promise
+ * never settles and the per-project git queue is poisoned forever.
+ *
+ * 15 seconds is ~15x the observed wall-time of a legitimate worktree-remove
+ * + prune + branch-delete cycle even on a repo with ~200 registered
+ * worktrees, so this only fires on genuine hangs. When it does, the git
+ * child process is killed via AbortController, the promise rejects cleanly,
+ * and the queue advances - no cascading failures.
+ */
+const GIT_REMOVAL_TIMEOUT_MS = 15_000;
+
+/**
+ * Run git as a direct child_process.spawn with a kill-on-timeout safety net.
+ *
+ * Used instead of `simple-git`'s `.raw()` for the three git calls in the
+ * worktree-removal hot path (`worktree remove`, `worktree prune`, `branch
+ * -D`). The difference vs simple-git: if `timeoutMs` elapses, we
+ * `controller.abort()` which sends SIGTERM to the child (Windows:
+ * TerminateProcess), forcing the promise to settle as a rejection instead
+ * of hanging forever. simple-git has no equivalent abort primitive.
+ *
+ * stdio is piped and drained so Windows conpty pipe buffers can't fill up
+ * and cause the child to block on write - another class of hang that
+ * simple-git didn't protect against.
+ */
+function runGitWithTimeout(
+  projectPath: string,
+  args: readonly string[],
+  timeoutMs: number,
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
+    const child = spawn('git', [...args], {
+      cwd: projectPath,
+      signal: controller.signal,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
+    child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
+
+    child.on('error', (error: NodeJS.ErrnoException) => {
+      clearTimeout(timeoutHandle);
+      if (error.name === 'AbortError' || error.code === 'ABORT_ERR') {
+        reject(new Error(`git ${args.join(' ')} timed out after ${timeoutMs}ms (child process killed)`));
+        return;
+      }
+      reject(error);
+    });
+
+    child.on('close', (code, signal) => {
+      clearTimeout(timeoutHandle);
+      if (signal) {
+        reject(new Error(`git ${args.join(' ')} killed by signal ${signal} after ${timeoutMs}ms timeout`));
+        return;
+      }
+      if (code !== 0) {
+        reject(new Error(`git ${args.join(' ')} exited with code ${code}: ${stderr.trim() || stdout.trim()}`));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
 
 /** Background prune debounce per project. */
 const backgroundPruneTimestamps = new Map<string, number>();
@@ -281,7 +356,11 @@ export class WorktreeManager {
     await removeNodeModulesPath(path.join(worktreePath, 'node_modules'));
 
     try {
-      await this.git.raw(['worktree', 'remove', worktreePath, '--force']);
+      await runGitWithTimeout(
+        this.projectPath,
+        ['worktree', 'remove', worktreePath, '--force'],
+        GIT_REMOVAL_TIMEOUT_MS,
+      );
       return true;
     } catch (error) {
       console.log(`[WORKTREE] git worktree remove failed, falling back to manual removal: ${(error as Error).message}`);
@@ -301,21 +380,23 @@ export class WorktreeManager {
         maxRetries: 10,
         retryDelay: 200,
       });
-      await this.git.raw(['worktree', 'prune']);
+      await runGitWithTimeout(this.projectPath, ['worktree', 'prune'], GIT_REMOVAL_TIMEOUT_MS);
       return true;
     } catch (error) {
       console.warn(`[WorktreeManager] Could not remove worktree after retries: ${worktreePath} (${(error as Error).message})`);
       // Best-effort prune so git's worktree metadata is consistent even when
       // the directory itself couldn't be removed.
-      try { await this.git.raw(['worktree', 'prune']); } catch { /* best effort */ }
+      try {
+        await runGitWithTimeout(this.projectPath, ['worktree', 'prune'], GIT_REMOVAL_TIMEOUT_MS);
+      } catch { /* best effort */ }
       return false;
     }
   }
 
   async removeBranch(branchName: string): Promise<void> {
     try {
-      await this.git.raw(['branch', '-D', branchName]);
-    } catch { /* branch may not exist */ }
+      await runGitWithTimeout(this.projectPath, ['branch', '-D', branchName], GIT_REMOVAL_TIMEOUT_MS);
+    } catch { /* branch may not exist, or git hung and was killed */ }
   }
 
   /**
@@ -363,7 +444,7 @@ export class WorktreeManager {
   }
 
   async pruneWorktrees(): Promise<void> {
-    await this.git.raw(['worktree', 'prune']);
+    await runGitWithTimeout(this.projectPath, ['worktree', 'prune'], GIT_REMOVAL_TIMEOUT_MS);
   }
 
   /**

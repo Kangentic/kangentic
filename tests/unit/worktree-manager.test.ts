@@ -28,8 +28,46 @@ vi.mock('node:fs', () => ({
   },
 }));
 
+// spawn mock for the runGitWithTimeout helper. Returns a fake ChildProcess
+// that emits close(0) by default (success). Test suites that need the git
+// op to fail configure it via recordedSpawnCalls + spawnOverrides.
+// vi.hoisted() is required so these are initialized before vi.mock() runs.
+const { mockSpawn, recordedSpawnCalls, spawnOverrides } = vi.hoisted(() => {
+  const recordedSpawnCalls: Array<{ command: string; args: readonly string[] }> = [];
+  const spawnOverrides: Array<{
+    match: (args: readonly string[]) => boolean;
+    behavior: { exitCode?: number; stderr?: string; stdout?: string };
+  }> = [];
+
+  const mockSpawn = vi.fn((command: string, args: readonly string[]) => {
+    recordedSpawnCalls.push({ command, args });
+    const override = spawnOverrides.find((entry) => entry.match(args));
+    const behavior = override?.behavior ?? { exitCode: 0 };
+
+    const EventEmitter = require('node:events').EventEmitter;
+    const child = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      kill: vi.fn(),
+    });
+
+    // queueMicrotask (not setImmediate/setTimeout) so the mock still works
+    // when vi.useFakeTimers() is active - fake timers don't affect microtasks.
+    queueMicrotask(() => {
+      if (behavior.stdout) child.stdout.emit('data', Buffer.from(behavior.stdout, 'utf8'));
+      if (behavior.stderr) child.stderr.emit('data', Buffer.from(behavior.stderr, 'utf8'));
+      child.emit('close', behavior.exitCode ?? 0, null);
+    });
+
+    return child;
+  });
+
+  return { mockSpawn, recordedSpawnCalls, spawnOverrides };
+});
+
 vi.mock('node:child_process', () => ({
   execFileSync: vi.fn(),
+  spawn: mockSpawn,
 }));
 
 import fs from 'node:fs';
@@ -266,6 +304,8 @@ describe('WorktreeManager -- fetch and base branch', () => {
 describe('WorktreeManager -- removal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    recordedSpawnCalls.length = 0;
+    spawnOverrides.length = 0;
     vi.useFakeTimers();
   });
 
@@ -285,15 +325,18 @@ describe('WorktreeManager -- removal', () => {
     return result as T;
   }
 
-  it('removeWorktree calls git worktree remove --force', async () => {
+  it('removeWorktree spawns "git worktree remove --force"', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
-    mockProjectGit.raw.mockResolvedValue('');
 
     const mgr = new WorktreeManager('/project');
     const result = await runWithTimers(mgr.removeWorktree('/project/.kangentic/worktrees/test-abcd1234'));
 
     expect(result).toBe(true);
-    expect(mockProjectGit.raw).toHaveBeenCalledWith([
+    const removeCall = recordedSpawnCalls.find(
+      (call) => call.args[0] === 'worktree' && call.args[1] === 'remove',
+    );
+    expect(removeCall).toBeDefined();
+    expect(removeCall!.args).toEqual([
       'worktree', 'remove', '/project/.kangentic/worktrees/test-abcd1234', '--force',
     ]);
   });
@@ -315,23 +358,27 @@ describe('WorktreeManager -- removal', () => {
     expect(mockProjectGit.raw).not.toHaveBeenCalled();
   });
 
-  it('removeBranch calls git branch -D', async () => {
-    mockProjectGit.raw.mockResolvedValue('');
-
+  it('removeBranch spawns "git branch -D"', async () => {
     const mgr = new WorktreeManager('/project');
     await mgr.removeBranch('kanban/fix-bug-abcd1234');
 
-    expect(mockProjectGit.raw).toHaveBeenCalledWith([
-      'branch', '-D', 'kanban/fix-bug-abcd1234',
-    ]);
+    const branchCall = recordedSpawnCalls.find(
+      (call) => call.args[0] === 'branch' && call.args[1] === '-D',
+    );
+    expect(branchCall).toBeDefined();
+    expect(branchCall!.args).toEqual(['branch', '-D', 'kanban/fix-bug-abcd1234']);
   });
 
   it('removeBranch silently handles missing branch', async () => {
-    mockProjectGit.raw.mockRejectedValue(new Error('error: branch not found'));
+    spawnOverrides.push({
+      match: (args) => args[0] === 'branch' && args[1] === '-D',
+      behavior: { exitCode: 1, stderr: 'error: branch not found' },
+    });
 
     const mgr = new WorktreeManager('/project');
 
-    // Should not throw
+    // Should not throw - the spawn resolves with a non-zero exit; the catch
+    // inside removeBranch swallows it (branch may legitimately not exist).
     await expect(mgr.removeBranch('kanban/nonexistent')).resolves.toBeUndefined();
   });
 });
@@ -667,7 +714,7 @@ describe('WorktreeManager -- stale branch recovery', () => {
   });
 
   it('createWorktree cleans up stale directory before git worktree add', async () => {
-    const stalePath = expect.stringContaining('test-task-abcd1234');
+    recordedSpawnCalls.length = 0;
 
     // existsSync: true for stale worktree path
     vi.mocked(fs.existsSync).mockReturnValue(true);
@@ -683,17 +730,24 @@ describe('WorktreeManager -- stale branch recovery', () => {
     const mgr = new WorktreeManager('/project');
     await mgr.createWorktree('abcd1234-0000', 'Test task');
 
-    // removeWorktree should have been called via git worktree remove --force
-    expect(mockProjectGit.raw).toHaveBeenCalledWith(['worktree', 'remove', stalePath, '--force']);
+    // removeWorktree should have been spawned with git worktree remove --force
+    const removeCall = recordedSpawnCalls.find(
+      (call) => call.args[0] === 'worktree' && call.args[1] === 'remove' && call.args[3] === '--force',
+    );
+    expect(removeCall).toBeDefined();
+    expect(String(removeCall!.args[2])).toContain('test-task-abcd1234');
   });
 
-  it('pruneWorktrees calls git worktree prune', async () => {
-    mockProjectGit.raw.mockResolvedValue('');
+  it('pruneWorktrees spawns "git worktree prune"', async () => {
+    recordedSpawnCalls.length = 0;
 
     const mgr = new WorktreeManager('/project');
     await mgr.pruneWorktrees();
 
-    expect(mockProjectGit.raw).toHaveBeenCalledWith(['worktree', 'prune']);
+    const pruneCall = recordedSpawnCalls.find(
+      (call) => call.args[0] === 'worktree' && call.args[1] === 'prune',
+    );
+    expect(pruneCall).toBeDefined();
   });
 });
 
