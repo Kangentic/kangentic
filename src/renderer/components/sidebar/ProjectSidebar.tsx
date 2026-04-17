@@ -1,25 +1,24 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   DndContext,
   DragOverlay,
 } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy, arrayMove } from '@dnd-kit/sortable';
 import {
-  Folder, ChevronsLeft, FolderPlus, FolderTree,
+  Folder, ChevronsLeft, FolderPlus, FolderTree, Search, X,
 } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
-import { Pill } from '../Pill';
 import type { Project, ProjectGroup } from '../../../shared/types';
 import {
   ProjectListItem,
   GroupHeader,
   ProjectContextMenu,
+  GroupContextMenu,
   useSidebarDragDrop,
-  shortenPath,
 } from './project-sidebar';
 
 // ─── Main Sidebar ──────────────────────────────────────────────
@@ -53,7 +52,10 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
   const [newGroupName, setNewGroupName] = useState('');
   const newGroupInputRef = useRef<HTMLInputElement>(null);
   const [contextMenu, setContextMenu] = useState<{ position: { x: number; y: number }; project: Project } | null>(null);
+  const [groupContextMenu, setGroupContextMenu] = useState<{ position: { x: number; y: number }; group: ProjectGroup } | null>(null);
   const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null);
+  const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
 
   const {
     sensors,
@@ -66,6 +68,42 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
     handleDragStart,
     handleDragEnd,
   } = useSidebarDragDrop(projects, groups, reorderProjects, setProjectGroup);
+
+  const searchTerm = search.trim().toLowerCase();
+  const isSearching = searchTerm.length > 0;
+
+  const { filteredGroupedProjects, filteredUngroupedProjects, filteredSortableIds } = useMemo(() => {
+    if (!isSearching) {
+      return {
+        filteredGroupedProjects: groupedProjectsMap,
+        filteredUngroupedProjects: ungroupedProjects,
+        filteredSortableIds: sortableIds,
+      };
+    }
+    const match = (project: Project) =>
+      project.name.toLowerCase().includes(searchTerm) ||
+      project.path.toLowerCase().includes(searchTerm);
+
+    const groupedFiltered = new Map<string, Project[]>();
+    groupedProjectsMap.forEach((projectList, groupId) => {
+      const kept = projectList.filter(match);
+      if (kept.length > 0) groupedFiltered.set(groupId, kept);
+    });
+    const ungroupedFiltered = ungroupedProjects.filter(match);
+    const keptIds = new Set<string>();
+    groupedFiltered.forEach((projectList) => projectList.forEach((project) => keptIds.add(project.id)));
+    ungroupedFiltered.forEach((project) => keptIds.add(project.id));
+
+    return {
+      filteredGroupedProjects: groupedFiltered,
+      filteredUngroupedProjects: ungroupedFiltered,
+      filteredSortableIds: sortableIds.filter((projectId) => keptIds.has(projectId)),
+    };
+  }, [isSearching, searchTerm, groupedProjectsMap, ungroupedProjects, sortableIds]);
+
+  const totalFilteredCount =
+    filteredUngroupedProjects.length +
+    Array.from(filteredGroupedProjects.values()).reduce((sum, list) => sum + list.length, 0);
 
   useEffect(() => {
     if (creatingGroup && newGroupInputRef.current) {
@@ -101,18 +139,11 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
     setNewGroupName('');
   };
 
-  const handleOpenSettings = (event: React.MouseEvent, project: Project) => {
-    event.stopPropagation();
+  const handleOpenSettings = (project: Project) => {
     openProjectSettings(project.path, project.name);
   };
 
-  const handleOpenInExplorer = (e: React.MouseEvent, project: Project) => {
-    e.stopPropagation();
-    window.electronAPI.shell.openPath(project.path);
-  };
-
-  const handleDeleteClick = (e: React.MouseEvent, project: Project) => {
-    e.stopPropagation();
+  const handleDeleteClick = (project: Project) => {
     setProjectToDelete(project);
   };
 
@@ -142,10 +173,6 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
     setGroupToDelete(null);
   };
 
-  const handleGroupRename = async (id: string, name: string) => {
-    await updateGroup(id, name);
-  };
-
   const handleGroupMoveUp = useCallback((groupId: string) => {
     const index = sortedGroups.findIndex((g) => g.id === groupId);
     if (index <= 0) return;
@@ -165,6 +192,17 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
     event.stopPropagation();
     setContextMenu({ position: { x: event.clientX, y: event.clientY }, project });
   }, []);
+
+  const handleGroupContextMenu = useCallback((event: React.MouseEvent, group: ProjectGroup) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setGroupContextMenu({ position: { x: event.clientX, y: event.clientY }, group });
+  }, []);
+
+  const handleGroupRenameSubmit = useCallback(async (id: string, name: string) => {
+    await updateGroup(id, name);
+    setRenamingGroupId(null);
+  }, [updateGroup]);
 
   const handleRenameProject = useCallback((id: string, name: string) => {
     renameProject(id, name);
@@ -200,9 +238,6 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
         idleCount={idleCount}
         isGrouped={isGrouped}
         onSelect={openProject}
-        onOpenSettings={handleOpenSettings}
-        onOpenInExplorer={handleOpenInExplorer}
-        onDeleteClick={handleDeleteClick}
         onContextMenu={handleContextMenu}
         onRename={handleRenameProject}
         onCancelRename={() => setRenamingProjectId(null)}
@@ -212,7 +247,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
 
   return (
     <div className="w-full h-full bg-surface-raised flex flex-col flex-shrink-0">
-      <div className="px-3 pt-3 pb-2 border-b border-edge">
+      <div className="px-3 pt-3 pb-2 border-b border-edge space-y-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             {onToggleSidebar && (
@@ -224,27 +259,43 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
                 <ChevronsLeft size={16} />
               </button>
             )}
-            <span className="text-xs font-semibold uppercase tracking-wider text-fg-faint">Projects</span>
+            <span className="text-xs font-semibold uppercase tracking-wider text-fg-faint">
+              Projects
+              {projects.length > 0 && (
+                <span className="ml-1.5 text-fg-disabled normal-case tracking-normal font-medium">
+                  &middot; {projects.length}
+                </span>
+              )}
+            </span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <Pill
-              onClick={handleNewProject}
-              className="border border-accent/40 text-accent-fg hover:bg-accent/15 transition-colors"
-              title="Open folder as project"
+        </div>
+        <div className="relative">
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-disabled pointer-events-none" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setSearch('');
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            placeholder="Search projects..."
+            data-testid="project-sidebar-search"
+            className="w-full bg-surface/50 border border-edge/50 rounded-md text-xs text-fg placeholder-fg-disabled pl-7 pr-7 py-1.5 outline-none focus:border-edge-input transition-colors"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-disabled hover:text-fg-muted transition-colors"
+              data-testid="project-sidebar-search-clear"
+              title="Clear search"
             >
-              <FolderPlus size={14} />
-              Project
-            </Pill>
-            <Pill
-              onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
-              onClick={handleNewGroup}
-              className="border border-edge/60 text-fg-muted hover:text-fg-tertiary hover:bg-surface-hover transition-colors"
-              title="New group"
-            >
-              <FolderTree size={14} />
-              Group
-            </Pill>
-          </div>
+              <X size={14} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -255,29 +306,30 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
-          <SortableContext items={sortableIds} strategy={rectSortingStrategy}>
+          <SortableContext items={filteredSortableIds} strategy={rectSortingStrategy}>
             {/* Groups with their projects */}
             {sortedGroups.map((group, groupIndex) => {
-              const groupProjects = groupedProjectsMap.get(group.id) || [];
+              const groupProjects = filteredGroupedProjects.get(group.id) || [];
+              if (isSearching && groupProjects.length === 0) return null;
+              const forceExpanded = isSearching && groupProjects.length > 0;
+              const isExpanded = forceExpanded || !group.is_collapsed;
               return (
                 <React.Fragment key={group.id}>
                   <GroupHeader
                     group={group}
                     projectCount={groupProjects.length}
-                    isFirst={groupIndex === 0}
-                    isLast={groupIndex === sortedGroups.length - 1}
+                    isRenaming={renamingGroupId === group.id}
                     onToggleCollapsed={toggleGroupCollapsed}
-                    onRename={handleGroupRename}
-                    onDelete={setGroupToDelete}
-                    onMoveUp={handleGroupMoveUp}
-                    onMoveDown={handleGroupMoveDown}
+                    onRename={handleGroupRenameSubmit}
+                    onContextMenu={handleGroupContextMenu}
+                    onCancelRename={() => setRenamingGroupId(null)}
                   />
-                  {!group.is_collapsed && groupProjects.length > 0 && (
+                  {isExpanded && groupProjects.length > 0 && (
                     <div>
                       {groupProjects.map((project) => renderProjectItem(project, true))}
                     </div>
                   )}
-                  {groupIndex === sortedGroups.length - 1 && ungroupedProjects.length > 0 && !group.is_collapsed && groupProjects.length > 0 && (
+                  {groupIndex === sortedGroups.length - 1 && filteredUngroupedProjects.length > 0 && isExpanded && groupProjects.length > 0 && (
                     <div className="my-1.5 mx-3 border-b border-fg-disabled/50" />
                   )}
                 </React.Fragment>
@@ -285,7 +337,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
             })}
 
             {/* Ungrouped projects below all groups */}
-            {ungroupedProjects.map((project) => renderProjectItem(project, false))}
+            {filteredUngroupedProjects.map((project) => renderProjectItem(project, false))}
 
             {/* Inline group creation input */}
             {creatingGroup && (
@@ -319,13 +371,12 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
               if (!project) return null;
               const isActive = currentProject?.id === project.id;
               return (
-                <div className="bg-surface-raised border border-edge rounded px-3 py-2 text-sm text-fg shadow-lg opacity-90">
-                  <div className="flex items-center gap-2">
-                    <Folder size={16} className={`${isActive ? 'text-accent-fg' : 'text-fg-faint'} flex-shrink-0`} />
-                    <div className="min-w-0">
-                      <div className="truncate font-medium">{project.name}</div>
-                      <div className="truncate text-xs text-fg-faint mt-0.5">{shortenPath(project.path)}</div>
-                    </div>
+                <div className={`bg-surface-raised border rounded px-3 py-1.5 text-sm shadow-lg opacity-90 ${
+                  isActive ? 'border-accent text-fg' : 'border-edge text-fg-muted'
+                }`}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-fg-faint" />
+                    <span className="truncate font-medium">{project.name}</span>
                   </div>
                 </div>
               );
@@ -336,16 +387,43 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
           <div className="p-6 text-center">
             <Folder size={32} className="mx-auto text-fg-disabled mb-2" />
             <div className="text-sm text-fg-faint">No projects yet</div>
-            <div className="text-xs text-fg-disabled mt-1">Click "+ New" to open a folder</div>
+            <div className="text-xs text-fg-disabled mt-1">Use the buttons below to open a folder</div>
+          </div>
+        )}
+        {projects.length > 0 && isSearching && totalFilteredCount === 0 && (
+          <div className="p-6 text-center">
+            <Search size={24} className="mx-auto text-fg-disabled mb-2" />
+            <div className="text-sm text-fg-faint">No projects match</div>
+            <div className="text-xs text-fg-disabled mt-1 truncate">&quot;{search}&quot;</div>
           </div>
         )}
       </div>
 
-      <div className="px-3 py-2 border-t border-edge text-xs text-fg-disabled">
-        {projects.length} project{projects.length !== 1 ? 's' : ''}
+      <div className="px-3 py-2 border-t border-edge flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={handleNewProject}
+          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-edge/60 text-fg-muted hover:text-fg hover:bg-surface-hover/40 hover:border-edge transition-colors"
+          title="Open folder as project"
+          data-testid="sidebar-new-project-button"
+        >
+          <FolderPlus size={14} />
+          Add Project
+        </button>
+        <button
+          type="button"
+          onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
+          onClick={handleNewGroup}
+          className="flex-shrink-0 inline-flex items-center justify-center w-8 h-[30px] rounded-md border border-edge/60 text-fg-muted hover:text-fg hover:bg-surface-hover/40 hover:border-edge transition-colors"
+          title="New group"
+          data-testid="sidebar-new-group-button"
+          aria-label="New group"
+        >
+          <FolderTree size={14} />
+        </button>
       </div>
 
-      {/* Context menu */}
+      {/* Project context menu */}
       {contextMenu && (
         <ProjectContextMenu
           position={contextMenu.position}
@@ -353,13 +431,31 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
           groups={sortedGroups}
           onRename={(project) => setRenamingProjectId(project.id)}
           onOpenInExplorer={(project) => window.electronAPI.shell.openPath(project.path)}
-          onOpenSettings={(project) => openProjectSettings(project.path, project.name)}
-          onDelete={(project) => setProjectToDelete(project)}
+          onOpenSettings={handleOpenSettings}
+          onDelete={handleDeleteClick}
           onMoveToGroup={handleContextMenuMoveToGroup}
           onRemoveFromGroup={handleContextMenuRemoveFromGroup}
           onClose={() => setContextMenu(null)}
         />
       )}
+
+      {/* Group context menu */}
+      {groupContextMenu && (() => {
+        const groupIndex = sortedGroups.findIndex((g) => g.id === groupContextMenu.group.id);
+        return (
+          <GroupContextMenu
+            position={groupContextMenu.position}
+            group={groupContextMenu.group}
+            isFirst={groupIndex === 0}
+            isLast={groupIndex === sortedGroups.length - 1}
+            onRename={(group) => setRenamingGroupId(group.id)}
+            onMoveUp={(group) => handleGroupMoveUp(group.id)}
+            onMoveDown={(group) => handleGroupMoveDown(group.id)}
+            onDelete={(group) => setGroupToDelete(group)}
+            onClose={() => setGroupContextMenu(null)}
+          />
+        );
+      })()}
 
       {projectToDelete && (
         <ConfirmDialog

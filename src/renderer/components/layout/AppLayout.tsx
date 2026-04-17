@@ -1,7 +1,7 @@
-import { PanelLeft } from 'lucide-react';
 import { TitleBar } from './TitleBar';
 import { StatusBar } from './StatusBar';
 import { ProjectSidebar } from '../sidebar/ProjectSidebar';
+import { CollapsedRail } from '../sidebar/CollapsedRail';
 import { KanbanBoard } from '../board/KanbanBoard';
 import { ViewToggle } from '../board/ViewToggle';
 import { BacklogView } from '../backlog/BacklogView';
@@ -60,18 +60,11 @@ export function AppLayout() {
 
               {/* Collapsed strip overlay -- visible when closed */}
               <div
-                className={`absolute inset-0 bg-surface-raised flex flex-col items-center pt-3 px-1.5 ${
+                className={`absolute inset-0 ${
                   sidebar.ready ? 'transition-opacity duration-200 ease-in-out' : ''
                 } ${sidebar.open ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
               >
-                <button
-                  onClick={sidebar.toggle}
-                  className="p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-                  title="Show sidebar"
-                  data-testid="sidebar-expand-button"
-                >
-                  <PanelLeft size={18} />
-                </button>
+                <CollapsedRail onExpandSidebar={sidebar.toggle} />
               </div>
             </div>
 

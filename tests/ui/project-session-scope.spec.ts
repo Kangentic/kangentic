@@ -234,34 +234,31 @@ test.describe('Project Session Scope', () => {
     }
   });
 
-  test('sidebar shows idle badge for all projects with idle sessions', async () => {
+  test('sidebar shows amber mail icon for projects with idle sessions', async () => {
     // Default fixture has both sessions set to 'idle' activity
     const { browser, page } = await launchWithState(twoProjectPreConfig());
 
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
-      // Project Alpha (active) should show idle mail+count badge
+      // Project Alpha (active) should show the amber idle mail icon
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
-      const alphaIdleBadge = alphaRow.locator('span[title*="idle"]');
-      await expect(alphaIdleBadge).toBeVisible();
-      await expect(alphaIdleBadge).toContainText('1');
+      await expect(alphaRow.locator('svg.text-amber-400').first()).toBeVisible();
+      await expect(alphaRow).toHaveAttribute('title', /1 thinking, 1 idle|0 thinking, 1 idle/);
 
-      // Project Beta (non-active) should also show idle mail+count badge
+      // Project Beta (non-active) should also show the amber idle mail icon
       const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
-      const betaIdleBadge = betaRow.locator('span[title*="idle"]');
-      await expect(betaIdleBadge).toBeVisible();
-      await expect(betaIdleBadge).toContainText('1');
+      await expect(betaRow.locator('svg.text-amber-400').first()).toBeVisible();
 
-      // Neither should show a thinking badge (idle takes priority)
-      await expect(alphaRow.locator('span[title*="thinking"]')).not.toBeVisible();
-      await expect(betaRow.locator('span[title*="thinking"]')).not.toBeVisible();
+      // Neither should show a green thinking spinner (only one indicator per row; idle uses amber)
+      await expect(alphaRow.locator('svg.text-green-400')).toHaveCount(0);
+      await expect(betaRow.locator('svg.text-green-400')).toHaveCount(0);
     } finally {
       await browser.close();
     }
   });
 
-  test('sidebar shows thinking badge for project with thinking sessions', async () => {
+  test('sidebar shows green spinning loader for project with thinking sessions', async () => {
     // Override activity so Session A is thinking (not idle)
     const preConfig = twoProjectPreConfig() + `
       window.__mockPreConfigure(function (state) {
@@ -273,23 +270,21 @@ test.describe('Project Session Scope', () => {
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
-      // Project Alpha should show thinking badge, no idle badge
+      // Project Alpha should show a green thinking spinner (no amber)
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
-      await expect(alphaRow.locator('span[title*="thinking"]')).toBeVisible();
-      await expect(alphaRow.locator('span[title*="thinking"]')).toContainText('1');
-      await expect(alphaRow.locator('span[title*="idle"]')).not.toBeVisible();
+      await expect(alphaRow.locator('svg.text-green-400').first()).toBeVisible();
+      await expect(alphaRow.locator('svg.text-amber-400')).toHaveCount(0);
 
-      // Project Beta still idle -- shows idle mail badge (not a dot)
+      // Project Beta still idle -- amber mail icon, no green
       const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
-      await expect(betaRow.locator('span[title*="idle"]')).toBeVisible();
-      await expect(betaRow.locator('span[title*="idle"]')).toContainText('1');
-      await expect(betaRow.locator('span[title*="thinking"]')).not.toBeVisible();
+      await expect(betaRow.locator('svg.text-amber-400').first()).toBeVisible();
+      await expect(betaRow.locator('svg.text-green-400')).toHaveCount(0);
     } finally {
       await browser.close();
     }
   });
 
-  test('sidebar shows no badge for project with no running sessions', async () => {
+  test('sidebar shows no activity indicator for project with no running sessions', async () => {
     // Add a third project with no sessions
     const preConfig = twoProjectPreConfig() + `
       window.__mockPreConfigure(function (state) {
@@ -310,17 +305,17 @@ test.describe('Project Session Scope', () => {
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
-      // Project Gamma has no sessions -- no badges or dots at all
+      // Project Gamma has no sessions -- no activity indicator icon renders
       const gammaRow = page.locator('[role="button"]:has-text("Project Gamma")');
       await expect(gammaRow).toBeVisible();
-      await expect(gammaRow.locator('span[title*="thinking"]')).not.toBeVisible();
-      await expect(gammaRow.locator('span[title*="idle"]')).not.toBeVisible();
+      await expect(gammaRow.locator('svg.text-amber-400')).toHaveCount(0);
+      await expect(gammaRow.locator('svg.text-green-400')).toHaveCount(0);
     } finally {
       await browser.close();
     }
   });
 
-  test('sidebar shows both idle and thinking badges when project has mixed sessions', async () => {
+  test('mixed thinking+idle sessions show the green thinking indicator (thinking wins)', async () => {
     // Add a second session to Project A (thinking) while first stays idle
     const preConfig = twoProjectPreConfig() + `
       window.__mockPreConfigure(function (state) {
@@ -361,15 +356,11 @@ test.describe('Project Session Scope', () => {
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
-      // Project Alpha should show both idle and thinking badges side by side
+      // Project Alpha shows only the green thinking spinner; the row title surfaces both counts
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
-      const thinkingBadge = alphaRow.locator('span[title*="thinking"]');
-      const idleBadge = alphaRow.locator('span[title*="idle"]');
-
-      await expect(thinkingBadge).toBeVisible();
-      await expect(thinkingBadge).toContainText('1');
-      await expect(idleBadge).toBeVisible();
-      await expect(idleBadge).toContainText('1');
+      await expect(alphaRow.locator('svg.text-green-400').first()).toBeVisible();
+      await expect(alphaRow.locator('svg.text-amber-400')).toHaveCount(0);
+      await expect(alphaRow).toHaveAttribute('title', /1 thinking, 1 idle/);
     } finally {
       await browser.close();
     }

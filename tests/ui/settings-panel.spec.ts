@@ -216,14 +216,14 @@ test.describe('Settings Panel', () => {
 });
 
 test.describe('Project Settings via Sidebar', () => {
-  test('sidebar gear icon opens Settings panel', async () => {
-    // Hover over the project row to reveal the gear icon
+  test('sidebar context menu opens Settings panel', async () => {
+    // Right-click the project row to open the context menu
     const projectRow = page.locator('[role="button"]').filter({ hasText: 'Settings Test' }).first();
-    await projectRow.hover();
+    await projectRow.click({ button: 'right' });
 
-    const gearButton = page.locator('button[title="Project settings"]').first();
-    await expect(gearButton).toBeVisible();
-    await gearButton.click();
+    const settingsItem = page.locator('.fixed.bg-surface-raised').locator('text=Project Settings');
+    await expect(settingsItem).toBeVisible();
+    await settingsItem.click();
     await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
 
     await expect(page.locator('h2:has-text("Settings")')).toBeVisible();
@@ -233,8 +233,8 @@ test.describe('Project Settings via Sidebar', () => {
 
   test('shows all tabs including per-project and shared settings', async () => {
     const projectRow = page.locator('[role="button"]').filter({ hasText: 'Settings Test' }).first();
-    await projectRow.hover();
-    await page.locator('button[title="Project settings"]').first().click();
+    await projectRow.click({ button: 'right' });
+    await page.locator('.fixed.bg-surface-raised').locator('text=Project Settings').click();
     await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
 
     // All tabs visible (no separate project panel with fewer tabs)
@@ -255,8 +255,8 @@ test.describe('Project Settings via Sidebar', () => {
 
   test('Escape closes settings', async () => {
     const projectRow = page.locator('[role="button"]').filter({ hasText: 'Settings Test' }).first();
-    await projectRow.hover();
-    await page.locator('button[title="Project settings"]').first().click();
+    await projectRow.click({ button: 'right' });
+    await page.locator('.fixed.bg-surface-raised').locator('text=Project Settings').click();
     await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
 
     const header = page.locator('h2:has-text("Settings")');
@@ -396,8 +396,8 @@ test.describe('Settings Search', () => {
 
   test('search works from sidebar gear icon', async () => {
     const projectRow = page.locator('[role="button"]').filter({ hasText: 'Settings Test' }).first();
-    await projectRow.hover();
-    await page.locator('button[title="Project settings"]').first().click();
+    await projectRow.click({ button: 'right' });
+    await page.locator('.fixed.bg-surface-raised').locator('text=Project Settings').click();
     await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
 
     const searchInput = page.getByTestId('settings-search');

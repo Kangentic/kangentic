@@ -396,10 +396,10 @@ test.describe('Project Deletion', () => {
     await expect(taskCard(`Task B ${runId}`)).toBeVisible();
     await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible();
 
-    // Hover project in sidebar -> click its delete icon (scoped to this row)
+    // Right-click the project row to open the context menu, then click Delete
     const projectRow = page.locator(`[role="button"]:has-text("${name}")`);
-    await projectRow.hover();
-    await projectRow.locator('button[title="Delete project"]').click();
+    await projectRow.click({ button: 'right' });
+    await page.locator('.fixed.bg-surface-raised').locator('text=Delete').click();
 
     // Confirm deletion in dialog
     await expect(page.locator('h3:has-text("Delete Project")')).toBeVisible();
@@ -437,10 +437,10 @@ test.describe('Project Deletion', () => {
   test('cancel delete preserves project and board', async () => {
     const name = `PostDel ${runId}`;
 
-    // Try to delete but cancel
+    // Try to delete (via context menu) but cancel
     const projectRow = page.locator(`[role="button"]:has-text("${name}")`);
-    await projectRow.hover();
-    await projectRow.locator('button[title="Delete project"]').click();
+    await projectRow.click({ button: 'right' });
+    await page.locator('.fixed.bg-surface-raised').locator('text=Delete').click();
 
     // Dialog appears
     await expect(page.locator('h3:has-text("Delete Project")')).toBeVisible();

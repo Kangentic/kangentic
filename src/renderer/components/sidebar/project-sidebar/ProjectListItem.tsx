@@ -1,18 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import {
-  Trash2, GripVertical, Folder, FolderOpen,
-  Loader2, Mail, Settings,
-} from 'lucide-react';
+import { Loader2, Mail, MoreHorizontal } from 'lucide-react';
 import type { Project } from '../../../../shared/types';
-
-/** Show last 3 path segments, e.g. "Users/dev/my-project" */
-export function shortenPath(fullPath: string): string {
-  const parts = fullPath.replace(/\\/g, '/').split('/').filter(Boolean);
-  if (parts.length <= 3) return parts.join('/');
-  return '.../' + parts.slice(-3).join('/');
-}
 
 export interface ProjectListItemProps {
   project: Project;
@@ -22,9 +12,6 @@ export interface ProjectListItemProps {
   idleCount: number;
   isGrouped: boolean;
   onSelect: (id: string) => void;
-  onOpenSettings: (e: React.MouseEvent, project: Project) => void;
-  onOpenInExplorer: (e: React.MouseEvent, project: Project) => void;
-  onDeleteClick: (e: React.MouseEvent, project: Project) => void;
   onContextMenu: (e: React.MouseEvent, project: Project) => void;
   onRename: (id: string, name: string) => void;
   onCancelRename: () => void;
@@ -38,9 +25,6 @@ export function ProjectListItem({
   idleCount,
   isGrouped,
   onSelect,
-  onOpenSettings,
-  onOpenInExplorer,
-  onDeleteClick,
   onContextMenu,
   onRename,
   onCancelRename,
@@ -80,7 +64,16 @@ export function ProjectListItem({
     opacity: isDragging ? 0.4 : 1,
   };
 
-  const actionOpacity = isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100';
+  const hasThinking = thinkingCount > 0;
+  const hasIdle = idleCount > 0;
+  const activityLabel = hasThinking || hasIdle
+    ? `${thinkingCount} thinking, ${idleCount} idle`
+    : null;
+  const rowTitle = [
+    project.path,
+    activityLabel,
+    'Right-click for options',
+  ].filter(Boolean).join('\n');
 
   return (
     <div
@@ -93,7 +86,9 @@ export function ProjectListItem({
       onClick={() => onSelect(project.id)}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onSelect(project.id); }}
       onContextMenu={(e) => onContextMenu(e, project)}
-      className={`group w-full text-left py-2 text-sm transition-colors border-l-2 cursor-pointer outline-none px-3 ${
+      title={rowTitle}
+      data-testid={`project-row-${project.id}`}
+      className={`group w-full text-left py-2.5 text-sm transition-colors border-l-2 cursor-pointer outline-none px-3 ${
         isGrouped ? 'pl-7' : ''
       } ${
         isActive
@@ -101,85 +96,55 @@ export function ProjectListItem({
           : 'border-transparent text-fg-muted hover:bg-surface-hover/50 hover:text-fg-secondary'
       }`}
     >
-      <div className="flex items-center gap-2">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <span className="flex-shrink-0">
-            <Folder size={16} className={`${isActive ? 'text-accent-fg' : 'text-fg-faint'} group-hover:hidden`} />
-            <GripVertical size={16} className={`${isActive ? 'text-accent-fg' : 'text-fg-faint'} hidden group-hover:block cursor-grab`} />
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              {isRenaming ? (
-                <input
-                  ref={renameInputRef}
-                  value={editName}
-                  onChange={(e) => setEditName(e.target.value)}
-                  onBlur={handleSubmitRename}
-                  onClick={(e) => e.stopPropagation()}
-                  onKeyDown={(e) => {
-                    e.stopPropagation();
-                    if (e.key === 'Enter') handleSubmitRename();
-                    if (e.key === 'Escape') {
-                      setEditName(project.name);
-                      onCancelRename();
-                    }
-                  }}
-                  className="flex-1 min-w-0 text-sm font-medium bg-transparent border-b border-accent text-fg outline-none px-0.5"
-                />
-              ) : (
-                <span className="truncate font-medium">{project.name}</span>
-              )}
-              {idleCount > 0 && (
-                <span
-                  className="flex items-center gap-1 text-xs tabular-nums flex-shrink-0 text-amber-400"
-                  title={`${idleCount} idle. Needs attention`}
-                >
-                  <Mail size={12} />
-                  {idleCount}
-                </span>
-              )}
-              {thinkingCount > 0 && (
-                <span
-                  className="flex items-center gap-1 text-xs tabular-nums text-green-400 flex-shrink-0"
-                  title={`${thinkingCount} thinking`}
-                >
-                  <Loader2 size={12} className="animate-spin" />
-                  {thinkingCount}
-                </span>
-              )}
-            </div>
-            <div
-              className="truncate text-xs text-fg-faint mt-0.5"
-              title={project.path}
-            >
-              {shortenPath(project.path)}
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-0.5 flex-shrink-0">
-          <button
-            onClick={(e) => onOpenInExplorer(e, project)}
-            className={`${actionOpacity} p-1.5 rounded-full text-fg-disabled hover:text-fg-tertiary hover:bg-edge-input/50 transition-all`}
-            title="Open in file explorer"
-          >
-            <FolderOpen size={16} />
-          </button>
-          <button
-            onClick={(e) => onOpenSettings(e, project)}
-            className={`${actionOpacity} p-1.5 rounded-full text-fg-disabled hover:text-fg-tertiary hover:bg-edge-input/50 transition-all`}
-            title="Project settings"
-            data-testid={`project-settings-${project.id}`}
-          >
-            <Settings size={16} />
-          </button>
-          <button
-            onClick={(e) => onDeleteClick(e, project)}
-            className={`${actionOpacity} p-1.5 rounded-full text-fg-disabled hover:text-red-400 hover:bg-red-400/10 transition-all`}
-            title="Delete project"
-          >
-            <Trash2 size={16} />
-          </button>
-        </div>
+      <div className="flex items-center gap-2 min-w-0">
+        <span
+          className="flex-shrink-0 inline-flex items-center justify-center w-3.5 h-3.5"
+          aria-label={activityLabel ?? undefined}
+        >
+          {hasThinking ? (
+            <Loader2 size={14} className="text-green-400 animate-spin" />
+          ) : hasIdle ? (
+            <Mail size={14} className="text-amber-400" />
+          ) : null}
+        </span>
+        {isRenaming ? (
+          <input
+            ref={renameInputRef}
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={handleSubmitRename}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') handleSubmitRename();
+              if (e.key === 'Escape') {
+                setEditName(project.name);
+                onCancelRename();
+              }
+            }}
+            className="flex-1 min-w-0 text-sm font-medium bg-transparent border-b border-accent text-fg outline-none px-0.5"
+          />
+        ) : (
+          <span className="truncate font-medium flex-1 min-w-0">{project.name}</span>
+        )}
+        <button
+          type="button"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onContextMenu(e, project);
+          }}
+          className={`flex-shrink-0 p-1 rounded transition-[opacity,color,background-color] outline-none ${
+            isActive
+              ? 'opacity-100 text-fg-muted hover:text-fg hover:bg-surface-hover'
+              : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-fg-disabled hover:text-fg-muted hover:bg-surface-hover/60'
+          }`}
+          title="More options (or right-click row)"
+          data-testid={`project-menu-${project.id}`}
+          aria-label={`Open menu for ${project.name}`}
+        >
+          <MoreHorizontal size={14} />
+        </button>
       </div>
     </div>
   );
