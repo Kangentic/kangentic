@@ -51,6 +51,13 @@ vi.mock('../../src/main/analytics/analytics', () => ({
   sanitizeErrorMessage: mocks.sanitizeErrorMessage,
 }));
 
+// updater.ts short-circuits initUpdater() on Linux (`if (!app.isPackaged ||
+// process.platform === 'linux') return`). CI runs on Ubuntu, so without this
+// stub the error listener is never registered and every test that calls
+// getRegisteredListener('error') fails. Tests should exercise the full
+// init path regardless of host OS.
+Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
 // Import after mocks are registered.
 import { checkWithRetry, downloadWithRetry, initUpdater } from '../../src/main/updater';
 import { BrowserWindow } from 'electron';
