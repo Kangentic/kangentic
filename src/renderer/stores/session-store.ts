@@ -26,6 +26,15 @@ const preservedTransientState = hmrTransientData as {
   transientBranch: string | null;
 } | undefined;
 
+/** Spawn progress labels preserved across HMR. Without this, a main-process
+ *  emitSpawnProgress push that arrives pre-reload is dropped when the store
+ *  re-initializes to defaults - leaving a stale "Initializing..." state on
+ *  the task card that the user can't clear without a full app restart. */
+// @ts-expect-error -- Vite handles import.meta.hot
+const preservedSpawnProgress: Record<string, string> = import.meta.hot?.data?.spawnProgress ?? {};
+// @ts-expect-error -- Vite handles import.meta.hot
+const preservedPendingCommandLabel: Record<string, string> = import.meta.hot?.data?.pendingCommandLabel ?? {};
+
 // @ts-expect-error -- Vite handles import.meta.hot
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
@@ -37,6 +46,8 @@ if (import.meta.hot) {
       transientSessionId: state.transientSessionId,
       transientBranch: state.transientBranch,
     };
+    data.spawnProgress = state.spawnProgress;
+    data.pendingCommandLabel = state.pendingCommandLabel;
   });
 }
 
@@ -53,10 +64,12 @@ export function cancelSync(): void {
  * UI hints, derived helpers) stays inline here because it's tightly
  * coupled and hard to split cleanly.
  *
- * HMR preservation: syncController (AbortController) and the three
- * transient-session pointers survive module replacement via
- * `import.meta.hot.dispose`. Without this, hot reload orphans live
- * PTY processes and breaks in-flight project switches.
+ * HMR preservation: syncController (AbortController), the three
+ * transient-session pointers, spawnProgress, and pendingCommandLabel
+ * survive module replacement via `import.meta.hot.dispose`. Without
+ * this, hot reload orphans live PTY processes, breaks in-flight
+ * project switches, and strands "Initializing..." indicators on
+ * task cards whose in-flight spawn-progress pushes arrived pre-reload.
  *
  * HMR re-sync: the `vite:afterUpdate` handler in App.tsx calls
  * `syncSessions()` after hot reload. Renaming syncSessions would
@@ -73,8 +86,8 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   sessionActivity: {},
   sessionEvents: {},
   seenIdleSessions: {},
-  pendingCommandLabel: {},
-  spawnProgress: {},
+  pendingCommandLabel: preservedPendingCommandLabel,
+  spawnProgress: preservedSpawnProgress,
   _pendingOpenTaskId: null,
   _pendingOpenCommandTerminal: false,
   setPendingOpenCommandTerminal: (value) => set({ _pendingOpenCommandTerminal: value }),

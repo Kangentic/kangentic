@@ -171,11 +171,21 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
     }
 
     // Optimistically clear session for tasks moving to backlog
-    // (the backend will destroy the session during TASK_MOVE via cleanupTaskSession)
+    // (the backend will destroy the session during TASK_MOVE via cleanupTaskSession).
+    // Also clear spawn progress and pending command labels so a stale
+    // "Initializing..." / "Starting agent..." indicator from an in-flight
+    // spawn disappears the instant the card lands in To Do, without
+    // waiting for the backend's clearSpawnProgress push to arrive.
     if (isColumnChange && targetLane?.role === 'todo') {
-      useSessionStore.setState((state) => ({
-        sessions: state.sessions.filter((session) => session.taskId !== input.taskId),
-      }));
+      useSessionStore.setState((state) => {
+        const { [input.taskId]: _removedProgress, ...nextSpawnProgress } = state.spawnProgress;
+        const { [input.taskId]: _removedLabel, ...nextPendingCommandLabel } = state.pendingCommandLabel;
+        return {
+          sessions: state.sessions.filter((session) => session.taskId !== input.taskId),
+          spawnProgress: nextSpawnProgress,
+          pendingCommandLabel: nextPendingCommandLabel,
+        };
+      });
     }
 
     try {

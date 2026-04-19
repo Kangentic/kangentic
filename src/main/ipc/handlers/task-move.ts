@@ -164,6 +164,12 @@ export async function handleTaskMove(
     // --- Priority 1: TARGET IS TO DO → full reset (kill session, remove worktree, delete branch) ---
     if (toLane?.role === 'todo') {
       context.commandInjector.cancel(task.id);
+      // Clear any lingering spawn progress label from an in-flight spawn
+      // that was aborted by this move. The aborted move's catch block also
+      // calls clearSpawnProgress, but doing it here too guarantees the
+      // renderer's "Initializing..." indicator vanishes regardless of
+      // whether the prior move reached its catch path.
+      clearSpawnProgress(context.mainWindow, task.id);
       // Kill (but don't remove from map) any in-flight PTY session spawned
       // by a concurrent move that hasn't written session_id to the task
       // record yet. Using killByTaskId instead of removeByTaskId so the

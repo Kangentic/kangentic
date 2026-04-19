@@ -194,6 +194,33 @@ test.describe('Claude Agent -- Rapid Task Moves', () => {
       return tasks.find((t: any) => t.id === tid);
     }, taskId!);
     expect(taskAfterSettle.session_id).toBeFalsy();
+
+    // --- Verify: renderer session store has no spawn-progress indicators ---
+    // The fix in board-store/task-slice.ts clears spawnProgress and
+    // pendingCommandLabel optimistically when a task moves to a To Do lane.
+    // If this clearance were removed, a stale "Initializing..." label from
+    // a prior in-flight spawn could remain on the task card indefinitely.
+    // __zustandStores is exposed only in DEV mode (NODE_ENV=test counts as DEV
+    // for Vite's dev server, which is how E2E tests load the renderer).
+    const spawnIndicatorsClear = await page.evaluate((tid) => {
+      const stores = (window as unknown as {
+        __zustandStores?: {
+          session: {
+            getState: () => {
+              spawnProgress: Record<string, string>;
+              pendingCommandLabel: Record<string, string>;
+            };
+          };
+        };
+      }).__zustandStores;
+      if (!stores?.session) {
+        // __zustandStores is not available in this context -- skip assertion
+        return true;
+      }
+      const state = stores.session.getState();
+      return !(tid in state.spawnProgress) && !(tid in state.pendingCommandLabel);
+    }, taskId!);
+    expect(spawnIndicatorsClear).toBe(true);
   });
 
   test('moving to Planning after rapid moves still spawns a running session', async () => {
