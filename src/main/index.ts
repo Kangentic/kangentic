@@ -307,10 +307,16 @@ const createWindow = () => {
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
-    // Check both relative paths: ../renderer/ (legacy Forge layout) and ./renderer/ (esbuild)
-    const legacyPath = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`);
+    // The esbuild layout ships the renderer alongside the main bundle
+    // (./renderer/). The legacy Forge layout kept it in ../renderer/.
+    // Prefer the esbuild layout because the legacy path can be populated
+    // by a stale `npm start` dev-server cache (`.vite/renderer/`) that
+    // survives `npm run build`, causing the packaged app to load an
+    // outdated bundle. Fall back to the legacy path only when the
+    // standalone layout is missing.
     const standalonePath = path.join(__dirname, `renderer/${MAIN_WINDOW_VITE_NAME}/index.html`);
-    mainWindow.loadFile(fs.existsSync(legacyPath) ? legacyPath : standalonePath);
+    const legacyPath = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`);
+    mainWindow.loadFile(fs.existsSync(standalonePath) ? standalonePath : legacyPath);
   }
 
   endPhase('createWindow');

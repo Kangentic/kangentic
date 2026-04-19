@@ -5,7 +5,7 @@ import { IPC } from '../../../shared/ipc-channels';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { resumeSuspendedSessions, autoSpawnTasks } from '../../engine/session-startup';
-import { cleanupStaleResources } from '../../engine/resource-cleanup';
+import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { TranscriptRepository } from '../../db/repositories/transcript-repository';
 import { WorktreeManager } from '../../git/worktree-manager';
@@ -360,13 +360,21 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
   context.sessionManager.setTranscriptRepository(new TranscriptRepository(getProjectDb(project.id)));
 
   if (!isReopen) {
-    // Async fire-and-forget: resource cleanup then session recovery, serialized.
     const db = getProjectDb(project.id);
     const taskRepo = new TaskRepository(db);
     const sessionRepo = new SessionRepository(db);
     const swimlaneRepo = new SwimlaneRepository(db);
-    cleanupStaleResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
-      .then(() => resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
+
+    // Prune orphan-worktree tasks synchronously so session recovery below
+    // sees a clean DB. The remaining passes (backlog cleanup + orphan
+    // directory removal) run hundreds of filesystem ops on repos with
+    // leftover worktrees and previously blocked recovery for minutes, so
+    // they are fired in the background.
+    pruneOrphanedWorktreeTasks(project.path, taskRepo, sessionRepo, context.sessionManager);
+    cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
+      .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
+
+    resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle)
       .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
       .then(() => autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
       .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err));
@@ -379,6 +387,12 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
  * Activate all projects on startup: run session recovery/reconciliation
  * for every project so agent sessions start immediately, not just when
  * the user navigates to a project board.
+ *
+ * Post-condition: resolves once every project's suspended sessions have
+ * been resumed and auto-spawns have been dispatched. The slow resource
+ * cleanup passes (backlog cleanup + orphan directory removal) run in the
+ * background and may still be in flight when this resolves. Callers
+ * that need cleanup-complete must not rely on this function's resolution.
  */
 export async function activateAllProjects(context: IpcContext): Promise<void> {
   if (isShuttingDown()) return;
@@ -398,7 +412,14 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       const taskRepo = new TaskRepository(db);
       const sessionRepo = new SessionRepository(db);
       const swimlaneRepo = new SwimlaneRepository(db);
-      await cleanupStaleResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager);
+
+      // See openProjectByPath for rationale: sync prune ensures recovery
+      // reads a clean DB; the slow async passes run in the background and
+      // may still be in flight when activateAllProjects resolves.
+      pruneOrphanedWorktreeTasks(project.path, taskRepo, sessionRepo, context.sessionManager);
+      cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
+        .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
+
       await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle);
       await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle);
     }),
@@ -486,8 +507,15 @@ export function registerProjectHandlers(context: IpcContext): void {
       const taskRepo = new TaskRepository(db);
       const sessionRepo = new SessionRepository(db);
       const swimlaneRepo = new SwimlaneRepository(db);
-      cleanupStaleResources(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
-        .then(() => resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
+
+      // Same split as openProjectByPath: sync prune guarantees recovery
+      // reads a clean DB, and the slow filesystem passes run in the
+      // background so session spawn is not blocked on them.
+      pruneOrphanedWorktreeTasks(project.path, taskRepo, sessionRepo, context.sessionManager);
+      cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
+        .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
+
+      resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle)
         .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
         .then(() => autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
         .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err));

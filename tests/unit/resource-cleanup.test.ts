@@ -44,7 +44,7 @@ vi.mock('node:util', () => ({
 // Import under test
 // ---------------------------------------------------------------------------
 
-import { cleanupStaleResources } from '../../src/main/engine/resource-cleanup';
+import { cleanupStaleResources, cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../src/main/engine/resource-cleanup';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -618,5 +618,77 @@ describe('cleanupStaleResources -- pruneOrphanedWorktreeTasks pass', () => {
     );
 
     expect(taskRepo.delete).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sync-ordering contract: pruneOrphanedWorktreeTasks must complete before
+// any microtask yields, so session recovery can read a clean DB after the
+// call without awaiting. Startup code in projects.ts depends on this.
+// ---------------------------------------------------------------------------
+
+describe('pruneOrphanedWorktreeTasks sync contract', () => {
+  const projectPath = '/home/dev/my-project';
+  const worktreesDir = '/home/dev/my-project/.kangentic/worktrees';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockExistsSync.mockReturnValue(false);
+  });
+
+  it('is a synchronous function (does not return a Promise)', () => {
+    const { taskRepo, sessionRepo, sessionManager } =
+      createMockReposWithAllTasks([]);
+
+    const result: unknown = pruneOrphanedWorktreeTasks(
+      projectPath,
+      taskRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    expect(result).not.toBeInstanceOf(Promise);
+    expect((result as { then?: unknown }).then).toBeUndefined();
+  });
+
+  it('completes pruning before cleanupStaleResourcesAsync yields', async () => {
+    const orphanTask = createMockTask({
+      id: 'orphan11-0000-0000-0000-000000000000',
+      title: 'Orphan task',
+      worktree_path: '/home/dev/my-project/.kangentic/worktrees/orphan-orphan11',
+      branch_name: 'orphan-orphan11',
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } =
+      createMockReposWithAllTasks([orphanTask]);
+
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreesDir);
+
+    // Emulate the startup call pattern exactly: sync prune, then fire the
+    // async tail without awaiting.
+    pruneOrphanedWorktreeTasks(
+      projectPath,
+      taskRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+    const asyncTail = cleanupStaleResourcesAsync(
+      projectPath,
+      taskRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    // At this synchronous point - before any await - the orphan task must
+    // already be deleted. Session recovery reads the DB in exactly this
+    // position in the real startup sequence.
+    expect(taskRepo.delete).toHaveBeenCalledWith(
+      'orphan11-0000-0000-0000-000000000000',
+    );
+    expect(sessionRepo.deleteByTaskId).toHaveBeenCalledWith(
+      'orphan11-0000-0000-0000-000000000000',
+    );
+
+    await asyncTail;
   });
 });

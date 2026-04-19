@@ -25,6 +25,19 @@ async function build() {
   execSync('npx tsc --noEmit', { cwd: projectDir, stdio: 'inherit' });
   console.log('[build] Type check passed');
 
+  // Remove any stale `.vite/renderer/` dev-server cache left by `npm start`.
+  // The runtime main-process loader prefers the esbuild layout
+  // (`.vite/build/renderer/`) but falls back to `.vite/renderer/` when the
+  // former is absent, so a lingering dev cache on a dogfooding machine
+  // could still shadow a freshly-built bundle in edge cases. Clearing it
+  // here guarantees the production layout is the only one the built app
+  // can resolve.
+  const staleDevRendererDir = path.join(projectDir, '.vite/renderer');
+  if (fs.existsSync(staleDevRendererDir)) {
+    fs.rmSync(staleDevRendererDir, { recursive: true, force: true });
+    console.log('[build] Removed stale .vite/renderer/ dev cache');
+  }
+
   console.log('[build] Building renderer with Vite...');
   const { build: viteBuild } = await import('vite');
   await viteBuild({

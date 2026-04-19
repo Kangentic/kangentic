@@ -23,9 +23,14 @@ const execFileAsync = promisify(execFile);
  *  2. Clean worktree dirs, branches, and sessions for backlog tasks
  *  3. Remove orphaned worktree, session, and task directories
  *
- * Async to avoid blocking the Electron main thread during startup.
  * This is the single source of truth for resource cleanup - session-startup/
  * only handles session lifecycle (resume, auto-spawn).
+ *
+ * For startup, prefer calling {@link pruneOrphanedWorktreeTasks} (sync) and
+ * {@link cleanupStaleResourcesAsync} (async) separately, so session recovery
+ * can read the DB after the sync prune but without waiting on the slow
+ * filesystem sweep. This wrapper is retained for tests and any callers that
+ * want the full sequence awaited.
  */
 export async function cleanupStaleResources(
   projectPath: string,
@@ -34,13 +39,25 @@ export async function cleanupStaleResources(
   sessionRepo: SessionRepository,
   sessionManager: SessionManager,
 ): Promise<void> {
-  // 1. Prune tasks whose worktree dirs were deleted externally (sync, fast)
   pruneOrphanedWorktreeTasks(projectPath, taskRepo, sessionRepo, sessionManager);
+  await cleanupStaleResourcesAsync(projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager);
+}
 
-  // 2. Clean backlog task resources (worktree dirs, branches, sessions)
+/**
+ * Async tail of resource cleanup: backlog cleanup (pass 2) + orphan directory
+ * removal (pass 3). Safe to fire-and-forget during startup because it only
+ * touches tasks the rest of the startup sequence does not (backlog tasks are
+ * excluded from session recovery, and orphan directories are by definition
+ * not referenced by any task).
+ */
+export async function cleanupStaleResourcesAsync(
+  projectPath: string,
+  taskRepo: TaskRepository,
+  swimlaneRepo: SwimlaneRepository,
+  sessionRepo: SessionRepository,
+  sessionManager: SessionManager,
+): Promise<void> {
   await cleanBacklogTaskResources(projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager);
-
-  // 3. Remove orphaned directories not referenced by any task
   await pruneOrphanedDirectories(projectPath, taskRepo, sessionRepo, sessionManager);
 }
 
@@ -55,8 +72,12 @@ export async function cleanupStaleResources(
  * missing, the project may be on an unmounted drive - don't prune anything).
  *
  * Never prunes tasks without a worktree_path or tasks with an active PTY.
+ *
+ * Synchronous by design: startup callers need this to complete before
+ * session recovery reads the DB, without paying for the async filesystem
+ * sweep in passes 2-3. Do not add `await`s to this function.
  */
-function pruneOrphanedWorktreeTasks(
+export function pruneOrphanedWorktreeTasks(
   projectPath: string,
   taskRepo: TaskRepository,
   sessionRepo: SessionRepository,
