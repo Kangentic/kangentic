@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useDroppable } from '@dnd-kit/core';
 import { ChevronDown, ChevronRight, MoreHorizontal } from 'lucide-react';
-import { Pill } from '../../Pill';
+import { CountBadge } from '../../CountBadge';
 import type { ProjectGroup } from '../../../../shared/types';
 
 export interface GroupHeaderProps {
@@ -66,35 +66,33 @@ export function GroupHeader({
         {group.is_collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
       </span>
 
-      {isRenaming ? (
-        <input
-          ref={inputRef}
-          value={editName}
-          onChange={(e) => setEditName(e.target.value)}
-          onBlur={handleSubmitRename}
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => {
-            e.stopPropagation();
-            if (e.key === 'Enter') handleSubmitRename();
-            if (e.key === 'Escape') {
-              setEditName(group.name);
-              onCancelRename();
-            }
-          }}
-          className="flex-1 min-w-0 text-xs font-semibold uppercase tracking-wider bg-transparent border-b border-accent text-fg outline-none px-0.5"
-        />
-      ) : (
-        <span
-          className="flex-1 min-w-0 text-xs font-semibold uppercase tracking-wider text-fg-muted truncate select-none"
-        >
-          {group.name}
-          {group.is_collapsed && (
-            <Pill size="sm" as="span" className="ml-1.5 align-middle bg-surface-hover text-[11px] text-fg-faint font-normal normal-case tracking-normal">
-              {projectCount} {projectCount === 1 ? 'project' : 'projects'}
-            </Pill>
-          )}
-        </span>
-      )}
+      <div className="flex-1 min-w-0 flex items-center gap-1.5">
+        {isRenaming ? (
+          <input
+            ref={inputRef}
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={handleSubmitRename}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') handleSubmitRename();
+              if (e.key === 'Escape') {
+                setEditName(group.name);
+                onCancelRename();
+              }
+            }}
+            className="flex-1 min-w-0 text-xs font-semibold uppercase tracking-wider bg-transparent border-b border-accent text-fg outline-none px-0.5"
+          />
+        ) : (
+          <span
+            className="min-w-0 text-xs font-semibold uppercase tracking-wider text-fg-muted truncate select-none"
+          >
+            {group.name}
+          </span>
+        )}
+        <CountBadge count={projectCount} variant="muted" size="sm" className="flex-shrink-0" />
+      </div>
 
       <button
         type="button"

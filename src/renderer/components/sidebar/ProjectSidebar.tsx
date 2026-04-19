@@ -12,6 +12,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
+import { CountBadge } from '../CountBadge';
 import type { Project, ProjectGroup } from '../../../shared/types';
 import {
   ProjectListItem,
@@ -248,26 +249,22 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
   return (
     <div className="w-full h-full bg-surface-raised flex flex-col flex-shrink-0">
       <div className="px-3 pt-3 pb-2 border-b border-edge space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {onToggleSidebar && (
-              <button
-                onClick={onToggleSidebar}
-                className="p-1 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-                title="Hide sidebar"
-              >
-                <ChevronsLeft size={16} />
-              </button>
-            )}
-            <span className="text-xs font-semibold uppercase tracking-wider text-fg-faint">
-              Projects
-              {projects.length > 0 && (
-                <span className="ml-1.5 text-fg-disabled normal-case tracking-normal font-medium">
-                  &middot; {projects.length}
-                </span>
-              )}
-            </span>
-          </div>
+        <div className="flex items-center gap-2">
+          {onToggleSidebar && (
+            <button
+              onClick={onToggleSidebar}
+              className="p-1 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+              title="Hide sidebar"
+            >
+              <ChevronsLeft size={16} />
+            </button>
+          )}
+          <span className="text-xs font-semibold uppercase tracking-wider text-fg-faint">
+            Projects
+          </span>
+          {projects.length > 0 && (
+            <CountBadge count={projects.length} variant="muted" size="sm" />
+          )}
         </div>
         <div className="relative">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-disabled pointer-events-none" />
@@ -283,7 +280,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
             }}
             placeholder="Search projects..."
             data-testid="project-sidebar-search"
-            className="w-full bg-surface/50 border border-edge/50 rounded-md text-xs text-fg placeholder-fg-disabled pl-7 pr-7 py-1.5 outline-none focus:border-edge-input transition-colors"
+            className="w-full h-8 bg-surface/50 border border-edge/50 rounded-md text-xs text-fg placeholder-fg-disabled pl-7 pr-7 outline-none focus:border-edge-input transition-colors"
           />
           {search && (
             <button

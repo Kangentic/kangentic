@@ -23,6 +23,15 @@ async function createGroup(page: Page, name: string): Promise<void> {
   await expect(input).toBeHidden();
 }
 
+test.describe('ProjectSidebar header count badge', () => {
+  test('shows project count badge in header when projects exist', async () => {
+    // The "Projects" header renders a CountBadge next to the label when projects.length > 0.
+    // Scope to the header area to avoid matching group or project-row badges.
+    const header = page.locator('.px-3.pt-3.pb-2.border-b').first();
+    await expect(header.locator('.rounded-full').filter({ hasText: '2' })).toBeVisible();
+  });
+});
+
 test.describe('Project Groups', () => {
   test('can create a project group', async () => {
     await createGroup(page, 'Work');
@@ -71,13 +80,34 @@ test.describe('Project Groups', () => {
     await expect(sidebar.locator('.truncate.font-medium:text("Alpha")')).toBeHidden();
     await expect(sidebar.locator('.truncate.font-medium:text("Beta")')).toBeHidden();
 
-    // Count pill should show "2 projects" in the group header
-    await expect(groupHeader.locator('text=2 projects')).toBeVisible();
+    // Count badge should show "2" in the group header
+    await expect(groupHeader.locator('.rounded-full').filter({ hasText: '2' })).toBeVisible();
 
     // Click again to expand
     await groupName.click();
     await expect(sidebar.locator('.truncate.font-medium:text("Alpha")')).toBeVisible();
     await expect(sidebar.locator('.truncate.font-medium:text("Beta")')).toBeVisible();
+  });
+
+  test('group count badge is visible when expanded', async () => {
+    // GroupHeader now renders CountBadge regardless of collapsed state.
+    // This test covers the expanded state (the prior test only covers collapsed).
+    const sidebar = page.locator('.bg-surface-raised').first();
+    await createGroup(page, 'ExpandedBadgeGroup');
+
+    // Move both projects into the group
+    await sidebar.locator('.truncate.font-medium:text("Alpha")').click({ button: 'right' });
+    await page.locator('.fixed.bg-surface-raised').locator('text=ExpandedBadgeGroup').click();
+    await sidebar.locator('.truncate.font-medium:text("Beta")').click({ button: 'right' });
+    await page.locator('.fixed.bg-surface-raised').locator('text=ExpandedBadgeGroup').click();
+
+    // Group is expanded by default - projects are visible
+    await expect(sidebar.locator('.truncate.font-medium:text("Alpha")')).toBeVisible();
+    await expect(sidebar.locator('.truncate.font-medium:text("Beta")')).toBeVisible();
+
+    // Badge must be visible while expanded
+    const groupHeader = page.locator('[data-testid^="project-group-"]');
+    await expect(groupHeader.locator('.rounded-full').filter({ hasText: '2' })).toBeVisible();
   });
 
   test('can rename a group via context menu', async () => {
