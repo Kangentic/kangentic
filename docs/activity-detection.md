@@ -99,6 +99,8 @@ The script is stateless -- no persistent process, no inter-invocation memory. Al
 | `config_change` | Configuration changed | `ConfigChange` (blank matcher) |
 | `worktree_create` | Worktree creation in progress | `WorktreeCreate` (blank matcher) |
 | `worktree_remove` | Worktree removal in progress | `WorktreeRemove` (blank matcher) |
+| `background_shell_start` | Agent launched a Bash with `run_in_background: true` | `PreToolUse` remapped by `remap-nested:tool_input:run_in_background:true:background_shell_start` |
+| `background_shell_end` | Agent killed a backgrounded shell via `KillBash` | `PreToolUse` remapped by `remap:tool_name:KillBash:background_shell_end` |
 
 Note: `tool_failure` is passed as the event type argument to the bridge script, but is never written to the JSONL file as-is. The bridge reads `is_interrupt` from the hook payload and converts it to either `interrupted` (if true) or `tool_end` (if false).
 
@@ -126,6 +128,7 @@ The SessionManager derives thinking/idle state from event types using this mappi
 | `subagent_start` | **thinking** | Main agent launched a subagent -- active work |
 | `compact` | **thinking** | Context compaction in progress |
 | `worktree_create` | **thinking** | Worktree creation in progress |
+| `background_shell_start` | **thinking** | Agent launched a backgrounded Bash; also increments `activeBackgroundShells` so Guard 3 holds while the detached child is alive |
 | `idle` | **idle** | Agent stopped, hit a permission wall, or asked a question |
 | `interrupted` | **idle** | User interrupted; agent is no longer processing |
 | `notification` | *(no change)* | Informational only -- fires unpredictably, often while idle |
@@ -137,6 +140,7 @@ The SessionManager derives thinking/idle state from event types using this mappi
 | `task_completed` | *(no change)* | Informational -- agent completed a task |
 | `config_change` | *(no change)* | Informational -- configuration changed |
 | `worktree_remove` | *(no change)* | Informational -- worktree removal |
+| `background_shell_end` | *(no change)* | Decrements `activeBackgroundShells`; releases a deferred Guard 3 idle when the counter reaches zero |
 
 Key design decisions:
 

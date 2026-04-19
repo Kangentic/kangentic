@@ -69,8 +69,20 @@ export function buildHooks(
     ...existingHooks,
     [H.PreToolUse]: [
       ...(existingHooks[H.PreToolUse] || []),
+      // Emit `tool_start` by default, but REMAP to `background_shell_start`
+      // when the tool is Bash with run_in_background: true, or to
+      // `background_shell_end` when the tool is KillBash. The state
+      // machine uses these to track active detached children -- a
+      // backgrounded Bash fires a well-formed tool_start/tool_end pair
+      // around the handle return, then Stop fires while the real child
+      // keeps running. Tracking these explicitly lets the engine avoid
+      // false-idle while background work is outstanding. See
+      // `tests/e2e/background-shell-idle.spec.ts` for the repro.
       { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.ToolStart,
-        'tool:tool_name', 'nested-detail:tool_input:file_path,command,query,pattern,url,description') }] },
+        'tool:tool_name',
+        'nested-detail:tool_input:file_path,command,query,pattern,url,description',
+        'remap-nested:tool_input:run_in_background:true:background_shell_start',
+        'remap:tool_name:KillBash:background_shell_end') }] },
     ],
     [H.PostToolUse]: [
       ...(existingHooks[H.PostToolUse] || []),

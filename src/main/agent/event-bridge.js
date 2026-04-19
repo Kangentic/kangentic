@@ -16,6 +16,8 @@
  *   nested-detail:<p>:<f1>,<f2>,.. Extract event.detail from first non-null ctx[p][f]
  *   env:<key>=<ENV_VAR>            Capture env var into hookContext as key
  *   remap:<field>:<value>:<type>   If ctx[field]==value, change event.type to type
+ *   remap-nested:<p>:<field>:<value>:<type>
+ *                                  If ctx[p][field]==value, change event.type to type
  *   arg-detail                     Use argv[next] as event.detail (for inline values)
  *
  * Stdin: Agent CLIs pipe hook context as JSON. Directives control which
@@ -93,6 +95,25 @@ process.stdin.on('end', () => {
       // arg-detail - use next argv as event.detail
       if (i + 1 < directives.length) {
         event.detail = String(directives[++i]).slice(0, 200);
+      }
+
+    } else if (directive.startsWith('remap-nested:')) {
+      // remap-nested:<parent>:<field>:<value>:<new-type> - conditionally
+      // change event.type based on a NESTED field value. Parse the three
+      // leading colons; everything after the third colon is the new type.
+      const rest = directive.slice(13);
+      const firstColon = rest.indexOf(':');
+      const secondColon = rest.indexOf(':', firstColon + 1);
+      const thirdColon = rest.indexOf(':', secondColon + 1);
+      if (firstColon > 0 && secondColon > firstColon && thirdColon > secondColon && ctx) {
+        const parent = rest.slice(0, firstColon);
+        const field = rest.slice(firstColon + 1, secondColon);
+        const value = rest.slice(secondColon + 1, thirdColon);
+        const newType = rest.slice(thirdColon + 1);
+        const container = ctx[parent];
+        if (container && typeof container === 'object' && String(container[field]) === value) {
+          event.type = newType;
+        }
       }
 
     } else if (directive.startsWith('remap:')) {

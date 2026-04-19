@@ -284,6 +284,16 @@ test.describe('Claude Agent -- Event Bridge Script', () => {
 
     fs.unlinkSync(outFile);
   });
+
+  // NOTE: The three remap-nested / remap directive tests (background_shell_start,
+  // foreground-Bash no-retype, KillBash -> background_shell_end) were moved to
+  // tests/unit/event-bridge-remap.test.ts on 2026-04-19.
+  //
+  // Reason: event-bridge.js is a standalone Node script with no Electron
+  // dependency. Keeping those tests in the E2E tier paid a ~3-5s Electron launch
+  // cost for every run and required a full build. The unit tier runs them in
+  // ~100ms each. Coverage is identical -- the same directive argv strings and
+  // real Claude PreToolUse payload shapes are used in the unit tests.
 });
 
 test.describe('Claude Agent -- Merged Settings Hooks', () => {

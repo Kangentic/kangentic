@@ -33,6 +33,18 @@ export interface SessionTrackingState {
   firstThinkingTimestamp: number | null;
   /** PR command detector: a `gh pr ...` bash tool_start is in flight. */
   pendingPRCommand: boolean;
+  /**
+   * Count of in-flight backgrounded Bash shells (run_in_background: true).
+   * Incremented by `background_shell_start`, decremented by
+   * `background_shell_end` (KillBash). Used by Guard 3 to suppress Idle
+   * while a detached child is still owned by the agent. Over-estimates
+   * when the background shell finishes naturally (no hook fires for
+   * that) -- reset on session_end. See `tests/e2e/background-shell-
+   * idle.spec.ts` for the bug this tracks.
+   */
+  activeBackgroundShells: number;
+  /** Guard 3: a Stop-driven idle was deferred because a bg shell is active. */
+  pendingIdleWhileBackgroundShell: boolean;
 }
 
 function createSessionTrackingState(): SessionTrackingState {
@@ -47,6 +59,8 @@ function createSessionTrackingState(): SessionTrackingState {
     lastThinkingSignal: null,
     firstThinkingTimestamp: null,
     pendingPRCommand: false,
+    activeBackgroundShells: 0,
+    pendingIdleWhileBackgroundShell: false,
   };
 }
 
@@ -192,6 +206,7 @@ export class ActivityStateMachine {
     this.updatePendingToolCount(state, event);
     this.updatePendingPermissions(state, event);
     this.updateSubagentDepth(sessionId, state, event);
+    this.updateBackgroundShellCount(sessionId, state, event);
 
     const newActivity = EventTypeActivity[event.type];
     if (!newActivity) return;
@@ -208,7 +223,14 @@ export class ActivityStateMachine {
     if (state.activity === newActivity) return;
 
     if (this.suppressSubagentWakeDuringPermission(state, event, newActivity)) return;
-    if (this.deferStopUntilSubagentFinishes(state, event, newActivity)) return;
+    // Both guards must evaluate before returning so that when a Stop-driven
+    // idle arrives while BOTH a subagent and a background shell are active,
+    // both pending flags are set. Short-circuiting on Guard 2 would leave
+    // pendingIdleWhileBackgroundShell unset, causing Guard 3 to miss the
+    // deferred emission when the bg shell is later killed.
+    const deferredByGuard2 = this.deferStopUntilSubagentFinishes(state, event, newActivity);
+    const deferredByGuard3 = this.deferStopUntilBackgroundShellsFinish(state, event, newActivity);
+    if (deferredByGuard2 || deferredByGuard3) return;
 
     // Clear stale pending idle when permission idle bypasses Guard 2.
     if (newActivity === 'idle' && event.detail === IdleReason.Permission) {
@@ -294,6 +316,38 @@ export class ActivityStateMachine {
     return true;
   }
 
+  /**
+   * Guard 3: defer a Stop-triggered idle while any backgrounded Bash is
+   * still active. A backgrounded Bash (`run_in_background: true`) fires
+   * a well-formed PreToolUse/PostToolUse pair when Claude returns the
+   * handle, but the detached child keeps running real work (e.g. an E2E
+   * test suite). When the agent narrates and yields, Stop fires. Without
+   * this guard, the session would flip to idle even though there is
+   * active background work, which breaks the task-card indicator,
+   * auto-suspend, and column-move semantics.
+   *
+   * Interrupts and permission idle bypass this guard because they must
+   * be visible to the user immediately regardless of background work.
+   *
+   * The pending flag is set so that a subsequent `background_shell_end`
+   * (KillBash) that drops the counter to zero emits the deferred idle.
+   * Natural completion of a background shell is NOT tracked (Claude
+   * Code does not fire a hook for it), so in the common case the flag
+   * stays pending until session_end -- that errs on the safe side.
+   */
+  private deferStopUntilBackgroundShellsFinish(
+    state: SessionTrackingState,
+    event: SessionEvent,
+    newActivity: ActivityState,
+  ): boolean {
+    if (state.activity !== 'thinking' || newActivity !== 'idle') return false;
+    if (event.type === EventType.Interrupted) return false;
+    if (event.detail === IdleReason.Permission) return false;
+    if (state.activeBackgroundShells === 0) return false;
+    state.pendingIdleWhileBackgroundShell = true;
+    return true;
+  }
+
   // ==== Private state updaters (one per concern) ====
 
   /** Tool-call counter for stale-thinking detection. */
@@ -344,14 +398,64 @@ export class ActivityStateMachine {
     } else if (event.type === EventType.SubagentStop) {
       state.subagentDepth = Math.max(0, state.subagentDepth - 1);
 
-      // Emit deferred idle when the last subagent finishes.
+      // Emit deferred idle when the last subagent finishes -- but only if
+      // Guard 3 (active background shells) is not also holding. When both
+      // guards were active simultaneously and SubagentStop fires first, we
+      // hand the deferral off to Guard 3 so it can emit when the last bg
+      // shell is killed via KillBash.
       if (state.subagentDepth === 0 && state.pendingIdleWhileSubagent) {
         state.pendingIdleWhileSubagent = false;
-        if (state.activity !== 'idle') {
+        if (state.activeBackgroundShells > 0) {
+          // Guard 3 still holds: promote the pending idle to the bg-shell
+          // deferred flag instead of emitting now.
+          state.pendingIdleWhileBackgroundShell = true;
+        } else if (state.activity !== 'idle') {
           state.activity = 'idle';
           this.callbacks.onActivityChange(sessionId, 'idle', false);
         }
       }
+    }
+  }
+
+  /**
+   * Background-shell counter tracking + deferred-idle emission when the
+   * last tracked shell is killed. Increments on `background_shell_start`
+   * (backgrounded Bash), decrements on `background_shell_end` (KillBash).
+   * Resets on session_end. Natural completion of a background shell is
+   * not tracked because Claude Code does not fire a hook for it; the
+   * counter is therefore a safe upper bound rather than a precise count.
+   */
+  private updateBackgroundShellCount(
+    sessionId: string,
+    state: SessionTrackingState,
+    event: SessionEvent,
+  ): void {
+    if (event.type === EventType.BackgroundShellStart) {
+      state.activeBackgroundShells += 1;
+    } else if (event.type === EventType.BackgroundShellEnd) {
+      state.activeBackgroundShells = Math.max(0, state.activeBackgroundShells - 1);
+
+      // Emit deferred idle when the last bg shell is killed -- but only if
+      // Guard 2 (active subagent) is not also holding. When both guards were
+      // active simultaneously and BackgroundShellEnd fires first, hand the
+      // deferral off to Guard 2 so it can emit when the subagent finishes.
+      if (state.activeBackgroundShells === 0 && state.pendingIdleWhileBackgroundShell) {
+        state.pendingIdleWhileBackgroundShell = false;
+        if (state.subagentDepth > 0) {
+          // Guard 2 still holds: promote the pending idle to the subagent
+          // deferred flag instead of emitting now.
+          state.pendingIdleWhileSubagent = true;
+        } else if (state.activity !== 'idle') {
+          state.activity = 'idle';
+          state.idleTimestamp = Date.now();
+          state.lastThinkingSignal = null;
+          this.callbacks.onActivityChange(sessionId, 'idle', false);
+        }
+      }
+    } else if (event.type === EventType.SessionEnd) {
+      // A fresh session should never inherit stale bg-shell state.
+      state.activeBackgroundShells = 0;
+      state.pendingIdleWhileBackgroundShell = false;
     }
   }
 

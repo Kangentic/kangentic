@@ -273,6 +273,24 @@ export const EventType = {
   ConfigChange: 'config_change',
   WorktreeCreate: 'worktree_create',
   WorktreeRemove: 'worktree_remove',
+  /**
+   * A Bash tool with `run_in_background: true` was launched. Emitted by
+   * the event-bridge when PreToolUse sees tool_input.run_in_background.
+   * Used by the activity state machine to keep the session as 'thinking'
+   * even after a subsequent Stop, because the detached child outlives
+   * the PostToolUse (which fires as soon as Claude returns the handle).
+   * See `tests/e2e/background-shell-idle.spec.ts` for the full repro.
+   */
+  BackgroundShellStart: 'background_shell_start',
+  /**
+   * A KillBash tool call was invoked. The agent explicitly killed a
+   * backgrounded shell; decrements the active-background-shells counter.
+   * Natural completion of a background shell is NOT tracked (Claude Code
+   * does not fire a hook for it), so the counter can over-estimate, but
+   * that errs on the safe side (keep thinking while any shell *might* be
+   * active).
+   */
+  BackgroundShellEnd: 'background_shell_end',
 } as const;
 export type EventType = (typeof EventType)[keyof typeof EventType];
 
@@ -297,6 +315,7 @@ export const EventTypeActivity: Record<EventType, ActivityState | null> = {
   [EventType.SubagentStart]: 'thinking',
   [EventType.Compact]: 'thinking',
   [EventType.WorktreeCreate]: 'thinking',
+  [EventType.BackgroundShellStart]: 'thinking',
   // → idle (agent waiting)
   [EventType.Idle]: 'idle',
   [EventType.Interrupted]: 'idle',
@@ -310,6 +329,7 @@ export const EventTypeActivity: Record<EventType, ActivityState | null> = {
   [EventType.TaskCompleted]: null,
   [EventType.ConfigChange]: null,
   [EventType.WorktreeRemove]: null,
+  [EventType.BackgroundShellEnd]: null,
 };
 
 // === Session Events (Claude Code Hooks → Activity Log) ===
