@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Loader2, Mail, MoreHorizontal } from 'lucide-react';
+import { MoreHorizontal } from 'lucide-react';
+import { SidebarActivityCounts } from './SidebarActivityCounts';
 import type { Project } from '../../../../shared/types';
 
 export interface ProjectListItemProps {
@@ -64,9 +65,7 @@ export function ProjectListItem({
     opacity: isDragging ? 0.4 : 1,
   };
 
-  const hasThinking = thinkingCount > 0;
-  const hasIdle = idleCount > 0;
-  const activityLabel = hasThinking || hasIdle
+  const activityLabel = thinkingCount > 0 || idleCount > 0
     ? `${thinkingCount} thinking, ${idleCount} idle`
     : null;
   const rowTitle = [
@@ -97,16 +96,6 @@ export function ProjectListItem({
       }`}
     >
       <div className="flex items-center gap-2 min-w-0">
-        <span
-          className="flex-shrink-0 inline-flex items-center justify-center w-3.5 h-3.5"
-          aria-label={activityLabel ?? undefined}
-        >
-          {hasThinking ? (
-            <Loader2 size={14} className="text-green-400 animate-spin" />
-          ) : hasIdle ? (
-            <Mail size={14} className="text-amber-400" />
-          ) : null}
-        </span>
         {isRenaming ? (
           <input
             ref={renameInputRef}
@@ -127,6 +116,7 @@ export function ProjectListItem({
         ) : (
           <span className="truncate font-medium flex-1 min-w-0">{project.name}</span>
         )}
+        <SidebarActivityCounts thinkingCount={thinkingCount} idleCount={idleCount} />
         <button
           type="button"
           onPointerDown={(e) => e.stopPropagation()}

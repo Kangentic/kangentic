@@ -315,7 +315,7 @@ test.describe('Project Session Scope', () => {
     }
   });
 
-  test('mixed thinking+idle sessions show the green thinking indicator (thinking wins)', async () => {
+  test('mixed thinking+idle sessions show both indicators with counts', async () => {
     // Add a second session to Project A (thinking) while first stays idle
     const preConfig = twoProjectPreConfig() + `
       window.__mockPreConfigure(function (state) {
@@ -356,11 +356,201 @@ test.describe('Project Session Scope', () => {
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
-      // Project Alpha shows only the green thinking spinner; the row title surfaces both counts
+      // Project Alpha shows both idle and thinking indicators with their counts;
+      // the row title surfaces both counts for screen-reader parity.
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
       await expect(alphaRow.locator('svg.text-green-400').first()).toBeVisible();
-      await expect(alphaRow.locator('svg.text-amber-400')).toHaveCount(0);
+      await expect(alphaRow.locator('svg.text-amber-400').first()).toBeVisible();
       await expect(alphaRow).toHaveAttribute('title', /1 thinking, 1 idle/);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('count digits render next to icon for each activity type', async () => {
+    // Project Alpha: 2 idle sessions + 3 thinking sessions.
+    // Verifies that the numeric count span rendered by SidebarActivityCounts
+    // contains the correct digit and is coloured with the matching amber/green class.
+    const preConfig = twoProjectPreConfig() + `
+      window.__mockPreConfigure(function (state) {
+        var ts = new Date().toISOString();
+
+        // Add a second idle session to Project Alpha (first is already in base config)
+        state.sessions.push({
+          id: 'sess-count-idle-2',
+          taskId: 'task-count-idle-2',
+          projectId: '${PROJECT_A_ID}',
+          pid: 2001,
+          status: 'running',
+          shell: 'bash',
+          cwd: '/mock/project-alpha',
+          startedAt: ts,
+          exitCode: null,
+        });
+        state.activityCache['sess-count-idle-2'] = 'idle';
+
+        // Add 3 thinking sessions to Project Alpha
+        ['sess-count-think-1', 'sess-count-think-2', 'sess-count-think-3'].forEach(function (sessionId, i) {
+          state.sessions.push({
+            id: sessionId,
+            taskId: 'task-count-think-' + i,
+            projectId: '${PROJECT_A_ID}',
+            pid: 2010 + i,
+            status: 'running',
+            shell: 'bash',
+            cwd: '/mock/project-alpha',
+            startedAt: ts,
+            exitCode: null,
+          });
+          state.activityCache[sessionId] = 'thinking';
+        });
+      });
+    `;
+    const { browser, page } = await launchWithState(preConfig);
+
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
+
+      // Amber idle pair: icon present + count span shows "2"
+      const idlePair = alphaRow.locator('svg.text-amber-400').first().locator('..');
+      await expect(idlePair).toBeVisible();
+      const idleCountSpan = alphaRow.locator('span.text-amber-400');
+      await expect(idleCountSpan).toBeVisible();
+      await expect(idleCountSpan).toContainText('2');
+
+      // Green thinking pair: icon present + count span shows "3"
+      const thinkingCountSpan = alphaRow.locator('span.text-green-400');
+      await expect(thinkingCountSpan).toBeVisible();
+      await expect(thinkingCountSpan).toContainText('3');
+
+      // Project Beta still has 1 idle only -- count span shows "1"
+      const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
+      const betaIdleCountSpan = betaRow.locator('span.text-amber-400');
+      await expect(betaIdleCountSpan).toBeVisible();
+      await expect(betaIdleCountSpan).toContainText('1');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('transient sessions are excluded from sidebar activity counts', async () => {
+    // A session with transient=true must NOT contribute to the idle or thinking
+    // count even if its activityCache entry says 'idle'.
+    const preConfig = twoProjectPreConfig() + `
+      window.__mockPreConfigure(function (state) {
+        var ts = new Date().toISOString();
+        state.sessions.push({
+          id: 'sess-transient-1',
+          taskId: 'task-transient-1',
+          projectId: '${PROJECT_A_ID}',
+          pid: 3001,
+          status: 'running',
+          shell: 'bash',
+          cwd: '/mock/project-alpha',
+          startedAt: ts,
+          exitCode: null,
+          transient: true,
+        });
+        state.activityCache['sess-transient-1'] = 'idle';
+      });
+    `;
+    const { browser, page } = await launchWithState(preConfig);
+
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Project Alpha has 1 non-transient idle session (from base config) and
+      // 1 transient idle session added above. Only the non-transient one should
+      // be counted, so the amber count span must show "1", not "2".
+      const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
+      const idleCountSpan = alphaRow.locator('span.text-amber-400');
+      await expect(idleCountSpan).toBeVisible();
+      await expect(idleCountSpan).toContainText('1');
+
+      // No thinking count should appear for Project Alpha
+      await expect(alphaRow.locator('span.text-green-400')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('non-running sessions are excluded from sidebar activity counts', async () => {
+    // A session with status 'suspended' must NOT contribute to the idle count
+    // even if its activityCache entry says 'idle'.
+    const preConfig = twoProjectPreConfig() + `
+      window.__mockPreConfigure(function (state) {
+        var ts = new Date().toISOString();
+        state.sessions.push({
+          id: 'sess-suspended-1',
+          taskId: 'task-suspended-1',
+          projectId: '${PROJECT_A_ID}',
+          pid: 4001,
+          status: 'suspended',
+          shell: 'bash',
+          cwd: '/mock/project-alpha',
+          startedAt: ts,
+          exitCode: null,
+        });
+        state.activityCache['sess-suspended-1'] = 'idle';
+      });
+    `;
+    const { browser, page } = await launchWithState(preConfig);
+
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Project Alpha has 1 running idle session (from base config) plus 1
+      // suspended idle session. Only the running one counts; amber span = "1".
+      const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
+      const idleCountSpan = alphaRow.locator('span.text-amber-400');
+      await expect(idleCountSpan).toBeVisible();
+      await expect(idleCountSpan).toContainText('1');
+
+      // No thinking count should appear
+      await expect(alphaRow.locator('span.text-green-400')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('aria-label on counts wrapper surfaces idle and thinking totals', async () => {
+    // The outer <span> produced by SidebarActivityCounts carries an aria-label
+    // of the form "{N} idle" or "{N} idle, {M} thinking" for screen-reader parity.
+    // This test uses a project with 1 idle + 1 thinking session to exercise the
+    // compound label path.
+    const preConfig = twoProjectPreConfig() + `
+      window.__mockPreConfigure(function (state) {
+        var ts = new Date().toISOString();
+        state.sessions.push({
+          id: 'sess-aria-think-1',
+          taskId: 'task-aria-think-1',
+          projectId: '${PROJECT_A_ID}',
+          pid: 5001,
+          status: 'running',
+          shell: 'bash',
+          cwd: '/mock/project-alpha',
+          startedAt: ts,
+          exitCode: null,
+        });
+        state.activityCache['sess-aria-think-1'] = 'thinking';
+      });
+    `;
+    const { browser, page } = await launchWithState(preConfig);
+
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Project Alpha: 1 idle (base) + 1 thinking (added above).
+      // SidebarActivityCounts renders idle first then thinking in the label.
+      const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
+
+      // The outer wrapper span with aria-label is NOT aria-hidden (the inner pairs are).
+      // We find it by the aria-label attribute pattern.
+      const countsWrapper = alphaRow.locator('[aria-label]').filter({ hasNotText: '' }).first();
+      await expect(countsWrapper).toBeVisible();
+      await expect(countsWrapper).toHaveAttribute('aria-label', /1 idle.*1 thinking|1 thinking.*1 idle/);
     } finally {
       await browser.close();
     }

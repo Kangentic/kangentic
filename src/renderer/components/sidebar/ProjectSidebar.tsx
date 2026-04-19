@@ -106,6 +106,24 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
     filteredUngroupedProjects.length +
     Array.from(filteredGroupedProjects.values()).reduce((sum, list) => sum + list.length, 0);
 
+  const activityCountsByProject = useMemo(() => {
+    const counts = new Map<string, { thinkingCount: number; idleCount: number }>();
+    for (const project of projects) {
+      counts.set(project.id, { thinkingCount: 0, idleCount: 0 });
+    }
+    for (const session of sessions) {
+      if (session.status !== 'running' || session.transient) continue;
+      const entry = counts.get(session.projectId);
+      if (!entry) continue;
+      if (sessionActivity[session.id] === 'idle') {
+        entry.idleCount += 1;
+      } else {
+        entry.thinkingCount += 1;
+      }
+    }
+    return counts;
+  }, [projects, sessions, sessionActivity]);
+
   useEffect(() => {
     if (creatingGroup && newGroupInputRef.current) {
       newGroupInputRef.current.focus();
@@ -220,23 +238,15 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
 
   const renderProjectItem = (project: Project, isGrouped: boolean) => {
     const isActive = currentProject?.id === project.id;
-    const runningSessions = sessions.filter(
-      (s) => s.projectId === project.id && s.status === 'running' && !s.transient,
-    );
-    const thinkingCount = runningSessions.filter(
-      (s) => sessionActivity[s.id] !== 'idle',
-    ).length;
-    const idleCount = runningSessions.filter(
-      (s) => sessionActivity[s.id] === 'idle',
-    ).length;
+    const counts = activityCountsByProject.get(project.id) ?? { thinkingCount: 0, idleCount: 0 };
     return (
       <ProjectListItem
         key={project.id}
         project={project}
         isActive={isActive}
         isRenaming={renamingProjectId === project.id}
-        thinkingCount={thinkingCount}
-        idleCount={idleCount}
+        thinkingCount={counts.thinkingCount}
+        idleCount={counts.idleCount}
         isGrouped={isGrouped}
         onSelect={openProject}
         onContextMenu={handleContextMenu}
