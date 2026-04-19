@@ -130,7 +130,7 @@ export function ContextBar({ sessionId, compact = false, agentFallback = null }:
         return (
           <span
             ref={rateLimitsRef}
-            className={`${pill} text-fg-muted tabular-nums flex items-center gap-2 flex-1 basis-64 min-w-[200px] max-w-[360px]`}
+            className={`${pill} text-fg-muted tabular-nums flex items-center gap-2 flex-1 basis-0 min-w-[220px]`}
             title={`5h session: ${formatResetTime(rateLimits.fiveHour.resetsAt)}\n7d weekly: ${formatResetTime(rateLimits.sevenDay.resetsAt)}`}
             data-testid="rate-limits-pill"
           >
@@ -180,7 +180,7 @@ export function ContextBar({ sessionId, compact = false, agentFallback = null }:
       )}
 
       {showProgressBar && (
-        <div className={`${pill} text-fg-muted flex items-center gap-2 flex-1 min-w-[140px]`}>
+        <div className={`${pill} text-fg-muted flex items-center gap-2 flex-1 basis-0 min-w-[160px]`}>
           <div className="flex-1 h-1.5 bg-surface-hover rounded-full overflow-hidden" title={barTooltip}>
             <div
               className="h-full rounded-full transition-[width,background-color] duration-300"
