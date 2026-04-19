@@ -275,7 +275,7 @@ Settings are accessed from two entry points:
 - **App Settings** - click the gear icon in the title bar. This is the main settings panel with all app-wide and project-default settings.
 - **Project Settings** - click the gear icon on a project row in the sidebar. This shows only the per-project overridable subset.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. In App Settings, tabs above the separator (Appearance, Terminal, Agent, Git, Shortcuts) are per-project settings; tabs below the separator (Behavior, MCP Server, Notifications, Privacy) are shared across all projects. When no project is open, only the shared tabs appear. Project Settings shows inherited defaults as hints, with reset buttons on any overridden value and a "Reset All" footer when overrides exist.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. In App Settings, tabs above the separator (Theme, Terminal, Agent, Git, Shortcuts) are per-project settings; tabs below the separator (Layout, Behavior, MCP Server, Notifications, Privacy) are shared across all projects. When no project is open, only the shared tabs appear. Project Settings shows inherited defaults as hints, with reset buttons on any overridden value and a "Reset All" footer when overrides exist.
 
 ### Search
 

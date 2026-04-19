@@ -6,6 +6,64 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.16.0] - 2026-04-19
+
+### Features
+
+- Agent: GitHub Copilot CLI adapter (61506c6)
+- Agent: Warp CLI (Oz) adapter (3f89876, b7e3917)
+- Agent: Cursor CLI adapter with stream-json init parsing for agent name and model (451e164, c4dd921)
+- Aider: session history parsing, transcript cleanup, and mode-aware idle detection (200cb45)
+- Boards: Asana integration with OAuth PKCE and setup wizard (43f309c)
+- Activity: detect background shells to prevent false idle state (b6b4d46)
+- Sidebar: reimagined project sidebar UX (b82e4e9)
+- Sidebar: project counts in header and group rows (ef49d53)
+- Sidebar: idle and active task counts per project row (5a391e8)
+- Command Bar: ContextBar in overlay with responsive layout (9f8c143)
+- Board: redesigned Done column to reclaim worktrees while preserving resumability (dc2a38f)
+- Worktree: encode base branch in auto-generated names and surface in task UI (afcf7fc)
+- Marketing: Playwright screenshot/video capture framework (cd6d465)
+
+### Fixes
+
+- Startup perf: don't block session recovery on resource cleanup (292fe3b)
+- Task-move: clear spawn progress when task moves to To Do (4b737c8)
+- Context-bar: distribute overlay row space evenly across pills (17d6129)
+- Worktree: kill-on-timeout for git removal ops so queue can't be poisoned (3df1f75)
+- Bulk-delete: per-task deadline and visibility to survive git hangs (b08ecf3)
+- Board: bulk delete no longer freezes or orphans worktrees (dbc040c)
+- Shutdown: remove real node_modules dirs and silence pipe write errors (cf5abcb)
+- Board: archive atomically on Done move and restore cursor attachSession binding (5d64625)
+- Asana: capture attachments on import and migrate auth from OAuth to PAT (049a4bb)
+- Cursor: clear "Loading agent..." spinner in interactive TUI mode (0530a37)
+- Updater: stop macOS update failures and silence transient noise (5513c7c)
+- Review findings for v0.16.0 release (78c7295)
+- Agents: unstick Copilot and Cursor at "loading agent" spinner (6c56ab0)
+- Copilot: add `type:"http"` to MCP config so Copilot CLI accepts it (43502b7)
+- PTY: swallow EACCES/ESRCH from already-dead PTY kills (199011e)
+- Board: prevent completed task from sticking in Done dropzone (0c1c9c6)
+- Renderer: render dates in the user's system locale (c7e155f)
+
+### Other
+
+- Perf: board structural sharing, subscription consolidation, agent-event debounce (9eb53d4)
+- Perf: keep main-process event loop responsive during bulk delete across all OSes (cc4137d)
+- Refactor: IPC tasks.ts split and withTaskLock policy gaps closed (c165977)
+- Refactor: move git-detector into src/main/git (39563bc)
+- Refactor: address review findings from comprehensive refactor audit (656af6a)
+- Refactor: azure-devops html-to-markdown and wiql helpers extracted (fced25f)
+- Refactor: git-checks, node-modules-link, fetch-throttle extracted from worktree-manager (eb18971)
+- Refactor: decompose session-manager into focused modules (9dd776e, bdbacbc)
+- Refactor: split board-store and session-store into slice files (bde5e3b)
+- Refactor: split completed-tasks, backlog, task-card dialogs (1251d6c)
+- Refactor: split settings, task-detail, manage-labels dialogs (6a11e33)
+- Refactor: split board-config-manager, mcp-http-server, session-recovery (e997968)
+- Refactor: per-adapter layout for board integrations (80625a1)
+- Refactor: tighten move-to-Done dialog copy and visual consistency (54ff0ca, 2fffaa8)
+- Docs: testing column discipline added to CLAUDE.md (1e949a5)
+- Docs: list all 7 supported agents and rename Warp to Oz CLI (bb42851)
+- Docs: update README to reflect multi-agent support and import sources (9eee320)
+
 ## [v0.15.0] - 2026-04-11
 
 ### Features
