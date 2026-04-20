@@ -91,73 +91,102 @@ export function registerSessionHandlers(context: IpcContext): void {
     });
   });
 
-  ipcMain.handle(IPC.SESSION_RESUME, (_, taskId: string, resumePrompt?: string) =>
-    withTaskLock(taskId, async () => {
+  ipcMain.handle(IPC.SESSION_RESUME, (_, taskId: string, resumePrompt?: string) => {
+    // Cancel any in-flight resume BEFORE queueing on the lock. Moving this
+    // outside the lock is required because Phase 2 (worktree git I/O) runs
+    // unlocked - a second resume must be able to cancel the first's in-flight
+    // fetch. Aborting inside the lock would deadlock: we'd be waiting for a
+    // holder stuck in the now-unlocked git op.
+    sessionResumeControllers.get(taskId)?.abort();
+    const resumeController = new AbortController();
+    sessionResumeControllers.set(taskId, resumeController);
+    const { signal } = resumeController;
+
+    return (async (): Promise<Session | null> => {
       const resolvedProjectId = context.currentProjectId;
       const resolvedProjectPath = context.currentProjectPath;
       if (!resolvedProjectId) throw new Error('No project is currently open');
 
       const { tasks, actions, swimlanes, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
-      const task = tasks.getById(taskId);
-      if (!task) throw new Error(`Task ${taskId} not found`);
-
-      // Guard: don't resume if already has an active session
-      if (task.session_id) throw new Error(`Task ${taskId} already has an active session`);
-
-      const lane = swimlanes.getById(task.swimlane_id);
-
-      // To Do tasks cannot have sessions -- reject resume
-      if (lane?.role === 'todo') {
-        throw new Error('Cannot resume a session for a task in the To Do column');
-      }
-
-      // Abort any in-flight resume for this task, then create a fresh controller
-      sessionResumeControllers.get(taskId)?.abort();
-      const resumeController = new AbortController();
-      sessionResumeControllers.set(taskId, resumeController);
-      const { signal } = resumeController;
 
       try {
-        // Create worktree if needed
+        // Phase 1 (locked, short): validate task + lane, build plan.
+        const plan = await withTaskLock(taskId, async () => {
+          const task = tasks.getById(taskId);
+          if (!task) throw new Error(`Task ${taskId} not found`);
+          if (task.session_id) throw new Error(`Task ${taskId} already has an active session`);
+          const lane = swimlanes.getById(task.swimlane_id);
+          if (lane?.role === 'todo') {
+            throw new Error('Cannot resume a session for a task in the To Do column');
+          }
+          return { task };
+        });
+
+        // Phase 2 (unlocked, slow): git I/O. Serialized per-project by
+        // WorktreeManager.projectQueues. AbortSignal cancels in-flight fetch
+        // when SESSION_SUSPEND / a newer SESSION_RESUME / SESSION_RESET fires.
         try {
-          await ensureTaskWorktree(context, task, tasks, resolvedProjectPath, { signal });
+          await ensureTaskWorktree(context, plan.task, tasks, resolvedProjectPath, { signal });
         } catch (worktreeError) {
           if (isAbortError(worktreeError)) throw worktreeError;
           const message = worktreeError instanceof Error ? worktreeError.message : String(worktreeError);
           throw new Error(`Worktree setup failed: ${message}`);
         }
 
-        const db = getProjectDb(resolvedProjectId);
-        const sessionRepo = new SessionRepository(db);
-        const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
+        // Phase 3 (locked, short): CAS-check invariants, then spawn the PTY
+        // and write session_id. Re-read task because Phase 2 could have raced
+        // with a concurrent handler that cleared session_id, moved the task
+        // to To Do, or already spawned a session.
+        return await withTaskLock(taskId, async () => {
+          signal.throwIfAborted();
+          const current = tasks.getById(taskId);
+          if (!current) throw new Error(`Task ${taskId} not found`);
+          if (current.session_id) {
+            // Another handler spawned during our Phase 2 gap. Return that
+            // session rather than trying to create a duplicate.
+            const existing = context.sessionManager.getSession(current.session_id);
+            if (existing) return existing;
+            throw new Error('Session resume failed - session not in manager');
+          }
+          const currentLane = swimlanes.getById(current.swimlane_id);
+          if (currentLane?.role === 'todo') {
+            throw new Error('Cannot resume a session for a task in the To Do column');
+          }
 
-        await engine.resumeSuspendedSession(task, lane?.permission_mode, undefined, resumePrompt, signal);
+          const db = getProjectDb(resolvedProjectId);
+          const sessionRepo = new SessionRepository(db);
+          const engine = createTransitionEngine(
+            context, actions, tasks, sessionRepo, attachmentRepo,
+            resolvedProjectId, resolvedProjectPath,
+          );
 
-        // Re-read task to get the new session_id
-        const updated = tasks.getById(taskId);
-        if (!updated?.session_id) throw new Error('Session resume failed -- no session_id on task');
+          await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, resumePrompt, signal);
 
-        // Return the new session object
-        const newSession = context.sessionManager.getSession(updated.session_id);
-        if (!newSession) throw new Error('Session resume failed -- session not in manager');
-        return newSession;
+          const updated = tasks.getById(taskId);
+          if (!updated?.session_id) throw new Error('Session resume failed - no session_id on task');
+          const newSession = context.sessionManager.getSession(updated.session_id);
+          if (!newSession) throw new Error('Session resume failed - session not in manager');
+          return newSession;
+        });
       } catch (error) {
         if (isAbortError(error)) {
-          // A suspend or newer resume superseded this one - clean up partial state
           console.log(`[SESSION_RESUME] Aborted stale resume for task ${taskId.slice(0, 8)}`);
-          context.sessionManager.removeByTaskId(taskId);
-          tasks.update({ id: taskId, session_id: null });
+          // Clean up partial state under the lock so a concurrent handler
+          // cannot observe a half-written session_id.
+          await withTaskLock(taskId, async () => {
+            context.sessionManager.removeByTaskId(taskId);
+            tasks.update({ id: taskId, session_id: null });
+          });
           return null;
         }
         throw error;
       } finally {
-        // Clean up controller only if it's still ours (not replaced by a newer resume)
         if (sessionResumeControllers.get(taskId) === resumeController) {
           sessionResumeControllers.delete(taskId);
         }
       }
-    })
-  );
+    })();
+  });
 
   // === Session Reset (safety-net recovery for unrecoverable sessions) ===
   ipcMain.handle(IPC.SESSION_RESET, (_, taskId: string) => {
