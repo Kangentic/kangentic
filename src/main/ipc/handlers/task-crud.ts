@@ -43,14 +43,14 @@ const PROGRESS_THROTTLE_MS = 100;
 /**
  * Wall-clock ceiling on per-task cleanup so a single hung op (network drive,
  * corrupted `.git/worktrees/*` metadata) can't poison the bulk-delete queue.
- * Cleanup normally finishes in <2s; this only fires on real hangs. The DB
+ * Cleanup normally finishes in <5s; this only fires on real hangs. The DB
  * row is still deleted on timeout and the failure surfaces in the UI.
  *
  * Sized to comfortably contain the worst-case git path inside `removeWorktree`
- * (3 sequential `runGitWithTimeout` ops at 5s each), so even a fully-pathological
- * git stall surfaces as the inner timeout, not the outer one.
+ * (3 sequential `runGitWithTimeout` ops at 15s each) plus the fs-rm fallback,
+ * so even a fully-pathological git stall surfaces as the inner timeout.
  */
-const TASK_CLEANUP_TIMEOUT_MS = 15_000;
+const TASK_CLEANUP_TIMEOUT_MS = 60_000;
 
 /**
  * Race an operation against a wall-clock deadline. Resolves with the

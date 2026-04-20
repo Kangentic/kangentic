@@ -9,12 +9,13 @@ import { fetchIfStale } from './fetch-throttle';
 import { removeWithRetry } from './rm-with-retry';
 
 /**
- * Wall-clock ceiling for git ops in the worktree-removal path. Normal
- * removes complete in <500ms; this only fires on real hangs (network
- * drives, corrupted `.git/worktrees/*` metadata). On timeout we abort the
- * child so the per-project git queue keeps moving instead of cascading.
+ * Wall-clock ceiling for git ops in the worktree-removal path. Small repos
+ * complete in <500ms, but `git worktree remove --force` on heavy node_modules
+ * (observed 5-12s on real TroyWeb repos during batch retry-cleanup) needs
+ * headroom. On timeout we abort the child so the per-project git queue keeps
+ * moving instead of cascading.
  */
-const GIT_REMOVAL_TIMEOUT_MS = 5_000;
+const GIT_REMOVAL_TIMEOUT_MS = 15_000;
 
 /**
  * Run git via child_process.spawn with kill-on-timeout. Used instead of
