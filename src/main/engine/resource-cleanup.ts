@@ -8,6 +8,9 @@ import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { SessionManager } from '../pty/session-manager';
 import { slugify } from '../../shared/slugify';
 import { removeNodeModulesPath } from '../git/node-modules-link';
+import { removeWithRetry } from '../git/rm-with-retry';
+import { WorktreeManager } from '../git/worktree-manager';
+import { withTaskLock } from '../ipc/task-lifecycle-lock';
 
 const execFileAsync = promisify(execFile);
 
@@ -58,6 +61,7 @@ export async function cleanupStaleResourcesAsync(
   sessionManager: SessionManager,
 ): Promise<void> {
   await cleanBacklogTaskResources(projectPath, taskRepo, swimlaneRepo, sessionRepo, sessionManager);
+  await retryFailedDoneCleanups(projectPath, taskRepo, swimlaneRepo);
   await pruneOrphanedDirectories(projectPath, taskRepo, sessionRepo, sessionManager);
 }
 
@@ -210,6 +214,71 @@ async function cleanBacklogTaskResources(
 }
 
 // ---------------------------------------------------------------------------
+// Pass 2b: Retry Done-task worktree cleanups that failed during the move
+// ---------------------------------------------------------------------------
+
+/**
+ * Retry worktree removal for every Done task whose `worktree_path` is still
+ * populated. `deleteTaskWorktree` (called on TASK_MOVE -> Done) clears that
+ * field on success; a non-null value here therefore means the original
+ * cleanup failed - typically because orphaned subprocesses spawned by the
+ * killed Claude CLI were still holding file handles on the worktree.
+ *
+ * By the time the user relaunches Kangentic, those orphaned processes are
+ * gone, so this pass usually succeeds on the first try. The retry reuses the
+ * full `WorktreeManager.removeWorktree` flow (node_modules cleanup -> git
+ * worktree remove --force -> removeWithRetry fallback) so it handles every
+ * removal mode the original move attempted. On success we clear
+ * `worktree_path`, which also unsticks the task for resume if the user later
+ * drags it out of Done (`ensureWorktree` skips when `worktree_path` is set).
+ *
+ * Runs on every project open and on app-startup activate-all, piggybacking
+ * on `cleanupStaleResourcesAsync`. The branch is preserved - only the
+ * worktree directory goes away.
+ *
+ * Wraps each task's cleanup in `withTaskLock` so a concurrent TASK_MOVE on
+ * the same task (user drags it out of Done right as we start retrying)
+ * cannot race with the removal + DB clear.
+ */
+export async function retryFailedDoneCleanups(
+  projectPath: string,
+  taskRepo: TaskRepository,
+  swimlaneRepo: SwimlaneRepository,
+): Promise<number> {
+  const doneLane = swimlaneRepo.list().find((lane) => lane.role === 'done');
+  if (!doneLane) return 0;
+
+  const doneTasks = taskRepo.list(doneLane.id).filter((task) => Boolean(task.worktree_path));
+  if (doneTasks.length === 0) return 0;
+
+  const worktreeManager = new WorktreeManager(projectPath);
+  let cleaned = 0;
+
+  for (const task of doneTasks) {
+    const cleanedThisTask = await withTaskLock(task.id, async () => {
+      // Re-read the task after acquiring the lock - a concurrent TASK_MOVE
+      // may have already handled this task (cleared worktree_path, moved
+      // it out of Done) while we were waiting.
+      const current = taskRepo.getById(task.id);
+      if (!current?.worktree_path) return false;
+
+      const removed = await worktreeManager.withLock(() => worktreeManager.removeWorktree(current.worktree_path!));
+      if (!removed) return false;
+
+      taskRepo.update({ id: task.id, worktree_path: null });
+      console.log(`[RESOURCE_CLEANUP] Retry pass cleaned Done-task worktree: ${task.title} (${task.id.slice(0, 8)})`);
+      return true;
+    });
+    if (cleanedThisTask) cleaned++;
+  }
+
+  if (cleaned > 0) {
+    console.log(`[RESOURCE_CLEANUP] Retry pass cleaned ${cleaned} Done-task worktree(s)`);
+  }
+  return cleaned;
+}
+
+// ---------------------------------------------------------------------------
 // Pass 3: Remove orphaned directories
 // ---------------------------------------------------------------------------
 
@@ -291,20 +360,10 @@ async function pruneDirectory(
       await removeNodeModulesPath(path.join(dirPath, 'node_modules'));
     }
 
-    let removed = false;
-    const delays = [0, 300, 1000];
-    for (const delay of delays) {
-      if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
-      try {
-        await fs.promises.rm(dirPath, { recursive: true, force: true });
-        removed = true;
-        break;
-      } catch {
-        // EPERM - retry after next delay
-      }
-    }
-    if (!removed) {
-      console.warn(`[RESOURCE_CLEANUP] Could not remove orphaned ${label} directory: ${entry.name}`);
+    try {
+      await removeWithRetry(dirPath);
+    } catch (error) {
+      console.warn(`[RESOURCE_CLEANUP] Could not remove orphaned ${label} directory: ${entry.name} (${(error as Error).message})`);
     }
   }
 }
@@ -335,7 +394,7 @@ async function removeWorktreeDirectory(worktreePath: string, projectPath: string
   }
 
   try {
-    await fs.promises.rm(worktreePath, { recursive: true, force: true });
+    await removeWithRetry(worktreePath);
     console.log(`[RESOURCE_CLEANUP] Removed worktree directory: ${worktreePath}`);
     return true;
   } catch (error) {

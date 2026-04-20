@@ -21,6 +21,7 @@ const {
   mockExistsSync,
   mockFsRm,
   mockRemoveNodeModulesPath,
+  mockRemoveWithRetry,
   mockSpawn,
   recordedSpawnCalls,
   spawnOverrides,
@@ -45,6 +46,7 @@ const {
     mockExistsSync: vi.fn((): boolean => false),
     mockFsRm: vi.fn(async () => {}),
     mockRemoveNodeModulesPath: vi.fn(),
+    mockRemoveWithRetry: vi.fn(async (_target: string): Promise<void> => {}),
     mockSpawn: vi.fn((command: string, args: readonly string[], options: { cwd: string }) => {
       recordedSpawnCalls.push({ command, args, cwd: options.cwd });
       const override = spawnOverrides.find((entry) => entry.match(args));
@@ -110,6 +112,10 @@ vi.mock('node:path', () => ({
 vi.mock('../../src/main/git/node-modules-link', () => ({
   linkNodeModules: vi.fn(),
   removeNodeModulesPath: (...args: unknown[]) => mockRemoveNodeModulesPath(...args),
+}));
+
+vi.mock('../../src/main/git/rm-with-retry', () => ({
+  removeWithRetry: (target: string) => mockRemoveWithRetry(target),
 }));
 
 vi.mock('../../src/main/git/fetch-throttle', () => ({
@@ -202,26 +208,23 @@ describe('WorktreeManager.removeWorktree', () => {
       (call) => call.args[0] === 'worktree' && call.args[1] === 'remove',
     );
     expect(worktreeRemoveCall).toBeDefined();
-    // fs.promises.rm should NOT be called when git succeeded
-    expect(mockFsRm).not.toHaveBeenCalled();
+    // removeWithRetry should NOT be called when git succeeded
+    expect(mockRemoveWithRetry).not.toHaveBeenCalled();
   });
 
-  // Branch 3: git worktree remove fails, fs.promises.rm fallback succeeds
-  it('falls back to fs.promises.rm when git worktree remove fails, returns true', async () => {
+  // Branch 3: git worktree remove fails, robust fallback succeeds
+  it('falls back to removeWithRetry when git worktree remove fails, returns true', async () => {
     mockExistsSync.mockReturnValue(true);
     spawnOverrides.push({
       match: (args) => args[0] === 'worktree' && args[1] === 'remove',
       behavior: { exitCode: 1, stderr: 'fatal: git worktree remove failed' },
     });
-    mockFsRm.mockResolvedValue(undefined);
+    mockRemoveWithRetry.mockResolvedValue(undefined);
 
     const result = await manager.removeWorktree(WORKTREE_PATH);
 
     expect(result).toBe(true);
-    expect(mockFsRm).toHaveBeenCalledWith(
-      WORKTREE_PATH,
-      expect.objectContaining({ recursive: true, force: true }),
-    );
+    expect(mockRemoveWithRetry).toHaveBeenCalledWith(WORKTREE_PATH);
     // worktree prune should also be called after the manual rm
     const pruneCall = recordedSpawnCalls.find(
       (call) => call.args[0] === 'worktree' && call.args[1] === 'prune',
@@ -229,14 +232,32 @@ describe('WorktreeManager.removeWorktree', () => {
     expect(pruneCall).toBeDefined();
   });
 
-  // Branch 4: both git worktree remove and fs.promises.rm fail - returns false
-  it('returns false when both git and fs.rm fail', async () => {
+  // Branch 4: both git and robust fallback fail - returns false.
+  // The startup retry pass in resource-cleanup will try again later; this
+  // unit doesn't enqueue, and task.worktree_path stays set so the retry
+  // pass can find it.
+  it('returns false when both git and robust fallback fail', async () => {
     mockExistsSync.mockReturnValue(true);
     spawnOverrides.push({
       match: (args) => args[0] === 'worktree' && args[1] === 'remove',
       behavior: { exitCode: 1, stderr: 'fatal: unable to remove worktree' },
     });
-    mockFsRm.mockRejectedValue(new Error('EPERM: operation not permitted'));
+    mockRemoveWithRetry.mockRejectedValue(new Error('EPERM: operation not permitted'));
+
+    const result = await manager.removeWorktree(WORKTREE_PATH);
+
+    expect(result).toBe(false);
+  });
+
+  // Branch 5: EISDIR thrown by the robust fallback also returns false.
+  it('returns false when removeWithRetry throws EISDIR after exhausting retries', async () => {
+    mockExistsSync.mockReturnValue(true);
+    spawnOverrides.push({
+      match: (args) => args[0] === 'worktree' && args[1] === 'remove',
+      behavior: { exitCode: 1, stderr: 'fatal: unable to remove worktree' },
+    });
+    const eisdir = Object.assign(new Error('EISDIR: illegal operation on a directory'), { code: 'EISDIR' });
+    mockRemoveWithRetry.mockRejectedValue(eisdir);
 
     const result = await manager.removeWorktree(WORKTREE_PATH);
 

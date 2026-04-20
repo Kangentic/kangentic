@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -44,7 +44,7 @@ vi.mock('node:util', () => ({
 // Import under test
 // ---------------------------------------------------------------------------
 
-import { cleanupStaleResources, cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../src/main/engine/resource-cleanup';
+import { cleanupStaleResources, cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks, pruneOrphanedDirectories } from '../../src/main/engine/resource-cleanup';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -690,5 +690,165 @@ describe('pruneOrphanedWorktreeTasks sync contract', () => {
     );
 
     await asyncTail;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pruneDirectory warn-and-continue path
+// When removeWithRetry exhausts its retries for one orphan, a warn is emitted
+// AND processing continues for subsequent orphans.
+// ---------------------------------------------------------------------------
+
+describe('pruneOrphanedDirectories -- pruneDirectory warn-and-continue', () => {
+  const projectPath = '/home/dev/my-project';
+
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockExistsSync.mockReturnValue(false);
+    mockRm.mockResolvedValue(undefined);
+    mockReaddir.mockResolvedValue([]);
+    setupExecFile(() => '');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    warnSpy.mockRestore();
+  });
+
+  it('warns on the failing orphan and still removes the subsequent orphan', async () => {
+    vi.useFakeTimers();
+
+    // Two orphaned session directories. Neither is referenced by any task.
+    mockReaddir.mockImplementation(async (dirPath: string) => {
+      if (String(dirPath).includes('sessions')) {
+        return [
+          { name: 'bad-session', isDirectory: () => true },
+          { name: 'good-session', isDirectory: () => true },
+        ];
+      }
+      return [];
+    });
+
+    // bad-session: fs.promises.rm always rejects (simulates a locked handle that
+    // never releases). removeWithRetry retries over [0, 100, 500, 2000] ms.
+    // good-session: fs.promises.rm succeeds.
+    mockRm.mockImplementation(async (_path: string) => {
+      if (String(_path).includes('bad-session')) {
+        throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+      }
+    });
+
+    const taskRepo = {
+      list: vi.fn(() => []),
+      listArchived: vi.fn(() => []),
+    };
+    const sessionRepo = { listAllSessionIds: vi.fn(() => []) };
+    const sessionManager = { listSessions: vi.fn(() => []) };
+
+    const resultPromise = pruneOrphanedDirectories(
+      projectPath,
+      taskRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    // Drive the full 0 + 100 + 500 + 2000 = 2600 ms retry window for bad-session.
+    // The retry loop for bad-session runs first; once exhausted, the loop
+    // continues to good-session which resolves immediately.
+    await vi.advanceTimersByTimeAsync(2600);
+    await resultPromise;
+
+    // A warning must be emitted for the failing orphan.
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[RESOURCE_CLEANUP] Could not remove orphaned session directory: bad-session'),
+    );
+
+    // The second orphan (good-session) must still be removed despite the earlier failure.
+    expect(mockRm).toHaveBeenCalledWith(
+      expect.stringContaining('good-session'),
+      expect.objectContaining({ recursive: true, force: true }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// removeWorktreeDirectory exhaustion path
+// When git worktree remove fails AND removeWithRetry exhausts all retries,
+// a warning is emitted and the function returns false (does not throw).
+// ---------------------------------------------------------------------------
+
+describe('cleanupStaleResources -- removeWorktreeDirectory exhaustion path', () => {
+  const projectPath = '/home/dev/my-project';
+
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockExistsSync.mockReturnValue(false);
+    mockRm.mockResolvedValue(undefined);
+    mockReaddir.mockResolvedValue([]);
+    setupExecFile(() => '');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    warnSpy.mockRestore();
+  });
+
+  it('warns and continues when both git worktree remove and removeWithRetry fail for a backlog task', async () => {
+    vi.useFakeTimers();
+
+    const worktreePath = '/home/dev/my-project/.kangentic/worktrees/locked-task-aaaa1111';
+    const task = createMockTask({
+      id: 'aaaa1111-0000-0000-0000-000000000000',
+      title: 'Locked task',
+      worktree_path: worktreePath,
+    });
+    const { swimlaneRepo, taskRepo, sessionRepo, sessionManager } = createMockRepos([task]);
+
+    // The worktree directory exists on disk.
+    mockExistsSync.mockImplementation((pathArg: string) => pathArg === worktreePath);
+
+    // git worktree remove --force fails.
+    setupExecFile((cmd: string, args: string[]) => {
+      if (cmd === 'git' && args[0] === 'worktree' && args[1] === 'remove') {
+        throw new Error('fatal: failed to remove worktree');
+      }
+      throw new Error('not found');
+    });
+
+    // fs.promises.rm persistently fails (simulates a process still holding handles).
+    mockRm.mockRejectedValue(
+      Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' }),
+    );
+
+    const resultPromise = cleanupStaleResources(
+      projectPath,
+      taskRepo as never,
+      swimlaneRepo as never,
+      sessionRepo as never,
+      sessionManager as never,
+    );
+
+    // Drive the full 0 + 100 + 500 + 2000 = 2600 ms retry window.
+    await vi.advanceTimersByTimeAsync(2600);
+    await resultPromise;
+
+    // A warning must be emitted - the exhaustion path in removeWorktreeDirectory
+    // calls console.warn, not console.error, so cleanup keeps running.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[RESOURCE_CLEANUP] Could not remove worktree directory:'),
+    );
+
+    // The task's DB fields must still be cleared (cleanup continues past the failure).
+    expect(taskRepo.update).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'aaaa1111-0000-0000-0000-000000000000',
+      worktree_path: null,
+    }));
   });
 });

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import { removeWithRetry } from './rm-with-retry';
 
 /**
  * node_modules junction (Windows) / symlink (POSIX) management for
@@ -70,16 +71,12 @@ export async function removeNodeModulesPath(targetPath: string): Promise<void> {
       fs.rmSync(targetPath, { force: true });
     } else if (stat.isDirectory()) {
       // Real directory - e.g. worktree ran `npm install` instead of
-      // relying on the junction. Can contain thousands of files; use
-      // async fs.promises.rm so the main-process event loop stays free
-      // during bulk-delete batches. Recursive is safe here because we've
-      // already ruled out reparse points above.
-      await fs.promises.rm(targetPath, {
-        recursive: true,
-        force: true,
-        maxRetries: 5,
-        retryDelay: 100,
-      });
+      // relying on the junction. Stat-first recursive removal handles
+      // EISDIR races inside nested node_modules and gives us an
+      // exponential backoff window for Windows file-lock transients
+      // instead of Node's opaque maxRetries budget. Reparse points were
+      // already handled above.
+      await removeWithRetry(targetPath);
     } else {
       // Regular file / fifo / socket. Should be unreachable for a path
       // named node_modules, but handle it defensively.
@@ -120,15 +117,10 @@ export async function linkNodeModules(worktreePath: string, rootPath: string): P
       // traversing into the target and deleting the main repo's modules).
       await removeNodeModulesPath(worktreeModules);
     } else {
-      // Real directory (e.g. from a previous npm install). Async rm so a
-      // large existing node_modules doesn't stall the main thread during
-      // worktree creation.
-      await fs.promises.rm(worktreeModules, {
-        recursive: true,
-        force: true,
-        maxRetries: 5,
-        retryDelay: 100,
-      });
+      // Real directory (e.g. from a previous npm install). Stat-first
+      // removal with exponential backoff so a large existing node_modules
+      // doesn't stall or silently fail during worktree creation.
+      await removeWithRetry(worktreeModules);
     }
   } catch (error: unknown) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {

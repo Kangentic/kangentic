@@ -6,6 +6,7 @@ import { slugify, computeSlugBudget, computeAutoBranchName } from '../../shared/
 import { isGitRepo, isInsideWorktree } from './git-checks';
 import { linkNodeModules, removeNodeModulesPath } from './node-modules-link';
 import { fetchIfStale } from './fetch-throttle';
+import { removeWithRetry } from './rm-with-retry';
 
 /**
  * Hard wall-clock ceiling for single git operations in the worktree-removal
@@ -366,26 +367,23 @@ export class WorktreeManager {
       console.log(`[WORKTREE] git worktree remove failed, falling back to manual removal: ${(error as Error).message}`);
     }
 
-    // Async fs.promises.rm with built-in retry budget. `maxRetries` +
-    // `retryDelay` handle Windows NTFS transient locks (EBUSY, ENOTEMPTY,
-    // EPERM) on .git/objects/pack/* and child processes that haven't
-    // released handles yet. On macOS/Linux the retries are effectively
-    // no-ops since those errors are rare. Async variant yields to the
-    // event loop between attempts so the main process stays responsive
-    // during bulk operations. Total ceiling: 10 * 200ms = 2s per worktree.
+    // Stat-first recursive removal with exponential backoff (0/100/500/2000ms).
+    // Windows NTFS transient locks (EBUSY, ENOTEMPTY, EPERM) on .git/objects/pack/*
+    // and lingering child-process handles need longer than the old 2s window.
+    // Also handles EISDIR explicitly (dirent race where a child flips from
+    // file to directory mid-walk), which Node's recursive rm can surface on
+    // nested node_modules left by sub-package npm installs.
     try {
-      await fs.promises.rm(worktreePath, {
-        recursive: true,
-        force: true,
-        maxRetries: 10,
-        retryDelay: 200,
-      });
+      await removeWithRetry(worktreePath);
       await runGitWithTimeout(this.projectPath, ['worktree', 'prune'], GIT_REMOVAL_TIMEOUT_MS);
       return true;
     } catch (error) {
       console.warn(`[WorktreeManager] Could not remove worktree after retries: ${worktreePath} (${(error as Error).message})`);
       // Best-effort prune so git's worktree metadata is consistent even when
-      // the directory itself couldn't be removed.
+      // the directory itself couldn't be removed. The task.worktree_path
+      // stays set so the next project open's retry pass can try again once
+      // whatever was holding file handles (orphaned subprocesses, AV scan)
+      // has moved on.
       try {
         await runGitWithTimeout(this.projectPath, ['worktree', 'prune'], GIT_REMOVAL_TIMEOUT_MS);
       } catch { /* best effort */ }
