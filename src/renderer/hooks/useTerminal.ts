@@ -176,17 +176,24 @@ export function useTerminal(options: UseTerminalOptions) {
       fitAddon.fit();
       const { cols, rows } = terminal;
 
-      // Immediate resize to sync PTY dimensions
-      window.electronAPI.sessions.resize(sid, cols, rows)
-        .then(() => {
-          // Skip scrollback when the overlay is suppressing data (shimmer showing).
-          // The shimmer-lift effect will call reloadScrollback() when ready.
-          if (suppressScrollback) return null;
-          // Always fetch scrollback regardless of cols change.
-          // getScrollback() strips pre-TUI noise at read time.
-          return window.electronAPI.sessions.getScrollback(sid);
-        })
-        .then((scrollback) => {
+      // Parallel IPCs: resize forwards SIGWINCH on main; getScrollback is a
+      // pure in-memory read. Firing them together hides the cheaper read
+      // inside the resize round-trip instead of chaining them serially.
+      //
+      // Timing caveat: SIGWINCH-redraw bytes from Claude can now land in the
+      // main-process buffer *after* getScrollback has already sampled it, so
+      // the replayed scrollback may be one frame stale. Those bytes arrive
+      // via live onData and get dropped by the scrollbackPendingRef guard
+      // while we're mid-write. The post-write force-resize at line 202
+      // compensates: once scrollbackPendingRef clears, it triggers a fresh
+      // SIGWINCH and Claude's next redraw flows through live onData cleanly.
+      const resizePromise = window.electronAPI.sessions.resize(sid, cols, rows);
+      const scrollbackPromise = suppressScrollback
+        ? Promise.resolve<string | null>(null)
+        : window.electronAPI.sessions.getScrollback(sid);
+
+      Promise.all([resizePromise, scrollbackPromise])
+        .then(([, scrollback]) => {
           // A newer scrollback operation has started; abandon this one.
           if (scrollbackGenerationRef.current !== scrollbackGeneration) {
             scrollbackPendingRef.current = false;
@@ -343,14 +350,15 @@ export function useTerminal(options: UseTerminalOptions) {
     const { cols, rows } = xtermRef.current;
     const sessionId = options.sessionId;
 
-    window.electronAPI.sessions.resize(sessionId, cols, rows)
-      .then(() => {
-        // Always replay scrollback. getScrollback() strips pre-TUI noise
-        // (shell command) at read time. Wrong-width content may briefly
-        // flash but the SIGWINCH redraw corrects it immediately.
-        return window.electronAPI.sessions.getScrollback(sessionId);
-      })
-      .then((scrollback) => {
+    // Parallel IPCs: same shape as initTerminal's mount-time path. Resize
+    // forwards SIGWINCH on main; getScrollback is an in-memory read. See the
+    // initTerminal comment for the SIGWINCH-frame staleness caveat - the
+    // post-write force-resize compensates here too.
+    const resizePromise = window.electronAPI.sessions.resize(sessionId, cols, rows);
+    const scrollbackPromise = window.electronAPI.sessions.getScrollback(sessionId);
+
+    Promise.all([resizePromise, scrollbackPromise])
+      .then(([, scrollback]) => {
         // A newer scrollback operation has started; abandon this one.
         if (scrollbackGenerationRef.current !== scrollbackGeneration) {
           scrollbackPendingRef.current = false;
