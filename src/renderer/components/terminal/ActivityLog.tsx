@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { formatTime } from '../../lib/datetime';
 import { useSessionStore } from '../../stores/session-store';
 import { Select } from '../settings/shared';
 import { EventType, IdleReason } from '../../../shared/types';
 import type { SessionEvent } from '../../../shared/types';
 
-const MAX_RENDERED_EVENTS = 500;
 const SCROLL_RETURN_DELAY_MS = 3000;
+const ESTIMATED_ROW_HEIGHT = 20;
 
 // 8 distinct colors for session badges (Tailwind-ish)
 const BADGE_COLORS = [
@@ -73,24 +74,28 @@ export function ActivityLog({ active, sessionIds, taskLabelMap }: ActivityLogPro
     [filterSessionId, sessionIds],
   );
 
-  // Merge events from active sessions, sorted by timestamp
+  // Merge events from active sessions, sorted by timestamp. Skip event types
+  // that would render to null so virtualized row counts match actual DOM rows.
   const allEvents = useMemo(() => {
     const events: Array<{ sessionId: string; event: SessionEvent }> = [];
     for (const sid of effectiveSessionIds) {
       const evts = sessionEvents[sid] || [];
       for (const event of evts) {
-        events.push({ sessionId: sid, event });
+        if (isRenderableEventType(event.type)) {
+          events.push({ sessionId: sid, event });
+        }
       }
     }
     events.sort((a, b) => a.event.ts - b.event.ts);
     return events;
   }, [effectiveSessionIds, sessionEvents]);
 
-  // Cap display at last N events
-  const displayEvents = useMemo(
-    () => allEvents.length > MAX_RENDERED_EVENTS ? allEvents.slice(-MAX_RENDERED_EVENTS) : allEvents,
-    [allEvents],
-  );
+  const virtualizer = useVirtualizer({
+    count: allEvents.length,
+    getScrollElement: () => containerRef.current,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    overscan: 12,
+  });
 
   // Smooth-scroll back to bottom and re-enable auto-scroll
   const smoothScrollToBottom = () => {
@@ -134,10 +139,10 @@ export function ActivityLog({ active, sessionIds, taskLabelMap }: ActivityLogPro
 
   // Auto-scroll to bottom when new events arrive (only when visible)
   useEffect(() => {
-    if (active && autoScrollRef.current && containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    if (active && autoScrollRef.current && allEvents.length > 0) {
+      virtualizer.scrollToIndex(allEvents.length - 1, { align: 'end' });
     }
-  }, [active, displayEvents.length]);
+  }, [active, allEvents.length, virtualizer]);
 
   // Clear isSmoothScrollingRef when scroll animation finishes
   useEffect(() => {
@@ -156,12 +161,12 @@ export function ActivityLog({ active, sessionIds, taskLabelMap }: ActivityLogPro
     if (active && !autoScrollRef.current) {
       autoScrollRef.current = true;
       requestAnimationFrame(() => {
-        if (containerRef.current) {
-          containerRef.current.scrollTop = containerRef.current.scrollHeight;
+        if (allEvents.length > 0) {
+          virtualizer.scrollToIndex(allEvents.length - 1, { align: 'end' });
         }
       });
     }
-  }, [active]);
+  }, [active, allEvents.length, virtualizer]);
 
   // Cleanup return timer on unmount
   useEffect(() => {
@@ -175,34 +180,14 @@ export function ActivityLog({ active, sessionIds, taskLabelMap }: ActivityLogPro
     ? taskLabelMap.get(filterSessionId) || filterSessionId.slice(0, 8)
     : null;
 
-  if (displayEvents.length === 0) {
-    return (
-      <div className="h-full w-full bg-surface flex flex-col font-mono">
-        {showFilter && (
-          <FilterPill
-            sessionIds={sessionIds}
-            taskLabelMap={taskLabelMap}
-            filterSessionId={filterSessionId}
-            onFilter={setFilterSessionId}
-          />
-        )}
-        <div className="flex-1 flex items-center justify-center text-fg-disabled text-sm">
-          {filteredLabel
-            ? `No activity yet for ${filteredLabel}...`
-            : 'Waiting for agent activity...'}
-        </div>
-      </div>
-    );
-  }
+  const virtualItems = virtualizer.getVirtualItems();
+  const totalSize = virtualizer.getTotalSize();
+  const firstStart = virtualItems.length > 0 ? virtualItems[0].start : 0;
+  const lastEnd = virtualItems.length > 0 ? virtualItems[virtualItems.length - 1].end : 0;
+  const showLabel = !filterSessionId && sessionIds.length > 1;
 
   return (
-    <div
-      ref={containerRef}
-      onScroll={handleScroll}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      className={`h-full w-full bg-surface overflow-y-auto font-mono text-xs leading-5 px-2 pb-2 ${showFilter ? 'pt-0' : 'pt-2'}`}
-    >
+    <div className="h-full w-full bg-surface flex flex-col font-mono px-2">
       {showFilter && (
         <FilterPill
           sessionIds={sessionIds}
@@ -211,16 +196,43 @@ export function ActivityLog({ active, sessionIds, taskLabelMap }: ActivityLogPro
           onFilter={setFilterSessionId}
         />
       )}
-      {displayEvents.map((item, i) => (
-        <EventLine
-          key={`${item.sessionId}-${item.event.ts}-${i}`}
-          sessionId={item.sessionId}
-          event={item.event}
-          label={taskLabelMap.get(item.sessionId) || item.sessionId.slice(0, 8)}
-          colorClass={BADGE_COLORS[getColorIndex(item.sessionId)]}
-          showLabel={!filterSessionId && sessionIds.length > 1}
-        />
-      ))}
+      {allEvents.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center text-fg-disabled text-sm">
+          {filteredLabel
+            ? `No activity yet for ${filteredLabel}...`
+            : 'Waiting for agent activity...'}
+        </div>
+      ) : (
+        <div
+          ref={containerRef}
+          onScroll={handleScroll}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          className="flex-1 min-h-0 overflow-y-auto text-xs leading-5 py-2"
+        >
+          {firstStart > 0 && <div style={{ height: firstStart }} />}
+          {virtualItems.map((virtualRow) => {
+            const item = allEvents[virtualRow.index];
+            return (
+              <div
+                key={`${item.sessionId}-${item.event.ts}`}
+                data-index={virtualRow.index}
+              >
+                <EventLine
+                  sessionId={item.sessionId}
+                  event={item.event}
+                  label={taskLabelMap.get(item.sessionId) || item.sessionId.slice(0, 8)}
+                  colorClass={BADGE_COLORS[getColorIndex(item.sessionId)]}
+                  showLabel={showLabel}
+                />
+              </div>
+            );
+          })}
+          {virtualItems.length > 0 && totalSize - lastEnd > 0 && (
+            <div style={{ height: totalSize - lastEnd }} />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -241,7 +253,7 @@ function FilterPill({
   onFilter,
 }: FilterPillProps) {
   return (
-    <div className="sticky top-0 z-10 bg-surface pt-2 pb-1.5 mb-1 border-b border-edge">
+    <div className="bg-surface pt-2 pb-1.5 mb-1 border-b border-edge">
       <Select
         data-testid="activity-filter"
         value={filterSessionId ?? ''}
@@ -317,65 +329,63 @@ function BadgeLine({ ts, label, colorClass, showLabel, badge, detail, variant = 
   );
 }
 
+interface EventLineCommon {
+  ts: number;
+  label: string;
+  colorClass: string;
+  showLabel: boolean;
+}
+
+type EventRenderer = (common: EventLineCommon, event: SessionEvent) => ReactNode;
+
+/**
+ * Single source of truth for which event types render in the Activity tab.
+ * The filter in `allEvents` and the dispatch in `EventLine` both derive from
+ * this map, so adding a new renderable EventType requires only one edit here.
+ *
+ * Exported for the unit-level exhaustiveness check in
+ * `tests/unit/activity-log-renderers.test.ts`. That test ensures every
+ * `EventType` value is either present in this map or explicitly listed in the
+ * non-renderable set, so future `EventType` additions cannot be silently
+ * dropped from the Activity tab.
+ */
+export const EVENT_RENDERERS: Partial<Record<EventType, EventRenderer>> = {
+  [EventType.ToolStart]: (common, event) => (
+    <BadgeLine {...common} badge={event.tool || 'Tool'} detail={event.detail} />
+  ),
+  [EventType.Interrupted]: (common, event) => (
+    <BadgeLine {...common} badge={`${event.tool || 'Tool'} interrupted`} detail={event.detail} variant="warn" />
+  ),
+  [EventType.Idle]: (common, event) => (
+    <DimLine {...common} text={event.detail === IdleReason.Timeout ? 'Idle (no activity detected)' : 'Idle (waiting for input)'} />
+  ),
+  [EventType.Prompt]: (common) => (
+    <div className="flex items-baseline gap-1.5">
+      <span className="text-zinc-600 shrink-0">{formatTime(common.ts)}</span>
+      {common.showLabel && <span className={`${common.colorClass} font-semibold shrink-0`}>[{common.label}]</span>}
+      <span className="text-fg-muted">Thinking...</span>
+    </div>
+  ),
+  [EventType.SessionStart]: (common) => <DimLine {...common} text="Session started" />,
+  [EventType.SessionEnd]: (common) => <DimLine {...common} text="Session ended" />,
+  [EventType.SubagentStart]: (common, event) => <BadgeLine {...common} badge="Subagent" detail={event.detail} />,
+  [EventType.SubagentStop]: (common, event) => <BadgeLine {...common} badge="Subagent done" detail={event.detail} />,
+  [EventType.Notification]: (common, event) => <BadgeLine {...common} badge="Notice" detail={event.detail} variant="warn" />,
+  [EventType.Compact]: (common) => <DimLine {...common} text="Compacting context..." />,
+  [EventType.TeammateIdle]: (common, event) => <DimDetailLine {...common} text="Teammate idle" detail={event.detail} />,
+  [EventType.TaskCompleted]: (common, event) => <BadgeLine {...common} badge="Task done" detail={event.detail} />,
+  [EventType.ConfigChange]: (common) => <DimLine {...common} text="Config changed" />,
+  [EventType.WorktreeCreate]: (common, event) => <BadgeLine {...common} badge="Worktree" detail={event.detail} />,
+  [EventType.WorktreeRemove]: (common, event) => <DimDetailLine {...common} text="Worktree removed" detail={event.detail} />,
+};
+
+/** Exported for unit testing - see `tests/unit/activity-log-renderers.test.ts`. */
+export function isRenderableEventType(type: string): boolean {
+  return Object.hasOwn(EVENT_RENDERERS, type);
+}
+
 function EventLine({ event, label, colorClass, showLabel }: EventLineProps) {
-  const common = { ts: event.ts, label, colorClass, showLabel };
-
-  switch (event.type) {
-    case EventType.ToolStart:
-      return <BadgeLine {...common} badge={event.tool || 'Tool'} detail={event.detail} />;
-
-    case EventType.ToolEnd:
-      return null;
-
-    case EventType.Interrupted:
-      return <BadgeLine {...common} badge={`${event.tool || 'Tool'} interrupted`} detail={event.detail} variant="warn" />;
-
-    case EventType.Idle:
-      return <DimLine {...common} text={event.detail === IdleReason.Timeout ? 'Idle (no activity detected)' : 'Idle (waiting for input)'} />;
-
-    case EventType.Prompt:
-      return (
-        <div className="flex items-baseline gap-1.5">
-          <span className="text-zinc-600 shrink-0">{formatTime(event.ts)}</span>
-          {showLabel && <span className={`${colorClass} font-semibold shrink-0`}>[{label}]</span>}
-          <span className="text-fg-muted">Thinking...</span>
-        </div>
-      );
-
-    case EventType.SessionStart:
-      return <DimLine {...common} text="Session started" />;
-
-    case EventType.SessionEnd:
-      return <DimLine {...common} text="Session ended" />;
-
-    case EventType.SubagentStart:
-      return <BadgeLine {...common} badge="Subagent" detail={event.detail} />;
-
-    case EventType.SubagentStop:
-      return <BadgeLine {...common} badge="Subagent done" detail={event.detail} />;
-
-    case EventType.Notification:
-      return <BadgeLine {...common} badge="Notice" detail={event.detail} variant="warn" />;
-
-    case EventType.Compact:
-      return <DimLine {...common} text="Compacting context..." />;
-
-    case EventType.TeammateIdle:
-      return <DimDetailLine {...common} text="Teammate idle" detail={event.detail} />;
-
-    case EventType.TaskCompleted:
-      return <BadgeLine {...common} badge="Task done" detail={event.detail} />;
-
-    case EventType.ConfigChange:
-      return <DimLine {...common} text="Config changed" />;
-
-    case EventType.WorktreeCreate:
-      return <BadgeLine {...common} badge="Worktree" detail={event.detail} />;
-
-    case EventType.WorktreeRemove:
-      return <DimDetailLine {...common} text="Worktree removed" detail={event.detail} />;
-
-    default:
-      return null;
-  }
+  const renderer = EVENT_RENDERERS[event.type];
+  if (!renderer) return null;
+  return renderer({ ts: event.ts, label, colorClass, showLabel }, event);
 }
