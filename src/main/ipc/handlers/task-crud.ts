@@ -41,24 +41,16 @@ const BULK_DELETE_CONCURRENCY = 2;
 const PROGRESS_THROTTLE_MS = 100;
 
 /**
- * Hard ceiling on how long a single task's cleanup can block the batch.
+ * Wall-clock ceiling on per-task cleanup so a single hung op (network drive,
+ * corrupted `.git/worktrees/*` metadata) can't poison the bulk-delete queue.
+ * Cleanup normally finishes in <2s; this only fires on real hangs. The DB
+ * row is still deleted on timeout and the failure surfaces in the UI.
  *
- * `cleanupTaskResources` can hang if a git child process started by
- * `simple-git` never resolves (stdio pipe stall, stale `.git/worktrees/*`
- * metadata pointing at an unreachable path, or similar). Because
- * `WorktreeManager.withGitLock` serializes every git operation for the
- * project through a promise chain, a single hung op holds the lock forever
- * and every subsequent task queues behind it - the whole batch freezes
- * even though the outer queue still has workers ready.
- *
- * 30 seconds is comfortably longer than any legitimate single-task cleanup
- * on a sane repo (git worktree remove + prune + branch -D on a ~200-
- * worktree parent repo completes in under 5s), so the timeout only fires
- * on genuine hangs. When it does, the task's DB row is still deleted (the
- * user's delete intent is honored) and a failure entry captures the
- * condition so the UI can surface it.
+ * Sized to comfortably contain the worst-case git path inside `removeWorktree`
+ * (3 sequential `runGitWithTimeout` ops at 5s each), so even a fully-pathological
+ * git stall surfaces as the inner timeout, not the outer one.
  */
-const TASK_CLEANUP_TIMEOUT_MS = 30_000;
+const TASK_CLEANUP_TIMEOUT_MS = 15_000;
 
 /**
  * Race an operation against a wall-clock deadline. Resolves with the

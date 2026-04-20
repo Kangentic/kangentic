@@ -162,6 +162,19 @@ export class TaskRepository {
     return rows.map(rowToTask);
   }
 
+  /**
+   * Tasks in a given swimlane, including archived ones. Used by resource
+   * cleanup where `archived_at` is not relevant to disk-state reconciliation
+   * (e.g. retrying worktree removal for Done-role tasks whose initial
+   * deletion failed - those are archived immediately on move to Done).
+   */
+  listAllInSwimlane(swimlaneId: string): Task[] {
+    const rows = this.db.prepare(`${TaskRepository.SELECT_WITH_COUNT}
+      WHERE t.swimlane_id = ?
+      ORDER BY t.position ASC`).all(swimlaneId) as TaskRow[];
+    return rows.map(rowToTask);
+  }
+
   /** Rename a label across all tasks. Returns count of modified tasks. */
   renameLabel(oldName: string, newName: string): number {
     const allRows = this.db.prepare('SELECT id, labels FROM tasks').all() as Array<{ id: string; labels: string }>;

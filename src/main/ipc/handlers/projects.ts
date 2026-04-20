@@ -1,5 +1,5 @@
-import fs from 'node:fs';
 import path from 'node:path';
+import fs from '../../git/original-fs';
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { TaskRepository } from '../../db/repositories/task-repository';

@@ -248,32 +248,45 @@ export async function retryFailedDoneCleanups(
   const doneLane = swimlaneRepo.list().find((lane) => lane.role === 'done');
   if (!doneLane) return 0;
 
-  const doneTasks = taskRepo.list(doneLane.id).filter((task) => Boolean(task.worktree_path));
+  // Include archived tasks - Done-role tasks are archived synchronously on
+  // move to Done (task-move.ts), so taskRepo.list() would filter them out
+  // via its `archived_at IS NULL` clause and starve this retry of the very
+  // tasks it exists to handle.
+  const doneTasks = taskRepo.listAllInSwimlane(doneLane.id).filter((task) => Boolean(task.worktree_path));
   if (doneTasks.length === 0) return 0;
 
   const worktreeManager = new WorktreeManager(projectPath);
   let cleaned = 0;
+  let failed = 0;
 
   for (const task of doneTasks) {
-    const cleanedThisTask = await withTaskLock(task.id, async () => {
+    const outcome = await withTaskLock(task.id, async (): Promise<'cleaned' | 'failed' | 'skipped'> => {
       // Re-read the task after acquiring the lock - a concurrent TASK_MOVE
       // may have already handled this task (cleared worktree_path, moved
       // it out of Done) while we were waiting.
       const current = taskRepo.getById(task.id);
-      if (!current?.worktree_path) return false;
+      if (!current?.worktree_path) return 'skipped';
 
       const removed = await worktreeManager.withLock(() => worktreeManager.removeWorktree(current.worktree_path!));
-      if (!removed) return false;
+      if (!removed) {
+        console.warn(
+          `[RESOURCE_CLEANUP] Retry pass could not remove worktree for `
+          + `"${task.title}" (${task.id.slice(0, 8)}) at ${current.worktree_path} `
+          + `- will retry on next project open`
+        );
+        return 'failed';
+      }
 
       taskRepo.update({ id: task.id, worktree_path: null });
       console.log(`[RESOURCE_CLEANUP] Retry pass cleaned Done-task worktree: ${task.title} (${task.id.slice(0, 8)})`);
-      return true;
+      return 'cleaned';
     });
-    if (cleanedThisTask) cleaned++;
+    if (outcome === 'cleaned') cleaned++;
+    else if (outcome === 'failed') failed++;
   }
 
-  if (cleaned > 0) {
-    console.log(`[RESOURCE_CLEANUP] Retry pass cleaned ${cleaned} Done-task worktree(s)`);
+  if (cleaned > 0 || failed > 0) {
+    console.log(`[RESOURCE_CLEANUP] Retry pass: cleaned ${cleaned}, still-stuck ${failed}`);
   }
   return cleaned;
 }
@@ -363,7 +376,11 @@ async function pruneDirectory(
     try {
       await removeWithRetry(dirPath);
     } catch (error) {
-      console.warn(`[RESOURCE_CLEANUP] Could not remove orphaned ${label} directory: ${entry.name} (${(error as Error).message})`);
+      const err = error as NodeJS.ErrnoException;
+      console.warn(
+        `[RESOURCE_CLEANUP] Could not remove orphaned ${label} directory: ${entry.name} `
+        + `(code=${err.code ?? 'unknown'} errno=${err.errno ?? '?'} syscall=${err.syscall ?? '?'}): ${err.message}`
+      );
     }
   }
 }

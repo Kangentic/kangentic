@@ -94,6 +94,12 @@ function makeTaskRepo(tasksByLane: Record<string, MockTask[]>) {
     update,
     list: vi.fn((laneId?: string) => (laneId ? tasksByLane[laneId] ?? [] : [])),
     listArchived: vi.fn(() => []),
+    // retryFailedDoneCleanups uses listAllInSwimlane so it sees archived
+    // Done tasks (which is the entire reason this pass exists). The mock
+    // returns the same set as `list` because the test fixtures don't
+    // distinguish active from archived - the production query difference
+    // (`archived_at IS NULL` vs no filter) is what matters at the SQL layer.
+    listAllInSwimlane: vi.fn((laneId: string) => tasksByLane[laneId] ?? []),
     // retryFailedDoneCleanups re-reads the task inside withTaskLock to avoid
     // racing with concurrent TASK_MOVEs. Mock getById to return the current
     // (mutable) task object so `update` effects are visible.
@@ -202,6 +208,35 @@ describe('retryFailedDoneCleanups', () => {
     expect(result).toBe(0);
     expect(mockRemoveWorktree).not.toHaveBeenCalled();
     expect(taskRepo.update).not.toHaveBeenCalled();
+  });
+
+  it('uses listAllInSwimlane (not list) so archived Done tasks are picked up', async () => {
+    // Regression guard: tasks moved to Done are archived synchronously in
+    // task-move.ts, which means `taskRepo.list(doneLaneId)` filters them out
+    // (via WHERE archived_at IS NULL). If retryFailedDoneCleanups uses `list`,
+    // every failed Done-cleanup becomes permanent because the retry pass
+    // never sees the task again. The fix is to use `listAllInSwimlane`,
+    // which ignores `archived_at`.
+    const swimlaneRepo = makeSwimlaneRepo([
+      { id: 'lane-done', role: 'done', name: 'Done' },
+    ]);
+    const taskRepo = makeTaskRepo({
+      'lane-done': [
+        { id: 'eeee5555', title: 'Archived stuck task', worktree_path: '/home/dev/my-project/.kangentic/worktrees/archived-eeee5555' },
+      ],
+    });
+    // Simulate the production behavior precisely: `list` (active-only) returns
+    // nothing because the Done task is archived. `listAllInSwimlane` is the
+    // only path that returns it.
+    taskRepo.list.mockReturnValue([]);
+
+    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never);
+
+    expect(taskRepo.listAllInSwimlane).toHaveBeenCalledWith('lane-done');
+    expect(taskRepo.list).not.toHaveBeenCalled();
+    expect(result).toBe(1);
+    expect(mockRemoveWorktree).toHaveBeenCalledWith('/home/dev/my-project/.kangentic/worktrees/archived-eeee5555');
+    expect(taskRepo.update).toHaveBeenCalledWith({ id: 'eeee5555', worktree_path: null });
   });
 
   it('handles a mix of successes and failures across multiple Done tasks', async () => {

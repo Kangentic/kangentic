@@ -1,29 +1,19 @@
-import fs from 'node:fs';
+import fs from './original-fs';
 
 /**
- * Recursive directory removal with exponential-backoff retry.
+ * Recursive directory removal with short retry for Windows transients.
  *
- * Thin wrapper over `fs.promises.rm(path, { recursive: true, force: true })`.
- * We delegate the tree walk to Node so junction/symlink semantics stay
- * correct on every platform (Node opens Windows junctions with
- * FILE_FLAG_OPEN_REPARSE_POINT and removes the link, not the target); the
- * only thing this function adds is a longer, exponentially-spaced retry
- * window than Node's `maxRetries`/`retryDelay` options allow.
+ * Uses `original-fs` so the walk doesn't trigger Electron's asar
+ * interception (see `original-fs.ts`). Retries cover real transients only:
+ * PTY handle release after process exit, brief AV scans, Explorer
+ * thumbnailers. Each settles in <500ms; if a path is still locked after
+ * 600ms of retries, something else is holding it and waiting longer
+ * doesn't help.
  *
- * Retry schedule: 0 / 100 / 500 / 2000 ms (total ceiling ~2.6s). This is
- * enough to ride out the common Windows transients (EBUSY/EPERM/ENOTEMPTY
- * from lingering PTY handles, AV scans, and Explorer thumbnailers) without
- * holding the event loop in a single long sleep. EISDIR from a racy tree
- * walk is absorbed by the same retry mechanism - the underlying race
- * resolves within one tick, and the next attempt succeeds.
- *
- * `force: true` already silences ENOENT, so an already-gone path just
- * resolves. Callers that hit the thrown rejection leave `task.worktree_path`
- * populated so the startup retry pass in `resource-cleanup.ts`
- * (`retryFailedDoneCleanups`) can try again on the next project open.
+ * `force: true` silences ENOENT.
  */
 
-const RETRY_DELAYS_MS = [0, 100, 500, 2000] as const;
+const RETRY_DELAYS_MS = [0, 100, 500] as const;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

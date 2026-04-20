@@ -1,5 +1,5 @@
 import path from 'node:path';
-import fs from 'node:fs';
+import fs from './original-fs';
 import { removeWithRetry } from './rm-with-retry';
 
 /**

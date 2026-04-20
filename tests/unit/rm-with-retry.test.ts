@@ -9,7 +9,7 @@
  *   - ENOENT is absorbed by `force: true` so a missing path resolves
  *   - Happy path: one `fs.rm` call, resolves
  *   - Transient failure then success: retries honored
- *   - Exhaustion: last error is rethrown after the full 0/100/500/2000ms schedule
+ *   - Exhaustion: last error is rethrown after the full 0/100/500ms schedule
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -89,7 +89,7 @@ describe('removeWithRetry', () => {
     );
   });
 
-  it('rethrows the last error after exhausting all four retry attempts', async () => {
+  it('rethrows the last error after exhausting all retry attempts', async () => {
     vi.useFakeTimers();
     mockFsRm.mockRejectedValue(eperm('persistent lock'));
 
@@ -97,10 +97,10 @@ describe('removeWithRetry', () => {
     // Silence unhandled-rejection warnings while we drive timers.
     resultPromise.catch(() => {});
 
-    // Drive the full 0 + 100 + 500 + 2000 = 2600 ms schedule.
-    await vi.advanceTimersByTimeAsync(2600);
+    // Drive the full 0 + 100 + 500 = 600 ms schedule.
+    await vi.advanceTimersByTimeAsync(600);
 
     await expect(resultPromise).rejects.toThrow(/persistent lock/);
-    expect(mockFsRm).toHaveBeenCalledTimes(4);
+    expect(mockFsRm).toHaveBeenCalledTimes(3);
   });
 });

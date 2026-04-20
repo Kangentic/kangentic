@@ -9,33 +9,19 @@ import { fetchIfStale } from './fetch-throttle';
 import { removeWithRetry } from './rm-with-retry';
 
 /**
- * Hard wall-clock ceiling for single git operations in the worktree-removal
- * path. simple-git's `.raw()` method awaits its child process with no
- * generic way to cancel; if the child stalls (stdio buffer hang, waiting on
- * a Windows file handle held by our own running process, etc.), the promise
- * never settles and the per-project git queue is poisoned forever.
- *
- * 15 seconds is ~15x the observed wall-time of a legitimate worktree-remove
- * + prune + branch-delete cycle even on a repo with ~200 registered
- * worktrees, so this only fires on genuine hangs. When it does, the git
- * child process is killed via AbortController, the promise rejects cleanly,
- * and the queue advances - no cascading failures.
+ * Wall-clock ceiling for git ops in the worktree-removal path. Normal
+ * removes complete in <500ms; this only fires on real hangs (network
+ * drives, corrupted `.git/worktrees/*` metadata). On timeout we abort the
+ * child so the per-project git queue keeps moving instead of cascading.
  */
-const GIT_REMOVAL_TIMEOUT_MS = 15_000;
+const GIT_REMOVAL_TIMEOUT_MS = 5_000;
 
 /**
- * Run git as a direct child_process.spawn with a kill-on-timeout safety net.
- *
- * Used instead of `simple-git`'s `.raw()` for the three git calls in the
- * worktree-removal hot path (`worktree remove`, `worktree prune`, `branch
- * -D`). The difference vs simple-git: if `timeoutMs` elapses, we
- * `controller.abort()` which sends SIGTERM to the child (Windows:
- * TerminateProcess), forcing the promise to settle as a rejection instead
- * of hanging forever. simple-git has no equivalent abort primitive.
- *
- * stdio is piped and drained so Windows conpty pipe buffers can't fill up
- * and cause the child to block on write - another class of hang that
- * simple-git didn't protect against.
+ * Run git via child_process.spawn with kill-on-timeout. Used instead of
+ * simple-git's `.raw()` for the three ops in the worktree-removal path
+ * (`worktree remove`, `worktree prune`, `branch -D`) because simple-git
+ * has no abort primitive. Stdio is drained so Windows conpty buffers
+ * can't block the child on write.
  */
 function runGitWithTimeout(
   projectPath: string,
@@ -378,7 +364,11 @@ export class WorktreeManager {
       await runGitWithTimeout(this.projectPath, ['worktree', 'prune'], GIT_REMOVAL_TIMEOUT_MS);
       return true;
     } catch (error) {
-      console.warn(`[WorktreeManager] Could not remove worktree after retries: ${worktreePath} (${(error as Error).message})`);
+      const err = error as NodeJS.ErrnoException;
+      console.warn(
+        `[WorktreeManager] Could not remove worktree after retries: ${worktreePath} `
+        + `(code=${err.code ?? 'unknown'} errno=${err.errno ?? '?'} syscall=${err.syscall ?? '?'} path=${err.path ?? '?'}): ${err.message}`
+      );
       // Best-effort prune so git's worktree metadata is consistent even when
       // the directory itself couldn't be removed. The task.worktree_path
       // stays set so the next project open's retry pass can try again once
