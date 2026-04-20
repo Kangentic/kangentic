@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '../addons/fit-addon';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { cleanSelection, enableTerminalClipboard } from '../utils/terminal-clipboard';
+import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import '@xterm/xterm/css/xterm.css';
 
 /** Delay before forwarding a resize to the PTY. Coalesces rapid resizes
@@ -88,6 +89,9 @@ export function useTerminal(options: UseTerminalOptions) {
    *  (e.g. TerminalTab) to gate PTY output while a loading overlay is shown. */
   const suppressDataRef = useRef(false);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Coalesces xterm onData bursts (paste, key-repeat, clipboard callback)
+   *  into one IPC write per microtask. */
+  const writeBatcherRef = useRef<WriteBatcher | null>(null);
 
   const initTerminal = useCallback(() => {
     if (!terminalRef.current || xtermRef.current) return;
@@ -109,12 +113,20 @@ export function useTerminal(options: UseTerminalOptions) {
 
     terminal.open(terminalRef.current);
 
-    // Enable Ctrl+C copy (when text selected), Ctrl+V paste, and Ctrl+Enter newline
-    enableTerminalClipboard(terminal, terminalRef.current, (data) => {
+    // Batch outgoing input into one IPC write per microtask. A paste or
+    // programmatic terminal.paste() often dispatches onData multiple times
+    // synchronously; concatenating those into a single ipcRenderer.invoke
+    // avoids N round-trips across the process boundary. PTY byte order is
+    // preserved for sequential pty.write calls, so concatenation is safe.
+    const batcher = createWriteBatcher((payload) => {
       if (options.sessionId) {
-        window.electronAPI.sessions.write(options.sessionId, data);
+        window.electronAPI.sessions.write(options.sessionId, payload);
       }
-    }, options.shellName);
+    });
+    writeBatcherRef.current = batcher;
+
+    // Enable Ctrl+C copy (when text selected), Ctrl+V paste, and Ctrl+Enter newline
+    enableTerminalClipboard(terminal, terminalRef.current, batcher.schedule, options.shellName);
 
     terminal.onScroll(() => {
       const buffer = terminal.buffer.active;
@@ -135,11 +147,9 @@ export function useTerminal(options: UseTerminalOptions) {
     xtermRef.current = terminal;
     fitAddonRef.current = fitAddon;
 
-    // Send user input to PTY
+    // Send user input to PTY (via the microtask-batched queue above).
     if (options.sessionId) {
-      terminal.onData((data) => {
-        window.electronAPI.sessions.write(options.sessionId!, data);
-      });
+      terminal.onData(batcher.schedule);
 
       // Debounced PTY resize -- coalesces rapid dimension changes so the
       // TUI only redraws once after resizing settles.
@@ -291,6 +301,10 @@ export function useTerminal(options: UseTerminalOptions) {
   useEffect(() => {
     return () => {
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
+      // Flush any pending batched writes synchronously so keystrokes queued
+      // just before unmount (sessionId change, HMR dispose) aren't dropped.
+      writeBatcherRef.current?.flush();
+      writeBatcherRef.current = null;
       // Save scroll position before dispose for HMR restoration.
       // Only save if the user scrolled up; at-bottom is the default.
       if (xtermRef.current && options.sessionId && !isAtBottomRef.current) {

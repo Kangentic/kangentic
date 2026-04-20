@@ -862,7 +862,12 @@
           task.updated_at = now();
         }
       },
-      write: async function () {},
+      // Call log for test assertions. Each entry is { sessionId, payload }.
+      // Reset between tests via window.__mockSessionWriteCalls.length = 0.
+      __writeCalls: [],
+      write: async function (sessionId, payload) {
+        window.electronAPI.sessions.__writeCalls.push({ sessionId: sessionId, payload: payload });
+      },
       resize: async function () { return { colsChanged: false }; },
       list: async function () {
         return sessions;
