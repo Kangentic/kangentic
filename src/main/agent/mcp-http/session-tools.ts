@@ -89,6 +89,43 @@ export function registerSessionTools(server: McpServer, context: CommandContext)
     }, context, 'Failed to move backlog tasks'),
   );
 
+  // --- kangentic_update_backlog_item ---
+  server.registerTool(
+    'kangentic_update_backlog_item',
+    {
+      description: 'Update a backlog item\'s title, description, priority, or labels. Only the fields you provide are changed; omitted fields are left as-is. Note that `labels` is a full replacement (not additive) - pass the complete new label set. Find item IDs with kangentic_list_backlog or kangentic_search_backlog.',
+      inputSchema: z.object({
+        itemId: z.string().describe('Backlog item UUID (from kangentic_list_backlog or kangentic_search_backlog).'),
+        title: z.string().max(200).optional().describe('New title (max 200 characters).'),
+        description: z.string().max(10_000).optional().describe('New description (max 10,000 characters).'),
+        priority: z.number().int().min(0).max(4).optional().describe('New priority level: 0=none, 1=low, 2=medium, 3=high, 4=urgent.'),
+        labels: z.array(z.union([
+          z.string(),
+          z.object({ name: z.string(), color: z.string() }),
+        ])).optional().describe('Full replacement label set. Strings, or {name, color} objects to also set the label color.'),
+      }),
+    },
+    async ({ itemId, title, description, priority, labels }) => callHandler('update_backlog_item', {
+      itemId,
+      title: title ?? null,
+      description: description ?? null,
+      priority: priority ?? null,
+      labels: labels ?? null,
+    }, context, 'Failed to update backlog item'),
+  );
+
+  // --- kangentic_delete_backlog_item ---
+  server.registerTool(
+    'kangentic_delete_backlog_item',
+    {
+      description: 'Permanently delete a backlog item and all of its attachments. This cannot be undone. Find item IDs with kangentic_list_backlog or kangentic_search_backlog.',
+      inputSchema: z.object({
+        itemId: z.string().describe('Backlog item UUID to delete.'),
+      }),
+    },
+    async ({ itemId }) => callHandler('delete_backlog_item', { itemId }, context, 'Failed to delete backlog item'),
+  );
+
   // --- kangentic_get_handoff_context ---
   server.registerTool(
     'kangentic_get_handoff_context',

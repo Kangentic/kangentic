@@ -7,6 +7,7 @@ import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { BACKLOG_PRIORITY_LABELS } from '../../../shared/types';
 import { resolveColumn } from './column-resolver';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
+import type { BacklogTaskUpdateInput } from '../../../shared/types';
 
 export const handleListBacklog: CommandHandler = (
   params: Record<string, unknown>,
@@ -126,6 +127,122 @@ export const handleCreateBacklogTask: CommandHandler = (
     success: true,
     data: { id: item.id, title: item.title, priority: priorityLabel, labels: item.labels },
     message: `Created backlog task "${item.title}" (priority: ${priorityLabel}, id: ${item.id})`,
+  };
+};
+
+export const handleUpdateBacklogItem: CommandHandler = (
+  params: Record<string, unknown>,
+  context: CommandContext,
+): CommandResponse => {
+  const itemId = params.itemId as string;
+  const newTitle = (params.title ?? null) as string | null;
+  const newDescription = (params.description ?? null) as string | null;
+  const newPriority = (params.priority ?? null) as number | null;
+  const rawLabels = (params.labels ?? null) as Array<string | { name: string; color: string }> | null;
+
+  if (!itemId) {
+    return { success: false, error: 'itemId is required' };
+  }
+
+  if (newPriority !== null && (newPriority < 0 || newPriority > 4)) {
+    return { success: false, error: 'Priority must be 0-4 (0=none, 1=low, 2=medium, 3=high, 4=urgent)' };
+  }
+
+  const db = context.getProjectDb();
+  const backlogRepo = new BacklogRepository(db);
+
+  const existing = backlogRepo.getById(itemId);
+  if (!existing) {
+    return { success: false, error: `Backlog item "${itemId}" not found` };
+  }
+
+  const updates: Record<string, unknown> = { id: existing.id };
+  const changedFields: string[] = [];
+
+  if (newTitle !== null) {
+    updates.title = String(newTitle).slice(0, 200);
+    changedFields.push('title');
+  }
+  if (newDescription !== null) {
+    updates.description = String(newDescription).slice(0, 10_000);
+    changedFields.push('description');
+  }
+  if (newPriority !== null) {
+    updates.priority = Number(newPriority);
+    changedFields.push('priority');
+  }
+
+  const labelColorMap: Record<string, string> = {};
+  if (rawLabels !== null) {
+    const labelNames: string[] = [];
+    for (const entry of rawLabels) {
+      if (typeof entry === 'string') {
+        labelNames.push(entry);
+      } else if (entry && typeof entry === 'object' && entry.name) {
+        labelNames.push(entry.name);
+        if (entry.color) {
+          labelColorMap[entry.name] = entry.color;
+        }
+      }
+    }
+    updates.labels = labelNames;
+    changedFields.push('labels');
+  }
+
+  if (changedFields.length === 0) {
+    return { success: false, error: 'No fields provided to update' };
+  }
+
+  const updated = backlogRepo.update(updates as unknown as BacklogTaskUpdateInput);
+
+  if (Object.keys(labelColorMap).length > 0) {
+    context.onLabelColorsChanged(labelColorMap);
+  }
+
+  context.onBacklogChanged();
+
+  const priorityLabel = BACKLOG_PRIORITY_LABELS[updated.priority] ?? 'None';
+  return {
+    success: true,
+    message: `Updated ${changedFields.join(', ')} for "${updated.title}".`,
+    data: {
+      id: updated.id,
+      title: updated.title,
+      description: updated.description,
+      priority: updated.priority,
+      priorityLabel,
+      labels: updated.labels,
+    },
+  };
+};
+
+export const handleDeleteBacklogItem: CommandHandler = (
+  params: Record<string, unknown>,
+  context: CommandContext,
+): CommandResponse => {
+  const itemId = params.itemId as string;
+
+  if (!itemId) {
+    return { success: false, error: 'itemId is required' };
+  }
+
+  const db = context.getProjectDb();
+  const backlogRepo = new BacklogRepository(db);
+  const item = backlogRepo.getById(itemId);
+  if (!item) {
+    return { success: false, error: `Backlog item "${itemId}" not found` };
+  }
+
+  const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
+  backlogAttachmentRepo.deleteByTaskId(item.id);
+  backlogRepo.delete(item.id);
+
+  context.onBacklogChanged();
+
+  return {
+    success: true,
+    message: `Deleted backlog item "${item.title}".`,
+    data: { id: item.id, title: item.title },
   };
 };
 
