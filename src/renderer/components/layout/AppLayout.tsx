@@ -5,6 +5,7 @@ import { CollapsedRail } from '../sidebar/CollapsedRail';
 import { KanbanBoard } from '../board/KanbanBoard';
 import { ViewToggle } from '../board/ViewToggle';
 import { BacklogView } from '../backlog/BacklogView';
+import { BacklogDialogs } from '../backlog/BacklogDialogs';
 import { TerminalPanel } from '../terminal/TerminalPanel';
 import { SettingsPanel } from '../settings/SettingsPanel';
 import { CommandBarOverlay } from '../command-bar/CommandBarOverlay';
@@ -119,9 +120,12 @@ export function AppLayout() {
                   )}
                 </>
               ) : (
-                <div className="flex-1 min-h-0 overflow-hidden">
-                  <BacklogView />
-                </div>
+                <>
+                  <div className="flex-1 min-h-0 overflow-hidden">
+                    <BacklogView />
+                  </div>
+                  <BacklogDialogs />
+                </>
               )}
             </>
           ) : !hydrated ? (

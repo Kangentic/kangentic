@@ -633,6 +633,7 @@ if (import.meta.hot) {
 if (import.meta.env.DEV) {
   (window as unknown as Record<string, unknown>).__zustandStores = {
     board: useBoardStore,
+    backlog: useBacklogStore,
     config: useConfigStore,
     project: useProjectStore,
     session: useSessionStore,

@@ -4,6 +4,7 @@ import type {
   BacklogTaskCreateInput,
   BacklogTaskUpdateInput,
   BacklogDemoteInput,
+  ImportSource,
   Task,
 } from '../../shared/types';
 import { useBoardStore } from './board-store';
@@ -14,6 +15,15 @@ interface BacklogState {
   loading: boolean;
   hydrated: boolean;
   selectedIds: Set<string>;
+
+  // Dialog state lifted out of BacklogView so dialog open/close transitions
+  // don't re-render the list, and items churn doesn't re-render closed dialog
+  // subtrees. Mirrors the BoardDialogs pattern in board-store.
+  showNewDialog: boolean;
+  editingItem: BacklogTask | null;
+  pendingDeleteId: string | null;
+  pendingBulkDelete: boolean;
+  importSource: ImportSource | null;
 
   // Data actions
   loadBacklog: () => Promise<void>;
@@ -31,6 +41,14 @@ interface BacklogState {
   toggleSelected: (id: string) => void;
   selectAll: (ids: string[]) => void;
   clearSelection: () => void;
+
+  // Dialog setters
+  openNewDialog: () => void;
+  closeNewDialog: () => void;
+  setEditingItem: (task: BacklogTask | null) => void;
+  setPendingDeleteId: (id: string | null) => void;
+  setPendingBulkDelete: (pending: boolean) => void;
+  setImportSource: (source: ImportSource | null) => void;
 }
 
 export const useBacklogStore = create<BacklogState>((set, get) => ({
@@ -38,6 +56,11 @@ export const useBacklogStore = create<BacklogState>((set, get) => ({
   loading: false,
   hydrated: false,
   selectedIds: new Set(),
+  showNewDialog: false,
+  editingItem: null,
+  pendingDeleteId: null,
+  pendingBulkDelete: false,
+  importSource: null,
 
   loadBacklog: async () => {
     set({ loading: true });
@@ -178,4 +201,11 @@ export const useBacklogStore = create<BacklogState>((set, get) => ({
   },
 
   clearSelection: () => set({ selectedIds: new Set() }),
+
+  openNewDialog: () => set({ showNewDialog: true }),
+  closeNewDialog: () => set({ showNewDialog: false }),
+  setEditingItem: (task) => set({ editingItem: task }),
+  setPendingDeleteId: (id) => set({ pendingDeleteId: id }),
+  setPendingBulkDelete: (pending) => set({ pendingBulkDelete: pending }),
+  setImportSource: (source) => set({ importSource: source }),
 }));

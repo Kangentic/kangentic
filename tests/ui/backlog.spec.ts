@@ -349,6 +349,101 @@ test.describe('Backlog View', () => {
     await browser.close();
   });
 
+  test('bulk delete via context menu opens ConfirmDialog and removes both rows', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'backlog-bulk-delete');
+
+    await page.locator('[data-testid="view-toggle-backlog"]').click();
+
+    // Create two items
+    for (const title of ['Delete Alpha', 'Delete Beta']) {
+      await page.locator('[data-testid="new-backlog-task-btn"]').click();
+      await page.locator('[data-testid="backlog-task-title"]').fill(title);
+      await page.locator('[data-testid="create-backlog-task-btn"]').click();
+      await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+    }
+
+    const rows = page.locator('[data-testid="backlog-task-row"]');
+    await expect(rows).toHaveCount(2);
+
+    // Select both items via checkboxes
+    await rows.nth(0).locator('[data-testid="backlog-task-checkbox"]').check();
+    await rows.nth(1).locator('[data-testid="backlog-task-checkbox"]').check();
+
+    // Right-click the first selected item to open context menu
+    await rows.nth(0).click({ button: 'right' });
+
+    // Context menu should show the multi-select delete label
+    await expect(page.locator('[data-testid="context-delete-item"]')).toBeVisible();
+    await expect(page.locator('[data-testid="context-delete-item"]')).toHaveText('Delete 2 items');
+
+    // Click the bulk delete item - this sets pendingBulkDelete=true in the store
+    await page.locator('[data-testid="context-delete-item"]').click();
+
+    // ConfirmDialog should appear with the correct confirm label
+    await expect(page.locator('button:has-text("Delete 2 items")')).toBeVisible();
+
+    // Confirm the deletion
+    await page.locator('button:has-text("Delete 2 items")').click();
+
+    // Both rows should be gone
+    await expect(rows).toHaveCount(0);
+    await expect(page.locator('text=Delete Alpha')).not.toBeVisible();
+    await expect(page.locator('text=Delete Beta')).not.toBeVisible();
+
+    await browser.close();
+  });
+
+  test('dialog state survives BacklogView unmount when toggling to board and back', async () => {
+    const { browser, page } = await launchPage();
+    await createProject(page, 'backlog-dialog-persist');
+
+    await page.locator('[data-testid="view-toggle-backlog"]').click();
+
+    // Set showNewDialog=true directly in the store without opening the dialog
+    // via UI. This avoids the backdrop-over-view-toggle problem (the backdrop
+    // is a fixed inset-0 overlay that intercepts clicks on the board toggle).
+    // We want to prove that the store state survives unmount, not that the
+    // toolbar button sets the state - that is already tested separately.
+    await page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores: { backlog: { setState: (state: Record<string, unknown>) => void } };
+      }).__zustandStores;
+      stores.backlog.setState({ showNewDialog: true });
+    });
+
+    // Dialog should now be visible (rendered by BacklogDialogs from store state)
+    await expect(page.locator('[data-testid="new-backlog-task-dialog"]')).toBeVisible();
+
+    // Switch to Board view via the store directly. The dialog backdrop (fixed inset-0)
+    // covers the view toggle button, so clicking it via UI would be intercepted by the
+    // backdrop's onMouseUp and close the dialog instead of switching views.
+    await page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores: { board: { setState: (state: Record<string, unknown>) => void } };
+      }).__zustandStores;
+      stores.board.setState({ activeView: 'board' });
+    });
+
+    // The dialog (and its entire subtree) is gone from the DOM because
+    // BacklogDialogs only renders inside the backlog branch of AppLayout
+    await expect(page.locator('[data-testid="new-backlog-task-dialog"]')).not.toBeAttached();
+
+    // Switch back to Backlog view via store - same reason as above
+    await page.evaluate(() => {
+      const stores = (window as unknown as {
+        __zustandStores: { board: { setState: (state: Record<string, unknown>) => void } };
+      }).__zustandStores;
+      stores.board.setState({ activeView: 'backlog' });
+    });
+
+    // Dialog should be visible again because the store-lifted state survived unmount.
+    // If someone adds a clearDialogState() call on BacklogView unmount, this breaks.
+    await expect(page.locator('[data-testid="new-backlog-task-dialog"]')).toBeVisible();
+
+    await browser.close();
+  });
+
   test('context menu on unselected item resets selection', async () => {
     const { browser, page } = await launchPage();
     await createProject(page, 'backlog-ctx-reset');

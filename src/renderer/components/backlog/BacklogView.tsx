@@ -5,11 +5,7 @@ import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { DataTable } from '../DataTable';
 import { BacklogContextMenu } from './BacklogContextMenu';
 import { BacklogBulkToolbar } from './BacklogBulkToolbar';
-import { NewBacklogTaskDialog } from './NewBacklogTaskDialog';
 import { ImportPopover } from './ImportPopover';
-import { ImportDialog } from './ImportDialog';
-import type { ImportSource } from '../../../shared/types';
-import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { CountBadge } from '../CountBadge';
 import { FilterPopover } from '../FilterPopover';
 import { useBacklogDragDrop } from '../../hooks/useBacklogDragDrop';
@@ -33,11 +29,14 @@ export function BacklogView() {
   const toggleSelected = useBacklogStore((state) => state.toggleSelected);
   const selectAll = useBacklogStore((state) => state.selectAll);
   const clearSelection = useBacklogStore((state) => state.clearSelection);
-  const createItem = useBacklogStore((state) => state.createItem);
-  const updateItem = useBacklogStore((state) => state.updateItem);
   const deleteItem = useBacklogStore((state) => state.deleteItem);
   const bulkDelete = useBacklogStore((state) => state.bulkDelete);
   const promoteItems = useBacklogStore((state) => state.promoteItems);
+  const openNewDialog = useBacklogStore((state) => state.openNewDialog);
+  const setEditingItem = useBacklogStore((state) => state.setEditingItem);
+  const setPendingDeleteId = useBacklogStore((state) => state.setPendingDeleteId);
+  const setPendingBulkDelete = useBacklogStore((state) => state.setPendingBulkDelete);
+  const setImportSource = useBacklogStore((state) => state.setImportSource);
   const swimlanes = useBoardStore((state) => state.swimlanes);
   const boardTasks = useBoardStore((state) => state.tasks);
   // Narrow config subscriptions: previously subscribed to the whole `config`
@@ -47,7 +46,6 @@ export function BacklogView() {
   const skipDeleteConfirm = useConfigStore((state) => state.config.skipDeleteConfirm);
   const priorities = useConfigStore((state) => state.config.backlog.priorities);
   const labelColors = useConfigStore((state) => state.config.backlog.labelColors);
-  const updateConfig = useConfigStore((state) => state.updateConfig);
 
   // `searchInput` is the immediate input value (updates per keystroke).
   // `searchQuery` is the debounced value that drives filtering. Keeps typing
@@ -90,12 +88,7 @@ export function BacklogView() {
     togglePriorityFilter, toggleLabelFilter, clearAllFilters,
     filterButtonRef, filterPopoverRef,
   } = useFilterPopover();
-  const [showNewDialog, setShowNewDialog] = useState(false);
-  const [editingTask, setEditingItem] = useState<BacklogTask | null>(null);
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
-  const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ position: { x: number; y: number }; item: BacklogTask } | null>(null);
-  const [importSource, setImportSource] = useState<ImportSource | null>(null);
 
   // All unique labels across backlog tasks and board tasks
   const allLabels = useMemo(() => {
@@ -149,7 +142,7 @@ export function BacklogView() {
   const handleEdit = useCallback((itemId: string) => {
     const item = items.find((backlogItem) => backlogItem.id === itemId);
     if (item) setEditingItem(item);
-  }, [items]);
+  }, [items, setEditingItem]);
 
   const handleDelete = useCallback((itemId: string) => {
     if (skipDeleteConfirm) {
@@ -157,15 +150,7 @@ export function BacklogView() {
     } else {
       setPendingDeleteId(itemId);
     }
-  }, [skipDeleteConfirm, deleteItem]);
-
-  const handleConfirmDelete = useCallback((dontAskAgain: boolean) => {
-    if (pendingDeleteId) {
-      deleteItem(pendingDeleteId);
-      if (dontAskAgain) updateConfig({ skipDeleteConfirm: true });
-    }
-    setPendingDeleteId(null);
-  }, [pendingDeleteId, deleteItem, updateConfig]);
+  }, [skipDeleteConfirm, deleteItem, setPendingDeleteId]);
 
   const handleBulkDelete = useCallback(() => {
     if (skipDeleteConfirm) {
@@ -173,13 +158,7 @@ export function BacklogView() {
     } else {
       setPendingBulkDelete(true);
     }
-  }, [selectedIds, skipDeleteConfirm, bulkDelete]);
-
-  const handleConfirmBulkDelete = useCallback((dontAskAgain: boolean) => {
-    bulkDelete([...selectedIds]);
-    if (dontAskAgain) updateConfig({ skipDeleteConfirm: true });
-    setPendingBulkDelete(false);
-  }, [selectedIds, bulkDelete, updateConfig]);
+  }, [selectedIds, skipDeleteConfirm, bulkDelete, setPendingBulkDelete]);
 
   const handleRowContextMenu = useCallback((item: BacklogTask, event: React.MouseEvent) => {
     // If right-clicked item is not in current selection,
@@ -232,7 +211,7 @@ export function BacklogView() {
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-edge">
         <button
           type="button"
-          onClick={() => setShowNewDialog(true)}
+          onClick={openNewDialog}
           className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors"
           data-testid="new-backlog-task-btn"
         >
@@ -240,7 +219,7 @@ export function BacklogView() {
           New Task
         </button>
 
-        <ImportPopover onOpenImportDialog={(source) => setImportSource(source)} />
+        <ImportPopover onOpenImportDialog={setImportSource} />
 
         <div className="flex-1" />
 
@@ -318,13 +297,13 @@ export function BacklogView() {
             <div className="flex items-center gap-3 mt-2">
               <button
                 type="button"
-                onClick={() => setShowNewDialog(true)}
+                onClick={openNewDialog}
                 className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors"
               >
                 <Plus size={14} />
                 Create your first task
               </button>
-              <ImportPopover onOpenImportDialog={(source) => setImportSource(source)} />
+              <ImportPopover onOpenImportDialog={setImportSource} />
             </div>
           </div>
         ) : (
@@ -407,60 +386,6 @@ export function BacklogView() {
             }
           }}
           onClose={() => setContextMenu(null)}
-        />
-      )}
-
-      {/* Dialogs */}
-      {showNewDialog && (
-        <NewBacklogTaskDialog
-          onClose={() => setShowNewDialog(false)}
-          onCreate={createItem}
-        />
-      )}
-
-      {editingTask && (
-        <NewBacklogTaskDialog
-          onClose={() => setEditingItem(null)}
-          onCreate={createItem}
-          editTask={editingTask}
-          onUpdate={updateItem}
-        />
-      )}
-
-      {pendingDeleteId && (
-        <ConfirmDialog
-          title="Delete backlog task"
-          message={<>
-            <p>This will permanently delete the backlog task.</p>
-            <p className="text-red-400 font-medium">This action cannot be undone.</p>
-          </>}
-          confirmLabel="Delete"
-          variant="danger"
-          showDontAskAgain
-          onConfirm={handleConfirmDelete}
-          onCancel={() => setPendingDeleteId(null)}
-        />
-      )}
-
-      {pendingBulkDelete && (
-        <ConfirmDialog
-          title={`Delete ${selectedIds.size} backlog tasks`}
-          message={<>
-            <p>This will permanently delete {selectedIds.size} backlog tasks.</p>
-            <p className="text-red-400 font-medium">This action cannot be undone.</p>
-          </>}
-          confirmLabel={`Delete ${selectedIds.size} items`}
-          variant="danger"
-          showDontAskAgain
-          onConfirm={handleConfirmBulkDelete}
-          onCancel={() => setPendingBulkDelete(false)}
-        />
-      )}
-
-      {importSource && (
-        <ImportDialog
-          source={importSource}
-          onClose={() => setImportSource(null)}
         />
       )}
     </div>
