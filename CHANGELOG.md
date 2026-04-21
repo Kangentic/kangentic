@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.16.1] - 2026-04-20
+
+### Features
+
+- MCP: add update and delete tools for backlog items (2e34a82)
+
+### Fixes
+
+- Worktree: restore git timeout ceiling for heavy repos (dcf8ea8)
+- Worktree: prevent asar handle leak that blocked Windows cleanup (1a80b49)
+- Worktree: retry failed Done-task cleanups on project open (18dc8a7)
+- Test: stub process.platform so updater-retry passes on Linux CI (e5ef7c5)
+
+### Other
+
+- Perf: parallelize terminal resize and scrollback fetch on mount (6883969)
+- Perf: virtualize ActivityLog rendering (4839c4d)
+- Perf: shrink withTaskLock scope around slow git and PTY I/O (2173804)
+- Perf: batch xterm onData into one IPC write per microtask (c6e1b6b)
+- Perf: extract backlog dialogs into sibling component (9ef2ee0)
+- Docs: mark Asana as supported import source in README (703ad6f)
+
 ## [v0.16.0] - 2026-04-19
 
 ### Features
