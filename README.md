@@ -77,7 +77,7 @@ Bring issues and work items from your existing tools into the backlog:
 | GitHub Issues | Supported |
 | GitHub Projects | Supported |
 | Azure DevOps | Supported |
-| Asana | Coming soon |
+| Asana | Supported |
 | Jira | Coming soon |
 | Linear | Coming soon |
 | Trello | Coming soon |
