@@ -12,6 +12,7 @@ import { WorktreeManager } from '../git/worktree-manager';
 import type { CommandContext } from './commands';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { AppConfig } from '../../shared/types';
+import { RequestResolver } from './mcp-http/project-resolver';
 
 /**
  * Resolve a project ID to a CommandContext, or return null if the project
@@ -119,4 +120,26 @@ export function buildCommandContextForProject(
       }
     },
   };
+}
+
+/**
+ * Build a `RequestResolver` bound to the given URL-path project. Each MCP
+ * HTTP request gets its own resolver so per-tool `project` arguments can
+ * swap the active context while the URL remains stable. Returns null when
+ * the project is unknown - the HTTP server responds 404 in that case.
+ */
+export function createRequestResolver(
+  ipcContext: IpcContext,
+  defaultProjectId: string,
+): RequestResolver | null {
+  const project = ipcContext.projectRepo.getById(defaultProjectId);
+  if (!project) return null;
+  const defaultContext = buildCommandContextForProject(ipcContext, defaultProjectId);
+  if (!defaultContext) return null;
+  return new RequestResolver({
+    ipcContext,
+    defaultContext,
+    defaultProjectId,
+    defaultProjectName: project.name,
+  });
 }

@@ -46,6 +46,26 @@ Claude Code supports a `--mcp-config` flag that accepts a path to a JSON file co
 This approach keeps `.mcp.json` completely untouched - no injection, no cleanup, no git noise. The `--mcp-config` flag is additive (not `--strict-mcp-config`), so user-configured servers like context7 continue to work normally.
 
 
+## Cross-Project Calls
+
+Every Kangentic MCP tool except `kangentic_get_current_task` accepts an optional `project` parameter. Use it to route a tool call at a *different* Kangentic project than the one the MCP client is bound to - no need to switch projects in the UI or reconfigure MCP.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `project` | string | Project name (case-insensitive exact) or project UUID. Omit to target the active project. |
+
+When `project` is set the tool response is prefixed with `[Project: <name> (<shortId>)]` so the caller can confirm where the action landed. Column resolution, `baseBranch` / `branchName` / `useWorktree`, auto-spawn side effects, and session lookups all apply against the *target* project.
+
+`kangentic_get_current_task` is intentionally excluded: it resolves the agent's own CWD/branch, so cross-project lookup makes no sense there.
+
+Use `kangentic_list_projects` (below) to discover valid selectors.
+
+### kangentic_list_projects
+
+List every Kangentic project registered on this machine. Use the returned name or id as the `project` argument on any other `kangentic_*` tool.
+
+No parameters. Returns each project's `name`, `id`, `path`, `lastOpened` timestamp, and an `isActive` flag marking the project the MCP client is bound to.
+
 ## Available Tools
 
 ### kangentic_create_task

@@ -21,21 +21,28 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { CommandContext } from './commands';
 import { makeTaskCounter, type TaskCounter } from './mcp-http/handler-helpers';
 import { registerTaskTools } from './mcp-http/task-tools';
 import { registerSessionTools } from './mcp-http/session-tools';
+import { registerProjectTools } from './mcp-http/project-tools';
+import type { RequestResolver } from './mcp-http/project-resolver';
 
 const SERVER_NAME = 'kangentic';
 const SERVER_VERSION = '1.0.0';
 const MAX_TASKS_PER_SESSION = 50;
 
 /**
- * Builds a CommandContext for a given project. The HTTP server calls this
- * once per request -- main process owns the project lifecycle and provides
- * the factory at startup time.
+ * Builds a `RequestResolver` bound to the given URL-path project. The
+ * HTTP server calls this once per request -- main process owns the
+ * project lifecycle and provides the factory at startup time.
+ *
+ * Returning null causes the server to respond 404 (unknown project, or
+ * MCP server globally disabled, etc.). A non-null resolver exposes the
+ * URL-path project as its default context and can also build contexts
+ * for any other project on demand (used by tools that accept an
+ * optional `project` argument).
  */
-export type ProjectContextFactory = (projectId: string) => CommandContext | null;
+export type ProjectContextFactory = (projectId: string) => RequestResolver | null;
 
 export interface McpHttpServerHandle {
   /** Full URL with port substituted in. Pass to claude --mcp-config or write into mcp.json. */
@@ -154,8 +161,8 @@ async function handleHttpRequest(
   }
   const projectId = segments[1];
 
-  const context = buildContext(projectId);
-  if (!context) {
+  const resolver = buildContext(projectId);
+  if (!resolver) {
     res.statusCode = 404;
     res.end();
     return;
@@ -165,8 +172,9 @@ async function handleHttpRequest(
   // responses (no SSE), built-in DNS rebinding protection on top of the
   // 127.0.0.1 bind for belt-and-suspenders.
   const mcpServer = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
-  registerTaskTools(mcpServer, context, taskCounter, MAX_TASKS_PER_SESSION);
-  registerSessionTools(mcpServer, context);
+  registerTaskTools(mcpServer, resolver, taskCounter, MAX_TASKS_PER_SESSION);
+  registerSessionTools(mcpServer, resolver);
+  registerProjectTools(mcpServer, resolver);
 
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,

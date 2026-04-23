@@ -5,7 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { registerAllIpc, getSessionManager, getCommandInjector, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
-import { buildCommandContextForProject } from './agent/mcp-project-context';
+import { createRequestResolver } from './agent/mcp-project-context';
 import { IPC } from '../shared/ipc-channels';
 import { ConfigManager } from './config/config-manager';
 import { isShuttingDown, setShuttingDown } from './shutdown-state';
@@ -422,7 +422,7 @@ app.whenReady().then(async () => {
       if (!ctx) return null;
       const globalConfig = ctx.configManager.load();
       if (globalConfig.mcpServer?.enabled === false) return null;
-      return buildCommandContextForProject(ctx, projectId);
+      return createRequestResolver(ctx, projectId);
     });
   } catch (err) {
     console.error('[APP] Failed to start MCP HTTP server:', err);

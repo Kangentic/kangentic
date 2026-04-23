@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
-import type { CommandContext } from '../commands';
-import { callHandler, runHandler, type TaskCounter } from './handler-helpers';
+import { callHandler, runHandler, withProject, PROJECT_SELECTOR_DESCRIPTION, type TaskCounter } from './handler-helpers';
+import type { RequestResolver } from './project-resolver';
 
 /**
  * Register the board/task/column management tools on an McpServer.
@@ -9,11 +9,18 @@ import { callHandler, runHandler, type TaskCounter } from './handler-helpers';
  * and columns - plus read-side helpers that are specifically about the
  * board (list_columns, find_task, etc.).
  *
+ * Every tool accepts an optional `project` argument (except
+ * `kangentic_get_current_task`, which is inherently scoped to the
+ * running agent's CWD/branch and therefore to its own project). When
+ * `project` is set, the tool resolves to a different project's board
+ * before executing and annotates the response with the target
+ * project's name so the caller can confirm where the action landed.
+ *
  * create_task is rate-limited via `taskCounter` to cap runaway agents.
  */
 export function registerTaskTools(
   server: McpServer,
-  context: CommandContext,
+  resolver: RequestResolver,
   taskCounter: TaskCounter,
   maxTasksPerSession: number,
 ): void {
@@ -21,7 +28,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_create_task',
     {
-      description: 'Create a task on the Kangentic board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool - use it whenever the user asks to "create a task", "add a todo", "add to backlog", or similar. With no `column` argument, the task always lands in the active board\'s To Do column - never the backlog. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead. Pass any other column name (e.g. "Planning", "Code Review") to land directly in that board column. Board tasks get a git branch and are ready to work on immediately.',
+      description: 'Create a task on the Kangentic board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool - use it whenever the user asks to "create a task", "add a todo", "add to backlog", or similar. With no `column` argument, the task always lands in the active board\'s To Do column - never the backlog. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead. Pass any other column name (e.g. "Planning", "Code Review") to land directly in that board column. Board tasks get a git branch and are ready to work on immediately. Pass `project` to file the task in a different Kangentic project (use kangentic_list_projects to find valid selectors).',
       inputSchema: z.object({
         title: z.string().max(200).describe('Task title (max 200 characters)'),
         description: z.string().max(10000).optional().describe('Task description. Supports markdown.'),
@@ -41,16 +48,19 @@ export function registerTaskTools(
           filePath: z.string().describe('Absolute path to the file to attach'),
           filename: z.string().optional().describe('Override display filename'),
         })).optional().describe('File attachments (array of file paths)'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
     },
-    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments }) => {
-      // Atomic reserve: bumps the counter only if we're under the cap.
+    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, project }) => withProject(resolver, project, (ctx) => {
+      // Atomic reserve AFTER project resolution so typoed project
+      // selectors (which fail in resolveProject above) don't burn
+      // quota slots meant to cap actual task creations.
       // No await between the check and the increment, so this can't race.
       if (!taskCounter.tryReserve()) {
-        return {
+        return Promise.resolve({
           content: [{ type: 'text' as const, text: `Rate limit reached: maximum ${maxTasksPerSession} tasks per session.` }],
           isError: true,
-        };
+        });
       }
       return callHandler('create_task', {
         title,
@@ -62,19 +72,21 @@ export function registerTaskTools(
         baseBranch: baseBranch ?? null,
         useWorktree: useWorktree ?? null,
         attachments: attachments ?? null,
-      }, context, 'Failed to create task');
-    },
+      }, ctx, 'Failed to create task');
+    }),
   );
 
   // --- kangentic_list_columns ---
   server.registerTool(
     'kangentic_list_columns',
     {
-      description: 'List all columns (swimlanes) on the Kangentic board. Returns column names, roles, and task counts.',
-      inputSchema: z.object({}),
+      description: 'List all columns (swimlanes) on the Kangentic board. Returns column names, roles, and task counts. Pass `project` to list columns from a different project.',
+      inputSchema: z.object({
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
+      }),
     },
-    async () => {
-      const response = await runHandler('list_columns', {}, context);
+    async ({ project }) => withProject(resolver, project, async (ctx) => {
+      const response = await runHandler('list_columns', {}, ctx);
       if (!response.success) {
         return { content: [{ type: 'text' as const, text: `Failed to list columns: ${response.error}` }], isError: true };
       }
@@ -84,20 +96,21 @@ export function registerTaskTools(
         return `- ${column.name}${roleTag}: ${column.taskCount} task(s)`;
       });
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
-    },
+    }),
   );
 
   // --- kangentic_list_tasks ---
   server.registerTool(
     'kangentic_list_tasks',
     {
-      description: 'List tasks on the Kangentic board. Optionally filter by column name.',
+      description: 'List tasks on the Kangentic board. Optionally filter by column name. Pass `project` to list tasks from a different project.',
       inputSchema: z.object({
         column: z.string().optional().describe('Filter by column name. If omitted, returns all tasks.'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
     },
-    async ({ column }) => {
-      const response = await runHandler('list_tasks', { column: column ?? null }, context);
+    async ({ column, project }) => withProject(resolver, project, async (ctx) => {
+      const response = await runHandler('list_tasks', { column: column ?? null }, ctx);
       if (!response.success) {
         return { content: [{ type: 'text' as const, text: `Failed to list tasks: ${response.error}` }], isError: true };
       }
@@ -113,21 +126,22 @@ export function registerTaskTools(
         return `- [${task.column}] ${task.title}${descriptionPreview} (#${task.displayId}, id: ${task.id})`;
       });
       return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
-    },
+    }),
   );
 
   // --- kangentic_search_tasks ---
   server.registerTool(
     'kangentic_search_tasks',
     {
-      description: 'Search board tasks by keyword across titles and descriptions. Searches both active and completed (archived) tasks. Does not search backlog tasks - use kangentic_search_backlog for that.',
+      description: 'Search board tasks by keyword across titles and descriptions. Searches both active and completed (archived) tasks. Does not search backlog tasks - use kangentic_search_backlog for that. Pass `project` to search a different project.',
       inputSchema: z.object({
         query: z.string().describe('Search keyword or phrase to match against task titles and descriptions (case-insensitive).'),
         status: z.enum(['active', 'completed', 'all']).optional().describe('Filter by task status. "active" = on the board, "completed" = in Done/archived. Defaults to "all".'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
     },
-    async ({ query, status }) => {
-      const response = await runHandler('search_tasks', { query, status: status ?? 'all' }, context);
+    async ({ query, status, project }) => withProject(resolver, project, async (ctx) => {
+      const response = await runHandler('search_tasks', { query, status: status ?? 'all' }, ctx);
       if (!response.success) {
         return { content: [{ type: 'text' as const, text: `Failed to search tasks: ${response.error}` }], isError: true };
       }
@@ -148,58 +162,64 @@ export function registerTaskTools(
         return `- ${task.title}${statusTag}${descriptionPreview} (#${task.displayId}, id: ${task.id})`;
       });
       return { content: [{ type: 'text' as const, text: `${summary}\n${lines.join('\n')}` }] };
-    },
+    }),
   );
 
   // --- kangentic_get_task_stats ---
   server.registerTool(
     'kangentic_get_task_stats',
     {
-      description: 'Get session metrics and statistics for tasks. Returns token usage, cost, duration, tool calls, and lines changed. Can query a specific task or get a summary across all completed tasks, optionally filtered by keyword.',
+      description: 'Get session metrics and statistics for tasks. Returns token usage, cost, duration, tool calls, and lines changed. Can query a specific task or get a summary across all completed tasks, optionally filtered by keyword. Pass `project` to query a different project.',
       inputSchema: z.object({
         taskId: z.string().optional().describe('Task ID (numeric display ID like "42" or full UUID). If omitted, returns aggregate stats across completed tasks.'),
         query: z.string().optional().describe('Filter completed tasks by keyword in title/description before aggregating stats.'),
         sortBy: z.enum(['tokens', 'cost', 'duration', 'toolCalls', 'linesChanged']).optional().describe('Sort results by this metric (descending). Defaults to "tokens". Only applies when querying multiple tasks.'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
     },
-    async ({ taskId, query, sortBy }) => callHandler('get_task_stats', {
+    async ({ taskId, query, sortBy, project }) => withProject(resolver, project, (ctx) => callHandler('get_task_stats', {
       taskId: taskId ?? null,
       query: query ?? null,
       sortBy: sortBy ?? 'tokens',
-    }, context, 'Failed to get task stats'),
+    }, ctx, 'Failed to get task stats')),
   );
 
   // --- kangentic_find_task ---
   server.registerTool(
     'kangentic_find_task',
     {
-      description: 'Find a task by display ID (e.g. 24, the "#24" shown in the UI), task UUID, branch name, title keyword, or PR number. Returns full task details including branch_name, worktree, PR info, and current column. Use displayId for the fastest exact lookup when the user references a task by its "#N" identifier.',
+      description: 'Find a task by display ID (e.g. 24, the "#24" shown in the UI), task UUID, branch name, title keyword, or PR number. Returns full task details including branch_name, worktree, PR info, and current column. Use displayId for the fastest exact lookup when the user references a task by its "#N" identifier. Pass `project` to look up a task in a different project.',
       inputSchema: z.object({
         displayId: z.number().int().positive().optional().describe('Numeric task display ID shown in the UI (e.g. 24 for "#24"). Exact match.'),
         id: z.string().optional().describe('Full task UUID. Exact match.'),
         branch: z.string().optional().describe('Git branch name to search for (matches the tasks.branch_name column, exact or partial, e.g. "feature/92294").'),
         title: z.string().optional().describe('Keyword to search in task titles (case-insensitive).'),
         prNumber: z.number().optional().describe('Pull request number to search for.'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
     },
-    async ({ displayId, id, branch, title, prNumber }) => {
+    async ({ displayId, id, branch, title, prNumber, project }) => {
       if (displayId === undefined && !id && !branch && !title && prNumber === undefined) {
         return {
           content: [{ type: 'text' as const, text: 'Provide at least one search parameter: displayId, id, branch, title, or prNumber.' }],
           isError: true,
         };
       }
-      return callHandler('find_task', {
+      return withProject(resolver, project, (ctx) => callHandler('find_task', {
         displayId: displayId ?? null,
         id: id ?? null,
         branch: branch ?? null,
         title: title ?? null,
         prNumber: prNumber ?? null,
-      }, context, 'Failed to find task');
+      }, ctx, 'Failed to find task'));
     },
   );
 
   // --- kangentic_get_current_task ---
+  // Intentionally does NOT accept `project`. This tool resolves the task
+  // that owns the agent's own CWD/branch, which is by definition in the
+  // project the agent is running inside. Cross-project lookup makes no
+  // sense here.
   server.registerTool(
     'kangentic_get_current_task',
     {
@@ -216,7 +236,8 @@ export function registerTaskTools(
           isError: true,
         };
       }
-      return callHandler('get_current_task', { cwd: cwd ?? null, branch: branch ?? null }, context, 'Failed to get current task');
+      const defaultContext = resolver.defaultContextResolved().context;
+      return callHandler('get_current_task', { cwd: cwd ?? null, branch: branch ?? null }, defaultContext, 'Failed to get current task');
     },
   );
 
@@ -224,29 +245,32 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_board_summary',
     {
-      description: 'Get a high-level summary of the Kangentic board: task counts per column, active sessions, completed task count, and aggregate cost/token usage across all sessions.',
-      inputSchema: z.object({}),
+      description: 'Get a high-level summary of the Kangentic board: task counts per column, active sessions, completed task count, and aggregate cost/token usage across all sessions. Pass `project` to summarize a different project.',
+      inputSchema: z.object({
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
+      }),
     },
-    async () => callHandler('board_summary', {}, context, 'Failed to get board summary'),
+    async ({ project }) => withProject(resolver, project, (ctx) => callHandler('board_summary', {}, ctx, 'Failed to get board summary')),
   );
 
   // --- kangentic_get_column_detail ---
   server.registerTool(
     'kangentic_get_column_detail',
     {
-      description: 'Get detailed configuration for a board column: automation settings (auto-spawn, auto-command, permission mode), plan exit target, role, and visual settings.',
+      description: 'Get detailed configuration for a board column: automation settings (auto-spawn, auto-command, permission mode), plan exit target, role, and visual settings. Pass `project` to inspect a column in a different project.',
       inputSchema: z.object({
         column: z.string().describe('Column name (case-insensitive).'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
     },
-    async ({ column }) => callHandler('get_column_detail', { column }, context, 'Failed to get column detail'),
+    async ({ column, project }) => withProject(resolver, project, (ctx) => callHandler('get_column_detail', { column }, ctx, 'Failed to get column detail')),
   );
 
   // --- kangentic_update_task ---
   server.registerTool(
     'kangentic_update_task',
     {
-      description: 'Update an existing task. Supports title, description, PR info, agent assignment, priority, labels, base branch, and worktree toggle. To move a task between columns, use kangentic_move_task instead. Find the task ID first with kangentic_find_task.',
+      description: 'Update an existing task. Supports title, description, PR info, agent assignment, priority, labels, base branch, and worktree toggle. To move a task between columns, use kangentic_move_task instead. Find the task ID first with kangentic_find_task. Pass `project` to update a task in a different project.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         title: z.string().max(200).optional().describe('New task title (max 200 characters).'),
@@ -258,16 +282,17 @@ export function registerTaskTools(
         labels: z.array(z.string()).optional().describe('Replace the task\'s label list. Pass [] to clear all labels.'),
         baseBranch: z.string().optional().describe('Base branch the task\'s worktree branches from (e.g. "main").'),
         useWorktree: z.boolean().optional().describe('Whether the task uses an isolated git worktree.'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
     },
-    async ({ taskId, title, description, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree }) => {
+    async ({ taskId, title, description, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, project }) => {
       if (
         title === undefined && description === undefined && prUrl === undefined && prNumber === undefined &&
         agent === undefined && priority === undefined && labels === undefined && baseBranch === undefined && useWorktree === undefined
       ) {
         return { content: [{ type: 'text' as const, text: 'Provide at least one field to update.' }], isError: true };
       }
-      return callHandler('update_task', {
+      return withProject(resolver, project, (ctx) => callHandler('update_task', {
         taskId,
         title: title ?? null,
         description: description ?? null,
@@ -278,7 +303,7 @@ export function registerTaskTools(
         labels: labels ?? null,
         baseBranch: baseBranch ?? null,
         useWorktree: useWorktree ?? null,
-      }, context, 'Failed to update task');
+      }, ctx, 'Failed to update task'));
     },
   );
 
@@ -286,20 +311,21 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_move_task',
     {
-      description: 'Move a task to a different column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task. Moving to To Do kills the session and removes the worktree.',
+      description: 'Move a task to a different column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task. Moving to To Do kills the session and removes the worktree. Pass `project` to move a task in a different project.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         column: z.string().describe('Target column name (case-insensitive, e.g. "Review", "In Progress", "Done").'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
     },
-    async ({ taskId, column }) => callHandler('move_task', { taskId, column }, context, 'Failed to move task'),
+    async ({ taskId, column, project }) => withProject(resolver, project, (ctx) => callHandler('move_task', { taskId, column }, ctx, 'Failed to move task')),
   );
 
   // --- kangentic_update_column ---
   server.registerTool(
     'kangentic_update_column',
     {
-      description: 'Update a swimlane (column) configuration. Supports renaming, recoloring, toggling auto-spawn, setting an auto-command template, overriding the agent for the column, changing permission mode, enabling handoff context, and setting a plan-exit target column. Use kangentic_get_column_detail to inspect current values first.',
+      description: 'Update a swimlane (column) configuration. Supports renaming, recoloring, toggling auto-spawn, setting an auto-command template, overriding the agent for the column, changing permission mode, enabling handoff context, and setting a plan-exit target column. Use kangentic_get_column_detail to inspect current values first. Pass `project` to update a column in a different project.',
       inputSchema: z.object({
         column: z.string().describe('Column name to update (case-insensitive, e.g. "Review").'),
         name: z.string().max(100).optional().describe('New column name.'),
@@ -311,9 +337,10 @@ export function registerTaskTools(
         permissionMode: z.enum(['default', 'plan', 'acceptEdits', 'dontAsk', 'bypassPermissions', 'auto']).nullable().optional().describe('Permission mode for agents spawned in this column. Null to use project default.'),
         handoffContext: z.boolean().optional().describe('Enable multi-agent handoff context preservation when entering this column.'),
         planExitTargetColumn: z.string().nullable().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning. Null to disable.'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
     },
-    async ({ column, name, color, icon, autoSpawn, autoCommand, agentOverride, permissionMode, handoffContext, planExitTargetColumn }) => callHandler('update_column', {
+    async ({ column, name, color, icon, autoSpawn, autoCommand, agentOverride, permissionMode, handoffContext, planExitTargetColumn, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
       column,
       name: name ?? undefined,
       color: color ?? undefined,
@@ -324,18 +351,19 @@ export function registerTaskTools(
       permissionMode: permissionMode === undefined ? undefined : permissionMode,
       handoffContext: handoffContext ?? undefined,
       planExitTargetColumn: planExitTargetColumn === undefined ? undefined : planExitTargetColumn,
-    }, context, 'Failed to update column'),
+    }, ctx, 'Failed to update column')),
   );
 
   // --- kangentic_delete_task ---
   server.registerTool(
     'kangentic_delete_task',
     {
-      description: 'Permanently delete a task from the Kangentic board. This removes the task, its attachments, and session records. The associated worktree and branch may also be cleaned up. Find the task ID first with kangentic_find_task or kangentic_search_tasks.',
+      description: 'Permanently delete a task from the Kangentic board. This removes the task, its attachments, and session records. The associated worktree and branch may also be cleaned up. Find the task ID first with kangentic_find_task or kangentic_search_tasks. Pass `project` to delete a task in a different project.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
     },
-    async ({ taskId }) => callHandler('delete_task', { taskId }, context, 'Failed to delete task'),
+    async ({ taskId, project }) => withProject(resolver, project, (ctx) => callHandler('delete_task', { taskId }, ctx, 'Failed to delete task')),
   );
 }
