@@ -513,6 +513,16 @@
         });
       },
       move: async function (input) {
+        // Test hook: simulate a main-process failure (e.g. dirty branch, spawn
+        // error). Real main process reverts the DB move before throwing, so
+        // the mock leaves the tasks array unchanged and throws.
+        // Set window.__mockTaskMoveThrow = 'error message' before calling.
+        if (typeof window !== 'undefined' && window.__mockTaskMoveThrow) {
+          var throwMsg = window.__mockTaskMoveThrow;
+          window.__mockTaskMoveThrow = null;
+          throw new Error(throwMsg);
+        }
+
         var idx = tasks.findIndex(function (t) {
           return t.id === input.taskId;
         });

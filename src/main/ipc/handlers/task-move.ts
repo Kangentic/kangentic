@@ -418,19 +418,11 @@ export async function handleTaskMove(
           }
         }
 
-        // Revert: move task back to original column. The forward tasks.move()
-        // compacted positions in the old swimlane; this reverse move
-        // re-expands at the original slot, restoring the prior ordering. This
-        // is a DB mutation, so it goes through a locked micro-step to avoid
-        // racing with a concurrent handler entering Phase 1.
-        await withTaskLock(input.taskId, async () => {
-          try {
-            const { tasks: tasksRevert } = getProjectRepos(context, resolvedProjectId);
-            tasksRevert.move({ taskId: input.taskId, targetSwimlaneId: fromSwimlaneId, targetPosition: originalPosition });
-          } catch (revertError) {
-            console.error('[TASK_MOVE] Failed to revert task move:', revertError);
-          }
-        });
+        // Revert + session cleanup is handled by the outer catch below, which
+        // runs on every non-abort failure (worktree setup, branch checkout,
+        // or spawn). Wrap the error with a context message so the toast
+        // surfaced to the renderer distinguishes worktree failures from
+        // later spawn failures.
         const message = error instanceof Error ? error.message : String(error);
         throw new Error(`Worktree setup failed: ${message}`);
       }
@@ -483,14 +475,36 @@ export async function handleTaskMove(
       });
     } catch (error) {
       clearSpawnProgress(context.mainWindow, task.id);
-      if (isAbortError(error)) {
-        // A newer move superseded this one - clean up any partially-spawned session
-        console.log(`[TASK_MOVE] Aborted stale move for task ${task.id.slice(0, 8)}`);
-        await withTaskLock(input.taskId, async () => {
+      const abort = isAbortError(error);
+
+      // Unified rollback path for Phase 2/3 failures: clean up any partially
+      // spawned session and revert the task move if the task is still in the
+      // destination column. The CAS guard on swimlane_id means a concurrent
+      // move that already relocated the task (e.g. user dragged again) keeps
+      // its authoritative state - we only undo our own forward move.
+      await withTaskLock(input.taskId, async () => {
+        try {
           context.sessionManager.removeByTaskId(task.id);
-          const { tasks: tasksCleanup } = getProjectRepos(context, resolvedProjectId);
-          tasksCleanup.update({ id: task.id, session_id: null });
-        });
+          const { tasks: tasksRollback } = getProjectRepos(context, resolvedProjectId);
+          const current = tasksRollback.getById(task.id);
+          if (!current) return;
+          if (current.session_id) {
+            tasksRollback.update({ id: task.id, session_id: null });
+          }
+          if (!abort && current.swimlane_id === input.targetSwimlaneId) {
+            tasksRollback.move({
+              taskId: input.taskId,
+              targetSwimlaneId: fromSwimlaneId,
+              targetPosition: originalPosition,
+            });
+          }
+        } catch (rollbackError) {
+          console.error('[TASK_MOVE] Rollback after move failure failed:', rollbackError);
+        }
+      });
+
+      if (abort) {
+        console.log(`[TASK_MOVE] Aborted stale move for task ${task.id.slice(0, 8)}`);
         return;
       }
       throw error;
