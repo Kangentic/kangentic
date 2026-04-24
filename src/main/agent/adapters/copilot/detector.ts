@@ -1,4 +1,5 @@
 import { AgentDetector } from '../../shared/agent-detector';
+import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 
 /**
  * GitHub Copilot CLI detector.
@@ -14,6 +15,7 @@ export class CopilotDetector extends AgentDetector {
   constructor() {
     super({
       binaryName: 'copilot',
+      fallbackPaths: standardUnixFallbackPaths('copilot'),
       parseVersion: (raw) => {
         const firstLine = raw.split('\n')[0] || '';
         return firstLine.replace(/^GitHub Copilot CLI\s+/i, '').replace(/\.\s*$/, '').trim() || null;

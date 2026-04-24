@@ -1,4 +1,5 @@
 import { AgentDetector } from '../../shared/agent-detector';
+import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 
 /**
  * Gemini CLI detector.
@@ -11,6 +12,7 @@ export class GeminiDetector extends AgentDetector {
   constructor() {
     super({
       binaryName: 'gemini',
+      fallbackPaths: standardUnixFallbackPaths('gemini'),
       parseVersion: (raw) => raw.trim() || null,
     });
   }

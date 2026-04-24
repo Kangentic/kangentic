@@ -15,6 +15,7 @@ import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './s
 import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds } from './window-utils';
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
+import { restoreShellEnv } from './shell-env';
 
 initStartupTimer(PROCESS_START);
 mark('process_start');
@@ -398,6 +399,21 @@ app.whenReady().then(async () => {
   app.setAppUserModelId(
     app.isPackaged ? 'com.kangentic.app' : 'com.kangentic.dev'
   );
+
+  // Restore the user's shell PATH on macOS/Linux GUI launches. Finder,
+  // Spotlight, Dock, and desktop launchers hand Electron a minimal PATH
+  // from launchd that does not include Homebrew, ~/.claude/local, nvm,
+  // npm-global, or pip --user locations. Without this, agent detection
+  // (via `which`) fails for CLIs installed in those locations. No-op on
+  // Windows.
+  phase('restoreShellEnv');
+  try {
+    await restoreShellEnv();
+  } catch (error) {
+    console.warn('[APP] restoreShellEnv failed:', error);
+  } finally {
+    endPhase('restoreShellEnv');
+  }
 
   // Fix node-pty spawn-helper permissions on macOS before any PTY spawns.
   // Must run before createWindow() which triggers session recovery.

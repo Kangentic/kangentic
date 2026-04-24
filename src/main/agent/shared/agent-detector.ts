@@ -102,25 +102,31 @@ export class AgentDetector {
   }
 
   private async performDetection(overridePath?: string | null): Promise<AgentInfo> {
+    const name = this.config.binaryName;
+
     // 1. User-configured override path wins. On failure we report the
     //    configured path with `found: false` rather than falling through
     //    to PATH lookup - that would mask the user's explicit choice.
     if (overridePath) {
       const version = await this.extractVersion(overridePath);
       if (version !== null) {
+        console.log(`[agent-detect] ${name}: found via override ${overridePath} (${version})`);
         this.cached = { found: true, path: overridePath, version };
         return this.cached;
       }
+      console.warn(`[agent-detect] ${name}: override ${overridePath} did not produce a version`);
       this.cached = { found: false, path: overridePath, version: null };
       return this.cached;
     }
 
     // 2. PATH-based discovery via `which()`. Works when Electron is
-    //    launched from a terminal that inherited the user's shell PATH.
+    //    launched from a terminal that inherited the user's shell PATH,
+    //    OR when restoreShellEnv() successfully restored it at startup.
     try {
-      const whichPath = await which(this.config.binaryName);
+      const whichPath = await which(name);
       const version = await this.extractVersion(whichPath);
       if (version !== null) {
+        console.log(`[agent-detect] ${name}: found via PATH at ${whichPath} (${version})`);
         this.cached = { found: true, path: whichPath, version };
         return this.cached;
       }
@@ -128,19 +134,35 @@ export class AgentDetector {
       // Binary not on PATH - continue to fallback paths.
     }
 
-    // 3. Well-known fallback locations. Needed when Electron is
-    //    launched from Finder/Dock on macOS and doesn't inherit the
-    //    shell PATH (Homebrew installs end up in /opt/homebrew/bin or
-    //    /usr/local/bin, which aren't on the GUI app's PATH by default).
-    for (const fallbackPath of this.config.fallbackPaths ?? []) {
+    // 3. Well-known fallback locations. Needed when Electron is launched
+    //    from Finder/Dock on macOS and does not inherit the shell PATH
+    //    AND restoreShellEnv() failed. Homebrew installs live at
+    //    /opt/homebrew/bin or /usr/local/bin, Claude's official installer
+    //    at ~/.claude/local/claude, etc.
+    const fallbackPaths = this.config.fallbackPaths ?? [];
+    const existingFallbacks: string[] = [];
+    for (const fallbackPath of fallbackPaths) {
       if (!fs.existsSync(fallbackPath)) continue;
+      existingFallbacks.push(fallbackPath);
       const version = await this.extractVersion(fallbackPath);
       if (version !== null) {
+        console.log(`[agent-detect] ${name}: found via fallback ${fallbackPath} (${version})`);
         this.cached = { found: true, path: fallbackPath, version };
         return this.cached;
       }
     }
 
+    // Not found anywhere. Log enough to diagnose bug reports - including
+    // which fallback paths were checked, so a user who reports "still
+    // not detected" can immediately see whether their install location
+    // needs to be added to the fallback list or configured as cliPath.
+    const pathSegmentCount = (process.env.PATH ?? '').split(':').filter(Boolean).length;
+    const missingCount = fallbackPaths.length - existingFallbacks.length;
+    console.warn(
+      `[agent-detect] ${name}: NOT FOUND. PATH had ${pathSegmentCount} segments; ` +
+      `${existingFallbacks.length}/${fallbackPaths.length} fallback paths existed but failed version probe; ` +
+      `${missingCount} did not exist on disk. Configure cliPath in Settings if installed elsewhere.`,
+    );
     this.cached = { found: false, path: null, version: null };
     return this.cached;
   }

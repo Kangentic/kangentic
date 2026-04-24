@@ -1,4 +1,5 @@
 import { AgentDetector } from '../../shared/agent-detector';
+import { standardUnixFallbackPaths } from '../../shared/fallback-paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { quoteArg, isUnixLikeShell, toForwardSlash } from '../../../../shared/paths';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
@@ -33,6 +34,11 @@ export class AiderAdapter implements AgentAdapter {
   // all four adapters).
   private readonly detector = new AgentDetector({
     binaryName: 'aider',
+    // Aider is most commonly installed via `pip install --user`, which puts
+    // it in ~/.local/bin (covered by standardUnixFallbackPaths). Homebrew
+    // and manual installs in /opt/homebrew/bin, /usr/local/bin are also
+    // covered there.
+    fallbackPaths: standardUnixFallbackPaths('aider'),
     parseVersion: (raw) => raw.replace(/^aider\s+/i, '').trim() || null,
   });
 
