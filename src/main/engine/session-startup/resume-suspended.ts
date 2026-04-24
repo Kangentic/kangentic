@@ -133,35 +133,51 @@ export async function resumeSuspendedSessions(
       continue;
     }
 
-    // When auto-resume is disabled, crashed (orphaned) records are upgraded
-    // to user-paused so reconcile and auto-spawn (which both filter via
-    // getUserPausedTaskIds) leave them alone. Graceful-quit records are
-    // already 'user'-marked by syncShutdownCleanup when the setting is off.
-    // Only registers a placeholder when the CAS upgrade succeeds - if
-    // something else already retired the record concurrently, skip quietly.
-    if (!autoResumeSessionsOnRestart && record.status === 'orphaned') {
-      const upgraded = markRecordSuspended(sessionRepo, record.id, 'user');
-      if (upgraded) {
-        sessionManager.registerSuspendedPlaceholder({
-          taskId: record.task_id,
-          projectId,
-          cwd: record.cwd,
-        });
+    // When auto-resume-on-restart is OFF, don't spawn. Register a suspended
+    // placeholder so the renderer shows a Resume button. The record stays
+    // marked 'system' (not 'user') so dragging the task through columns
+    // still resumes normally - the 'user' marker is reserved for explicit
+    // pauses via the Pause button (see spawnAgent's user-pause guard).
+    //
+    // For crashed (orphaned) records we atomically transition to 'suspended'
+    // so we don't re-process them on next startup. If the CAS fails
+    // (concurrent retire), skip quietly.
+    if (!autoResumeSessionsOnRestart) {
+      if (record.status === 'orphaned') {
+        const upgraded = markRecordSuspended(sessionRepo, record.id, 'system');
+        if (!upgraded) {
+          skipped++;
+          continue;
+        }
+      }
+      sessionManager.registerSuspendedPlaceholder({
+        taskId: record.task_id,
+        projectId,
+        cwd: record.cwd,
+      });
+      // Ensure task.session_id is null so SESSION_RESUME's precondition
+      // passes when the user clicks the Resume button.
+      if (task.session_id) {
+        taskRepo.update({ id: task.id, session_id: null });
       }
       skipped++;
       continue;
     }
 
-    // User-paused sessions stay suspended. Register a placeholder so the
-    // renderer shows "Paused" state. task.session_id stays null (cleared
-    // on suspend) so SESSION_RESUME still works when the user clicks
-    // resume.
+    // User explicitly paused (clicked Pause). Even when auto-resume-on-restart
+    // is enabled, respect the pause. Register a placeholder so the renderer
+    // shows "Paused" state. Clear task.session_id defensively - it should
+    // already be null from SESSION_SUSPEND, but crash-recovery paths may
+    // have left it set.
     if (record.status === 'suspended' && record.suspended_by === 'user') {
       sessionManager.registerSuspendedPlaceholder({
         taskId: record.task_id,
         projectId,
         cwd: record.cwd,
       });
+      if (task.session_id) {
+        taskRepo.update({ id: task.id, session_id: null });
+      }
       skipped++;
       continue;
     }
@@ -172,7 +188,7 @@ export async function resumeSuspendedSessions(
   if (toProcess.length === 0) {
     if (skipped > 0) {
       console.log(
-        `[SESSION_RECOVERY] Skipped ${skipped} of ${toRecover.length} task(s) -- non-auto-spawn columns, deleted, or user-paused`,
+        `[SESSION_RECOVERY] Skipped ${skipped} of ${toRecover.length} task(s) -- non-auto-spawn columns, deleted, user-paused, or auto-resume disabled`,
       );
     }
     if (!app.isPackaged) console.timeEnd(timerLabel);

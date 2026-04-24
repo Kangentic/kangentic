@@ -1,16 +1,18 @@
 /**
- * Tests for the orphan-upgrade branch in resumeSuspendedSessions
- * (src/main/engine/session-startup/resume-suspended.ts lines 142-153).
+ * Tests for the auto-resume-disabled branch in resumeSuspendedSessions
+ * (src/main/engine/session-startup/resume-suspended.ts).
  *
- * When `autoResumeSessionsOnRestart=false` and a record has status='orphaned'
- * (crash recovery), the branch upgrades it to user-paused via a CAS call to
- * markRecordSuspended and registers a placeholder so the renderer shows
- * "Paused" state. When the CAS fails (concurrent retire), the placeholder is
- * skipped. When the setting is true, the branch is not entered at all.
+ * When `autoResumeSessionsOnRestart=false`, the branch does NOT spawn a new
+ * session. For orphaned records it atomically transitions status to
+ * 'suspended' (with suspended_by='system' - 'user' is reserved for explicit
+ * pause-button presses, to keep task-move's spawnAgent resume behavior
+ * working on subsequent drags). It then registers a placeholder so the
+ * renderer shows a Resume button, and clears task.session_id so
+ * SESSION_RESUME's precondition check passes.
  *
- * All collaborators are mocked aggressively so only the orphan-upgrade
- * branch's observable effects are asserted: mock call counts and arguments
- * on markRecordSuspended and sessionManager.registerSuspendedPlaceholder.
+ * All collaborators are mocked aggressively so only this branch's observable
+ * effects are asserted: mock call counts and arguments on markRecordSuspended,
+ * sessionManager.registerSuspendedPlaceholder, and taskRepo.update.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -27,6 +29,7 @@ const sessionRepoMarkAllRunningAsOrphaned = vi.fn();
 const sessionRepoMarkRunningAsOrphanedExcluding = vi.fn();
 
 const taskRepoList = vi.fn(() => [] as Task[]);
+const taskRepoUpdateMock = vi.fn();
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks: must appear before any import that loads the module under test
@@ -73,11 +76,12 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
   return { SessionRepository: FakeSessionRepository };
 });
 
-// TaskRepository mock: all instances delegate to module-level taskRepoList.
+// TaskRepository mock: all instances delegate to module-level taskRepoList
+// and taskRepoUpdateMock so tests can assert on session_id clears.
 vi.mock('../../src/main/db/repositories/task-repository', () => {
   class FakeTaskRepository {
     list = () => taskRepoList();
-    update = vi.fn();
+    update = (...args: unknown[]) => taskRepoUpdateMock(...args);
   }
   return { TaskRepository: FakeTaskRepository };
 });
@@ -187,7 +191,7 @@ function makeConfigManager(autoResumeSessionsOnRestart: boolean) {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('resumeSuspendedSessions: orphan-upgrade branch (autoResumeSessionsOnRestart=false)', () => {
+describe('resumeSuspendedSessions: auto-resume-disabled branch (autoResumeSessionsOnRestart=false)', () => {
   beforeEach(() => {
     // Reset all module-level mock fns to clean defaults before each test
     markRecordSuspendedMock.mockClear();
@@ -201,9 +205,10 @@ describe('resumeSuspendedSessions: orphan-upgrade branch (autoResumeSessionsOnRe
     sessionRepoMarkRunningAsOrphanedExcluding.mockClear();
     taskRepoList.mockClear();
     taskRepoList.mockReturnValue([]);
+    taskRepoUpdateMock.mockClear();
   });
 
-  it('happy path: CAS succeeds - calls markRecordSuspended and registerSuspendedPlaceholder, no spawn', async () => {
+  it("orphaned happy path: CAS succeeds with 'system' marker, placeholder registered, no spawn", async () => {
     // Arrange: one orphaned record, setting disabled, CAS returns true
     sessionRepoGetOrphaned.mockReturnValue([makeOrphanedRecord()]);
     taskRepoList.mockReturnValue([makeTask()]);
@@ -219,12 +224,12 @@ describe('resumeSuspendedSessions: orphan-upgrade branch (autoResumeSessionsOnRe
       configManager as never,
     );
 
-    // Assert: CAS called once with the record id and 'user'
+    // Assert: CAS called with 'system' (reserves 'user' for explicit pauses)
     expect(markRecordSuspendedMock).toHaveBeenCalledTimes(1);
     expect(markRecordSuspendedMock).toHaveBeenCalledWith(
       expect.anything(),
       'record-1',
-      'user',
+      'system',
     );
 
     // Assert: placeholder registered for the task
@@ -239,7 +244,7 @@ describe('resumeSuspendedSessions: orphan-upgrade branch (autoResumeSessionsOnRe
     expect(sessionManager.spawn).not.toHaveBeenCalled();
   });
 
-  it('CAS-failure path: markRecordSuspended returns false - registerSuspendedPlaceholder is NOT called', async () => {
+  it('CAS-failure path: markRecordSuspended returns false - placeholder is NOT registered', async () => {
     // Arrange: CAS fails (concurrent retire already transitioned the record)
     markRecordSuspendedMock.mockReturnValue(false);
 
@@ -267,22 +272,21 @@ describe('resumeSuspendedSessions: orphan-upgrade branch (autoResumeSessionsOnRe
     expect(sessionManager.spawn).not.toHaveBeenCalled();
   });
 
-  it('boundary: suspended+suspended_by=user record does NOT enter orphan-upgrade branch', async () => {
-    // Arrange: record is already 'suspended' with suspended_by='user'
-    // (graceful-quit case - syncShutdownCleanup already marked it).
-    // The orphan-upgrade branch guards on status==='orphaned', so it must
-    // be skipped. The record falls through to the user-paused-placeholder
-    // branch at lines 159-167, which registers a placeholder without CAS.
-    const userPausedRecord = makeOrphanedRecord({
+  it('already-suspended records (from shutdown) register a placeholder without an extra CAS', async () => {
+    // Arrange: record is already 'suspended' with suspended_by='system'
+    // (graceful-quit case - syncShutdownCleanup already marked it). The
+    // auto-resume-disabled branch does NOT re-transition already-suspended
+    // records - it just registers the placeholder and clears
+    // task.session_id.
+    const alreadySuspendedRecord = makeOrphanedRecord({
       status: 'suspended',
-      suspended_by: 'user',
+      suspended_by: 'system',
       suspended_at: '2026-04-23T10:00:00.000Z',
     });
 
-    // getResumable returns the user-paused record; getOrphaned is empty
-    sessionRepoGetResumable.mockReturnValue([userPausedRecord]);
+    sessionRepoGetResumable.mockReturnValue([alreadySuspendedRecord]);
     sessionRepoGetOrphaned.mockReturnValue([]);
-    taskRepoList.mockReturnValue([makeTask()]);
+    taskRepoList.mockReturnValue([makeTask({ session_id: 'stale-pty-id' })]);
 
     const sessionManager = makeSessionManager();
     const configManager = makeConfigManager(false);
@@ -295,28 +299,61 @@ describe('resumeSuspendedSessions: orphan-upgrade branch (autoResumeSessionsOnRe
       configManager as never,
     );
 
-    // Assert: orphan-upgrade CAS was NOT called (record is not 'orphaned')
+    // Assert: no CAS transition - record was already 'suspended'
     expect(markRecordSuspendedMock).not.toHaveBeenCalled();
 
-    // Assert: the user-paused-placeholder branch DID register a placeholder
+    // Assert: placeholder registered
     expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
-    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledWith({
-      taskId: 'task-1',
-      projectId: 'proj-1',
-      cwd: '/project/cwd',
+
+    // Assert: stale task.session_id cleared so SESSION_RESUME's precondition passes
+    expect(taskRepoUpdateMock).toHaveBeenCalledWith({
+      id: 'task-1',
+      session_id: null,
     });
 
     // Assert: no spawn
     expect(sessionManager.spawn).not.toHaveBeenCalled();
   });
 
-  it('guard-flip: when autoResumeSessionsOnRestart=true, orphaned record skips upgrade branch', async () => {
+  it("user-paused records (explicit Pause button) register a placeholder, auto-resume setting aside", async () => {
+    // Arrange: record is 'suspended' with suspended_by='user' (user clicked
+    // the Pause button). Even with autoResumeSessionsOnRestart=true, the
+    // explicit pause must be respected - register a placeholder, don't
+    // auto-resume.
+    const userPausedRecord = makeOrphanedRecord({
+      status: 'suspended',
+      suspended_by: 'user',
+      suspended_at: '2026-04-23T10:00:00.000Z',
+    });
+
+    sessionRepoGetResumable.mockReturnValue([userPausedRecord]);
+    sessionRepoGetOrphaned.mockReturnValue([]);
+    taskRepoList.mockReturnValue([makeTask()]);
+
+    const sessionManager = makeSessionManager();
+    const configManager = makeConfigManager(true); // auto-resume ON
+
+    // Act
+    await resumeSuspendedSessions(
+      'proj-1',
+      '/project',
+      sessionManager as never,
+      configManager as never,
+    );
+
+    // Assert: no CAS, placeholder registered, no spawn
+    expect(markRecordSuspendedMock).not.toHaveBeenCalled();
+    expect(sessionManager.registerSuspendedPlaceholder).toHaveBeenCalledTimes(1);
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  it('guard-flip: when autoResumeSessionsOnRestart=true, orphaned record skips the disabled branch', async () => {
     // Arrange: setting is true (default). The orphaned record must NOT be
-    // upgraded to user-paused. It enters toProcess and the preparation
-    // pass. The key assertion is that markRecordSuspended is never called
-    // (the upgrade branch was not entered). The preparation pass will
-    // retire the record (prepareAgentSpawn returns a failure), which is
-    // fine - we only care that the upgrade did not fire.
+    // transitioned via the disabled branch. It enters toProcess and the
+    // preparation pass. The key assertion is that markRecordSuspended is
+    // never called (the disabled branch was not entered). The preparation
+    // pass will retire the record (prepareAgentSpawn returns a failure),
+    // which is fine - we only care that the branch did not fire.
     const { prepareAgentSpawn } = await import(
       '../../src/main/engine/session-startup/prepare-spawn'
     );
@@ -339,11 +376,10 @@ describe('resumeSuspendedSessions: orphan-upgrade branch (autoResumeSessionsOnRe
       configManager as never,
     );
 
-    // Assert: orphan-upgrade CAS was NOT called
+    // Assert: disabled branch was NOT entered
     expect(markRecordSuspendedMock).not.toHaveBeenCalled();
 
-    // Assert: no suspended placeholder registered via the upgrade branch
-    // (the user-paused branch also cannot fire for an orphaned record)
+    // Assert: no suspended placeholder registered via the disabled branch
     expect(sessionManager.registerSuspendedPlaceholder).not.toHaveBeenCalled();
   });
 });

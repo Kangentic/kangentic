@@ -51,14 +51,6 @@ export async function autoSpawnTasks(
     return;
   }
 
-  // Build set of task IDs that already have a running PTY session
-  const activePtySessions = sessionManager.listSessions();
-  const activeTaskIds = new Set(
-    activePtySessions
-      .filter((session) => session.status === 'running')
-      .map((session) => session.taskId),
-  );
-
   const resolvedShell = await sessionManager.getShell();
 
   // Batch-fetch user-paused task IDs to skip during reconciliation
@@ -103,15 +95,23 @@ export async function autoSpawnTasks(
     void lanesWithIncomingSpawn;
 
     for (const task of tasks) {
-      if (activeTaskIds.has(task.id)) continue; // already has a session
+      // Skip if the session manager already has a session for this task -
+      // running, queued, OR a suspended placeholder. Placeholders are
+      // registered by resumeSuspendedSessions (which runs before this) for:
+      //   - user-paused records (explicit Pause button)
+      //   - 'system'-suspended records when autoResumeSessionsOnRestart=false
+      // Either case, the user must explicitly Resume - don't auto-spawn over
+      // the placeholder and clobber the resumable record's agent_session_id.
+      if (sessionManager.hasSessionForTask(task.id)) continue;
 
-      // Skip tasks whose latest session was user-paused -- respect user intent.
-      // Register placeholder so renderer shows paused state (if not already registered).
+      // Safety net: register a placeholder for user-paused records that
+      // somehow weren't registered by resumeSuspendedSessions (e.g. the
+      // record was created after that pass, or cwd existence check failed).
+      // Without this the task would auto-spawn a fresh agent and lose the
+      // --resume transcript.
       if (userPausedTaskIds.has(task.id)) {
-        if (!sessionManager.hasSessionForTask(task.id)) {
-          const cwd = task.worktree_path || projectPath;
-          sessionManager.registerSuspendedPlaceholder({ taskId: task.id, projectId, cwd });
-        }
+        const cwd = task.worktree_path || projectPath;
+        sessionManager.registerSuspendedPlaceholder({ taskId: task.id, projectId, cwd });
         continue;
       }
 
