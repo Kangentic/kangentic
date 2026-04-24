@@ -1368,7 +1368,14 @@
       importCheckCli: async function (/* source */) {
         return { available: true, authenticated: true };
       },
-      importFetch: async function (/* input */) {
+      importFetch: async function (input) {
+        // Track call count and last arguments for test assertions.
+        // Tests can read window.__mockImportFetchCallCount and
+        // window.__mockImportFetchLastArgs to verify fetch behavior.
+        if (typeof window !== 'undefined') {
+          window.__mockImportFetchCallCount = (window.__mockImportFetchCallCount || 0) + 1;
+          window.__mockImportFetchLastArgs = input;
+        }
         var preset = (typeof window !== 'undefined' && window.__mockImportFetchPreset) || null;
         if (preset) return preset;
         return { issues: [], totalCount: 0, hasNextPage: false };

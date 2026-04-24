@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue } from 'react';
 import { Check, Loader2, Paperclip, Search, AlertCircle, X, RefreshCw, EyeOff, Eye } from 'lucide-react';
 import { formatRelativeTime } from '../../lib/datetime';
 import { BaseDialog } from '../dialogs/BaseDialog';
@@ -110,7 +110,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     searchTimeoutRef.current = setTimeout(() => {
       setSelectedIds(new Set());
       fetchIssues(1, stateFilter, value);
-    }, 400);
+    }, 200);
   };
 
   const handleLoadMore = () => {
@@ -138,24 +138,37 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     [issues],
   );
 
+  // Defer text-search inputs so typing stays responsive even when the row list is large.
+  // The <input value> binds to the live state; this deferred copy drives the filter computation.
+  // Note: deferred values are used only for visible-filter math. Fetch triggers and the
+  // hasActiveFilters predicate use the live values so the network and the empty-state UI
+  // reflect what the user has actually typed, not last frame's input.
+  const deferredFilterText = useDeferredValue(filterText);
+  const deferredServerSearchQuery = useDeferredValue(serverSearchQuery);
+
+  // For non-Projects sources, prefilter the already-fetched list against the live server query
+  // so the visible list narrows immediately while the debounced remote refetch is in flight.
+  const titleSearchTerm = isProjectsSource ? deferredFilterText : deferredServerSearchQuery;
+  const titleSearchLower = titleSearchTerm.toLowerCase();
+
   // Client-side filtering (issues are pre-sorted by createdAt desc on fetch)
   const filteredIssues = useMemo(() => {
     return issues.filter((issue) => {
       if (hideImported && issue.alreadyImported) return false;
-      if (filterText && !issue.title.toLowerCase().includes(filterText.toLowerCase())) return false;
+      if (titleSearchLower && !issue.title.toLowerCase().includes(titleSearchLower)) return false;
       if (filterStatuses.size > 0 && (!issue.state || !filterStatuses.has(issue.state))) return false;
       if (filterAssignees.size > 0 && (!issue.assignee || !filterAssignees.has(issue.assignee))) return false;
       if (filterTypes.size > 0 && (!issue.workItemType || !filterTypes.has(issue.workItemType))) return false;
       if (filterLabels.size > 0 && !issue.labels.some((label) => filterLabels.has(label))) return false;
       return true;
     });
-  }, [issues, filterText, filterStatuses, filterAssignees, filterTypes, filterLabels, hideImported]);
+  }, [issues, titleSearchLower, filterStatuses, filterAssignees, filterTypes, filterLabels, hideImported]);
 
   const selectableIssues = filteredIssues.filter((issue) => !issue.alreadyImported);
   const allImported = issues.length > 0 && issues.every((issue) => issue.alreadyImported);
-  const hasActiveFilters = filterText !== '' || filterStatuses.size > 0 || filterAssignees.size > 0 || filterTypes.size > 0 || filterLabels.size > 0;
+  const hasActiveFilters = filterText !== '' || serverSearchQuery !== '' || filterStatuses.size > 0 || filterAssignees.size > 0 || filterTypes.size > 0 || filterLabels.size > 0;
 
-  const handleToggleSelect = (externalId: string) => {
+  const handleToggleSelect = useCallback((externalId: string) => {
     setSelectedIds((previous) => {
       const next = new Set(previous);
       if (next.has(externalId)) {
@@ -165,7 +178,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       }
       return next;
     });
-  };
+  }, []);
 
   const handleSelectAll = () => {
     if (selectedIds.size === selectableIssues.length) {
@@ -181,6 +194,12 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     setFilterAssignees(new Set());
     setFilterTypes(new Set());
     setFilterLabels(new Set());
+    if (serverSearchQuery !== '') {
+      setServerSearchQuery('');
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      setSelectedIds(new Set());
+      fetchIssues(1, stateFilter, '');
+    }
   };
 
   const toggleFilterStatus = (status: string) => {
@@ -456,20 +475,26 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
             key={issue.externalId}
             issue={issue}
             selected={selectedIds.has(issue.externalId)}
-            onToggle={() => handleToggleSelect(issue.externalId)}
+            onToggle={handleToggleSelect}
           />
         ))}
 
         {/* Loading state */}
         {loading && (
-          <div className="flex items-center justify-center h-full min-h-[400px]">
+          <div
+            data-testid="import-loading"
+            className="flex items-center justify-center h-full min-h-[400px]"
+          >
             <Loader2 size={48} className="animate-spin text-fg-faint" />
           </div>
         )}
 
         {/* Empty state */}
         {!loading && !cliError && filteredIssues.length === 0 && !error && (
-          <div className="flex flex-col items-center justify-center flex-1 min-h-[200px] text-fg-faint gap-2">
+          <div
+            data-testid="import-empty-state"
+            className="flex flex-col items-center justify-center flex-1 min-h-[200px] text-fg-faint gap-2"
+          >
             {allImported && !hasActiveFilters ? (
               <>
                 <Check size={24} className="text-success" />
@@ -485,10 +510,11 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
               </>
             ) : hasActiveFilters ? (
               <>
-                <span className="text-sm">No items match your filters</span>
+                <span data-testid="import-empty-state-message" className="text-sm">No items match your filters</span>
                 <button
                   type="button"
                   onClick={clearFilters}
+                  data-testid="import-clear-filters-btn"
                   className="text-xs text-accent-fg hover:underline"
                 >
                   Clear filters
@@ -530,14 +556,14 @@ function displayId(issue: ExternalIssue): string {
   return `#${issue.externalId}`;
 }
 
-function ImportIssueRow({
+const ImportIssueRow = React.memo(function ImportIssueRow({
   issue,
   selected,
   onToggle,
 }: {
   issue: ExternalIssue;
   selected: boolean;
-  onToggle: () => void;
+  onToggle: (externalId: string) => void;
 }) {
   const isImported = issue.alreadyImported;
   const isProject = issue.externalSource === 'github_projects';
@@ -548,7 +574,7 @@ function ImportIssueRow({
       className={`flex items-start gap-2.5 px-4 py-2.5 border-b border-edge/20 transition-colors select-none ${
         isImported ? 'opacity-50 bg-surface-hover/10' : 'hover:bg-surface-hover/30 cursor-pointer'
       }`}
-      onClick={() => { if (!isImported) onToggle(); }}
+      onClick={() => { if (!isImported) onToggle(issue.externalId); }}
       data-testid={`import-issue-${issue.externalId}`}
     >
       <div className="pt-0.5">
@@ -560,7 +586,7 @@ function ImportIssueRow({
           <input
             type="checkbox"
             checked={selected}
-            onChange={onToggle}
+            onChange={() => onToggle(issue.externalId)}
             onClick={(event) => event.stopPropagation()}
             className="accent-accent-emphasis"
           />
@@ -615,4 +641,4 @@ function ImportIssueRow({
       </div>
     </div>
   );
-}
+});
