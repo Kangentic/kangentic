@@ -10,7 +10,9 @@ const execAsync = promisify(exec);
  * On Windows, npm global installs create .cmd shims that require a shell
  * to interpret. We use exec() with a single command string (not execFile
  * with an args array) to avoid Node.js DEP0190 which warns against
- * passing args when shell: true.
+ * passing args when shell: true. `windowsHide: true` keeps cmd.exe from
+ * briefly flashing a console window for every probe (noticeable in E2E
+ * runs where every test launch probes every installed agent CLI).
  *
  * On macOS/Linux, we use execFile() without a shell for direct execution.
  */
@@ -20,7 +22,7 @@ export async function execVersion(
 ): Promise<{ stdout: string; stderr: string }> {
   if (process.platform === 'win32') {
     // Safe: candidatePath comes from which() or hardcoded fallback paths, never user input
-    return execAsync(`"${candidatePath}" --version`, { timeout });
+    return execAsync(`"${candidatePath}" --version`, { timeout, windowsHide: true });
   }
   return execFileAsync(candidatePath, ['--version'], { timeout });
 }

@@ -38,7 +38,9 @@ export async function execWarpVersion(candidatePath: string, timeout = 5000): Pr
       // them rather than attempting to escape, since this path is a binary
       // location and should never contain them in practice.
       if (/["&|^%<>\n\r`$]/.test(candidatePath)) return null;
-      const { stdout, stderr } = await execAsync(`"${candidatePath}" dump-debug-info`, { timeout });
+      // windowsHide: true prevents the cmd.exe shell from briefly flashing
+      // a console window during the probe (visible in E2E test runs).
+      const { stdout, stderr } = await execAsync(`"${candidatePath}" dump-debug-info`, { timeout, windowsHide: true });
       return parseWarpVersion(stdout || stderr || '');
     }
     const { stdout, stderr } = await execFileAsync(candidatePath, ['dump-debug-info'], { timeout });
