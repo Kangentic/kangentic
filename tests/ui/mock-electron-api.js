@@ -974,7 +974,13 @@
       getPeriodStats: async function () {
         return { totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0 };
       },
-      setFocused: async function (/* sessionIds */) {},
+      // Call log for test assertions. Each entry is the string[] of session IDs
+      // passed to setFocused. Reset between tests via:
+      //   window.electronAPI.sessions.__setFocusedCalls.length = 0;
+      __setFocusedCalls: [],
+      setFocused: async function (sessionIds) {
+        window.electronAPI.sessions.__setFocusedCalls.push(sessionIds.slice());
+      },
     },
 
     config: {

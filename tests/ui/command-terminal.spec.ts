@@ -729,4 +729,238 @@ test.describe('Command Terminal', () => {
       }
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // setFocused IPC contract
+  //
+  // These tests verify that useFocusedSessionsSync calls setFocused with the
+  // correct session ID set under different view/state combinations. The mock
+  // records every setFocused call in window.electronAPI.sessions.__setFocusedCalls
+  // so we can assert on it after triggering state changes.
+  //
+  // The critical regression: switching to Backlog view while a command bar
+  // transient session exists must still put the transient ID in the focused set.
+  // Before the fix, TerminalPanel was unmounted on Backlog, so the setFocused
+  // effect never ran and the transient PTY output was silently dropped.
+  // ---------------------------------------------------------------------------
+
+  test.describe('setFocused IPC contract', () => {
+    /**
+     * Pre-configure with one running task session and one pre-existing transient
+     * session (command bar already open). This avoids the async spawnTransient
+     * path and lets us directly observe setFocused calls for the steady state.
+     */
+    function preConfigWithOpenCommandBar(): string {
+      return `
+        window.__mockPreConfigure(function (state) {
+          var ts = new Date().toISOString();
+
+          state.projects.push({
+            id: '${PROJECT_ID}',
+            name: 'Test Project',
+            path: '/mock/test-project',
+            github_url: null,
+            default_agent: 'claude',
+            last_opened: ts,
+            created_at: ts,
+          });
+
+          state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+            state.swimlanes.push(Object.assign({}, s, {
+              id: 'lane-focused-' + i,
+              position: i,
+              created_at: ts,
+            }));
+          });
+
+          // Regular task session
+          state.sessions.push({
+            id: '${TASK_SESSION_ID}',
+            taskId: '${TASK_ID}',
+            projectId: '${PROJECT_ID}',
+            pid: 3001,
+            status: 'running',
+            shell: 'bash',
+            cwd: '/mock/test-project',
+            startedAt: ts,
+            exitCode: null,
+            resuming: false,
+          });
+
+          // Pre-existing transient session (command bar was already open)
+          state.sessions.push({
+            id: '${TRANSIENT_SESSION_ID}',
+            taskId: '${TRANSIENT_SESSION_ID}',
+            projectId: '${PROJECT_ID}',
+            pid: 3002,
+            status: 'running',
+            shell: 'bash',
+            cwd: '/mock/test-project',
+            startedAt: ts,
+            exitCode: null,
+            resuming: false,
+            transient: true,
+          });
+
+          state.activityCache['${TASK_SESSION_ID}'] = 'idle';
+          state.activityCache['${TRANSIENT_SESSION_ID}'] = 'idle';
+
+          state.tasks.push({
+            id: '${TASK_ID}',
+            title: 'Regular Task',
+            description: '',
+            swimlane_id: 'lane-focused-0',
+            position: 0,
+            agent: null,
+            session_id: '${TASK_SESSION_ID}',
+            worktree_path: null,
+            branch_name: null,
+            pr_number: null,
+            pr_url: null,
+            base_branch: null,
+            archived_at: null,
+            created_at: ts,
+            updated_at: ts,
+          });
+
+          return { currentProjectId: '${PROJECT_ID}' };
+        });
+      `;
+    }
+
+    test('transient session enters focused set when command bar opens from Backlog view', async () => {
+      // This is the regression test for the bug fixed in this branch.
+      // Before the fix: TerminalPanel was unmounted on Backlog, so the
+      // setFocused effect never ran for the transient session, and PTY output
+      // was silently dropped - the overlay appeared frozen.
+      //
+      // After the fix: useFocusedSessionsSync lives in AppLayout (always
+      // mounted), so it fires setFocused even when the Backlog view is active.
+      const { browser, page } = await launchWithState(preConfigWithOpenCommandBar());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Clear any calls that fired during initial mount so we start fresh.
+        await page.evaluate(() => {
+          window.electronAPI.sessions.__setFocusedCalls.length = 0;
+        });
+
+        // Switch to Backlog view.
+        await page.locator('[data-testid="view-toggle-backlog"]').click();
+        await page.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 5000 });
+
+        // Open the command bar overlay (Ctrl+Shift+P).
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+
+        // Poll until setFocused is called with the transient session ID included.
+        // useFocusedSessionsSync fires as a useEffect after each render, so there
+        // may be a short async gap between state update and the IPC call.
+        await expect.poll(
+          async () => {
+            const allCalls = await page.evaluate(
+              (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
+            );
+            return allCalls.some(
+              (callArgs) => callArgs.includes(TRANSIENT_SESSION_ID),
+            );
+          },
+          { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
+        ).toBe(true);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('panel session leaves focused set when switching to Backlog with no dialog', async () => {
+      // Reverse regression: switching from Board to Backlog must remove the panel
+      // session from the focused set (no terminal is visible on Backlog without
+      // the command bar open). The session manager should stop forwarding PTY
+      // data for that session to avoid wasting IPC budget.
+      const { browser, page } = await launchWithState(preConfigWithOpenCommandBar());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // On Board view the panel session should be in the focused set.
+        await expect.poll(
+          async () => {
+            const allCalls = await page.evaluate(
+              (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
+            );
+            return allCalls.some(
+              (callArgs) => callArgs.includes(TASK_SESSION_ID),
+            );
+          },
+          { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
+        ).toBe(true);
+
+        // Clear the call log.
+        await page.evaluate(() => {
+          window.electronAPI.sessions.__setFocusedCalls.length = 0;
+        });
+
+        // Switch to Backlog. No command bar, no dialog.
+        await page.locator('[data-testid="view-toggle-backlog"]').click();
+        await page.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 5000 });
+
+        // setFocused should be called without the panel session ID.
+        // Poll until at least one call arrives, then assert the task session
+        // was not included in the latest call.
+        await expect.poll(
+          async () => {
+            const allCalls = await page.evaluate(
+              (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
+            );
+            return allCalls.length > 0;
+          },
+          { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
+        ).toBe(true);
+
+        const lastCall = await page.evaluate((): string[] => {
+          const allCalls = window.electronAPI.sessions.__setFocusedCalls;
+          return allCalls[allCalls.length - 1] ?? [];
+        });
+        expect(lastCall).not.toContain(TASK_SESSION_ID);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('panel session re-enters focused set when switching back to Board view', async () => {
+      // Board -> Backlog -> Board round-trip: the panel session must be restored
+      // to the focused set when the user returns to the Board view.
+      const { browser, page } = await launchWithState(preConfigWithOpenCommandBar());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Switch to Backlog.
+        await page.locator('[data-testid="view-toggle-backlog"]').click();
+        await page.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 5000 });
+
+        // Clear the log at the midpoint.
+        await page.evaluate(() => {
+          window.electronAPI.sessions.__setFocusedCalls.length = 0;
+        });
+
+        // Switch back to Board.
+        await page.locator('[data-testid="view-toggle-board"]').click();
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 5000 });
+
+        // Panel session must be back in the focused set.
+        await expect.poll(
+          async () => {
+            const allCalls = await page.evaluate(
+              (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
+            );
+            return allCalls.some(
+              (callArgs) => callArgs.includes(TASK_SESSION_ID),
+            );
+          },
+          { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
+        ).toBe(true);
+      } finally {
+        await browser.close();
+      }
+    });
+  });
 });

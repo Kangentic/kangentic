@@ -18,6 +18,7 @@ import { useSidebarResize, COLLAPSED_STRIP_WIDTH } from '../../hooks/useSidebarR
 import { useTerminalResize, COLLAPSED_HEIGHT } from '../../hooks/useTerminalResize';
 import { useCommandBar } from '../../hooks/useCommandBar';
 import { useViewToggle } from '../../hooks/useViewToggle';
+import { useFocusedSessionsSync } from '../../hooks/useFocusedSessionsSync';
 
 export function AppLayout() {
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
@@ -31,6 +32,7 @@ export function AppLayout() {
   const terminal = useTerminalResize(config);
   const commandBar = useCommandBar();
   useViewToggle();
+  useFocusedSessionsSync();
 
   return (
     <div className="h-screen flex flex-col bg-surface">
