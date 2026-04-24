@@ -624,6 +624,52 @@ test.describe('Task Activity Indicators', () => {
     });
   });
 
+  // Group H: running session with no activity cache entry
+  // Regression: previously, a running session whose activity entry was
+  // missing from the main-side cache (orphaned DB row, HMR recovery gap,
+  // listener reattach race) rendered a permanent thinking spinner + green
+  // pulse in the title row because getTaskProgress defaulted activity to
+  // 'thinking'. A running session is always either thinking or idle;
+  // when there is no cached value, we default to idle (the safer value).
+  // A real thinking session emits events quickly and self-corrects.
+  // The bottom-bar "Starting agent..." overlay is unchanged (Group G).
+  test.describe('running session with missing activity cache entry', () => {
+    test('title row shows idle mail icon (not spinner) when activity cache is empty', async () => {
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, noActivityCache: true }),
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await expect(page.locator('[data-testid="usage-bar"]').first()).toBeVisible({ timeout: 10000 });
+
+        const titleRow = page.locator('text=Test Initializing Task').first().locator('..');
+        await expect(titleRow.locator('.lucide-mail')).toBeVisible({ timeout: 10000 });
+        await expect(titleRow.locator('.lucide-loader-circle')).not.toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('card container has animate-pulse-subtle (idle pulse) when activity cache is empty', async () => {
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, noActivityCache: true }),
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await expect(page.locator('[data-testid="usage-bar"]').first()).toBeVisible({ timeout: 10000 });
+
+        const card = page.locator(`[data-task-id="${TASK_ID}"]`);
+        await expect(card).toBeVisible();
+
+        const classAttr = await card.getAttribute('class');
+        expect(classAttr).toBeTruthy();
+        expect(classAttr).toContain('animate-pulse-subtle');
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
   // Group: rate-limits pill (Claude-only field, ContextBar component)
   test.describe('rate limits pill', () => {
     test('renders 5h and 7d bars in task detail ContextBar when usage.rateLimits is present', async () => {

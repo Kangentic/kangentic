@@ -78,9 +78,18 @@ export function getTaskProgress(inputs: {
       // Session is running - show as running regardless of usage data.
       // Usage enriches the display (model, cost, context %) but its
       // absence doesn't mean the agent isn't running.
+      //
+      // A running session is always either 'thinking' or 'idle'; there
+      // is no third state. When the renderer has no cached value (brief
+      // startup window, HMR recovery gap where syncSessions's snapshot
+      // didn't contain the session, listener reattach race, orphaned
+      // DB row with no live state machine entry), we default to 'idle'.
+      // Defaulting to 'thinking' would stick the spinner permanently
+      // for any of those cases; 'idle' is the safer default because a
+      // real thinking session emits events quickly and corrects itself.
       return {
         kind: 'running',
-        activity: activity ?? 'thinking',
+        activity: activity ?? 'idle',
         usage: usage ?? null,
       };
     }

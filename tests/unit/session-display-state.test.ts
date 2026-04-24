@@ -82,16 +82,16 @@ describe('getTaskProgress', () => {
       .toEqual({ kind: 'queued' });
   });
 
-  it('returns { kind: "running" } with default activity when running with no usage', () => {
+  it('defaults activity to "idle" when running with no activity signal', () => {
     const session = makeSession({ status: 'running' });
     expect(getTaskProgress({ session }))
-      .toEqual({ kind: 'running', activity: 'thinking', usage: null });
+      .toEqual({ kind: 'running', activity: 'idle', usage: null });
   });
 
-  it('returns { kind: "running" } when session is resuming (no usage)', () => {
+  it('defaults activity to "idle" when session is resuming (no usage)', () => {
     const session = makeSession({ status: 'running', resuming: true });
     expect(getTaskProgress({ session }))
-      .toEqual({ kind: 'running', activity: 'thinking', usage: null });
+      .toEqual({ kind: 'running', activity: 'idle', usage: null });
   });
 
   it('returns { kind: "running" } when running with activity but no usage', () => {
@@ -106,10 +106,17 @@ describe('getTaskProgress', () => {
     expect(result).toEqual({ kind: 'running', activity: 'thinking', usage: MOCK_USAGE });
   });
 
-  it('defaults activity to "thinking" when activity is undefined', () => {
+  it('defaults activity to "idle" when activity is undefined', () => {
+    // Regression: the old implementation defaulted to 'thinking' here,
+    // which caused TaskCard to render a permanent spinner for any
+    // session whose activity entry was missing from the main-side cache
+    // (orphaned DB rows, HMR recovery gaps, listener reattach races).
+    // A running session is always either thinking or idle; when we have
+    // no signal, 'idle' is the safer default because a real thinking
+    // session emits events quickly and self-corrects.
     const session = makeSession({ status: 'running' });
     const result = getTaskProgress({ session, usage: MOCK_USAGE });
-    expect(result).toEqual({ kind: 'running', activity: 'thinking', usage: MOCK_USAGE });
+    expect(result).toEqual({ kind: 'running', activity: 'idle', usage: MOCK_USAGE });
   });
 
   it('preserves activity "idle" when explicitly set', () => {

@@ -209,9 +209,10 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     );
   }
 
-  // Derive visual indicators from display state
+  // A running session is always either idle or thinking; see
+  // task-progress.ts for how the fallback is resolved.
   const isIdle = displayState.kind === 'running' && displayState.activity === 'idle';
-  const isThinking = displayState.kind === 'running' && displayState.activity !== 'idle';
+  const isThinking = displayState.kind === 'running' && displayState.activity === 'thinking';
 
   // Board-level density: compact prop (from backlog) takes precedence, otherwise use config
   const boardDensity = compact ? 'compact' : cardDensity;
