@@ -21,7 +21,7 @@ export interface McpToolResult {
  * session-tools import one source of truth.
  */
 export const PROJECT_SELECTOR_DESCRIPTION =
-  'Optional project selector. Pass a project name (case-insensitive exact) or project UUID to route this call to a different project than the one the MCP client is bound to. Use kangentic_list_projects to discover valid selectors. Omit to target the active project.';
+  'Optional project selector. Pass a project name (case-insensitive exact) or project UUID to route this call to a different project than the one the MCP client is bound to. If the user\'s request names another Kangentic project (e.g. "create a task in X to ..." or "move task #7 in X to Done"), pass that name here instead of omitting - do not rely on the active default when the prompt specifies a different target. Use kangentic_list_projects to discover valid selectors. Omit to target the active project.';
 
 /**
  * Atomic create_task rate-limit counter shared across all requests served
@@ -128,14 +128,17 @@ export async function withProject(
  * when the handler returned structured data.
  */
 /**
- * Strip characters that would corrupt the single-line `[Project: ...]`
- * marker (newlines, brackets) and cap length so a pathologically long
- * project name can't swamp the tool response. Project names are
- * user-controlled at project creation time, so while the realistic
- * blast radius is tiny, this keeps downstream line-based parsing
- * robust.
+ * Strip characters that would corrupt a single-line embedding of the
+ * project name (newlines, brackets) and cap length so a pathologically
+ * long project name can't swamp the tool response or instructions
+ * string. Project names are user-controlled at project creation time,
+ * so while the realistic blast radius is tiny, this keeps downstream
+ * line-based parsing robust.
+ *
+ * Exported so server-instructions.ts can reuse the same normalisation
+ * when embedding names in the top-level MCP `instructions` string.
  */
-function sanitizeProjectName(name: string): string {
+export function sanitizeProjectName(name: string): string {
   const stripped = name.replace(/[\r\n\]]/g, ' ');
   return stripped.length > 60 ? `${stripped.slice(0, 57)}...` : stripped;
 }

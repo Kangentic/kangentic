@@ -82,14 +82,21 @@ type AnyToolHandler = (args: Record<string, unknown>) => Promise<{
 
 function makeFakeServer() {
   const handlers: Record<string, AnyToolHandler> = {};
+  const configs: Record<string, { description?: string }> = {};
   return {
-    registerTool: vi.fn((_name: string, _config: unknown, handler: AnyToolHandler) => {
-      handlers[_name] = handler;
+    registerTool: vi.fn((name: string, config: { description?: string }, handler: AnyToolHandler) => {
+      handlers[name] = handler;
+      configs[name] = config;
     }),
     getHandler(name: string): AnyToolHandler {
       const handler = handlers[name];
       if (!handler) throw new Error(`Tool "${name}" was not registered`);
       return handler;
+    },
+    getConfig(name: string): { description?: string } {
+      const config = configs[name];
+      if (!config) throw new Error(`Tool "${name}" was not registered`);
+      return config;
     },
   };
 }
@@ -221,6 +228,38 @@ describe('get_current_task uses defaultContextResolved, not withProject', () => 
 // ---------------------------------------------------------------------------
 // list_sessions - representative session tool that routes through withProject
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Routing-cue hints in tool descriptions - regression guard against accidental
+// revert of the prompt-routing guidance text (see server-instructions.ts for
+// the top-level version of the same rule).
+// ---------------------------------------------------------------------------
+
+describe('routing-cue hints in tool descriptions', () => {
+  let server: ReturnType<typeof makeFakeServer>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    server = makeFakeServer();
+    const resolver = makeResolver();
+    const taskCounter: TaskCounter = { tryReserve: vi.fn(() => true) };
+    registerTaskTools(server as never, resolver, taskCounter, 50);
+  });
+
+  it('kangentic_create_task description nudges the model to route by prompt cues', () => {
+    const { description } = server.getConfig('kangentic_create_task');
+    expect(description).toBeDefined();
+    expect(description).toMatch(/names a different Kangentic project/i);
+    expect(description).toContain('`project`');
+  });
+
+  it('kangentic_move_task description nudges the model to route by prompt cues', () => {
+    const { description } = server.getConfig('kangentic_move_task');
+    expect(description).toBeDefined();
+    expect(description).toMatch(/names a different Kangentic project/i);
+    expect(description).toContain('`project`');
+  });
+});
 
 describe('list_sessions project routing via withProject', () => {
   let server: ReturnType<typeof makeFakeServer>;

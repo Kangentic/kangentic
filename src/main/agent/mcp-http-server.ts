@@ -25,6 +25,7 @@ import { makeTaskCounter, type TaskCounter } from './mcp-http/handler-helpers';
 import { registerTaskTools } from './mcp-http/task-tools';
 import { registerSessionTools } from './mcp-http/session-tools';
 import { registerProjectTools } from './mcp-http/project-tools';
+import { buildServerInstructions } from './mcp-http/server-instructions';
 import type { RequestResolver } from './mcp-http/project-resolver';
 
 const SERVER_NAME = 'kangentic';
@@ -171,7 +172,16 @@ async function handleHttpRequest(
   // Per-request McpServer + transport. Stateless mode, plain JSON
   // responses (no SSE), built-in DNS rebinding protection on top of the
   // 127.0.0.1 bind for belt-and-suspenders.
-  const mcpServer = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  //
+  // `instructions` is surfaced to the agent at initialize time (Claude
+  // Code renders it as `## kangentic` in its system prompt). We build it
+  // per-request so the active-project name and registered-project list
+  // reflect the current DB state, not whatever was true at launch.
+  const instructions = buildServerInstructions(resolver);
+  const mcpServer = new McpServer(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    { instructions },
+  );
   registerTaskTools(mcpServer, resolver, taskCounter, MAX_TASKS_PER_SESSION);
   registerSessionTools(mcpServer, resolver);
   registerProjectTools(mcpServer, resolver);

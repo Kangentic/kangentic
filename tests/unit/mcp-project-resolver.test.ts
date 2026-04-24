@@ -385,6 +385,26 @@ describe('withProject', () => {
     expect(firstLine).not.toContain('\n');
   });
 
+  it('sanitizes project names that contain CRLF (\\r\\n) before embedding in the marker', async () => {
+    const resolver = makeResolver(
+      [
+        makeProject({ id: DEFAULT_ID, name: 'Active' }),
+        makeProject({ id: OTHER_ID, name: 'Line\r\nBreak' }),
+      ],
+      DEFAULT_ID,
+    );
+
+    const result = await withProject(resolver, OTHER_ID, async () => ({
+      content: [{ type: 'text' as const, text: 'ok' }],
+    }));
+
+    const firstLine = textOf(result).split('\n')[0];
+    // Both \r and \n are replaced with spaces, producing 'Line  Break'.
+    expect(firstLine).toBe(`[Project: Line  Break (${OTHER_ID.slice(0, 8)})]`);
+    expect(firstLine).not.toContain('\r');
+    expect(firstLine).not.toContain('\n');
+  });
+
   it('truncates pathologically long project names to keep the marker on one line', async () => {
     const longName = 'x'.repeat(200);
     const resolver = makeResolver(

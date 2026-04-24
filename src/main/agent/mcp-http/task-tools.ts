@@ -28,7 +28,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_create_task',
     {
-      description: 'Create a task on the Kangentic board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool - use it whenever the user asks to "create a task", "add a todo", "add to backlog", or similar. With no `column` argument, the task always lands in the active board\'s To Do column - never the backlog. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead. Pass any other column name (e.g. "Planning", "Code Review") to land directly in that board column. Board tasks get a git branch and are ready to work on immediately. Pass `project` to file the task in a different Kangentic project (use kangentic_list_projects to find valid selectors).',
+      description: 'Create a task on the Kangentic board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool - use it whenever the user asks to "create a task", "add a todo", "add to backlog", or similar. With no `column` argument, the task always lands in the active board\'s To Do column - never the backlog. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead. Pass any other column name (e.g. "Planning", "Code Review") to land directly in that board column. Board tasks get a git branch and are ready to work on immediately. If the user\'s prompt names a different Kangentic project (e.g. "create a task in X to fix ..."), pass that name as `project` to route the task to that project instead of the active default - do not rely on the active default when the user clearly targeted another project. Use kangentic_list_projects to find valid selectors.',
       inputSchema: z.object({
         title: z.string().max(200).describe('Task title (max 200 characters)'),
         description: z.string().max(10000).optional().describe('Task description. Supports markdown.'),
@@ -311,7 +311,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_move_task',
     {
-      description: 'Move a task to a different column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task. Moving to To Do kills the session and removes the worktree. Pass `project` to move a task in a different project.',
+      description: 'Move a task to a different column. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running configured transition actions. Moving to the Done column auto-archives the task. Moving to To Do kills the session and removes the worktree. If the user\'s prompt names a different Kangentic project (e.g. "move task #7 in X to Done"), pass that name as `project` to route the move to that project instead of the active default.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         column: z.string().describe('Target column name (case-insensitive, e.g. "Review", "In Progress", "Done").'),
