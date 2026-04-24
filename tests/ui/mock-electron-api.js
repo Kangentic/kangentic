@@ -101,7 +101,6 @@
     skipDoneWorktreeConfirm: false,
     skipBoardConfigConfirm: false,
     autoFocusIdleSession: false,
-    activateAllProjectsOnStartup: true,
     restoreWindowPosition: true,
     windowBounds: null,
     windowMaximized: false,

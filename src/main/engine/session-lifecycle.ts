@@ -21,6 +21,7 @@ export interface ResumeCheck {
 //   running    → exited     (Claude exits naturally, crash, killed)
 //   suspended  → exited     (replaced by new session on resume)
 //   orphaned   → exited     (recovery dedup, or failed recovery)
+//   orphaned   → suspended  (pause-on-restart setting upgrades crashed sessions)
 //   exited     → suspended  (preserve for future resume on move to Done)
 // ---------------------------------------------------------------------------
 
@@ -64,8 +65,9 @@ export function markRecordExited(
 }
 
 /**
- * Atomically mark a session record as suspended. Accepts 'running' or
- * 'exited' as the source status (exited covers Claude natural exit).
+ * Atomically mark a session record as suspended. Accepts 'running', 'exited',
+ * or 'orphaned' as the source status. 'exited' covers Claude natural exit;
+ * 'orphaned' covers the pause-on-restart upgrade for crash-recovered records.
  */
 export function markRecordSuspended(
   sessionRepo: SessionRepository,
@@ -74,7 +76,7 @@ export function markRecordSuspended(
 ): boolean {
   return sessionRepo.compareAndUpdateStatus(
     recordId,
-    ['running', 'exited'],
+    ['running', 'exited', 'orphaned'],
     'suspended',
     { suspended_at: new Date().toISOString(), suspended_by: suspendedBy },
   );

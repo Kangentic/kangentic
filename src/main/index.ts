@@ -3,7 +3,7 @@ const PROCESS_START = performance.now();
 import { app, BrowserWindow, clipboard, Menu, nativeImage } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
-import { registerAllIpc, getSessionManager, getCommandInjector, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
+import { registerAllIpc, getSessionManager, getCommandInjector, getBoardConfigManager, getConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
 import { createRequestResolver } from './agent/mcp-project-context';
 import { IPC } from '../shared/ipc-channels';
@@ -502,6 +502,7 @@ function getShutdownDependencies() {
     getSessionManager,
     getBoardConfigManager,
     getCommandInjector,
+    getConfigManager,
     getCurrentProjectId,
     deleteProjectFromIndex,
     stopUpdaterTimers,

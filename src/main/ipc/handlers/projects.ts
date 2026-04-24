@@ -397,9 +397,6 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
 export async function activateAllProjects(context: IpcContext): Promise<void> {
   if (isShuttingDown()) return;
 
-  const config = context.configManager.load();
-  if (!config.activateAllProjectsOnStartup) return;
-
   const projects = context.projectRepo.list();
   const otherProjects = projects.filter(p => p.id !== context.currentProjectId);
   if (otherProjects.length === 0) return;

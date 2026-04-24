@@ -72,10 +72,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'agent.queueOverflow', tabId: 'behavior', label: 'When Max Sessions Reached', description: 'How new agent requests are handled when all slots are in use', scope: 'global', section: 'Session Limits', keywords: ['overflow', 'queue', 'reject'] },
 
   // ── Behavior ──
-  { id: 'skipDeleteConfirm', tabId: 'behavior', label: 'Skip Task Delete Confirmation', description: 'Delete tasks immediately without a confirmation dialog', scope: 'global', keywords: ['confirm', 'dialog'] },
-  { id: 'skipDoneWorktreeConfirm', tabId: 'behavior', label: 'Auto-Delete Worktree on Done', description: 'Delete the local worktree without asking each time a task moves to Done. Branch and session history are always preserved.', scope: 'global', keywords: ['confirm', 'dialog', 'worktree', 'done', 'delete'] },
   { id: 'autoFocusIdleSession', tabId: 'behavior', label: 'Auto-Focus Idle Sessions', description: 'Automatically switch the bottom panel to idle sessions. Idle tabs are always highlighted regardless of this setting.', scope: 'global', keywords: ['switch', 'panel', 'attention'] },
-  { id: 'activateAllProjectsOnStartup', tabId: 'behavior', label: 'Launch All Projects on Startup', description: 'Start agents across all projects on launch, not just the current open one', scope: 'global', keywords: ['boot', 'open', 'activate'] },
+  { id: 'agent.autoResumeSessionsOnRestart', tabId: 'behavior', label: 'Auto-Resume Agents on Restart', description: 'When a project opens, resume any agent sessions that were running at last close. When off, those sessions stay paused until you click Resume on each task. Turn off if resuming many agents at once slows your machine.', scope: 'global', keywords: ['resume', 'restart', 'startup', 'suspend', 'pause', 'stampede', 'auto', 'sessions', 'agents'] },
 
   // ── Notifications ──
   { id: 'notifications.onAgentIdle', tabId: 'notifications', label: 'Agent Idle', description: 'When an agent needs attention on a non-visible project', scope: 'global', keywords: ['desktop', 'toast', 'alert'] },

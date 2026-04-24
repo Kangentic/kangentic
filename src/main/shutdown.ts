@@ -4,11 +4,14 @@ import { markRecordSuspended, markRecordExited } from './engine/session-lifecycl
 import type { SessionManager } from './pty/session-manager';
 import type { BoardConfigManager } from './config/board-config-manager';
 import type { CommandInjector } from './engine/command-injector';
+import type { ConfigManager } from './config/config-manager';
+import type { SuspendedBy } from '../shared/types';
 
 interface ShutdownDependencies {
   getSessionManager: () => SessionManager;
   getBoardConfigManager: () => BoardConfigManager;
   getCommandInjector: () => CommandInjector;
+  getConfigManager: () => ConfigManager;
   getCurrentProjectId: () => string | null;
   deleteProjectFromIndex: (projectId: string) => void;
   stopUpdaterTimers: () => void;
@@ -41,6 +44,19 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
     const sessionManager = dependencies.getSessionManager();
     dependencies.getCommandInjector().cancelAll();
 
+    // Read the auto-resume setting once. When disabled, we mark running
+    // sessions as 'user'-suspended so resumeSuspendedSessions leaves them as
+    // placeholders on next launch instead of auto-resuming.
+    let suspendReason: SuspendedBy = 'system';
+    try {
+      const config = dependencies.getConfigManager().load();
+      if (!config.agent.autoResumeSessionsOnRestart) {
+        suspendReason = 'user';
+      }
+    } catch (error) {
+      console.error('[APP] Failed to read agent.autoResumeSessionsOnRestart during shutdown:', error);
+    }
+
     // Mark running DB records as 'suspended' so sessions can resume on next launch.
     // This must happen BEFORE killAll() because killAll sends best-effort exit
     // signals then force-kills. The atomic compareAndUpdateStatus prevents the
@@ -62,7 +78,7 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
         for (const session of sessions) {
           const record = sessionRepo.getLatestForTask(session.taskId);
           if (record && record.status === 'running') {
-            markRecordSuspended(sessionRepo, record.id, 'system');
+            markRecordSuspended(sessionRepo, record.id, suspendReason);
           } else if (record && record.status === 'queued') {
             // Queued sessions never started Claude CLI - mark as exited
             // (not suspended) since there's nothing to resume.

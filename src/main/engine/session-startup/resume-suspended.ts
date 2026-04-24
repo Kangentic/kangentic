@@ -8,7 +8,7 @@ import { SessionManager } from '../../pty/session-manager';
 import { ConfigManager } from '../../config/config-manager';
 import type { SessionRecord, Task } from '../../../shared/types';
 import { isResumeEligible } from '../spawn-intent';
-import { retireRecord } from '../session-lifecycle';
+import { retireRecord, markRecordSuspended } from '../session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
 import { prepareAgentSpawn } from './prepare-spawn';
 
@@ -107,6 +107,8 @@ export async function resumeSuspendedSessions(
   const allTasks = taskRepo.list();
   const taskMap = new Map(allTasks.map((task) => [task.id, task]));
 
+  const autoResumeSessionsOnRestart = configManager.load().agent.autoResumeSessionsOnRestart;
+
   const toProcess: Array<{ record: SessionRecord; task: Task }> = [];
   let skipped = 0;
 
@@ -126,6 +128,25 @@ export async function resumeSuspendedSessions(
     if (excludedLaneIds.has(task.swimlane_id)) {
       if (record.status !== 'suspended') {
         retireRecord(sessionRepo, record.id);
+      }
+      skipped++;
+      continue;
+    }
+
+    // When auto-resume is disabled, crashed (orphaned) records are upgraded
+    // to user-paused so reconcile and auto-spawn (which both filter via
+    // getUserPausedTaskIds) leave them alone. Graceful-quit records are
+    // already 'user'-marked by syncShutdownCleanup when the setting is off.
+    // Only registers a placeholder when the CAS upgrade succeeds - if
+    // something else already retired the record concurrently, skip quietly.
+    if (!autoResumeSessionsOnRestart && record.status === 'orphaned') {
+      const upgraded = markRecordSuspended(sessionRepo, record.id, 'user');
+      if (upgraded) {
+        sessionManager.registerSuspendedPlaceholder({
+          taskId: record.task_id,
+          projectId,
+          cwd: record.cwd,
+        });
       }
       skipped++;
       continue;

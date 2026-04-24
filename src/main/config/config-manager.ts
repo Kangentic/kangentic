@@ -27,11 +27,14 @@ export class ConfigManager {
       this.config = { ...DEFAULT_CONFIG };
     }
 
-    // One-time migration: claude.* namespace -> agent.* (cliPath -> cliPaths)
+    // One-time migration: claude.* namespace -> agent.* (cliPath -> cliPaths).
+    // Spread the already-merged default first so any new agent.* fields added
+    // in the future are carried through without having to touch this block.
     if (parsed && 'claude' in parsed && !('agent' in parsed)) {
       const legacy = parsed.claude as Record<string, unknown>;
       const cliPath = legacy.cliPath;
       this.config.agent = {
+        ...this.config.agent,
         permissionMode: (legacy.permissionMode as PermissionMode) ?? this.config.agent.permissionMode,
         cliPaths: typeof cliPath === 'string' ? { claude: cliPath } : {},
         maxConcurrentSessions: (legacy.maxConcurrentSessions as number) ?? this.config.agent.maxConcurrentSessions,

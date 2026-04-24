@@ -602,6 +602,7 @@ export interface AppConfig {
     maxConcurrentSessions: number;
     queueOverflow: 'queue' | 'reject';
     idleTimeoutMinutes: number; // 0 = disabled
+    autoResumeSessionsOnRestart: boolean; // when false, sessions stay paused after restart and require a manual Resume click
   };
 
   sidebar: {
@@ -644,7 +645,6 @@ export interface AppConfig {
   skipDoneWorktreeConfirm: boolean;
   skipBoardConfigConfirm: boolean;
   autoFocusIdleSession: boolean;
-  activateAllProjectsOnStartup: boolean;
   restoreWindowPosition: boolean;
   windowBounds: { x: number; y: number; width: number; height: number } | null;
   windowMaximized: boolean;
@@ -676,6 +676,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     maxConcurrentSessions: 8,
     queueOverflow: 'queue',
     idleTimeoutMinutes: 0,
+    autoResumeSessionsOnRestart: true,
   },
   sidebar: {
     width: 400,
@@ -731,7 +732,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   skipDoneWorktreeConfirm: false,
   skipBoardConfigConfirm: false,
   autoFocusIdleSession: false,
-  activateAllProjectsOnStartup: true,
   restoreWindowPosition: true,
   windowBounds: null,
   windowMaximized: false,

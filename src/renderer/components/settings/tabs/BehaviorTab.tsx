@@ -28,28 +28,16 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
           <option value="reject">Reject</option>
         </Select>
       </SettingRow>
-      <SettingRow {...settingProps('skipDeleteConfirm')}>
-        <ToggleSwitch
-          checked={globalConfig.skipDeleteConfirm}
-          onChange={(value) => updateGlobal({ skipDeleteConfirm: value })}
-        />
-      </SettingRow>
-      <SettingRow {...settingProps('skipDoneWorktreeConfirm')}>
-        <ToggleSwitch
-          checked={globalConfig.skipDoneWorktreeConfirm}
-          onChange={(value) => updateGlobal({ skipDoneWorktreeConfirm: value })}
-        />
-      </SettingRow>
       <SettingRow {...settingProps('autoFocusIdleSession')}>
         <ToggleSwitch
           checked={globalConfig.autoFocusIdleSession}
           onChange={(value) => updateGlobal({ autoFocusIdleSession: value })}
         />
       </SettingRow>
-      <SettingRow {...settingProps('activateAllProjectsOnStartup')}>
+      <SettingRow {...settingProps('agent.autoResumeSessionsOnRestart')}>
         <ToggleSwitch
-          checked={globalConfig.activateAllProjectsOnStartup}
-          onChange={(value) => updateGlobal({ activateAllProjectsOnStartup: value })}
+          checked={globalConfig.agent.autoResumeSessionsOnRestart}
+          onChange={(value) => updateGlobal({ agent: { autoResumeSessionsOnRestart: value } })}
         />
       </SettingRow>
     </>

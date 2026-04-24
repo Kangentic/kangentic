@@ -29,9 +29,9 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `sidebarVisible`, `boardLayout`, `sidebar.width`
 - `cardDensity`, `columnWidth`, `terminalPanelVisible`, `animationsEnabled`, `statusBarVisible`
 - `showBoardSearch`, `restoreWindowPosition`
-- `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.queueOverflow`
+- `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`
 - `terminal.panelHeight`, `terminal.showPreview`
-- `skipDeleteConfirm`, `skipDoneWorktreeConfirm`, `autoFocusIdleSession`, `activateAllProjectsOnStartup`
+- `autoFocusIdleSession`
 - `contextBar.*` (all context bar visibility toggles)
 - `notifications.*` (all notification settings)
 - `agent.idleTimeoutMinutes`
@@ -59,10 +59,9 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `terminalPanelVisible` | boolean | `true` | Show the terminal panel below the board. Global-only. |
 | `animationsEnabled` | boolean | `true` | Enable CSS keyframe animations (idle pulse, dialog fades, status bar pulses). Global-only. |
 | `statusBarVisible` | boolean | `true` | Show the status bar at the bottom of the window. Global-only. |
-| `skipDeleteConfirm` | boolean | `false` | Skip confirmation dialog on task delete |
-| `skipDoneWorktreeConfirm` | boolean | `false` | Delete the local worktree without asking each time a task moves to Done. Branch and session history are always preserved. |
+| `skipDeleteConfirm` | boolean | `false` | Skip confirmation dialog on task delete. Written by the delete dialog's "don't ask again" checkbox. No longer surfaced in the Settings panel. |
+| `skipDoneWorktreeConfirm` | boolean | `false` | Skip the confirmation dialog when a task moves to Done. Written by the dialog's "don't ask again" checkbox. No longer surfaced in the Settings panel. |
 | `autoFocusIdleSession` | boolean | `false` | Auto-switch to session tab when agent goes idle. Idle tabs are always highlighted regardless of this setting. |
-| `activateAllProjectsOnStartup` | boolean | `true` | Open all projects on app launch (not just the last one). Global-only. |
 | `restoreWindowPosition` | boolean | `true` | Remember window size and position between launches. Global-only. |
 | `showBoardSearch` | boolean | `true` | Display the search bar above board columns. Toggle with Ctrl+F / Cmd+F. Global-only. |
 | `hasCompletedFirstRun` | boolean | `false` | Whether the user has completed first-run onboarding. Auto-set, not shown in UI. |
@@ -93,6 +92,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `agent.maxConcurrentSessions` | number | `8` | Max concurrent PTY sessions. Global-only. |
 | `agent.queueOverflow` | `'queue'` \| `'reject'` | `'queue'` | What to do when max sessions reached. Global-only. |
 | `agent.idleTimeoutMinutes` | number | `0` | Auto-suspend sessions after this many minutes idle. 0 = disabled. Global-only. |
+| `agent.autoResumeSessionsOnRestart` | boolean | `true` | When true, agent sessions that were running at last close auto-resume when Kangentic restarts. When false, sessions stay paused and require a manual Resume click on each task. Turn off if auto-resuming many agents at once overwhelms your machine. Global-only. |
 
 PermissionMode values:
 

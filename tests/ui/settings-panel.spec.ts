@@ -76,9 +76,8 @@ test.describe('Settings Panel', () => {
     await page.getByRole('button', { name: 'Behavior' }).click();
     await expect(page.locator('text=Max Concurrent Sessions')).toBeVisible();
     await expect(page.locator('text=When Max Sessions Reached')).toBeVisible();
-    await expect(page.locator('text=Skip Task Delete Confirmation')).toBeVisible();
     await expect(page.locator('text=Auto-Focus Idle Sessions')).toBeVisible();
-    await expect(page.locator('text=Launch All Projects on Startup')).toBeVisible();
+    await expect(page.locator('text=Auto-Resume Agents on Restart')).toBeVisible();
     await closeSettings();
   });
 

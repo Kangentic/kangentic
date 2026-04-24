@@ -135,6 +135,10 @@ export function getBoardConfigManager(): BoardConfigManager {
   return requireContext().boardConfigManager;
 }
 
+export function getConfigManager(): ConfigManager {
+  return requireContext().configManager;
+}
+
 export function getCurrentProjectId(): string | null {
   return requireContext().currentProjectId;
 }
