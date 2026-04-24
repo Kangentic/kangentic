@@ -2,6 +2,7 @@ import { type StateCreator } from 'zustand';
 import type { Task, TaskUnarchiveInput, TaskBulkDeleteProgress } from '../../../shared/types';
 import { useSessionStore } from '../session-store';
 import { useToastStore } from '../toast-store';
+import { applyStructuralSharing } from './structural-sharing';
 import type { BoardStore } from './types';
 
 export interface ArchivedTasksSlice {
@@ -39,35 +40,79 @@ export const createArchivedTasksSlice: StateCreator<BoardStore, [], [], Archived
   },
 
   unarchiveTask: async (input) => {
-    const taskTitle = get().archivedTasks.find((t) => t.id === input.id)?.title;
+    const previousTasks = get().tasks;
+    const previousArchivedTasks = get().archivedTasks;
+    const archivedRecord = previousArchivedTasks.find((t) => t.id === input.id);
+    if (!archivedRecord) return;
 
-    // Optimistic: remove from archivedTasks
-    set((s) => ({
-      archivedTasks: s.archivedTasks.filter((t) => t.id !== input.id),
+    const targetLane = get().swimlanes.find((lane) => lane.id === input.targetSwimlaneId);
+    const endOfLanePosition = previousTasks.filter((t) => t.swimlane_id === input.targetSwimlaneId).length;
+    const optimisticTask: Task = {
+      ...archivedRecord,
+      archived_at: null,
+      swimlane_id: input.targetSwimlaneId,
+      position: endOfLanePosition,
+    };
+
+    // Symmetric optimistic update: insert into tasks[] and remove from
+    // archivedTasks[] in one set() so the card is continuously present in
+    // some list. Without this, dnd-kit's DragOverlay has no handoff target
+    // during the IPC window and animates back to Done.
+    set((state) => ({
+      tasks: [...state.tasks, optimisticTask],
+      archivedTasks: state.archivedTasks.filter((t) => t.id !== input.id),
     }));
 
-    await window.electronAPI.tasks.unarchive(input);
+    // Backend always attempts resume first on unarchive from Done; if no
+    // suspended session record exists it falls back to fresh spawn. Either
+    // way the badge should appear immediately to match moveTask's UX.
+    if (targetLane?.auto_spawn) {
+      useSessionStore.getState().setSpawnProgress(input.id, 'Resuming agent...');
+    }
 
-    // Reload tasks (sessions arrive via push-based session-changed events)
-    const tasks = await window.electronAPI.tasks.list();
-    set({ tasks });
+    try {
+      await window.electronAPI.tasks.unarchive(input);
 
-    const targetLane = get().swimlanes.find((s) => s.id === input.targetSwimlaneId);
-    useToastStore.getState().addToast({
-      message: `"${taskTitle}" restored to ${targetLane?.name || 'board'}`,
-      variant: 'success',
-    });
+      const [nextTasks, nextArchivedTasks] = await Promise.all([
+        window.electronAPI.tasks.list(),
+        window.electronAPI.tasks.listArchived(),
+      ]);
+      set((state) => ({
+        tasks: applyStructuralSharing(state.tasks, nextTasks),
+        archivedTasks: applyStructuralSharing(state.archivedTasks, nextArchivedTasks),
+      }));
 
-    // Detect if the unarchived task got a session (transition engine fired).
-    // Unarchiving from Done always attempts to resume the suspended session,
-    // preserving Claude's conversation history via --resume.
-    const restoredTask = tasks.find((t) => t.id === input.id);
-    if (restoredTask?.session_id) {
-      useSessionStore.setState({ activeSessionId: restoredTask.session_id });
       useToastStore.getState().addToast({
-        message: `Agent resumed for "${restoredTask.title}"`,
+        message: `"${archivedRecord.title}" restored to ${targetLane?.name || 'board'}`,
         variant: 'success',
       });
+
+      // Detect if the unarchived task got a session (transition engine fired).
+      // Unarchiving from Done always attempts to resume the suspended session,
+      // preserving Claude's conversation history via --resume.
+      const restoredTask = nextTasks.find((t) => t.id === input.id);
+      if (restoredTask?.session_id) {
+        useSessionStore.setState({ activeSessionId: restoredTask.session_id });
+        useToastStore.getState().addToast({
+          message: `Agent resumed for "${restoredTask.title}"`,
+          variant: 'success',
+        });
+      }
+    } catch (err) {
+      // Snapshot restore for immediate visual revert, then loadBoard() to
+      // reconcile against concurrent ops that may have mutated either array
+      // during the await window. Matches the pattern in bulkUnarchiveTasks.
+      set({ tasks: previousTasks, archivedTasks: previousArchivedTasks });
+      await get().loadBoard();
+      useToastStore.getState().addToast({
+        message: `Failed to restore task: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'error',
+      });
+    } finally {
+      // Backend unarchive handler awaits the full spawn flow before returning,
+      // so by the time we're here the session is either attached or isn't -
+      // no reason to leave an optimistic "Resuming agent..." badge stuck.
+      useSessionStore.getState().setSpawnProgress(input.id, null);
     }
   },
 

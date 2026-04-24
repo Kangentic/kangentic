@@ -143,26 +143,6 @@ async function readBulkDeleteStore(page: Page) {
   });
 }
 
-// Read the toast store state (all current toasts)
-async function readToastStore(page: Page): Promise<Array<{ message: string; variant: string }>> {
-  return page.evaluate(() => {
-    const stores = (window as unknown as {
-      __zustandStores?: {
-        toast: {
-          getState: () => {
-            toasts: Array<{ id: string; message: string; variant: string }>;
-          };
-        };
-      };
-    }).__zustandStores;
-    if (!stores) return [];
-    return stores.toast.getState().toasts.map((toast) => ({
-      message: toast.message,
-      variant: toast.variant,
-    }));
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

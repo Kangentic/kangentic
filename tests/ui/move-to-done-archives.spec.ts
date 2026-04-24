@@ -113,11 +113,21 @@ async function dragTaskToColumn(page: Page, taskTitle: string, targetColumn: str
   const endX = targetBox.x + targetBox.width / 2;
   const endY = targetBox.y + 120;
 
+  // The .drag-overlay element is mounted by dnd-kit's DragOverlay component
+  // only while activeTask is non-null (see KanbanBoard.tsx). Polling for it
+  // between the activation move and the long move confirms dnd-kit's
+  // PointerSensor picked up the drag before we start cursor travel - avoids
+  // a race on slow machines where the long move could fire before the
+  // sensor's activation listeners attached.
   await page.mouse.move(startX, startY);
   await page.mouse.down();
   await page.mouse.move(startX + 10, startY, { steps: 3 });
+  await page.locator('.drag-overlay').waitFor({ state: 'attached', timeout: 3000 });
   await page.mouse.move(endX, endY, { steps: 15 });
   await page.mouse.up();
+  // After release, wait for dnd-kit to tear down the overlay before returning
+  // so downstream assertions don't observe mid-teardown state.
+  await page.locator('.drag-overlay').waitFor({ state: 'detached', timeout: 3000 });
 }
 
 async function readStore(page: Page): Promise<StoreProbe> {

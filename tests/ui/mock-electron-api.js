@@ -610,6 +610,29 @@
         };
       },
       unarchive: async function (input) {
+        // Test hook: simulate a main-process failure (e.g. worktree conflict).
+        // Real main process leaves archivedTasks unchanged before throwing, so
+        // the mock also leaves them unchanged and throws. The renderer's catch
+        // block restores the optimistic snapshot, which mirrors real behaviour.
+        // Set window.__mockTaskUnarchiveThrow = 'error message' before calling.
+        if (typeof window !== 'undefined' && window.__mockTaskUnarchiveThrow) {
+          var throwMsg = window.__mockTaskUnarchiveThrow;
+          window.__mockTaskUnarchiveThrow = null;
+          throw new Error(throwMsg);
+        }
+
+        // Test hook: make tasks.unarchive() return a controlled promise so the
+        // test can observe the intermediate optimistic state before the IPC
+        // resolves. Set window.__mockTaskUnarchiveDeferred = true before calling;
+        // the promise hangs until window.__mockTaskUnarchiveResolve() is called.
+        if (typeof window !== 'undefined' && window.__mockTaskUnarchiveDeferred) {
+          window.__mockTaskUnarchiveDeferred = false;
+          var resolveRef;
+          var pending = new Promise(function (res) { resolveRef = res; });
+          window.__mockTaskUnarchiveResolve = resolveRef;
+          await pending;
+        }
+
         var idx = archivedTasks.findIndex(function (t) {
           return t.id === input.id;
         });
