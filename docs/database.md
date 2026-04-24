@@ -261,6 +261,8 @@ No foreign key constraint on `session_id`. Cascade cleanup is handled via a DELE
 
 Index: `idx_handoffs_task_id` on (task_id).
 
+`packet_json` is a legacy column retained for schema compatibility. Current handoffs pass session context via `session_history_path` (a pointer to the source agent's native session history file). Repository queries no longer SELECT or write `packet_json`, and it is absent from the `HandoffRecord` TypeScript type.
+
 TypeScript type: `HandoffRecord` in `src/shared/types.ts`. Repository: `HandoffRepository` in `src/main/db/repositories/handoff-repository.ts`.
 
 ## Migration Strategy
@@ -449,7 +451,9 @@ Operates on a per-project DB. Tracks cross-agent context handoffs.
 | `insert(record)` | Insert a new handoff record |
 | `updateToSession(id, toSessionId)` | Update the target session ID after the handoff spawn completes |
 | `listByTaskId(taskId)` | List all handoff records for a task (ordered by `created_at` ASC) |
-| `getById(id)` | Get a single handoff record by ID (includes `packet_json`) |
+| `getLatestForTask(taskId)` | Get the most recent handoff record for a task |
+| `getByFromSession(sessionId)` | Forward lookup: where did this session's context go? |
+| `getByToSession(sessionId)` | Backward lookup: where did this session's context come from? |
 
 ### BacklogAttachmentRepository
 

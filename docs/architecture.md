@@ -507,6 +507,7 @@ Constructs the `claude` CLI invocation:
 | `plan` | `--permission-mode plan` |
 | `acceptEdits` | `--permission-mode acceptEdits` |
 | `dontAsk` | `--permission-mode dontAsk` |
+| `auto` | `--permission-mode auto` |
 | `bypassPermissions` | `--dangerously-skip-permissions` |
 
 ### Permission Mode Resolution (priority order)

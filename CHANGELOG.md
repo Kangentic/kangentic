@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.17.0] - 2026-04-24
+
+### Features
+
+- Session-recovery: add Auto-Resume Agents on Restart toggle, prune redundant Behavior toggles (5dedaa0)
+- MCP: cross-project tool calls via optional `project` selector (7973237)
+
+### Fixes
+
+- Task-unarchive: symmetric optimistic update to stop snap-back from Done (54f1e17)
+- Session-recovery: preserve resume when auto-resume-on-restart is off (22c1344)
+- Agent-detect: restore shell PATH on macOS/Linux GUI launches (63900bc)
+- Agent-detect: hide cmd.exe flashes during version probes on Windows (82ad4a2)
+- Task-card: default running activity to idle when cache is missing (e47055c)
+- Task-move: revert task to source column when spawn fails (796fdf2)
+
 ## [v0.16.1] - 2026-04-20
 
 ### Features

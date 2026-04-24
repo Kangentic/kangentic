@@ -358,12 +358,8 @@ These are global-only settings that apply to the entire app.
 |---------|-------------|
 | Max Concurrent Sessions | Limit how many agents can run at the same time |
 | When Max Sessions Reached | How new agent requests are handled when all slots are in use (Queue or Reject) |
-| Skip Task Delete Confirmation | Delete tasks immediately without a confirmation dialog |
-| Auto-Delete Worktree on Done | Delete the local worktree without asking each time a task moves to Done. Branch and session history are always preserved. |
-| Auto-Focus Idle Sessions | Automatically switch the bottom panel to the most recently idle session. Off by default - idle sessions show an amber dot on their tab instead. |
-| Launch All Projects on Startup | Start agents across all projects on launch, not just the current one |
-| Restore Window Position | Remember window size and position between launches |
-| Show Board Search Bar | Display the search bar above board columns. Press Ctrl+F / Cmd+F to toggle. |
+| Auto-Focus Idle Sessions | Automatically switch the bottom panel to idle sessions. Idle tabs are always highlighted regardless of this setting. |
+| Auto-Resume Agents on Restart | When a project opens, resume any agent sessions that were running at last close. When off, those sessions stay paused until you click Resume on each task. Turn off if resuming many agents at once slows your machine. |
 
 ### MCP Server
 
