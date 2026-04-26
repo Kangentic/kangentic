@@ -27,6 +27,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { CodexAdapter } from '../../src/main/agent/adapters/codex';
 import { GeminiAdapter } from '../../src/main/agent/adapters/gemini';
 import { WarpAdapter } from '../../src/main/agent/adapters/warp';
+import { DroidAdapter } from '../../src/main/agent/adapters/droid';
 import { sessionOutputPaths } from '../../src/main/engine/session-paths';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
 
@@ -368,6 +369,27 @@ describe('Agent PTY detection (real CLI boot)', () => {
       // There's no interactive idle prompt to detect. The PTY silence
       // timer is the sole idle detection mechanism.
       const adapter = new WarpAdapter();
+      const strategy = adapter.runtime.activity;
+      const detectIdle = (strategy.kind === 'pty' || strategy.kind === 'hooks_and_pty')
+        ? strategy.detectIdle
+        : undefined;
+      expect(detectIdle).toBeUndefined();
+    });
+
+    it('DroidAdapter detectFirstOutput matches cursor-hide escape', () => {
+      // Droid's Ink-based TUI emits \x1b[?25l (cursor-hide) as its
+      // first output, identical to Codex and Gemini. Verified empirically
+      // via scripts/probe-droid.js against Droid 0.109.1.
+      const adapter = new DroidAdapter();
+      expect(adapter.detectFirstOutput('\x1b[?25l')).toBe(true);
+      expect(adapter.detectFirstOutput('plain text')).toBe(false);
+    });
+
+    it('DroidAdapter has no detectIdle (silence-timer only)', () => {
+      // Droid uses PTY silence-timer-only activity detection -- no
+      // regex-based idle detection because the TUI's idle prompt shape
+      // was not empirically stable enough to pin at launch time.
+      const adapter = new DroidAdapter();
       const strategy = adapter.runtime.activity;
       const detectIdle = (strategy.kind === 'pty' || strategy.kind === 'hooks_and_pty')
         ? strategy.detectIdle

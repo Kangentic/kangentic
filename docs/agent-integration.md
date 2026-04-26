@@ -1,6 +1,6 @@
 # Agent Integration
 
-Kangentic supports ten AI coding agents: Claude Code, Codex CLI, Gemini CLI, Qwen Code, Cursor CLI, GitHub Copilot CLI, OpenCode, Aider, Oz CLI (Warp), and Kimi Code. Each agent is wrapped behind a common `AgentAdapter` interface that handles CLI detection, command building, permission mapping, session lifecycle hooks, and cross-agent handoff. This doc covers the adapter system, agent-specific details, and shared infrastructure.
+Kangentic supports eleven AI coding agents: Claude Code, Codex CLI, Gemini CLI, Qwen Code, Cursor CLI, GitHub Copilot CLI, OpenCode, Aider, Oz CLI (Warp), Kimi Code, and Droid. Each agent is wrapped behind a common `AgentAdapter` interface that handles CLI detection, command building, permission mapping, session lifecycle hooks, and cross-agent handoff. This doc covers the adapter system, agent-specific details, and shared infrastructure.
 
 ## Agent Adapter Interface
 
@@ -26,7 +26,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 
 | Property | Type | Purpose |
 |----------|------|---------|
-| `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'cursor'`, `'copilot'`, `'opencode'`, `'aider'`, `'warp'`, `'kimi'`) |
+| `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'cursor'`, `'copilot'`, `'opencode'`, `'aider'`, `'warp'`, `'kimi'`, `'droid'`) |
 | `displayName` | `string` | Human-readable product name |
 | `sessionType` | `SessionRecord['session_type']` | Value stored in the sessions DB table |
 | `supportsCallerSessionId` | `boolean` | True when the CLI accepts a caller-supplied session ID via `--session-id` (Claude). When false, Kangentic captures the agent's own ID via `runtime.sessionId` for `--resume`. |
@@ -75,6 +75,7 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude via `--se
 | Aider | `aider-adapter.ts` | `aider` | No | No | No | No |
 | Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | No | No | No |
 | Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <uuid>` (caller-owned) | Yes (`wire.jsonl`) | No | No |
+| Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | No (PTY-only) | No (use Droid's TUI: `/model` + Ctrl+D, shift+tab) | No |
 
 ## Agent Resolution
 
@@ -105,6 +106,7 @@ Each adapter implements `detectFirstOutput(data)` to signal when the agent's TUI
 | Aider | `data.length > 0` | Aider writes output immediately (no TUI alternate screen) |
 | Oz CLI (Warp) | `data.length > 0` | `oz agent run` streams output, no alternate screen |
 | Kimi Code | `\x1b[?25l` (cursor hide) | TUI hides cursor when its alternate-screen buffer takes over (verified empirically with kimi v1.37.0) |
+| Droid | `\x1b[?25l` (cursor hide) | Ink-based TUI, same pattern as Claude (verified empirically) |
 
 The `\x1b[?25l` (ANSI cursor hide) sequence fires after the shell prompt noise but before the TUI draws its startup banner. This keeps the shell command hidden behind the shimmer overlay.
 
@@ -123,6 +125,7 @@ Graceful exit sequences written to the PTY during `SessionManager.suspend()`:
 | Aider | `Ctrl+C` | No session resume, clean exit sufficient |
 | Oz CLI (Warp) | `Ctrl+C` | No session resume mechanism |
 | Kimi Code | `Ctrl+C`, `/exit` | Conventional TUI quit; flushes context.jsonl / wire.jsonl |
+| Droid | `Ctrl+C`, `/quit` | Triggers clean shutdown of the Ink TUI |
 
 ## Session History File Location
 

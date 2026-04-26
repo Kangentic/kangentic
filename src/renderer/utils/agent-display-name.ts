@@ -58,6 +58,11 @@ const AGENT_META: Record<string, AgentMeta> = {
     short: 'Kimi',
     installUrl: 'https://github.com/MoonshotAI/kimi-cli',
   },
+  droid: {
+    display: 'Droid',
+    short: 'Droid',
+    installUrl: 'https://docs.factory.ai/cli/getting-started/overview',
+  },
 };
 
 /** Full product name for an agent identifier (e.g. 'claude' -> 'Claude Code'). */
