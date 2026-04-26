@@ -62,7 +62,7 @@ src/
   main/           # Electron main process
     agent/        # Agent adapter system
       shared/     # Shared utilities (interpolateTemplate, resolveBridgeScript, execVersion)
-      adapters/   # Per-agent subfolders (claude/, codex/, gemini/, aider/)
+      adapters/   # Per-agent subfolders (claude/, codex/, gemini/, qwen-code/, opencode/, aider/)
       commands/   # MCP command handlers
     boards/       # Board integration adapter system (mirrors agent/)
       shared/     # BoardAdapter interface + auth, mapping, download, rate-limit helpers

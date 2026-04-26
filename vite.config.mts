@@ -15,7 +15,7 @@ export default defineConfig({
       // Ignore non-renderer directories to prevent unnecessary HMR triggers.
       // .kangentic/ contains worktrees and session data, .claude/ has agent configs,
       // docs/ and tests/ are markdown/test files that don't affect the renderer.
-      ignored: ['**/.kangentic/**', '**/.claude/**', '**/.codex/**', '**/.aider/**', '**/docs/**', '**/tests/**', '**/kangentic.json', '**/kangentic.local.json'],
+      ignored: ['**/.kangentic/**', '**/.claude/**', '**/.codex/**', '**/.aider/**', '**/.qwen/**', '**/docs/**', '**/tests/**', '**/kangentic.json', '**/kangentic.local.json'],
     },
   },
   optimizeDeps: {

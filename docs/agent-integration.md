@@ -1,6 +1,6 @@
 # Agent Integration
 
-Kangentic supports seven AI coding agents: Claude Code, Codex CLI, Gemini CLI, Cursor CLI, GitHub Copilot CLI, Aider, and Oz CLI (Warp). Each agent is wrapped behind a common `AgentAdapter` interface that handles CLI detection, command building, permission mapping, session lifecycle hooks, and cross-agent handoff. This doc covers the adapter system, agent-specific details, and shared infrastructure.
+Kangentic supports nine AI coding agents: Claude Code, Codex CLI, Gemini CLI, Qwen Code, Cursor CLI, GitHub Copilot CLI, OpenCode, Aider, and Oz CLI (Warp). Each agent is wrapped behind a common `AgentAdapter` interface that handles CLI detection, command building, permission mapping, session lifecycle hooks, and cross-agent handoff. This doc covers the adapter system, agent-specific details, and shared infrastructure.
 
 ## Agent Adapter Interface
 
@@ -26,7 +26,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 
 | Property | Type | Purpose |
 |----------|------|---------|
-| `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'cursor'`, `'copilot'`, `'aider'`, `'warp'`) |
+| `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'cursor'`, `'copilot'`, `'opencode'`, `'aider'`, `'warp'`) |
 | `displayName` | `string` | Human-readable product name |
 | `sessionType` | `SessionRecord['session_type']` | Value stored in the sessions DB table |
 | `supportsCallerSessionId` | `boolean` | True when the CLI accepts a caller-supplied session ID via `--session-id` (Claude). When false, Kangentic captures the agent's own ID via `runtime.sessionId` for `--resume`. |
@@ -69,6 +69,7 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude via `--se
 | Claude Code | `claude-adapter.ts` | `claude` | `--resume <id>` | Yes (status.json + events.jsonl) | Yes (`--settings`) | Yes (`~/.claude.json`) |
 | Codex CLI | `codex-adapter.ts` | `codex` | `resume <id>` | Partial (events.jsonl only) | No | No |
 | Gemini CLI | `gemini-adapter.ts` | `gemini` | `--resume <id>` | Yes (status.json + events.jsonl) | Yes (`.gemini/settings.json`) | No |
+| Qwen Code | `qwen-adapter.ts` | `qwen` | `--resume <id>` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | No |
 | Cursor CLI | `cursor-adapter.ts` | `agent` | `--resume="<id>"` | No | No | No |
 | GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--resume <uuid>` (caller-owned) | Partial (events.jsonl + status parser) | Per-session `--config-dir` | Runtime `--add-dir` |
 | Aider | `aider-adapter.ts` | `aider` | No | No | No | No |
@@ -97,6 +98,7 @@ Each adapter implements `detectFirstOutput(data)` to signal when the agent's TUI
 | Claude Code | `\x1b[?25l` (cursor hide) | TUI hides cursor when it takes over the terminal |
 | Codex CLI | `\x1b[?25l` (cursor hide) | Same TUI pattern as Claude |
 | Gemini CLI | `\x1b[?25l` (cursor hide) | Same TUI pattern as Claude |
+| Qwen Code | `\x1b[?25l` (cursor hide) | Same TUI pattern as Claude (inherited from gemini-cli fork) |
 | GitHub Copilot CLI | `\x1b[?25l` (cursor hide) | Same TUI pattern as Claude |
 | Cursor CLI | `data.length > 0` | Streams output immediately (no alternate screen buffer) |
 | Aider | `data.length > 0` | Aider writes output immediately (no TUI alternate screen) |
@@ -113,6 +115,7 @@ Graceful exit sequences written to the PTY during `SessionManager.suspend()`:
 | Claude Code | `Ctrl+C`, `/exit` | Flushes conversation state to JSONL transcript |
 | Codex CLI | `Ctrl+C` | API-backed sessions, no local state to flush |
 | Gemini CLI | `Ctrl+C`, `/quit` | Triggers clean shutdown |
+| Qwen Code | `Ctrl+C`, `/quit` | Same TUI shutdown as Gemini (fork) |
 | Cursor CLI | `Ctrl+C` | No graceful exit needed |
 | GitHub Copilot CLI | `Ctrl+C`, `/exit` | Same TUI exit pattern as Claude |
 | Aider | `Ctrl+C` | No session resume, clean exit sufficient |
@@ -127,6 +130,7 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 | Claude Code | `~/.claude/projects/<slug>/<sessionId>.jsonl` | Direct path computation |
 | Codex CLI | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<uuid>.jsonl` | Directory scan with polling |
 | Gemini CLI | `~/.gemini/tmp/<projectDir>/chats/session-<id>.json` | Directory scan with polling |
+| Qwen Code | `~/.qwen/tmp/<projectDir>/chats/session-<id>.json` | Directory scan with polling (inherited from gemini-cli fork) |
 | Cursor CLI | N/A | Returns null (location not yet known) |
 | GitHub Copilot CLI | N/A | Returns null (not yet empirically verified; activity flows through hooks JSONL) |
 | Aider | N/A | Returns null (no native session files) |
@@ -352,6 +356,66 @@ gemini --resume <sessionId>
 Gemini reads settings from `.gemini/settings.json` in the project directory. Unlike Claude's `--settings` flag, Gemini has no way to point to a per-session settings file. Kangentic writes merged settings (with event-bridge hooks) directly to `.gemini/settings.json` in the CWD.
 
 Because the file is shared, concurrent Gemini sessions in the same project are serialized by a per-task reference counter in `GeminiAdapter.hookHolders`: each `buildCommand` retains a reference keyed by `taskId`, and `removeHooks(directory, taskId)` only strips the file when the last task in that directory releases. Double-calls for the same `taskId` (session-manager invokes `removeHooks` both explicitly in `suspend()` and again from the PTY `onExit` handler) are idempotent. On crash or force-quit, `buildHooks` strips any stale Kangentic entries from the settings file on the next spawn. The same pattern lives in `CodexAdapter.hookHolders` for `.codex/hooks.json`.
+
+## Qwen Code
+
+Qwen Code (https://github.com/QwenLM/qwen-code) is a soft fork of Google's gemini-cli published by the Alibaba Qwen team. The Kangentic adapter mirrors the Gemini adapter: same hook event schema, same session JSON layout, same TUI behavior. Three deltas matter for users.
+
+### CLI Detection
+
+`src/main/agent/adapters/qwen-code/detector.ts`
+
+Detection follows the standard pattern: check `config.agent.cliPaths.qwen`, fall back to `PATH` via `which`, run `qwen --version`. Version output is the raw version string with no product-name prefix or suffix (inherited from gemini-cli), so `parseVersion` is identity.
+
+### Command Building
+
+`src/main/agent/adapters/qwen-code/command-builder.ts`
+
+#### New Session
+
+```
+qwen --approval-mode <mode> "prompt text"
+```
+
+Qwen Code creates sessions implicitly (we mirror Gemini's filesystem-capture path even though `--session-id` is documented in the upstream yargs config; see "Out of scope" notes for the rationale).
+
+#### Resumed Session
+
+```
+qwen --resume <sessionId>
+```
+
+### Permission Modes
+
+| Mode | Flag | Qwen Mode |
+|------|------|-----------|
+| `plan` / `dontAsk` | `--approval-mode plan` | Plan (Read-Only Research) |
+| `default` | (no flag) | Default (Confirm Actions) |
+| `acceptEdits` / `auto` | `--approval-mode auto-edit` | Auto Edit (Auto-Approve Edits) |
+| `bypassPermissions` | `--approval-mode yolo` | YOLO (Auto-Approve All) |
+
+The fork swapped Gemini's `auto_edit` (underscore) flag value for `auto-edit` (hyphen). The unit tests guard against the underscore form regressing.
+
+### Settings Merge
+
+Qwen Code reads settings from `.qwen/settings.json` in the project directory. Like Gemini it has no `--settings` flag, so Kangentic writes merged settings (with event-bridge hooks) directly to `.qwen/settings.json` in the CWD. Concurrent sessions in the same project are serialized by a per-task reference counter in `QwenAdapter.hookHolders`, identical to the Gemini implementation.
+
+### Session History
+
+Native chat session JSON file:
+
+```
+~/.qwen/tmp/<basename(cwd)>/chats/session-<timestamp><shortId>.json
+```
+
+The parser walks the `messages[]` array backwards to find the most recent assistant message and reads its `model` + `tokens` fields. Both `type: 'qwen'` (rebranded build) and `type: 'gemini'` (some forks retain the upstream literal) are accepted.
+
+Context window sizes are stored in a model-name lookup table covering Qwen3-Coder (256K), Qwen3 general (128K), Qwen-Max (32K), Qwen-Plus (128K), Qwen-Turbo (1M long-context tier), and the Qwen2.5 family. Unknown model names fall through to a `null` sentinel - the renderer hides the progress bar and shows only the model name (graceful degradation).
+
+### Limitations / Out of Scope
+
+- **Caller-owned session IDs:** Qwen Code's yargs config exposes `--session-id <uuid>`, but until end-to-end semantics are empirically verified the adapter mirrors Gemini's filesystem-capture path. `supportsCallerSessionId` is `false`. Switching to caller-owned IDs is a one-line flip in `qwen-adapter.ts` plus a `--session-id` branch in the command builder.
+- **No statusLine telemetry:** Qwen Code (like Gemini) has no `status.json` token-streaming feature, so context window % is sourced from the session history file rather than a real-time hook.
 
 ## Aider
 

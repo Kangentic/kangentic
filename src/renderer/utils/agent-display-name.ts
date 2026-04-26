@@ -48,6 +48,11 @@ const AGENT_META: Record<string, AgentMeta> = {
     short: 'OpenCode',
     installUrl: 'https://opencode.ai/docs',
   },
+  qwen: {
+    display: 'Qwen Code',
+    short: 'Qwen',
+    installUrl: 'https://github.com/QwenLM/qwen-code',
+  },
 };
 
 /** Full product name for an agent identifier (e.g. 'claude' -> 'Claude Code'). */
