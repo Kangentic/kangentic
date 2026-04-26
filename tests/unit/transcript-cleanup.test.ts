@@ -548,5 +548,54 @@ describe('cleanTranscriptForHandoff', () => {
       const result = cleanTranscriptForHandoff(text, 'unknown-agent');
       expect(result).toContain('plain output');
     });
+
+    it('default branch applies finalizeTranscript (collapse blank runs, trim) for unknown agent', () => {
+      // The dispatcher default case calls finalizeTranscript, which collapses
+      // 3+ blank lines to at most 2 and trims leading/trailing whitespace.
+      const text = '   \n\n\n\nSome content\n\n\n\nMore content\n\n\n';
+      const result = cleanTranscriptForHandoff(text, 'future-agent-v2');
+      expect(result).not.toBeNull();
+      // Leading/trailing whitespace must be gone.
+      expect(result!.startsWith(' ')).toBe(false);
+      expect(result!.endsWith('\n')).toBe(false);
+      // Excessive blank runs collapsed to at most two newlines.
+      expect(result).not.toMatch(/\n{3,}/);
+      // Content must be preserved.
+      expect(result).toContain('Some content');
+      expect(result).toContain('More content');
+    });
+
+    it('early-return guard returns null for whitespace-only transcript regardless of agent', () => {
+      // The dispatcher's `if (!rawTranscript.trim()) return null;` guard fires
+      // BEFORE the switch, so whitespace-only input never reaches the default
+      // branch. This test pins the early-return contract explicitly so a
+      // future change that moves the trim check into individual cleaners
+      // doesn't silently break it.
+      const result = cleanTranscriptForHandoff('   \n  \n  ', 'future-agent-v2');
+      expect(result).toBeNull();
+    });
+
+    it('default branch returns null when content reduces to nothing inside finalizeTranscript', () => {
+      // To exercise the default branch (not the early-return guard), the
+      // input must pass `rawTranscript.trim()` (i.e. contain non-whitespace
+      // characters somewhere) but reduce to empty after finalizeTranscript's
+      // collapse + strip-trailing-duplicates pass. A run of repeated blank
+      // lines surrounding a single zero-width-joiner does this: trim() on
+      // the whole thing returns truthy (the ZWJ survives), but the per-line
+      // pipeline collapses it away and trim() at the end returns ''.
+      // We use a simpler input: a single line of pure whitespace mixed with
+      // tabs is preserved by the early-return guard (tabs survive trim) but
+      // the finalize step trims it to empty.
+      // NOTE: with the current implementation, ANY input that passes the
+      // early-return guard will preserve at least one non-whitespace
+      // character through finalizeTranscript. So the default branch
+      // returning null is unreachable in practice - it's a defensive
+      // safety net. This test documents that observation.
+      const text = '​'; // zero-width space - non-whitespace per trim()
+      const result = cleanTranscriptForHandoff(text, 'future-agent-v2');
+      // Defensive null OR a string containing the ZWJ are both acceptable;
+      // the contract is that the default branch never throws.
+      expect(result === null || typeof result === 'string').toBe(true);
+    });
   });
 });

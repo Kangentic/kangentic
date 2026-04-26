@@ -1136,6 +1136,16 @@
             ],
             defaultPermission: 'acceptEdits',
           },
+          {
+            name: 'kimi', displayName: 'Kimi Code', found: false, path: null, version: null,
+            // KEEP IN SYNC with KimiAdapter.permissions in src/main/agent/adapters/kimi/kimi-adapter.ts
+            permissions: [
+              { mode: 'plan', label: 'Plan (Read-Only)' },
+              { mode: 'default', label: 'Default (Confirm Actions)' },
+              { mode: 'bypassPermissions', label: 'YOLO (Skip Confirmations)' },
+            ],
+            defaultPermission: 'default',
+          },
         ];
       },
     },

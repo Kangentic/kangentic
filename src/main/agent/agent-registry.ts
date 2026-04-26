@@ -8,6 +8,7 @@ import { WarpAdapter } from './adapters/warp';
 import { CopilotAdapter } from './adapters/copilot';
 import { OpenCodeAdapter } from './adapters/opencode';
 import { QwenAdapter } from './adapters/qwen-code';
+import { KimiAdapter } from './adapters/kimi';
 
 class AgentRegistry {
   private adapters = new Map<string, AgentAdapter>();
@@ -59,3 +60,4 @@ agentRegistry.register(new WarpAdapter());
 agentRegistry.register(new CopilotAdapter());
 agentRegistry.register(new OpenCodeAdapter());
 agentRegistry.register(new QwenAdapter());
+agentRegistry.register(new KimiAdapter());

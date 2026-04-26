@@ -53,6 +53,11 @@ const AGENT_META: Record<string, AgentMeta> = {
     short: 'Qwen',
     installUrl: 'https://github.com/QwenLM/qwen-code',
   },
+  kimi: {
+    display: 'Kimi Code',
+    short: 'Kimi',
+    installUrl: 'https://github.com/MoonshotAI/kimi-cli',
+  },
 };
 
 /** Full product name for an agent identifier (e.g. 'claude' -> 'Claude Code'). */

@@ -1,6 +1,6 @@
 # Agent Integration
 
-Kangentic supports nine AI coding agents: Claude Code, Codex CLI, Gemini CLI, Qwen Code, Cursor CLI, GitHub Copilot CLI, OpenCode, Aider, and Oz CLI (Warp). Each agent is wrapped behind a common `AgentAdapter` interface that handles CLI detection, command building, permission mapping, session lifecycle hooks, and cross-agent handoff. This doc covers the adapter system, agent-specific details, and shared infrastructure.
+Kangentic supports ten AI coding agents: Claude Code, Codex CLI, Gemini CLI, Qwen Code, Cursor CLI, GitHub Copilot CLI, OpenCode, Aider, Oz CLI (Warp), and Kimi Code. Each agent is wrapped behind a common `AgentAdapter` interface that handles CLI detection, command building, permission mapping, session lifecycle hooks, and cross-agent handoff. This doc covers the adapter system, agent-specific details, and shared infrastructure.
 
 ## Agent Adapter Interface
 
@@ -26,7 +26,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 
 | Property | Type | Purpose |
 |----------|------|---------|
-| `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'cursor'`, `'copilot'`, `'opencode'`, `'aider'`, `'warp'`) |
+| `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'cursor'`, `'copilot'`, `'opencode'`, `'aider'`, `'warp'`, `'kimi'`) |
 | `displayName` | `string` | Human-readable product name |
 | `sessionType` | `SessionRecord['session_type']` | Value stored in the sessions DB table |
 | `supportsCallerSessionId` | `boolean` | True when the CLI accepts a caller-supplied session ID via `--session-id` (Claude). When false, Kangentic captures the agent's own ID via `runtime.sessionId` for `--resume`. |
@@ -74,6 +74,7 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude via `--se
 | GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--resume <uuid>` (caller-owned) | Partial (events.jsonl + status parser) | Per-session `--config-dir` | Runtime `--add-dir` |
 | Aider | `aider-adapter.ts` | `aider` | No | No | No | No |
 | Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | No | No | No |
+| Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <uuid>` (caller-owned) | Yes (`wire.jsonl`) | No | No |
 
 ## Agent Resolution
 
@@ -103,6 +104,7 @@ Each adapter implements `detectFirstOutput(data)` to signal when the agent's TUI
 | Cursor CLI | `data.length > 0` | Streams output immediately (no alternate screen buffer) |
 | Aider | `data.length > 0` | Aider writes output immediately (no TUI alternate screen) |
 | Oz CLI (Warp) | `data.length > 0` | `oz agent run` streams output, no alternate screen |
+| Kimi Code | `\x1b[?25l` (cursor hide) | TUI hides cursor when its alternate-screen buffer takes over (verified empirically with kimi v1.37.0) |
 
 The `\x1b[?25l` (ANSI cursor hide) sequence fires after the shell prompt noise but before the TUI draws its startup banner. This keeps the shell command hidden behind the shimmer overlay.
 
@@ -120,6 +122,7 @@ Graceful exit sequences written to the PTY during `SessionManager.suspend()`:
 | GitHub Copilot CLI | `Ctrl+C`, `/exit` | Same TUI exit pattern as Claude |
 | Aider | `Ctrl+C` | No session resume, clean exit sufficient |
 | Oz CLI (Warp) | `Ctrl+C` | No session resume mechanism |
+| Kimi Code | `Ctrl+C`, `/exit` | Conventional TUI quit; flushes context.jsonl / wire.jsonl |
 
 ## Session History File Location
 
@@ -135,6 +138,7 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 | GitHub Copilot CLI | N/A | Returns null (not yet empirically verified; activity flows through hooks JSONL) |
 | Aider | N/A | Returns null (no native session files) |
 | Oz CLI (Warp) | N/A | Returns null (no CLI-accessible session history) |
+| Kimi Code | `~/.kimi/sessions/<work_dir_hash>/<sessionId>/wire.jsonl` | Glob across all hash dirs (work_dir hash is opaque) and match on session UUID |
 
 ## Claude Code
 
@@ -575,6 +579,109 @@ Warp manages permissions via agent profiles (`--profile <ID>`), not individual C
 - No structured status or event output - PTY silence timer is the sole idle detection
 - No `transcript-cleanup.ts` (streams text output, not a TUI alternate screen)
 - `locateSessionHistoryFile` returns null - no CLI-accessible session history
+
+## Kimi Code
+
+### CLI Detection
+
+`src/main/agent/adapters/kimi/kimi-adapter.ts`
+
+Kimi is a Python tool installed via `uv tool install kimi-cli` (the upstream installer at `code.kimi.com/install.sh`). Both `kimi` and `kimi-cli` PATH entries map to the same `src/kimi_cli:__main__` entry point. Detection uses `AgentDetector` with a `kimi --version` probe (output format: `kimi, version 1.37.0`). Fallback paths cover the uv-tool prefix on macOS/Linux (`~/.local/share/uv/tools/kimi-cli/bin/kimi`) and Windows (`%APPDATA%\uv\tools\kimi-cli\Scripts\kimi.exe` and `%LOCALAPPDATA%` equivalent).
+
+### Command Building
+
+`src/main/agent/adapters/kimi/command-builder.ts`
+
+```
+kimi -w <cwd> [--session <uuid>] [--plan|--yolo] [--print --output-format stream-json] [--mcp-config '<json>'] [--prompt "<text>"]
+```
+
+Flag mapping (verified empirically with kimi v1.37.0):
+
+| PermissionMode | Kimi flag |
+|----------------|-----------|
+| `plan` | `--plan` |
+| `bypassPermissions` | `--yolo` |
+| `default` / `acceptEdits` / `dontAsk` / `auto` | (no flag - interactive confirms) |
+
+- `-w <cwd>` always passed; the path is forward-slashed so PowerShell and bash both parse it correctly.
+- `--session <uuid>` is used for both *create* (caller-owned UUID) and *resume*. Kimi's `Session.create(work_dir, session_id="...")` SDK API maps to the same flag, so we set `supportsCallerSessionId = true` and own the ID end-to-end.
+- `--prompt <text>` is the canonical non-interactive prompt entry. Quoting follows the same shell-safe rules as the other adapters.
+- `--mcp-config <JSON>` is synthesized when `mcpServerEnabled` is true; the payload is a minimal fastmcp-compatible config naming Kangentic's HTTP MCP server with the `X-Kangentic-Token` header.
+
+### Session ID Capture
+
+Two PTY regex anchors plus a filesystem fallback:
+
+1. **Welcome banner**: `Session: <uuid>` printed in the cyan startup box (interactive and `--print`).
+2. **Print-mode exit**: `To resume this session: kimi -r <uuid>` written to stderr at session end.
+3. **Filesystem fallback**: `runtime.sessionId.fromFilesystem` scans `~/.kimi/sessions/*\/<uuid>/` for directories whose mtime is within ±30s of the spawn time.
+
+### Session History
+
+`src/main/agent/adapters/kimi/session-history-parser.ts` + `wire-parser.ts`
+
+Kimi writes `wire.jsonl` to `~/.kimi/sessions/<work_dir_hash>/<sessionId>/` on every spawn (interactive or `--print`). The work_dir hash is opaque - the locator globs across all hash dirs and matches on session UUID.
+
+The file is append-only (resume via `-r <uuid>` appends new `TurnBegin` / `TurnEnd` lines). Format:
+
+```jsonl
+{"type": "metadata", "protocol_version": "1.9"}
+{"timestamp": <unix_seconds>, "message": {"type": "<EventName>", "payload": {...}}}
+```
+
+Every documented wire-protocol message type (19 Events + 4 Requests, wire protocol v1.9) is parsed:
+
+**Events**
+
+| Wire event | Activity | SessionEvent |
+|------------|----------|--------------|
+| `TurnBegin` | → Thinking | `Prompt` (detail = extracted user_input text) |
+| `TurnEnd` | → Idle | (none) |
+| `StepBegin` | → Thinking | (none) |
+| `StepInterrupted` | → Idle | `Interrupted` |
+| `CompactionBegin` | → Thinking | `Compact` |
+| `CompactionEnd` | (preserve) | (none) |
+| `StatusUpdate` | (preserve) | (none; updates SessionUsage) |
+| `ContentPart` | (preserve) | (none; streaming text fragment) |
+| `ToolCall` | (preserve) | `ToolStart` (detail = tool name) |
+| `ToolCallPart` | (preserve) | (none; argument-streaming fragment) |
+| `ToolResult` | (preserve) | `ToolEnd` (detail = `ok` or `error`) |
+| `ApprovalResponse` | → Thinking | `Notification` (detail = response) |
+| `SubagentEvent` | (preserve) | `Notification` (detail = subagent_type or agent_id) |
+| `BtwBegin` | (preserve) | `SubagentStart` (detail = `btw`) |
+| `BtwEnd` | (preserve) | `SubagentStop` (detail = `btw`) |
+| `SteerInput` | → Thinking | `Prompt` (detail = extracted user_input text) |
+| `PlanDisplay` | (preserve) | `Notification` (detail = file_path) |
+| `HookTriggered` | (preserve) | `Notification` (detail = `<event>:<target>`) |
+| `HookResolved` | (preserve) | `Notification` (detail = `<event>:<action> (<reason>)`) |
+
+**Requests** (Wire protocol uses JSON-RPC 2.0; the parser is a passive observer that surfaces requests as activity-state telemetry):
+
+| Wire request | Activity | SessionEvent |
+|--------------|----------|--------------|
+| `ApprovalRequest` | → Idle | `Idle` (detail = `IdleReason.Permission`) |
+| `ToolCallRequest` | (preserve) | `ToolStart` (detail = `name`) |
+| `QuestionRequest` | → Idle | `Idle` (detail = `IdleReason.Permission`) |
+| `HookRequest` | (preserve) | `Notification` (detail = `<event>:<target>`) |
+
+The parser uses an exhaustive `switch` over a `KIMI_DISPATCH_TYPES` literal union, so a future protocol bump that adds a new type produces a TS exhaustiveness error at compile time. `user_input` (TurnBegin / SteerInput) accepts both `string` and `ContentPart[]`; the parser extracts `TextPart.text` from arrays and ignores think/media parts.
+
+### Permission Modes
+
+Kimi exposes only two permission flags. The adapter surfaces three modes:
+
+| Mode | Kimi behavior |
+|------|---------------|
+| `plan` | Read-only (`--plan`) |
+| `default` | Interactive confirmation per action (no flag) |
+| `bypassPermissions` | Auto-approve all (`--yolo`) |
+
+### Limitations
+
+- No hook injection (Kimi reads `~/.kimi/config.toml` `hooks = []` but has no per-project settings file equivalent we can write to)
+- No trust dialog (`ensureTrust` is a no-op)
+- Authentication is interactive (`kimi login` opens an OAuth flow); we surface no UX for it today - a fresh install will print "Model: not set, send /login to login" until the user logs in once
 
 ## Prompt Templates
 

@@ -51,6 +51,7 @@ function agentDisplayLabel(agent: string): string {
     case 'gemini': return 'Gemini CLI';
     case 'codex': return 'Codex CLI';
     case 'aider': return 'Aider';
+    case 'kimi': return 'Kimi Code';
     default: return agent;
   }
 }

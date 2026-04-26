@@ -1,10 +1,12 @@
 import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
+import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import type { Session, Swimlane, Task } from '../../src/shared/types';
 
-export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp' | 'opencode';
+export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp' | 'opencode' | 'kimi';
 
 // --- Test data isolation ---
 // Each test run uses its own data directory so E2E tests never pollute
@@ -232,6 +234,22 @@ export async function createTask(
  * Used by E2E specs that need to point an agent's cliPath at a mock binary
  * (e.g. mock-claude, mock-codex, mock-gemini).
  */
+/**
+ * Wipe the ~/.kimi/sessions/<hash>/ directory whose md5 matches the given
+ * absolute work_dir. The mock-kimi fixture computes the hash the same way,
+ * so this targets exactly the directories that mock spawned for this test.
+ *
+ * Mirrors the cleanup pattern used by mock-codex (which deletes its
+ * rollout JSONL on exit), but factored into helpers because the mock
+ * intentionally never cleans up itself - real Kimi persists wire.jsonl
+ * across runs so resume can find it.
+ */
+export function cleanupKimiSessionsForCwd(cwd: string): void {
+  const hash = createHash('md5').update(path.resolve(cwd)).digest('hex');
+  const target = path.join(os.homedir(), '.kimi', 'sessions', hash);
+  try { fs.rmSync(target, { recursive: true, force: true }); } catch { /* ignore */ }
+}
+
 export function mockAgentPath(agent: AgentName): string {
   const fixturesDir = path.join(__dirname, '..', 'fixtures');
   if (process.platform === 'win32') {

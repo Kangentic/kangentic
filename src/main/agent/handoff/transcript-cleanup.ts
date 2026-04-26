@@ -15,6 +15,7 @@ import { cleanClaudeTranscript } from '../adapters/claude/transcript-cleanup';
 import { cleanCodexTranscript } from '../adapters/codex/transcript-cleanup';
 import { cleanGeminiTranscript } from '../adapters/gemini/transcript-cleanup';
 import { cleanAiderTranscript } from '../adapters/aider/transcript-cleanup';
+import { cleanKimiTranscript } from '../adapters/kimi/transcript-cleanup';
 
 // ---------------------------------------------------------------------------
 // Shared utilities (exported for use by adapter transcript-cleanup files)
@@ -106,7 +107,7 @@ export function finalizeTranscript(text: string): string | null {
  * clean conversation from the raw PTY stream.
  *
  * @param rawTranscript - ANSI-stripped PTY output from TranscriptWriter
- * @param sourceAgent - Agent identifier: 'claude', 'codex', 'gemini', 'aider'
+ * @param sourceAgent - Agent identifier: 'claude', 'codex', 'gemini', 'aider', 'kimi'
  * @returns Cleaned transcript text, or null if nothing meaningful remains.
  */
 export function cleanTranscriptForHandoff(
@@ -124,6 +125,8 @@ export function cleanTranscriptForHandoff(
       return cleanGeminiTranscript(rawTranscript);
     case 'aider':
       return cleanAiderTranscript(rawTranscript);
+    case 'kimi':
+      return cleanKimiTranscript(rawTranscript);
     default:
       // Unknown agents: no TUI-specific cleanup, just basic finalization
       return finalizeTranscript(rawTranscript);

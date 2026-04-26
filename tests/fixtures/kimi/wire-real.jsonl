@@ -1,0 +1,5 @@
+{"type": "metadata", "protocol_version": "1.9"}
+{"timestamp": 1776824398.6243954, "message": {"type": "TurnBegin", "payload": {"user_input": [{"type": "text", "text": "hello"}]}}}
+{"timestamp": 1776824398.6256943, "message": {"type": "TurnEnd", "payload": {}}}
+{"timestamp": 1776824416.890657, "message": {"type": "TurnBegin", "payload": {"user_input": [{"type": "text", "text": "hello"}]}}}
+{"timestamp": 1776824416.8920372, "message": {"type": "TurnEnd", "payload": {}}}
