@@ -43,6 +43,11 @@ const AGENT_META: Record<string, AgentMeta> = {
     short: 'Copilot',
     installUrl: 'https://docs.github.com/en/copilot/how-tos/copilot-cli/cli-getting-started',
   },
+  opencode: {
+    display: 'OpenCode',
+    short: 'OpenCode',
+    installUrl: 'https://opencode.ai/docs',
+  },
 };
 
 /** Full product name for an agent identifier (e.g. 'claude' -> 'Claude Code'). */

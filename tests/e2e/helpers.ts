@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import { execSync } from 'node:child_process';
 import type { Session, Swimlane, Task } from '../../src/shared/types';
 
-export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp';
+export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp' | 'opencode';
 
 // --- Test data isolation ---
 // Each test run uses its own data directory so E2E tests never pollute
