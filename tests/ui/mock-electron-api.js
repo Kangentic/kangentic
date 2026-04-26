@@ -501,6 +501,36 @@
         throw new Error('Task not found: ' + input.id);
       },
       delete: async function (id) {
+        // Test hook: increment a per-id IPC call counter so specs can verify
+        // that rapid repeats don't spawn extra IPC calls. Read via
+        // window.__mockTaskDeleteCallCount[id].
+        if (typeof window !== 'undefined') {
+          if (!window.__mockTaskDeleteCallCount) window.__mockTaskDeleteCallCount = {};
+          window.__mockTaskDeleteCallCount[id] = (window.__mockTaskDeleteCallCount[id] || 0) + 1;
+        }
+
+        // Test hook: simulate a main-process failure (e.g. worktree cleanup
+        // throws). Real main process leaves the DB row in place before
+        // throwing, so the mock also leaves arrays unchanged and throws.
+        // Set window.__mockTaskDeleteThrow = 'error message' before calling.
+        if (typeof window !== 'undefined' && window.__mockTaskDeleteThrow) {
+          var throwMsg = window.__mockTaskDeleteThrow;
+          window.__mockTaskDeleteThrow = null;
+          throw new Error(throwMsg);
+        }
+
+        // Test hook: make tasks.delete() return a controlled promise so the
+        // test can observe the optimistic state before the IPC resolves.
+        // Set window.__mockTaskDeleteDeferred = true before calling; the
+        // promise hangs until window.__mockTaskDeleteResolve() is called.
+        if (typeof window !== 'undefined' && window.__mockTaskDeleteDeferred) {
+          window.__mockTaskDeleteDeferred = false;
+          var resolveRef;
+          var pending = new Promise(function (res) { resolveRef = res; });
+          window.__mockTaskDeleteResolve = resolveRef;
+          await pending;
+        }
+
         tasks = tasks.filter(function (t) {
           return t.id !== id;
         });

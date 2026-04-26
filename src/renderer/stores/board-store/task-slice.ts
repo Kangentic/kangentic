@@ -64,16 +64,41 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
   },
 
   deleteTask: async (id) => {
-    // IPC first -- only update UI on success
-    await window.electronAPI.tasks.delete(id);
+    // Snapshot both arrays for rollback. Active tasks normally live in
+    // `tasks`, but we filter both defensively to match the prior behavior.
+    const previousTasks = get().tasks;
+    const previousArchivedTasks = get().archivedTasks;
+
+    // Optimistic: remove the card from view immediately.
     set((s) => ({
       tasks: s.tasks.filter((t) => t.id !== id),
       archivedTasks: s.archivedTasks.filter((t) => t.id !== id),
     }));
-    // Remove ALL sessions for this task from the session store
+
+    // Callers (TaskCard.handleContextDelete / useTaskActions.handleDelete)
+    // already awaited killSession before invoking this, so the PTY is dead.
+    // Drop the in-memory record alongside the task. Sessions are NOT restored
+    // on rollback - the PTY is gone either way; user can re-spawn if the task
+    // pops back.
     useSessionStore.setState((s) => ({
       sessions: s.sessions.filter((session) => session.taskId !== id),
     }));
+
+    try {
+      await window.electronAPI.tasks.delete(id);
+    } catch (err) {
+      // Restore both arrays so the card reappears in its original slot.
+      // No loadBoard() reconcile (unlike unarchiveTask): backend withTaskLock
+      // already serializes per-task ops, and same-task is the only meaningful
+      // race surface for a hard delete. Matches deleteArchivedTask.
+      set({ tasks: previousTasks, archivedTasks: previousArchivedTasks });
+      useToastStore.getState().addToast({
+        message: `Failed to delete task: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'error',
+      });
+      // Re-throw so callers skip their own success toast on failure.
+      throw err;
+    }
   },
 
   moveTask: async (input, skipConfirmation?: boolean) => {
