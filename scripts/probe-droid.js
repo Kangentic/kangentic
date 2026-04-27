@@ -20,9 +20,10 @@
  *                            recalls the prior turn (verifies the same
  *                            JSON `session_id` comes back, and the
  *                            answer references the prior turn's content)
- *   5. Hook delivery       - a self-installed `.factory/settings.json`
- *                            SessionStart hook is fired for an exec call,
- *                            with `session_id` present in stdin
+ *   5. Hook delivery       - hook entries injected via `--settings <path>`
+ *                            fire on `droid` interactive (empirical state on
+ *                            0.109.1: they do NOT fire, even with `model`
+ *                            pinned in the merged settings)
  *   6. Interactive new     - spawns the TUI via node-pty, watches for
  *                            cursor-hide first-output marker
  *   7. Interactive resume  - spawns `droid --resume <uuid>` via node-pty
@@ -31,6 +32,12 @@
  *                            the load-bearing question for whether
  *                            Kangentic's adapter can use a symmetric
  *                            new/resume command builder
+ *   8. Project-level hooks - `<cwd>/.factory/settings.json` SessionStart hook
+ *                            fires for an interactive `droid` invocation with
+ *                            NO `--settings` flag (the documented per-project
+ *                            injection vehicle; if this fires, the empty
+ *                            Activity tab gap can be closed via a Codex/Gemini
+ *                            -style refcounted hook-manager)
  *
  * Auth
  * ----
@@ -96,6 +103,9 @@ const VERDICT = {
   hookSessionIdField: null,
   ptyNewFirstOutput: null,
   ptyResumeAccepted: null,
+  projectLevelHooksFire: null,
+  projectLevelHookSessionIdField: null,
+  projectLevelHookEventCounts: null,
   resumeStrategy: null,
 };
 
@@ -615,13 +625,100 @@ async function step7PtyResume(prior) {
   VERDICT.ptyResumeAccepted = sawCursorHide && !hadError && !earlyExit;
 }
 
+// --------------------------------------------------------------------------
+// Step 8 - PTY interactive new + hooks via project-level
+// `<cwd>/.factory/settings.json` (NO `--settings` flag)
+// --------------------------------------------------------------------------
+async function step8ProjectLevelHooks() {
+  section('Step 8 - project-level <cwd>/.factory/settings.json hook injection (NO --settings flag)');
+
+  let pty;
+  try {
+    pty = require('node-pty');
+  } catch (error) {
+    log('FAIL to load node-pty:');
+    log('  ' + error.message);
+    log('  Run `npm install` from this worktree, then retry.');
+    return;
+  }
+
+  // Reset hook log so step 5/7 records do not leak into step 8 counts.
+  try { fs.unlinkSync(HOOK_LOG); } catch { /* ignore */ }
+  writeRecorderScript();
+
+  const cwd = path.join(TMP_ROOT, 'project-d-factory-hooks');
+  const factoryDir = path.join(cwd, '.factory');
+  fs.mkdirSync(factoryDir, { recursive: true });
+  const settingsPath = path.join(factoryDir, 'settings.json');
+  fs.writeFileSync(settingsPath, JSON.stringify(buildHookSettings(), null, 2));
+  log(`hook settings file: ${settingsPath}`);
+  log('(intentionally NOT passing `--settings` - relying on project-level discovery)');
+
+  // Mirror step 5's argv exactly, MINUS the `--settings` flag, so the only
+  // variable between the two probes is the hook injection vehicle.
+  const argv = ['--cwd', cwd, 'Reply with PROBE-PROJECT-HOOKS and nothing else.'];
+  log(`spawning: droid ${argv.join(' ')}`);
+
+  const projectHooksProc = pty.spawn(
+    VERDICT.detectedPath || (process.platform === 'win32' ? 'droid.cmd' : 'droid'),
+    argv,
+    { name: 'xterm-color', cols: 120, rows: 30, cwd, env: process.env },
+  );
+  let buffer = '';
+  projectHooksProc.onData((data) => { buffer += data; });
+
+  // Same 25s window as step 5 - enough for SessionStart, the prompt round-trip,
+  // and Stop to fire if hooks are honored.
+  await new Promise((resolve) => setTimeout(resolve, 25_000));
+
+  const cursorHide = buffer.includes('\x1b[?25l');
+  log(`captured ${buffer.length} bytes; cursor-hide (\\x1b[?25l): ${cursorHide ? 'YES' : 'no'}`);
+  log('first 400 bytes of TUI output:');
+  blockquote(JSON.stringify(buffer.slice(0, 400)));
+
+  try { projectHooksProc.write('/quit\r'); } catch { /* ignore */ }
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  try { projectHooksProc.write('\x03'); } catch { /* ignore */ }
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  try { projectHooksProc.kill(); } catch { /* may already be dead */ }
+
+  const records = readHookRecords();
+  log(`hook records captured: ${records.length}`);
+  const byEvent = {};
+  for (const record of records) {
+    byEvent[record.event] = (byEvent[record.event] || 0) + 1;
+  }
+  for (const event of Object.keys(byEvent).sort()) {
+    log(`  ${event.padEnd(20)} ${byEvent[event]}`);
+  }
+
+  VERDICT.projectLevelHooksFire = records.length > 0;
+  VERDICT.projectLevelHookEventCounts = byEvent;
+
+  if (records.length > 0) {
+    const idInfo = extractSessionIdFromHooks(records);
+    if (idInfo) {
+      VERDICT.projectLevelHookSessionIdField = idInfo.fieldName;
+      log(`SessionStart payload field: "${idInfo.fieldName}" -> ${idInfo.id}`);
+    }
+    log('PROJECT-LEVEL HOOKS FIRE: adapter wiring is viable.');
+    log('  Next step (separate decision): add src/main/agent/adapters/droid/hook-manager.ts');
+    log('  using the Codex/Gemini refcounted pattern (Map<projectRoot, Set<taskId>>).');
+  } else {
+    log('PROJECT-LEVEL HOOKS DID NOT FIRE: zero records captured.');
+    log('  Both injection vehicles (--settings and <cwd>/.factory/settings.json) fail on this Droid build.');
+    log('  Activity tab cannot be populated for Droid via the existing hook pipeline.');
+  }
+}
+
 async function step6And7Pty() {
   if (SKIP_PTY) {
-    section('Steps 5+6+7 - skipped (--skip-pty)');
+    section('Steps 5+6+7+8 - skipped (--skip-pty)');
     return;
   }
   const result = await step5And6PtyNew();
   await step7PtyResume(result);
+  await step8ProjectLevelHooks();
 }
 
 // --------------------------------------------------------------------------
