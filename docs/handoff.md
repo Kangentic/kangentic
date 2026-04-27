@@ -109,9 +109,9 @@ The toggle is a per-column setting in the Edit Column dialog, under the Agent se
 
 ## Per-Agent Transcript Cleanup
 
-TUI agents (Claude Code, Codex CLI, Gemini CLI) produce raw PTY output with agent-specific rendering artifacts. Cleanup utilities in `src/main/agent/handoff/transcript-cleanup.ts` provide shared functions (`filterNoiseLines`, `finalizeTranscript`) used by per-adapter transcript cleanup files. Each agent's cleanup lives in its adapter folder: `src/main/agent/adapters/<name>/transcript-cleanup.ts`.
+TUI agents (Claude Code, Codex CLI, Gemini CLI, Qwen Code, Aider, Kimi Code) produce raw PTY output with agent-specific rendering artifacts. Cleanup utilities in `src/main/agent/handoff/transcript-cleanup.ts` provide shared functions (`filterNoiseLines`, `finalizeTranscript`) used by per-adapter transcript cleanup files. Each agent's cleanup lives in its adapter folder: `src/main/agent/adapters/<name>/transcript-cleanup.ts`.
 
-GitHub Copilot CLI and Qwen Code are also TUI agents but do not yet ship their own `transcript-cleanup.ts`, so their handoff transcripts may contain rendering artifacts until one is added. Cursor CLI, Aider, and Oz CLI (Warp) stream plain text output (no alternate screen buffer) and do not need per-adapter cleanup.
+GitHub Copilot CLI is also a TUI agent but does not yet ship its own `transcript-cleanup.ts`, so its handoff transcripts may contain rendering artifacts until one is added. Cursor CLI and Oz CLI (Warp) stream plain text output (no alternate screen buffer) and do not need per-adapter cleanup.
 
 ## See Also
 

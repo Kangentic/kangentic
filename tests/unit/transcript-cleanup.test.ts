@@ -309,6 +309,52 @@ const GEMINI_REAL_TRANSCRIPT = [
   'YOLO Ctrl+Y',
 ].join('\n');
 
+// ── Qwen Code ──
+// Real structure: Gemini-inherited banner/noise + Qwen-specific idle indicator,
+// Session ID / resume-hint shutdown lines, auth-wizard chrome, per-token
+// viewport redraws. Same `>` / `✦` markers as Gemini.
+const QWEN_REAL_TRANSCRIPT = [
+  // Banner (Gemini-inherited block chars)
+  '▝▜▄▗ Qwen Code',
+  '⠋ Thinking...',
+  // Status bar
+  'Auto (Qwen 3 Coder)',
+  'no sandbox   ? for shortcuts',
+  'branch: feature/add-tests',
+  '',
+  // Idle indicator inside a box border (the pre-strip step extracts it)
+  '╭──────────────────────────╮',
+  "│ I'm ready.               │",
+  '╰──────────────────────────╯',
+  '',
+  // Auth-wizard chrome that appears when reauth triggers mid-session
+  'Select Auth Method',
+  '(Use arrow keys to navigate)',
+  'Login with Qwen',
+  'OpenAI Compatible',
+  '',
+  // First (incomplete) redraw
+  '> explain recursion',
+  '',
+  '✦ Recursion is',
+  '',
+  // Second (incomplete) redraw
+  '> explain recursion',
+  '',
+  '✦ Recursion is a technique',
+  '',
+  // Clean final render (most complete)
+  '> explain recursion',
+  '',
+  '✦ Recursion is a technique where a function calls itself.',
+  '',
+  '  It requires a base case to prevent infinite loops.',
+  '',
+  // Shutdown block
+  'Session ID: 73013240-b192-422f-99a3-7cf37eac045a',
+  "qwen --resume '73013240-b192-422f-99a3-7cf37eac045a'",
+].join('\n');
+
 // ── Claude multi-turn ──
 const CLAUDE_MULTI_TURN = [
   '✶Sublimating...',
@@ -514,6 +560,54 @@ describe('cleanTranscriptForHandoff', () => {
       const result = cleanTranscriptForHandoff(GEMINI_REAL_TRANSCRIPT, 'gemini')!;
       const promptCount = (result.match(/Tell me about 5 fish/g) || []).length;
       expect(promptCount).toBe(1);
+    });
+  });
+
+  describe('Qwen Code', () => {
+    it('extracts clean conversation from Qwen TUI output through the dispatcher', () => {
+      const result = cleanTranscriptForHandoff(QWEN_REAL_TRANSCRIPT, 'qwen');
+      expect(result).not.toBeNull();
+
+      // Prompt and full final response must be present.
+      expect(result).toContain('explain recursion');
+      expect(result).toContain('Recursion is a technique where a function calls itself.');
+      expect(result).toContain('base case to prevent infinite loops.');
+    });
+
+    it('strips Qwen-specific noise (idle indicator, Session ID, resume hint)', () => {
+      const result = cleanTranscriptForHandoff(QWEN_REAL_TRANSCRIPT, 'qwen')!;
+      expect(result).not.toMatch(/I'm ready/);
+      expect(result).not.toMatch(/Session ID:/);
+      expect(result).not.toMatch(/--resume/);
+    });
+
+    it('strips auth-wizard chrome (Select Auth Method, menu items)', () => {
+      const result = cleanTranscriptForHandoff(QWEN_REAL_TRANSCRIPT, 'qwen')!;
+      expect(result).not.toMatch(/Select Auth Method/);
+      expect(result).not.toMatch(/Login with Qwen/);
+      expect(result).not.toMatch(/OpenAI Compatible/);
+      expect(result).not.toMatch(/Use arrow keys/);
+    });
+
+    it('strips Gemini-inherited noise (spinner, status bar, banner)', () => {
+      const result = cleanTranscriptForHandoff(QWEN_REAL_TRANSCRIPT, 'qwen')!;
+      expect(result).not.toMatch(/Thinking\.\.\./);
+      expect(result).not.toMatch(/Auto \(Qwen/);
+      expect(result).not.toMatch(/no sandbox/);
+      expect(result).not.toMatch(/branch:/);
+    });
+
+    it('does not duplicate the prompt across per-token redraws', () => {
+      const result = cleanTranscriptForHandoff(QWEN_REAL_TRANSCRIPT, 'qwen')!;
+      const promptCount = (result.match(/explain recursion/g) ?? []).length;
+      expect(promptCount).toBe(1);
+    });
+
+    it('does not duplicate partial response redraws', () => {
+      const result = cleanTranscriptForHandoff(QWEN_REAL_TRANSCRIPT, 'qwen')!;
+      // The ✦ marker should appear exactly once - only the final complete block.
+      const responseMarkers = (result.match(/✦/g) ?? []).length;
+      expect(responseMarkers).toBe(1);
     });
   });
 

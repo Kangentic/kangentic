@@ -5,6 +5,9 @@
  * - adapters/claude/transcript-cleanup.ts
  * - adapters/codex/transcript-cleanup.ts
  * - adapters/gemini/transcript-cleanup.ts
+ * - adapters/qwen-code/transcript-cleanup.ts
+ * - adapters/aider/transcript-cleanup.ts
+ * - adapters/kimi/transcript-cleanup.ts
  *
  * This file provides:
  * 1. The dispatcher (cleanTranscriptForHandoff) that routes to the right adapter
@@ -14,6 +17,7 @@
 import { cleanClaudeTranscript } from '../adapters/claude/transcript-cleanup';
 import { cleanCodexTranscript } from '../adapters/codex/transcript-cleanup';
 import { cleanGeminiTranscript } from '../adapters/gemini/transcript-cleanup';
+import { cleanQwenTranscript } from '../adapters/qwen-code/transcript-cleanup';
 import { cleanAiderTranscript } from '../adapters/aider/transcript-cleanup';
 import { cleanKimiTranscript } from '../adapters/kimi/transcript-cleanup';
 
@@ -107,7 +111,7 @@ export function finalizeTranscript(text: string): string | null {
  * clean conversation from the raw PTY stream.
  *
  * @param rawTranscript - ANSI-stripped PTY output from TranscriptWriter
- * @param sourceAgent - Agent identifier: 'claude', 'codex', 'gemini', 'aider', 'kimi'
+ * @param sourceAgent - Agent identifier: 'claude', 'codex', 'gemini', 'qwen', 'aider', 'kimi'
  * @returns Cleaned transcript text, or null if nothing meaningful remains.
  */
 export function cleanTranscriptForHandoff(
@@ -123,6 +127,8 @@ export function cleanTranscriptForHandoff(
       return cleanCodexTranscript(rawTranscript);
     case 'gemini':
       return cleanGeminiTranscript(rawTranscript);
+    case 'qwen':
+      return cleanQwenTranscript(rawTranscript);
     case 'aider':
       return cleanAiderTranscript(rawTranscript);
     case 'kimi':
