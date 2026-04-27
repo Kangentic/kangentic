@@ -10,6 +10,9 @@
  *  - Usage data (context_usage ratio, max_context_tokens, token_usage)
  *    is parsed out of wire.jsonl and surfaced through getUsage()
  *  - ToolCall / ToolResult events from wire.jsonl appear in the events cache
+ *  - SubagentEvent TurnBegin / TurnEnd inner lifecycle events are decoded
+ *    and surfaced as SubagentStart / SubagentStop entries in the events cache
+ *    (MOCK_KIMI_SUBAGENT=1 path)
  */
 import { test, expect } from '@playwright/test';
 import {
@@ -149,5 +152,88 @@ test.describe('Kimi Agent - Activity Detection', () => {
     expect(toolStarts.length).toBeGreaterThan(0);
     expect(toolEnds.length).toBeGreaterThan(0);
     expect(toolStarts[0].detail).toBe('Shell');
+  });
+});
+
+test.describe('Kimi Agent - SubagentEvent lifecycle decoding (MOCK_KIMI_SUBAGENT=1)', () => {
+  const TEST_NAME = 'kimi-subagent-detection';
+  const PROJECT_NAME = `Kimi Subagent Test ${runId}`;
+
+  let app: ElectronApplication;
+  let page: Page;
+  let tmpDir: string;
+  let dataDir: string;
+
+  test.beforeAll(async () => {
+    // Set the subagent knob before launching Electron so every PTY session
+    // spawned by this Electron instance inherits the env var. mock-kimi.js
+    // reads it at runtime to inject SubagentEvent TurnBegin + TurnEnd lines
+    // into wire.jsonl, exercising the disk-to-IPC pipeline end-to-end.
+    process.env.MOCK_KIMI_SUBAGENT = '1';
+
+    tmpDir = createTempProject(TEST_NAME);
+    dataDir = getTestDataDir(TEST_NAME);
+    fs.writeFileSync(
+      path.join(dataDir, 'config.json'),
+      JSON.stringify({
+        agent: {
+          cliPaths: { kimi: mockAgentPath('kimi') },
+          permissionMode: 'acceptEdits',
+          maxConcurrentSessions: 5,
+          queueOverflow: 'queue',
+        },
+        git: { worktreesEnabled: false },
+      }),
+    );
+
+    const result = await launchApp({ dataDir });
+    app = result.app;
+    page = result.page;
+    await createProject(page, PROJECT_NAME, tmpDir);
+    await setProjectDefaultAgent(page, 'kimi');
+  });
+
+  test.afterAll(async () => {
+    delete process.env.MOCK_KIMI_SUBAGENT;
+    await app?.close();
+    cleanupKimiSessionsForCwd(tmpDir);
+    cleanupTempProject(TEST_NAME);
+    cleanupTestDataDir(TEST_NAME);
+  });
+
+  test('SubagentEvent TurnBegin and TurnEnd from wire.jsonl appear as subagent_start and subagent_stop in the events cache', async () => {
+    const title = `Kimi Subagent ${runId}`;
+    await createTask(page, title, 'Verify SubagentEvent inner lifecycle decoding through the wire.jsonl pipeline');
+
+    const swimlaneIds = await getSwimlaneIds(page);
+    const taskId = await getTaskIdByTitle(page, title);
+
+    await moveTaskIpc(page, taskId, swimlaneIds.planning);
+    await waitForScrollback(page, 'MOCK_KIMI_SESSION:');
+
+    // The mock writes SubagentEvent TurnBegin + TurnEnd lines after the
+    // ToolResult and before the outer TurnEnd. The SessionHistoryReader
+    // tails wire.jsonl and pushes events via IPC. Poll until both
+    // subagent_start and subagent_stop appear in the cache.
+    await expect.poll(async () => {
+      const eventsMap = await page.evaluate(() => window.electronAPI.sessions.getEventsCache());
+      const allEvents = Object.values(eventsMap as Record<string, SessionEvent[]>).flat();
+      const hasSubagentStart = allEvents.some((event) => event.type === 'subagent_start');
+      const hasSubagentStop = allEvents.some((event) => event.type === 'subagent_stop');
+      return hasSubagentStart && hasSubagentStop;
+    }, { timeout: 30000, message: 'Expected subagent_start and subagent_stop events from wire.jsonl SubagentEvent decoding' }).toBe(true);
+
+    const eventsMap = await page.evaluate(() => window.electronAPI.sessions.getEventsCache());
+    const allEvents = Object.values(eventsMap as Record<string, SessionEvent[]>).flat();
+
+    const subagentStartEvents = allEvents.filter((event) => event.type === 'subagent_start');
+    const subagentStopEvents = allEvents.filter((event) => event.type === 'subagent_stop');
+
+    expect(subagentStartEvents.length).toBeGreaterThan(0);
+    expect(subagentStopEvents.length).toBeGreaterThan(0);
+
+    // The mock injects subagent_type='explore', so detail should be 'explore'.
+    expect(subagentStartEvents[0].detail).toBe('explore');
+    expect(subagentStopEvents[0].detail).toBe('explore');
   });
 });

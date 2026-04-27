@@ -1,0 +1,9 @@
+{"type": "metadata", "protocol_version": "1.9"}
+{"timestamp": 1776900000.000, "message": {"type": "TurnBegin", "payload": {"user_input": [{"type": "text", "text": "delegate exploration"}]}}}
+{"timestamp": 1776900000.100, "message": {"type": "ToolCall", "payload": {"type": "function", "id": "tc_agent_001", "function": {"name": "Agent", "arguments": "{\"description\": \"Explore repo\", \"prompt\": \"List the top-level files\", \"subagent_type\": \"explore\"}"}}}}
+{"timestamp": 1776900000.200, "message": {"type": "SubagentEvent", "payload": {"parent_tool_call_id": "tc_agent_001", "agent_id": "sub-1", "subagent_type": "explore", "event": {"type": "TurnBegin", "payload": {"user_input": "List the top-level files"}}}}}
+{"timestamp": 1776900000.300, "message": {"type": "SubagentEvent", "payload": {"parent_tool_call_id": "tc_agent_001", "agent_id": "sub-1", "subagent_type": "explore", "event": {"type": "StatusUpdate", "payload": {"context_usage": 0.04, "context_tokens": 8000, "max_context_tokens": 200000}}}}}
+{"timestamp": 1776900000.400, "message": {"type": "SubagentEvent", "payload": {"parent_tool_call_id": "tc_agent_001", "agent_id": "sub-1", "subagent_type": "explore", "event": {"type": "ToolCall", "payload": {"type": "function", "id": "tc_sub_001", "function": {"name": "Shell", "arguments": "{\"command\": \"ls\"}"}}}}}}
+{"timestamp": 1776900000.500, "message": {"type": "SubagentEvent", "payload": {"parent_tool_call_id": "tc_agent_001", "agent_id": "sub-1", "subagent_type": "explore", "event": {"type": "TurnEnd", "payload": {}}}}}
+{"timestamp": 1776900000.600, "message": {"type": "ToolResult", "payload": {"tool_call_id": "tc_agent_001", "return_value": {"is_error": false, "output": "README.md\npackage.json\n", "message": "ok", "display": []}}}}
+{"timestamp": 1776900000.700, "message": {"type": "TurnEnd", "payload": {}}}

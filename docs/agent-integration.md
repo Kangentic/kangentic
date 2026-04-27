@@ -659,7 +659,7 @@ Every documented wire-protocol message type (19 Events + 4 Requests, wire protoc
 | `ToolCallPart` | (preserve) | (none; argument-streaming fragment) |
 | `ToolResult` | (preserve) | `ToolEnd` (detail = `ok` or `error`) |
 | `ApprovalResponse` | → Thinking | `Notification` (detail = response) |
-| `SubagentEvent` | (preserve) | `Notification` (detail = subagent_type or agent_id) |
+| `SubagentEvent` | (preserve) | `SubagentStart` (inner `TurnBegin`) / `SubagentStop` (inner `TurnEnd`) / `Notification` (other inner types). detail = `subagent_type` \|\| `agent_id` \|\| `subagent` |
 | `BtwBegin` | (preserve) | `SubagentStart` (detail = `btw`) |
 | `BtwEnd` | (preserve) | `SubagentStop` (detail = `btw`) |
 | `SteerInput` | → Thinking | `Prompt` (detail = extracted user_input text) |

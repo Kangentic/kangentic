@@ -35,6 +35,10 @@
  *   MOCK_KIMI_NO_BANNER=1  -> suppress the welcome banner so tests can
  *                             exercise the filesystem fallback capture path.
  *   MOCK_KIMI_NO_WIRE=1    -> suppress wire.jsonl creation.
+ *   MOCK_KIMI_SUBAGENT=1   -> inject a SubagentEvent TurnBegin + TurnEnd pair
+ *                             (subagent_type='explore') into the wire.jsonl,
+ *                             exercising the SubagentStart / SubagentStop
+ *                             lifecycle decoding path end-to-end.
  */
 
 const { randomUUID, createHash } = require('node:crypto');
@@ -170,6 +174,36 @@ function writeWireEvents() {
       },
     },
   }));
+  // MOCK_KIMI_SUBAGENT=1: inject a SubagentEvent TurnBegin + TurnEnd pair
+  // (subagent_type='explore') before the outer TurnEnd, exercising the
+  // SubagentStart / SubagentStop lifecycle decoding path end-to-end.
+  if (process.env.MOCK_KIMI_SUBAGENT) {
+    lines.push(JSON.stringify({
+      timestamp: now + 0.18,
+      message: {
+        type: 'SubagentEvent',
+        payload: {
+          parent_tool_call_id: 'tc-mock-1',
+          agent_id: 'sub-mock-1',
+          subagent_type: 'explore',
+          event: { type: 'TurnBegin', payload: { user_input: 'explore the repo' } },
+        },
+      },
+    }));
+    lines.push(JSON.stringify({
+      timestamp: now + 0.19,
+      message: {
+        type: 'SubagentEvent',
+        payload: {
+          parent_tool_call_id: 'tc-mock-1',
+          agent_id: 'sub-mock-1',
+          subagent_type: 'explore',
+          event: { type: 'TurnEnd', payload: {} },
+        },
+      },
+    }));
+  }
+
   lines.push(JSON.stringify({
     timestamp: now + 0.2,
     message: { type: 'TurnEnd', payload: {} },

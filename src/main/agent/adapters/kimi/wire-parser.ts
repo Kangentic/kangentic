@@ -56,7 +56,10 @@ import {
  *   ToolCallPart       (preserve)    (none; argument-streaming fragment)
  *   ToolResult         (preserve)    ToolEnd (detail = ok | error)
  *   ApprovalResponse   → Thinking    Notification (detail = response)
- *   SubagentEvent      (preserve)    Notification (detail = subagent_type)
+ *   SubagentEvent      (preserve)    SubagentStart  if inner event.type === TurnBegin
+ *                                    SubagentStop   if inner event.type === TurnEnd
+ *                                    Notification   otherwise
+ *                                    detail = subagent_type || agent_id || "subagent"
  *   BtwBegin           (preserve)    SubagentStart (detail = "btw")
  *   BtwEnd             (preserve)    SubagentStop  (detail = "btw")
  *   SteerInput         → Thinking    Prompt (detail = user input)
@@ -126,6 +129,17 @@ export const KIMI_BTW_SUBAGENT_NAME = 'btw';
  * Activity log row is meaningful instead of empty.
  */
 export const KIMI_SUBAGENT_FALLBACK_NAME = 'subagent';
+
+/**
+ * Inner `event.type` discriminants on a `SubagentEvent` payload that map
+ * to lifecycle events. The inner `event` is itself a full wire Event,
+ * so these literals happen to share names with two outer wire-protocol
+ * types - but they are checked against the *nested* event, which is a
+ * separate dispatch surface from `KIMI_DISPATCH_TYPES`. Centralizing the
+ * literals here keeps a future protocol rename to a single site.
+ */
+const KIMI_SUBAGENT_INNER_BEGIN = 'TurnBegin';
+const KIMI_SUBAGENT_INNER_END = 'TurnEnd';
 
 type KimiDispatchType = typeof KIMI_DISPATCH_TYPES[number];
 
@@ -346,11 +360,33 @@ export function parseWireJsonl(
       case 'SubagentEvent': {
         if (isRecord(payload)) {
           const subagentDetail = extractSubagentDetail(payload);
-          events.push({
-            ts: timestamp,
-            type: EventType.Notification,
-            detail: subagentDetail,
-          });
+          // The runner wraps every wire Event a subagent emits inside a
+          // SubagentEvent envelope (src/kimi_cli/subagents/runner.py
+          // :419-426). The inner `event` is the same Event union as the
+          // outer wire, so TurnBegin/TurnEnd are the lifecycle markers
+          // for the subagent's turn. Other inner types (StatusUpdate,
+          // ToolCall, ContentPart, ...) fall through to Notification so
+          // mid-run subagent chatter still surfaces in the activity log.
+          const innerType = extractInnerEventType(payload.event);
+          if (innerType === KIMI_SUBAGENT_INNER_BEGIN) {
+            events.push({
+              ts: timestamp,
+              type: EventType.SubagentStart,
+              detail: subagentDetail,
+            });
+          } else if (innerType === KIMI_SUBAGENT_INNER_END) {
+            events.push({
+              ts: timestamp,
+              type: EventType.SubagentStop,
+              detail: subagentDetail,
+            });
+          } else {
+            events.push({
+              ts: timestamp,
+              type: EventType.Notification,
+              detail: subagentDetail,
+            });
+          }
         }
         break;
       }
@@ -500,6 +536,23 @@ function extractToolCallName(payload: Record<string, unknown>): string {
     return payload.type;
   }
   return KIMI_TOOL_FALLBACK_NAME;
+}
+
+/**
+ * Pull the nested wire Event's `type` discriminant from a `SubagentEvent`
+ * payload. The inner `event` field is itself a full wire Event - same
+ * union as the outer protocol (TurnBegin, TurnEnd, StepBegin, ToolCall,
+ * StatusUpdate, ...). Per the Pydantic schema in
+ * `src/kimi_cli/wire/types.py` and the runner emission site at
+ * `src/kimi_cli/subagents/runner.py:419`, the only discriminant we care
+ * about for lifecycle tracking is `event.type`.
+ *
+ * Returns null when the envelope is malformed (event missing, not an
+ * object, type field absent or non-string).
+ */
+function extractInnerEventType(value: unknown): string | null {
+  if (!isRecord(value)) return null;
+  return typeof value.type === 'string' && value.type.length > 0 ? value.type : null;
 }
 
 /**

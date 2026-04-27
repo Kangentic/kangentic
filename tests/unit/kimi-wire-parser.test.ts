@@ -1,7 +1,7 @@
 /**
  * Unit tests for the Kimi wire.jsonl parser.
  *
- * Drives the parser with two fixtures:
+ * Drives the parser with three fixtures:
  *
  *   1. wire-real.jsonl - captured from a real `kimi --print` run on this
  *      machine (no LLM auth, so only metadata + TurnBegin/TurnEnd events).
@@ -12,6 +12,13 @@
  *      ToolResult, StepBegin, and full token-usage parsing per the
  *      upstream schema in docs/en/customization/wire-mode.md (wire
  *      protocol 1.9).
+ *
+ *   3. wire-subagent.jsonl - synthesized capture of a turn that delegates
+ *      to the `Agent` tool, exercising the `SubagentEvent` envelope and
+ *      its nested-Event lifecycle. Mirrors the upstream Pydantic schema
+ *      in `src/kimi_cli/wire/types.py` and the runner emission site at
+ *      `src/kimi_cli/subagents/runner.py:419-426`. Replace with a real
+ *      capture once Moonshot credentials are wired into the dev loop.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -547,6 +554,169 @@ describe('parseWireJsonl', () => {
           type: EventType.SubagentStop,
           detail: KIMI_BTW_SUBAGENT_NAME,
         }),
+      ]);
+    });
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // SubagentEvent inner-event lifecycle decoding.
+  //
+  // The runner wraps every wire Event a subagent emits inside a
+  // SubagentEvent envelope (src/kimi_cli/subagents/runner.py:419-426).
+  // The inner `event` is itself a full wire Event union, so TurnBegin /
+  // TurnEnd are the natural lifecycle markers. The parser maps those to
+  // SubagentStart / SubagentStop and falls back to Notification for
+  // every other inner type so non-lifecycle chatter (StatusUpdate,
+  // ToolCall, ContentPart, ...) still surfaces in the activity log.
+  // ────────────────────────────────────────────────────────────────────
+
+  describe('SubagentEvent inner lifecycle decoding', () => {
+    it('emits SubagentStart when inner event.type === "TurnBegin"', () => {
+      const result = parseWireJsonl(envelope('SubagentEvent', {
+        parent_tool_call_id: 'tc-1',
+        agent_id: 'sub-1',
+        subagent_type: 'explore',
+        event: { type: 'TurnBegin', payload: { user_input: 'list files' } },
+      }), 'append');
+      expect(result.events).toEqual([
+        expect.objectContaining({
+          type: EventType.SubagentStart,
+          detail: 'explore',
+        }),
+      ]);
+    });
+
+    it('emits SubagentStop when inner event.type === "TurnEnd"', () => {
+      const result = parseWireJsonl(envelope('SubagentEvent', {
+        parent_tool_call_id: 'tc-1',
+        agent_id: 'sub-1',
+        subagent_type: 'explore',
+        event: { type: 'TurnEnd', payload: {} },
+      }), 'append');
+      expect(result.events).toEqual([
+        expect.objectContaining({
+          type: EventType.SubagentStop,
+          detail: 'explore',
+        }),
+      ]);
+    });
+
+    it('uses agent_id as detail when subagent_type is missing on a TurnBegin lifecycle event', () => {
+      const result = parseWireJsonl(envelope('SubagentEvent', {
+        agent_id: 'sub-42',
+        event: { type: 'TurnBegin', payload: {} },
+      }), 'append');
+      expect(result.events).toEqual([
+        expect.objectContaining({
+          type: EventType.SubagentStart,
+          detail: 'sub-42',
+        }),
+      ]);
+    });
+
+    it('falls back to KIMI_SUBAGENT_FALLBACK_NAME when both subagent_type and agent_id are absent', () => {
+      const result = parseWireJsonl(envelope('SubagentEvent', {
+        event: { type: 'TurnEnd', payload: {} },
+      }), 'append');
+      expect(result.events).toEqual([
+        expect.objectContaining({
+          type: EventType.SubagentStop,
+          detail: KIMI_SUBAGENT_FALLBACK_NAME,
+        }),
+      ]);
+    });
+
+    it('routes inner StatusUpdate to Notification (non-lifecycle inner type)', () => {
+      const result = parseWireJsonl(envelope('SubagentEvent', {
+        agent_id: 'sub-1',
+        subagent_type: 'coder',
+        event: {
+          type: 'StatusUpdate',
+          payload: { context_usage: 0.1, context_tokens: 1000, max_context_tokens: 200000 },
+        },
+      }), 'append');
+      expect(result.events).toEqual([
+        expect.objectContaining({
+          type: EventType.Notification,
+          detail: 'coder',
+        }),
+      ]);
+    });
+
+    it('routes inner ToolCall to Notification (non-lifecycle inner type)', () => {
+      const result = parseWireJsonl(envelope('SubagentEvent', {
+        subagent_type: 'coder',
+        event: {
+          type: 'ToolCall',
+          payload: { type: 'function', function: { name: 'Shell', arguments: '{}' } },
+        },
+      }), 'append');
+      expect(result.events).toEqual([
+        expect.objectContaining({
+          type: EventType.Notification,
+          detail: 'coder',
+        }),
+      ]);
+    });
+
+    it('routes inner events with malformed envelopes to Notification (defensive)', () => {
+      // Inner `event` is missing entirely - the envelope still produces
+      // a Notification keyed by subagent_type. Robust against future
+      // protocol bumps that ship optional or malformed inner payloads.
+      const result = parseWireJsonl(envelope('SubagentEvent', {
+        subagent_type: 'plan',
+      }), 'append');
+      expect(result.events).toEqual([
+        expect.objectContaining({
+          type: EventType.Notification,
+          detail: 'plan',
+        }),
+      ]);
+    });
+
+    it('routes scalar event field values (number, string, null) to Notification (extractInnerEventType returns null)', () => {
+      // extractInnerEventType guards against non-Record values (scalars,
+      // null, arrays). Each of these must fall through to the Notification
+      // branch so the Activity log row is still emitted rather than silently
+      // dropped. This completes the defensive-parsing matrix for the `event`
+      // field alongside the "missing event" test above.
+      const scalarCases: unknown[] = [42, 'TurnBegin', null, ['TurnBegin']];
+      for (const scalarEvent of scalarCases) {
+        const content = JSON.stringify({
+          timestamp: 1_000_000.0,
+          message: {
+            type: 'SubagentEvent',
+            payload: {
+              subagent_type: 'explorer',
+              event: scalarEvent,
+            },
+          },
+        });
+        const result = parseWireJsonl(content, 'append');
+        expect(result.events).toHaveLength(1);
+        expect(result.events[0].type).toBe(EventType.Notification);
+        expect(result.events[0].detail).toBe('explorer');
+      }
+    });
+
+    it('drives the wire-subagent.jsonl fixture into the expected lifecycle sequence', () => {
+      const content = loadFixture('wire-subagent.jsonl');
+      const result = parseWireJsonl(content, 'append');
+      // Final transition is the outer TurnEnd → Idle.
+      expect(result.activity).toBe(Activity.Idle);
+      // Events: parent Prompt, parent ToolStart(Agent), then the wrapped
+      // subagent lifecycle (SubagentStart, two Notifications for the
+      // mid-run StatusUpdate + ToolCall chatter, SubagentStop), and
+      // finally the parent ToolEnd.
+      const ordered = result.events.map((event) => `${event.type}:${event.detail}`);
+      expect(ordered).toEqual([
+        'prompt:delegate exploration',
+        'tool_start:Agent',
+        'subagent_start:explore',
+        'notification:explore',
+        'notification:explore',
+        'subagent_stop:explore',
+        'tool_end:ok',
       ]);
     });
   });
