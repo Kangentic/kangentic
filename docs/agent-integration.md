@@ -597,7 +597,7 @@ Kimi is a Python tool installed via `uv tool install kimi-cli` (the upstream ins
 `src/main/agent/adapters/kimi/command-builder.ts`
 
 ```
-kimi -w <cwd> [--session <uuid>] [--plan|--yolo] [--print --output-format stream-json] [--mcp-config '<json>'] [--prompt "<text>"]
+kimi -w <cwd> [--session <uuid> | --continue] [--plan|--yolo] [--print --output-format stream-json] [--mcp-config '<json>'] [--prompt "<text>"]
 ```
 
 Flag mapping (verified empirically with kimi v1.37.0):
@@ -610,6 +610,7 @@ Flag mapping (verified empirically with kimi v1.37.0):
 
 - `-w <cwd>` always passed; the path is forward-slashed so PowerShell and bash both parse it correctly.
 - `--session <uuid>` is used for both *create* (caller-owned UUID) and *resume*. Kimi's `Session.create(work_dir, session_id="...")` SDK API maps to the same flag, so we set `supportsCallerSessionId = true` and own the ID end-to-end.
+- `--continue` is emitted when the builder's `useContinueFallback` option is set and no `sessionId` is supplied. It tells Kimi to resume the most recent session for `cwd`, covering three cases: recovering after a lost DB record, attaching to a session started by a manual `kimi` invocation in the same `work_dir`, or driving a "Resume last session" UI affordance from the command-terminal overlay. Precedence: when both `sessionId` and `useContinueFallback` are provided, the explicit `--session <uuid>` always wins.
 - `--prompt <text>` is the canonical non-interactive prompt entry. Quoting follows the same shell-safe rules as the other adapters.
 - `--mcp-config <JSON>` is synthesized when `mcpServerEnabled` is true; the payload is a minimal fastmcp-compatible config naming Kangentic's HTTP MCP server with the `X-Kangentic-Token` header.
 

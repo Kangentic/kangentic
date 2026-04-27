@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { quoteArg } from '../../src/shared/paths';
+import { KimiCommandBuilder } from '../../src/main/agent/adapters/kimi/command-builder';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
 import {
@@ -377,6 +378,82 @@ describe('KimiAdapter', () => {
         }));
         expect(command).toContain('"broken"');
       });
+    });
+
+    it('does not emit --continue when only SpawnCommandOptions fields are passed (firewall against accidental future spread)', () => {
+      // KimiAdapter.buildCommand accepts SpawnCommandOptions, which does NOT
+      // include useContinueFallback. This test pins the firewall contract: even
+      // with no sessionId, the adapter must never emit --continue for a fresh
+      // spawn. If a future refactor adds useContinueFallback to
+      // SpawnCommandOptions and accidentally enables --continue for every
+      // new Kimi session, this test will catch it.
+      const command = adapter.buildCommand(makeOptions());
+      expect(command).not.toContain('--continue');
+    });
+  });
+
+  // ── KimiCommandBuilder.useContinueFallback ───────────────────────────────
+  //
+  // The `useContinueFallback` option lives on `KimiCommandOptions` (not on
+  // the shared `SpawnCommandOptions`), so we exercise the builder directly.
+  // It surfaces the `--continue` resume mode for cases where Kangentic does
+  // not own a session UUID (lost DB record, manual `kimi` session in the
+  // same work_dir, command-terminal "resume latest" affordance).
+
+  describe('KimiCommandBuilder.useContinueFallback', () => {
+    const builder = new KimiCommandBuilder();
+
+    it('emits --continue when useContinueFallback is true and no sessionId', () => {
+      const command = builder.buildKimiCommand({
+        kimiPath: '/usr/bin/kimi',
+        taskId: 'task-1',
+        cwd: '/projects/foo',
+        permissionMode: 'default',
+        useContinueFallback: true,
+        shell: 'bash',
+      });
+      expect(command).toContain('--continue');
+      expect(command).not.toContain('--session');
+    });
+
+    it('prefers --session <uuid> over --continue when both sessionId and useContinueFallback are set', () => {
+      const command = builder.buildKimiCommand({
+        kimiPath: '/usr/bin/kimi',
+        taskId: 'task-1',
+        cwd: '/projects/foo',
+        permissionMode: 'default',
+        sessionId: '73013240-b192-422f-99a3-7cf37eac045a',
+        useContinueFallback: true,
+        shell: 'bash',
+      });
+      expect(command).toContain('--session');
+      expect(command).toContain('73013240-b192-422f-99a3-7cf37eac045a');
+      expect(command).not.toContain('--continue');
+    });
+
+    it('omits --continue when useContinueFallback is false and no sessionId', () => {
+      const command = builder.buildKimiCommand({
+        kimiPath: '/usr/bin/kimi',
+        taskId: 'task-1',
+        cwd: '/projects/foo',
+        permissionMode: 'default',
+        useContinueFallback: false,
+        shell: 'bash',
+      });
+      expect(command).not.toContain('--continue');
+      expect(command).not.toContain('--session');
+    });
+
+    it('omits --continue when useContinueFallback is undefined (default)', () => {
+      const command = builder.buildKimiCommand({
+        kimiPath: '/usr/bin/kimi',
+        taskId: 'task-1',
+        cwd: '/projects/foo',
+        permissionMode: 'default',
+        shell: 'bash',
+      });
+      expect(command).not.toContain('--continue');
+      expect(command).not.toContain('--session');
     });
   });
 

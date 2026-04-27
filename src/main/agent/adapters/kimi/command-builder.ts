@@ -45,6 +45,20 @@ import type { SpawnCommandOptions } from '../../agent-adapter';
  */
 export interface KimiCommandOptions extends Omit<SpawnCommandOptions, 'agentPath'> {
   kimiPath: string;
+  /**
+   * When true and no `sessionId` is supplied, emit `--continue` so Kimi
+   * resumes the most recent session for `cwd`. Ignored when `sessionId`
+   * is set (the explicit ID always wins). Drives the "Resume last
+   * session" affordance for cases where the DB session record is lost
+   * or the user has an active Kimi session from outside Kangentic.
+   *
+   * Currently only reachable via direct `KimiCommandBuilder` calls.
+   * `KimiAdapter.buildCommand` spreads `SpawnCommandOptions`, which does
+   * not yet expose this field; engine-layer plumbing (adding the option
+   * to the shared spawn options + threading it from the action handler)
+   * lands as a follow-up.
+   */
+  useContinueFallback?: boolean;
 }
 
 /**
@@ -89,11 +103,20 @@ export class KimiCommandBuilder {
     // session_id=...)) and resume, Kimi accepts the same `--session
     // <uuid>` form, so the resume flag is irrelevant to the argv shape.
     //
-    // We always prefer the ID form: it is unambiguous across
-    // reorderings of `kimi.json` and survives the user starting another
-    // Kimi session in the same directory between Kangentic spawns.
+    // Precedence:
+    //   1. `sessionId` (caller-owned UUID) → `--session <uuid>`. Always
+    //      preferred when set: unambiguous across reorderings of
+    //      `kimi.json` and survives the user starting another Kimi
+    //      session in the same directory between Kangentic spawns.
+    //   2. `useContinueFallback` (no sessionId) → `--continue`. Escape
+    //      hatch for "resume latest session in this work_dir" - useful
+    //      when the DB record is lost or the user wants to attach to a
+    //      session started by a manual `kimi` invocation.
+    //   3. Neither → no resume flag, Kimi starts a fresh session.
     if (options.sessionId) {
       parts.push('--session', quoteArg(options.sessionId, shell));
+    } else if (options.useContinueFallback) {
+      parts.push('--continue');
     }
 
     // Permission mapping (--yolo / --plan / nothing).
