@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import type { Session, Swimlane, Task } from '../../src/shared/types';
 
-export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp' | 'opencode' | 'kimi' | 'droid';
+export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp' | 'opencode' | 'kimi' | 'qwen' | 'droid';
 
 // --- Test data isolation ---
 // Each test run uses its own data directory so E2E tests never pollute
