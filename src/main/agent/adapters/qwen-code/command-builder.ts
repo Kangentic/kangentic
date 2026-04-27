@@ -10,6 +10,7 @@ import type { PermissionMode } from '../../../../shared/types';
 /** Qwen-specific subset of settings.json that we read/write. */
 interface QwenSettings {
   hooks?: Record<string, QwenHookEntry[]>;
+  mcpServers?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -32,7 +33,15 @@ export interface QwenCommandOptions {
 }
 
 export class QwenCommandBuilder {
-  /** Cache of merged base settings keyed by project root path. */
+  /**
+   * Cache of merged base settings keyed by project root path.
+   *
+   * Cached intentionally so that re-spawns do not re-ingest the
+   * Kangentic-injected `hooks` and `mcpServers.kangentic` entries we
+   * wrote on the prior spawn. Each spawn re-merges fresh entries on top
+   * of the original user baseline. Call `clearSettingsCache()` if the
+   * user edits `.qwen/settings.json` between spawns.
+   */
   private projectSettingsCache = new Map<string, QwenSettings>();
 
   /** Clear the cached project settings. */
@@ -44,8 +53,11 @@ export class QwenCommandBuilder {
     const { shell } = options;
     const parts = [quoteArg(options.qwenPath, shell)];
 
-    // Write merged settings with event-bridge hooks when we have output paths
-    if (options.eventsOutputPath) {
+    // Write merged settings whenever event-bridge hooks OR the kangentic
+    // MCP server entry need to land in `.qwen/settings.json`. Either alone
+    // is sufficient - hooks need eventsOutputPath, MCP needs the URL+token
+    // pair.
+    if (this.shouldWriteMergedSettings(options)) {
       this.createMergedSettings(options);
     }
 
@@ -118,10 +130,20 @@ export class QwenCommandBuilder {
     return structuredClone(baseSettings);
   }
 
+  private shouldWriteMergedSettings(options: QwenCommandOptions): boolean {
+    if (options.eventsOutputPath) return true;
+    return (
+      options.mcpServerEnabled !== false &&
+      Boolean(options.mcpServerUrl) &&
+      Boolean(options.mcpServerToken)
+    );
+  }
+
   /**
-   * Create a merged Qwen settings file that includes event-bridge hooks.
-   * Writes to `.qwen/settings.json` in the cwd since Qwen Code reads
-   * settings from the project directory (no --settings flag available).
+   * Create a merged Qwen settings file that includes event-bridge hooks
+   * and / or the Kangentic MCP server entry. Writes to
+   * `.qwen/settings.json` in the cwd since Qwen Code reads settings from
+   * the project directory (no --settings flag available).
    *
    * Qwen Code (like Gemini) has no --settings flag, so hooks live in a
    * project-shared file. Concurrent sessions in the same cwd are
@@ -130,19 +152,49 @@ export class QwenCommandBuilder {
    * the count drops to zero. The isKangenticHook() guard prevents
    * affecting user-defined hooks. On crash / force-quit, stripping on
    * the next spawn (buildHooks) cleans up.
+   *
+   * MCP server entry: Qwen Code natively supports inline `mcpServers`
+   * in settings.json (Gemini-fork format with `httpUrl`, not the
+   * Anthropic/fastmcp `url` convention used by Claude/Kimi). We inject
+   * a single `kangentic` entry pointing at the in-process MCP HTTP
+   * server, with the per-launch token in the `X-Kangentic-Token`
+   * header. User-defined `mcpServers` are preserved via spread.
+   *
+   * Security trade-off: `.qwen/settings.json` is project-shared and may
+   * be intentionally committed by users (team-wide model defaults, MCP
+   * servers, etc.), so we cannot blanket-gitignore it like
+   * `.kangentic/`. The injected token is therefore plaintext on disk
+   * during the active session. Mitigations: tokens rotate per app
+   * launch (see `mcp-http-server.ts`), and `removeHooks()` strips the
+   * entry on session exit / suspend. Consequence: do not commit
+   * `.qwen/settings.json` while a Kangentic-spawned Qwen session is
+   * running.
    */
   private createMergedSettings(options: QwenCommandOptions): void {
     const projectRoot = options.projectRoot || options.cwd;
     const baseSettings = this.readBaseSettings(projectRoot);
 
     const eventsPath = options.eventsOutputPath ? toForwardSlash(options.eventsOutputPath) : null;
-    if (!eventsPath) return;
+    const merged: QwenSettings = { ...baseSettings };
 
-    const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
-    const merged: QwenSettings = {
-      ...baseSettings,
-      hooks: buildHooks(eventBridge, eventsPath, baseSettings.hooks || {}),
-    };
+    if (eventsPath) {
+      const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
+      merged.hooks = buildHooks(eventBridge, eventsPath, baseSettings.hooks || {});
+    }
+
+    if (
+      options.mcpServerEnabled !== false &&
+      options.mcpServerUrl &&
+      options.mcpServerToken
+    ) {
+      merged.mcpServers = {
+        ...(baseSettings.mcpServers ?? {}),
+        kangentic: {
+          httpUrl: options.mcpServerUrl,
+          headers: { 'X-Kangentic-Token': options.mcpServerToken },
+        },
+      };
+    }
 
     // Write merged settings into the cwd's .qwen/settings.json
     const qwenDir = path.join(options.cwd, '.qwen');
@@ -155,7 +207,10 @@ export class QwenCommandBuilder {
 
     const settingsPath = path.join(qwenDir, 'settings.json');
     fs.writeFileSync(settingsPath, JSON.stringify(merged, null, 2));
-    console.log(`[qwen] Wrote hooks to ${settingsPath} (${Object.keys(merged.hooks || {}).length} event types, events -> ${eventsPath})`);
+
+    const hookCount = Object.keys(merged.hooks || {}).length;
+    const mcpCount = Object.keys(merged.mcpServers || {}).length;
+    console.log(`[qwen] Wrote settings to ${settingsPath} (${hookCount} hook event types, ${mcpCount} mcp servers, events -> ${eventsPath ?? 'none'})`);
   }
 }
 

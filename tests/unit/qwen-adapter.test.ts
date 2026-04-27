@@ -240,3 +240,109 @@ describe('agent-display-name - qwen entry', () => {
     expect(agentInstallUrl('qwen')).toBe('https://github.com/QwenLM/qwen-code');
   });
 });
+
+describe('Qwen Adapter - MCP-only spawn (no eventsOutputPath)', () => {
+  let sandbox: string;
+  let adapter: QwenAdapter;
+
+  beforeEach(() => {
+    sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'kg-qwen-mcp-only-'));
+    adapter = new QwenAdapter();
+  });
+
+  afterEach(() => {
+    fs.rmSync(sandbox, { recursive: true, force: true });
+  });
+
+  /**
+   * buildOptions with MCP config but NO eventsOutputPath.
+   * This is the "MCP-only" path introduced when the in-process MCP HTTP
+   * server is wired into Qwen sessions.
+   */
+  const buildMcpOnlyOptions = (cwd: string, taskId: string) => ({
+    agentPath: 'qwen',
+    taskId,
+    cwd,
+    permissionMode: 'default' as const,
+    mcpServerEnabled: true as const,
+    mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-1',
+    mcpServerToken: 'test-token-mcp',
+    // eventsOutputPath intentionally absent
+  });
+
+  it('gap-1: does NOT retain a hook reference when only MCP is configured', () => {
+    // Call buildCommand twice with MCP-only options. If retainHooks were
+    // incorrectly called, the reference counter for `sandbox` would be 2
+    // and the first removeHooks call would leave the counter at 1 (not
+    // calling removeQwenHooks at all). The test proves the counter stays at
+    // zero: even after two spawns, a single removeHooks call with an
+    // unregistered taskId still invokes the underlying cleanup.
+    adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'task-a'));
+    adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'task-b'));
+
+    // Write a settings file that has only the kangentic MCP entry - this
+    // simulates what createMergedSettings wrote for the two spawns.
+    const qwenDir = path.join(sandbox, '.qwen');
+    fs.mkdirSync(qwenDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(qwenDir, 'settings.json'),
+      JSON.stringify({
+        mcpServers: {
+          kangentic: {
+            httpUrl: 'http://127.0.0.1:51234/mcp/proj-1',
+            headers: { 'X-Kangentic-Token': 'test-token-mcp' },
+          },
+        },
+      }, null, 2),
+    );
+
+    // removeHooks with an unregistered taskId (no retain was called for
+    // 'task-a' or 'task-b' because eventsOutputPath was absent). When
+    // hookHolders is empty for sandbox, removeQwenHooks runs unconditionally.
+    adapter.removeHooks(sandbox, 'task-a');
+
+    // mcpServers.kangentic must be stripped - the file should now be empty
+    // (no user hooks or user MCP servers) so either the key is gone or the
+    // file is deleted.
+    const stillExists = fs.existsSync(path.join(qwenDir, 'settings.json'));
+    if (stillExists) {
+      const result = JSON.parse(fs.readFileSync(path.join(qwenDir, 'settings.json'), 'utf-8')) as {
+        mcpServers?: Record<string, unknown>;
+      };
+      expect(result.mcpServers?.kangentic).toBeUndefined();
+    }
+    // If the file was deleted entirely, that is also an acceptable outcome.
+  });
+
+  it('gap-2: removeHooks after MCP-only spawn strips mcpServers.kangentic even with empty hookHolders', () => {
+    // Spawn once with MCP-only options. hookHolders map stays empty.
+    adapter.buildCommand(buildMcpOnlyOptions(sandbox, 'task-x'));
+
+    // Settings file written by createMergedSettings for the MCP-only spawn.
+    const qwenDir = path.join(sandbox, '.qwen');
+    fs.mkdirSync(qwenDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(qwenDir, 'settings.json'),
+      JSON.stringify({
+        mcpServers: {
+          kangentic: {
+            httpUrl: 'http://127.0.0.1:51234/mcp/proj-1',
+            headers: { 'X-Kangentic-Token': 'test-token-mcp' },
+          },
+          'user-server': { httpUrl: 'http://example.com/mcp' },
+        },
+      }, null, 2),
+    );
+
+    // With hookHolders empty for sandbox, the adapter calls removeQwenHooks
+    // immediately - no gating on a reference counter.
+    adapter.removeHooks(sandbox, 'task-x');
+
+    // kangentic entry stripped; user-server preserved.
+    const result = JSON.parse(
+      fs.readFileSync(path.join(qwenDir, 'settings.json'), 'utf-8'),
+    ) as { mcpServers?: Record<string, unknown> };
+    expect(result.mcpServers?.kangentic).toBeUndefined();
+    expect(result.mcpServers?.['user-server']).toBeDefined();
+  });
+});

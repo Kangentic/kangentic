@@ -122,30 +122,54 @@ function qwenSettingsPath(directory: string): string {
 }
 
 /**
- * Remove ALL Kangentic hook entries from `.qwen/settings.json` at the
- * given directory. Preserves all other user hooks and settings.
+ * Remove ALL Kangentic-injected entries from `.qwen/settings.json` at
+ * the given directory. Preserves user hooks, user MCP servers, and any
+ * other user settings.
  *
- * Called on session exit/suspend to clean up hooks injected by
- * buildHooks(). Qwen Code has no --settings flag, so hooks live in the
- * shared project-level file and must be explicitly removed when the
- * session ends.
+ * Cleans up two kinds of injected entries:
+ *   1. Hook entries written by `buildHooks()` - matched by the
+ *      `isKangenticHookCommand` guard.
+ *   2. The `mcpServers.kangentic` entry written by the command builder
+ *      when wiring the in-process MCP HTTP server. Pulled out unconditionally
+ *      because the entry name is fixed.
+ *
+ * Called on session exit/suspend. Qwen Code has no --settings flag, so
+ * these entries live in the shared project-level file and must be
+ * explicitly removed when the session ends - otherwise stale tokens
+ * stay on disk and user hooks are noisy.
  */
 export function removeHooks(directory: string): void {
   safelyUpdateSettingsFile(qwenSettingsPath(directory), (parsed) => {
-    const settings = parsed as { hooks?: Record<string, QwenHookEntry[]> };
-    if (!settings?.hooks || typeof settings.hooks !== 'object') return null;
+    const settings = parsed as {
+      hooks?: Record<string, QwenHookEntry[]>;
+      mcpServers?: Record<string, unknown>;
+    };
+    if (!settings || typeof settings !== 'object') return null;
 
     let changed = false;
-    for (const key of Object.keys(settings.hooks)) {
-      if (!Array.isArray(settings.hooks[key])) continue;
-      const before = settings.hooks[key].length;
-      settings.hooks[key] = filterOurHooks(settings.hooks[key]);
-      if (settings.hooks[key].length !== before) changed = true;
-      if (settings.hooks[key].length === 0) delete settings.hooks[key];
-    }
-    if (!changed) return null;
 
-    if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+    if (settings.hooks && typeof settings.hooks === 'object') {
+      for (const key of Object.keys(settings.hooks)) {
+        if (!Array.isArray(settings.hooks[key])) continue;
+        const before = settings.hooks[key].length;
+        settings.hooks[key] = filterOurHooks(settings.hooks[key]);
+        if (settings.hooks[key].length !== before) changed = true;
+        if (settings.hooks[key].length === 0) delete settings.hooks[key];
+      }
+      if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+    }
+
+    if (
+      settings.mcpServers &&
+      typeof settings.mcpServers === 'object' &&
+      'kangentic' in settings.mcpServers
+    ) {
+      delete settings.mcpServers.kangentic;
+      changed = true;
+      if (Object.keys(settings.mcpServers).length === 0) delete settings.mcpServers;
+    }
+
+    if (!changed) return null;
     return settings;
   }, 'removeHooks');
 }

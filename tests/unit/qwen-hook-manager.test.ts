@@ -203,5 +203,106 @@ describe('qwen-hook-manager', () => {
       expect(result.theme).toBe('dark');
       expect(result.hooks).toBeUndefined();
     });
+
+    it('strips mcpServers.kangentic, preserves user-defined mcp servers', () => {
+      const qwenDir = path.join(tmpDir, '.qwen');
+      fs.mkdirSync(qwenDir, { recursive: true });
+      const settings = {
+        mcpServers: {
+          kangentic: {
+            httpUrl: 'http://127.0.0.1:51234/mcp/proj-1',
+            headers: { 'X-Kangentic-Token': 'stale-token' },
+          },
+          'user-server': { httpUrl: 'http://example.com/mcp' },
+        },
+      };
+      fs.writeFileSync(
+        path.join(qwenDir, 'settings.json'),
+        JSON.stringify(settings, null, 2),
+      );
+
+      removeHooks(tmpDir);
+
+      const result = readSettings();
+      const mcpServers = result.mcpServers as Record<string, unknown>;
+      expect(mcpServers.kangentic).toBeUndefined();
+      expect(mcpServers['user-server']).toBeDefined();
+    });
+
+    it('removes mcpServers key entirely when only kangentic was present', () => {
+      const qwenDir = path.join(tmpDir, '.qwen');
+      fs.mkdirSync(qwenDir, { recursive: true });
+      const settings = {
+        theme: 'dark',
+        mcpServers: {
+          kangentic: {
+            httpUrl: 'http://127.0.0.1:51234/mcp/proj-1',
+            headers: { 'X-Kangentic-Token': 'stale-token' },
+          },
+        },
+      };
+      fs.writeFileSync(
+        path.join(qwenDir, 'settings.json'),
+        JSON.stringify(settings, null, 2),
+      );
+
+      removeHooks(tmpDir);
+
+      const result = readSettings();
+      expect(result.theme).toBe('dark');
+      expect(result.mcpServers).toBeUndefined();
+    });
+
+    it('strips kangentic hooks AND mcpServers.kangentic in a single pass', () => {
+      const qwenDir = path.join(tmpDir, '.qwen');
+      fs.mkdirSync(qwenDir, { recursive: true });
+      const settings = {
+        hooks: {
+          BeforeTool: [
+            { matcher: '*', hooks: [{ name: 'kangentic-tool_start', type: 'command', command: `node "${EVENT_BRIDGE}" "${EVENTS_PATH}" tool_start` }] },
+          ],
+        },
+        mcpServers: {
+          kangentic: {
+            httpUrl: 'http://127.0.0.1:51234/mcp/proj-1',
+            headers: { 'X-Kangentic-Token': 'stale-token' },
+          },
+        },
+      };
+      fs.writeFileSync(
+        path.join(qwenDir, 'settings.json'),
+        JSON.stringify(settings, null, 2),
+      );
+
+      removeHooks(tmpDir);
+
+      // Both keys removed - whole settings object is empty - file is deleted.
+      expect(settingsExists()).toBe(false);
+    });
+
+    it('is a no-op when no kangentic entries exist (idempotent)', () => {
+      const qwenDir = path.join(tmpDir, '.qwen');
+      fs.mkdirSync(qwenDir, { recursive: true });
+      const settings = {
+        theme: 'dark',
+        mcpServers: {
+          'user-server': { httpUrl: 'http://example.com/mcp' },
+        },
+        hooks: {
+          BeforeAgent: [
+            { matcher: '*', hooks: [{ name: 'memory', type: 'command', command: 'echo inject-memory' }] },
+          ],
+        },
+      };
+      fs.writeFileSync(
+        path.join(qwenDir, 'settings.json'),
+        JSON.stringify(settings, null, 2),
+      );
+
+      removeHooks(tmpDir);
+
+      const result = readSettings();
+      expect(result).toEqual(settings);
+    });
   });
 });
