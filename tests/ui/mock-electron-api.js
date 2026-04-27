@@ -1067,7 +1067,12 @@
 
     agents: {
       list: async function () {
-        return [
+        // Tests can override per-agent fields (found, version, authenticated, etc.)
+        // by setting window.__mockAgentListOverrides = { kimi: { found: true, authenticated: false }, ... }
+        // before navigating to the page. Useful for exercising auth-state UI without
+        // changing the default fixture, which keeps every non-Claude agent as not-installed.
+        var overrides = (typeof window !== 'undefined' && window.__mockAgentListOverrides) || {};
+        var defaults = [
           {
             name: 'claude', displayName: 'Claude Code', found: true, path: '/usr/bin/claude', version: '2.1.72',
             permissions: [
@@ -1147,6 +1152,10 @@
             defaultPermission: 'default',
           },
         ];
+        return defaults.map(function (agent) {
+          var override = overrides[agent.name];
+          return override ? Object.assign({}, agent, override) : agent;
+        });
       },
     },
 

@@ -29,6 +29,8 @@ export interface AgentDetectionInfo {
   found: boolean;
   path: string | null;
   version: string | null;
+  /** True = logged in, false = installed but not authenticated, null/undefined = N/A or not probed. */
+  authenticated?: boolean | null;
   permissions: AgentPermissionEntry[];
   defaultPermission: PermissionMode;
 }

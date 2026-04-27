@@ -73,6 +73,13 @@ export interface AgentAdapter {
   /** Pre-approve a working directory so the agent does not prompt for trust. */
   ensureTrust(workingDirectory: string): Promise<void>;
 
+  /**
+   * Probe whether the agent is authenticated/logged in. Returns null
+   * for agents that have no auth requirement or no cheap probe. Only
+   * called by IPC after detect() returns found:true. Must never throw.
+   */
+  probeAuth?(): Promise<boolean | null>;
+
   /** Build the shell command string to spawn the agent. */
   buildCommand(options: SpawnCommandOptions): string;
 

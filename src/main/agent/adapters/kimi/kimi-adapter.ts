@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { AgentDetector } from '../../shared/agent-detector';
@@ -84,7 +85,24 @@ export class KimiAdapter implements AgentAdapter {
     // Kimi has no global trust dialog. Sessions are stored under
     // ~/.kimi/sessions/<work_dir_hash>/ and the work_dir is added to
     // ~/.kimi/kimi.json automatically on first spawn - no pre-approval
-    // step needed.
+    // step needed. See `probeAuth` for the login-state check, which
+    // reads ~/.kimi/credentials/.
+  }
+
+  async probeAuth(): Promise<boolean | null> {
+    // `kimi login` writes OAuth state to ~/.kimi/credentials/. A
+    // missing or empty directory means the user has not authenticated;
+    // a fresh spawn would print "LLM not set, send /login to login"
+    // and exit. The renderer surfaces this as an amber warning so the
+    // user can run `kimi login` before moving a task.
+    try {
+      const credentialsDir = path.join(os.homedir(), '.kimi', 'credentials');
+      const entries = fs.readdirSync(credentialsDir);
+      return entries.length > 0;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      return null;
+    }
   }
 
   buildCommand(options: SpawnCommandOptions): string {

@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
-import { Check, CircleAlert, RefreshCw } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, CircleAlert, Copy, RefreshCw } from 'lucide-react';
 import { useConfigStore } from '../../../stores/config-store';
 import { useProjectStore } from '../../../stores/project-store';
 import type { AgentDetectionInfo, AgentPermissionEntry, AppConfig, PermissionMode } from '../../../../shared/types';
 import { DEFAULT_PERMISSIONS, DEFAULT_AGENT, getAgentDefaultPermission } from '../../../../shared/types';
-import { agentDisplayName } from '../../../utils/agent-display-name';
+import { agentDisplayName, agentLoginCommand } from '../../../utils/agent-display-name';
 import { SettingRow, Select, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
@@ -24,6 +24,22 @@ export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
   const refreshCurrentProject = useProjectStore((state) => state.loadCurrent);
   const refreshAgentList = useConfigStore((state) => state.loadAgentList);
   const [refreshing, setRefreshing] = useState(false);
+  const [copiedAgent, setCopiedAgent] = useState<string | null>(null);
+  const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (copyTimeout.current) clearTimeout(copyTimeout.current);
+  }, []);
+
+  const handleCopyLoginCommand = (agentName: string, command: string) => {
+    navigator.clipboard.writeText(command).catch(() => { /* leave copied state alone; user can retry */ });
+    setCopiedAgent(agentName);
+    if (copyTimeout.current) clearTimeout(copyTimeout.current);
+    copyTimeout.current = setTimeout(
+      () => setCopiedAgent((current) => (current === agentName ? null : current)),
+      2000,
+    );
+  };
 
   const handleRefreshAgents = async () => {
     setRefreshing(true);
@@ -72,17 +88,26 @@ export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
           {agentList.length === 0 && <option value={DEFAULT_AGENT}>{agentDisplayName(DEFAULT_AGENT)}</option>}
         </Select>
       </SettingRow>
-      {agentList.filter((agent) => agent.name === effectiveAgent).map((agent) => (
+      {agentList.filter((agent) => agent.name === effectiveAgent).map((agent) => {
+        const loginCommand = agentLoginCommand(agent.name);
+        const unauthenticated = agent.found && agent.authenticated === false;
+        return (
         <SettingRow
           key={agent.name}
           {...settingProps('agent.cliPaths')}
           label={`${agent.displayName} Path`}
           trailing={
-            <span className={`text-xs flex items-center gap-1 ${agent.found ? 'text-fg-faint' : 'text-red-400/70'}`}>
-              {agent.found
-                ? <><Check size={13} className="text-green-400" />{agent.version ? `v${agent.version.replace(/^v/, '')}` : 'Detected'}</>
-                : <><CircleAlert size={13} />Not found</>}
-            </span>
+            unauthenticated ? (
+              <span className="text-xs flex items-center gap-1 text-amber-400">
+                <CircleAlert size={13} />Not signed in
+              </span>
+            ) : (
+              <span className={`text-xs flex items-center gap-1 ${agent.found ? 'text-fg-faint' : 'text-red-400/70'}`}>
+                {agent.found
+                  ? <><Check size={13} className="text-green-400" />{agent.version ? `v${agent.version.replace(/^v/, '')}` : 'Detected'}</>
+                  : <><CircleAlert size={13} />Not found</>}
+              </span>
+            )
           }
         >
           <div className="relative">
@@ -103,8 +128,23 @@ export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
               <RefreshCw size={16} className={`text-fg-faint hover:text-fg-muted ${refreshing ? 'animate-spin' : ''}`} />
             </button>
           </div>
+          {unauthenticated && loginCommand && (
+            <div className="mt-1 text-xs text-amber-400/80 flex items-center gap-2">
+              <span>Run <code className="font-mono">{loginCommand}</code> in your terminal to authenticate.</span>
+              <button
+                type="button"
+                onClick={() => handleCopyLoginCommand(agent.name, loginCommand)}
+                className="inline-flex items-center gap-1 text-accent hover:underline cursor-pointer"
+                title={`Copy "${loginCommand}" to clipboard`}
+                data-testid={`agent-tab-copy-login-${agent.name}`}
+              >
+                <Copy size={11} />{copiedAgent === agent.name ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+          )}
         </SettingRow>
-      ))}
+        );
+      })}
       <SettingRow {...settingProps('agent.idleTimeoutMinutes')}>
         <input
           type="number"

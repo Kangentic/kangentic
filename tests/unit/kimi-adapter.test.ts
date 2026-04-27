@@ -8,6 +8,7 @@
  * schema. These tests are the regression net against future Kimi
  * releases that change either surface.
  */
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { quoteArg } from '../../src/shared/paths';
 import { KimiCommandBuilder } from '../../src/main/agent/adapters/kimi/command-builder';
@@ -24,6 +25,7 @@ let mockWhichResult: string | Error = '/usr/bin/kimi';
 let mockExecVersionStdout = 'kimi, version 1.37.0\n';
 let mockExecVersionShouldFail = false;
 let mockExistsSync: (filePath: string) => boolean = () => true;
+let mockReaddirSync: (filePath: string) => string[] = () => [];
 let execVersionCallCount = 0;
 
 vi.mock('which', () => ({
@@ -40,6 +42,7 @@ vi.mock('node:fs', async (importOriginal) => {
     default: {
       ...original,
       existsSync: (filePath: string) => mockExistsSync(filePath),
+      readdirSync: (filePath: string) => mockReaddirSync(filePath),
     },
   };
 });
@@ -75,6 +78,7 @@ describe('KimiAdapter', () => {
     mockExecVersionStdout = 'kimi, version 1.37.0\n';
     mockExecVersionShouldFail = false;
     mockExistsSync = () => true;
+    mockReaddirSync = () => [];
     execVersionCallCount = 0;
   });
 
@@ -558,6 +562,57 @@ describe('KimiAdapter', () => {
 
     it('clearSettingsCache does not throw', () => {
       expect(() => adapter.clearSettingsCache()).not.toThrow();
+    });
+  });
+
+  // ── probeAuth ────────────────────────────────────────────────────────────
+
+  describe('probeAuth', () => {
+    // probeAuth checks ~/.kimi/credentials/ for OAuth state written by
+    // `kimi login`. The renderer surfaces the false case as an amber
+    // warning so users know to authenticate before spawning a task.
+
+    it('targets ~/.kimi/credentials/ under the home directory', async () => {
+      let probedPath: string | null = null;
+      mockReaddirSync = (filePath) => {
+        probedPath = filePath;
+        return ['default.json'];
+      };
+      await adapter.probeAuth();
+      expect(probedPath).not.toBeNull();
+      expect(probedPath!).toContain(path.join('.kimi', 'credentials'));
+    });
+
+    it('returns true when ~/.kimi/credentials/ contains files', async () => {
+      mockReaddirSync = () => ['default.json', 'session.token'];
+      const result = await adapter.probeAuth();
+      expect(result).toBe(true);
+    });
+
+    it('returns false when ~/.kimi/credentials/ is missing (ENOENT)', async () => {
+      mockReaddirSync = () => {
+        const error = new Error('no such file or directory') as NodeJS.ErrnoException;
+        error.code = 'ENOENT';
+        throw error;
+      };
+      const result = await adapter.probeAuth();
+      expect(result).toBe(false);
+    });
+
+    it('returns false when ~/.kimi/credentials/ exists but is empty', async () => {
+      mockReaddirSync = () => [];
+      const result = await adapter.probeAuth();
+      expect(result).toBe(false);
+    });
+
+    it('returns null when readdirSync throws a non-ENOENT error', async () => {
+      mockReaddirSync = () => {
+        const error = new Error('permission denied') as NodeJS.ErrnoException;
+        error.code = 'EACCES';
+        throw error;
+      };
+      const result = await adapter.probeAuth();
+      expect(result).toBeNull();
     });
   });
 

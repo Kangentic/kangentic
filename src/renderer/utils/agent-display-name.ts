@@ -10,6 +10,13 @@ interface AgentMeta {
   short: string;
   /** URL to install documentation. */
   installUrl: string;
+  /**
+   * Shell command users run to authenticate the CLI, when the adapter
+   * exposes an `authenticated` field on `AgentDetectionInfo`. Renderer
+   * surfaces this as a "Copy" button next to the "Not signed in"
+   * warning. Omit for agents with no in-app auth UX.
+   */
+  loginCommand?: string;
 }
 
 const AGENT_META: Record<string, AgentMeta> = {
@@ -57,6 +64,7 @@ const AGENT_META: Record<string, AgentMeta> = {
     display: 'Kimi Code',
     short: 'Kimi',
     installUrl: 'https://github.com/MoonshotAI/kimi-cli',
+    loginCommand: 'kimi login',
   },
   droid: {
     display: 'Droid',
@@ -81,4 +89,13 @@ export function agentShortName(agentId: string | null | undefined): string {
 export function agentInstallUrl(agentId: string | null | undefined): string | null {
   if (!agentId) return null;
   return AGENT_META[agentId]?.installUrl ?? null;
+}
+
+/**
+ * Shell command that authenticates the agent CLI (e.g. 'kimi login').
+ * Returns undefined for agents with no in-app auth UX.
+ */
+export function agentLoginCommand(agentId: string | null | undefined): string | undefined {
+  if (!agentId) return undefined;
+  return AGENT_META[agentId]?.loginCommand;
 }

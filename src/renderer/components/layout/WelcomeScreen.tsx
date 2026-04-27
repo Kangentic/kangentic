@@ -1,30 +1,51 @@
-import { useState } from 'react';
-import { FolderOpen, FileText, GitBranch, Terminal, CheckCircle, Loader2, RefreshCw, ExternalLink } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { FolderOpen, FileText, GitBranch, Terminal, CheckCircle, CircleAlert, Copy, Loader2, RefreshCw, ExternalLink } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
-import { agentInstallUrl } from '../../utils/agent-display-name';
+import { agentInstallUrl, agentLoginCommand } from '../../utils/agent-display-name';
 import logoSrc from '../../assets/logo-32.png';
 
 /** Reusable detection card used for both Git and agent entries */
-function DetectionCard({ name, found, version, installUrl, loading }: {
+function DetectionCard({ name, testId, found, version, installUrl, loading, authenticated, loginCommand }: {
   name: string;
+  testId?: string;
   found: boolean;
   version: string | null;
   installUrl: string | null;
   loading: boolean;
+  authenticated?: boolean | null;
+  loginCommand?: string;
 }) {
+  const [copied, setCopied] = useState(false);
+  const copyTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const unauthenticated = !loading && found && authenticated === false;
+
+  useEffect(() => () => {
+    if (copyTimeout.current) clearTimeout(copyTimeout.current);
+  }, []);
+
+  const handleCopy = () => {
+    if (!loginCommand) return;
+    navigator.clipboard.writeText(loginCommand).catch(() => { /* leave Copied! state alone; user can retry */ });
+    setCopied(true);
+    if (copyTimeout.current) clearTimeout(copyTimeout.current);
+    copyTimeout.current = setTimeout(() => setCopied(false), 2000);
+  };
+
+  const borderClass = !loading && found
+    ? unauthenticated
+      ? 'border-edge border-l-2 border-l-amber-500'
+      : 'border-edge border-l-2 border-l-green-500'
+    : 'border-edge';
+
   return (
-    <div
-      className={`border rounded-lg p-3 ${
-        !loading && found
-          ? 'border-edge border-l-2 border-l-green-500'
-          : 'border-edge'
-      }`}
-    >
+    <div className={`border rounded-lg p-3 ${borderClass}`} data-testid={testId}>
       <div className="flex items-start gap-2">
         <div className="w-4 h-5 flex items-center justify-center shrink-0">
           {loading ? (
             <Loader2 size={14} className="animate-spin text-fg-faint" />
+          ) : unauthenticated ? (
+            <CircleAlert size={14} className="text-amber-400" />
           ) : found ? (
             <CheckCircle size={14} className="text-green-400" />
           ) : (
@@ -38,6 +59,24 @@ function DetectionCard({ name, found, version, installUrl, loading }: {
           <div className="h-4 flex items-center">
             {loading ? (
               <span className="text-xs text-fg-faint">Checking...</span>
+            ) : unauthenticated ? (
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-amber-400">Not signed in</span>
+                {loginCommand && (
+                  <>
+                    <span className="text-xs text-fg-faint">-</span>
+                    <button
+                      className="inline-flex items-center gap-0.5 text-xs text-accent hover:underline cursor-pointer"
+                      onClick={handleCopy}
+                      title={`Copy "${loginCommand}" to clipboard`}
+                      data-testid={testId ? `${testId}-copy-login` : undefined}
+                    >
+                      {copied ? 'Copied!' : <>Copy <code className="font-mono">{loginCommand}</code></>}
+                      {!copied && <Copy size={10} />}
+                    </button>
+                  </>
+                )}
+              </div>
             ) : found ? (
               <span className="text-xs text-green-400">
                 {version ? `v${version}` : 'Installed'}
@@ -207,10 +246,13 @@ export function WelcomeScreen() {
                 <DetectionCard
                   key={agent.name}
                   name={agent.displayName}
+                  testId={`welcome-agent-${agent.name}`}
                   found={agent.found}
                   version={agent.version}
                   installUrl={agentInstallUrl(agent.name)}
                   loading={refreshing}
+                  authenticated={agent.authenticated}
+                  loginCommand={agentLoginCommand(agent.name)}
                 />
               ))
             ) : (

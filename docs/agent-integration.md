@@ -13,6 +13,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `detect(overridePath?)` | Locate the CLI binary and return path + version |
 | `invalidateDetectionCache()` | Reset cached detection (e.g. after user changes CLI path) |
 | `ensureTrust(workingDirectory)` | Pre-approve a directory so the agent doesn't prompt for trust |
+| `probeAuth?()` | Optional. Check whether the agent is authenticated. Returns `true` (logged in), `false` (installed but not authenticated), or `null` (probe unavailable / I/O error). Only called by IPC after `detect()` reports `found: true`. Must never throw. Currently implemented only by Kimi (see [Kimi Code -> Authentication](#authentication)). |
 | `buildCommand(options)` | Build the shell command string to spawn the agent |
 | `interpolateTemplate(template, variables)` | Replace `{{key}}` placeholders in prompt templates |
 | `runtime` | `AdapterRuntimeStrategy` declaring activity detection + session ID capture (see below) |
@@ -688,11 +689,25 @@ Kimi exposes only two permission flags. The adapter surfaces three modes:
 | `default` | Interactive confirmation per action (no flag) |
 | `bypassPermissions` | Auto-approve all (`--yolo`) |
 
+### Authentication
+
+`KimiAdapter.probeAuth()` checks for `~/.kimi/credentials/` (the OAuth state directory written by `kimi login`). The probe is invoked by the `IPC.AGENT_LIST` handler after `detect()` reports `found: true` and surfaces a tristate field `authenticated: true | false | null` on `AgentDetectionInfo`:
+
+- `true` - credentials directory exists and is non-empty
+- `false` - directory missing or empty (user has not run `kimi login`)
+- `null` - I/O error or probe not implemented
+
+The renderer surfaces the `false` state two ways: an amber `DetectionCard` variant on the welcome-screen agent grid (with a "Copy `kimi login`" clipboard button), and an amber pill plus inline hint in Settings -> Agent. Refreshing the agent list (welcome-screen Refresh, Settings re-detect button, or reopening the settings panel) re-runs the probe and clears the warning once the user has logged in.
+
+Filesystem check chosen over a `kimi info` subprocess: the probe runs on every `AGENT_LIST` call alongside the existing `--version` probes, and a single sub-millisecond `fs.readdirSync` (with ENOENT mapped to `false`) keeps the refresh latency unchanged. An expired-token false-positive (credentials present but not valid) still falls through to today's behavior - the spawned session prints "LLM not set" and exits.
+
+`probeAuth?()` is an optional method on the `AgentAdapter` interface; only Kimi implements it today. Other adapters return `undefined` for the `authenticated` field, which the renderer treats as "not applicable".
+
 ### Limitations
 
 - No hook injection (Kimi reads `~/.kimi/config.toml` `hooks = []` but has no per-project settings file equivalent we can write to)
 - No trust dialog (`ensureTrust` is a no-op)
-- Authentication is interactive (`kimi login` opens an OAuth flow); we surface no UX for it today - a fresh install will print "Model: not set, send /login to login" until the user logs in once
+- We do not initiate the OAuth flow on the user's behalf - see Authentication above for how the unauthenticated state is detected and surfaced
 
 ## Prompt Templates
 
