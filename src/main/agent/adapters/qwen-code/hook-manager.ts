@@ -14,9 +14,6 @@ export interface QwenHookEntry {
  * Qwen Code inherits gemini-cli's hooks system unchanged. Event names,
  * stdin schema, and entry shape all carry over - only the settings file
  * path differs (`.qwen/settings.json` instead of `.gemini/settings.json`).
- *
- * BeforeModel, AfterModel, and BeforeToolSelection are available upstream
- * but currently unmapped here, mirroring the Gemini adapter.
  */
 export const QwenHookEvent = {
   SessionStart: 'SessionStart',
@@ -103,6 +100,18 @@ export function buildHooks(
     [H.PreCompress]: [
       ...filterOurHooks(existingHooks[H.PreCompress]),
       bridgeEntry(eventBridge, eventsPath, E.Compact),
+    ],
+    [H.BeforeModel]: [
+      ...filterOurHooks(existingHooks[H.BeforeModel]),
+      bridgeEntry(eventBridge, eventsPath, E.ModelStart, 'nested-detail:llm_request:model'),
+    ],
+    [H.AfterModel]: [
+      ...filterOurHooks(existingHooks[H.AfterModel]),
+      bridgeEntry(eventBridge, eventsPath, E.ModelEnd, 'nested-detail:llm_request:model'),
+    ],
+    [H.BeforeToolSelection]: [
+      ...filterOurHooks(existingHooks[H.BeforeToolSelection]),
+      bridgeEntry(eventBridge, eventsPath, E.ToolSelectionStart),
     ],
   };
 }

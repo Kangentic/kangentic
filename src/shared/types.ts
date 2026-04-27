@@ -291,6 +291,17 @@ export const EventType = {
    * active).
    */
   BackgroundShellEnd: 'background_shell_end',
+  /**
+   * Fired by Qwen Code / Gemini CLI before each LLM API call within an
+   * agent turn. Used for per-call visibility in the Activity tab; does
+   * not change activity state (the agent is already 'thinking' from the
+   * containing BeforeAgent).
+   */
+  ModelStart: 'model_start',
+  /** Fired after each LLM API call returns. Log-only counterpart to ModelStart. */
+  ModelEnd: 'model_end',
+  /** Fired when the agent is choosing which tool to invoke next. Log-only. */
+  ToolSelectionStart: 'tool_selection_start',
 } as const;
 export type EventType = (typeof EventType)[keyof typeof EventType];
 
@@ -330,6 +341,9 @@ export const EventTypeActivity: Record<EventType, ActivityState | null> = {
   [EventType.ConfigChange]: null,
   [EventType.WorktreeRemove]: null,
   [EventType.BackgroundShellEnd]: null,
+  [EventType.ModelStart]: null,
+  [EventType.ModelEnd]: null,
+  [EventType.ToolSelectionStart]: null,
 };
 
 // === Session Events (Claude Code Hooks → Activity Log) ===

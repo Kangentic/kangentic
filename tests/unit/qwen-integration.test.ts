@@ -277,7 +277,7 @@ describe('Qwen Code - integration harness', () => {
   });
 
   describe('Layer 4: hook injection writes .qwen/settings.json', () => {
-    it('buildCommand with eventsOutputPath creates .qwen/settings.json with 8 hook events', () => {
+    it('buildCommand with eventsOutputPath creates .qwen/settings.json with 11 hook events', () => {
       const adapter = new QwenAdapter();
       const eventsPath = path.join(sandbox, 'events.jsonl');
       adapter.buildCommand({
@@ -297,9 +297,12 @@ describe('Qwen Code - integration harness', () => {
       const hookEventKeys = Object.keys(settings.hooks).sort();
       expect(hookEventKeys).toEqual([
         'AfterAgent',
+        'AfterModel',
         'AfterTool',
         'BeforeAgent',
+        'BeforeModel',
         'BeforeTool',
+        'BeforeToolSelection',
         'Notification',
         'PreCompress',
         'SessionEnd',

@@ -377,6 +377,9 @@ export const EVENT_RENDERERS: Partial<Record<EventType, EventRenderer>> = {
   [EventType.ConfigChange]: (common) => <DimLine {...common} text="Config changed" />,
   [EventType.WorktreeCreate]: (common, event) => <BadgeLine {...common} badge="Worktree" detail={event.detail} />,
   [EventType.WorktreeRemove]: (common, event) => <DimDetailLine {...common} text="Worktree removed" detail={event.detail} />,
+  [EventType.ModelStart]: (common, event) => <BadgeLine {...common} badge="Model" detail={event.detail} />,
+  [EventType.ModelEnd]: (common, event) => <DimDetailLine {...common} text="Model done" detail={event.detail} />,
+  [EventType.ToolSelectionStart]: (common) => <DimLine {...common} text="Selecting tool..." />,
 };
 
 /** Exported for unit testing - see `tests/unit/activity-log-renderers.test.ts`. */

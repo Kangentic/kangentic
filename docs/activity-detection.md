@@ -101,6 +101,9 @@ The script is stateless -- no persistent process, no inter-invocation memory. Al
 | `worktree_remove` | Worktree removal in progress | `WorktreeRemove` (blank matcher) |
 | `background_shell_start` | Agent launched a Bash with `run_in_background: true` | `PreToolUse` remapped by `remap-nested:tool_input:run_in_background:true:background_shell_start` |
 | `background_shell_end` | Agent killed a backgrounded shell via `KillBash` | `PreToolUse` remapped by `remap:tool_name:KillBash:background_shell_end` |
+| `model_start` | LLM API call started | `BeforeModel` (Qwen Code / Gemini CLI wire-protocol) |
+| `model_end` | LLM API call returned | `AfterModel` (Qwen Code / Gemini CLI wire-protocol) |
+| `tool_selection_start` | Agent is choosing which tool to invoke | `BeforeToolSelection` (Qwen Code / Gemini CLI wire-protocol) |
 
 Note: `tool_failure` is passed as the event type argument to the bridge script, but is never written to the JSONL file as-is. The bridge reads `is_interrupt` from the hook payload and converts it to either `interrupted` (if true) or `tool_end` (if false).
 
@@ -141,6 +144,9 @@ The SessionManager derives thinking/idle state from event types using this mappi
 | `config_change` | *(no change)* | Informational -- configuration changed |
 | `worktree_remove` | *(no change)* | Informational -- worktree removal |
 | `background_shell_end` | *(no change)* | Decrements `activeBackgroundShells`; releases a deferred Guard 3 idle when the counter reaches zero |
+| `model_start` | *(no change)* | Log-only -- fires inside an active turn; `BeforeAgent` already drove thinking state |
+| `model_end` | *(no change)* | Log-only -- pairs with `model_start` |
+| `tool_selection_start` | *(no change)* | Log-only -- fires inside an active turn; `BeforeAgent` already drove thinking state |
 
 Key design decisions:
 

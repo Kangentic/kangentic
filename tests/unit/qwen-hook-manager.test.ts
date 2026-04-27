@@ -30,7 +30,7 @@ afterEach(() => {
 
 describe('qwen-hook-manager', () => {
   describe('buildHooks', () => {
-    it('produces correct hook entries for all 8 mapped event types', () => {
+    it('produces correct hook entries for all 11 mapped event types', () => {
       const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});
 
       // BeforeTool: tool_start
@@ -68,8 +68,22 @@ describe('qwen-hook-manager', () => {
       expect(hooks.PreCompress).toHaveLength(1);
       expect(hooks.PreCompress[0].hooks[0].command).toContain('compact');
 
-      // Total: 8 hook event keys
-      expect(Object.keys(hooks)).toHaveLength(8);
+      // BeforeModel: model_start, model name extracted from llm_request.model
+      expect(hooks.BeforeModel).toHaveLength(1);
+      expect(hooks.BeforeModel[0].hooks[0].command).toContain('model_start');
+      expect(hooks.BeforeModel[0].hooks[0].command).toContain('nested-detail:llm_request:model');
+
+      // AfterModel: model_end, model name extracted from llm_request.model
+      expect(hooks.AfterModel).toHaveLength(1);
+      expect(hooks.AfterModel[0].hooks[0].command).toContain('model_end');
+      expect(hooks.AfterModel[0].hooks[0].command).toContain('nested-detail:llm_request:model');
+
+      // BeforeToolSelection: tool_selection_start
+      expect(hooks.BeforeToolSelection).toHaveLength(1);
+      expect(hooks.BeforeToolSelection[0].hooks[0].command).toContain('tool_selection_start');
+
+      // Total: 11 hook event keys
+      expect(Object.keys(hooks)).toHaveLength(11);
     });
 
     it('preserves existing user hooks', () => {
