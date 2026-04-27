@@ -1399,8 +1399,29 @@
         });
         return count;
       },
-      onChangedByAgent: function () {
-        return noop;
+      onChangedByAgent: function (callback) {
+        // Capture the callback so tests can simulate the main-process broadcast
+        // via window.__mockFireBacklogChangedByAgent(projectId).
+        if (typeof window !== 'undefined') {
+          if (!window.__mockBacklogChangedListeners) {
+            window.__mockBacklogChangedListeners = [];
+          }
+          window.__mockBacklogChangedListeners.push(callback);
+          if (!window.__mockFireBacklogChangedByAgent) {
+            window.__mockFireBacklogChangedByAgent = function (projectId) {
+              var listeners = (window.__mockBacklogChangedListeners || []).slice();
+              for (var i = 0; i < listeners.length; i++) {
+                listeners[i](projectId);
+              }
+            };
+          }
+        }
+        return function () {
+          if (typeof window === 'undefined') return;
+          var listeners = window.__mockBacklogChangedListeners || [];
+          var listenerIndex = listeners.indexOf(callback);
+          if (listenerIndex >= 0) listeners.splice(listenerIndex, 1);
+        };
       },
       onLabelColorsChanged: function () {
         return noop;
@@ -1548,6 +1569,7 @@
       archivedTasks: archivedTasks,
       swimlanes: swimlanes,
       sessions: sessions,
+      backlogTasks: backlogTasks,
       activityCache: activityCache,
       eventCache: eventCache,
       summaryCache: summaryCache,
