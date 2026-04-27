@@ -3,9 +3,10 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { resolveTask } from './task-resolver';
 import { parseClaudeTranscript, locateClaudeTranscriptFile } from '../adapters/claude/transcript-parser';
+import { parseDroidTranscript, droidTranscriptFilePath } from '../adapters/droid/transcript-parser';
 import { transcriptToMarkdown } from '../../../shared/transcript-format';
 import type { CommandContext, CommandResponse } from './types';
-import type { SessionRecord } from '../../../shared/types';
+import type { SessionRecord, TranscriptEntry } from '../../../shared/types';
 
 type TranscriptFormat = 'structured' | 'raw';
 
@@ -17,13 +18,15 @@ type TranscriptFormat = 'structured' | 'raw';
  *
  * - `structured` (default): the parsed conversation - user prompts,
  *   assistant text, tool calls and results - rendered as markdown.
- *   Sourced from Claude Code's native session JSONL. Best for
- *   cross-agent context handoff and human review. Claude sessions only.
+ *   Sourced from each agent's native session JSONL. Best for
+ *   cross-agent context handoff and human review. Currently supported
+ *   for Claude (`claude_agent`) and Droid (`droid_agent`); other agent
+ *   types fall back to a polite "not yet supported" message.
  *
  * - `raw`: the ANSI-stripped PTY scrollback - exactly what hit the
  *   terminal, including TUI redraws. Useful for debugging the terminal
- *   layer or for inspecting non-Claude sessions where the structured
- *   parser isn't yet supported.
+ *   layer or for inspecting agents where the structured parser isn't
+ *   yet supported.
  */
 export async function handleGetTranscript(
   params: Record<string, unknown>,
@@ -70,18 +73,25 @@ export async function handleGetTranscript(
     const targetSessionId = record.id;
 
     if (format === 'structured') {
-      if (record.session_type !== 'claude_agent') {
-        return {
-          success: true,
-          message: `Structured transcripts are currently supported only for Claude sessions (session_type=${record.session_type}). Re-run with format="raw" to get the terminal scrollback instead.`,
-        };
-      }
       if (!record.agent_session_id) {
         return { success: true, message: `Session ${targetSessionId.slice(0, 8)} has no agent_session_id - JSONL not yet written.` };
       }
 
-      const filePath = locateClaudeTranscriptFile(record.agent_session_id, record.cwd);
-      const entries = await parseClaudeTranscript(filePath);
+      let filePath: string;
+      let entries: TranscriptEntry[];
+      if (record.session_type === 'claude_agent') {
+        filePath = locateClaudeTranscriptFile(record.agent_session_id, record.cwd);
+        entries = await parseClaudeTranscript(filePath);
+      } else if (record.session_type === 'droid_agent') {
+        filePath = droidTranscriptFilePath(record.agent_session_id, record.cwd);
+        entries = await parseDroidTranscript(filePath);
+      } else {
+        return {
+          success: true,
+          message: `Structured transcripts are not yet supported for ${record.session_type}. Re-run with format="raw" to get the terminal scrollback instead.`,
+        };
+      }
+
       if (entries.length === 0) {
         return { success: true, message: `No transcript entries found at ${filePath}.` };
       }
