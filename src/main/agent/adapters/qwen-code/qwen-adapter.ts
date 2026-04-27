@@ -3,6 +3,7 @@ import { QwenCommandBuilder } from './command-builder';
 import { removeHooks as removeQwenHooks } from './hook-manager';
 import { QwenSessionHistoryParser } from './session-history-parser';
 import { QwenStatusParser } from './status-parser';
+import { ensureWorktreeTrust } from './trust-manager';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -53,8 +54,13 @@ export class QwenAdapter implements AgentAdapter {
     this.detector.invalidateCache();
   }
 
-  async ensureTrust(_workingDirectory: string): Promise<void> {
-    // No-op: Qwen Code does not have a trust/directory-approval system.
+  async ensureTrust(workingDirectory: string): Promise<void> {
+    // Qwen Code's folder-trust feature (inherited from upstream Gemini CLI)
+    // is gated on security.folderTrust.enabled in ~/.qwen/settings.json.
+    // When the user has opted in, pre-populate the worktree entry in
+    // ~/.qwen/trustedFolders.json so the trust prompt does not block
+    // drag-to-spawn. When disabled (default), this is a no-op.
+    await ensureWorktreeTrust(workingDirectory);
   }
 
   buildCommand(options: SpawnCommandOptions): string {

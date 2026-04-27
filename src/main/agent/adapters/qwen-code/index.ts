@@ -3,3 +3,4 @@ export { QwenDetector } from './detector';
 export { QwenCommandBuilder, type QwenCommandOptions } from './command-builder';
 export { QwenStatusParser } from './status-parser';
 export { buildHooks, removeHooks, type QwenHookEntry, QwenHookEvent } from './hook-manager';
+export { ensureWorktreeTrust as ensureQwenWorktreeTrust } from './trust-manager';
