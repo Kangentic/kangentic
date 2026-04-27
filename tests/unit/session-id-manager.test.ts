@@ -156,6 +156,15 @@ describe('SessionIdManager', () => {
       vi.advanceTimersByTime(30_000);
       expect(warnSpy).not.toHaveBeenCalled();
     });
+
+    it('does NOT arm the timer when hasKnownAgentSessionId=true (caller-owned UUID)', () => {
+      // Adapters like Qwen and Kimi pass --session-id <uuid> at spawn time.
+      // The agent's session ID is fixed by us, so the "not captured" warning
+      // would be a false positive. spawn-flow signals this via the flag.
+      manager.init('s1', makeAdapter({ fromOutput }), '/cwd', 'qwen', true);
+      vi.advanceTimersByTime(30_000);
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
   });
 
   describe('removeSession', () => {

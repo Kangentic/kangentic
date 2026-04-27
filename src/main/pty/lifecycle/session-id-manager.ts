@@ -97,18 +97,25 @@ export class SessionIdManager {
    * Arm the diagnostic timer and kick off filesystem-based capture.
    * Call once at spawn time per session. Safe for adapters without a
    * session-ID strategy (returns early).
+   *
+   * `hasKnownAgentSessionId` lets the caller indicate that the agent
+   * session ID is already known at spawn time (caller-owned UUID via
+   * `--session-id` etc). When true, the diagnostic "not captured"
+   * timer is skipped because the ID is fixed by us, not discovered
+   * by the agent.
    */
   init(
     sessionId: string,
     agentParser: AgentParser | undefined,
     cwd: string,
     agentName: string,
+    hasKnownAgentSessionId: boolean = false,
   ): void {
     const strategy = agentParser?.runtime?.sessionId;
     if (!strategy) return;
 
     const hasCapturePath = !!(strategy.fromHook || strategy.fromOutput || strategy.fromFilesystem);
-    if (hasCapturePath) {
+    if (hasCapturePath && !hasKnownAgentSessionId) {
       const timer = setTimeout(() => {
         this.diagnosticTimers.delete(sessionId);
         if (!this.callbacks.hasAgentSessionId(sessionId)) {

@@ -288,6 +288,7 @@ export class SessionManager extends EventEmitter {
       sessionFiles: this.sessionFiles,
       resizeManager: this.resizeManager,
       statusFileReader: this.statusFileReader,
+      sessionHistoryReader: this.sessionHistoryReader,
       sessionQueue: this.sessionQueue,
       getTranscriptWriter: () => this.transcriptWriter,
       getShell: () => this.getShell(),

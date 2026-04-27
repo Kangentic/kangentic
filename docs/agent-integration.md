@@ -61,6 +61,7 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude via `--se
 | Field | Type | Purpose |
 |-------|------|---------|
 | `agentName?` | `string` | Human-readable agent name (`'claude'`, `'gemini'`, etc.) captured at spawn time. Used in diagnostic logs - survives production minification unlike `agentParser.constructor.name`. |
+| `agentSessionId?` | `string \| null` | Caller-owned agent session UUID. Set when the adapter declares `supportsCallerSessionId = true` and the spawn pipeline pre-generates a UUID before invoking the CLI (Claude `--session-id`, Qwen `--session-id`, Kimi `--session`). Lets `session-spawn-flow.ts` call `sessionHistoryReader.attach()` immediately at spawn time without waiting for capture pathways to round-trip, and skips the 30s "session ID not captured" diagnostic timer. Null/undefined for adapters that auto-generate IDs (Codex, Gemini, Droid). |
 
 ## Supported Agents
 
@@ -69,7 +70,7 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude via `--se
 | Claude Code | `claude-adapter.ts` | `claude` | `--resume <id>` | Yes (status.json + events.jsonl) | Yes (`--settings`) | Yes (`~/.claude.json`) |
 | Codex CLI | `codex-adapter.ts` | `codex` | `resume <id>` | Partial (events.jsonl only) | No | No |
 | Gemini CLI | `gemini-adapter.ts` | `gemini` | `--resume <id>` | Yes (status.json + events.jsonl) | Yes (`.gemini/settings.json`) | No |
-| Qwen Code | `qwen-adapter.ts` | `qwen` | `--resume <id>` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | No |
+| Qwen Code | `qwen-adapter.ts` | `qwen` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | No |
 | Cursor CLI | `cursor-adapter.ts` | `agent` | `--resume="<id>"` | No | No | No |
 | GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--resume <uuid>` (caller-owned) | Partial (events.jsonl + status parser) | Per-session `--config-dir` | Runtime `--add-dir` |
 | Aider | `aider-adapter.ts` | `aider` | No | No | No | No |
@@ -381,16 +382,18 @@ Detection follows the standard pattern: check `config.agent.cliPaths.qwen`, fall
 #### New Session
 
 ```
-qwen --approval-mode <mode> "prompt text"
+qwen --approval-mode <mode> --session-id <uuid> "prompt text"
 ```
 
-Qwen Code creates sessions implicitly (we mirror Gemini's filesystem-capture path even though `--session-id` is documented in the upstream yargs config; see "Out of scope" notes for the rationale).
+Kangentic generates a UUID up front and passes it via `--session-id`, mirroring Claude. Qwen 0.15.3+ honors caller-owned UUIDs and writes its session JSONL at exactly `<our-uuid>.jsonl`.
 
 #### Resumed Session
 
 ```
 qwen --resume <sessionId>
 ```
+
+`--session-id` and `--resume` are mutually exclusive (yargs enforces). The command builder picks the correct flag based on the `resume` option.
 
 ### Permission Modes
 
@@ -419,9 +422,12 @@ The parser walks the `messages[]` array backwards to find the most recent assist
 
 Context window sizes are stored in a model-name lookup table covering Qwen3-Coder (256K), Qwen3 general (128K), Qwen-Max (32K), Qwen-Plus (128K), Qwen-Turbo (1M long-context tier), and the Qwen2.5 family. Unknown model names fall through to a `null` sentinel - the renderer hides the progress bar and shows only the model name (graceful degradation).
 
+### Session ID Capture
+
+Caller-owned via `--session-id <uuid>`, mirroring Claude. `supportsCallerSessionId` is `true`. Empirically verified against Qwen 0.15.3: real qwen accepts a UUID and writes its JSONL at exactly `~/.qwen/projects/<sanitized-cwd>/chats/<our-uuid>.jsonl`. `--session-id` and `--resume` are mutex (yargs enforces). The runtime keeps `fromHook` and `fromOutput` capture paths as belt-and-suspenders for forks that pre-empt the caller's UUID.
+
 ### Limitations / Out of Scope
 
-- **Caller-owned session IDs:** Qwen Code's yargs config exposes `--session-id <uuid>`, but until end-to-end semantics are empirically verified the adapter mirrors Gemini's filesystem-capture path. `supportsCallerSessionId` is `false`. Switching to caller-owned IDs is a one-line flip in `qwen-adapter.ts` plus a `--session-id` branch in the command builder.
 - **No statusLine telemetry:** Qwen Code (like Gemini) has no `status.json` token-streaming feature, so context window % is sourced from the session history file rather than a real-time hook.
 - **OpenAI gpt-5 family unsupported (upstream bug):** Qwen Code 0.15.3's bundled `cli.js` sends `max_tokens` in OpenAI requests and never `max_completion_tokens`. OpenAI's gpt-5 family (e.g. gpt-5, gpt-5-mini, gpt-5-nano, gpt-5.1, and any gpt-5.x / gpt-5.x-codex variant) requires `max_completion_tokens` and rejects `max_tokens` with HTTP 400. Picking any gpt-5 variant via `/model` in the Qwen TUI surfaces `[API Error: 400 Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.]`. Workarounds until upstream patches: stay on the gpt-4.1 family for OpenAI, or use the Anthropic provider (Opus 4.7, Sonnet 4.6, Haiku 4.5) which is fully supported. Kangentic cannot work around this - the adapter is a pure CLI wrapper with no request-parameter interception. Tracked upstream at https://github.com/QwenLM/qwen-code (search issues for `max_completion_tokens`).
 

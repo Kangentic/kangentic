@@ -9,6 +9,7 @@ import type { SessionIdManager } from './session-id-manager';
 import type { SessionFileManager } from './session-file-manager';
 import type { ResizeManager } from './resize-manager';
 import type { StatusFileReader } from '../readers/status-file-reader';
+import type { SessionHistoryReader } from '../readers/session-history-reader';
 import type { SessionQueue } from '../session-queue';
 import type { TranscriptWriter } from '../buffer/transcript-writer';
 import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './adapter-lifecycle';
@@ -37,6 +38,7 @@ export interface SpawnFlowContext {
   sessionFiles: SessionFileManager;
   resizeManager: ResizeManager;
   statusFileReader: StatusFileReader;
+  sessionHistoryReader: SessionHistoryReader;
   sessionQueue: SessionQueue;
   getTranscriptWriter: () => TranscriptWriter | null;
   getShell: () => Promise<string>;
@@ -203,8 +205,46 @@ export async function performSpawn(
 
   // Session-ID capture: arm the diagnostic timer and kick off the
   // filesystem-based pathway. See SessionIdManager for the
-  // full capture strategy.
-  context.sessionIdManager.init(id, input.agentParser, effectiveCwd, session.agentName ?? 'agent');
+  // full capture strategy. Skip the diagnostic timer when the agent
+  // session ID is caller-owned (already set at spawn time) - the
+  // 30s "not captured" warning would be a false positive since we
+  // never expected the agent to report it.
+  context.sessionIdManager.init(
+    id,
+    input.agentParser,
+    effectiveCwd,
+    session.agentName ?? 'agent',
+    !!input.agentSessionId,
+  );
+
+  // Caller-owned session ID short-circuit: when the adapter declares
+  // `supportsCallerSessionId = true` the spawn pipeline pre-generates
+  // a UUID and passes it on the CLI (--session-id / --session). For
+  // adapters that ALSO declare `runtime.sessionHistory` we attach the
+  // reader immediately so model + token telemetry starts streaming
+  // without waiting for capture pathways to round-trip.
+  //
+  // Why not call `usageTracker.notifyAgentSessionId` instead: that
+  // path also fires the `agent-session-id` event which dispatches to
+  // `recoverStaleSessionId(sessionRepo, ...)`. The DB record is
+  // inserted by the caller AFTER spawn() returns, so during the
+  // notify the latest session record is still the previous (retired)
+  // one. recoverStaleSessionId would then misattribute the new ID to
+  // the old record. Calling attach() directly skips that chain.
+  // sessionHistoryReader.attach is idempotent; a later capture
+  // pathway firing the full notify chain is harmless.
+  const callerOwnedSessionHistory = input.agentParser?.runtime?.sessionHistory;
+  if (input.agentSessionId && callerOwnedSessionHistory) {
+    context.sessionHistoryReader.attach({
+      sessionId: id,
+      agentSessionId: input.agentSessionId,
+      cwd: effectiveCwd,
+      hook: callerOwnedSessionHistory,
+      agentName: session.agentName,
+    }).catch((err) => {
+      console.warn(`[session-history] attach failed for session=${id.slice(0, 8)}:`, err);
+    });
+  }
 
   // Generic adapter lifecycle hook. See adapter-lifecycle.ts for the
   // contract. The attachment is disposed on PTY exit and on remove()

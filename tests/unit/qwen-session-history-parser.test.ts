@@ -1,10 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   QwenSessionHistoryParser,
-  clearDiscoveredSessionPaths,
   qwenChatsDir,
 } from '../../src/main/agent/adapters/qwen-code/session-history-parser';
 
@@ -218,44 +217,29 @@ describe('QwenSessionHistoryParser', () => {
     });
   });
 
-  describe('captureSessionIdFromFilesystem', () => {
+  describe('locate', () => {
     let chatsDir: string;
     let cwd: string;
     const createdDirs: string[] = [];
 
-    function writeSessionFile(sessionId: string, startTime: Date): string {
+    function writeSessionFile(sessionId: string): string {
       const filePath = path.join(chatsDir, `${sessionId}.jsonl`);
       const userEvent = {
         uuid: 'u1',
         parentUuid: null,
         sessionId,
-        timestamp: startTime.toISOString(),
+        timestamp: new Date().toISOString(),
         type: 'user',
         cwd,
         version: '0.15.3',
         gitBranch: 'mock',
         message: { role: 'user', parts: [{ text: 'hi' }] },
       };
-      const assistantEvent = {
-        uuid: 'a1',
-        parentUuid: 'u1',
-        sessionId,
-        timestamp: new Date(startTime.getTime() + 100).toISOString(),
-        type: 'assistant',
-        cwd,
-        version: '0.15.3',
-        gitBranch: 'mock',
-        model: 'claude-haiku-4-5-20251001',
-        message: { role: 'model', parts: [{ text: 'ok' }] },
-        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, cachedContentTokenCount: 0, totalTokenCount: 15 },
-        contextWindowSize: 200000,
-      };
-      fs.writeFileSync(filePath, JSON.stringify(userEvent) + '\n' + JSON.stringify(assistantEvent) + '\n');
+      fs.writeFileSync(filePath, JSON.stringify(userEvent) + '\n');
       return filePath;
     }
 
     beforeEach(() => {
-      clearDiscoveredSessionPaths();
       cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-cwd-'));
       // Use the same chats-dir helper the parser uses, so our test's
       // mkdir tracks the parser's path derivation byte-for-byte.
@@ -274,50 +258,9 @@ describe('QwenSessionHistoryParser', () => {
       try { fs.rmSync(cwd, { recursive: true, force: true }); } catch { /* ignore */ }
     });
 
-    it('captures session ID from a matching JSONL file', async () => {
-      const sessionId = 'aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee';
-      const now = new Date();
-      writeSessionFile(sessionId, now);
-
-      const result = await QwenSessionHistoryParser.captureSessionIdFromFilesystem({
-        spawnedAt: new Date(now.getTime() - 1000),
-        cwd,
-        maxAttempts: 2,
-      });
-      expect(result).toBe(sessionId);
-    });
-
-    it('returns null when no matching session file exists', async () => {
-      const result = await QwenSessionHistoryParser.captureSessionIdFromFilesystem({
-        spawnedAt: new Date(),
-        cwd,
-        maxAttempts: 1,
-      });
-      expect(result).toBeNull();
-    });
-
-    it('populates locate() cache so locate() returns immediately', async () => {
-      const sessionId = 'bbbb2222-cccc-dddd-eeee-ffffffffffff';
-      const now = new Date();
-      const filePath = writeSessionFile(sessionId, now);
-
-      const capturedId = await QwenSessionHistoryParser.captureSessionIdFromFilesystem({
-        spawnedAt: new Date(now.getTime() - 1000),
-        cwd,
-        maxAttempts: 2,
-      });
-      expect(capturedId).toBe(sessionId);
-
-      const locatedPath = await QwenSessionHistoryParser.locate({
-        agentSessionId: sessionId,
-        cwd,
-      });
-      expect(locatedPath).toBe(filePath);
-    });
-
-    it('locate() returns the direct <sessionId>.jsonl path even without prior capture', async () => {
+    it('returns the direct <sessionId>.jsonl path when the file exists', async () => {
       const sessionId = 'cccc3333-dddd-eeee-ffff-aaaaaaaaaaaa';
-      const filePath = writeSessionFile(sessionId, new Date());
+      const filePath = writeSessionFile(sessionId);
       const located = await QwenSessionHistoryParser.locate({
         agentSessionId: sessionId,
         cwd,
@@ -325,37 +268,13 @@ describe('QwenSessionHistoryParser', () => {
       expect(located).toBe(filePath);
     });
 
-    it('logs warning when polling budget exhausts without finding a file', async () => {
-      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-      await QwenSessionHistoryParser.captureSessionIdFromFilesystem({
-        spawnedAt: new Date(),
+    it('returns null when the file never appears', async () => {
+      const located = await QwenSessionHistoryParser.locate({
+        agentSessionId: '00000000-0000-0000-0000-000000000000',
         cwd,
-        maxAttempts: 1,
       });
-
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('no matching session file found after'),
-      );
-      warnSpy.mockRestore();
-    });
-
-    it('ignores session files with timestamp outside the time window', async () => {
-      const sessionId = 'dddd4444-eeee-ffff-aaaa-bbbbbbbbbbbb';
-      // Create a file with first-event timestamp 2 minutes ago - outside the +/- 30s window
-      const oldTime = new Date(Date.now() - 120_000);
-      const filePath = writeSessionFile(sessionId, oldTime);
-      // Touch mtime to now so it passes the mtime pre-filter
-      const now = new Date();
-      fs.utimesSync(filePath, now, now);
-
-      const result = await QwenSessionHistoryParser.captureSessionIdFromFilesystem({
-        spawnedAt: new Date(),
-        cwd,
-        maxAttempts: 1,
-      });
-      expect(result).toBeNull();
-    });
+      expect(located).toBeNull();
+    }, 10000);
   });
 
   describe('path derivation', () => {

@@ -176,6 +176,7 @@ export async function autoSpawnTasks(
         eventsOutputPath: input.eventsOutputPath,
         agentParser: input.adapter,
         agentName: input.adapter.name,
+        agentSessionId: input.agentSessionId,
         exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
       });
       return { input, newSession };

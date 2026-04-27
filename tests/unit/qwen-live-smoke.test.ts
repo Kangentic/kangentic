@@ -6,8 +6,8 @@
  * default. The mock-driven integration harness in
  * `tests/unit/qwen-integration.test.ts` covers the same scenarios for
  * everyday CI; this file exists for empirical validation that the
- * adapter's filesystem-capture path is wired against a real Qwen
- * 0.15.3 install.
+ * adapter's caller-owned `--session-id` path is wired against a real
+ * Qwen 0.15.3 install.
  *
  * Run:
  *   $env:KANGENTIC_LIVE_QWEN="1"; npx vitest run tests/unit/qwen-live-smoke.test.ts   # PowerShell
@@ -16,15 +16,13 @@
  *
  * What it proves end-to-end:
  *   1. The real qwen binary is on PATH and reports a version (detector).
- *   2. Spawning real qwen with our adapter's flags produces a JSONL
- *      session file at the EXACT path our adapter scans for
- *      (`~/.qwen/projects/<sanitized-cwd>/chats/<sessionId>.jsonl`).
- *   3. Our `runtime.sessionId.fromFilesystem` discovers the captured
- *      UUID without help.
- *   4. Our parser extracts `usage.model.id`, `usage.contextWindow.*`,
+ *   2. Real qwen accepts `--session-id <our-uuid>` and writes its JSONL
+ *      at exactly `~/.qwen/projects/<sanitized-cwd>/chats/<our-uuid>.jsonl`
+ *      (caller-owned UUID, not CLI-generated).
+ *   3. Our parser extracts `usage.model.id`, `usage.contextWindow.*`,
  *      and `usage.contextWindow.contextWindowSize` from the real
  *      assistant event.
- *   5. Spawning real qwen with `--resume <captured-id>` re-attaches to
+ *   4. Spawning real qwen with `--resume <our-uuid>` re-attaches to
  *      the SAME JSONL file and appends new events to it (resume loop).
  *
  * Cost: ~$0.001-$0.005 per full run (two short Haiku calls).
@@ -37,6 +35,7 @@
  */
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -47,7 +46,6 @@ import {
 } from '../../src/main/agent/adapters/qwen-code';
 import {
   QwenSessionHistoryParser,
-  clearDiscoveredSessionPaths,
   qwenChatsDir,
 } from '../../src/main/agent/adapters/qwen-code/session-history-parser';
 
@@ -125,7 +123,6 @@ describe.skipIf(!SHOULD_RUN)('Qwen Code - LIVE smoke (real CLI, costs real money
   });
 
   beforeEach(() => {
-    clearDiscoveredSessionPaths();
     sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-live-smoke-'));
     // Real Qwen 0.15.3 will write to ~/.qwen/projects/<sanitized-sandbox>/chats/.
     // We compute that path via the parser's helper so test cleanup
@@ -150,63 +147,59 @@ describe.skipIf(!SHOULD_RUN)('Qwen Code - LIVE smoke (real CLI, costs real money
     });
   });
 
-  describe('Layer 2: full new-session -> capture -> resume cycle', () => {
-    it('real qwen writes a JSONL session at the path our adapter expects, then --resume reuses it', async () => {
+  describe('Layer 2: caller-owned --session-id <uuid> -> resume cycle', () => {
+    it('real qwen honors --session-id <our-uuid>, writes JSONL at our path, then --resume reuses it', async () => {
       const adapter = new QwenAdapter();
-      const spawnedAt = new Date();
 
-      // Step 1: spawn real qwen non-interactively. We pass --auth-type
-      // and -m explicitly so the test doesn't depend on the user's
-      // settings.json defaults. --approval-mode yolo skips all
-      // confirmations. The bare positional prompt is the documented
-      // non-deprecated form (`-p` is deprecated in 0.15.3).
+      // Caller pre-generates the UUID, just like prepare-spawn.ts does
+      // for adapters with supportsCallerSessionId === true.
+      const ourSessionId = randomUUID();
+      const chatFilePath = path.join(projectChatsRoot, `${ourSessionId}.jsonl`);
+
+      // Step 1: spawn real qwen non-interactively WITH --session-id
+      // <our-uuid>. We pass --auth-type and -m explicitly so the test
+      // doesn't depend on the user's settings.json defaults.
+      // --approval-mode yolo skips all confirmations. The bare positional
+      // prompt is the documented non-deprecated form.
       const newRun = await runQwenLive(
         qwenPath,
         [
           '-m', PROBE_MODEL,
           '--auth-type', PROBE_AUTH,
           '--approval-mode', 'yolo',
+          '--session-id', ourSessionId,
           PROBE_PROMPT,
         ],
         sandbox,
       );
       expect(newRun.exitCode, `qwen failed: ${newRun.stderr}`).toBe(0);
-      // Real qwen prints just the assistant text on stdout for non-
-      // interactive runs. The Haiku response to "say ok" is a short
-      // ack like "ok".
       expect(newRun.stdout.trim().length).toBeGreaterThan(0);
 
-      // Step 2: a JSONL file MUST have landed under our adapter's
-      // expected path. Otherwise the adapter and the real CLI disagree
-      // about where chats live (the bug we just fixed).
+      // Step 2: the JSONL file MUST land at <our-uuid>.jsonl, not at a
+      // CLI-generated UUID. This is the empirical proof that
+      // --session-id is caller-owned.
       expect(fs.existsSync(projectChatsRoot)).toBe(true);
+      expect(
+        fs.existsSync(chatFilePath),
+        `expected real qwen to honor --session-id and write ${chatFilePath}`,
+      ).toBe(true);
+      // Defensive: confirm no other JSONL files appeared (i.e. real qwen
+      // didn't quietly fall back to generating its own UUID).
       const chatFiles = fs.readdirSync(projectChatsRoot)
         .filter((name) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i.test(name));
-      expect(chatFiles.length, `no JSONL session file found in ${projectChatsRoot}`).toBe(1);
-      const chatFilePath = path.join(projectChatsRoot, chatFiles[0]);
-      const expectedSessionId = chatFiles[0].replace(/\.jsonl$/, '');
+      expect(chatFiles, `expected exactly one JSONL file (the caller-owned one)`).toEqual([`${ourSessionId}.jsonl`]);
 
       // Step 3: cross-check the file's first event sessionId matches
-      // the filename (Qwen's invariant per the source).
+      // our UUID (Qwen's invariant: filename UUID == event.sessionId).
       const firstLine = fs.readFileSync(chatFilePath, 'utf-8').split('\n')[0];
       const firstEvent = JSON.parse(firstLine) as { sessionId: string; type: string };
-      expect(firstEvent.sessionId).toBe(expectedSessionId);
+      expect(firstEvent.sessionId).toBe(ourSessionId);
 
-      // Step 4: invoke our adapter's filesystem capture. It must
-      // discover the same UUID without us telling it the file location.
-      const capturedId = await adapter.runtime.sessionId!.fromFilesystem!({
-        spawnedAt,
-        cwd: sandbox,
-        maxAttempts: 5,
-      });
-      expect(capturedId, `captureSessionIdFromFilesystem returned null - check ~/.qwen/projects layout`)
-        .toBe(expectedSessionId);
-
-      // Step 5: locate() must return the same on-disk path.
-      const located = await adapter.locateSessionHistoryFile(capturedId!, sandbox);
+      // Step 4: locate() resolves the same path from the known UUID.
+      const located = await adapter.locateSessionHistoryFile(ourSessionId, sandbox);
       expect(located).toBe(chatFilePath);
 
-      // Step 6: parse the real JSONL and confirm we extract usage.
+      // Step 5: parse the real JSONL and confirm we extract usage.
       const parsed = QwenSessionHistoryParser.parse(
         fs.readFileSync(located!, 'utf-8'),
         'full',
@@ -219,7 +212,7 @@ describe.skipIf(!SHOULD_RUN)('Qwen Code - LIVE smoke (real CLI, costs real money
       expect(parsed.usage!.contextWindow.totalInputTokens).toBeGreaterThan(0);
       expect(parsed.usage!.contextWindow.totalOutputTokens).toBeGreaterThan(0);
 
-      // Step 7: spawn real qwen with --resume <captured-id>. It must
+      // Step 6: spawn real qwen with --resume <our-uuid>. It must
       // re-open the SAME chat file and append more events to it.
       const initialSize = fs.statSync(chatFilePath).size;
       const resumeRun = await runQwenLive(
@@ -228,18 +221,18 @@ describe.skipIf(!SHOULD_RUN)('Qwen Code - LIVE smoke (real CLI, costs real money
           '-m', PROBE_MODEL,
           '--auth-type', PROBE_AUTH,
           '--approval-mode', 'yolo',
-          '--resume', capturedId!,
+          '--resume', ourSessionId,
           'continue: say ok again',
         ],
         sandbox,
       );
       expect(resumeRun.exitCode, `qwen --resume failed: ${resumeRun.stderr}`).toBe(0);
 
-      // Step 8: file must have grown (resume appended new events).
+      // Step 7: file must have grown (resume appended new events).
       const finalSize = fs.statSync(chatFilePath).size;
       expect(finalSize, 'resume did not append to the existing chat file').toBeGreaterThan(initialSize);
 
-      // Step 9: parse the post-resume file - should now have multiple
+      // Step 8: parse the post-resume file - should now have multiple
       // assistant events. Walk-backwards must still pick up the most
       // recent one with non-zero token totals.
       const reparsed = QwenSessionHistoryParser.parse(

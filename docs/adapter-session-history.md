@@ -21,8 +21,14 @@ Runtime flow:
 
 1. An agent adapter declares a `sessionHistory` block in its `runtime` strategy (`src/shared/types.ts` - `AdapterRuntimeStrategy.sessionHistory`).
 2. On PTY spawn, the adapter's full runtime strategy is stored on `ManagedSession.agentParser` - SessionManager does nothing session-history-specific.
-3. The agent's session ID is captured via one of three paths (whichever fires first): `runtime.sessionId.fromHook` (Gemini hook stdin), `runtime.sessionId.fromOutput` (PTY scraper), or `runtime.sessionId.fromFilesystem` (Codex rollout directory scan). See [Agent Integration](agent-integration.md) for the full table.
-4. When `notifyAgentSessionId` fires, SessionManager reads `session.agentParser?.runtime?.sessionHistory` and, if present, calls `sessionHistoryReader.attach(...)`. This is the full session-history integration in SessionManager — about 10 lines.
+3. The agent's session ID is captured via one of four paths (whichever fires first):
+   - **Spawn-time short-circuit** (caller-owned IDs): when the adapter declares `supportsCallerSessionId = true`, the spawn pipeline pre-generates a UUID and passes it via `SpawnSessionInput.agentSessionId`. `session-spawn-flow.ts` calls `sessionHistoryReader.attach(...)` directly during spawn. Used by Claude (when `runtime.sessionHistory` is wired), Qwen, and Kimi.
+   - `runtime.sessionId.fromHook` (Gemini hook stdin)
+   - `runtime.sessionId.fromOutput` (PTY scraper)
+   - `runtime.sessionId.fromFilesystem` (Codex rollout directory scan)
+
+   See [Agent Integration](agent-integration.md) for the full table.
+4. When `notifyAgentSessionId` fires (one of the latter three paths), SessionManager reads `session.agentParser?.runtime?.sessionHistory` and, if present, calls `sessionHistoryReader.attach(...)`. The spawn-time short-circuit calls `attach()` directly, bypassing the notify chain to avoid a DB ordering hazard with `recoverStaleSessionId`. `attach()` is idempotent, so a later capture pathway firing the full chain is harmless.
 5. `SessionHistoryReader.attach()` calls `hook.locate({ agentSessionId, cwd })`, instantiates a `FileWatcher` on the resolved path, and triggers an initial read.
 6. Each file-change event reads new content (append-mode cursor for JSONL, whole-file re-read for JSON) and dispatches to `sessionHistory.parse(content, mode)`.
 7. The resulting `SessionHistoryParseResult` flows through `dispatchSessionHistoryResult()` into the generic callback primitives (`onUsageUpdate`, `onEvents`, `onActivity`, `onFirstTelemetry`) that SessionManager wired to UsageTracker at construction time.

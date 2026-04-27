@@ -23,7 +23,7 @@ export class QwenAdapter implements AgentAdapter {
   readonly name = 'qwen';
   readonly displayName = 'Qwen Code';
   readonly sessionType = 'qwen_agent';
-  readonly supportsCallerSessionId = false;
+  readonly supportsCallerSessionId = true;
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only Research)' },
     { mode: 'default', label: 'Default (Confirm Actions)' },
@@ -89,14 +89,13 @@ export class QwenAdapter implements AgentAdapter {
    *   including activity events), with PTY silence-timer fallback if
    *   hooks fail at runtime. The sessionHistory hook provides the
    *   authoritative model + tokens stream from Qwen's native chat file.
-   * - Session ID (fromHook): Qwen's base hook input schema (inherited
-   *   from gemini-cli) includes `session_id` (and sometimes camelCase
-   *   `sessionId`) on every hook stdin.
-   * - Session ID (fromOutput): Qwen prints "qwen --resume '<uuid>'" and
-   *   "Session ID: <uuid>" in the shutdown summary, identical to
-   *   Gemini. We accept either `qwen` or `gemini` as the binary name
-   *   in the resume regex - some fork builds still print the upstream
-   *   string.
+   * - Session ID: caller-owned via `--session-id <uuid>` (Qwen 0.15.3+
+   *   accepts a UUID as caller-owned, mutex with --continue / --resume).
+   *   The fromHook and fromOutput captures stay as belt-and-suspenders
+   *   in case some forks emit a different ID; they should be no-ops
+   *   when the caller-supplied UUID matches. fromOutput accepts either
+   *   `qwen` or `gemini` as the binary name in the resume regex - some
+   *   fork builds still print the upstream string.
    * - sessionHistory: tails ~/.qwen/projects/<sanitizeCwd(cwd)>/chats/<sessionId>.jsonl
    *   (append-only JSONL, one event per line) and walks lines backwards
    *   to extract model + tokens + contextWindowSize from the most recent
@@ -153,11 +152,6 @@ export class QwenAdapter implements AgentAdapter {
         const headerMatch = data.match(/Session ID:\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/);
         return headerMatch ? headerMatch[1] : null;
       },
-      // Qwen (inheriting from gemini-cli 0.37) does not include
-      // session_id reliably in hook stdin nor print it in PTY output
-      // until shutdown. The session JSON file Qwen writes synchronously
-      // at session start is the authoritative source at runtime.
-      fromFilesystem: QwenSessionHistoryParser.captureSessionIdFromFilesystem,
     },
     sessionHistory: {
       locate: QwenSessionHistoryParser.locate,

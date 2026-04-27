@@ -9,9 +9,13 @@
  * canonical scheme description.
  *
  * Qwen command shapes (see src/main/agent/adapters/qwen-code/command-builder.ts):
- *   qwen --version                                            -> detector probe
- *   qwen [--approval-mode <m>] --resume <sessionId> [prompt]  -> resume
- *   qwen [--approval-mode <m>] [-p] [prompt]                  -> new session
+ *   qwen --version                                                  -> detector probe
+ *   qwen [--approval-mode <m>] --resume <sessionId> [prompt]        -> resume
+ *   qwen [--approval-mode <m>] --session-id <sessionId> [prompt]    -> new (caller-owned)
+ *   qwen [--approval-mode <m>] [-p] [prompt]                        -> new session
+ *
+ * `--session-id` and `--resume` are mutex (real Qwen's yargs enforces
+ * this); the mock rejects with exit code 1 if both are passed.
  *
  * Markers for test assertions:
  *   MOCK_QWEN_SESSION:<id>   -> new session
@@ -46,6 +50,7 @@ if (args.includes('--version')) {
 
 let sessionId = null;
 let resumed = false;
+let callerOwnedId = false;
 let prompt = null;
 
 for (let i = 0; i < args.length; i++) {
@@ -56,12 +61,23 @@ for (let i = 0; i < args.length; i++) {
     i++;
     continue;
   }
+  if (a === '--session-id' && args[i + 1]) {
+    sessionId = args[i + 1];
+    callerOwnedId = true;
+    i++;
+    continue;
+  }
   if (a === '--approval-mode' || a === '-p') {
     if (args[i + 1] && !args[i + 1].startsWith('-')) i++;
     continue;
   }
   if (a.startsWith('-')) continue;
   if (prompt === null) prompt = a;
+}
+
+if (resumed && callerOwnedId) {
+  console.error('mock-qwen: --resume and --session-id are mutually exclusive');
+  process.exit(1);
 }
 
 if (!sessionId) sessionId = randomUUID();

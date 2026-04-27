@@ -13,11 +13,9 @@
  *      formats the documented flags into the rendered command string.
  *   4. Spawns the mock CLI directly with argv it would receive after a
  *      successful shell parse (no shell layer involved - the unit tests
- *      already cover quoting), captures the session UUID the mock
- *      writes to ~/.qwen/tmp/<basename(cwd)>/chats/session-*.json, and
- *      then resumes that exact UUID via `--resume`. The capture path
- *      runs through the adapter's real
- *      `runtime.sessionId.fromFilesystem`, not a mocked stand-in.
+ *      already cover quoting), passes a caller-owned UUID via
+ *      `--session-id`, asserts the mock wrote the JSONL at the path
+ *      our adapter expects, then resumes that exact UUID via `--resume`.
  *   5. Exercises hook injection (writes to .qwen/settings.json) and
  *      cleanup (refcount-aware removeHooks) on real on-disk files using
  *      a kangentic-style path so the `isKangenticHookCommand` filter
@@ -38,6 +36,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -51,7 +50,6 @@ import {
 } from '../../src/main/agent/adapters/qwen-code';
 import {
   QwenSessionHistoryParser,
-  clearDiscoveredSessionPaths,
   qwenChatsDir,
 } from '../../src/main/agent/adapters/qwen-code/session-history-parser';
 
@@ -60,8 +58,6 @@ const MOCK_QWEN_JS = path.join(REPO_ROOT, 'tests', 'fixtures', 'mock-qwen.js');
 const MOCK_QWEN_CMD = process.platform === 'win32'
   ? path.join(REPO_ROOT, 'tests', 'fixtures', 'mock-qwen.cmd')
   : MOCK_QWEN_JS;
-
-const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
 
 interface SpawnResult {
   stdout: string;
@@ -135,7 +131,6 @@ describe('Qwen Code - integration harness', () => {
   let projectChatsParent: string;
 
   beforeEach(() => {
-    clearDiscoveredSessionPaths();
     sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'qwen-integration-'));
     // Real Qwen 0.15.3 writes session JSONL to
     //   ~/.qwen/projects/<sanitizeCwd(cwd)>/chats/<sessionId>.jsonl
@@ -236,6 +231,19 @@ describe('Qwen Code - integration harness', () => {
       expect(command).toContain('--approval-mode yolo');
     });
 
+    it('new session with sessionId emits --session-id <sessionId> (caller-owned)', () => {
+      const sessionId = 'aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee';
+      const command = builder.buildQwenCommand({
+        ...baseOptions,
+        permissionMode: 'default',
+        resume: false,
+        sessionId,
+      });
+      expect(command).toContain('--session-id');
+      expect(command).toContain(sessionId);
+      expect(command).not.toContain('--resume');
+    });
+
     it('resume command emits --resume <sessionId>', () => {
       const sessionId = 'aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee';
       const command = builder.buildQwenCommand({
@@ -246,6 +254,7 @@ describe('Qwen Code - integration harness', () => {
       });
       expect(command).toContain('--resume');
       expect(command).toContain(sessionId);
+      expect(command).not.toContain('--session-id');
     });
 
     it('non-interactive prompt uses -p (mutex with positional per Qwen yargs)', () => {
@@ -385,129 +394,104 @@ describe('Qwen Code - integration harness', () => {
     });
   });
 
-  describe('Layer 5: full new-session -> capture -> resume cycle', () => {
-    it('spawns mock CLI, captures its session UUID via filesystem, then resumes with that UUID', async () => {
+  describe('Layer 5: caller-owned --session-id -> resume cycle', () => {
+    it('spawns mock CLI with --session-id <our-uuid>, mock writes JSONL at our path, then resumes with same UUID', async () => {
       const adapter = new QwenAdapter();
       const builder = new QwenCommandBuilder();
 
-      // Step 1: confirm the command-builder would format a new-session
-      // invocation with no resume/session flags. The actual spawn uses
-      // a manually-built argv (no shell layer) - the unit tests cover
-      // the per-shell quoting forms.
+      // Caller pre-generates the UUID, just like prepare-spawn.ts does
+      // for adapters with supportsCallerSessionId === true.
+      const ourSessionId = randomUUID();
+
+      // Step 1: confirm the command-builder formats --session-id <id>
+      // for a new session (resume=false, sessionId set).
       const newCommand = builder.buildQwenCommand({
         qwenPath: MOCK_QWEN_JS,
         taskId: 'integration-lifecycle',
         cwd: sandbox,
         permissionMode: 'default',
+        sessionId: ourSessionId,
+        resume: false,
       });
+      expect(newCommand).toContain('--session-id');
+      expect(newCommand).toContain(ourSessionId);
       expect(newCommand).not.toContain('--resume');
-      expect(newCommand).not.toContain('--session-id');
 
-      // Step 2: spawn the mock with no extra flags (matching the new-session
-      // semantics the command-builder above represents).
-      const spawnedAt = new Date();
-      const newRun = await runMockQwen([], sandbox);
+      // Step 2: spawn the mock with --session-id <our-uuid>. The mock
+      // (like real qwen) MUST honor the caller-owned UUID and write
+      // its JSONL at exactly <ourSessionId>.jsonl.
+      const newRun = await runMockQwen(['--session-id', ourSessionId], sandbox);
 
-      // The mock prints `Session ID: <uuid>` and `MOCK_QWEN_SESSION:<uuid>`.
+      // Mock prints MOCK_QWEN_SESSION:<uuid> for new sessions; the UUID
+      // must equal the one we passed in.
       const sessionMatch = newRun.stdout.match(/MOCK_QWEN_SESSION:([0-9a-f-]+)/);
       expect(sessionMatch).not.toBeNull();
-      const newSessionId = sessionMatch![1];
-      expect(newSessionId).toMatch(UUID_PATTERN);
-      expect(newRun.stdout).toContain(`Session ID: ${newSessionId}`);
-      // detectFirstOutput's signal must be in the output.
+      expect(sessionMatch![1]).toBe(ourSessionId);
+      expect(newRun.stdout).toContain(`Session ID: ${ourSessionId}`);
       expect(newRun.stdout).toContain('\x1b[?25l');
 
-      // Step 3: the mock wrote a session JSON file at
-      // ~/.qwen/projects/<sanitized-cwd>/chats/<sessionId>.jsonl. Confirm
-      // the file landed and the sessionId in the JSONL matches the marker.
-      const chatFilePath = path.join(projectChatsRoot, `${newSessionId}.jsonl`);
+      // Step 3: the mock wrote the JSONL at the caller-owned path.
+      const chatFilePath = path.join(projectChatsRoot, `${ourSessionId}.jsonl`);
       expect(fs.existsSync(chatFilePath)).toBe(true);
       const firstLine = fs.readFileSync(chatFilePath, 'utf-8').split('\n')[0];
       const firstEvent = JSON.parse(firstLine) as { sessionId: string; type: string };
-      expect(firstEvent.sessionId).toBe(newSessionId);
+      expect(firstEvent.sessionId).toBe(ourSessionId);
       expect(firstEvent.type).toBe('user');
 
-      // Step 4: invoke the adapter's filesystem capture. It must
-      // discover the same UUID without us telling it what to look for.
-      const capturedId = await adapter.runtime.sessionId!.fromFilesystem!({
-        spawnedAt,
-        cwd: sandbox,
-        maxAttempts: 5,
-      });
-      expect(capturedId).toBe(newSessionId);
-
-      // Step 5: locate() must return the on-disk path so the session
-      // history reader can attach.
-      const located = await adapter.locateSessionHistoryFile(newSessionId, sandbox);
+      // Step 4: locate() resolves the same path from the known UUID.
+      // No filesystem polling needed - we already know the UUID.
+      const located = await adapter.locateSessionHistoryFile(ourSessionId, sandbox);
       expect(located).toBe(chatFilePath);
 
-      // Step 6: parse the JSONL chat file and confirm we extract usage.
-      // The mock writes one assistant event with model=claude-haiku-4-5...
-      // and contextWindowSize=200000 to mirror real Qwen output.
+      // Step 5: parse the JSONL chat file and confirm we extract usage.
       const parsed = QwenSessionHistoryParser.parse(fs.readFileSync(located!, 'utf-8'), 'full');
       expect(parsed.usage).not.toBeNull();
       expect(parsed.usage!.model.id).toBe('claude-haiku-4-5-20251001');
       expect(parsed.usage!.contextWindow.contextWindowSize).toBe(200_000);
       expect(parsed.usage!.contextWindow.totalInputTokens).toBeGreaterThan(0);
 
-      // Step 7: build a resume command using the captured UUID and
-      // confirm the rendered string carries the correct flags.
+      // Step 6: build a resume command and confirm --resume formatting.
       const resumeCommand = builder.buildQwenCommand({
         qwenPath: MOCK_QWEN_JS,
         taskId: 'integration-lifecycle',
         cwd: sandbox,
         permissionMode: 'default',
         resume: true,
-        sessionId: capturedId!,
+        sessionId: ourSessionId,
       });
       expect(resumeCommand).toContain('--resume');
-      expect(resumeCommand).toContain(capturedId!);
+      expect(resumeCommand).toContain(ourSessionId);
+      expect(resumeCommand).not.toContain('--session-id');
 
-      // Step 8: spawn the mock with the resume argv. The mock should
-      // report MOCK_QWEN_RESUMED:<uuid> and NOT MOCK_QWEN_SESSION.
-      const resumeRun = await runMockQwen(['--resume', capturedId!], sandbox);
+      // Step 7: spawn the mock with --resume <our-uuid>. The mock
+      // reports MOCK_QWEN_RESUMED:<uuid> and NOT MOCK_QWEN_SESSION.
+      const resumeRun = await runMockQwen(['--resume', ourSessionId], sandbox);
       const resumedMatch = resumeRun.stdout.match(/MOCK_QWEN_RESUMED:([0-9a-f-]+)/);
       expect(resumedMatch).not.toBeNull();
-      expect(resumedMatch![1]).toBe(capturedId);
+      expect(resumedMatch![1]).toBe(ourSessionId);
       expect(resumeRun.stdout).not.toContain('MOCK_QWEN_SESSION:');
     }, 30000);
 
-    it('captureSessionIdFromFilesystem ignores stale files outside the time window', async () => {
-      // Plant a stale JSONL file from "yesterday" before spawning. The
-      // capture path's first-event-timestamp window must reject it.
-      const staleSessionId = '00000000-0000-0000-0000-deadbeefcafe';
-      const staleStart = new Date(Date.now() - 86_400_000); // 24h ago
-      const staleEvent = {
-        uuid: 'stale-1',
-        parentUuid: null,
-        sessionId: staleSessionId,
-        timestamp: staleStart.toISOString(),
-        type: 'user',
-        cwd: sandbox,
-        version: '0.15.3',
-        gitBranch: 'mock',
-        message: { role: 'user', parts: [{ text: 'old' }] },
-      };
-      fs.writeFileSync(
-        path.join(projectChatsRoot, `${staleSessionId}.jsonl`),
-        JSON.stringify(staleEvent) + '\n',
+    it('mock rejects --session-id and --resume passed together (mutex)', async () => {
+      const sessionId = randomUUID();
+      // The mock exits with code 1 when both flags are present; we still
+      // race the marker-watcher in runMockQwen which expects the markers
+      // to appear, so spawn directly instead.
+      const result = await new Promise<{ exitCode: number | null; stderr: string }>(
+        (resolve) => {
+          const child = spawn(
+            process.execPath,
+            [MOCK_QWEN_JS, '--session-id', sessionId, '--resume', sessionId],
+            { cwd: sandbox, env: process.env, windowsHide: true },
+          );
+          let stderr = '';
+          child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
+          child.on('close', (code) => resolve({ exitCode: code, stderr }));
+        },
       );
-
-      const spawnedAt = new Date();
-      const run = await runMockQwen([], sandbox);
-      const newSessionId = run.stdout.match(/MOCK_QWEN_SESSION:([0-9a-f-]+)/)![1];
-      expect(newSessionId).not.toBe(staleSessionId);
-
-      const adapter = new QwenAdapter();
-      const captured = await adapter.runtime.sessionId!.fromFilesystem!({
-        spawnedAt,
-        cwd: sandbox,
-        maxAttempts: 5,
-      });
-      // Must capture the FRESH id, not the stale one.
-      expect(captured).toBe(newSessionId);
-      expect(captured).not.toBe(staleSessionId);
-    }, 30000);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('mutually exclusive');
+    }, 10000);
   });
 
   describe('Layer 6: PTY-output and TUI heuristics', () => {

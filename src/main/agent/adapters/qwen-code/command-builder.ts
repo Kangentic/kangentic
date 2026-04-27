@@ -73,14 +73,13 @@ export class QwenCommandBuilder {
         break;
     }
 
-    // Session resume: Qwen uses --resume <id> for existing sessions.
-    // For new sessions, no flag is needed (Qwen creates implicitly).
-    // Qwen Code also supports --session-id <uuid> for caller-owned IDs,
-    // but we mirror Gemini's filesystem-capture path until empirically
-    // verified end-to-end. See plan: "Out of scope - caller-owned session
-    // IDs via --session-id".
-    if (options.resume && options.sessionId) {
-      parts.push('--resume', quoteArg(options.sessionId, shell));
+    // Session: --resume for existing conversations, --session-id for
+    // new ones. Qwen Code's yargs validates these as mutex with
+    // --continue, so we never combine them. Caller-owned IDs eliminate
+    // the filesystem-polling capture path Gemini still needs.
+    if (options.sessionId) {
+      const flag = options.resume ? '--resume' : '--session-id';
+      parts.push(flag, quoteArg(options.sessionId, shell));
     }
 
     // Prompt delivery differs between interactive and non-interactive mode.

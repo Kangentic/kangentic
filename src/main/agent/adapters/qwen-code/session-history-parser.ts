@@ -28,7 +28,8 @@ import {
  *
  * **`<sessionId>.jsonl`**: filename is exactly the session UUID with no
  *   prefix or timestamp. The session UUID is also embedded in every
- *   event record's `sessionId` field.
+ *   event record's `sessionId` field. Since we use caller-owned UUIDs
+ *   via `--session-id`, locate() is a direct path construction.
  *
  * **File format**: append-only JSONL. Each line is one JSON event:
  *
@@ -58,79 +59,17 @@ import {
  */
 export class QwenSessionHistoryParser {
   /**
-   * Scan `~/.qwen/projects/<sanitized-cwd>/chats/` for a session file
-   * whose first event's `timestamp` says it was created by our spawn,
-   * and return the file's session UUID. Primary capture path for Qwen
-   * Code, since hooks may not fire reliably and PTY output only shows
-   * the session ID at shutdown.
-   *
-   * Two-stage filter (matching Gemini's pattern):
-   *   1. mtime >= spawnedAt - 30s    (cheap pre-filter)
-   *   2. JSON `timestamp` of first event within +/- 30s of spawnedAt
-   */
-  static async captureSessionIdFromFilesystem(options: {
-    spawnedAt: Date;
-    cwd: string;
-    maxAttempts?: number;
-  }): Promise<string | null> {
-    const spawnedAtMs = options.spawnedAt.getTime();
-    const mtimeFloorMs = spawnedAtMs - 30_000;
-    const startTimeFloorMs = spawnedAtMs - 30_000;
-    const startTimeCeilMs = spawnedAtMs + 30_000;
-
-    const directory = qwenChatsDir(options.cwd);
-    // Real Qwen filenames are bare `<uuid>.jsonl`. Anchored UUID match
-    // avoids picking up non-session JSONL files that may appear later.
-    const pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/i;
-
-    const maxAttempts = options.maxAttempts ?? 60;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const entries = safeReaddirWithStats(directory)
-        .filter((entry) => pattern.test(entry.name) && entry.mtimeMs >= mtimeFloorMs);
-
-      if (attempt === 0 && entries.length === 0) {
-        console.log(`[qwen] captureSessionId: scanning ${directory} (no matching files yet)`);
-      }
-
-      for (const entry of entries) {
-        const filePath = path.join(directory, entry.name);
-        const meta = readQwenSessionMeta(filePath);
-        if (!meta) continue;
-        if (meta.startTimeMs < startTimeFloorMs) continue;
-        if (meta.startTimeMs > startTimeCeilMs) continue;
-        // Cache the discovered path so locate() can skip its own scan.
-        discoveredSessionPaths.set(meta.sessionId, filePath);
-        console.log(`[qwen] captureSessionId: found session ${meta.sessionId.slice(0, 8)} on attempt ${attempt}`);
-        return meta.sessionId;
-      }
-      await sleep(500);
-    }
-    console.warn(
-      `[qwen] captureSessionId: no matching session file found after `
-      + `${Math.round(maxAttempts * 500 / 1000)}s in ${directory}`,
-    );
-    return null;
-  }
-
-  /**
    * Locate the JSONL file for a known session UUID. Real Qwen names
-   * the file exactly `<sessionId>.jsonl` so this is a direct path
-   * lookup with no scan needed. We poll briefly because the file may
-   * not exist until after the first user turn lands.
+   * the file exactly `<sessionId>.jsonl`, and we always know the UUID
+   * up front because the adapter passes `--session-id <uuid>`. Polls
+   * briefly because the file may not exist until after the first user
+   * turn lands.
    */
   static async locate(options: {
     agentSessionId: string;
     cwd: string;
   }): Promise<string | null> {
     const { agentSessionId, cwd } = options;
-
-    // Fast path: captureSessionIdFromFilesystem already found this file.
-    const cached = discoveredSessionPaths.get(agentSessionId);
-    if (cached) {
-      discoveredSessionPaths.delete(agentSessionId);
-      if (fs.existsSync(cached)) return cached;
-    }
-
     const directory = qwenChatsDir(cwd);
     const filePath = path.join(directory, `${agentSessionId}.jsonl`);
 
@@ -268,76 +207,6 @@ export function qwenChatsDir(cwd: string): string {
 function sanitizeCwd(cwd: string): string {
   const normalized = process.platform === 'win32' ? cwd.toLowerCase() : cwd;
   return normalized.replace(/[^a-zA-Z0-9]/g, '-');
-}
-
-/**
- * Read a directory and return each entry as `{ name, mtimeMs }`,
- * skipping anything that fails to stat. Returns an empty array when
- * the directory does not exist.
- */
-function safeReaddirWithStats(directory: string): Array<{ name: string; mtimeMs: number }> {
-  let names: string[];
-  try {
-    names = fs.readdirSync(directory);
-  } catch {
-    return [];
-  }
-  const results: Array<{ name: string; mtimeMs: number }> = [];
-  for (const name of names) {
-    try {
-      const stat = fs.statSync(path.join(directory, name));
-      results.push({ name, mtimeMs: stat.mtimeMs });
-    } catch {
-      // File vanished between readdir and stat - skip.
-    }
-  }
-  return results;
-}
-
-/**
- * Read just enough of the JSONL file to extract `sessionId` and the
- * `timestamp` of its first event. Avoids loading the whole file when
- * we only need to time-window-filter candidates.
- *
- * Filename UUID == sessionId, but we cross-check the first line as a
- * defense against renamed/copied files.
- */
-function readQwenSessionMeta(filePath: string): { sessionId: string; startTimeMs: number } | null {
-  try {
-    // Read up to ~4KB - one event line is well under that for a fresh session.
-    const fd = fs.openSync(filePath, 'r');
-    try {
-      const buffer = Buffer.alloc(4096);
-      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
-      const text = buffer.slice(0, bytesRead).toString('utf-8');
-      const newlineIndex = text.indexOf('\n');
-      const firstLine = newlineIndex >= 0 ? text.slice(0, newlineIndex) : text;
-      if (!firstLine) return null;
-      const parsed: unknown = JSON.parse(firstLine);
-      if (!isRecord(parsed)) return null;
-      const { sessionId, timestamp } = parsed;
-      if (typeof sessionId !== 'string' || typeof timestamp !== 'string') return null;
-      const startTimeMs = Date.parse(timestamp);
-      if (!Number.isFinite(startTimeMs)) return null;
-      return { sessionId, startTimeMs };
-    } finally {
-      fs.closeSync(fd);
-    }
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Module-level cache populated by `captureSessionIdFromFilesystem` and
- * consumed by `locate()`. Eliminates a redundant scan when the
- * session-manager pipeline calls capture -> locate in sequence.
- */
-const discoveredSessionPaths = new Map<string, string>();
-
-/** Exported for testing only - clears the module-level path cache. */
-export function clearDiscoveredSessionPaths(): void {
-  discoveredSessionPaths.clear();
 }
 
 /** Simple async sleep helper for polling loops. */

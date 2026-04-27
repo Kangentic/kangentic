@@ -1404,6 +1404,16 @@ export interface SpawnSessionInput {
   agentName?: string;
   /** Sequence of strings to write to PTY before killing for graceful exit (e.g. ['\x03', '/exit\r']). */
   exitSequence?: string[];
+  /**
+   * Caller-owned agent session UUID. Set when the adapter declares
+   * `supportsCallerSessionId = true` and the spawn pipeline pre-generates
+   * a UUID before invoking the CLI (e.g. Claude `--session-id`, Qwen
+   * `--session-id`, Kimi `--session`). Lets the spawn flow trigger
+   * `notifyAgentSessionId` immediately so `sessionHistoryReader.attach`
+   * fires without waiting for capture pathways to round-trip. Null/undefined
+   * for adapters that auto-generate IDs (Codex, Gemini, Droid).
+   */
+  agentSessionId?: string | null;
 }
 
 export interface SpawnTransientSessionInput {

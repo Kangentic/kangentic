@@ -81,23 +81,31 @@ describe('QwenCommandBuilder', () => {
     });
   });
 
-  describe('session resume', () => {
+  describe('session id flags', () => {
     it('resume with sessionId produces --resume flag', () => {
       const command = buildCommand({ resume: true, sessionId: 'abc-123' });
       expect(command).toContain('--resume');
       expect(command).toContain('abc-123');
+      expect(command).not.toContain('--session-id');
     });
 
-    it('new session (resume=false) produces no session flag', () => {
+    it('new session with sessionId produces --session-id flag (caller-owned)', () => {
       const command = buildCommand({ resume: false, sessionId: 'abc-123' });
+      expect(command).toContain('--session-id');
+      expect(command).toContain('abc-123');
+      expect(command).not.toContain('--resume');
+    });
+
+    it('new session without sessionId produces no session flag', () => {
+      const command = buildCommand();
       expect(command).not.toContain('--resume');
       expect(command).not.toContain('--session-id');
-      expect(command).not.toContain('abc-123');
     });
 
     it('resume without sessionId produces no flag', () => {
       const command = buildCommand({ resume: true });
       expect(command).not.toContain('--resume');
+      expect(command).not.toContain('--session-id');
     });
   });
 
