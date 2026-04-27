@@ -7,6 +7,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { quoteArg } from '../../src/shared/paths';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
+import {
+  agentDisplayName,
+  agentShortName,
+  agentInstallUrl,
+} from '../../src/renderer/utils/agent-display-name';
 
 // Mock which, fs, and execWarpVersion before importing adapter.
 // Warp uses `dump-debug-info` instead of `--version`, so we mock
@@ -364,5 +369,21 @@ describe('Agent Registry', () => {
     const adapter = agentRegistry.getBySessionType('warp_agent');
     expect(adapter).toBeDefined();
     expect(adapter!.name).toBe('warp');
+  });
+});
+
+// -- agent-display-name - warp entry -----------------------------------------
+
+describe('agent-display-name - warp entry', () => {
+  it('agentDisplayName returns "Oz CLI" for "warp"', () => {
+    expect(agentDisplayName('warp')).toBe('Oz CLI');
+  });
+
+  it('agentShortName returns "Oz" for "warp"', () => {
+    expect(agentShortName('warp')).toBe('Oz');
+  });
+
+  it('agentInstallUrl returns the Warp CLI docs URL for "warp"', () => {
+    expect(agentInstallUrl('warp')).toBe('https://docs.warp.dev/reference/cli/cli');
   });
 });

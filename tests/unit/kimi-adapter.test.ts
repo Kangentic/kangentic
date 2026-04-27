@@ -12,6 +12,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { quoteArg } from '../../src/shared/paths';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
+import {
+  agentDisplayName,
+  agentShortName,
+  agentInstallUrl,
+} from '../../src/renderer/utils/agent-display-name';
 
 // Mock which, fs, and exec-version before importing adapter
 let mockWhichResult: string | Error = '/usr/bin/kimi';
@@ -521,5 +526,21 @@ describe('Agent Registry', () => {
     const { agentRegistry } = await import('../../src/main/agent/agent-registry');
     const adapter = agentRegistry.getBySessionType('kimi_agent');
     expect(adapter?.name).toBe('kimi');
+  });
+});
+
+// -- agent-display-name - kimi entry -----------------------------------------
+
+describe('agent-display-name - kimi entry', () => {
+  it('agentDisplayName returns "Kimi Code" for "kimi"', () => {
+    expect(agentDisplayName('kimi')).toBe('Kimi Code');
+  });
+
+  it('agentShortName returns "Kimi" for "kimi"', () => {
+    expect(agentShortName('kimi')).toBe('Kimi');
+  });
+
+  it('agentInstallUrl returns the Kimi CLI repo URL for "kimi"', () => {
+    expect(agentInstallUrl('kimi')).toBe('https://github.com/MoonshotAI/kimi-cli');
   });
 });

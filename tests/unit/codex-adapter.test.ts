@@ -14,6 +14,11 @@ import { CodexAdapter } from '../../src/main/agent/adapters/codex';
 import { CodexSessionHistoryParser } from '../../src/main/agent/adapters/codex/session-history-parser';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
+import {
+  agentDisplayName,
+  agentShortName,
+  agentInstallUrl,
+} from '../../src/renderer/utils/agent-display-name';
 
 // Use a platform-aware quote helper for assertions. quoteArg uses
 // single quotes on Unix-like shells and double quotes on Windows/PowerShell.
@@ -651,5 +656,21 @@ describe('Codex Adapter', () => {
       adapter.removeHooks(tempDir);
       expect(fs.existsSync(hooksFile)).toBe(false);
     });
+  });
+});
+
+// -- agent-display-name - codex entry ----------------------------------------
+
+describe('agent-display-name - codex entry', () => {
+  it('agentDisplayName returns "Codex CLI" for "codex"', () => {
+    expect(agentDisplayName('codex')).toBe('Codex CLI');
+  });
+
+  it('agentShortName returns "Codex" for "codex"', () => {
+    expect(agentShortName('codex')).toBe('Codex');
+  });
+
+  it('agentInstallUrl returns the OpenAI Codex repo URL for "codex"', () => {
+    expect(agentInstallUrl('codex')).toBe('https://github.com/openai/codex');
   });
 });

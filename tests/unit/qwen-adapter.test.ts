@@ -11,6 +11,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { QwenAdapter } from '../../src/main/agent/adapters/qwen-code';
+import {
+  agentDisplayName,
+  agentShortName,
+  agentInstallUrl,
+} from '../../src/renderer/utils/agent-display-name';
 
 describe('Qwen Adapter - session ID capture', () => {
   let adapter: QwenAdapter;
@@ -217,5 +222,21 @@ describe('Qwen Adapter - concurrent-session hook reference counting', () => {
   it('tolerates removeHooks with no prior retain (crash/restart path)', () => {
     seedSettingsWithKangenticHook();
     expect(() => adapter.removeHooks(sandbox, 'orphan-task')).not.toThrow();
+  });
+});
+
+// -- agent-display-name - qwen entry ----------------------------------------
+
+describe('agent-display-name - qwen entry', () => {
+  it('agentDisplayName returns "Qwen Code" for "qwen"', () => {
+    expect(agentDisplayName('qwen')).toBe('Qwen Code');
+  });
+
+  it('agentShortName returns "Qwen" for "qwen"', () => {
+    expect(agentShortName('qwen')).toBe('Qwen');
+  });
+
+  it('agentInstallUrl returns the Qwen Code repo URL for "qwen"', () => {
+    expect(agentInstallUrl('qwen')).toBe('https://github.com/QwenLM/qwen-code');
   });
 });

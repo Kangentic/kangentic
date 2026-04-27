@@ -8,6 +8,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { GeminiAdapter } from '../../src/main/agent/adapters/gemini';
 import { GeminiSessionHistoryParser } from '../../src/main/agent/adapters/gemini/session-history-parser';
+import {
+  agentDisplayName,
+  agentShortName,
+  agentInstallUrl,
+} from '../../src/renderer/utils/agent-display-name';
 
 describe('Gemini Adapter - session ID capture', () => {
   let adapter: GeminiAdapter;
@@ -344,5 +349,21 @@ describe('Gemini Adapter - concurrent-session hook reference counting', () => {
   it('tolerates removeHooks with no prior retain (crash/restart path)', () => {
     seedSettingsWithKangenticHook();
     expect(() => adapter.removeHooks(sandbox, 'orphan-task')).not.toThrow();
+  });
+});
+
+// -- agent-display-name - gemini entry ----------------------------------------
+
+describe('agent-display-name - gemini entry', () => {
+  it('agentDisplayName returns "Gemini CLI" for "gemini"', () => {
+    expect(agentDisplayName('gemini')).toBe('Gemini CLI');
+  });
+
+  it('agentShortName returns "Gemini" for "gemini"', () => {
+    expect(agentShortName('gemini')).toBe('Gemini');
+  });
+
+  it('agentInstallUrl returns the Gemini CLI repo URL for "gemini"', () => {
+    expect(agentInstallUrl('gemini')).toBe('https://github.com/google-gemini/gemini-cli');
   });
 });

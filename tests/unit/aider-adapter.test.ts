@@ -7,6 +7,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { quoteArg } from '../../src/shared/paths';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
+import {
+  agentDisplayName,
+  agentShortName,
+  agentInstallUrl,
+} from '../../src/renderer/utils/agent-display-name';
 
 // Mock which, fs, and exec-version before importing adapter
 let mockWhichResult: string | Error = '/usr/bin/aider';
@@ -312,5 +317,21 @@ describe('Agent Registry', () => {
   it('lists aider among registered adapters', async () => {
     const { agentRegistry } = await import('../../src/main/agent/agent-registry');
     expect(agentRegistry.list()).toContain('aider');
+  });
+});
+
+// -- agent-display-name - aider entry ----------------------------------------
+
+describe('agent-display-name - aider entry', () => {
+  it('agentDisplayName returns "Aider" for "aider"', () => {
+    expect(agentDisplayName('aider')).toBe('Aider');
+  });
+
+  it('agentShortName returns "Aider" for "aider"', () => {
+    expect(agentShortName('aider')).toBe('Aider');
+  });
+
+  it('agentInstallUrl returns the Aider homepage URL for "aider"', () => {
+    expect(agentInstallUrl('aider')).toBe('https://aider.chat');
   });
 });
