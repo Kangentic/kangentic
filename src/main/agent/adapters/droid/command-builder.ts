@@ -22,6 +22,15 @@ import type { PermissionMode } from '../../../../shared/types';
  * by user feedback as unnecessary custom layering. The bare command
  * with cwd + resume + prompt is the production path.
  *
+ * MCP is also intentionally manual. Droid CLI exposes no `--mcp-config`
+ * flag; the only configuration paths are stateful (`droid mcp add`) or
+ * file-based (`~/.factory/mcp.json`, `<projectRoot>/.factory/mcp.json`),
+ * neither of which Kangentic writes. Users who want Kangentic's project
+ * MCP server in a Droid session run `droid mcp add kangentic <url>` once.
+ * See `docs/agent-integration.md` for the exact command. Codex and
+ * Gemini behave the same way: only Kimi (inline `--mcp-config`) and
+ * Claude (`--settings` merge) auto-wire the in-process MCP server.
+ *
  * Other notes:
  * - Resume uses `droid --resume <uuid>`, NOT the exec-only `-s` flag.
  * - The session UUID is captured post-spawn from
@@ -50,6 +59,12 @@ export interface DroidCommandOptions {
   /** Accepted for parity; no events.jsonl pipeline today. */
   eventsOutputPath?: string;
   shell?: string;
+  /**
+   * Accepted for parity with the shared `SpawnCommandOptions` shape but
+   * discarded by `buildDroidCommand`. Droid has no `--mcp-config` flag;
+   * MCP is wired manually via `droid mcp add` (see JSDoc above and
+   * `docs/agent-integration.md`).
+   */
   mcpServerEnabled?: boolean;
   mcpServerUrl?: string;
   mcpServerToken?: string;

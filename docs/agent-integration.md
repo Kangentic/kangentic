@@ -77,7 +77,7 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude via `--se
 | Aider | `aider-adapter.ts` | `aider` | No | No | No | No |
 | Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | No | No | No |
 | Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <uuid>` (caller-owned) | Yes (`wire.jsonl`) | No | No |
-| Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | No (PTY-only) | No (use Droid's TUI: `/model` + Ctrl+D, shift+tab) | No |
+| Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | No (PTY-only) | No (use Droid's TUI: `/model` + Ctrl+D, shift+tab; MCP via manual `droid mcp add`) | No |
 
 ## Agent Resolution
 
@@ -708,6 +708,50 @@ Filesystem check chosen over a `kimi info` subprocess: the probe runs on every `
 - No hook injection (Kimi reads `~/.kimi/config.toml` `hooks = []` but has no per-project settings file equivalent we can write to)
 - No trust dialog (`ensureTrust` is a no-op)
 - We do not initiate the OAuth flow on the user's behalf - see Authentication above for how the unauthenticated state is detected and surfaced
+
+## Droid
+
+### CLI Detection
+
+`src/main/agent/adapters/droid/detector.ts`
+
+Droid is Factory's coding agent CLI (the `droid` binary). Detection follows the standard `AgentDetector` flow with a `droid --version` probe. Output is either `droid <semver>` or bare `<semver>`; `parseVersion` strips the optional `droid` product prefix and returns the trimmed version string. Standard Unix fallback paths are wired via `standardUnixFallbackPaths('droid')` for cases where the binary is not on `PATH`. Refer to Factory's documentation for the current install command.
+
+### Command Building
+
+`src/main/agent/adapters/droid/command-builder.ts`
+
+```
+droid --cwd <cwd> [--resume <uuid>] "<prompt>"
+```
+
+Empirically validated against Droid 0.109.1 (see `scripts/probe-droid.js`). The adapter is intentionally minimal - the bare command with cwd + optional resume + prompt is the production path. Other CLI behavior (model picker, autonomy mode, BYOK) is configured in Droid's TUI and persisted in `~/.factory/settings.json`. Trying to shadow these with Kangentic-managed `--settings` overrides was rejected by user feedback as unnecessary custom layering.
+
+### Session ID Capture
+
+`src/main/agent/adapters/droid/session-id-capture.ts`
+
+`captureSessionIdFromFilesystem` polls `~/.factory/sessions/<cwd-slug>/` (up to 20 attempts at 500ms) for `<uuid>.jsonl` files whose mtime is at or above `spawnedAt - 30s`, and returns the UUID with the newest qualifying mtime. The cwd slug normalizes path separators and the drive-letter colon to `-` (e.g. `C:\Users\dev\project` -> `-C-Users-dev-project`). Concurrent Droid spawns in the same cwd within the 30s floor can collide; per-task worktrees are the recommended mitigation.
+
+### Permission Modes
+
+Droid does not accept a CLI flag for autonomy mode. The adapter surfaces a single `default` mode and the user cycles autonomy in the TUI directly (shift+tab toggles low/medium/high). Kangentic does not translate `permissionMode` into a flag override.
+
+### MCP Setup (Manual)
+
+Droid CLI has no per-spawn `--mcp-config` flag, and Kangentic intentionally does not write to `~/.factory/mcp.json` or `<projectRoot>/.factory/mcp.json`. To expose Kangentic's project MCP server (board/task tools) to a Droid session, run once per machine after enabling MCP in project settings:
+
+```
+droid mcp add kangentic <kangenticMcpUrl> --type http --header "Authorization: Bearer <token>"
+```
+
+The URL and token are visible in **Settings -> MCP**. Droid persists the entry in `~/.factory/mcp.json`; subsequent spawns pick it up automatically. Codex and Gemini behave the same way - Kangentic only auto-wires MCP for Kimi (inline `--mcp-config`) and Claude (`--settings` merge).
+
+### Limitations
+
+- No status events or activity log integration; the terminal panel is the only signal of agent state.
+- No trust dialog (`ensureTrust` is a no-op; Droid does not prompt for directory approval).
+- No cross-agent handoff source: `locateSessionHistoryFile` returns null because Droid's JSONL transcript format has not yet been wired into the handoff pipeline.
 
 ## Prompt Templates
 
