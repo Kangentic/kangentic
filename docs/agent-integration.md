@@ -423,6 +423,7 @@ Context window sizes are stored in a model-name lookup table covering Qwen3-Code
 
 - **Caller-owned session IDs:** Qwen Code's yargs config exposes `--session-id <uuid>`, but until end-to-end semantics are empirically verified the adapter mirrors Gemini's filesystem-capture path. `supportsCallerSessionId` is `false`. Switching to caller-owned IDs is a one-line flip in `qwen-adapter.ts` plus a `--session-id` branch in the command builder.
 - **No statusLine telemetry:** Qwen Code (like Gemini) has no `status.json` token-streaming feature, so context window % is sourced from the session history file rather than a real-time hook.
+- **OpenAI gpt-5 family unsupported (upstream bug):** Qwen Code 0.15.3's bundled `cli.js` sends `max_tokens` in OpenAI requests and never `max_completion_tokens`. OpenAI's gpt-5 family (e.g. gpt-5, gpt-5-mini, gpt-5-nano, gpt-5.1, and any gpt-5.x / gpt-5.x-codex variant) requires `max_completion_tokens` and rejects `max_tokens` with HTTP 400. Picking any gpt-5 variant via `/model` in the Qwen TUI surfaces `[API Error: 400 Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.]`. Workarounds until upstream patches: stay on the gpt-4.1 family for OpenAI, or use the Anthropic provider (Opus 4.7, Sonnet 4.6, Haiku 4.5) which is fully supported. Kangentic cannot work around this - the adapter is a pure CLI wrapper with no request-parameter interception. Tracked upstream at https://github.com/QwenLM/qwen-code (search issues for `max_completion_tokens`).
 
 ## Aider
 
