@@ -489,8 +489,17 @@ describe('TASK_MOVE AbortError cleanup', () => {
     task = createMockTask('task-abort', { swimlane_id: 'lane-todo' });
     storedTask = { ...task };
 
+    // First call (Phase 1): task has no active session, so Phase 1 returns a
+    // plan that proceeds into Phase 2. Subsequent calls (the unified rollback's
+    // getById in task-move.ts) see session_id set, simulating a partially
+    // spawned PTY whose session_id was written onto the task row before
+    // AbortError surfaced. This exercises the rollback's conditional update
+    // branch (the realistic scenario the conditional exists to handle), matching
+    // the canonical pattern in tests/unit/task-move-rollback.test.ts.
     const taskRepo = {
-      getById: vi.fn(() => storedTask),
+      getById: vi.fn()
+        .mockImplementationOnce(() => storedTask)
+        .mockImplementation(() => ({ ...storedTask, session_id: 'sess-partial' })),
       move: vi.fn((input: { taskId: string; targetSwimlaneId: string; targetPosition: number }) => {
         storedTask = { ...storedTask, swimlane_id: input.targetSwimlaneId, position: input.targetPosition };
       }),
@@ -521,6 +530,14 @@ describe('TASK_MOVE AbortError cleanup', () => {
     registerTaskMoveHandlers(context as never);
   });
 
+  // Regression note: this test was added in commit 2173804 (perf(ipc): shrink
+  // withTaskLock scope around slow git + PTY I/O) and silently regressed by
+  // commit 796fdf2 (fix(task-move): revert task to source column when spawn
+  // fails), which generalized the AbortError-only cleanup into a unified
+  // rollback path and made tasks.update({ session_id: null }) conditional on
+  // current.session_id being non-null. The optimization is correct (writing
+  // null when already null is a no-op), but the test fixture needed updating
+  // to drive getById toward the conditional branch its name advertises.
   it('fires clearSpawnProgress, removes session, nulls session_id, and returns (not throws) on AbortError mid-Phase-2', async () => {
     // Hold Phase 2 so we can inject an AbortError from inside ensureTaskWorktree.
     let triggerAbort!: () => void;
@@ -542,9 +559,13 @@ describe('TASK_MOVE AbortError cleanup', () => {
 
     await phase2Entered;
 
-    // A second move for the same task aborts the first's controller.
-    // The second move will also enter Phase 2 and throw AbortError - that's fine,
-    // we only care that the first move's cleanup ran correctly.
+    // A second move for the same task aborts the first's controller via the
+    // taskMoveControllers.get(taskId).abort() call at the top of handleTaskMove
+    // (runs before any lock is acquired). The second move's own Phase 1 then
+    // reads getById and sees session_id='sess-partial' (injected by the
+    // sequenced mock above), routing it into Priority 3c (same agent, no
+    // auto_command, keep session alive) which returns null without entering
+    // Phase 2. We only care that the first move's cleanup ran correctly.
     const secondMovePromise = handleTaskMove(context as never, {
       taskId: 'task-abort',
       targetSwimlaneId: 'lane-doing',
@@ -567,8 +588,9 @@ describe('TASK_MOVE AbortError cleanup', () => {
     // removeByTaskId must have been called inside the locked micro-step cleanup.
     expect(context.sessionManager.removeByTaskId).toHaveBeenCalledWith('task-abort');
 
-    // session_id must have been nulled in the locked micro-step.
-    // The tasks.update mock lives on the taskRepo object returned by mockGetProjectRepos.
+    // session_id must have been nulled in the locked micro-step. The rollback's
+    // getById sees the partial session_id (sess-partial) injected by the
+    // sequenced mock above, so the conditional update fires.
     const lastRepos = mockGetProjectRepos.mock.results.at(-1)?.value as { tasks: { update: MockInstance } };
     expect(lastRepos?.tasks.update).toHaveBeenCalledWith({ id: 'task-abort', session_id: null });
   });
