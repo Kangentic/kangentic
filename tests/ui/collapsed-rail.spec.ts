@@ -231,42 +231,30 @@ test.describe('CollapsedRail - active project highlight', () => {
   });
 });
 
-test.describe('CollapsedRail - activity icon corner-badge', () => {
-  test('idle session shows amber Mail icon corner badge', async () => {
-    const { browser, page } = await launchWithCollapsedRail(
-      twoDistinctProjectsScript({ withSessionA: true, sessionAActivity: 'idle' }),
-    );
+// Activity indicators are intentionally omitted from the collapsed rail: at the
+// rail's narrow column width the partial-arc Loader2 glyph reads as a broken
+// icon overflowing the project initial. The expanded sidebar still surfaces
+// thinking/idle counts via SidebarActivityCounts; the rail just shows initials.
+test.describe('CollapsedRail - no activity indicators in collapsed view', () => {
+  for (const activity of ['idle', 'thinking'] as const) {
+    test(`${activity} session does not render an activity icon on the rail`, async () => {
+      const { browser, page } = await launchWithCollapsedRail(
+        twoDistinctProjectsScript({ withSessionA: true, sessionAActivity: activity }),
+      );
 
-    try {
-      const alphaButton = page.locator(`[data-testid="rail-project-${PROJECT_A_ID}"]`);
-      await alphaButton.waitFor({ state: 'attached', timeout: 5000 });
+      try {
+        const alphaButton = page.locator(`[data-testid="rail-project-${PROJECT_A_ID}"]`);
+        await alphaButton.waitFor({ state: 'attached', timeout: 5000 });
 
-      // Corner badge contains a Mail icon (amber-400)
-      await expect(alphaButton.locator('svg.text-amber-400')).toBeAttached();
-      await expect(alphaButton.locator('svg.text-green-400')).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
+        await expect(alphaButton.locator('svg.text-amber-400')).toHaveCount(0);
+        await expect(alphaButton.locator('svg.text-green-400')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+  }
 
-  test('thinking session shows green Loader2 icon corner badge', async () => {
-    const { browser, page } = await launchWithCollapsedRail(
-      twoDistinctProjectsScript({ withSessionA: true, sessionAActivity: 'thinking' }),
-    );
-
-    try {
-      const alphaButton = page.locator(`[data-testid="rail-project-${PROJECT_A_ID}"]`);
-      await alphaButton.waitFor({ state: 'attached', timeout: 5000 });
-
-      // Corner badge contains a Loader2 icon (green-400)
-      await expect(alphaButton.locator('svg.text-green-400')).toBeAttached();
-      await expect(alphaButton.locator('svg.text-amber-400')).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('no sessions shows no corner badge icon', async () => {
+  test('baseline: no sessions, no activity icon', async () => {
     const { browser, page } = await launchWithCollapsedRail(twoDistinctProjectsScript());
 
     try {
@@ -275,6 +263,23 @@ test.describe('CollapsedRail - activity icon corner-badge', () => {
 
       await expect(alphaButton.locator('svg.text-amber-400')).toHaveCount(0);
       await expect(alphaButton.locator('svg.text-green-400')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('title is plain project name even when a thinking session is active', async () => {
+    // Guards against regression where compound tooltip e.g. "Alpha - 1 thinking, 0 idle"
+    // is re-introduced alongside a badge. The title must stay plain project.name only.
+    const { browser, page } = await launchWithCollapsedRail(
+      twoDistinctProjectsScript({ withSessionA: true, sessionAActivity: 'thinking' }),
+    );
+
+    try {
+      const alphaButton = page.locator(`[data-testid="rail-project-${PROJECT_A_ID}"]`);
+      await alphaButton.waitFor({ state: 'attached', timeout: 5000 });
+
+      await expect(alphaButton).toHaveAttribute('title', 'Alpha');
     } finally {
       await browser.close();
     }
