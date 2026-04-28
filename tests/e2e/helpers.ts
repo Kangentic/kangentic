@@ -82,6 +82,7 @@ export function cleanupTempProject(testName: string): void {
 export async function launchApp(options?: {
   cwd?: string;
   dataDir?: string;
+  extraEnv?: Record<string, string>;
 }): Promise<{ app: ElectronApplication; page: Page }> {
   const mainEntry = path.join(__dirname, '../../.vite/build/index.js');
 
@@ -144,6 +145,9 @@ export async function launchApp(options?: {
         args,
         env: {
           ...process.env,
+          ...(options?.extraEnv ?? {}),
+          // Test-essential keys go LAST so callers cannot accidentally
+          // override them via extraEnv.
           NODE_ENV: 'test',
           ELECTRON_DISABLE_GPU: '1',
           KANGENTIC_DATA_DIR: dataDir,

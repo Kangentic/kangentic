@@ -39,6 +39,21 @@
  *                             (subagent_type='explore') into the wire.jsonl,
  *                             exercising the SubagentStart / SubagentStop
  *                             lifecycle decoding path end-to-end.
+ *   MOCK_KIMI_WRITE_KIMI_JSON=1 -> simulate real Kimi's racy read-modify-write of
+ *                                  the kimi.json work_dirs[].last_session_id state.
+ *                                  Intentionally non-atomic so concurrent invocations
+ *                                  can corrupt the file - this models the upstream
+ *                                  pattern that kimi-concurrent-spawns.spec.ts hunts.
+ *   MOCK_KIMI_KIMI_JSON_PATH=path -> override the kimi.json write target to an
+ *                                    absolute test-specific path, instead of the
+ *                                    default ~/.kimi/kimi.json. Lets tests opt into
+ *                                    the racy write without ever touching the real
+ *                                    user state. Only consulted when
+ *                                    MOCK_KIMI_WRITE_KIMI_JSON=1.
+ *   MOCK_KIMI_KIMI_JSON_DELAY_MS=N -> insert N ms of synchronous busy-wait between
+ *                                     read and write of kimi.json, widening the race
+ *                                     window so concurrent mock processes interleave
+ *                                     deterministically.
  */
 
 const { randomUUID, createHash } = require('node:crypto');
@@ -215,6 +230,46 @@ function writeWireEvents() {
 }
 
 writeWireEvents();
+
+// --- kimi.json racy read-modify-write (opt-in) ------------------------------
+// Real Kimi maintains ~/.kimi/kimi.json with a work_dirs[] array tracking the
+// most recent session per work_dir. Under concurrent invocations against the
+// same HOME, that read-modify-write can race and corrupt the file. The spec
+// at tests/e2e/kimi-concurrent-spawns.spec.ts opts in to this branch via
+// MOCK_KIMI_WRITE_KIMI_JSON=1 to detect that race deterministically.
+
+if (process.env.MOCK_KIMI_WRITE_KIMI_JSON) {
+  const kimiJsonPath = process.env.MOCK_KIMI_KIMI_JSON_PATH
+    ? process.env.MOCK_KIMI_KIMI_JSON_PATH
+    : path.join(os.homedir(), '.kimi', 'kimi.json');
+  fs.mkdirSync(path.dirname(kimiJsonPath), { recursive: true });
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(kimiJsonPath, 'utf-8'));
+  } catch {
+    data = { work_dirs: [] };
+  }
+  if (!Array.isArray(data.work_dirs)) data.work_dirs = [];
+
+  // Synchronous busy-wait widens the read-modify-write race window so two
+  // concurrent mock processes interleave deterministically. Real Kimi does
+  // nontrivial work between read and write; without a delay here, sub-ms
+  // timing makes corruption statistically rare even when the bug exists.
+  const delayMs = Number(process.env.MOCK_KIMI_KIMI_JSON_DELAY_MS ?? '0');
+  if (delayMs > 0) {
+    const target = Date.now() + delayMs;
+    while (Date.now() < target) { /* spin */ }
+  }
+
+  const existingIndex = data.work_dirs.findIndex((entry) => entry && entry.path === cwd);
+  if (existingIndex >= 0) data.work_dirs[existingIndex].last_session_id = sessionId;
+  else data.work_dirs.push({ path: cwd, last_session_id: sessionId });
+
+  // Intentionally non-atomic (no temp+rename). This models the racy pattern
+  // upstream Kimi may exhibit; an atomic write would hide the very bug the
+  // spec is hunting.
+  fs.writeFileSync(kimiJsonPath, JSON.stringify(data, null, 2));
+}
 
 // Real Kimi never deletes wire.jsonl - it persists for the lifetime of
 // the project so that future `kimi -r <uuid>` calls can replay context.
