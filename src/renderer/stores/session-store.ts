@@ -1,6 +1,7 @@
 import { create } from 'zustand';
-import type { Session, SessionUsage, ActivityState, SessionEvent } from '../../shared/types';
+import { ACTIVITY_TAB, type Session, type SessionUsage, type ActivityState, type SessionEvent } from '../../shared/types';
 import { useProjectStore } from './project-store';
+import { useConfigStore } from './config-store';
 import type { SessionStore } from './session-store/types';
 import { buildSessionByTaskId } from './session-store/session-index';
 import { createTaskChangesPanelSlice } from './session-store/task-changes-panel-slice';
@@ -231,6 +232,30 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   },
 
   setActiveSession: (id) => set({ activeSessionId: id }),
+
+  selectActiveSession: (id) => {
+    set({ activeSessionId: id });
+    // Persist the user's tab choice to AppConfig so it survives project switch
+    // and app restart. Skip non-persistable selections: null, the activity tab
+    // sentinel, sessions outside the current project, or transient sessions.
+    if (id === null || id === ACTIVITY_TAB) return;
+    const session = get().sessions.find((s) => s.id === id);
+    if (!session || session.transient) return;
+    const currentProjectId = useProjectStore.getState().currentProject?.id;
+    if (!currentProjectId || session.projectId !== currentProjectId) return;
+    const existing = useConfigStore.getState().config.lastActiveTaskByProject ?? {};
+    if (existing[currentProjectId] === session.taskId) return;
+    const updated = { ...existing, [currentProjectId]: session.taskId };
+    // Optimistically update the local config store so back-to-back calls
+    // (e.g. rapid project-switch + tab-click) read the latest value rather
+    // than a pre-IPC stale snapshot.
+    useConfigStore.setState((state) => ({
+      config: { ...state.config, lastActiveTaskByProject: updated },
+      globalConfig: { ...state.globalConfig, lastActiveTaskByProject: updated },
+    }));
+    window.electronAPI.config.set({ lastActiveTaskByProject: updated });
+  },
+
   setDetailTaskId: (id) => set({ detailTaskId: id }),
   setDialogSessionId: (id) => set({ dialogSessionId: id }),
 

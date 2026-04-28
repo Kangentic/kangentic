@@ -69,6 +69,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `windowMaximized` | boolean | `false` | Whether the window was maximized at last close. Auto-saved, not shown in UI. |
 | `skipBoardConfigConfirm` | boolean | `false` | Auto-apply board config changes without confirmation dialog |
 | `statusBarPeriod` | UsageTimePeriod | `'live'` | Time period for status bar usage stats. Values: `live`, `today`, `week`, `month`, `all`. Global-only. |
+| `lastActiveTaskByProject` | Record\<string, string\> | `{}` | Per-project memory of the last user-clicked task tab in the terminal panel, keyed by project ID. Restored on project switch. Auto-saved, not shown in UI. |
 
 ### terminal.*
 

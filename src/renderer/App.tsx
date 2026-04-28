@@ -159,6 +159,23 @@ export function App() {
         }
         useSessionStore.getState().markIdleSessionsSeen(currentProject.id);
 
+        // Restore the last user-selected task tab for this project. If the
+        // task no longer has a running session (deleted, moved to Done, etc.),
+        // fall through and let TerminalPanel's auto-select pick a default.
+        const rememberedTaskId =
+          useConfigStore.getState().config.lastActiveTaskByProject?.[currentProject.id];
+        if (rememberedTaskId) {
+          const sessionForTask = useSessionStore.getState()._sessionByTaskId.get(rememberedTaskId);
+          if (
+            sessionForTask
+            && sessionForTask.projectId === currentProject.id
+            && sessionForTask.status === 'running'
+            && !sessionForTask.transient
+          ) {
+            useSessionStore.getState().setActiveSession(sessionForTask.id);
+          }
+        }
+
         // Restore persisted usage period and fetch stats if not 'live'
         const savedPeriod = useConfigStore.getState().config.statusBarPeriod;
         if (savedPeriod && savedPeriod !== useSessionStore.getState().selectedPeriod) {

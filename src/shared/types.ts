@@ -665,6 +665,9 @@ export interface AppConfig {
   windowBounds: { x: number; y: number; width: number; height: number } | null;
   windowMaximized: boolean;
   statusBarPeriod: UsageTimePeriod;
+  /** Per-project memory of the last user-selected task tab in the terminal panel.
+   *  Keyed by project ID, value is the task ID. Restored on project switch. */
+  lastActiveTaskByProject: Record<string, string>;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -752,6 +755,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   windowBounds: null,
   windowMaximized: false,
   statusBarPeriod: 'live',
+  lastActiveTaskByProject: {},
 };
 
 // === Agent Commands ===

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Project, ProjectCreateInput, ProjectGroup, ProjectGroupCreateInput } from '../../shared/types';
 import { useSessionStore } from './session-store';
+import { useConfigStore } from './config-store';
 
 // Hydration gate: tracks whether both loadProjects() and loadCurrent() have
 // resolved at least once. Module-scoped so they don't pollute the store
@@ -62,6 +63,17 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       projects: s.projects.filter((p) => p.id !== id),
       currentProject: s.currentProject?.id === id ? null : s.currentProject,
     }));
+    // Drop the deleted project's remembered active task. Stale entries are
+    // harmless (they'd never match a real session) but accumulate over time.
+    const existing = useConfigStore.getState().config.lastActiveTaskByProject ?? {};
+    if (existing[id] !== undefined) {
+      const { [id]: _removed, ...remaining } = existing;
+      useConfigStore.setState((state) => ({
+        config: { ...state.config, lastActiveTaskByProject: remaining },
+        globalConfig: { ...state.globalConfig, lastActiveTaskByProject: remaining },
+      }));
+      window.electronAPI.config.set({ lastActiveTaskByProject: remaining });
+    }
   },
 
   openProject: async (id) => {

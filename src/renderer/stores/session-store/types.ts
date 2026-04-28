@@ -52,6 +52,12 @@ export interface CoreSessionSlice {
   suspendSession: (taskId: string) => Promise<void>;
   resumeSession: (taskId: string, resumePrompt?: string) => Promise<Session>;
   setActiveSession: (id: string | null) => void;
+  /** User-gesture variant of setActiveSession. Updates state AND persists the
+   *  selection to AppConfig.lastActiveTaskByProject so it survives app restart
+   *  and project switch. Used by tab-click handlers; the auto-select fallback
+   *  in TerminalPanel uses setActiveSession directly so default picks don't
+   *  overwrite the remembered value. */
+  selectActiveSession: (id: string | null) => void;
   setDialogSessionId: (id: string | null) => void;
   upsertSession: (session: Session) => void;
   updateSessionStatus: (id: string, updates: Partial<Session>) => void;
