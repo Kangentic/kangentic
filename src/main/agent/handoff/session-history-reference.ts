@@ -52,6 +52,7 @@ function agentDisplayLabel(agent: string): string {
     case 'codex': return 'Codex CLI';
     case 'aider': return 'Aider';
     case 'kimi': return 'Kimi Code';
+    case 'droid': return 'Droid';
     default: return agent;
   }
 }

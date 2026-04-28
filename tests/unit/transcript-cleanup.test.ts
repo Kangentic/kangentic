@@ -355,6 +355,75 @@ const QWEN_REAL_TRANSCRIPT = [
   "qwen --resume '73013240-b192-422f-99a3-7cf37eac045a'",
 ].join('\n');
 
+// ── Factory Droid ──
+// Real structure from `scripts/capture-droid-pty.js` against Droid 0.109.3.
+// Ink-based TUI that redraws the full viewport every spinner tick: each frame
+// has the conversation area on top and a status block at the bottom (autonomy
+// + model line, empty `>` input box, version notice, IDE indicator). The
+// response is marked with `⛬` and grows incrementally across frames; the
+// last `⛬` block holds the final completed answer. User prompts have NO
+// leader marker; they appear as bare lines in the conversation area.
+const DROID_REAL_TRANSCRIPT = [
+  // Initial frame, no response yet
+  ' ⠁ Streaming...  (Press ESC to stop)',
+  '',
+  ' Auto (Off) - all actions require approvalSonnet 4.5 [BYOK] [custom]',
+  '',
+  ' >',
+  '',
+  ' ↓ Downloading update',
+  '',
+  // User prompt appears in conversation area, then frames redraw with it
+  'Tell me 3 facts about cats',
+  '',
+  ' ⣀ Streaming...  (Press ESC to stop)',
+  '',
+  ' Auto (Off) - all actions require approvalSonnet 4.5 [BYOK] [custom]',
+  '',
+  ' >',
+  '',
+  ' [⏱ 1s]✓ v0.109.3 ready (restart to apply)',
+  '',
+  // First partial response frame
+  '⛬  Cats are',
+  '',
+  ' ⣁ Streaming...  (Press ESC to stop)',
+  '',
+  ' Auto (Off) - all actions require approvalSonnet 4.5 [BYOK] [custom]',
+  '',
+  ' >',
+  '',
+  ' [⏱ 2s]✓ v0.109.3 ready (restart to apply)',
+  '',
+  // Second partial frame with more streamed tokens
+  '⛬  Cats are fascinating creatures.',
+  '',
+  ' ⣂ Streaming...  (Press ESC to stop)',
+  '',
+  ' Auto (Off) - all actions require approvalSonnet 4.5 [BYOK] [custom]',
+  '',
+  ' >',
+  '',
+  ' [⏱ 3s]✓ v0.109.3 ready (restart to apply)',
+  '',
+  // Final complete response frame
+  '⛬  Cats are fascinating creatures. Three facts:',
+  '',
+  '  1. They sleep 12-16 hours a day.',
+  '',
+  '  2. They have a third eyelid called a nictitating membrane.',
+  '',
+  '  3. Their purring frequency may help heal bones.',
+  '',
+  ' ⣄ Streaming...  (Press ESC to stop)',
+  '',
+  ' Auto (Off) - all actions require approvalSonnet 4.5 [BYOK] [custom]',
+  '',
+  ' >',
+  '',
+  ' [⏱ 4s]✓ v0.109.3 ready (restart to apply)IDE ◌',
+].join('\n');
+
 // ── Claude multi-turn ──
 const CLAUDE_MULTI_TURN = [
   '✶Sublimating...',
@@ -608,6 +677,51 @@ describe('cleanTranscriptForHandoff', () => {
       // The ✦ marker should appear exactly once - only the final complete block.
       const responseMarkers = (result.match(/✦/g) ?? []).length;
       expect(responseMarkers).toBe(1);
+    });
+  });
+
+  describe('Factory Droid', () => {
+    it('extracts the user prompt and complete final response', () => {
+      const result = cleanTranscriptForHandoff(DROID_REAL_TRANSCRIPT, 'droid');
+      expect(result).not.toBeNull();
+
+      expect(result).toContain('Tell me 3 facts about cats');
+      expect(result).toContain('Cats are fascinating creatures. Three facts:');
+      expect(result).toContain('sleep 12-16 hours');
+      expect(result).toContain('nictitating membrane');
+      expect(result).toContain('purring frequency');
+    });
+
+    it('strips Droid-specific noise (status bar, streaming, version notices)', () => {
+      const result = cleanTranscriptForHandoff(DROID_REAL_TRANSCRIPT, 'droid')!;
+      expect(result).not.toMatch(/Streaming\.\.\./);
+      expect(result).not.toMatch(/Press ESC to stop/);
+      expect(result).not.toMatch(/all actions require approval/);
+      expect(result).not.toMatch(/\[BYOK\]/);
+      expect(result).not.toMatch(/\[custom\]/);
+      expect(result).not.toMatch(/v0\.109\.3/);
+      expect(result).not.toMatch(/Downloading update/);
+      expect(result).not.toMatch(/\[⏱/);
+      expect(result).not.toMatch(/^IDE\s/m);
+    });
+
+    it('strips empty input box prompt lines', () => {
+      const result = cleanTranscriptForHandoff(DROID_REAL_TRANSCRIPT, 'droid')!;
+      expect(result).not.toMatch(/^\s*>\s*$/m);
+    });
+
+    it('does not duplicate the response across streaming redraws', () => {
+      const result = cleanTranscriptForHandoff(DROID_REAL_TRANSCRIPT, 'droid')!;
+      // Only the final ⛬ frame should survive; earlier partial frames
+      // ("Cats are", "Cats are fascinating creatures.") are subsumed.
+      const responseMarkers = (result.match(/⛬/g) ?? []).length;
+      expect(responseMarkers).toBe(1);
+    });
+
+    it('does not duplicate the user prompt', () => {
+      const result = cleanTranscriptForHandoff(DROID_REAL_TRANSCRIPT, 'droid')!;
+      const promptCount = (result.match(/Tell me 3 facts about cats/g) ?? []).length;
+      expect(promptCount).toBe(1);
     });
   });
 

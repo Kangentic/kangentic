@@ -8,6 +8,7 @@
  * - adapters/qwen-code/transcript-cleanup.ts
  * - adapters/aider/transcript-cleanup.ts
  * - adapters/kimi/transcript-cleanup.ts
+ * - adapters/droid/transcript-cleanup.ts
  *
  * This file provides:
  * 1. The dispatcher (cleanTranscriptForHandoff) that routes to the right adapter
@@ -20,6 +21,7 @@ import { cleanGeminiTranscript } from '../adapters/gemini/transcript-cleanup';
 import { cleanQwenTranscript } from '../adapters/qwen-code/transcript-cleanup';
 import { cleanAiderTranscript } from '../adapters/aider/transcript-cleanup';
 import { cleanKimiTranscript } from '../adapters/kimi/transcript-cleanup';
+import { cleanDroidTranscript } from '../adapters/droid/transcript-cleanup';
 
 // ---------------------------------------------------------------------------
 // Shared utilities (exported for use by adapter transcript-cleanup files)
@@ -111,7 +113,7 @@ export function finalizeTranscript(text: string): string | null {
  * clean conversation from the raw PTY stream.
  *
  * @param rawTranscript - ANSI-stripped PTY output from TranscriptWriter
- * @param sourceAgent - Agent identifier: 'claude', 'codex', 'gemini', 'qwen', 'aider', 'kimi'
+ * @param sourceAgent - Agent identifier: 'claude', 'codex', 'gemini', 'qwen', 'aider', 'kimi', 'droid'
  * @returns Cleaned transcript text, or null if nothing meaningful remains.
  */
 export function cleanTranscriptForHandoff(
@@ -133,6 +135,8 @@ export function cleanTranscriptForHandoff(
       return cleanAiderTranscript(rawTranscript);
     case 'kimi':
       return cleanKimiTranscript(rawTranscript);
+    case 'droid':
+      return cleanDroidTranscript(rawTranscript);
     default:
       // Unknown agents: no TUI-specific cleanup, just basic finalization
       return finalizeTranscript(rawTranscript);

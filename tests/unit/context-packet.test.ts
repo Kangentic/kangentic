@@ -64,6 +64,8 @@ describe('buildSessionHistoryReference', () => {
       { name: 'gemini', display: 'Gemini CLI' },
       { name: 'codex', display: 'Codex CLI' },
       { name: 'aider', display: 'Aider' },
+      { name: 'kimi', display: 'Kimi Code' },
+      { name: 'droid', display: 'Droid' },
     ];
 
     for (const { name, display } of agents) {
