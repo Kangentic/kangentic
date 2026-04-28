@@ -4,6 +4,7 @@ import type {
   AgentParser,
   Session,
   SessionAttachment,
+  SessionRecord,
   SessionStatus,
   StreamOutputParser,
 } from '../../shared/types';
@@ -73,6 +74,50 @@ export function toSession(session: ManagedSession): Session {
     resuming: session.resuming,
     transient: session.transient || undefined,
   };
+}
+
+/**
+ * Whether a session represents a still-live spawn that would collide with a
+ * new spawn / resume attempt for the same task.
+ *
+ * `running` and `queued` are live (occupy a slot, must not be duplicated).
+ * `suspended`, `exited`, and missing entries are stale references that the
+ * caller can safely clear before proceeding. SESSION_RESUME relies on this
+ * to recover when the DB still points at a session the registry has already
+ * marked suspended (e.g. internal idle-timeout suspend or an auto-spawn
+ * placeholder safety-net path that didn't clear `task.session_id`).
+ *
+ * Note: not named `isActiveSession` because `SessionManager.activeCount`
+ * already uses "active" to mean strictly running (excludes queued); broadening
+ * the meaning here would clash with that established term.
+ */
+export function isLiveSession(session: Session | undefined): boolean {
+  return !!session && (session.status === 'running' || session.status === 'queued');
+}
+
+/**
+ * Decide what DB action to take when persisting a session suspend.
+ * Centralizes the record-status branching used by SESSION_SUSPEND, the
+ * idle-timeout listener, and any future suspend path so the rules live in
+ * one place and can be unit-tested without spinning up the full IPC handler.
+ *
+ * - `suspend`: record has an `agent_session_id` and was running/exited - mark
+ *    suspended so the next resume can use `--resume`.
+ * - `exit-queued`: record was queued (never started Claude CLI) - mark exited
+ *    instead of suspended to avoid a doomed `--resume` next time.
+ * - `noop`: record is missing, already suspended/exited, or has no agent
+ *    session id (nothing to mirror).
+ */
+export type SuspendDbAction = 'suspend' | 'exit-queued' | 'noop';
+
+export function decideSuspendDbAction(record: SessionRecord | undefined): SuspendDbAction {
+  if (!record) return 'noop';
+  if (record.agent_session_id
+      && (record.status === 'running' || record.status === 'exited')) {
+    return 'suspend';
+  }
+  if (record.status === 'queued') return 'exit-queued';
+  return 'noop';
 }
 
 /**

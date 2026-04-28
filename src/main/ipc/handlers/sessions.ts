@@ -8,7 +8,8 @@ import { getProjectRepos, ensureTaskWorktree, createTransitionEngine } from '../
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
-import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessionId } from '../../engine/session-lifecycle';
+import { markRecordExited, promoteRecord, recoverStaleSessionId } from '../../engine/session-lifecycle';
+import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import type { Session, UsageTimePeriod } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
@@ -64,30 +65,15 @@ export function registerSessionHandlers(context: IpcContext): void {
       const { tasks } = getProjectRepos(context, resolvedProjectId);
       const task = tasks.getById(taskId);
       if (!task) throw new Error(`Task ${taskId} not found`);
-
       if (!task.session_id) return; // nothing to suspend
 
-      const db = getProjectDb(resolvedProjectId);
-      const sessionRepo = new SessionRepository(db);
-
-      // Mark session record as suspended in DB (atomic: only transitions from running/exited)
-      const record = sessionRepo.getLatestForTask(task.id);
-      if (record && record.agent_session_id
-          && (record.status === 'running' || record.status === 'exited')) {
-        // Capture metrics before suspend (caches are still populated)
-        captureSessionMetrics(context.sessionManager, sessionRepo, task.session_id!, record.id);
-        markRecordSuspended(sessionRepo, record.id, 'user');
-      } else if (record && record.status === 'queued') {
-        // Queued sessions never started Claude CLI - mark as exited (not
-        // suspended) to avoid a failed --resume attempt on next resume click.
-        markRecordExited(sessionRepo, record.id);
-      }
-
-      // Gracefully exit agent then kill PTY, preserve session files
-      await context.sessionManager.suspend(task.session_id);
-
-      // Clear task's active session reference
-      tasks.update({ id: task.id, session_id: null });
+      const sessionId = task.session_id;
+      // DB writes first (capture metrics, mark record suspended, clear
+      // task.session_id) then async PTY shutdown. Capturing metrics before
+      // shutdown is required - caches are still populated; afterwards is
+      // also fine, but doing it first matches task-move's order.
+      applySuspendDbWrites(context, resolvedProjectId, taskId, 'user');
+      await context.sessionManager.suspend(sessionId);
     });
   });
 
@@ -112,9 +98,10 @@ export function registerSessionHandlers(context: IpcContext): void {
       try {
         // Phase 1 (locked, short): validate task + lane, build plan.
         const plan = await withTaskLock(taskId, async () => {
-          const task = tasks.getById(taskId);
-          if (!task) throw new Error(`Task ${taskId} not found`);
-          if (task.session_id) throw new Error(`Task ${taskId} already has an active session`);
+          const { task, liveSession } = reconcileTaskSessionRef(context, resolvedProjectId, taskId);
+          if (liveSession) {
+            throw new Error(`Task ${taskId} already has an active session`);
+          }
           const lane = swimlanes.getById(task.swimlane_id);
           if (lane?.role === 'todo') {
             throw new Error('Cannot resume a session for a task in the To Do column');
@@ -139,15 +126,12 @@ export function registerSessionHandlers(context: IpcContext): void {
         // to To Do, or already spawned a session.
         return await withTaskLock(taskId, async () => {
           signal.throwIfAborted();
-          const current = tasks.getById(taskId);
-          if (!current) throw new Error(`Task ${taskId} not found`);
-          if (current.session_id) {
-            // Another handler spawned during our Phase 2 gap. Return that
-            // session rather than trying to create a duplicate.
-            const existing = context.sessionManager.getSession(current.session_id);
-            if (existing) return existing;
-            throw new Error('Session resume failed - session not in manager');
-          }
+          // Reconcile against the registry: if a concurrent handler spawned a
+          // live session during our Phase 2 gap, return it (don't duplicate).
+          // If session_id is stale (registry-suspended/missing), reconcile
+          // clears it so we proceed to spawn fresh.
+          const { task: current, liveSession } = reconcileTaskSessionRef(context, resolvedProjectId, taskId);
+          if (liveSession) return liveSession;
           const currentLane = swimlanes.getById(current.swimlane_id);
           if (currentLane?.role === 'todo') {
             throw new Error('Cannot resume a session for a task in the To Do column');
@@ -376,10 +360,25 @@ export function registerSessionHandlers(context: IpcContext): void {
   });
 
   context.sessionManager.on('idle-timeout', (sessionId: string, taskId: string, timeoutMinutes: number) => {
+    const projectId = context.sessionManager.getSessionProjectId(sessionId);
     if (!context.mainWindow.isDestroyed()) {
-      const projectId = context.sessionManager.getSessionProjectId(sessionId);
       context.mainWindow.webContents.send(IPC.SESSION_IDLE_TIMEOUT, sessionId, taskId, timeoutMinutes, projectId);
     }
+    if (!projectId) return;
+
+    // session-manager.suspend() (called by usage-tracker.requestSuspend) already
+    // flipped the registry status synchronously. Mirror those writes into the DB
+    // so task.session_id and the session record agree with the registry.
+    // Without this, SESSION_RESUME's reconciliation has to recover from the
+    // divergence on the next user click - cleaner to fix it here at the source.
+    void withTaskLock(taskId, async () => {
+      try {
+        context.commandInjector.cancel(taskId);
+        applySuspendDbWrites(context, projectId, taskId, 'system');
+      } catch (error) {
+        console.error('[idle-timeout] DB sync failed:', error);
+      }
+    });
   });
 
   // Stale session ID recovery: when a resuming session reports a different

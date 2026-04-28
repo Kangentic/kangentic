@@ -19,6 +19,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest';
+import type { Session } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Hoisted mocks
@@ -797,7 +798,25 @@ describe('SESSION_RESUME split-lock dedup', () => {
     });
 
     context = createMockContext();
-    context.sessionManager.getSession.mockImplementation((id: string) => ({ id, taskId: 'task-2' }));
+    // Real getSession returns a full Session DTO with status. Phase 3's
+    // reconciler narrowed its dedup check to live (running/queued) sessions
+    // so a stale suspended/exited reference falls through to fresh-spawn
+    // instead of being returned as if it were the resumed session - the mock
+    // has to mirror that contract. Type the return as Session so missing
+    // fields surface at compile time if downstream code starts reading them.
+    const mockSession = (id: string): Session => ({
+      id,
+      taskId: 'task-2',
+      projectId: 'proj-1',
+      pid: 12345,
+      status: 'running',
+      shell: '/bin/bash',
+      cwd: '/mock/project',
+      startedAt: new Date().toISOString(),
+      exitCode: null,
+      resuming: false,
+    });
+    context.sessionManager.getSession.mockImplementation(mockSession);
 
     registerSessionHandlers(context as never);
   });
