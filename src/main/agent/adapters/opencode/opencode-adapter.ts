@@ -142,11 +142,11 @@ export class OpenCodeAdapter implements AgentAdapter {
   }
 
   getExitSequence(): string[] {
-    // Ctrl+C interrupts in-progress work; /exit triggers OpenCode's
-    // graceful shutdown so any session-state flush completes before
-    // the PTY is killed. If empirical testing shows OpenCode does not
-    // recognize /exit, this can be reduced to ['\x03'].
-    return ['\x03', '/exit\r'];
+    // Verified 2026-04-28 via scripts/probe-opencode-exit.ts: Ctrl+C alone
+    // closes OpenCode (PTY exits in ~1s with STATUS_CONTROL_C_EXIT). Neither
+    // /exit nor /quit is a recognized slash command - sending them at the
+    // input prompt just types the characters into a dying buffer.
+    return ['\x03'];
   }
 
   detectFirstOutput(data: string): boolean {

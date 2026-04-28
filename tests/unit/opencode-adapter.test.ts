@@ -213,9 +213,9 @@ describe('OpenCode Adapter', () => {
       expect(adapter.detectFirstOutput('hello world')).toBe(false);
     });
 
-    it('exit sequence sends Ctrl+C then /exit', () => {
+    it('exit sequence is Ctrl+C only (verified empirically: /exit and /quit are not recognised commands)', () => {
       const exitSequence = adapter.getExitSequence?.();
-      expect(exitSequence).toEqual(['\x03', '/exit\r']);
+      expect(exitSequence).toEqual(['\x03']);
     });
 
     it('removeHooks is a no-op (OpenCode has no hooks)', () => {
