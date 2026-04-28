@@ -18,6 +18,7 @@ import { safeKillPty } from './lifecycle/pty-kill';
 import { performSpawn } from './lifecycle/session-spawn-flow';
 import { detectPR } from './pr/pr-connectors';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession } from './session-registry';
+import { createWriteQueue, type WriteQueue } from './write-queue';
 import { isShuttingDown } from '../shutdown-state';
 import type { TranscriptRepository } from '../db/repositories/transcript-repository';
 import type {
@@ -46,6 +47,14 @@ export class SessionManager extends EventEmitter {
    * sessions are focused" (no filtering).
    */
   private focusedSessionIds = new Set<string>();
+  /**
+   * Per-session FIFO write queue. Every `write()` call appends to the same
+   * buffer and is drained by a single loop that yields via setImmediate
+   * between 4KB chunks. Guarantees byte order across concurrent callers
+   * (user input, paste, command-injector) so bracketed-paste sequences
+   * cannot be fragmented by interleaved writes.
+   */
+  private writeQueues = new Map<string, WriteQueue>();
   private transcriptWriter: TranscriptWriter | null = null;
 
   // Sub-modules owned by SessionManager. Cross-wired in the constructor
@@ -175,6 +184,17 @@ export class SessionManager extends EventEmitter {
       this.sessionHistoryReader,
       this.statusFileReader,
     );
+
+    // Free the per-session write queue when a PTY exits naturally (without
+    // going through kill()). dispose() is idempotent so the kill() path
+    // double-disposing is harmless.
+    this.on('exit', (sessionId: string) => {
+      const writeQueue = this.writeQueues.get(sessionId);
+      if (writeQueue) {
+        writeQueue.dispose();
+        this.writeQueues.delete(sessionId);
+      }
+    });
   }
 
   setMaxConcurrent(max: number): void {
@@ -298,21 +318,18 @@ export class SessionManager extends EventEmitter {
 
   write(sessionId: string, data: string): void {
     const session = this.registry.get(sessionId);
-    if (!session?.pty) return;
+    if (!session?.pty || data.length === 0) return;
 
-    const CHUNK_SIZE = 4096;
-    if (data.length <= CHUNK_SIZE) {
-      session.pty.write(data);
-      return;
+    let queue = this.writeQueues.get(sessionId);
+    if (!queue) {
+      queue = createWriteQueue(
+        () => this.registry.get(sessionId)?.pty ?? null,
+        undefined,
+        { onAutoDispose: () => this.writeQueues.delete(sessionId) },
+      );
+      this.writeQueues.set(sessionId, queue);
     }
-    let offset = 0;
-    const writeNextChunk = () => {
-      if (!session.pty || offset >= data.length) return;
-      session.pty.write(data.slice(offset, offset + CHUNK_SIZE));
-      offset += CHUNK_SIZE;
-      if (offset < data.length) setTimeout(writeNextChunk, 1);
-    };
-    writeNextChunk();
+    queue.enqueue(data);
   }
 
   resize(sessionId: string, cols: number, rows: number): { colsChanged: boolean } {
@@ -383,6 +400,13 @@ export class SessionManager extends EventEmitter {
       const ptyRef = session.pty;
       session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
       safeKillPty(ptyRef);
+    }
+    // Drop pending bytes; a stale drain loop scheduled via setImmediate will
+    // observe the disposed flag on its next tick and exit cleanly.
+    const writeQueue = this.writeQueues.get(sessionId);
+    if (writeQueue) {
+      writeQueue.dispose();
+      this.writeQueues.delete(sessionId);
     }
     // Remove from queue if queued, and mark as exited.
     // Queued sessions have no PTY, so onExit never fires. Emit the exit
