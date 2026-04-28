@@ -78,14 +78,15 @@ export function TerminalTab({ config, globalConfig, shells }: {
         label="Context Bar"
         searchIds={[
           'contextBar.showShell', 'contextBar.showVersion', 'contextBar.showModel',
-          'contextBar.showCost', 'contextBar.showTokens', 'contextBar.showContextFraction',
-          'contextBar.showProgressBar', 'contextBar.showRateLimits',
+          'contextBar.showEffort', 'contextBar.showCost', 'contextBar.showTokens',
+          'contextBar.showContextFraction', 'contextBar.showProgressBar', 'contextBar.showRateLimits',
         ]}
       />
       <CompactToggleList items={[
         { label: 'Shell', description: 'Detected shell name', checked: globalConfig.contextBar.showShell, onChange: (value) => updateGlobal({ contextBar: { showShell: value } }), searchId: 'contextBar.showShell' },
         { label: 'Version', description: 'Agent CLI version', checked: globalConfig.contextBar.showVersion, onChange: (value) => updateGlobal({ contextBar: { showVersion: value } }), searchId: 'contextBar.showVersion' },
         { label: 'Model', description: 'Active model name', checked: globalConfig.contextBar.showModel, onChange: (value) => updateGlobal({ contextBar: { showModel: value } }), searchId: 'contextBar.showModel' },
+        { label: 'Effort', description: 'Claude reasoning effort level', checked: globalConfig.contextBar.showEffort, onChange: (value) => updateGlobal({ contextBar: { showEffort: value } }), searchId: 'contextBar.showEffort' },
         { label: 'Cost', description: 'Session API cost', checked: globalConfig.contextBar.showCost, onChange: (value) => updateGlobal({ contextBar: { showCost: value } }), searchId: 'contextBar.showCost' },
         { label: 'Token Counts', description: 'Input / output totals', checked: globalConfig.contextBar.showTokens, onChange: (value) => updateGlobal({ contextBar: { showTokens: value } }), searchId: 'contextBar.showTokens' },
         { label: 'Context Window', description: 'Used / total tokens', checked: globalConfig.contextBar.showContextFraction, onChange: (value) => updateGlobal({ contextBar: { showContextFraction: value } }), searchId: 'contextBar.showContextFraction' },

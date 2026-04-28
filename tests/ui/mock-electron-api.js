@@ -64,6 +64,7 @@
       showShell: true,
       showVersion: true,
       showModel: true,
+      showEffort: true,
       showCost: true,
       showTokens: true,
       showContextFraction: true,

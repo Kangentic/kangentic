@@ -93,6 +93,7 @@ export function ContextBar({ sessionId, compact = false, agentFallback = null }:
   const showShell = !compact && !!sessionShell && contextBarConfig.showShell;
   const showVersion = !compact && contextBarConfig.showVersion;
   const showModel = contextBarConfig.showModel;
+  const showEffort = contextBarConfig.showEffort;
   const showCost = contextBarConfig.showCost;
   const showTokens = !compact && contextBarConfig.showTokens;
   const showFraction = contextBarConfig.showContextFraction;
@@ -124,7 +125,14 @@ export function ContextBar({ sessionId, compact = false, agentFallback = null }:
           )}
         </span>
       )}
-      {showModel && <span className={`${pill} text-fg-muted`}>{modelName}</span>}
+      {showModel && (
+        <span className={`${pill} text-fg-muted`}>
+          {modelName}
+          {showEffort && usage.model.effort && (
+            <span className="text-fg-faint ml-1.5">{usage.model.effort}</span>
+          )}
+        </span>
+      )}
       {showRateLimits && usage.rateLimits && (() => {
         const rateLimits = usage.rateLimits;
         return (

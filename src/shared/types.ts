@@ -413,6 +413,8 @@ export interface SessionUsage {
   model: {
     id: string;
     displayName: string;
+    /** Claude effort level from status.json (`low` | `medium` | `high` | `xhigh`). Absent for older Claude Code versions and non-Claude adapters. */
+    effort?: string;
   };
   /** Agent-reported session ID (from status.json). Used for stale ID recovery. */
   sessionId?: string;
@@ -641,6 +643,7 @@ export interface AppConfig {
     showShell: boolean;
     showVersion: boolean;
     showModel: boolean;
+    showEffort: boolean;
     showCost: boolean;
     showTokens: boolean;
     showContextFraction: boolean;
@@ -714,6 +717,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     showShell: true,
     showVersion: true,
     showModel: true,
+    showEffort: true,
     showCost: true,
     showTokens: true,
     showContextFraction: true,

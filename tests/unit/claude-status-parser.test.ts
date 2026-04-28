@@ -78,6 +78,67 @@ describe('ClaudeStatusParser', () => {
       expect(usage!.cost.totalDurationMs).toBe(12345);
       expect(usage!.model.id).toBe('claude-sonnet-4-20250514');
       expect(usage!.model.displayName).toBe('Claude Sonnet 4');
+      // No effort emitted in this fixture
+      expect(usage!.model.effort).toBeUndefined();
+    });
+
+    it('extracts effort.level into model.effort', () => {
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 11, context_window_size: 1_000_000 },
+        cost: { total_cost_usd: 0, total_duration_ms: 0 },
+        model: { id: 'claude-opus-4-7[1m]', display_name: 'Opus 4.7 (1M context)' },
+        effort: { level: 'xhigh' },
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.model.effort).toBe('xhigh');
+    });
+
+    it('leaves model.effort undefined when status omits effort', () => {
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 5, context_window_size: 200_000 },
+        cost: { total_cost_usd: 0, total_duration_ms: 0 },
+        model: { id: 'claude-opus-4-7', display_name: 'Opus 4.7' },
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.model.effort).toBeUndefined();
+    });
+
+    it('leaves model.effort undefined when effort is null', () => {
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 5, context_window_size: 200_000 },
+        cost: { total_cost_usd: 0, total_duration_ms: 0 },
+        model: { id: 'claude-opus-4-7', display_name: 'Opus 4.7' },
+        effort: null,
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.model.effort).toBeUndefined();
+    });
+
+    it('leaves model.effort undefined when effort.level is non-string', () => {
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 5, context_window_size: 200_000 },
+        cost: { total_cost_usd: 0, total_duration_ms: 0 },
+        model: { id: 'claude-opus-4-7', display_name: 'Opus 4.7' },
+        effort: { level: 3 },
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.model.effort).toBeUndefined();
+    });
+
+    it('leaves model.effort undefined when effort object has no level key', () => {
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 5, context_window_size: 200_000 },
+        cost: { total_cost_usd: 0, total_duration_ms: 0 },
+        model: { id: 'claude-opus-4-7', display_name: 'Opus 4.7' },
+        effort: {},
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.model.effort).toBeUndefined();
     });
 
     it('returns null for invalid JSON', () => {

@@ -81,6 +81,12 @@ export class ClaudeStatusParser {
       const modelId = (model?.id as string) ?? '';
       const sessionId = typeof data.session_id === 'string' ? data.session_id : undefined;
 
+      // Claude Code 2.1.119+ reports the active effort level (low/medium/high/xhigh)
+      // as a top-level `effort: { level }` object alongside model. Older versions
+      // omit it entirely, in which case we leave the field undefined.
+      const effortObject = data.effort as Record<string, unknown> | undefined;
+      const effortLevel = typeof effortObject?.level === 'string' ? effortObject.level : undefined;
+
       // Claude Code emits session (5h) and weekly (7d) plan-usage countdowns
       // alongside context_window. resets_at is Unix epoch seconds.
       const rateLimitsRaw = data.rate_limits as Record<string, unknown> | undefined;
@@ -120,6 +126,7 @@ export class ClaudeStatusParser {
           model: {
             id: modelId,
             displayName: (model?.display_name as string) ?? '',
+            effort: effortLevel,
           },
           sessionId,
           rateLimits,

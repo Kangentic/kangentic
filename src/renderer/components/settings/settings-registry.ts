@@ -42,6 +42,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'contextBar.showShell', tabId: 'terminal', label: 'Shell', description: 'Detected shell name', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
   { id: 'contextBar.showVersion', tabId: 'terminal', label: 'Version', description: 'Agent CLI version', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
   { id: 'contextBar.showModel', tabId: 'terminal', label: 'Model', description: 'Active model name', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
+  { id: 'contextBar.showEffort', tabId: 'terminal', label: 'Effort', description: 'Claude reasoning effort level', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'claude', 'reasoning', 'thinking', 'xhigh'] },
   { id: 'contextBar.showCost', tabId: 'terminal', label: 'Cost', description: 'Session API cost', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'price'] },
   { id: 'contextBar.showTokens', tabId: 'terminal', label: 'Token Counts', description: 'Input / output totals', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
   { id: 'contextBar.showContextFraction', tabId: 'terminal', label: 'Context Window', description: 'Used / total tokens', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status'] },
