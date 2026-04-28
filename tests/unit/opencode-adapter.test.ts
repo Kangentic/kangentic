@@ -18,7 +18,10 @@
  * The non-interactive `opencode run` subcommand is the only place
  * `--dangerously-skip-permissions` is documented.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   OpenCodeAdapter,
   OpenCodeDetector,
@@ -231,6 +234,112 @@ describe('OpenCode Adapter', () => {
     });
   });
 
+  // ── probeAuth ────────────────────────────────────────────────────────────
+  //
+  // probeAuth reads ~/.local/share/opencode/auth.json - the file that
+  // `opencode auth login` writes provider credentials into. The renderer
+  // surfaces the false case as an amber "Not signed in" warning so users
+  // know to authenticate before moving a task.
+
+  describe('probeAuth', () => {
+    // Read the fixture once at the start of each test, BEFORE installing
+    // the readFileSync spy, so the spy doesn't intercept the fixture load.
+    let opencodeAuthFixture: string;
+
+    beforeEach(() => {
+      opencodeAuthFixture = fs.readFileSync(
+        path.join(__dirname, '..', 'fixtures', 'opencode-auth.json'),
+        'utf8',
+      );
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    /**
+     * Install a readFileSync spy whose impl is called with the resolved
+     * path string. Wraps the overload-cast boilerplate so individual test
+     * bodies stay focused on the case data.
+     */
+    function mockReadFileSync(impl: (filePath: string) => string): void {
+      vi.spyOn(fs, 'readFileSync').mockImplementation(((filePath: fs.PathOrFileDescriptor) =>
+        impl(String(filePath))
+      ) as typeof fs.readFileSync);
+    }
+
+    it('targets ~/.local/share/opencode/auth.json under the home directory', async () => {
+      let probedPath: string | null = null;
+      mockReadFileSync((filePath) => {
+        probedPath = filePath;
+        return JSON.stringify({ anthropic: { type: 'oauth' } });
+      });
+      await adapter.probeAuth();
+      expect(probedPath).not.toBeNull();
+      expect(probedPath!).toBe(path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json'));
+    });
+
+    it('returns true for the realistic auth.json fixture (sanitized sample)', async () => {
+      // Fixture replays the documented shape from the OpenCode docs:
+      // a top-level object keyed by provider id, with OAuth and API-key
+      // entries. Pins probeAuth against the real on-disk format so a
+      // future schema change (e.g. envelope wrapper) trips this test.
+      mockReadFileSync(() => opencodeAuthFixture);
+      const result = await adapter.probeAuth();
+      expect(result).toBe(true);
+    });
+
+    it('returns true when auth.json contains at least one provider', async () => {
+      mockReadFileSync(() => JSON.stringify({ anthropic: { type: 'oauth', access: 'tok' } }));
+      const result = await adapter.probeAuth();
+      expect(result).toBe(true);
+    });
+
+    it('returns false when auth.json is the empty object', async () => {
+      mockReadFileSync(() => '{}');
+      const result = await adapter.probeAuth();
+      expect(result).toBe(false);
+    });
+
+    it('returns false when auth.json is missing (ENOENT)', async () => {
+      mockReadFileSync(() => {
+        const error = new Error('no such file or directory') as NodeJS.ErrnoException;
+        error.code = 'ENOENT';
+        throw error;
+      });
+      const result = await adapter.probeAuth();
+      expect(result).toBe(false);
+    });
+
+    it('returns null when auth.json contains malformed JSON', async () => {
+      mockReadFileSync(() => 'not-json{{{');
+      const result = await adapter.probeAuth();
+      expect(result).toBeNull();
+    });
+
+    it('returns null when readFileSync throws a non-ENOENT error', async () => {
+      mockReadFileSync(() => {
+        const error = new Error('permission denied') as NodeJS.ErrnoException;
+        error.code = 'EACCES';
+        throw error;
+      });
+      const result = await adapter.probeAuth();
+      expect(result).toBeNull();
+    });
+
+    it('returns false when auth.json is a JSON array (defensive: not the documented shape)', async () => {
+      mockReadFileSync(() => '[]');
+      const result = await adapter.probeAuth();
+      expect(result).toBe(false);
+    });
+
+    it('returns false when auth.json contains a JSON null', async () => {
+      mockReadFileSync(() => 'null');
+      const result = await adapter.probeAuth();
+      expect(result).toBe(false);
+    });
+  });
+
   describe('template interpolation', () => {
     it('replaces {{key}} placeholders', () => {
       const result = adapter.interpolateTemplate('Hello {{name}}!', { name: 'world' });
@@ -380,5 +489,13 @@ describe('agent-display-name - opencode entry', () => {
   it('agentInstallUrl("opencode") returns "https://opencode.ai/docs"', async () => {
     const { agentInstallUrl } = await import('../../src/renderer/utils/agent-display-name');
     expect(agentInstallUrl('opencode')).toBe('https://opencode.ai/docs');
+  });
+
+  it('agentLoginCommand("opencode") returns "opencode auth login"', async () => {
+    // Pairs with the OpenCodeAdapter.probeAuth implementation: when the
+    // adapter reports authenticated:false, the welcome-screen
+    // DetectionCard renders this command behind a "Copy" button.
+    const { agentLoginCommand } = await import('../../src/renderer/utils/agent-display-name');
+    expect(agentLoginCommand('opencode')).toBe('opencode auth login');
   });
 });

@@ -54,6 +54,7 @@ const AGENT_META: Record<string, AgentMeta> = {
     display: 'OpenCode',
     short: 'OpenCode',
     installUrl: 'https://opencode.ai/docs',
+    loginCommand: 'opencode auth login',
   },
   qwen: {
     display: 'Qwen Code',

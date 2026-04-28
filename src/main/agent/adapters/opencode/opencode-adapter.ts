@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { OpenCodeDetector } from './detector';
 import { OpenCodeCommandBuilder } from './command-builder';
 import { OpenCodeSessionHistoryParser } from './session-history-parser';
@@ -79,7 +82,37 @@ export class OpenCodeAdapter implements AgentAdapter {
   }
 
   async ensureTrust(_workingDirectory: string): Promise<void> {
-    // OpenCode has no trust dialog - no pre-approval needed.
+    // OpenCode has no trust dialog - no pre-approval needed. See
+    // `probeAuth` for the login-state check, which reads
+    // ~/.local/share/opencode/auth.json.
+  }
+
+  async probeAuth(): Promise<boolean | null> {
+    // `opencode auth login` writes provider credentials to
+    // ~/.local/share/opencode/auth.json on every platform (the OpenCode
+    // troubleshooting docs spell out the same `.local/share/opencode/`
+    // layout for Windows, under %USERPROFILE%, not %APPDATA%). The file
+    // is a JSON object keyed by provider id; an empty `{}` or a missing
+    // file means no providers are configured and a fresh spawn would
+    // die with an auth error. The renderer surfaces this as an amber
+    // warning so the user can run `opencode auth login` before moving
+    // a task.
+    //
+    // The human-facing read of the same file is `opencode auth list`
+    // (alias `opencode auth ls`); see tests/fixtures/opencode-auth.json
+    // for the documented shape used in the regression test.
+    try {
+      const authPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json');
+      const raw = fs.readFileSync(authPath, 'utf8');
+      const parsed = JSON.parse(raw) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return Object.keys(parsed as Record<string, unknown>).length > 0;
+      }
+      return false;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      return null;
+    }
   }
 
   buildCommand(options: SpawnCommandOptions): string {

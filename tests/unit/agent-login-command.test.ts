@@ -2,8 +2,9 @@
  * Unit tests for agentLoginCommand() in src/renderer/utils/agent-display-name.ts.
  *
  * agentLoginCommand() returns the shell command users run to authenticate an
- * agent CLI (e.g. 'kimi login'). Only Kimi exposes this; all other agents
- * (and null/undefined inputs) return undefined.
+ * agent CLI (e.g. 'kimi login', 'opencode auth login'). Only agents whose
+ * adapter implements probeAuth and surfaces an in-app auth UX expose this;
+ * all other agents (and null/undefined inputs) return undefined.
  *
  * These are purely pure-function tests - no mocks needed.
  */
@@ -32,8 +33,8 @@ describe('agentLoginCommand', () => {
     expect(agentLoginCommand('aider')).toBeUndefined();
   });
 
-  it('returns undefined for opencode', () => {
-    expect(agentLoginCommand('opencode')).toBeUndefined();
+  it('returns "opencode auth login" for the opencode agent', () => {
+    expect(agentLoginCommand('opencode')).toBe('opencode auth login');
   });
 
   it('returns undefined for qwen', () => {

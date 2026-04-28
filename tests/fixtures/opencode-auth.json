@@ -1,0 +1,12 @@
+{
+  "anthropic": {
+    "type": "oauth",
+    "access": "REDACTED-access-token-for-tests",
+    "refresh": "REDACTED-refresh-token-for-tests",
+    "expires": 1735689600000
+  },
+  "openai": {
+    "type": "api",
+    "key": "sk-REDACTED-fake-key-for-tests"
+  }
+}

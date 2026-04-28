@@ -1152,6 +1152,17 @@
             ],
             defaultPermission: 'default',
           },
+          {
+            name: 'opencode', displayName: 'OpenCode', found: false, path: null, version: null,
+            // KEEP IN SYNC with OpenCodeAdapter.permissions in src/main/agent/adapters/opencode/opencode-adapter.ts
+            permissions: [
+              { mode: 'plan', label: 'Plan (Read-Only)' },
+              { mode: 'default', label: 'Default' },
+              { mode: 'acceptEdits', label: 'Accept Edits' },
+              { mode: 'bypassPermissions', label: 'Dangerous Full Access' },
+            ],
+            defaultPermission: 'acceptEdits',
+          },
         ];
         return defaults.map(function (agent) {
           var override = overrides[agent.name];
