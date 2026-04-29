@@ -25,6 +25,7 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   parseWireJsonl,
+  truncateForActivityLog,
   KIMI_TOOL_FALLBACK_NAME,
   KIMI_BTW_SUBAGENT_NAME,
   KIMI_SUBAGENT_FALLBACK_NAME,
@@ -772,7 +773,11 @@ describe('parseWireJsonl', () => {
       expect(notif?.detail).toBe('pre_tool_use:allow');
     });
 
-    it('HookRequest is treated as Notification telemetry (request form of HookTriggered)', () => {
+    it('HookRequest appends the user_input prompt text to the detail', () => {
+      // input_data on `on_user_input` carries the actual prompt text. The
+      // detail should surface it after the `<event>:<target>` head so the
+      // Activity log shows what the hook is firing against, not just that
+      // it fired.
       const result = parseWireJsonl(envelope('HookRequest', {
         id: 'hreq-1',
         subscription_id: 'sub-1',
@@ -781,7 +786,161 @@ describe('parseWireJsonl', () => {
         input_data: { user_input: 'hi' },
       }), 'append');
       const notif = result.events.find((event) => event.type === EventType.Notification);
+      expect(notif?.detail).toBe('on_user_input:all: hi');
+    });
+
+    it('HookRequest extracts a tool name from a tool-hook input_data', () => {
+      // pre_tool_use / post_tool_use payloads carry the tool name under
+      // tool_name (or function.name on older protocols). Surface the name
+      // so the Activity log row tells the developer *which* tool the hook
+      // is gating.
+      const result = parseWireJsonl(envelope('HookRequest', {
+        id: 'hreq-2',
+        subscription_id: 'sub-2',
+        event: 'pre_tool_use',
+        target: 'Shell',
+        input_data: {
+          tool_name: 'Shell',
+          tool_input: { command: 'ls -la' },
+        },
+      }), 'append');
+      const notif = result.events.find((event) => event.type === EventType.Notification);
+      expect(notif?.detail).toBe('pre_tool_use:Shell: Shell');
+    });
+
+    it('HookRequest falls back to bare <event>:<target> when input_data is missing', () => {
+      // Back-compat with the prior shape: a payload with no input_data
+      // still produces a Notification, just without the suffix.
+      const result = parseWireJsonl(envelope('HookRequest', {
+        id: 'hreq-3',
+        subscription_id: 'sub-3',
+        event: 'on_session_start',
+        target: 'all',
+      }), 'append');
+      const notif = result.events.find((event) => event.type === EventType.Notification);
+      expect(notif?.detail).toBe('on_session_start:all');
+    });
+
+    it('HookRequest falls back to bare head when input_data is empty', () => {
+      const result = parseWireJsonl(envelope('HookRequest', {
+        id: 'hreq-4',
+        subscription_id: 'sub-4',
+        event: 'on_user_input',
+        target: 'all',
+        input_data: {},
+      }), 'append');
+      const notif = result.events.find((event) => event.type === EventType.Notification);
       expect(notif?.detail).toBe('on_user_input:all');
+    });
+
+    it('HookRequest surfaces the first short string field when no user_input or tool name is present', () => {
+      const result = parseWireJsonl(envelope('HookRequest', {
+        id: 'hreq-5',
+        subscription_id: 'sub-5',
+        event: 'on_file_change',
+        target: 'all',
+        input_data: { path: 'src/main.ts' },
+      }), 'append');
+      const notif = result.events.find((event) => event.type === EventType.Notification);
+      expect(notif?.detail).toBe('on_file_change:all: path=src/main.ts');
+    });
+
+    it('HookRequest detail is truncated to 200 chars on oversized input_data', () => {
+      const longPrompt = 'x'.repeat(5000);
+      const result = parseWireJsonl(envelope('HookRequest', {
+        id: 'hreq-6',
+        subscription_id: 'sub-6',
+        event: 'on_user_input',
+        target: 'all',
+        input_data: { user_input: longPrompt },
+      }), 'append');
+      const notif = result.events.find((event) => event.type === EventType.Notification);
+      expect(notif?.detail).toBeDefined();
+      expect(notif?.detail?.length ?? 0).toBeLessThanOrEqual(200);
+      expect(notif?.detail).toMatch(/^on_user_input:all: /);
+    });
+
+    it('HookRequest extracts tool name from the name field when tool_name is absent', () => {
+      // Some hook payloads use `name` instead of `tool_name`. The fallback
+      // chain should surface it so the Activity log still shows the tool.
+      const result = parseWireJsonl(envelope('HookRequest', {
+        id: 'hreq-7',
+        subscription_id: 'sub-7',
+        event: 'pre_tool_use',
+        target: 'Shell',
+        input_data: { name: 'Shell' },
+      }), 'append');
+      const notif = result.events.find((event) => event.type === EventType.Notification);
+      expect(notif?.detail).toBe('pre_tool_use:Shell: Shell');
+    });
+
+    it('HookRequest extracts tool name from function.name when tool_name and name are absent', () => {
+      // OpenAI-style payloads nest the tool identifier under `function.name`.
+      // The fallback chain must walk one level deep.
+      const result = parseWireJsonl(envelope('HookRequest', {
+        id: 'hreq-8',
+        subscription_id: 'sub-8',
+        event: 'pre_tool_use',
+        target: 'Shell',
+        input_data: { function: { name: 'Shell' } },
+      }), 'append');
+      const notif = result.events.find((event) => event.type === EventType.Notification);
+      expect(notif?.detail).toBe('pre_tool_use:Shell: Shell');
+    });
+
+    it('HookRequest extracts tool name from tool_call.function.name when shallower fields are absent', () => {
+      // Anthropic tool_call envelope nests the identifier two levels deep.
+      const result = parseWireJsonl(envelope('HookRequest', {
+        id: 'hreq-9',
+        subscription_id: 'sub-9',
+        event: 'pre_tool_use',
+        target: 'Shell',
+        input_data: { tool_call: { function: { name: 'Shell' } } },
+      }), 'append');
+      const notif = result.events.find((event) => event.type === EventType.Notification);
+      expect(notif?.detail).toBe('pre_tool_use:Shell: Shell');
+    });
+
+    it('HookRequest extracts tool name from tool_call.name when tool_call.function is absent', () => {
+      // Deepest rung of the fallback chain: flat name inside tool_call.
+      const result = parseWireJsonl(envelope('HookRequest', {
+        id: 'hreq-10',
+        subscription_id: 'sub-10',
+        event: 'pre_tool_use',
+        target: 'Shell',
+        input_data: { tool_call: { name: 'Shell' } },
+      }), 'append');
+      const notif = result.events.find((event) => event.type === EventType.Notification);
+      expect(notif?.detail).toBe('pre_tool_use:Shell: Shell');
+    });
+  });
+
+  describe('truncateForActivityLog', () => {
+    it('returns raw slice with no ellipsis when max is 3', () => {
+      // The max <= 3 guard prevents the "..." suffix from consuming the
+      // entire budget. A 3-char max has no room for a 3-char suffix, so
+      // the function returns a bare slice to avoid returning "..." alone.
+      expect(truncateForActivityLog('hello world', 3)).toBe('hel');
+    });
+
+    it('returns raw slice with no ellipsis when max is 1', () => {
+      expect(truncateForActivityLog('hello world', 1)).toBe('h');
+    });
+
+    it('appends ellipsis and respects budget when max is 4 or above', () => {
+      // 4-char budget: 1 char of content + "..."
+      expect(truncateForActivityLog('hello world', 4)).toBe('h...');
+    });
+
+    it('does not truncate when the value fits within max', () => {
+      expect(truncateForActivityLog('hi', 10)).toBe('hi');
+    });
+
+    it('collapses internal whitespace before measuring length', () => {
+      // Newlines are replaced with spaces; leading/trailing whitespace is
+      // stripped before the length check. The final string should be
+      // flattened even when it fits within max.
+      expect(truncateForActivityLog('line one\nline two', 50)).toBe('line one line two');
     });
   });
 

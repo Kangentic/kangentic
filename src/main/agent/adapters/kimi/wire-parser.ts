@@ -72,7 +72,7 @@ import {
  *   ApprovalRequest    → Idle        Idle (detail = IdleReason.Permission)
  *   ToolCallRequest    (preserve)    ToolStart (detail = name)
  *   QuestionRequest    → Idle        Idle (detail = IdleReason.Permission)
- *   HookRequest        (preserve)    Notification (detail = "<event>:<target>")
+ *   HookRequest        (preserve)    Notification (detail = "<event>:<target>[: <summary>]")
  *
  * All other inputs (malformed JSON, unrecognized types, missing
  * envelope fields) are skipped silently. Defensive parsing throughout.
@@ -446,7 +446,7 @@ export function parseWireJsonl(
           events.push({
             ts: timestamp,
             type: EventType.Notification,
-            detail: formatHookDetail(payload),
+            detail: formatHookRequestDetail(payload),
           });
         }
         break;
@@ -581,6 +581,131 @@ function formatHookDetail(payload: Record<string, unknown>): string {
   const event = typeof payload.event === 'string' ? payload.event : 'hook';
   const target = typeof payload.target === 'string' ? payload.target : '';
   return target.length > 0 ? `${event}:${target}` : event;
+}
+
+/**
+ * Hard ceiling on a `HookRequest` Notification detail string. The hook
+ * `input_data` field carries the full event payload, which on tool hooks
+ * can include the entire arguments object - generous truncation prevents
+ * the Activity log from being flooded by a single row.
+ */
+const KIMI_HOOK_DETAIL_MAX_LEN = 200;
+
+/**
+ * Per-summary cap, sized so the `<event>:<target>: ` prefix plus the
+ * summary still fits inside `KIMI_HOOK_DETAIL_MAX_LEN`.
+ */
+const KIMI_HOOK_SUMMARY_MAX_LEN = 180;
+
+/**
+ * Format a `HookRequest` detail string. Builds on `formatHookDetail` for
+ * the `<event>:<target>` head and then appends a one-line summary of the
+ * hook's `input_data` payload when one can be extracted. The summary is
+ * the highest-signal field for a developer debugging hook behavior - it
+ * carries the actual prompt text on `on_user_input`, the tool name on
+ * tool hooks, etc.
+ *
+ * Final string is truncated to `KIMI_HOOK_DETAIL_MAX_LEN` chars as
+ * defence in depth - the per-summary cap should already enforce this,
+ * but very long event/target names could still push the head over the
+ * ceiling.
+ */
+function formatHookRequestDetail(payload: Record<string, unknown>): string {
+  const head = formatHookDetail(payload);
+  const inputData = payload.input_data;
+  const summary = isRecord(inputData) ? extractHookInputSummary(inputData) : null;
+  const full = summary ? `${head}: ${summary}` : head;
+  return truncateForActivityLog(full, KIMI_HOOK_DETAIL_MAX_LEN);
+}
+
+/**
+ * Pull a one-line summary out of a `HookRequest`'s `input_data` payload.
+ *
+ * `input_data` is the full event payload received by the hook
+ * subscription. Its shape varies per `event`:
+ *   - `on_user_input` and friends carry a `user_input` field
+ *     (`string | ContentPart[]`) - reuse `extractUserInputText` for
+ *     consistency with `TurnBegin` / `SteerInput`.
+ *   - Tool hooks (`pre_tool_use`, `post_tool_use`) carry a tool
+ *     identifier under `tool_name`, `name`, `function.name`, or a nested
+ *     `tool_call.function.name`. Walk that chain.
+ *   - For any other shape, surface the first short string-valued field
+ *     as `key=value` so the row is still meaningful instead of empty.
+ *
+ * Returns null when nothing usable is found so the caller can fall back
+ * to the bare `<event>:<target>` head.
+ */
+function extractHookInputSummary(inputData: Record<string, unknown>): string | null {
+  const userInputSummary = extractUserInputText(inputData.user_input);
+  if (userInputSummary) {
+    return truncateForActivityLog(userInputSummary, KIMI_HOOK_SUMMARY_MAX_LEN);
+  }
+
+  const toolName = extractHookToolName(inputData);
+  if (toolName) {
+    return truncateForActivityLog(toolName, KIMI_HOOK_SUMMARY_MAX_LEN);
+  }
+
+  for (const [key, value] of Object.entries(inputData)) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed.length === 0) continue;
+    return truncateForActivityLog(`${key}=${trimmed}`, KIMI_HOOK_SUMMARY_MAX_LEN);
+  }
+
+  return null;
+}
+
+/**
+ * Walk the tool-name chain on a hook `input_data` payload:
+ * `tool_name → name → function.name → tool_call.function.name`. Returns
+ * null when no candidate is present so the caller can fall through to
+ * the generic key=value scan.
+ */
+function extractHookToolName(inputData: Record<string, unknown>): string | null {
+  if (typeof inputData.tool_name === 'string' && inputData.tool_name.length > 0) {
+    return inputData.tool_name;
+  }
+  if (typeof inputData.name === 'string' && inputData.name.length > 0) {
+    return inputData.name;
+  }
+  const functionField = inputData.function;
+  if (
+    isRecord(functionField)
+    && typeof functionField.name === 'string'
+    && functionField.name.length > 0
+  ) {
+    return functionField.name;
+  }
+  const toolCall = inputData.tool_call;
+  if (isRecord(toolCall)) {
+    const nestedFunction = toolCall.function;
+    if (
+      isRecord(nestedFunction)
+      && typeof nestedFunction.name === 'string'
+      && nestedFunction.name.length > 0
+    ) {
+      return nestedFunction.name;
+    }
+    if (typeof toolCall.name === 'string' && toolCall.name.length > 0) {
+      return toolCall.name;
+    }
+  }
+  return null;
+}
+
+/**
+ * Trim trailing whitespace, collapse internal newlines to spaces, and
+ * truncate with a trailing `...` when the result exceeds `max`. The
+ * suffix counts toward the limit so the returned string is always
+ * `<= max`. ASCII-only suffix to stay safe across Windows console code
+ * pages and any non-Chromium consumers of the same string.
+ */
+export function truncateForActivityLog(value: string, max: number): string {
+  const flattened = value.replace(/\s+/g, ' ').trim();
+  if (flattened.length <= max) return flattened;
+  if (max <= 3) return flattened.slice(0, max);
+  return `${flattened.slice(0, max - 3)}...`;
 }
 
 /**

@@ -675,7 +675,7 @@ Every documented wire-protocol message type (19 Events + 4 Requests, wire protoc
 | `ApprovalRequest` | → Idle | `Idle` (detail = `IdleReason.Permission`) |
 | `ToolCallRequest` | (preserve) | `ToolStart` (detail = `name`) |
 | `QuestionRequest` | → Idle | `Idle` (detail = `IdleReason.Permission`) |
-| `HookRequest` | (preserve) | `Notification` (detail = `<event>:<target>`) |
+| `HookRequest` | (preserve) | `Notification` (detail = `<event>:<target>[: <summary>]`, summary derived from `input_data` and capped at 200 chars) |
 
 The parser uses an exhaustive `switch` over a `KIMI_DISPATCH_TYPES` literal union, so a future protocol bump that adds a new type produces a TS exhaustiveness error at compile time. `user_input` (TurnBegin / SteerInput) accepts both `string` and `ContentPart[]`; the parser extracts `TextPart.text` from arrays and ignores think/media parts.
 
