@@ -10,12 +10,15 @@
  * If no DB is present, all tests are skipped (clean exit). CI machines
  * without OpenCode installed will simply not run them.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { OpenCodeSessionHistoryParser } from '../../src/main/agent/adapters/opencode/session-history-parser';
+import {
+  OpenCodeSessionHistoryParser,
+  __resetSchemaCanaryForTests,
+} from '../../src/main/agent/adapters/opencode/session-history-parser';
 
 const DB_PATH = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
 const HAS_DB = fs.existsSync(DB_PATH);
@@ -73,6 +76,26 @@ describe.runIf(CAN_RUN)('OpenCodeSessionHistoryParser - live DB', () => {
   it('precondition: at least one session row exists', () => {
     expect(target).not.toBeNull();
     expect(target?.id).toMatch(/^ses_/);
+  });
+
+  it('schema canary does not warn against the real OpenCode DB', async () => {
+    if (!target) return;
+    __resetSchemaCanaryForTests();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({
+        spawnedAt: new Date(target.time_created),
+        cwd: target.directory,
+        maxAttempts: 1,
+      });
+      const opencodeWarnings = warnSpy.mock.calls.filter((call) => {
+        const first = call[0];
+        return typeof first === 'string' && first.includes('[opencode]');
+      });
+      expect(opencodeWarnings).toEqual([]);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('captureSessionIdFromFilesystem returns the right ID for a window matching time_created', async () => {

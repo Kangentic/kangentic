@@ -85,6 +85,7 @@ export class OpenCodeSessionHistoryParser {
     spawnedAt: Date;
     cwd: string;
     maxAttempts?: number;
+    getAgentVersion?: () => string | null;
   }): Promise<string | null> {
     const spawnedAtMs = options.spawnedAt.getTime();
     // Match the Codex parser's window shape: ±a few seconds for clock
@@ -96,7 +97,7 @@ export class OpenCodeSessionHistoryParser {
     const maxAttempts = options.maxAttempts ?? 20; // ~10s
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const id = readMatchingSessionId(createdFloorMs, createdCeilMs, normalizedCwd);
+      const id = readMatchingSessionId(createdFloorMs, createdCeilMs, normalizedCwd, options.getAgentVersion);
       if (id) return id;
       await sleep(POLL_INTERVAL_MS);
     }
@@ -124,6 +125,80 @@ export class OpenCodeSessionHistoryParser {
 
 const POLL_INTERVAL_MS = 500;
 
+// Verified-against version baked into the warning so future readers
+// know which OpenCode release we last observed the schema match.
+// Single source of truth - the class JSDoc above also mentions this
+// version for context; bump both together when re-verifying.
+const VERIFIED_AGAINST_OPENCODE_VERSION = '1.14.25';
+
+// Required columns on the `session` table. Missing any of these means
+// the parser's read path will fail silently in production.
+const REQUIRED_SESSION_COLUMNS = ['id', 'directory', 'time_created'] as const;
+
+// Process-lifetime guard: the canary fires at most once per process so
+// a long-running app doesn't spam logs on every poll. Reset by
+// `__resetSchemaCanaryForTests` so unit tests can exercise the warn
+// path repeatedly.
+let schemaCanaryRun = false;
+
+/** Test-only hook to reset the once-per-process guard. */
+export function __resetSchemaCanaryForTests(): void {
+  schemaCanaryRun = false;
+}
+
+/**
+ * Run a one-shot sanity check on the OpenCode `session` table schema.
+ * Emits a single `console.warn` if the `session` table is missing
+ * entirely, or if any of `id`, `directory`, `time_created` is absent,
+ * so users have a breadcrumb when a future OpenCode release renames or
+ * drops a column we depend on.
+ *
+ * This function never throws: a PRAGMA failure flips the once-flag and
+ * returns silently, so the legitimate read path that follows can
+ * succeed (the canary may have been a false alarm) or fall through to
+ * the existing outer catch in `readMatchingSessionId`.
+ */
+export function verifyOpenCodeSchemaOnce(
+  database: DatabaseType.Database,
+  getAgentVersion?: () => string | null,
+): void {
+  if (schemaCanaryRun) return;
+  schemaCanaryRun = true;
+
+  try {
+    const rows = database
+      .prepare<[], { name: string }>('PRAGMA table_info("session")')
+      .all();
+
+    if (rows.length === 0) {
+      const version = getAgentVersion?.() ?? null;
+      const versionSuffix = version ? ` (detected version: ${version})` : '';
+      console.warn(
+        `[opencode] opencode.db schema mismatch: \`session\` table is missing${versionSuffix}. ` +
+          `Resume will fall back to fresh sessions until this is fixed. ` +
+          `Verified against ${VERIFIED_AGAINST_OPENCODE_VERSION}.`,
+      );
+      return;
+    }
+
+    const present = new Set(rows.map((row) => row.name));
+    const missing = REQUIRED_SESSION_COLUMNS.filter((column) => !present.has(column));
+    if (missing.length > 0) {
+      const version = getAgentVersion?.() ?? null;
+      const versionSuffix = version ? ` (detected version: ${version})` : '';
+      const columnList = missing.map((column) => `\`${column}\``).join(', ');
+      console.warn(
+        `[opencode] opencode.db schema mismatch: missing column(s) ${columnList} in \`session\` table${versionSuffix}. ` +
+          `Resume will fall back to fresh sessions until this is fixed. ` +
+          `Verified against ${VERIFIED_AGAINST_OPENCODE_VERSION}.`,
+      );
+    }
+  } catch {
+    // PRAGMA itself failed - leave the flag set so we don't loop and
+    // let the real SELECT below decide whether the DB is usable.
+  }
+}
+
 interface SessionIdRow {
   id: string;
 }
@@ -138,6 +213,7 @@ function readMatchingSessionId(
   createdFloorMs: number,
   createdCeilMs: number,
   normalizedCwd: string,
+  getAgentVersion?: () => string | null,
 ): string | null {
   const dbPath = openCodeDbPath();
   if (!fs.existsSync(dbPath)) return null;
@@ -147,6 +223,7 @@ function readMatchingSessionId(
   let database: DatabaseType.Database | null = null;
   try {
     database = new DatabaseConstructor(dbPath, { readonly: true, fileMustExist: true });
+    verifyOpenCodeSchemaOnce(database, getAgentVersion);
     // OpenCode opens its DB in WAL mode; we must NOT change journal
     // mode from a read-only handle. Just read.
     const statement = database.prepare<[number, number], SessionIdRow & { directory: string }>(

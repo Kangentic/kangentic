@@ -162,7 +162,11 @@ export class OpenCodeAdapter implements AgentAdapter {
 
         return null;
       },
-      fromFilesystem: OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem,
+      fromFilesystem: (options: { spawnedAt: Date; cwd: string }) =>
+        OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({
+          ...options,
+          getAgentVersion: () => this.detector.getCachedVersion(),
+        }),
     },
   };
 
