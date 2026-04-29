@@ -417,6 +417,19 @@ export interface SessionEvent {
 
 // === Session Usage (Claude Code Status Line) ===
 
+export interface RateLimitWindow {
+  /** Stable adapter-defined key, e.g. 'five-hour', 'seven-day'. Used as React key. */
+  id: string;
+  /** Human-readable label, e.g. '5h session', '7d weekly'. Used in tooltips and aria-label. */
+  label: string;
+  /** Renderer maps this to a Lucide icon. Kept as a small enum so the renderer stays in charge of visual vocabulary. */
+  iconKind: 'session' | 'period';
+  /** 0-100, clamped by the adapter. */
+  usedPercentage: number;
+  /** Unix epoch seconds. */
+  resetsAt: number;
+}
+
 export interface SessionUsage {
   contextWindow: {
     usedPercentage: number;
@@ -438,11 +451,12 @@ export interface SessionUsage {
   };
   /** Agent-reported session ID (from status.json). Used for stale ID recovery. */
   sessionId?: string;
-  /** Claude-only. Other adapters do not set this field. */
-  rateLimits?: {
-    fiveHour: { usedPercentage: number; resetsAt: number };
-    sevenDay: { usedPercentage: number; resetsAt: number };
-  };
+  /**
+   * Optional plan/usage windows reported by the agent (e.g. Claude's 5h session and 7d weekly).
+   * Adapters declare each window self-describingly so the renderer can map without knowing
+   * provider-specific bucket names. Adapters that don't report rate limits leave this undefined.
+   */
+  rateLimits?: RateLimitWindow[];
 }
 
 // === Usage Time Period Stats ===

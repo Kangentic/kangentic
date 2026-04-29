@@ -561,10 +561,10 @@ export function buildMarketingPreConfig(): string {
           model: { id: 'claude-opus-4-6', displayName: 'Opus 4.6 (1M)' },
           contextWindow: { usedPercentage: 53, usedTokens: 106000, cacheTokens: 45000, totalInputTokens: 75000, totalOutputTokens: 31000, contextWindowSize: 200000 },
           cost: { totalCostUsd: 2.47, totalDurationMs: 180000 },
-          rateLimits: {
-            fiveHour: { usedPercentage: 20, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
-            sevenDay: { usedPercentage: 8, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
-          },
+          rateLimits: [
+            { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 20, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
+            { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 8, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
+          ],
         },
         '${SESSION_API_CLIENT}': {
           model: { id: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6' },

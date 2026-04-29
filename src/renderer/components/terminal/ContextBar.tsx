@@ -1,4 +1,6 @@
 import { ArrowUp, ArrowDown, Loader2, Clock, Calendar } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import type { RateLimitWindow } from '../../../shared/types';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
@@ -26,6 +28,13 @@ function formatResetTime(epochSeconds: number): string {
   if (ms < 24 * 60 * 60 * 1000) return `Resets in ${formatDuration(ms)}`;
   return `Resets ${formatDateTime(epochSeconds * 1000)}`;
 }
+
+// Maps adapter-declared RateLimitWindow.iconKind to a Lucide icon. The visual
+// vocabulary lives here in the renderer so adapters declare semantics, not chrome.
+const RATE_LIMIT_ICON: Record<RateLimitWindow['iconKind'], LucideIcon> = {
+  session: Clock,
+  period: Calendar,
+};
 
 /**
  * Visual context window usage bar displayed below terminal areas.
@@ -66,7 +75,7 @@ export function ContextBar({ sessionId, compact = false, agentFallback = null }:
   const pctRef = useValuePulse(usage ? Math.round(usage.contextWindow.usedPercentage) : 0);
   const fractionRef = useValuePulse(usage?.contextWindow.usedTokens);
   const rateLimitsKey = latestRateLimits
-    ? `${Math.round(latestRateLimits.rateLimits.fiveHour.usedPercentage)}-${Math.round(latestRateLimits.rateLimits.sevenDay.usedPercentage)}`
+    ? latestRateLimits.rateLimits.map((limitWindow) => `${limitWindow.id}:${Math.round(limitWindow.usedPercentage)}`).join('|')
     : '';
   const rateLimitsRef = useValuePulse(rateLimitsKey);
 
@@ -135,7 +144,9 @@ export function ContextBar({ sessionId, compact = false, agentFallback = null }:
   // rateLimits (currently Claude) earn the pill. The displayed *value* comes
   // from the global `latestRateLimits` snapshot so every agent in the window
   // shows the freshest account-wide numbers, not its own stale ones.
-  const showRateLimits = !!usage.rateLimits && !!latestRateLimits && contextBarConfig.showRateLimits;
+  const showRateLimits = !!usage.rateLimits && usage.rateLimits.length > 0
+    && !!latestRateLimits && latestRateLimits.rateLimits.length > 0
+    && contextBarConfig.showRateLimits;
 
   // Left pills: shell, version, model, rate limits, cost. Right pills: tokens, fraction, progress bar.
   const hasLeftPills = showShell || showVersion || showModel || showRateLimits || showCost;
@@ -174,20 +185,22 @@ export function ContextBar({ sessionId, compact = false, agentFallback = null }:
         const rateLimits = latestRateLimits.rateLimits;
         const sourceLabel = sourceAgent ? ` via ${agentDisplayName(sourceAgent)}` : '';
         const updatedSuffix = `\nUpdated ${formatTime(latestRateLimits.capturedAt)}${sourceLabel}`;
+        const tooltipBody = rateLimits
+          .map((limitWindow) => `${limitWindow.label}: ${formatResetTime(limitWindow.resetsAt)}`)
+          .join('\n');
         return (
           <span
             ref={rateLimitsRef}
             className={`${pill} text-fg-muted tabular-nums flex items-center gap-2 flex-1 basis-0 min-w-[220px]`}
-            title={`5h session: ${formatResetTime(rateLimits.fiveHour.resetsAt)}\n7d weekly: ${formatResetTime(rateLimits.sevenDay.resetsAt)}${updatedSuffix}`}
+            title={`${tooltipBody}${updatedSuffix}`}
             data-testid="rate-limits-pill"
           >
-            {(['fiveHour', 'sevenDay'] as const).map((key) => {
-              const row = rateLimits[key];
-              const Icon = key === 'fiveHour' ? Clock : Calendar;
-              const pctRow = Math.round(row.usedPercentage);
+            {rateLimits.map((limitWindow) => {
+              const Icon = RATE_LIMIT_ICON[limitWindow.iconKind];
+              const pctRow = Math.round(limitWindow.usedPercentage);
               return (
-                <span key={key} className="flex items-center gap-1.5 flex-1 min-w-0">
-                  <Icon size={11} className="text-fg-faint flex-shrink-0" aria-label={key === 'fiveHour' ? '5h session' : '7d weekly'} />
+                <span key={limitWindow.id} className="flex items-center gap-1.5 flex-1 min-w-0">
+                  <Icon size={11} className="text-fg-faint flex-shrink-0" aria-label={limitWindow.label} />
                   <span className="flex-1 min-w-[40px] h-1.5 bg-surface-hover rounded-full overflow-hidden">
                     <span
                       className="block h-full rounded-full transition-[width,background-color] duration-300"

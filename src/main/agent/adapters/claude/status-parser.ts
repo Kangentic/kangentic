@@ -1,4 +1,4 @@
-import type { SessionUsage, SessionEvent } from '../../../../shared/types';
+import type { SessionUsage, SessionEvent, RateLimitWindow } from '../../../../shared/types';
 
 /**
  * Parses Claude Code status line and event bridge data.
@@ -94,17 +94,23 @@ export class ClaudeStatusParser {
       const sevenDayRaw = rateLimitsRaw?.seven_day as Record<string, unknown> | undefined;
       const finiteOrZero = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
       const clampPercentage = (value: unknown): number => Math.min(100, Math.max(0, finiteOrZero(value)));
-      const rateLimits = (fiveHourRaw && sevenDayRaw)
-        ? {
-            fiveHour: {
+      const rateLimits: RateLimitWindow[] | undefined = (fiveHourRaw && sevenDayRaw)
+        ? [
+            {
+              id: 'five-hour',
+              label: '5h session',
+              iconKind: 'session',
               usedPercentage: clampPercentage(fiveHourRaw.used_percentage),
               resetsAt: finiteOrZero(fiveHourRaw.resets_at),
             },
-            sevenDay: {
+            {
+              id: 'seven-day',
+              label: '7d weekly',
+              iconKind: 'period',
               usedPercentage: clampPercentage(sevenDayRaw.used_percentage),
               resetsAt: finiteOrZero(sevenDayRaw.resets_at),
             },
-          }
+          ]
         : undefined;
 
       return {

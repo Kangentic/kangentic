@@ -145,16 +145,16 @@ function makePreConfig(): string {
       };
       var result = {};
       result['${SESSION_STALE_ID}'] = Object.assign({}, baseUsage, {
-        rateLimits: {
-          fiveHour: { usedPercentage: 18, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
-          sevenDay: { usedPercentage: 4, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
-        },
+        rateLimits: [
+          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
+          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 4, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
+        ],
       });
       result['${SESSION_FRESH_ID}'] = Object.assign({}, baseUsage, {
-        rateLimits: {
-          fiveHour: { usedPercentage: 73, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
-          sevenDay: { usedPercentage: 41, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
-        },
+        rateLimits: [
+          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 73, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
+          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 41, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
+        ],
       });
       return result;
     };

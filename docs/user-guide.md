@@ -311,7 +311,7 @@ The context bar is a status line displayed below the terminal showing session me
 | Tokens | Token usage (input + output) |
 | Context Fraction | Context window usage as a percentage |
 | Progress Bar | Visual progress bar for context window usage |
-| Rate Limits | Claude Code 5-hour and weekly plan-usage quota bars (Claude only) |
+| Rate Limits | Adapter-reported plan-usage quota bars (e.g. Claude reports 5-hour session and 7-day weekly windows). Hidden for adapters that do not report rate limits. |
 
 ### Agent Settings
 

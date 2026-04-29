@@ -141,10 +141,10 @@ Override `window.electronAPI.sessions.getUsage()` to return `Record<sessionId, S
     contextWindowSize: 200000,
   },
   cost: { totalCostUsd: 2.47, totalDurationMs: 180000 },
-  rateLimits: {  // Optional, shows 5h/7d bars
-    fiveHour: { usedPercentage: 20, resetsAt: epochSeconds },
-    sevenDay: { usedPercentage: 8, resetsAt: epochSeconds },
-  },
+  rateLimits: [  // Optional. Adapter-declared windows; renderer maps iconKind ('session'|'period') to a Lucide icon.
+    { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 20, resetsAt: epochSeconds },
+    { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 8, resetsAt: epochSeconds },
+  ],
 }
 ```
 

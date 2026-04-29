@@ -190,9 +190,10 @@ describe('ClaudeStatusParser', () => {
       });
       const usage = ClaudeStatusParser.parseStatus(raw);
       expect(usage).not.toBeNull();
-      expect(usage!.rateLimits).toBeDefined();
-      expect(usage!.rateLimits!.fiveHour).toEqual({ usedPercentage: 18, resetsAt: 1775883600 });
-      expect(usage!.rateLimits!.sevenDay).toEqual({ usedPercentage: 4, resetsAt: 1776452400 });
+      expect(usage!.rateLimits).toEqual([
+        { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsAt: 1775883600 },
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 4, resetsAt: 1776452400 },
+      ]);
     });
 
     it('omits rateLimits when rate_limits is absent', () => {
@@ -218,8 +219,10 @@ describe('ClaudeStatusParser', () => {
       });
       const usage = ClaudeStatusParser.parseStatus(raw);
       expect(usage).not.toBeNull();
-      expect(usage!.rateLimits!.fiveHour).toEqual({ usedPercentage: 0, resetsAt: 0 });
-      expect(usage!.rateLimits!.sevenDay).toEqual({ usedPercentage: 0, resetsAt: 0 });
+      expect(usage!.rateLimits).toEqual([
+        { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 0, resetsAt: 0 },
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 0, resetsAt: 0 },
+      ]);
     });
 
     it('clamps rate_limits used_percentage to 0..100', () => {
@@ -234,8 +237,38 @@ describe('ClaudeStatusParser', () => {
       });
       const usage = ClaudeStatusParser.parseStatus(raw);
       expect(usage).not.toBeNull();
-      expect(usage!.rateLimits!.fiveHour.usedPercentage).toBe(100);
-      expect(usage!.rateLimits!.sevenDay.usedPercentage).toBe(0);
+      expect(usage!.rateLimits![0].usedPercentage).toBe(100);
+      expect(usage!.rateLimits![1].usedPercentage).toBe(0);
+    });
+
+    it('omits rateLimits when only five_hour is present (both required)', () => {
+      // The parser requires BOTH five_hour AND seven_day to build the array.
+      // A status.json with only one bucket should fall back to undefined.
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 5 },
+        cost: { total_cost_usd: 0 },
+        model: { id: 'claude-opus-4-6' },
+        rate_limits: {
+          five_hour: { used_percentage: 30, resets_at: 1775883600 },
+        },
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.rateLimits).toBeUndefined();
+    });
+
+    it('omits rateLimits when only seven_day is present (both required)', () => {
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 5 },
+        cost: { total_cost_usd: 0 },
+        model: { id: 'claude-opus-4-6' },
+        rate_limits: {
+          seven_day: { used_percentage: 10, resets_at: 1776452400 },
+        },
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.rateLimits).toBeUndefined();
     });
 
     it('real-world: 14% raw shows 14% on bar (not inflated)', () => {

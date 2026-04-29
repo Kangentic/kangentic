@@ -59,10 +59,22 @@ import { useSessionStore } from '../../src/renderer/stores/session-store';
 // ---------------------------------------------------------------------------
 
 function makeRateLimits(fiveHourPct: number, sevenDayPct: number): NonNullable<SessionUsage['rateLimits']> {
-  return {
-    fiveHour: { usedPercentage: fiveHourPct, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
-    sevenDay: { usedPercentage: sevenDayPct, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
-  };
+  return [
+    {
+      id: 'five-hour',
+      label: '5h session',
+      iconKind: 'session',
+      usedPercentage: fiveHourPct,
+      resetsAt: Math.floor(Date.now() / 1000) + 3600,
+    },
+    {
+      id: 'seven-day',
+      label: '7d weekly',
+      iconKind: 'period',
+      usedPercentage: sevenDayPct,
+      resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5,
+    },
+  ];
 }
 
 function makeUsage(rateLimits?: NonNullable<SessionUsage['rateLimits']>): SessionUsage {
@@ -115,8 +127,8 @@ describe('updateUsage - latestRateLimits snapshot', () => {
 
     const snapshot = useSessionStore.getState().latestRateLimits;
     expect(snapshot).not.toBeNull();
-    expect(snapshot!.rateLimits.fiveHour.usedPercentage).toBe(50);
-    expect(snapshot!.rateLimits.sevenDay.usedPercentage).toBe(20);
+    expect(snapshot!.rateLimits[0].usedPercentage).toBe(50);
+    expect(snapshot!.rateLimits[1].usedPercentage).toBe(20);
     expect(snapshot!.sourceSessionId).toBe('sess-a');
   });
 
@@ -147,7 +159,7 @@ describe('updateUsage - latestRateLimits snapshot', () => {
 
     const snapshot = useSessionStore.getState().latestRateLimits;
     expect(snapshot!.sourceSessionId).toBe('sess-beta');
-    expect(snapshot!.rateLimits.fiveHour.usedPercentage).toBe(90);
+    expect(snapshot!.rateLimits[0].usedPercentage).toBe(90);
   });
 
   it('also merges usage into sessionUsage regardless of rateLimits presence', () => {
@@ -157,6 +169,24 @@ describe('updateUsage - latestRateLimits snapshot', () => {
     const storedUsage = useSessionStore.getState().sessionUsage['sess-c'];
     expect(storedUsage).toBeDefined();
     expect(storedUsage.contextWindow.usedPercentage).toBe(10);
+  });
+
+  it('writes latestRateLimits with an empty rateLimits array (truthy check passes; renderer gates on length > 0)', () => {
+    // RateLimitWindow[] is typed as an array, so [] is a valid value. The
+    // if (data.rateLimits) guard in updateUsage treats [] as truthy, so the
+    // snapshot IS written. The ContextBar component then gates on
+    // latestRateLimits.rateLimits.length > 0 so the pill stays hidden.
+    // This test documents the store-level contract: empty array triggers the
+    // snapshot update; hiding is the renderer's responsibility.
+    useSessionStore.getState().updateUsage('sess-empty', {
+      ...makeUsage(),
+      rateLimits: [],
+    });
+
+    const snapshot = useSessionStore.getState().latestRateLimits;
+    expect(snapshot).not.toBeNull();
+    expect(snapshot!.rateLimits).toEqual([]);
+    expect(snapshot!.sourceSessionId).toBe('sess-empty');
   });
 });
 
@@ -179,8 +209,8 @@ describe('batchUpdateUsage - partial-fill path', () => {
     const snapshot = useSessionStore.getState().latestRateLimits;
     expect(snapshot).not.toBeNull();
     expect(snapshot!.sourceSessionId).toBe('sess-last-limits');
-    expect(snapshot!.rateLimits.fiveHour.usedPercentage).toBe(75);
-    expect(snapshot!.rateLimits.sevenDay.usedPercentage).toBe(60);
+    expect(snapshot!.rateLimits[0].usedPercentage).toBe(75);
+    expect(snapshot!.rateLimits[1].usedPercentage).toBe(60);
   });
 
   it('merges all entries into sessionUsage, including those without rateLimits', () => {
@@ -208,7 +238,7 @@ describe('batchUpdateUsage - partial-fill path', () => {
 
     const snapshot = useSessionStore.getState().latestRateLimits;
     expect(snapshot!.sourceSessionId).toBe('sess-with-limits');
-    expect(snapshot!.rateLimits.fiveHour.usedPercentage).toBe(40);
+    expect(snapshot!.rateLimits[0].usedPercentage).toBe(40);
   });
 });
 
@@ -287,8 +317,8 @@ describe('syncSessions - non-seeding path', () => {
     // The pre-existing snapshot from sess-live must be unchanged.
     const snapshotAfter = useSessionStore.getState().latestRateLimits;
     expect(snapshotAfter!.sourceSessionId).toBe('sess-live');
-    expect(snapshotAfter!.rateLimits.fiveHour.usedPercentage).toBe(80);
-    expect(snapshotAfter!.rateLimits.sevenDay.usedPercentage).toBe(55);
+    expect(snapshotAfter!.rateLimits[0].usedPercentage).toBe(80);
+    expect(snapshotAfter!.rateLimits[1].usedPercentage).toBe(55);
   });
 
   it('seeds latestRateLimits from cachedUsage when the snapshot is null (first sync)', async () => {
@@ -312,6 +342,6 @@ describe('syncSessions - non-seeding path', () => {
     const snapshot = useSessionStore.getState().latestRateLimits;
     expect(snapshot).not.toBeNull();
     expect(snapshot!.sourceSessionId).toBe('sess-cached');
-    expect(snapshot!.rateLimits.fiveHour.usedPercentage).toBe(22);
+    expect(snapshot!.rateLimits[0].usedPercentage).toBe(22);
   });
 });

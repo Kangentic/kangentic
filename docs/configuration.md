@@ -168,7 +168,7 @@ IPC channels for shortcuts are in the Board Config group: `boardConfig:getShortc
 | `contextBar.showTokens` | boolean | `true` | Show token usage (input + output) |
 | `contextBar.showContextFraction` | boolean | `true` | Show the context window usage percentage |
 | `contextBar.showProgressBar` | boolean | `true` | Show the context window progress bar |
-| `contextBar.showRateLimits` | boolean | `true` | Show Claude Code 5-hour and weekly plan-usage quota bars (Claude only) |
+| `contextBar.showRateLimits` | boolean | `true` | Show adapter-reported plan-usage quota bars. Each window is self-described by the agent adapter (e.g. Claude reports a 5-hour session and 7-day weekly window). Hidden for adapters that do not report rate limits. |
 
 All context bar settings are global-only and cannot be overridden per-project.
 

@@ -41,7 +41,7 @@ const SESSION_ID = 'sess-activity-test';
 const SWIMLANE_ID = 'lane-backlog';
 
 /** Base pre-configure that creates a project with a task linked to a running session */
-function makePreConfig(opts: { sessionStatus: string; activity: string; withUsage: boolean; nullSessionId?: boolean; withEvents?: boolean; noActivityCache?: boolean; withRateLimits?: boolean; agent?: string | null }): string {
+function makePreConfig(opts: { sessionStatus: string; activity: string; withUsage: boolean; nullSessionId?: boolean; withEvents?: boolean; noActivityCache?: boolean; withRateLimits?: boolean; emptyRateLimits?: boolean; rateLimitResetsInPast?: boolean; rateLimitResetsWithin24h?: boolean; agent?: string | null }): string {
   return `
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
@@ -120,10 +120,10 @@ function makePreConfig(opts: { sessionStatus: string; activity: string; withUsag
         model: { id: 'claude-sonnet', displayName: 'Claude Sonnet' },
         contextWindow: { usedPercentage: 25, usedTokens: 1500, cacheTokens: 0, totalInputTokens: 1000, totalOutputTokens: 500, contextWindowSize: 200000 },
         cost: { totalCostUsd: 0.01, totalDurationMs: 5000 },
-        ${opts.withRateLimits ? `rateLimits: {
-          fiveHour: { usedPercentage: 18, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
-          sevenDay: { usedPercentage: 4, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
-        },` : ''}
+        ${opts.withRateLimits ? `rateLimits: [
+          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsAt: ${opts.rateLimitResetsInPast ? 'Math.floor(Date.now() / 1000) - 60' : opts.rateLimitResetsWithin24h ? 'Math.floor(Date.now() / 1000) + 1800' : 'Math.floor(Date.now() / 1000) + 3600'} },
+          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 4, resetsAt: ${opts.rateLimitResetsInPast ? 'Math.floor(Date.now() / 1000) - 60' : opts.rateLimitResetsWithin24h ? 'Math.floor(Date.now() / 1000) + 7200' : 'Math.floor(Date.now() / 1000) + 86400 * 5'} },
+        ],` : opts.emptyRateLimits ? 'rateLimits: [],' : ''}
       };
       return result;
     };
@@ -839,10 +839,10 @@ test.describe('Task Activity Indicators', () => {
           }).__zustandStores;
           stores.session.setState({
             latestRateLimits: {
-              rateLimits: {
-                fiveHour: { usedPercentage: 65, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
-                sevenDay: { usedPercentage: 30, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
-              },
+              rateLimits: [
+                { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 65, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
+                { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 30, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
+              ],
               capturedAt: Date.now(),
               sourceSessionId: 'some-other-session',
             },
@@ -886,10 +886,10 @@ test.describe('Task Activity Indicators', () => {
           }).__zustandStores;
           stores.session.setState({
             latestRateLimits: {
-              rateLimits: {
-                fiveHour: { usedPercentage: 50, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
-                sevenDay: { usedPercentage: 20, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
-              },
+              rateLimits: [
+                { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 50, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
+                { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 20, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
+              ],
               capturedAt: Date.now(),
               // This session ID has no matching task in the board store, so
               // sourceAgent resolves to undefined and the "via" suffix is omitted.
@@ -913,6 +913,197 @@ test.describe('Task Activity Indicators', () => {
         // the task row for sourceSessionId is absent. Both old code (no suffix at
         // all) and new code (suffix without "via") satisfy this invariant.
         expect(titleAttr).not.toContain(' via ');
+
+        await page.locator('[data-testid="task-detail-close"]').click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('does not render pill when usage.rateLimits is an empty array', async () => {
+      // rateLimits: [] is a valid value per the RateLimitWindow[] type (e.g. an
+      // adapter that discovered no active plan windows). The ContextBar gates on
+      // usage.rateLimits.length > 0, so the pill must stay hidden.
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, emptyRateLimits: true })
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.locator('text=Test Initializing Task').first().click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
+        await expect(contextBar).toBeVisible({ timeout: 10000 });
+        await expect(contextBar.locator('[data-testid="rate-limits-pill"]')).toHaveCount(0);
+
+        await page.locator('[data-testid="task-detail-close"]').click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('does not render pill when latestRateLimits.rateLimits is an empty array', async () => {
+      // The global snapshot can arrive with an empty rateLimits array (e.g. if
+      // updateUsage received [] before any real windows were reported). ContextBar
+      // gates on latestRateLimits.rateLimits.length > 0, so the pill stays hidden.
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true })
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Inject latestRateLimits with an empty rateLimits array.
+        await page.evaluate(() => {
+          const stores = (window as unknown as {
+            __zustandStores: { session: { setState: (patch: Record<string, unknown>) => void } };
+          }).__zustandStores;
+          stores.session.setState({
+            latestRateLimits: {
+              rateLimits: [],
+              capturedAt: Date.now(),
+              sourceSessionId: 'sess-activity-test',
+            },
+          });
+        });
+
+        await page.locator('text=Test Initializing Task').first().click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
+        await expect(contextBar).toBeVisible({ timeout: 10000 });
+        await expect(contextBar.locator('[data-testid="rate-limits-pill"]')).toHaveCount(0);
+
+        await page.locator('[data-testid="task-detail-close"]').click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('tooltip title contains window label prefixes ("5h session:" and "7d weekly:")', async () => {
+      // Regression guard: the tooltip body is built as
+      // `${limitWindow.label}: ${formatResetTime(limitWindow.resetsAt)}` per line.
+      // Dropping the label prefix would silently break the tooltip without failing
+      // the percentage-rendering or pill-visibility assertions.
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true })
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.locator('text=Test Initializing Task').first().click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
+        await expect(contextBar).toBeVisible({ timeout: 10000 });
+
+        const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
+        await expect(pill).toBeVisible();
+
+        const titleAttr = await pill.getAttribute('title');
+        expect(titleAttr).toBeTruthy();
+        expect(titleAttr).toContain('5h session:');
+        expect(titleAttr).toContain('7d weekly:');
+
+        await page.locator('[data-testid="task-detail-close"]').click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('formatResetTime returns "Resets now" when resetsAt is in the past', async () => {
+      // The <=0 branch in formatResetTime: when epochSeconds * 1000 - Date.now() <= 0.
+      // Both windows use resetsAt = now - 60s so both lines should show "Resets now".
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true, rateLimitResetsInPast: true })
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.locator('text=Test Initializing Task').first().click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
+        await expect(contextBar).toBeVisible({ timeout: 10000 });
+
+        const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
+        await expect(pill).toBeVisible();
+
+        const titleAttr = await pill.getAttribute('title');
+        expect(titleAttr).toBeTruthy();
+        // Both windows reset in the past, so both lines should contain "Resets now".
+        // We check that the tooltip contains "Resets now" at all - two occurrences
+        // would require splitting, but one is sufficient to confirm the branch fires.
+        expect(titleAttr).toContain('Resets now');
+
+        await page.locator('[data-testid="task-detail-close"]').click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('formatResetTime returns "Resets in ..." when resetsAt is within 24 hours', async () => {
+      // The <24h branch in formatResetTime: ms > 0 and ms < 24 * 60 * 60 * 1000.
+      // Both windows use resetsAt within 2 hours so both lines should say "Resets in ".
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true, rateLimitResetsWithin24h: true })
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.locator('text=Test Initializing Task').first().click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
+        await expect(contextBar).toBeVisible({ timeout: 10000 });
+
+        const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
+        await expect(pill).toBeVisible();
+
+        const titleAttr = await pill.getAttribute('title');
+        expect(titleAttr).toBeTruthy();
+        expect(titleAttr).toContain('Resets in ');
+
+        await page.locator('[data-testid="task-detail-close"]').click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('pill renders Clock icon for 5h session and Calendar icon for 7d weekly (iconKind identity)', async () => {
+      // Regression guard for RATE_LIMIT_ICON mapping: session -> Clock, period -> Calendar.
+      // Swapping them would not be caught by the svg count assertion.
+      // Lucide renders aria-label on the <svg> element, so we can check by
+      // svg[aria-label="5h session"] and svg[aria-label="7d weekly"].
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true })
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.locator('text=Test Initializing Task').first().click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
+        await expect(contextBar).toBeVisible({ timeout: 10000 });
+
+        const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
+        await expect(pill).toBeVisible();
+
+        // ContextBar renders: <Icon aria-label={limitWindow.label} />
+        // Lucide forwards aria-label to the <svg> element.
+        // .lucide-clock is the CSS class lucide adds to the Clock SVG.
+        // .lucide-calendar is the CSS class lucide adds to the Calendar SVG.
+        // We prefer class selectors here because they survive aria-label changes;
+        // both checks together confirm the iconKind-to-icon mapping is correct.
+        await expect(pill.locator('.lucide-clock')).toHaveCount(1);
+        await expect(pill.locator('.lucide-calendar')).toHaveCount(1);
 
         await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
