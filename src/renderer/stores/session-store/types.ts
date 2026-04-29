@@ -29,6 +29,18 @@ export interface CoreSessionSlice {
   detailTaskId: string | null;
   dialogSessionId: string | null;
   sessionUsage: Record<string, SessionUsage>;
+  /**
+   * Most recent rate-limit snapshot observed across any session. Rate
+   * limits are an account-wide value, but each session only sees its
+   * own status.json updates, so per-session entries drift apart. The
+   * renderer keeps one shared snapshot so every ContextBar agrees.
+   * Null until the first usage payload with `rateLimits` arrives.
+   */
+  latestRateLimits: {
+    rateLimits: NonNullable<SessionUsage['rateLimits']>;
+    capturedAt: number;
+    sourceSessionId: string;
+  } | null;
   /** Tracks sessions whose PTY has activated the alternate screen buffer (TUI ready). */
   sessionFirstOutput: Record<string, boolean>;
   sessionActivity: Record<string, ActivityState>;

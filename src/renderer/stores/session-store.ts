@@ -83,6 +83,7 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   detailTaskId: null,
   dialogSessionId: null,
   sessionUsage: {},
+  latestRateLimits: null,
   sessionFirstOutput: {},
   sessionActivity: {},
   sessionEvents: {},
@@ -141,11 +142,29 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
 
     // For usage/activity/events: keep store on top -- IPC-delivered updates
     // are strictly more recent than the cache snapshot.
+    // latestRateLimits: seed from any cached entry with rateLimits when we
+    // don't already have one. IPC-delivered updates that arrived during the
+    // async gap have already populated the store's snapshot, so we leave
+    // those alone. Without this seed the global snapshot would stay null
+    // until the next status update, leaving a noticeable gap on app start.
+    let nextLatestRateLimits = currentState.latestRateLimits;
+    if (!nextLatestRateLimits) {
+      for (const [sessionId, usage] of Object.entries(cachedUsage)) {
+        if (usage.rateLimits) {
+          nextLatestRateLimits = {
+            rateLimits: usage.rateLimits,
+            capturedAt: Date.now(),
+            sourceSessionId: sessionId,
+          };
+        }
+      }
+    }
     set({
       sessions: mergedSessions,
       _sessionByTaskId: buildSessionByTaskId(mergedSessions),
       activeSessionId: stillExists ? currentState.activeSessionId : null,
       sessionUsage: { ...cachedUsage, ...currentState.sessionUsage },
+      latestRateLimits: nextLatestRateLimits,
       sessionActivity: { ...cachedActivity, ...currentState.sessionActivity },
       sessionEvents: { ...cachedEvents, ...currentState.sessionEvents },
     });
@@ -287,9 +306,19 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   },
 
   updateUsage: (sessionId, data) => {
-    set((s) => ({
-      sessionUsage: { ...s.sessionUsage, [sessionId]: data },
-    }));
+    set((s) => {
+      const next: Partial<SessionStore> = {
+        sessionUsage: { ...s.sessionUsage, [sessionId]: data },
+      };
+      if (data.rateLimits) {
+        next.latestRateLimits = {
+          rateLimits: data.rateLimits,
+          capturedAt: Date.now(),
+          sourceSessionId: sessionId,
+        };
+      }
+      return next;
+    });
   },
 
   markFirstOutput: (sessionId) => {
@@ -327,10 +356,22 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   batchUpdateUsage: (entries: Map<string, SessionUsage>) => {
     set((s) => {
       const merged = { ...s.sessionUsage };
+      let latestRateLimits = s.latestRateLimits;
       for (const [sessionId, data] of entries) {
         merged[sessionId] = data;
+        if (data.rateLimits) {
+          latestRateLimits = {
+            rateLimits: data.rateLimits,
+            capturedAt: Date.now(),
+            sourceSessionId: sessionId,
+          };
+        }
       }
-      return { sessionUsage: merged };
+      const next: Partial<SessionStore> = { sessionUsage: merged };
+      if (latestRateLimits !== s.latestRateLimits) {
+        next.latestRateLimits = latestRateLimits;
+      }
+      return next;
     });
   },
 

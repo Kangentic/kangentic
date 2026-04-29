@@ -270,6 +270,7 @@ export function TaskDetailHeader({
       <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
       <button
         onClick={onClose}
+        data-testid="task-detail-close"
         className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
       >
         <X size={16} />

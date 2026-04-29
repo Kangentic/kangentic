@@ -244,8 +244,8 @@ test.describe('Task Activity Indicators', () => {
       expect(costIdx).toBeGreaterThanOrEqual(0);
       expect(tokensIdx).toBeGreaterThan(costIdx);
 
-      // Click the backdrop overlay to close (Escape may be captured by terminal in view mode)
-      await page.locator('.fixed.inset-0').first().click({ position: { x: 5, y: 5 } });
+      // Click the X close button (Escape may be captured by terminal in view mode)
+      await page.locator('[data-testid="task-detail-close"]').click();
       await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
     });
 
@@ -269,8 +269,8 @@ test.describe('Task Activity Indicators', () => {
       const titleInput = page.locator('.fixed input[placeholder="Task title"]');
       await expect(titleInput).not.toBeVisible();
 
-      // Click the backdrop overlay to close (Escape may be captured by terminal in view mode)
-      await page.locator('.fixed.inset-0').first().click({ position: { x: 5, y: 5 } });
+      // Click the X close button (Escape may be captured by terminal in view mode)
+      await page.locator('[data-testid="task-detail-close"]').click();
       await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
     });
 
@@ -755,7 +755,7 @@ test.describe('Task Activity Indicators', () => {
         // Clock icon for 5h session, CalendarDays icon for 7d weekly
         await expect(pill.locator('svg')).toHaveCount(2);
 
-        await page.locator('.fixed.inset-0').first().click({ position: { x: 5, y: 5 } });
+        await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
       } finally {
         await browser.close();
@@ -776,7 +776,7 @@ test.describe('Task Activity Indicators', () => {
         await expect(contextBar).toBeVisible({ timeout: 10000 });
         await expect(contextBar.locator('[data-testid="rate-limits-pill"]')).toHaveCount(0);
 
-        await page.locator('.fixed.inset-0').first().click({ position: { x: 5, y: 5 } });
+        await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
       } finally {
         await browser.close();
@@ -810,7 +810,111 @@ test.describe('Task Activity Indicators', () => {
         // sevenDay resets in 5 days so its line uses "Resets <formatted date>".
         expect(titleAttr).toMatch(/Resets [^\s]/);
 
-        await page.locator('.fixed.inset-0').first().click({ position: { x: 5, y: 5 } });
+        await page.locator('[data-testid="task-detail-close"]').click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('hides pill when usage.rateLimits is absent even though latestRateLimits is populated globally', async () => {
+      // The visibility gate is `!!usage.rateLimits && !!latestRateLimits`. Adapters
+      // like Codex or Gemini never populate usage.rateLimits, so the pill must stay
+      // hidden even when a sibling Claude session has already seeded latestRateLimits.
+      //
+      // Setup: task has usage (so ContextBar renders fully) but usage.rateLimits is
+      // absent. We then inject latestRateLimits directly into the session store via
+      // Zustand to simulate a sibling session's update having already arrived.
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true })
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Inject a non-null latestRateLimits snapshot into the store, simulating
+        // a sibling session having already reported its rate limits.
+        await page.evaluate(() => {
+          const stores = (window as unknown as {
+            __zustandStores: { session: { getState: () => { latestRateLimits: unknown } & Record<string, unknown>; setState: (patch: Record<string, unknown>) => void } };
+          }).__zustandStores;
+          stores.session.setState({
+            latestRateLimits: {
+              rateLimits: {
+                fiveHour: { usedPercentage: 65, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
+                sevenDay: { usedPercentage: 30, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
+              },
+              capturedAt: Date.now(),
+              sourceSessionId: 'some-other-session',
+            },
+          });
+        });
+
+        await page.locator('text=Test Initializing Task').first().click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
+        await expect(contextBar).toBeVisible({ timeout: 10000 });
+
+        // The pill must be absent: this session's usage has no rateLimits, so the
+        // per-session visibility gate blocks it regardless of latestRateLimits.
+        await expect(contextBar.locator('[data-testid="rate-limits-pill"]')).toHaveCount(0);
+
+        await page.locator('[data-testid="task-detail-close"]').click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('tooltip omits "via" suffix when sourceSessionId points at a missing task row', async () => {
+      // sourceAgent is resolved by looking up the task whose session_id equals
+      // latestRateLimits.sourceSessionId. When that task has been deleted (or the
+      // snapshot came from a transient command-terminal session with no task row),
+      // the lookup returns undefined. The tooltip must still render without crashing
+      // and must NOT contain " via ".
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true })
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Override latestRateLimits so that sourceSessionId points at a session
+        // that has no corresponding task row in the board store.
+        await page.evaluate(() => {
+          const stores = (window as unknown as {
+            __zustandStores: { session: { setState: (patch: Record<string, unknown>) => void } };
+          }).__zustandStores;
+          stores.session.setState({
+            latestRateLimits: {
+              rateLimits: {
+                fiveHour: { usedPercentage: 50, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
+                sevenDay: { usedPercentage: 20, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
+              },
+              capturedAt: Date.now(),
+              // This session ID has no matching task in the board store, so
+              // sourceAgent resolves to undefined and the "via" suffix is omitted.
+              sourceSessionId: 'orphan-session-with-no-task',
+            },
+          });
+        });
+
+        await page.locator('text=Test Initializing Task').first().click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
+        await expect(contextBar).toBeVisible({ timeout: 10000 });
+
+        const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
+        await expect(pill).toBeVisible();
+
+        const titleAttr = await pill.getAttribute('title');
+        expect(titleAttr).toBeTruthy();
+        // Must NOT contain "via" because sourceAgent resolves to undefined when
+        // the task row for sourceSessionId is absent. Both old code (no suffix at
+        // all) and new code (suffix without "via") satisfy this invariant.
+        expect(titleAttr).not.toContain(' via ');
+
+        await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
       } finally {
         await browser.close();

@@ -5,7 +5,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { getProgressColor } from '../../utils/color-lerp';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
-import { formatDateTime } from '../../lib/datetime';
+import { formatDateTime, formatTime } from '../../lib/datetime';
 import { agentDisplayName } from '../../utils/agent-display-name';
 import { shellDisplayName } from '../../utils/shell-display-name';
 import { useValuePulse } from '../../hooks/useValuePulse';
@@ -37,10 +37,17 @@ function formatResetTime(epochSeconds: number): string {
  */
 export function ContextBar({ sessionId, compact = false, agentFallback = null }: ContextBarProps) {
   const usage = useSessionStore((s) => s.sessionUsage[sessionId]);
+  const latestRateLimits = useSessionStore((s) => s.latestRateLimits);
   const session = useSessionStore((s) => s.sessions.find((sess) => sess.id === sessionId));
   const sessionShell = session?.shell;
   const isResuming = session?.resuming ?? false;
   const taskAgent = useBoardStore((s) => s.tasks.find((t) => t.session_id === sessionId)?.agent) ?? agentFallback;
+  // Resolve the agent that contributed the latest rate-limit snapshot so the
+  // tooltip can name it. Falls back to undefined when the source session has
+  // no task row (e.g. transient command-terminal sessions).
+  const sourceAgent = useBoardStore((s) =>
+    latestRateLimits ? s.tasks.find((t) => t.session_id === latestRateLimits.sourceSessionId)?.agent : undefined,
+  );
   const agentVersionNumber = useConfigStore((s) => s.agentVersionNumber);
   const contextBarConfig = useConfigStore((s) => s.config.contextBar);
   // Adapter-declared affordance for agents whose CLI exposes no live-telemetry
@@ -58,8 +65,8 @@ export function ContextBar({ sessionId, compact = false, agentFallback = null }:
   const tokenRef = useValuePulse(tokenKey);
   const pctRef = useValuePulse(usage ? Math.round(usage.contextWindow.usedPercentage) : 0);
   const fractionRef = useValuePulse(usage?.contextWindow.usedTokens);
-  const rateLimitsKey = usage?.rateLimits
-    ? `${Math.round(usage.rateLimits.fiveHour.usedPercentage)}-${Math.round(usage.rateLimits.sevenDay.usedPercentage)}`
+  const rateLimitsKey = latestRateLimits
+    ? `${Math.round(latestRateLimits.rateLimits.fiveHour.usedPercentage)}-${Math.round(latestRateLimits.rateLimits.sevenDay.usedPercentage)}`
     : '';
   const rateLimitsRef = useValuePulse(rateLimitsKey);
 
@@ -124,7 +131,11 @@ export function ContextBar({ sessionId, compact = false, agentFallback = null }:
   const showTokens = !compact && contextBarConfig.showTokens;
   const showFraction = contextBarConfig.showContextFraction;
   const showProgressBar = contextBarConfig.showProgressBar;
-  const showRateLimits = !!usage.rateLimits && contextBarConfig.showRateLimits;
+  // Visibility gate stays per-session: only adapters that ever populated
+  // rateLimits (currently Claude) earn the pill. The displayed *value* comes
+  // from the global `latestRateLimits` snapshot so every agent in the window
+  // shows the freshest account-wide numbers, not its own stale ones.
+  const showRateLimits = !!usage.rateLimits && !!latestRateLimits && contextBarConfig.showRateLimits;
 
   // Left pills: shell, version, model, rate limits, cost. Right pills: tokens, fraction, progress bar.
   const hasLeftPills = showShell || showVersion || showModel || showRateLimits || showCost;
@@ -159,13 +170,15 @@ export function ContextBar({ sessionId, compact = false, agentFallback = null }:
           )}
         </span>
       )}
-      {showRateLimits && usage.rateLimits && (() => {
-        const rateLimits = usage.rateLimits;
+      {showRateLimits && latestRateLimits && (() => {
+        const rateLimits = latestRateLimits.rateLimits;
+        const sourceLabel = sourceAgent ? ` via ${agentDisplayName(sourceAgent)}` : '';
+        const updatedSuffix = `\nUpdated ${formatTime(latestRateLimits.capturedAt)}${sourceLabel}`;
         return (
           <span
             ref={rateLimitsRef}
             className={`${pill} text-fg-muted tabular-nums flex items-center gap-2 flex-1 basis-0 min-w-[220px]`}
-            title={`5h session: ${formatResetTime(rateLimits.fiveHour.resetsAt)}\n7d weekly: ${formatResetTime(rateLimits.sevenDay.resetsAt)}`}
+            title={`5h session: ${formatResetTime(rateLimits.fiveHour.resetsAt)}\n7d weekly: ${formatResetTime(rateLimits.sevenDay.resetsAt)}${updatedSuffix}`}
             data-testid="rate-limits-pill"
           >
             {(['fiveHour', 'sevenDay'] as const).map((key) => {
