@@ -28,6 +28,7 @@ asarUnpack:
   - "node_modules/node-pty/prebuilds/**"
   - ".vite/build/event-bridge.js"
   - ".vite/build/status-bridge.js"
+  - ".vite/build/plugins/**"
 
 extraResources:
   - from: resources/icon.png

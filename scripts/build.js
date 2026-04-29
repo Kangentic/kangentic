@@ -76,6 +76,18 @@ async function build() {
   );
   console.log('[build] Copied status-bridge.js + event-bridge.js');
 
+  // Copy adapter-owned plugin files. These ship as raw .mjs sources so
+  // Kangentic can copy them into the user's project at spawn time
+  // (e.g. OpenCode auto-loads plugins from `.opencode/plugins/`).
+  // resolvePluginScript() looks for them under `<bundle>/plugins/<adapter>/`.
+  const pluginsOutputDir = path.join(projectDir, '.vite/build/plugins/opencode');
+  fs.mkdirSync(pluginsOutputDir, { recursive: true });
+  fs.copyFileSync(
+    path.join(projectDir, 'src/main/agent/adapters/opencode/plugin/kangentic-activity.mjs'),
+    path.join(pluginsOutputDir, 'kangentic-activity.mjs'),
+  );
+  console.log('[build] Copied adapter plugin scripts');
+
   // The kangentic MCP server now runs in-process inside Electron main
   // (see src/main/agent/mcp-http-server.ts), so we no longer bundle a
   // standalone mcp-server.js for Claude Code to spawn as a child.

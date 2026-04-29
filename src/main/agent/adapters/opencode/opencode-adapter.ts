@@ -4,8 +4,9 @@ import path from 'node:path';
 import { OpenCodeDetector } from './detector';
 import { OpenCodeCommandBuilder } from './command-builder';
 import { OpenCodeSessionHistoryParser } from './session-history-parser';
+import { removeHooks as removeOpenCodeHooks } from './hook-manager';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
-import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy } from '../../../../shared/types';
+import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SessionEvent } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
 // Session-ID regexes hoisted to module scope so they compile once.
@@ -34,25 +35,30 @@ const FLAG_FORM_SESSION_ID_REGEX = new RegExp(
 const ANSI_ESCAPE_REGEX = /\x1b\[[0-9;?]*[a-zA-Z]/g;
 
 /**
- * OpenCode CLI adapter (https://github.com/anomalyco/opencode, formerly
- * sst/opencode). OpenCode is a TUI-based AI coding agent installed via
- * `npm i -g opencode-ai`, the curl|sh installer, or platform package
- * managers (brew, scoop, choco, pacman).
+ * OpenCode CLI adapter (https://github.com/sst/opencode). OpenCode is a
+ * TUI-based AI coding agent installed via `npm i -g opencode-ai`, the
+ * curl|sh installer, or platform package managers (brew, scoop, choco,
+ * pacman).
  *
- * Capabilities relative to other adapters (verified against
- * /anomalyco/opencode docs):
- *  - No documented hook system, so activity detection is PTY-only
- *    (silence timer, same as Codex).
- *  - Generates its own session IDs - we capture them via PTY output
- *    regex and a filesystem scan, then pass them back as `--session
- *    <id>` to resume.
+ * Capabilities relative to other adapters (verified against the official
+ * OpenCode plugin docs at https://opencode.ai/docs/plugins/, April 2026):
+ *  - Plugin system fires in TUI mode. Activity detection is hook-driven
+ *    (`tool.execute.before/after`, `event` for `session.created` /
+ *    `session.idle` / `session.error`), with PTY silence timer as a
+ *    belt-and-braces fallback for the gap between idle events.
+ *  - Generates its own session IDs. The plugin captures the ID via
+ *    `event.properties.info.id` on `session.created`; we also keep the
+ *    PTY output regex and filesystem scan as fallbacks for legacy
+ *    OpenCode versions that may not deliver the plugin event.
  *  - No merged settings file and no `--mcp-config` CLI flag. OpenCode
  *    reads MCP and provider config from `opencode.json` (project) or
  *    `~/.config/opencode/opencode.json` (global), plus the
- *    `OPENCODE_CONFIG_CONTENT` env var for inline overrides. We inject
- *    the Kangentic MCP entry via `buildEnv()` so the user's checked-in
- *    `opencode.json` is never touched and concurrent sessions stay
- *    isolated (no ref-counting needed).
+ *    `OPENCODE_CONFIG_CONTENT` env var for inline overrides. The
+ *    Kangentic MCP entry is injected via `buildEnv()` so the user's
+ *    checked-in `opencode.json` is never touched. The activity-stream
+ *    plugin is a separate file, copied into the project-shared
+ *    `.opencode/plugins/` directory at spawn (refcounted via
+ *    `hookHolders` since concurrent sessions share the file).
  *  - No trust dialog and no per-mode permission flags. The
  *    `--dangerously-skip-permissions` flag exists only for the
  *    non-interactive `opencode run` subcommand. In TUI mode, users
@@ -75,6 +81,13 @@ export class OpenCodeAdapter implements AgentAdapter {
 
   private readonly detector = new OpenCodeDetector();
   private readonly commandBuilder = new OpenCodeCommandBuilder();
+  // Per-project taskId set tracking which spawns currently hold the
+  // activity plugin. OpenCode auto-loads plugins from a project-shared
+  // `.opencode/plugins/` directory, so concurrent sessions in the same
+  // project share one plugin file. Refcount prevents premature deletion
+  // when the first task ends while a second is still active. Mirrors
+  // CodexAdapter.hookHolders.
+  private readonly hookHolders = new Map<string, Set<string>>();
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     return this.detector.detect(overridePath);
@@ -120,7 +133,25 @@ export class OpenCodeAdapter implements AgentAdapter {
 
   buildCommand(options: SpawnCommandOptions): string {
     const { agentPath, ...rest } = options;
-    return this.commandBuilder.buildOpenCodeCommand({ opencodePath: agentPath, ...rest });
+    const command = this.commandBuilder.buildOpenCodeCommand({ opencodePath: agentPath, ...rest });
+    // buildOpenCodeCommand copies the activity plugin into
+    // `<projectRoot>/.opencode/plugins/` whenever eventsOutputPath is set.
+    // Retain a reference keyed by the project root so concurrent sessions
+    // serialize their cleanup in `removeHooks`.
+    if (options.eventsOutputPath) {
+      const projectRoot = options.projectRoot || options.cwd;
+      this.retainHooks(projectRoot, options.taskId);
+    }
+    return command;
+  }
+
+  private retainHooks(directory: string, taskId: string): void {
+    let holders = this.hookHolders.get(directory);
+    if (!holders) {
+      holders = new Set<string>();
+      this.hookHolders.set(directory, holders);
+    }
+    holders.add(taskId);
   }
 
   buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
@@ -133,15 +164,23 @@ export class OpenCodeAdapter implements AgentAdapter {
   }
 
   /**
-   * Runtime strategy: OpenCode exposes activity via PTY only (no hooks)
-   * and generates its own session IDs. Capture is best-effort and tries
-   * PTY output first, then falls back to a filesystem scan of the
-   * documented config-dir candidates.
+   * Runtime strategy: OpenCode exposes activity via its plugin system
+   * (`tool.execute.before/after`, `event` with `session.*` types) with
+   * a PTY silence-timer fallback for the gap between hook deliveries.
+   * Session IDs come from the plugin's `session.created` payload first,
+   * with PTY-output regex and a filesystem scan as belt-and-braces
+   * fallbacks for legacy OpenCode versions.
    *
-   * - Activity: silence timer. The Codex experience showed that idle
-   *   detection via prompt regex on TUI agents is brittle (false
-   *   thinking <-> idle oscillations); the 10s silence default is
-   *   reliable when the TUI stops redrawing.
+   * - Activity: hooks_and_pty. Hooks are authoritative when they fire;
+   *   the PTY tracker is suppressed on the first hook event and
+   *   re-engages only as a fallback if the plugin stops emitting.
+   * - statusFile.parseEvent: decodes the plugin's JSONL output, which
+   *   matches the event-bridge schema verbatim (the plugin produces
+   *   the same `{ ts, type, tool?, detail?, hookContext? }` shape
+   *   that all other adapters use).
+   * - sessionId.fromHook: extracts `sessionID` from the
+   *   `event.properties.info.id` field captured by the plugin on
+   *   `session.created` and stored in `hookContext`.
    * - sessionId.fromOutput: scans every PTY chunk for an OpenCode
    *   session ID adjacent to common labels. The native ID format
    *   (verified empirically on v1.14.25) is `ses_<26 alphanumeric>`,
@@ -154,8 +193,31 @@ export class OpenCodeAdapter implements AgentAdapter {
    *   `time_created` falls in the spawn window.
    */
   readonly runtime: AdapterRuntimeStrategy = {
-    activity: ActivityDetection.pty(),
+    activity: ActivityDetection.hooksAndPty(),
+    statusFile: {
+      parseStatus: () => null,
+      parseEvent: (line: string): SessionEvent | null => {
+        try {
+          return JSON.parse(line) as SessionEvent;
+        } catch {
+          return null;
+        }
+      },
+      isFullRewrite: false,
+    },
     sessionId: {
+      fromHook(hookContext: string): string | null {
+        try {
+          const context = JSON.parse(hookContext);
+          const sessionID = context.sessionID ?? context.session_id ?? null;
+          if (typeof sessionID === 'string' && sessionID.length > 0) {
+            return sessionID;
+          }
+          return null;
+        } catch {
+          return null;
+        }
+      },
       fromOutput(data: string): string | null {
         // Strip ANSI before pattern matching - the TUI peppers escape
         // codes between visible characters and would otherwise break
@@ -178,8 +240,28 @@ export class OpenCodeAdapter implements AgentAdapter {
     },
   };
 
-  removeHooks(_directory: string, _taskId?: string): void {
-    // OpenCode does not use hooks - no-op.
+  /**
+   * Remove the activity plugin from a project's `.opencode/plugins/`.
+   *
+   * `taskId` is required when concurrent OpenCode sessions on the same
+   * project are possible (it identifies which spawn is releasing). When
+   * supplied, the call decrements the refcount and only deletes the
+   * plugin file once the last holder releases. When omitted, the call
+   * skips the refcount path and unconditionally deletes the file -
+   * intended only for shutdown / forced cleanup paths where every
+   * pending session is being torn down anyway.
+   */
+  removeHooks(directory: string, taskId?: string): void {
+    const holders = this.hookHolders.get(directory);
+    if (holders && taskId) {
+      holders.delete(taskId);
+      if (holders.size > 0) {
+        // Another concurrent session in this project still needs the plugin.
+        return;
+      }
+      this.hookHolders.delete(directory);
+    }
+    removeOpenCodeHooks(directory);
   }
 
   clearSettingsCache(): void {

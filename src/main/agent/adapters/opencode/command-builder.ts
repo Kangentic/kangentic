@@ -1,5 +1,6 @@
 import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
+import { buildHooks } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
 
 export interface OpenCodeCommandOptions {
@@ -54,6 +55,17 @@ export interface OpenCodeCommandOptions {
 export class OpenCodeCommandBuilder {
   buildOpenCodeCommand(options: OpenCodeCommandOptions): string {
     const { shell } = options;
+
+    // Install the activity-stream plugin into the project's
+    // `.opencode/plugins/` directory before the CLI launches. OpenCode
+    // auto-discovers plugins from that directory at TUI startup, so no
+    // CLI flag or `opencode.json` mutation is required. Mirrors the
+    // `buildHooks` side effect in CodexCommandBuilder.buildCodexCommand.
+    if (options.eventsOutputPath) {
+      const projectRoot = options.projectRoot || options.cwd;
+      buildHooks(projectRoot);
+    }
+
     const parts: string[] = [quoteArg(options.opencodePath, shell)];
 
     if (options.resume && options.sessionId) {

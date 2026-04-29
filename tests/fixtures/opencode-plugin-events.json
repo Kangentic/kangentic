@@ -1,0 +1,75 @@
+{
+  "_README": "Sample OpenCode plugin invocation payloads. Shapes are derived from the official plugin docs (https://opencode.ai/docs/plugins/, April 2026) and the cmux reference plugin (https://gist.github.com/johnlindquist/0adf1032b4e84942f3e1050aba3c5e4a). Replace this fixture with a sanitized capture from a real OpenCode session once the spike documented in plans/opencode-hook-based-activity-stream-zazzy-tulip.md is run. The opencode-plugin.test.ts suite asserts our extractor functions against these inputs; if OpenCode's real shape diverges, update this file and the failing test will pin the new contract.",
+  "event_session_created": {
+    "type": "session.created",
+    "properties": {
+      "info": {
+        "id": "ses_2349b5c91ffeKd6qajuUTR4clq",
+        "title": "Refactor login flow"
+      },
+      "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq"
+    }
+  },
+  "event_session_idle": {
+    "type": "session.idle",
+    "properties": {
+      "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq"
+    }
+  },
+  "event_session_error": {
+    "type": "session.error",
+    "properties": {
+      "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq",
+      "error": {
+        "name": "RateLimitError",
+        "message": "Anthropic API limit"
+      }
+    }
+  },
+  "event_session_unknown": {
+    "type": "session.updated",
+    "properties": {}
+  },
+  "tool_before_bash": {
+    "input": { "tool": "bash" },
+    "output": {
+      "args": {
+        "command": "ls -la /tmp"
+      }
+    }
+  },
+  "tool_before_read": {
+    "input": { "tool": "read" },
+    "output": {
+      "args": {
+        "filePath": "/repo/src/main.ts"
+      }
+    }
+  },
+  "tool_before_glob": {
+    "input": { "tool": "glob" },
+    "output": {
+      "args": {
+        "path": "/repo",
+        "pattern": "**/*.ts"
+      }
+    }
+  },
+  "tool_before_no_args": {
+    "input": { "tool": "list" },
+    "output": {
+      "args": {}
+    }
+  },
+  "tool_before_long_command": {
+    "input": { "tool": "bash" },
+    "output": {
+      "args": {
+        "command": "rg --multiline 'pattern' /a/very/long/path/that/keeps/going/and/going/with/lots/of/text/and/keeps/going/and/going/and/going/and/going/and/going/and/going/and/going/and/going/until/it/exceeds/the/200/character/truncation/limit/we/apply/in/the/extractor/helper/function"
+      }
+    }
+  },
+  "tool_after_bash": {
+    "input": { "tool": "bash" }
+  }
+}

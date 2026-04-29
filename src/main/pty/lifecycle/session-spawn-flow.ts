@@ -127,7 +127,17 @@ export async function performSpawn(
   // Shell invocation (exe + args) and spawn env. See pty-spawn.ts.
   const shellName = shell.toLowerCase();
   const { exe: shellExe, args: shellArgs } = resolveShellArgs(shell);
-  const cleanEnv = buildSpawnEnv(input.env);
+  // Export KANGENTIC_EVENTS_PATH whenever the session has an events
+  // output path. Adapters whose hooks shell out to event-bridge.js read
+  // the path from their hook command line, but adapters whose hooks run
+  // inline in the agent process (OpenCode plugins) need the path on
+  // process.env. Setting it universally is harmless: hook-bridge-based
+  // adapters ignore the env var.
+  const spawnEnv: Record<string, string> = { ...(input.env ?? {}) };
+  if (input.eventsOutputPath) {
+    spawnEnv.KANGENTIC_EVENTS_PATH = input.eventsOutputPath;
+  }
+  const cleanEnv = buildSpawnEnv(spawnEnv);
 
   // Validate cwd + apply Windows UNC fallback for cmd.exe. See pty-spawn.ts.
   const { effectiveCwd, uncPushdPrefix } = resolveSpawnCwd({

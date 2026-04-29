@@ -81,6 +81,7 @@ vi.mock('../../src/shared/paths', () => ({
 // ---- Import under test (after all vi.mock hoisting) ----
 import { performSpawn } from '../../src/main/pty/lifecycle/session-spawn-flow';
 import { SessionRegistry } from '../../src/main/pty/session-registry';
+import * as ptyModule from 'node-pty';
 
 // ---- Helpers ----
 
@@ -188,6 +189,87 @@ function makeInput(overrides: Partial<SpawnSessionInput> = {}): SpawnSessionInpu
 }
 
 // ---- Tests ----
+
+describe('performSpawn - KANGENTIC_EVENTS_PATH env injection', () => {
+  // ptyModule.spawn is the vi.fn() from the module-level vi.mock('node-pty').
+  // Accessing it via the named import lets us inspect .mock.calls across tests.
+  const ptySpawnMock = ptyModule.spawn as ReturnType<typeof vi.fn>;
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('includes KANGENTIC_EVENTS_PATH in the spawn env when eventsOutputPath is set', async () => {
+    const context = makeContext();
+    const eventsPath = '/home/dev/project/.kangentic/sessions/test-session/events.jsonl';
+    const input = makeInput({ eventsOutputPath: eventsPath });
+
+    await performSpawn(input, context);
+
+    expect(ptySpawnMock).toHaveBeenCalledOnce();
+    const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { env?: Record<string, string> };
+    expect(spawnOptions.env).toBeDefined();
+    expect(spawnOptions.env!['KANGENTIC_EVENTS_PATH']).toBe(eventsPath);
+  });
+
+  it('does NOT add KANGENTIC_EVENTS_PATH when eventsOutputPath is absent', async () => {
+    const context = makeContext();
+    // makeInput() does not set eventsOutputPath by default.
+    const input = makeInput();
+
+    await performSpawn(input, context);
+
+    expect(ptySpawnMock).toHaveBeenCalledOnce();
+    const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { env?: Record<string, string> };
+    expect(spawnOptions.env).toBeDefined();
+    expect('KANGENTIC_EVENTS_PATH' in (spawnOptions.env ?? {})).toBe(false);
+  });
+
+  it('does NOT add KANGENTIC_EVENTS_PATH when eventsOutputPath is undefined', async () => {
+    const context = makeContext();
+    const input = makeInput({ eventsOutputPath: undefined });
+
+    await performSpawn(input, context);
+
+    const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { env?: Record<string, string> };
+    expect('KANGENTIC_EVENTS_PATH' in (spawnOptions.env ?? {})).toBe(false);
+  });
+
+  it('eventsOutputPath value wins over a caller-supplied KANGENTIC_EVENTS_PATH in input.env', async () => {
+    // The spawn flow merges input.env first, then unconditionally overwrites
+    // KANGENTIC_EVENTS_PATH with input.eventsOutputPath (lines 136-139 of
+    // session-spawn-flow.ts). Verify that the eventsOutputPath value wins.
+    const context = makeContext();
+    const callerEnvValue = '/caller/supplied/path.jsonl';
+    const eventsOutputPathValue = '/authoritative/events/path.jsonl';
+    const input = makeInput({
+      env: { KANGENTIC_EVENTS_PATH: callerEnvValue, OTHER_VAR: 'preserved' },
+      eventsOutputPath: eventsOutputPathValue,
+    });
+
+    await performSpawn(input, context);
+
+    const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { env?: Record<string, string> };
+    // eventsOutputPath must win.
+    expect(spawnOptions.env!['KANGENTIC_EVENTS_PATH']).toBe(eventsOutputPathValue);
+    // Other env vars from input.env must be preserved.
+    expect(spawnOptions.env!['OTHER_VAR']).toBe('preserved');
+  });
+
+  it('merges input.env into the spawn env when eventsOutputPath is absent', async () => {
+    const context = makeContext();
+    const input = makeInput({
+      env: { CUSTOM_VAR: 'hello', ANOTHER_VAR: 'world' },
+    });
+
+    await performSpawn(input, context);
+
+    const spawnOptions = ptySpawnMock.mock.calls[0]?.[2] as { env?: Record<string, string> };
+    expect(spawnOptions.env!['CUSTOM_VAR']).toBe('hello');
+    expect(spawnOptions.env!['ANOTHER_VAR']).toBe('world');
+    expect('KANGENTIC_EVENTS_PATH' in (spawnOptions.env ?? {})).toBe(false);
+  });
+});
 
 describe('performSpawn - caller-owned session ID wiring', () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
