@@ -46,10 +46,13 @@ const ANSI_ESCAPE_REGEX = /\x1b\[[0-9;?]*[a-zA-Z]/g;
  *  - Generates its own session IDs - we capture them via PTY output
  *    regex and a filesystem scan, then pass them back as `--session
  *    <id>` to resume.
- *  - No merged settings file; OpenCode reads MCP and provider config
- *    from `opencode.json` (project) or `~/.config/opencode/opencode.json`
- *    (global). Wiring the Kangentic MCP server into that config is a
- *    follow-up.
+ *  - No merged settings file and no `--mcp-config` CLI flag. OpenCode
+ *    reads MCP and provider config from `opencode.json` (project) or
+ *    `~/.config/opencode/opencode.json` (global), plus the
+ *    `OPENCODE_CONFIG_CONTENT` env var for inline overrides. We inject
+ *    the Kangentic MCP entry via `buildEnv()` so the user's checked-in
+ *    `opencode.json` is never touched and concurrent sessions stay
+ *    isolated (no ref-counting needed).
  *  - No trust dialog and no per-mode permission flags. The
  *    `--dangerously-skip-permissions` flag exists only for the
  *    non-interactive `opencode run` subcommand. In TUI mode, users
@@ -118,6 +121,11 @@ export class OpenCodeAdapter implements AgentAdapter {
   buildCommand(options: SpawnCommandOptions): string {
     const { agentPath, ...rest } = options;
     return this.commandBuilder.buildOpenCodeCommand({ opencodePath: agentPath, ...rest });
+  }
+
+  buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
+    const { agentPath, ...rest } = options;
+    return this.commandBuilder.buildOpenCodeEnv({ opencodePath: agentPath, ...rest });
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {

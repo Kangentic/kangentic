@@ -80,7 +80,7 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     const statusOutputPath = path.join(sessionDirectory, 'status.json');
     const eventsOutputPath = path.join(sessionDirectory, 'activity.json');
 
-    const command = adapter.buildCommand({
+    const commandOptions = {
       agentPath: detection.path,
       taskId: transientTaskId,
       cwd: projectRoot,
@@ -91,13 +91,16 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       mcpServerEnabled: config.mcpServer.enabled,
       mcpServerUrl: context.mcpServerHandle?.urlForProject(input.projectId),
       mcpServerToken: context.mcpServerHandle?.token,
-    });
+    };
+    const command = adapter.buildCommand(commandOptions);
+    const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
 
     const session = await context.sessionManager.spawn({
       taskId: transientTaskId,
       projectId: input.projectId,
       command,
       cwd: projectRoot,
+      env: extraEnv ?? undefined,
       statusOutputPath,
       eventsOutputPath,
       transient: true,

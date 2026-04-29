@@ -10,7 +10,7 @@ import type { SessionRecord, Task } from '../../../shared/types';
 import { isResumeEligible } from '../spawn-intent';
 import { retireRecord, markRecordSuspended } from '../session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
-import { prepareAgentSpawn } from './prepare-spawn';
+import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
 
 /**
  * Recover suspended and orphaned agent sessions on project open.
@@ -199,18 +199,7 @@ export async function resumeSuspendedSessions(
   const resolvedShell = await sessionManager.getShell();
 
   // --- Preparation pass: build spawn inputs per-task ---
-  const spawnInputs: Array<{
-    record: SessionRecord;
-    task: Task;
-    adapter: import('../../agent/agent-adapter').AgentAdapter;
-    command: string;
-    cwd: string;
-    sessionRecordId: string;
-    agentSessionId: string | null;
-    permissionMode: string;
-    statusOutputPath: string;
-    eventsOutputPath: string;
-  }> = [];
+  const spawnInputs: Array<PreparedSpawn & { record: SessionRecord; task: Task }> = [];
 
   for (const { record, task } of toProcess) {
     try {
@@ -289,6 +278,7 @@ export async function resumeSuspendedSessions(
         projectId,
         command: input.command,
         cwd: input.cwd,
+        env: input.extraEnv ?? undefined,
         statusOutputPath: input.statusOutputPath,
         eventsOutputPath: input.eventsOutputPath,
         agentParser: input.adapter,

@@ -9,7 +9,7 @@ import { SessionManager } from '../../pty/session-manager';
 import { ConfigManager } from '../../config/config-manager';
 import type { Task } from '../../../shared/types';
 import { isShuttingDown } from '../../shutdown-state';
-import { prepareAgentSpawn } from './prepare-spawn';
+import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
 
 /**
  * Enforce the auto-spawn invariant on project open: find tasks in
@@ -73,18 +73,7 @@ export async function autoSpawnTasks(
   );
 
   // --- Preparation pass: collect spawn inputs ---
-  const spawnInputs: Array<{
-    task: Task;
-    adapter: import('../../agent/agent-adapter').AgentAdapter;
-    agent: string;
-    command: string;
-    cwd: string;
-    sessionRecordId: string;
-    agentSessionId: string | null;
-    permissionMode: string;
-    statusOutputPath: string;
-    eventsOutputPath: string;
-  }> = [];
+  const spawnInputs: Array<PreparedSpawn & { task: Task }> = [];
 
   for (const lane of activeLanes) {
     const tasks = taskRepo.list(lane.id);
@@ -172,6 +161,7 @@ export async function autoSpawnTasks(
         projectId,
         command: input.command,
         cwd: input.cwd,
+        env: input.extraEnv ?? undefined,
         statusOutputPath: input.statusOutputPath,
         eventsOutputPath: input.eventsOutputPath,
         agentParser: input.adapter,

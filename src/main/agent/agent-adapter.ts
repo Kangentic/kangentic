@@ -28,7 +28,7 @@ export interface CommandOptions {
   statusOutputPath?: string; // path where the status bridge writes JSON
   eventsOutputPath?: string; // path where the event bridge appends JSONL
   shell?: string; // target shell name - controls quoting style (single vs double quotes)
-  mcpServerEnabled?: boolean; // whether to enable kangentic MCP server via --mcp-config
+  mcpServerEnabled?: boolean; // whether to enable Kangentic MCP server (delivery is adapter-specific: --mcp-config flag, settings file, or env var)
   /** In-process MCP HTTP server URL for this project. Required when mcpServerEnabled is true. */
   mcpServerUrl?: string;
   /** Per-launch MCP server token. Sent as the X-Kangentic-Token header. */
@@ -82,6 +82,17 @@ export interface AgentAdapter {
 
   /** Build the shell command string to spawn the agent. */
   buildCommand(options: SpawnCommandOptions): string;
+
+  /**
+   * Build adapter-specific environment variables to inject into the PTY
+   * spawn. Returns `null` (or omits the method entirely) when the adapter
+   * needs no env injection. Used by adapters whose CLI has no flag-based
+   * MCP wiring and must deliver the Kangentic MCP server config via env
+   * (e.g. OpenCode's `OPENCODE_CONFIG_CONTENT`). Adapters that wire MCP
+   * via a CLI flag (Claude `--mcp-config`) or settings file (Codex hooks)
+   * do not implement this.
+   */
+  buildEnv?(options: SpawnCommandOptions): Record<string, string> | null;
 
   /** Interpolate {{key}} placeholders in a template string. */
   interpolateTemplate(template: string, variables: Record<string, string>): string;

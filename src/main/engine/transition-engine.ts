@@ -221,7 +221,7 @@ export class TransitionEngine {
     const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 
     const shell = await this.sessionManager.getShell();
-    const command = adapter.buildCommand({
+    const commandOptions = {
       agentPath: detection.path,
       taskId: task.id,
       prompt,
@@ -237,7 +237,9 @@ export class TransitionEngine {
       mcpServerEnabled: appConfig.mcpServerEnabled,
       mcpServerUrl: appConfig.mcpServerUrl,
       mcpServerToken: appConfig.mcpServerToken,
-    });
+    };
+    const command = adapter.buildCommand(commandOptions);
+    const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
 
     console.log(`[spawnAgent] agent=${agentName} Command: ${command.slice(0, 120)}...`);
 
@@ -251,6 +253,7 @@ export class TransitionEngine {
       projectId: appConfig.projectId,
       command,
       cwd,
+      env: extraEnv ?? undefined,
       statusOutputPath,
       eventsOutputPath,
       resuming: canResume,

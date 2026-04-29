@@ -347,6 +347,96 @@ describe('OpenCode Adapter', () => {
     });
   });
 
+  describe('buildEnv - Kangentic MCP injection', () => {
+    const fullMcpOptions = (): SpawnCommandOptions =>
+      makeOptions({
+        mcpServerEnabled: true,
+        mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-abc',
+        mcpServerToken: 'token-deadbeef',
+      });
+
+    it('returns null when MCP is disabled', () => {
+      const env = adapter.buildEnv(makeOptions({
+        mcpServerEnabled: false,
+        mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-abc',
+        mcpServerToken: 'token-deadbeef',
+      }));
+      expect(env).toBeNull();
+    });
+
+    it('returns null when mcpServerUrl is missing', () => {
+      const env = adapter.buildEnv(makeOptions({
+        mcpServerEnabled: true,
+        mcpServerToken: 'token-deadbeef',
+      }));
+      expect(env).toBeNull();
+    });
+
+    it('returns null when mcpServerToken is missing', () => {
+      const env = adapter.buildEnv(makeOptions({
+        mcpServerEnabled: true,
+        mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-abc',
+      }));
+      expect(env).toBeNull();
+    });
+
+    it('emits OPENCODE_CONFIG_CONTENT when MCP is fully configured', () => {
+      const env = adapter.buildEnv(fullMcpOptions());
+      expect(env).not.toBeNull();
+      expect(env).toHaveProperty('OPENCODE_CONFIG_CONTENT');
+    });
+
+    it('emits a parseable JSON payload', () => {
+      const env = adapter.buildEnv(fullMcpOptions());
+      expect(env).not.toBeNull();
+      expect(() => JSON.parse(env!.OPENCODE_CONFIG_CONTENT)).not.toThrow();
+    });
+
+    it('emits the kangentic mcp entry with type "remote" (not "http")', () => {
+      const env = adapter.buildEnv(fullMcpOptions());
+      expect(env).not.toBeNull();
+      const config = JSON.parse(env!.OPENCODE_CONFIG_CONTENT);
+      // /anomalyco/opencode docs use type:"remote" for HTTP MCP servers.
+      // Claude's mcp.json uses type:"http" - do not confuse the two.
+      expect(config.mcp.kangentic.type).toBe('remote');
+    });
+
+    it('forwards the URL and token verbatim', () => {
+      const env = adapter.buildEnv(fullMcpOptions());
+      expect(env).not.toBeNull();
+      const config = JSON.parse(env!.OPENCODE_CONFIG_CONTENT);
+      expect(config.mcp.kangentic.url).toBe('http://127.0.0.1:51234/mcp/proj-abc');
+      expect(config.mcp.kangentic.headers['X-Kangentic-Token']).toBe('token-deadbeef');
+    });
+
+    it('marks the kangentic entry as enabled', () => {
+      const env = adapter.buildEnv(fullMcpOptions());
+      expect(env).not.toBeNull();
+      const config = JSON.parse(env!.OPENCODE_CONFIG_CONTENT);
+      expect(config.mcp.kangentic.enabled).toBe(true);
+    });
+
+    it('emits no other mcp.* keys (deep-merge preserves user entries)', () => {
+      // The injected payload must contain ONLY kangentic. OpenCode's
+      // multi-source config loader deep-merges by key, so any user
+      // entries (mcp.filesystem, mcp.github, ...) in opencode.json are
+      // preserved automatically. We must not echo unknown keys back.
+      const env = adapter.buildEnv(fullMcpOptions());
+      expect(env).not.toBeNull();
+      const config = JSON.parse(env!.OPENCODE_CONFIG_CONTENT);
+      expect(Object.keys(config.mcp)).toEqual(['kangentic']);
+    });
+
+    it('emits no top-level keys other than mcp', () => {
+      // Anything we add here would override user settings on merge.
+      // Today the only key we touch is `mcp`.
+      const env = adapter.buildEnv(fullMcpOptions());
+      expect(env).not.toBeNull();
+      const config = JSON.parse(env!.OPENCODE_CONFIG_CONTENT);
+      expect(Object.keys(config)).toEqual(['mcp']);
+    });
+  });
+
   describe('locateSessionHistoryFile', () => {
     it('returns null when no session file exists for the given ID', async () => {
       // No real OpenCode install in CI, so the scan finds nothing.

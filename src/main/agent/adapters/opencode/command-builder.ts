@@ -42,10 +42,14 @@ export interface OpenCodeCommandOptions {
  *   That flag is only documented for `opencode run` (non-interactive).
  *   For TUI mode users must configure auto-approve in `opencode.json`.
  *
- * - There is no merged settings file. OpenCode reads MCP and provider
- *   config from `opencode.json` (project) or
- *   `~/.config/opencode/opencode.json` (global). Wiring the Kangentic
- *   MCP server is a follow-up.
+ * - There is no merged settings file and no `--mcp-config` CLI flag.
+ *   OpenCode reads MCP and provider config from `opencode.json` (project)
+ *   or `~/.config/opencode/opencode.json` (global), plus the
+ *   `OPENCODE_CONFIG_CONTENT` env var for inline overrides. The Kangentic
+ *   MCP server is wired via `buildOpenCodeEnv()` below, which emits
+ *   `OPENCODE_CONFIG_CONTENT` per PTY spawn so we never have to touch
+ *   the user's checked-in `opencode.json`. Configs are deep-merged across
+ *   sources, so user-defined `mcp.*` entries are preserved.
  */
 export class OpenCodeCommandBuilder {
   buildOpenCodeCommand(options: OpenCodeCommandOptions): string {
@@ -70,6 +74,44 @@ export class OpenCodeCommandBuilder {
     }
 
     return parts.join(' ');
+  }
+
+  /**
+   * Build env vars that inject the Kangentic MCP server into OpenCode.
+   *
+   * OpenCode loads config from multiple sources and deep-merges them by
+   * key. The `OPENCODE_CONFIG_CONTENT` env var is one of those sources,
+   * with higher precedence than the project's `opencode.json`, so the
+   * launch-fresh URL + token always win. Because the merge is per-key,
+   * any user-defined `mcp.*` entries (filesystem, github, etc.) are
+   * preserved alongside our `mcp.kangentic` entry.
+   *
+   * Schema verified against /anomalyco/opencode docs: remote MCP servers
+   * use `type: "remote"` (not Claude's `"http"`), `url`, and optional
+   * `headers`. We pass the per-launch token via the `X-Kangentic-Token`
+   * header that the in-process MCP HTTP server expects.
+   *
+   * Returns `null` when MCP wiring is disabled or any of the required
+   * URL / token values are missing.
+   */
+  buildOpenCodeEnv(options: OpenCodeCommandOptions): Record<string, string> | null {
+    if (!options.mcpServerEnabled) return null;
+    if (!options.mcpServerUrl || !options.mcpServerToken) return null;
+
+    const inlineConfig = {
+      mcp: {
+        kangentic: {
+          type: 'remote',
+          url: options.mcpServerUrl,
+          enabled: true,
+          headers: {
+            'X-Kangentic-Token': options.mcpServerToken,
+          },
+        },
+      },
+    };
+
+    return { OPENCODE_CONFIG_CONTENT: JSON.stringify(inlineConfig) };
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {

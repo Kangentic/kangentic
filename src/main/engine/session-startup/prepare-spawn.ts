@@ -26,6 +26,13 @@ export interface PreparedSpawn {
   permissionMode: string;
   statusOutputPath: string;
   eventsOutputPath: string;
+  /**
+   * Adapter-specific env vars to merge into the PTY spawn env. Populated
+   * from `adapter.buildEnv?.(...)` for adapters that wire MCP via env
+   * (OpenCode `OPENCODE_CONFIG_CONTENT`). Null for adapters that wire MCP
+   * via CLI flag or settings file.
+   */
+  extraEnv: Record<string, string> | null;
 }
 
 export type PrepareResult =
@@ -98,7 +105,7 @@ export async function prepareAgentSpawn(input: {
   fs.mkdirSync(sessionDir, { recursive: true });
   const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
 
-  const command = adapter.buildCommand({
+  const commandOptions = {
     agentPath: detection.path,
     taskId: task.id,
     prompt: undefined,
@@ -113,7 +120,10 @@ export async function prepareAgentSpawn(input: {
     mcpServerEnabled: config.mcpServer?.enabled ?? true,
     mcpServerUrl: input.mcpServerHandle?.urlForProject(projectId),
     mcpServerToken: input.mcpServerHandle?.token,
-  });
+  };
+
+  const command = adapter.buildCommand(commandOptions);
+  const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
 
   return {
     ok: true,
@@ -127,6 +137,7 @@ export async function prepareAgentSpawn(input: {
       permissionMode,
       statusOutputPath,
       eventsOutputPath,
+      extraEnv,
     },
   };
 }
