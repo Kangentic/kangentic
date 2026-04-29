@@ -111,7 +111,17 @@ export function registerSystemHandlers(context: IpcContext): void {
       const authenticated = info.found && adapter.probeAuth
         ? await adapter.probeAuth().catch(() => null)
         : undefined;
-      results.push({ name: agentName, displayName: adapter.displayName, found: info.found, path: info.path, version: info.version, authenticated, permissions: adapter.permissions, defaultPermission: adapter.defaultPermission });
+      results.push({
+        name: agentName,
+        displayName: adapter.displayName,
+        found: info.found,
+        path: info.path,
+        version: info.version,
+        authenticated,
+        permissions: adapter.permissions,
+        defaultPermission: adapter.defaultPermission,
+        liveTelemetryUnsupported: adapter.liveTelemetryUnsupported,
+      });
     }
     return results;
   });

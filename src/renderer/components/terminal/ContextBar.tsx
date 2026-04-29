@@ -43,6 +43,12 @@ export function ContextBar({ sessionId, compact = false, agentFallback = null }:
   const taskAgent = useBoardStore((s) => s.tasks.find((t) => t.session_id === sessionId)?.agent) ?? agentFallback;
   const agentVersionNumber = useConfigStore((s) => s.agentVersionNumber);
   const contextBarConfig = useConfigStore((s) => s.config.contextBar);
+  // Adapter-declared affordance for agents whose CLI exposes no live-telemetry
+  // channel. Label and tooltip live with the adapter (see AgentAdapter.liveTelemetryUnsupported);
+  // this component never branches on agent name.
+  const agentLiveTelemetryUnsupported = useConfigStore(
+    (s) => s.agentList.find((a) => a.name === taskAgent)?.liveTelemetryUnsupported
+  );
 
   // Pulse hooks -- always called unconditionally (hooks rules)
   const costRef = useValuePulse(usage?.cost.totalCostUsd);
@@ -63,6 +69,26 @@ export function ContextBar({ sessionId, compact = false, agentFallback = null }:
   const resolvedModelName = usage?.model.displayName || null;
 
   if (!usage || !resolvedModelName) {
+    // Adapter-declared "no live telemetry" branch. The spinner would otherwise
+    // display forever for these agents - show the adapter's static affordance
+    // instead. Branching on a generic capability flag (not agent name) keeps
+    // agent-specific copy inside src/main/agent/adapters/<agent>/.
+    if (agentLiveTelemetryUnsupported) {
+      return (
+        <div
+          className={containerClass}
+          data-testid="usage-bar"
+          data-live-telemetry="unsupported"
+        >
+          <span
+            className={`${pill} text-fg-muted`}
+            title={agentLiveTelemetryUnsupported.unavailableTitle}
+          >
+            {agentLiveTelemetryUnsupported.unavailableLabel}
+          </span>
+        </div>
+      );
+    }
     const spinnerLabel = isResuming ? 'Resuming agent...' : 'Starting agent...';
     return (
       <div

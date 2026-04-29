@@ -48,6 +48,7 @@ All commands below run from the **current working directory** — never use `cd 
 - Zustand stores with IPC bridge pattern
 - IPC channels defined in `src/shared/ipc-channels.ts`
 - All dialogs use global `useEffect` Escape key listener
+- **No agent-specific code outside `src/main/agent/adapters/`.** Flag any branch on agent name (`agent === 'claude'`, `agent === 'droid'`, `taskAgent === '<x>'`, `switch (adapter.name)`, etc.) found in renderer code, IPC handlers, shared utilities, stores, or tests outside the `adapters/` tree. Adapter-specific copy, tooltips, capability decisions, and behavior must live with the adapter and surface through generic capability fields (e.g. `AgentAdapter.liveTelemetryUnsupported`, `AdapterRuntimeStrategy`, `AgentDetectionInfo` extensions). Suggested grep: `agent === '|taskAgent ===|adapter\.name ===` under `src/renderer/`, `src/shared/`, and `src/main/ipc/`.
 
 ### Domain-Specific Checks
 

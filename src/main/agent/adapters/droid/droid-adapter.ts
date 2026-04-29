@@ -2,7 +2,12 @@ import { DroidDetector } from './detector';
 import { DroidCommandBuilder } from './command-builder';
 import { captureSessionIdFromFilesystem, locateSessionFile } from './session-id-capture';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
-import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy } from '../../../../shared/types';
+import type {
+  AgentPermissionEntry,
+  PermissionMode,
+  AdapterRuntimeStrategy,
+  AgentLiveTelemetryUnsupported,
+} from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
 /**
@@ -93,6 +98,22 @@ export class DroidAdapter implements AgentAdapter {
       // synchronously at session start.
       fromFilesystem: captureSessionIdFromFilesystem,
     },
+  };
+
+  /**
+   * Droid 0.109.x has no per-session telemetry channel Kangentic can
+   * subscribe to: `/cost` and `/context` are post-hoc TUI commands,
+   * `OTEL_TELEMETRY_ENDPOINT` is out-of-band, and the post-hoc
+   * `<uuid>.settings.json` schema is undocumented. ContextBar would
+   * otherwise spin forever - declare an unavailable affordance pointing
+   * users at the in-TUI surfaces. See docs/agent-integration.md.
+   */
+  readonly liveTelemetryUnsupported: AgentLiveTelemetryUnsupported = {
+    unavailableLabel: 'Telemetry: TUI only',
+    unavailableTitle:
+      'Droid does not stream live telemetry to Kangentic.\n' +
+      'Run /cost or /context inside the Droid TUI to see model, tokens, and cost.\n' +
+      'Tracked upstream: Factory-AI/factory (see docs/agent-integration.md).',
   };
 
   removeHooks(_directory: string, _taskId?: string): void {

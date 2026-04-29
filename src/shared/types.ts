@@ -23,6 +23,24 @@ export interface Project {
   created_at: string;
 }
 
+/**
+ * Adapter-declared affordance shown by ContextBar when the agent CLI
+ * exposes no live-telemetry channel (no statusFile / sessionHistory /
+ * streamOutput pipeline can be wired). Omit entirely for agents whose
+ * `runtime` populates SessionUsage normally - that is the common case.
+ *
+ * The label and tooltip live with the adapter so agent-specific copy
+ * stays inside `src/main/agent/adapters/<agent>/`. The renderer treats
+ * this as a generic "telemetry unavailable" signal and never branches
+ * on agent name.
+ */
+export interface AgentLiveTelemetryUnsupported {
+  /** Pill text shown in place of the loading spinner. */
+  unavailableLabel: string;
+  /** Tooltip title shown on the pill (multi-line allowed). */
+  unavailableTitle: string;
+}
+
 export interface AgentDetectionInfo {
   name: string;
   displayName: string;
@@ -33,6 +51,8 @@ export interface AgentDetectionInfo {
   authenticated?: boolean | null;
   permissions: AgentPermissionEntry[];
   defaultPermission: PermissionMode;
+  /** Set by adapters that have no live-telemetry channel - drives the ContextBar fallback pill. */
+  liveTelemetryUnsupported?: AgentLiveTelemetryUnsupported;
 }
 
 export type ProjectSearchEntryKind = 'file' | 'directory';

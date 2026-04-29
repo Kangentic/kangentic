@@ -1163,6 +1163,22 @@
             ],
             defaultPermission: 'acceptEdits',
           },
+          {
+            name: 'droid', displayName: 'Droid', found: false, path: null, version: null,
+            // KEEP IN SYNC with DroidAdapter.permissions and DroidAdapter.liveTelemetryUnsupported
+            // in src/main/agent/adapters/droid/droid-adapter.ts
+            permissions: [
+              { mode: 'default', label: 'Default (use Droid TUI controls)' },
+            ],
+            defaultPermission: 'default',
+            liveTelemetryUnsupported: {
+              unavailableLabel: 'Telemetry: TUI only',
+              unavailableTitle:
+                'Droid does not stream live telemetry to Kangentic.\n' +
+                'Run /cost or /context inside the Droid TUI to see model, tokens, and cost.\n' +
+                'Tracked upstream: Factory-AI/factory (see docs/agent-integration.md).',
+            },
+          },
         ];
         return defaults.map(function (agent) {
           var override = overrides[agent.name];

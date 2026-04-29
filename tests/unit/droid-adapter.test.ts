@@ -443,6 +443,36 @@ describe('Agent Registry - droid', () => {
   });
 });
 
+// ── liveTelemetryUnsupported capability ─────────────────────────────────────
+//
+// Droid 0.109.x has no per-session telemetry channel Kangentic can subscribe
+// to. The adapter declares a static `liveTelemetryUnsupported` affordance so
+// ContextBar can render a static pill instead of an indefinite spinner.
+// These assertions lock in: (a) the field is defined, (b) the label is a
+// non-empty string, (c) the tooltip title contains the "Droid" product-name
+// marker so an accidental field-clear is caught.
+
+describe('DroidAdapter - liveTelemetryUnsupported', () => {
+  it('is defined on the adapter instance', () => {
+    const adapter = new DroidAdapter();
+    expect(adapter.liveTelemetryUnsupported).toBeDefined();
+  });
+
+  it('unavailableLabel is a non-empty string', () => {
+    const adapter = new DroidAdapter();
+    const label = adapter.liveTelemetryUnsupported?.unavailableLabel;
+    expect(typeof label).toBe('string');
+    expect(label!.length).toBeGreaterThan(0);
+  });
+
+  it('unavailableTitle contains "Droid" so an empty-field refactor is caught', () => {
+    const adapter = new DroidAdapter();
+    const title = adapter.liveTelemetryUnsupported?.unavailableTitle;
+    expect(typeof title).toBe('string');
+    expect(title).toContain('Droid');
+  });
+});
+
 // ── agent-display-name - droid entry ────────────────────────────────────────
 
 describe('agent-display-name - droid entry', () => {

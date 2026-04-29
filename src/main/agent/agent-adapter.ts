@@ -5,6 +5,7 @@ import type {
   AdapterRuntimeStrategy,
   SessionContext,
   SessionAttachment,
+  AgentLiveTelemetryUnsupported,
 } from '../../shared/types';
 
 /** CLI detection result returned by all agent detectors. */
@@ -144,6 +145,15 @@ export interface AgentAdapter {
    * at runtime. See AdapterRuntimeStrategy for details.
    */
   readonly runtime: AdapterRuntimeStrategy;
+
+  /**
+   * Set by adapters whose CLI has no per-session telemetry channel (no
+   * statusFile / sessionHistory / streamOutput integration is possible).
+   * Carries the renderer-facing label and tooltip so all agent-specific
+   * copy lives with the adapter. Omit for adapters that populate
+   * SessionUsage normally via `runtime`.
+   */
+  readonly liveTelemetryUnsupported?: AgentLiveTelemetryUnsupported;
 
   /**
    * Optional session lifecycle hook called once per PTY spawn, after

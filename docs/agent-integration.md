@@ -790,9 +790,27 @@ The URL and token are visible in **Settings -> MCP**. Droid persists the entry i
 
 ### Limitations
 
+#### No live telemetry (model, cost, tokens, context window)
+
+Droid 0.109.x has no per-session telemetry channel that Kangentic can subscribe to. The three documented surfaces all sit outside the live-streaming contract that `ContextBar` requires:
+
+- **`/cost` and `/context` slash commands** - post-hoc and user-initiated inside the TUI, not a stream Kangentic can read.
+- **`OTEL_TELEMETRY_ENDPOINT`** - out-of-band OpenTelemetry export to a collector. Not a per-session signal we can subscribe to from the main process.
+- **`~/.factory/sessions/<cwd-slug>/<uuid>.settings.json`** - written post-hoc, schema undocumented and unstable. Empirical parsing was evaluated and rejected (see "Out of scope" below).
+
+As a result, `SessionUsage` is never populated for Droid sessions. The Droid adapter declares `liveTelemetryUnsupported` (carrying a label and tooltip) on `AgentAdapter`, the field flows to the renderer through `AgentDetectionInfo`, and `ContextBar` reads the generic capability and renders a "Telemetry: TUI only" pill (with the adapter-supplied tooltip) in place of the loading spinner. The renderer never branches on agent name. Users get live telemetry by running `/cost` or `/context` directly inside the Droid TUI.
+
+Tracked upstream at [Factory-AI/factory#TBD](https://github.com/Factory-AI/factory/issues) - once a per-session streaming channel ships (status file, named pipe, or `stream-json` on interactive `droid`), wire a `runtime.sessionHistory` (or `runtime.statusFile` / `runtime.streamOutput`) parser in `src/main/agent/adapters/droid/` and remove `liveTelemetryUnsupported` from the Droid adapter. The renderer falls back to the standard model / cost / token pills automatically.
+
+#### Other gaps
+
 - No status events or activity log integration; the terminal panel is the only signal of agent state.
 - No trust dialog (`ensureTrust` is a no-op; Droid does not prompt for directory approval).
 - No cross-agent handoff source: `locateSessionHistoryFile` returns null because Droid's JSONL transcript format has not yet been wired into the handoff pipeline.
+
+#### Out of scope: post-hoc JSONL replay
+
+Reading `<uuid>.settings.json` after session exit was considered as a "good enough" fallback for cost/token totals. Rejected because (a) the file schema is undocumented and observed to differ across Droid 0.10x point releases, (b) post-hoc data does not solve the live-spinner UX, only the final-row UX, and (c) Factory has signaled willingness to add a streaming channel - see upstream FR.
 
 ## Prompt Templates
 

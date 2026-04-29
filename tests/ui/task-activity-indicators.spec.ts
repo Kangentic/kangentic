@@ -41,7 +41,7 @@ const SESSION_ID = 'sess-activity-test';
 const SWIMLANE_ID = 'lane-backlog';
 
 /** Base pre-configure that creates a project with a task linked to a running session */
-function makePreConfig(opts: { sessionStatus: string; activity: string; withUsage: boolean; nullSessionId?: boolean; withEvents?: boolean; noActivityCache?: boolean; withRateLimits?: boolean }): string {
+function makePreConfig(opts: { sessionStatus: string; activity: string; withUsage: boolean; nullSessionId?: boolean; withEvents?: boolean; noActivityCache?: boolean; withRateLimits?: boolean; agent?: string | null }): string {
   return `
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
@@ -97,7 +97,7 @@ function makePreConfig(opts: { sessionStatus: string; activity: string; withUsag
         description: '',
         swimlane_id: '${SWIMLANE_ID}',
         position: 0,
-        agent: null,
+        agent: ${opts.agent !== undefined ? (opts.agent === null ? 'null' : `'${opts.agent}'`) : 'null'},
         session_id: ${opts.sessionStatus === 'suspended' || opts.nullSessionId ? 'null' : `'${SESSION_ID}'`},
         worktree_path: null,
         branch_name: null,
@@ -618,6 +618,68 @@ test.describe('Task Activity Indicators', () => {
         await expect(usageBar).toBeVisible({ timeout: 10000 });
         await expect(usageBar).toContainText('Resuming agent...');
         await expect(usageBar.locator('.lucide-loader-circle')).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    // Gap 1: liveTelemetryUnsupported branch
+    // When a task's agent declares liveTelemetryUnsupported (currently only
+    // Droid), ContextBar renders a static pill with the adapter's label and
+    // tooltip instead of the indefinite Loader2 spinner. The renderer never
+    // branches on agent name -- it reads the generic capability flag from
+    // agentList.find(a => a.name === task.agent).
+    //
+    // The ContextBar component lives inside TaskDetailDialog (and the bottom
+    // panel), not in the TaskCard inline bar. We open the dialog to assert
+    // the ContextBar branch. The dialog's ContextBar has the `min-h-8` class
+    // that distinguishes it from the TaskCard's own compact usage bar.
+    test('shows static "Telemetry: TUI only" pill (no spinner) for droid agent', async () => {
+      // Set agent:'droid' so agentList.find(a => a.name === 'droid')
+      // resolves to the entry carrying liveTelemetryUnsupported. Leave
+      // withUsage:false and noActivityCache:true so usage and
+      // resolvedModelName both stay null -- triggering the early-return
+      // branch in ContextBar before the full bar layout renders.
+      const { browser, page } = await launchWithState(
+        makePreConfig({
+          sessionStatus: 'running',
+          activity: 'idle',
+          withUsage: false,
+          noActivityCache: true,
+          agent: 'droid',
+        }),
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Open the task detail dialog to exercise the ContextBar component.
+        await page.locator('text=Test Initializing Task').first().click();
+        const dialog = page.locator('[data-testid="task-detail-dialog"]');
+        await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+        // The ContextBar inside the dialog carries min-h-8 to distinguish it
+        // from the TaskCard's own compact usage bar (which uses mt-2 pt-2).
+        const usageBar = page.locator('[data-testid="usage-bar"].min-h-8');
+        await expect(usageBar).toBeVisible({ timeout: 10000 });
+
+        // data-live-telemetry="unsupported" is the machine-readable signal
+        await expect(usageBar).toHaveAttribute('data-live-telemetry', 'unsupported');
+
+        // Human-readable pill text
+        await expect(usageBar).toContainText('Telemetry: TUI only');
+
+        // No spinner -- the indefinite Loader2 must be absent
+        await expect(usageBar.locator('.lucide-loader-2')).toHaveCount(0);
+
+        // No "Starting agent..." or "Resuming agent..." copy
+        await expect(usageBar).not.toContainText('Starting agent...');
+        await expect(usageBar).not.toContainText('Resuming agent...');
+
+        // Tooltip contains the "Run /cost or /context" hint
+        const pill = usageBar.locator('span[title]');
+        const titleAttr = await pill.first().getAttribute('title');
+        expect(titleAttr).toBeTruthy();
+        expect(titleAttr).toMatch(/\/cost|\/context/);
       } finally {
         await browser.close();
       }
