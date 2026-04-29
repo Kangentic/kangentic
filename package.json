@@ -27,6 +27,7 @@
     "typecheck": "tsc --noEmit",
     "dev": "node scripts/dev.js",
     "build": "node scripts/build.js",
+    "validate:kimi-mcp": "node scripts/kimi-validate-mcp.mjs",
     "prepare": "husky"
   },
   "keywords": [
