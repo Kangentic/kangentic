@@ -39,6 +39,11 @@
  *                             (subagent_type='explore') into the wire.jsonl,
  *                             exercising the SubagentStart / SubagentStop
  *                             lifecycle decoding path end-to-end.
+ *   MOCK_KIMI_PLAN_DISPLAY=1 -> inject a PlanDisplay event (file_path='PLAN.md',
+ *                               content='# Implementation plan\n- Step 1: scaffold\n
+ *                               - Step 2: implement') into the wire.jsonl,
+ *                               exercising the Notification detail round-trip
+ *                               through the events-cache IPC pipeline.
  *   MOCK_KIMI_WRITE_KIMI_JSON=1 -> simulate real Kimi's racy read-modify-write of
  *                                  the kimi.json work_dirs[].last_session_id state.
  *                                  Intentionally non-atomic so concurrent invocations
@@ -189,6 +194,23 @@ function writeWireEvents() {
       },
     },
   }));
+  // MOCK_KIMI_PLAN_DISPLAY=1: inject a PlanDisplay event with a known
+  // file_path and content so the E2E spec can assert that the notification
+  // detail survives the wire.jsonl -> SessionHistoryReader -> IPC round-trip
+  // in the "<file_path>: <truncated content>" format.
+  if (process.env.MOCK_KIMI_PLAN_DISPLAY) {
+    lines.push(JSON.stringify({
+      timestamp: now + 0.17,
+      message: {
+        type: 'PlanDisplay',
+        payload: {
+          file_path: 'PLAN.md',
+          content: '# Implementation plan\n- Step 1: scaffold\n- Step 2: implement',
+        },
+      },
+    }));
+  }
+
   // MOCK_KIMI_SUBAGENT=1: inject a SubagentEvent TurnBegin + TurnEnd pair
   // (subagent_type='explore') before the outer TurnEnd, exercising the
   // SubagentStart / SubagentStop lifecycle decoding path end-to-end.

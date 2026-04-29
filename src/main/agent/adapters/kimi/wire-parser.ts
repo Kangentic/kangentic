@@ -63,7 +63,7 @@ import {
  *   BtwBegin           (preserve)    SubagentStart (detail = "btw")
  *   BtwEnd             (preserve)    SubagentStop  (detail = "btw")
  *   SteerInput         → Thinking    Prompt (detail = user input)
- *   PlanDisplay        (preserve)    Notification (detail = file_path)
+ *   PlanDisplay        (preserve)    Notification (detail = file_path[: content...])
  *   HookTriggered      (preserve)    Notification (detail = "<event>:<target>")
  *   HookResolved       (preserve)    Notification (detail = "<event>:<action>")
  *
@@ -413,10 +413,15 @@ export function parseWireJsonl(
           const filePath = typeof payload.file_path === 'string' && payload.file_path.length > 0
             ? payload.file_path
             : 'plan';
+          const rawContent = typeof payload.content === 'string' ? payload.content : '';
+          const truncatedContent = truncateForActivityLog(rawContent, 200);
+          const detail = truncatedContent.length > 0
+            ? `${filePath}: ${truncatedContent}`
+            : filePath;
           events.push({
             ts: timestamp,
             type: EventType.Notification,
-            detail: filePath,
+            detail,
           });
         }
         break;

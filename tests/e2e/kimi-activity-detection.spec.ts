@@ -155,6 +155,91 @@ test.describe('Kimi Agent - Activity Detection', () => {
   });
 });
 
+test.describe('Kimi Agent - PlanDisplay notification detail round-trip (MOCK_KIMI_PLAN_DISPLAY=1)', () => {
+  const TEST_NAME = 'kimi-plan-display';
+  const PROJECT_NAME = `Kimi PlanDisplay Test ${runId}`;
+
+  let app: ElectronApplication;
+  let page: Page;
+  let tmpDir: string;
+  let dataDir: string;
+
+  test.beforeAll(async () => {
+    // Set the plan-display knob before launching Electron so every PTY session
+    // spawned by this Electron instance inherits the env var. mock-kimi.js
+    // reads it at runtime to inject a PlanDisplay line into wire.jsonl,
+    // exercising the file_path + content detail round-trip end-to-end.
+    process.env.MOCK_KIMI_PLAN_DISPLAY = '1';
+
+    tmpDir = createTempProject(TEST_NAME);
+    dataDir = getTestDataDir(TEST_NAME);
+    fs.writeFileSync(
+      path.join(dataDir, 'config.json'),
+      JSON.stringify({
+        agent: {
+          cliPaths: { kimi: mockAgentPath('kimi') },
+          permissionMode: 'acceptEdits',
+          maxConcurrentSessions: 5,
+          queueOverflow: 'queue',
+        },
+        git: { worktreesEnabled: false },
+      }),
+    );
+
+    const result = await launchApp({ dataDir });
+    app = result.app;
+    page = result.page;
+    await createProject(page, PROJECT_NAME, tmpDir);
+    await setProjectDefaultAgent(page, 'kimi');
+  });
+
+  test.afterAll(async () => {
+    delete process.env.MOCK_KIMI_PLAN_DISPLAY;
+    await app?.close();
+    cleanupKimiSessionsForCwd(tmpDir);
+    cleanupTempProject(TEST_NAME);
+    cleanupTestDataDir(TEST_NAME);
+  });
+
+  test('PlanDisplay wire event produces a notification event with file_path and content detail', async () => {
+    const title = `Kimi PlanDisplay ${runId}`;
+    await createTask(page, title, 'Verify PlanDisplay detail round-trip through wire.jsonl events-cache IPC');
+
+    const swimlaneIds = await getSwimlaneIds(page);
+    const taskId = await getTaskIdByTitle(page, title);
+
+    await moveTaskIpc(page, taskId, swimlaneIds.planning);
+    await waitForScrollback(page, 'MOCK_KIMI_SESSION:');
+
+    // The mock writes a PlanDisplay event with file_path='PLAN.md' and
+    // content='# Implementation plan\n- Step 1: scaffold\n- Step 2: implement'.
+    // After truncateForActivityLog the content becomes:
+    //   '# Implementation plan - Step 1: scaffold - Step 2: implement'
+    // (whitespace collapsed; well under 200 chars so no ellipsis).
+    // The full detail is: 'PLAN.md: # Implementation plan - Step 1: scaffold - Step 2: implement'
+    await expect.poll(async () => {
+      const eventsMap = await page.evaluate(() => window.electronAPI.sessions.getEventsCache());
+      const allEvents = Object.values(eventsMap as Record<string, SessionEvent[]>).flat();
+      return allEvents.some((event) => event.type === 'notification' && /^PLAN\.md: .+/.test(event.detail ?? ''));
+    }, { timeout: 30000, message: 'Expected notification event with PLAN.md detail from PlanDisplay wire event' }).toBe(true);
+
+    // Snapshot and verify the exact detail format survives the round-trip.
+    const eventsMap = await page.evaluate(() => window.electronAPI.sessions.getEventsCache());
+    const allEvents = Object.values(eventsMap as Record<string, SessionEvent[]>).flat();
+    const planNotification = allEvents.find(
+      (event) => event.type === 'notification' && /^PLAN\.md: .+/.test(event.detail ?? ''),
+    );
+    expect(planNotification).toBeDefined();
+    // detail must match the "<file_path>: <content>" format
+    expect(planNotification!.detail).toMatch(/^.+: .+/);
+    // file_path portion must be preserved exactly
+    expect(planNotification!.detail).toMatch(/^PLAN\.md:/);
+    // content portion must be non-empty (colon-space separates them)
+    const contentPart = planNotification!.detail!.split(': ').slice(1).join(': ');
+    expect(contentPart.length).toBeGreaterThan(0);
+  });
+});
+
 test.describe('Kimi Agent - SubagentEvent lifecycle decoding (MOCK_KIMI_SUBAGENT=1)', () => {
   const TEST_NAME = 'kimi-subagent-detection';
   const PROJECT_NAME = `Kimi Subagent Test ${runId}`;

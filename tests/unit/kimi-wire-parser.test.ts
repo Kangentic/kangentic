@@ -723,13 +723,13 @@ describe('parseWireJsonl', () => {
   });
 
   describe('Plan / hook telemetry', () => {
-    it('PlanDisplay emits a Notification with the file_path', () => {
+    it('PlanDisplay emits a Notification with file_path and truncated content', () => {
       const result = parseWireJsonl(envelope('PlanDisplay', {
         content: '# Plan\n- step 1',
         file_path: '/projects/foo/PLAN.md',
       }), 'append');
       const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('/projects/foo/PLAN.md');
+      expect(notif?.detail).toBe('/projects/foo/PLAN.md: # Plan - step 1');
     });
 
     it('PlanDisplay falls back to "plan" when file_path is missing', () => {
@@ -737,7 +737,31 @@ describe('parseWireJsonl', () => {
         content: '# inline plan',
       }), 'append');
       const notif = result.events.find((event) => event.type === EventType.Notification);
-      expect(notif?.detail).toBe('plan');
+      expect(notif?.detail).toBe('plan: # inline plan');
+    });
+
+    it('PlanDisplay truncates long content to 200 chars with ellipsis', () => {
+      const longContent = 'a'.repeat(500);
+      const result = parseWireJsonl(envelope('PlanDisplay', {
+        content: longContent,
+        file_path: 'PLAN.md',
+      }), 'append');
+      const notif = result.events.find((event) => event.type === EventType.Notification);
+      expect(notif?.detail).toBeDefined();
+      const detail = notif!.detail!;
+      expect(detail.startsWith('PLAN.md: ')).toBe(true);
+      expect(detail.endsWith('...')).toBe(true);
+      // Detail = "PLAN.md: " (9 chars) + truncated content (<= 200 chars).
+      expect(detail.length).toBeLessThanOrEqual('PLAN.md: '.length + 200);
+    });
+
+    it('PlanDisplay omits the trailing colon when content is empty', () => {
+      const result = parseWireJsonl(envelope('PlanDisplay', {
+        content: '   ',
+        file_path: '/foo/PLAN.md',
+      }), 'append');
+      const notif = result.events.find((event) => event.type === EventType.Notification);
+      expect(notif?.detail).toBe('/foo/PLAN.md');
     });
 
     it('HookTriggered formats detail as "<event>:<target>"', () => {
