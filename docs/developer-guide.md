@@ -225,6 +225,8 @@ npx playwright test --project=electron
 | Component rendering, user interaction, form validation | UI |
 | Real IPC, PTY spawning, terminal output, file I/O | E2E |
 
+Release-time manual validation against real authenticated agent CLIs lives in [release-checklist.md](release-checklist.md). Automated tests use mock fixtures and intentionally do not exercise real model latency, real tool calls, or conversation continuity across resume.
+
 ### Run All
 
 ```bash

@@ -40,9 +40,10 @@ To roll back to a previous version, run `npx kangentic@X.Y.Z` with the desired v
 
 1. **`/release patch`** (or `minor`/`major`) -- analyzes conventional commits, bumps version in root `package.json` + `packages/launcher/package.json`, generates CHANGELOG entry + user-friendly release notes, commits, tags, pushes.
 2. **Tag push triggers `release.yml`** -- requires approval from the `release` environment (Settings > Environments). Builds all platforms (Linux x64, Windows x64, macOS arm64), signs binaries (when signing secrets are configured), creates a **draft** GitHub Release with artifacts attached.
-3. **Review and publish the draft release** at [github.com/Kangentic/kangentic/releases](https://github.com/Kangentic/kangentic/releases). Paste the release notes from `/release` output. Publishing is a manual gate.
-4. **Publishing triggers `npm-publish.yml`** -- publishes the launcher package to npm.
-5. **`npx kangentic`** now downloads the new version's signed binaries.
+3. **Run the [release smoke checklist](release-checklist.md)** against the draft build before publishing. Automated tests use mock CLI fixtures, so this manual gate is the only place real model latency, real tool calls, and conversation continuity across resume get exercised. Failure here blocks publish.
+4. **Review and publish the draft release** at [github.com/Kangentic/kangentic/releases](https://github.com/Kangentic/kangentic/releases). Paste the release notes from `/release` output. Publishing is a manual gate.
+5. **Publishing triggers `npm-publish.yml`** -- publishes the launcher package to npm.
+6. **`npx kangentic`** now downloads the new version's signed binaries.
 
 ### Commit Conventions
 

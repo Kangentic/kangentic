@@ -40,3 +40,4 @@ Kangentic is a cross-platform desktop Kanban for AI coding agents. Drag tasks be
 - [Cross-Platform](cross-platform.md) -- Shell resolution, path handling, packaging, security fuses
 - [Deployment](deployment.md) -- Release pipeline, code signing, auto-update, npx launcher
 - [Developer Guide](developer-guide.md) -- Setup, build system, testing, conventions
+- [Release Smoke Checklist](release-checklist.md) -- Manual real-LLM validation gate run against draft builds before publish
