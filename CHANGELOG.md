@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [Unreleased]
+
+### Added
+
+- **Kimi Code agent support** (Moonshot AI's `kimi-cli`). Full wire-protocol v1.9 telemetry via `~/.kimi/sessions/<hash>/<id>/wire.jsonl` (context %, token counts, tool events). Caller-owned session IDs via `--session <uuid>`. Plan / YOLO permission modes. MCP server config injection. Detected on Windows + macOS + Linux via uv-tool fallback paths.
+
 ## [v0.17.0] - 2026-04-24
 
 ### Features
