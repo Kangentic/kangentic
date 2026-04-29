@@ -424,6 +424,31 @@ const DROID_REAL_TRANSCRIPT = [
   ' [⏱ 4s]✓ v0.109.3 ready (restart to apply)IDE ◌',
 ].join('\n');
 
+// ── OpenCode CLI ──
+// Real structure (captured from opencode v1.14.25): the Bubble Tea TUI uses
+// cursor positioning rather than newlines for layout, so each PTY frame
+// collapses into one very wide line after ANSI stripping. Vertical box
+// borders `┃` separate visual cells, and long `▀` runs are horizontal
+// separators. The actual response text appears interspersed with chrome
+// (banner block-chars, spinner runs, status bar, onboarding panel).
+//
+// Compact fixture below preserves the structural shape of a real capture
+// (banner row → prompt cell → spinner row → Thinking block → response →
+// duplicate redraw → onboarding panel → version footer) while staying
+// readable in source.
+const OPENCODE_REAL_TRANSCRIPT = [
+  // Frame 1: banner + welcome + prompt cell + tip + cwd:branch + input placeholder.
+  // All concatenated on a single visual row by cursor positioning.
+  '                                                                                ▄     ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▄▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀▀  ▀ ▀  ▀ ▀▀▀▀ ▀  ▀▀    ▀  ▀ ▀  ▀ ▀▀▀▀▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀┃┃  Tell me about 3 birds. Be brief - one sentence each.┃┃  Build · Big Pickle OpenCode Zen╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀tab agentsctrl+p commands● Tip Set any keybind to none to disable it completely~\\Documents\\GitHub\\kangentic\\.kangentic\\worktrees\\opencode-add-transcr-2075d854:opencode-add-transcr-2075d854Ask anything... "What is the tech stack of this project?"',
+  // Frame 2: prompt cell + mode indicator
+  '┃┃  Tell me about 3 birds. Be brief - one sentence each.┃  ▣ Build · Big Pickle',
+  '',
+  // Frame 3: chrome + spinner runs + Thinking + response (all concatenated)
+  '┃┃┃┃  Build · Big Pickle OpenCode Zen╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ ■⬝⬝⬝⬝⬝⬝⬝esc interrupttab agentsctrl+p commands■■⬝⬝⬝⬝⬝⬝■■■⬝⬝⬝⬝⬝■■■■⬝⬝⬝⬝■■■■■⬝⬝⬝┃  ▣ Build · Big Pickle⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝Thinking: The user is asking about 3 birds, wants brief one-sentence descriptions. This is a general knowledge ┃question - I do not need to use any tools for this.  ▣ Build · Big Pickle⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝⬝  ▣ Build · Big PickleBald eagles are large raptors native to North America, known for their striking white head and wingspan up to 7.5 feet.Penguins are flightless birds adapted to aquatic life in the Southern Hemisphere, with species ranging from the emperor penguin to the tiny fairy penguin.Cardinals are vibrant red songbirds found in North America, famous for the male brilliant plumage and distinctive whistling call.⬝⬝⬝⬝⬝⬝⬝⬝■⬝⬝⬝⬝⬝⬝⬝■■⬝⬝⬝⬝⬝⬝■■■⬝⬝⬝⬝⬝■■■■⬝⬝⬝⬝15.4K (8%)■■■■■⬝⬝⬝■■■■■■⬝⬝⬝■■■■■■⬝ · 3.0s                                                                                                                                   ┃                                                                                                                        ┃  Tell me about 3 birds. Be brief - one sentence each.                                                                  ┃                                                                                                                                                                                                                                                 ┃  Thinking: The user is asking about 3 birds, wants brief one-sentence descriptions. This is a general knowledge        ┃  question - I do not need to use any tools for this.                                                                                                                                                                                                Bald eagles are large raptors native to North America, known for their striking white head and wingspan up to 7.5         feet.                                                                                                                                                                                                                                             Penguins are flightless birds adapted to aquatic life in the Southern Hemisphere, with species ranging from the          emperor penguin to the tiny fairy penguin.                                                                                                                                                                                                        Cardinals are vibrant red songbirds found in North America, famous for the male brilliant plumage and                  distinctive whistling call.                                                                                                                                                                                                                       ▣  Build · Big Pickle · 3.0s                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       ┃                                                                                                                        ┃                                                                                                                        ┃                                                                                                                        ┃  Build · Big Pickle OpenCode Zen                                                                                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                                                              15.4K (8%)  ctrl+p commands',
+  // Frame 4: onboarding/welcome panel + final response redraw + context panel
+  '                                                                                                                           ┃                                                                              Birds: brief overview of three       █    ┃  Tell me about 3 birds. Be brief - one sentence each.                        species                              █    ┃                                                                                                                   █                                                                                   Context                                   ┃  Thinking: The user is asking about 3 birds, wants brief one-sentence        15,402 tokens                             ┃  descriptions. This is a general knowledge question - I do not need to        8% used                                   ┃  use any tools for this.                                                     $0.00 spent                                                                                                                                                           Bald eagles are large raptors native to North America, known for their                                                   striking white head and wingspan up to 7.5 feet.                                                                                                                                                                                                   Penguins are flightless birds adapted to aquatic life in the Southern         ⬖ Getting started                ✕         Hemisphere, with species ranging from the emperor penguin to the tiny                                                    fairy penguin.                                                                  OpenCode includes free models                                                                                            so you can start immediately.            Cardinals are vibrant red songbirds found in North America, famous for                                                   the male brilliant plumage and distinctive whistling call.                    Connect from 75+ providers to                                                                                            use other models, including              ▣  Build · Big Pickle · 3.0s                                                    Claude, GPT, Gemini etc                                                                                                                                                                                                                           Connect provider        /connect                                                                                                                                                                                                                                                        ┃                                                                              /~\\Documents\\GitHub\\kangentic\\.           ┃                                                                              kangentic\\worktrees\\opencode-add-         ┃                                                                              transcr-2075d854:opencode-add-transcr-    ┃  Build · Big Pickle OpenCode Zen                                             2075d854                                  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                                                              15.4K (8%)  ctrl+p commands    • OpenCode 1.14.25                                                                                                                                               ███LSP^C',
+].join('\n');
+
 // ── Claude multi-turn ──
 const CLAUDE_MULTI_TURN = [
   '✶Sublimating...',
@@ -722,6 +747,245 @@ describe('cleanTranscriptForHandoff', () => {
       const result = cleanTranscriptForHandoff(DROID_REAL_TRANSCRIPT, 'droid')!;
       const promptCount = (result.match(/Tell me 3 facts about cats/g) ?? []).length;
       expect(promptCount).toBe(1);
+    });
+  });
+
+  describe('OpenCode CLI', () => {
+    it('extracts user prompt and assistant response from the TUI capture', () => {
+      const result = cleanTranscriptForHandoff(OPENCODE_REAL_TRANSCRIPT, 'opencode');
+      expect(result).not.toBeNull();
+
+      expect(result).toContain('Tell me about 3 birds');
+      expect(result).toContain('Bald eagles');
+      expect(result).toContain('Penguins');
+      expect(result).toContain('Cardinals');
+    });
+
+    it('strips block-character banner and horizontal border runs', () => {
+      const result = cleanTranscriptForHandoff(OPENCODE_REAL_TRANSCRIPT, 'opencode')!;
+      // The banner row of ▀ ▄ block chars and the ╹▀▀▀ horizontal separators
+      // should not survive cleanup.
+      expect(result).not.toMatch(/^[\s█▀▄]{8,}$/m);
+      expect(result).not.toMatch(/╹▀+/);
+    });
+
+    it('strips spinner runs (■ and ⬝ mixes)', () => {
+      const result = cleanTranscriptForHandoff(OPENCODE_REAL_TRANSCRIPT, 'opencode')!;
+      expect(result).not.toMatch(/^[\s■⬝]{4,}$/m);
+    });
+
+    it('strips status / hint bar fragments', () => {
+      const result = cleanTranscriptForHandoff(OPENCODE_REAL_TRANSCRIPT, 'opencode')!;
+      expect(result).not.toMatch(/tab\s*agents/);
+      expect(result).not.toMatch(/ctrl\+p\s+commands/);
+      expect(result).not.toMatch(/esc\s+interrupt/);
+    });
+
+    it('strips model footer and mode indicator chrome', () => {
+      const result = cleanTranscriptForHandoff(OPENCODE_REAL_TRANSCRIPT, 'opencode')!;
+      expect(result).not.toMatch(/Build\s+·\s+Big Pickle\s+OpenCode\s+Zen/);
+      expect(result).not.toMatch(/▣\s+Build\s+·/);
+    });
+
+    it('strips token / context readouts', () => {
+      const result = cleanTranscriptForHandoff(OPENCODE_REAL_TRANSCRIPT, 'opencode')!;
+      expect(result).not.toMatch(/^\s*15\.4K\s+\(8%\)\s*$/m);
+      expect(result).not.toMatch(/^\s*15,402\s+tokens\s*$/m);
+      expect(result).not.toMatch(/^\s*8%\s+used\s*$/m);
+      expect(result).not.toMatch(/^\s*\$0\.00\s+spent\s*$/m);
+      expect(result).not.toMatch(/·\s+3\.0s\s*$/m);
+    });
+
+    it('strips onboarding panel content', () => {
+      const result = cleanTranscriptForHandoff(OPENCODE_REAL_TRANSCRIPT, 'opencode')!;
+      expect(result).not.toMatch(/Getting\s+started/);
+      expect(result).not.toMatch(/OpenCode\s+includes\s+free\s+models/);
+      expect(result).not.toMatch(/Connect\s+from\s+75\+\s+providers/);
+      expect(result).not.toMatch(/Connect\s+provider\s+\/connect/);
+    });
+
+    it('strips input placeholder, tip line, and version footer', () => {
+      const result = cleanTranscriptForHandoff(OPENCODE_REAL_TRANSCRIPT, 'opencode')!;
+      expect(result).not.toMatch(/Ask\s+anything\.\.\./);
+      expect(result).not.toMatch(/^[●•]\s+Tip\s+/m);
+      expect(result).not.toMatch(/^\s*[•·]\s*OpenCode\s+\d+\.\d+\.\d+\s*$/m);
+      expect(result).not.toMatch(/^\s*█+\s*LSP/m);
+    });
+
+    it('strips the session id line emitted for runtime capture', () => {
+      const withSessionId = 'session id: ses_2349b5c91ffeKd6qajuUTR4clq\n\n' + OPENCODE_REAL_TRANSCRIPT;
+      const result = cleanTranscriptForHandoff(withSessionId, 'opencode')!;
+      expect(result).not.toMatch(/session\s+id:\s+ses_/i);
+      expect(result).not.toMatch(/ses_2349b5c91ffeKd6qajuUTR4clq/);
+    });
+
+    it('strips the resume hint footer', () => {
+      const withResume =
+        OPENCODE_REAL_TRANSCRIPT + "\n\nopencode --session 'ses_2349b5c91ffeKd6qajuUTR4clq'";
+      const result = cleanTranscriptForHandoff(withResume, 'opencode')!;
+      expect(result).not.toMatch(/^\s*opencode\s+(?:--session|-s)\s+/m);
+    });
+
+    it('strips slash-command help-table rows but keeps legitimate slash prose', () => {
+      const helpRows = [
+        '/help     Show command help',
+        '/connect  Connect to a provider',
+      ].join('\n');
+      const prose = 'You can run /help to see commands or /connect to set up a provider.';
+      const helpRowsCleaned = cleanTranscriptForHandoff(helpRows, 'opencode');
+      const proseCleaned = cleanTranscriptForHandoff(prose, 'opencode');
+      expect(helpRowsCleaned).toBeNull();
+      expect(proseCleaned).toContain('/help');
+      expect(proseCleaned).toContain('/connect');
+    });
+
+    it('does not duplicate the user prompt across redraws', () => {
+      const result = cleanTranscriptForHandoff(OPENCODE_REAL_TRANSCRIPT, 'opencode')!;
+      const promptCount = (result.match(/Tell me about 3 birds/g) ?? []).length;
+      // The fixture contains 4 redraws of the prompt; cleanup should collapse
+      // at minimum to a small number (≤2) thanks to trailing-dupe stripping
+      // and the cell-recovery split. We assert ≤2 rather than exactly 1
+      // because OpenCode renders the prompt in two distinct frames (live +
+      // final) that aren't identical paragraphs.
+      expect(promptCount).toBeLessThanOrEqual(2);
+    });
+
+    it('preserves short repeated lines (length-gated dedup)', () => {
+      // Dedup should only collapse long redrawn paragraphs (chrome), not short
+      // legitimate user/assistant content that happens to repeat.
+      const transcript = [
+        '┃  Is the build green?',
+        '┃  Yes.',
+        '┃  And the tests?',
+        '┃  Yes.',
+      ].join('\n');
+      const result = cleanTranscriptForHandoff(transcript, 'opencode')!;
+      const yesCount = (result.match(/^Yes\.$/gm) ?? []).length;
+      expect(yesCount).toBe(2);
+    });
+
+    it('returns null for input that is only horizontal border runs with no cell content', () => {
+      // HORIZONTAL_BORDER_RUN splits on ╹▀▀▀▀... runs (Step 1). When the
+      // entire input is composed of these separator characters (with no ┃ cell
+      // content), every resulting segment is either empty, a banner noise match,
+      // or too short (<3 chars) to survive Step 3. The pipeline must return null.
+      const borderOnly = '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀';
+      const result = cleanTranscriptForHandoff(borderOnly, 'opencode');
+      expect(result).toBeNull();
+    });
+
+    it('strips path-fragment cells produced by the onboarding panel wrapping cwd:branch', () => {
+      // The OPENCODE_NOISE_PATTERNS path-fragment entry matches cells like
+      // "/~\Documents\GitHub\kangentic\.\" that appear when the cwd:branch line
+      // wraps inside the onboarding panel column. Test it in isolation to ensure
+      // the regex fires without relying on the full fixture's Frame 4.
+      const pathFragment = '/~\\Documents\\GitHub\\kangentic\\.\\';
+      const result = cleanTranscriptForHandoff(pathFragment, 'opencode');
+      expect(result).toBeNull();
+    });
+
+    it('strips inline-chrome currency string when concatenated mid-line with response text', () => {
+      // The /\$\d+(?:\.\d+)?\s+spent/g inline-chrome pattern (Step 0) fires
+      // when the cost readout is concatenated onto the same line as response
+      // prose. The line-level NOISE pattern only matches standalone lines, so
+      // this exercises the distinct inline-strip substitution path.
+      const transcript = '┃  The answer is 42.$1.23 spent Now you know.';
+      const result = cleanTranscriptForHandoff(transcript, 'opencode');
+      expect(result).not.toBeNull();
+      // Response text on either side of the chrome must survive.
+      expect(result).toContain('The answer is 42');
+      expect(result).toContain('Now you know');
+      // The cost readout itself must be gone.
+      expect(result).not.toMatch(/\$1\.23\s+spent/);
+    });
+
+    it('preserves both turns of a multi-turn conversation', () => {
+      // The seenLong set in Step 4 accumulates across the full transcript.
+      // Two distinct turns that each have long sentences must BOTH survive
+      // dedup, even though each sentence exceeds the 20-char threshold.
+      // This test pins the pipeline's multi-turn preservation behavior so
+      // a future change to the dedup strategy is forced to be intentional.
+      const multiTurn = [
+        '┃  What is the capital of France?',
+        '┃  The capital of France is Paris, which has been the seat of French government for centuries.',
+        '',
+        '┃  And what is the capital of Japan?',
+        '┃  The capital of Japan is Tokyo, one of the most populous cities in the world.',
+      ].join('\n');
+      const result = cleanTranscriptForHandoff(multiTurn, 'opencode');
+      expect(result).not.toBeNull();
+      // Both user prompts must survive.
+      expect(result).toContain('capital of France');
+      expect(result).toContain('capital of Japan');
+      // Both responses must survive (they are distinct long lines, not duplicates).
+      expect(result).toContain('Paris');
+      expect(result).toContain('Tokyo');
+    });
+
+    it('dedup threshold boundary: exactly 20 chars is NOT deduped, 21 chars IS deduped', () => {
+      // DEDUP_LENGTH_THRESHOLD is `> 20` (strict). A line of exactly 20 chars
+      // is never added to seenLong, so a second occurrence survives. A line of
+      // exactly 21 chars IS added to seenLong, so the second occurrence is dropped.
+      //
+      // 20-char line: "Exactly twenty chars" (20 chars) - both occurrences keep
+      // 21-char line: "Exactly twenty-1chars" (21 chars) - second occurrence dropped
+      const twentyChars = 'Exactly twenty chars'; // length === 20
+      const twentyOneChars = 'Exactly twenty-1chars'; // length === 21
+
+      const transcriptTwenty = [
+        `┃  ${twentyChars}`,
+        `┃  ${twentyChars}`,
+      ].join('\n');
+      const resultTwenty = cleanTranscriptForHandoff(transcriptTwenty, 'opencode')!;
+      const twentyCount = (resultTwenty.match(new RegExp(twentyChars, 'g')) ?? []).length;
+      expect(twentyCount).toBe(2); // both occurrences preserved - below threshold
+
+      const transcriptTwentyOne = [
+        `┃  ${twentyOneChars}`,
+        `┃  ${twentyOneChars}`,
+      ].join('\n');
+      const resultTwentyOne = cleanTranscriptForHandoff(transcriptTwentyOne, 'opencode')!;
+      const twentyOneCount = (resultTwentyOne.match(new RegExp(twentyOneChars, 'g')) ?? []).length;
+      expect(twentyOneCount).toBe(1); // second occurrence dropped - at threshold
+    });
+
+    it('splits on light vertical bar U+2502 (│) as well as heavy U+2503 (┃)', () => {
+      // CELL_DELIMITERS = /[┃│]/g accepts both heavy (U+2503) and light (U+2502)
+      // vertical box-drawing characters as cell boundaries. All existing fixtures
+      // use only ┃ - this test exercises the │ code path in isolation.
+      const lightDelimiters = [
+        '│  What is 1+1?',
+        '│  1+1 = 2',
+        '│  Build · Big Pickle OpenCode Zen',
+      ].join('\n');
+      const result = cleanTranscriptForHandoff(lightDelimiters, 'opencode');
+      expect(result).not.toBeNull();
+      expect(result).toContain('What is 1+1?');
+      expect(result).toContain('1+1 = 2');
+      // The footer brand should be stripped by inline-chrome (Step 0 / line filter).
+      expect(result).not.toMatch(/Build\s+·\s+Big Pickle\s+OpenCode\s+Zen/);
+    });
+
+    it('returns null for OpenCode-specific pure-noise input (banner + spinner + hints, no content)', () => {
+      // Exercises the OpenCode-specific path of the pipeline end-to-end.
+      // All input must be absorbed by the chrome-strip + noise-filter steps,
+      // leaving nothing meaningful for finalizeTranscript to return.
+      const noise = [
+        // Block-char banner row
+        '                              ▄     ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▄▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀▀▀▀▀',
+        // Spinner row
+        '■⬝⬝⬝⬝■■⬝⬝■■■⬝⬝⬝■■■■⬝⬝',
+        // Hint bar
+        '? for shortcuts',
+        // Context cell (standalone)
+        '8% used',
+        // Version footer
+        '• OpenCode 1.14.25',
+        // Horizontal separator
+        '╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ].join('\n');
+      const result = cleanTranscriptForHandoff(noise, 'opencode');
+      expect(result).toBeNull();
     });
   });
 

@@ -48,6 +48,14 @@ const AGENTS: Record<string, AgentConfig> = {
     args: [PROMPT],
     marker: 'birds',
   },
+  opencode: {
+    cmd: 'opencode',
+    // OpenCode's TUI accepts the prompt via --prompt rather than as a positional.
+    // The interactive TUI is what we need for handoff scrollback (not `opencode run`),
+    // so we use the default subcommand with --prompt to seed the conversation.
+    args: ['--prompt', PROMPT],
+    marker: 'birds',
+  },
 };
 
 interface CaptureResult {
