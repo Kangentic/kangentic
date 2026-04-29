@@ -298,11 +298,12 @@
       },
       getCurrent: async function () {
         if (!currentProjectId) return null;
-        return (
-          projects.find(function (p) {
-            return p.id === currentProjectId;
-          }) || null
-        );
+        var found = projects.find(function (p) {
+          return p.id === currentProjectId;
+        });
+        // Return a new object each time so Zustand's reference equality check
+        // detects field mutations (e.g. default_agent changes after setDefaultAgent).
+        return found ? Object.assign({}, found) : null;
       },
       openByPath: async function (projectPath) {
         var name = projectPath.split('/').pop() || projectPath.split('\\').pop() || 'project';
@@ -1156,10 +1157,8 @@
             name: 'opencode', displayName: 'OpenCode', found: false, path: null, version: null,
             // KEEP IN SYNC with OpenCodeAdapter.permissions in src/main/agent/adapters/opencode/opencode-adapter.ts
             permissions: [
-              { mode: 'plan', label: 'Plan (Read-Only)' },
-              { mode: 'default', label: 'Default' },
-              { mode: 'acceptEdits', label: 'Accept Edits' },
-              { mode: 'bypassPermissions', label: 'Dangerous Full Access' },
+              { mode: 'plan', label: 'Plan' },
+              { mode: 'acceptEdits', label: 'Build' },
             ],
             defaultPermission: 'acceptEdits',
           },

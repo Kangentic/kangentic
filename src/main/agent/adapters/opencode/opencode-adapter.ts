@@ -71,11 +71,23 @@ export class OpenCodeAdapter implements AgentAdapter {
   readonly displayName = 'OpenCode';
   readonly sessionType = 'opencode_agent';
   readonly supportsCallerSessionId = false;
+  // OpenCode's autonomy is expressed through "agents" (Build, Plan,
+  // and any custom agents the user defines in opencode.json), cycled
+  // at runtime via Tab. We expose those native concepts directly
+  // rather than the Claude-shaped 4-mode union, mapping to OpenCode's
+  // built-in primary agents:
+  //   Plan  -> --agent plan  (built-in: read-only, no edits/bash)
+  //   Build -> --agent build (built-in: full tool access)
+  // The `mode` field reuses existing PermissionMode enum values for
+  // storage compatibility (a swimlane setting set under Claude as
+  // 'acceptEdits' continues to mean "Build" under OpenCode), but the
+  // user-facing label is OpenCode's vocabulary. Historical values
+  // outside this list (`default`, `bypassPermissions`, `dontAsk`,
+  // `auto`) are still handled by mapPermissionModeToAgent for
+  // backward compat with mixed-agent projects.
   readonly permissions: AgentPermissionEntry[] = [
-    { mode: 'plan', label: 'Plan (Read-Only)' },
-    { mode: 'default', label: 'Default' },
-    { mode: 'acceptEdits', label: 'Accept Edits' },
-    { mode: 'bypassPermissions', label: 'Dangerous Full Access' },
+    { mode: 'plan', label: 'Plan' },
+    { mode: 'acceptEdits', label: 'Build' },
   ];
   readonly defaultPermission: PermissionMode = 'acceptEdits';
 

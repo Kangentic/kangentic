@@ -226,6 +226,46 @@ test.describe('Settings Panel', () => {
     }
   });
 
+  test('permission mode dropdown shows OpenCode-specific modes after switching to OpenCode agent', async () => {
+    await openSettings();
+    await page.getByRole('button', { name: 'Agent' }).click();
+
+    // Switch default agent to OpenCode via the Default Agent select.
+    const defaultAgentDescription = page.getByText('Which agent CLI to use for new sessions');
+    const defaultAgentRow = defaultAgentDescription.locator('..').locator('..').locator('..');
+    const agentSelect = defaultAgentRow.locator('select');
+    await agentSelect.selectOption({ label: 'OpenCode' });
+
+    // Cleanup MUST run even if the assertions below throw - otherwise a
+    // failing assertion would leak the OpenCode-default into subsequent tests
+    // and produce confusing cascading failures. try/finally is the only
+    // way to guarantee restoration in Playwright tests that mutate shared
+    // app state (this test fixture uses module-scoped page + beforeAll).
+    try {
+      const permDescription = page.getByText('How the agent handles tool approvals');
+      const permSettingRow = permDescription.locator('..').locator('..').locator('..');
+      const permSelect = permSettingRow.locator('select');
+
+      // OpenCode exposes exactly 2 modes: Plan and Build (trimmed from the
+      // original 4-entry Claude-shaped list). Verify exact order and no extras.
+      await expect.poll(async () => {
+        const options = permSelect.locator('option');
+        return options.allTextContents();
+      }, { timeout: 3000 }).toEqual([
+        'Plan',
+        'Build',
+      ]);
+
+      // The OpenCode adapter declares "acceptEdits" as its defaultPermission.
+      // After switching the agent, the permission mode should be set to "acceptEdits".
+      await expect(permSelect).toHaveValue('acceptEdits');
+    } finally {
+      // Restore to Claude so later tests are unaffected.
+      await agentSelect.selectOption({ label: 'Claude Code' });
+      await closeSettings();
+    }
+  });
+
   test('board remains visible behind settings panel', async () => {
     await openSettings();
     await expect(page.locator('[data-swimlane-name="To Do"]')).toBeAttached();

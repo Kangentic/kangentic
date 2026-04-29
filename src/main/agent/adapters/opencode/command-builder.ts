@@ -41,7 +41,12 @@ export interface OpenCodeCommandOptions {
  *
  * - There is no `--dangerously-skip-permissions` flag in TUI mode.
  *   That flag is only documented for `opencode run` (non-interactive).
- *   For TUI mode users must configure auto-approve in `opencode.json`.
+ *   OpenCode's autonomy model is "agents" (Build, Plan, custom) cycled
+ *   at runtime via Tab. We map Kangentic's permission-mode dropdown to
+ *   the `--agent <name>` flag for the initial spawn only - resume
+ *   preserves the user's runtime Tab selection rather than overriding
+ *   it. See `mapPermissionModeToAgent` below for the mode-to-agent
+ *   table.
  *
  * - There is no merged settings file and no `--mcp-config` CLI flag.
  *   OpenCode reads MCP and provider config from `opencode.json` (project)
@@ -71,8 +76,19 @@ export class OpenCodeCommandBuilder {
     if (options.resume && options.sessionId) {
       parts.push('--session', quoteArg(options.sessionId, shell));
       // Resume attaches to the existing OpenCode session - no prompt
-      // is delivered (mirrors Claude's --resume convention).
+      // is delivered (mirrors Claude's --resume convention). We also
+      // do not pass --agent on resume: the saved session already has
+      // an active agent and the user may have Tab-switched mid-session.
+      // Forcing it here would shadow that runtime choice.
       return parts.join(' ');
+    }
+
+    // Map Kangentic's permission-mode dropdown to OpenCode's --agent
+    // flag for fresh spawns. Once the TUI is running the user controls
+    // autonomy via Tab, so this only sets the initial state.
+    const agentName = mapPermissionModeToAgent(options.permissionMode);
+    if (agentName) {
+      parts.push('--agent', quoteArg(agentName, shell));
     }
 
     if (options.prompt) {
@@ -128,5 +144,36 @@ export class OpenCodeCommandBuilder {
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
     return interpolateTemplate(template, variables);
+  }
+}
+
+/**
+ * Map Kangentic's `PermissionMode` to the OpenCode primary-agent name
+ * passed via `--agent <name>` on fresh spawn.
+ *
+ *   plan              -> "plan"  (built-in: read-only, no edits/bash)
+ *   default           -> null    (omit flag - defer to user's `default_agent` config, falls back to "build")
+ *   acceptEdits       -> "build" (built-in: full tool access)
+ *   bypassPermissions -> "build" (closest built-in - users wanting full bypass define their own agent and set it as `default_agent`)
+ *   dontAsk / auto    -> null    (Claude/Gemini-shaped modes that can leak through; safe to defer)
+ *
+ * OpenCode's primary agents define their own per-tool permissions, so
+ * we do not need to (and should not) inject a global `permission` block.
+ * The Tab keybind cycles agents at runtime; this only sets the initial
+ * pick. See `runtime.activity.kind = 'hooks_and_pty'` in the adapter
+ * for the broader OpenCode integration model.
+ */
+function mapPermissionModeToAgent(mode: PermissionMode): string | null {
+  switch (mode) {
+    case 'plan':
+      return 'plan';
+    case 'acceptEdits':
+    case 'bypassPermissions':
+      return 'build';
+    case 'default':
+    case 'dontAsk':
+    case 'auto':
+    default:
+      return null;
   }
 }
