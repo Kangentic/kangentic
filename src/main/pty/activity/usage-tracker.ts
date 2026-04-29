@@ -136,9 +136,12 @@ export class UsageTracker {
 
       const lastSignal = state.lastThinkingSignal;
       if (lastSignal && (now - lastSignal) > STALE_THINKING_THRESHOLD_MS) {
-        // If tools are in-flight, the agent is busy (not stale). Reset the
-        // timer and re-check later instead of transitioning to idle.
-        if (state.pendingToolCount > 0) {
+        // If tools are in-flight OR a backgrounded Bash is still running,
+        // the agent is busy (not stale). Reset the timer and re-check later
+        // instead of force-idling, which would bypass Guard 3
+        // (deferStopUntilBackgroundShellsFinish) and flip the state to idle
+        // even though there is real detached work outstanding.
+        if (state.pendingToolCount > 0 || state.activeBackgroundShells > 0) {
           this.activityStateMachine.markThinkingSignal(sessionId);
           return;
         }

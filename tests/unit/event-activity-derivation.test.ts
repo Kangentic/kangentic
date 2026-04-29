@@ -1849,6 +1849,56 @@ describe('Event-derived activity state', () => {
       expect(states).toEqual(['thinking', 'idle']);
     });
 
+    it('active background shell prevents stale thinking transition to idle', async () => {
+      // Regression: the stale-thinking watchdog used to call forceIdle()
+      // which bypasses Guard 3 (deferStopUntilBackgroundShellsFinish).
+      // For a backgrounded Bash (run_in_background: true), the agent
+      // yields its turn after the handle returns, Stop fires (deferred
+      // by Guard 3), then 45s of silence let the watchdog flip the
+      // session to idle even though the detached child is still running.
+      // Repro from real task #503 (npx playwright test in background).
+      const { session, eventsPath, statusPath } = await spawnWithEventsFake();
+      const states = collectActivity(fakeManager, session.id);
+
+      triggerUsageUpdate(fakeManager, session.id, statusPath, 100, 50);
+
+      // Real event sequence for a backgrounded Bash:
+      //   prompt -> background_shell_start -> tool_end -> idle (Stop)
+      // Guard 3 must hold the idle, AND the stale watchdog must not
+      // override Guard 3 even after 45s+ of silence.
+      appendEvent(eventsPath, { ts: Date.now(), type: EventType.Prompt });
+      appendEvent(eventsPath, {
+        ts: Date.now(),
+        type: EventType.BackgroundShellStart,
+        tool: 'Bash',
+        detail: 'npx playwright test --project=ui &',
+      });
+      appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolEnd, tool: 'Bash' });
+      appendEvent(eventsPath, { ts: Date.now(), type: EventType.Idle });
+      triggerEventRead(fakeManager, session.id, eventsPath);
+
+      // Guard 3 deferred the Stop-driven idle.
+      expect(fakeManager.getActivityCache()[session.id]).toBe('thinking');
+
+      // Advance well past the 45s stale threshold + 15s check interval.
+      // Pre-fix: watchdog called forceIdle() -> activity flipped to idle.
+      // Post-fix: activeBackgroundShells > 0 keeps the watchdog deferred.
+      vi.advanceTimersByTime(120_000);
+      expect(fakeManager.getActivityCache()[session.id]).toBe('thinking');
+      expect(states).toEqual(['thinking']);
+
+      // KillBash drops the counter to zero -> deferred idle finally emits.
+      appendEvent(eventsPath, {
+        ts: Date.now(),
+        type: EventType.BackgroundShellEnd,
+        tool: 'KillBash',
+      });
+      triggerEventRead(fakeManager, session.id, eventsPath);
+
+      expect(fakeManager.getActivityCache()[session.id]).toBe('idle');
+      expect(states).toEqual(['thinking', 'idle']);
+    });
+
     it('event resets the stale thinking timer', async () => {
       const { session, eventsPath, statusPath } = await spawnWithEventsFake();
       const states = collectActivity(fakeManager, session.id);
