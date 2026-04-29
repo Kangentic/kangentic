@@ -4,7 +4,7 @@ Kangentic collects anonymous usage statistics to understand adoption and improve
 
 ## What We Collect
 
-Eight event types are tracked, all on critical-path actions only:
+Nine event types are tracked, all on critical-path actions only:
 
 | Event | When | Properties |
 |-------|------|------------|
@@ -13,9 +13,14 @@ Eight event types are tracked, all on critical-path actions only:
 | `app_close` | Graceful quit, Ctrl+C, or SIGTERM | durationSeconds |
 | `app_error` | Uncaught exception, unhandled rejection, renderer crash, or React ErrorBoundary | source, message (sanitized), reason (renderer crashes), exitCode (renderer crashes) |
 | `project_create` | User creates a project | (none) |
-| `task_complete` | Task moves to Done | (none) |
-| `session_exit` | Agent session finishes | exit code, duration (seconds) |
-| `transient_session_spawn` | Transient session launched from command bar | (none) |
+| `task_complete` | Task moves to Done | agent, model |
+| `session_spawn` | Agent session reaches running state (board or transient) | agent, isTransient |
+| `session_exit` | Agent session finishes | exitCode, durationSeconds, agent, model |
+| `transient_session_spawn` | Transient session launched from command bar | agent |
+
+`agent` is the adapter id from a fixed allowlist (`claude`, `codex`, `gemini`, `qwen-code`, `opencode`, `aider`, `cursor`, `warp`, `copilot`, `kimi`, `droid`). `model` is the CLI-level model identifier the agent itself reports through its status output (e.g. `claude-opus-4-7`, `gpt-5-codex`, `gemini-2.5-pro`).
+
+`model` is only present on events fired *after* the agent has emitted at least one status update, which means it is omitted on `session_spawn` and `transient_session_spawn` (model is unknown at spawn time) and may also be omitted on `session_exit` / `task_complete` for very short sessions that exited before the agent reported a model.
 
 The analytics SDK automatically detects: OS name, OS version, locale, app version, anonymous session ID, and country (derived from IP, then discarded).
 

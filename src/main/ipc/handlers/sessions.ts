@@ -18,6 +18,11 @@ import { computePeriodCutoff } from '../../../shared/period-cutoff';
 // Track session start times for duration calculation on exit
 const sessionStartTimes = new Map<string, number>();
 
+// Track which session ids have already fired the `session_spawn` analytics
+// event so we never double-fire if `session-changed` re-emits running for the
+// same id. Cleared on exit alongside `sessionStartTimes`.
+const sessionSpawnAnalyticsFired = new Set<string>();
+
 /**
  * Per-task AbortController to cancel in-flight resumes when the session is
  * suspended before the async resume completes. Prevents orphaned sessions
@@ -336,6 +341,20 @@ export function registerSessionHandlers(context: IpcContext): void {
     if (session.status === 'running') {
       sessionStartTimes.set(sessionId, Date.now());
 
+      // Analytics: track spawn intent on the first running transition. Model
+      // is not known yet (arrives later via status.json) and is omitted here -
+      // session_exit / task_complete carry the model.
+      if (!sessionSpawnAnalyticsFired.has(sessionId)) {
+        sessionSpawnAnalyticsFired.add(sessionId);
+        const spawnAgentName = context.sessionManager.getSessionAgentName(sessionId);
+        if (spawnAgentName) {
+          trackEvent('session_spawn', {
+            agent: spawnAgentName,
+            isTransient: !!session.transient,
+          });
+        }
+      }
+
       // Atomically promote DB record from 'queued' to 'running'
       const resolvedProjectId = context.sessionManager.getSessionProjectId(sessionId);
       if (resolvedProjectId) {
@@ -401,8 +420,18 @@ export function registerSessionHandlers(context: IpcContext): void {
     const startTime = sessionStartTimes.get(sessionId);
     if (startTime) {
       const durationSeconds = Math.round((Date.now() - startTime) / 1000);
-      trackEvent('session_exit', { exitCode, durationSeconds });
+      const exitProps: Record<string, string | number | boolean> = { exitCode, durationSeconds };
+      const exitAgentName = context.sessionManager.getSessionAgentName(sessionId);
+      if (exitAgentName) exitProps.agent = exitAgentName;
+      // Read model from the in-memory usage cache (still populated at this
+      // point; captureSessionMetrics below clears it). The DB record's
+      // model_id is not written until captureSessionMetrics runs, so we cannot
+      // read it from the repo here.
+      const usageForExit = context.sessionManager.getUsageCache()[sessionId];
+      if (usageForExit?.model?.id) exitProps.model = usageForExit.model.id;
+      trackEvent('session_exit', exitProps);
       sessionStartTimes.delete(sessionId);
+      sessionSpawnAnalyticsFired.delete(sessionId);
     }
 
     if (!context.mainWindow.isDestroyed()) {

@@ -618,6 +618,12 @@ export class SessionManager extends EventEmitter {
     return this.registry.getSessionTaskId(sessionId);
   }
 
+  /** Return the adapter name (e.g. "claude", "codex") for a given session,
+   *  or undefined if not found or the spawn predates agentName tracking. */
+  getSessionAgentName(sessionId: string): string | undefined {
+    return this.registry.getSessionAgentName(sessionId);
+  }
+
   /**
    * Register a suspended placeholder session for a task that was user-paused
    * before app restart. The placeholder has no PTY but makes the renderer

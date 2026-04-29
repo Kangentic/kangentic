@@ -106,7 +106,7 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
     });
 
-    trackEvent('transient_session_spawn');
+    trackEvent('transient_session_spawn', { agent: adapter.name });
     return { session, branch, checkoutError };
   });
 

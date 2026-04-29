@@ -196,6 +196,10 @@ export class SessionRegistry {
     return this.sessions.get(sessionId)?.taskId;
   }
 
+  getSessionAgentName(sessionId: string): string | undefined {
+    return this.sessions.get(sessionId)?.agentName;
+  }
+
   getSession(sessionId: string): Session | undefined {
     const session = this.sessions.get(sessionId);
     return session ? toSession(session) : undefined;

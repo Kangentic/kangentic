@@ -175,13 +175,20 @@ export async function handleTaskMove(
       // Within-column reorder: no side effects needed
       if (fromSwimlaneId === input.targetSwimlaneId) return null;
 
-      // Analytics: track critical-path transitions only
-      if (toLane?.role === 'done') {
-        trackEvent('task_complete');
-      }
-
       const db = getProjectDb(resolvedProjectId);
       const sessionRepo = new SessionRepository(db);
+
+      // Analytics: track critical-path transitions only.
+      // Read agent from task.agent (set at spawn) and model from the latest
+      // session record's metrics. Either may be missing (legacy rows, never
+      // spawned, exited before status.json) - omit absent props.
+      if (toLane?.role === 'done') {
+        const completeProps: Record<string, string | number | boolean> = {};
+        if (task.agent) completeProps.agent = task.agent;
+        const latestSessionRecord = sessionRepo.getLatestForTask(task.id);
+        if (latestSessionRecord?.model_id) completeProps.model = latestSessionRecord.model_id;
+        trackEvent('task_complete', completeProps);
+      }
 
       // --- Priority 1: TARGET IS TO DO → full reset (kill session, remove worktree, delete branch) ---
       if (toLane?.role === 'todo') {
