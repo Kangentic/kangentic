@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import type { PermissionMode } from '../../../../shared/types';
@@ -25,7 +27,7 @@ import type { SpawnCommandOptions } from '../../agent-adapter';
  *   --final-message              with --print, only print final assistant msg
  *   --quiet                      alias for --print --output-format text --final-message
  *   --wire                       Wire JSON-RPC server (experimental)
- *   --mcp-config-file <FILE>     MCP config file (repeatable)
+ *   --mcp-config-file <FILE>     MCP config file (repeatable, used here)
  *   --mcp-config <TEXT>          MCP config JSON (repeatable)
  *   --skills-dir <DIR>           custom skills dirs (repeatable)
  *   --max-steps-per-turn <N>     loop control
@@ -129,33 +131,44 @@ export class KimiCommandBuilder {
       parts.push('--print', '--output-format', 'stream-json');
     }
 
-    // MCP: Kangentic's in-process MCP HTTP server is exposed by URL,
-    // so we synthesize a minimal `--mcp-config` JSON entry. Kimi
-    // accepts `--mcp-config <TEXT>` (repeatable) per `kimi --help`.
-    // The schema follows fastmcp/Anthropic MCP convention:
+    // MCP: Kangentic's in-process MCP HTTP server is exposed by URL.
+    // We write a minimal fastmcp-compatible config to <sessionDir>/mcp.json
+    // and pass `--mcp-config-file <FILE>`. Inline JSON via `--mcp-config
+    // <TEXT>` is fragile across shells (quote escaping is shell-specific
+    // and easy to get wrong); a file path goes through quoteArg cleanly
+    // on every platform. Schema follows fastmcp/Anthropic MCP convention:
     //   { "mcpServers": { "<name>": { "url": "...", "headers": {...} } } }
     if (options.mcpServerEnabled && options.mcpServerUrl) {
-      const mcpConfig = {
-        mcpServers: {
-          kangentic: {
-            url: options.mcpServerUrl,
-            ...(options.mcpServerToken
-              ? { headers: { 'X-Kangentic-Token': options.mcpServerToken } }
-              : {}),
+      if (!options.statusOutputPath) {
+        // All production spawn paths populate statusOutputPath via
+        // sessionOutputPaths(). Reaching this branch means a caller
+        // built spawn options manually and forgot it - the session
+        // would silently lose MCP wiring otherwise.
+        console.warn(
+          '[kimi command-builder] mcpServerEnabled is true but statusOutputPath is missing - skipping MCP config wiring',
+        );
+      } else {
+        const mcpConfig = {
+          mcpServers: {
+            kangentic: {
+              url: options.mcpServerUrl,
+              ...(options.mcpServerToken
+                ? { headers: { 'X-Kangentic-Token': options.mcpServerToken } }
+                : {}),
+            },
           },
-        },
-      };
-      const json = JSON.stringify(mcpConfig);
-      // Force single-quote wrapping on Unix shells (default), and
-      // double-quote replacement on Windows. JSON contains plenty of
-      // double quotes that PowerShell treats as string delimiters.
-      const needsDoubleQuoteReplacement = shell
-        ? !isUnixLikeShell(shell)
-        : process.platform === 'win32';
-      const safeJson = needsDoubleQuoteReplacement
-        ? json.replace(/"/g, "'")
-        : json;
-      parts.push('--mcp-config', quoteArg(safeJson, shell));
+        };
+        const sessionDir = path.dirname(options.statusOutputPath);
+        try {
+          fs.mkdirSync(sessionDir, { recursive: true });
+        } catch (err) {
+          console.error(`[kimi command-builder] Failed to create session directory: ${sessionDir}`, err);
+          throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`);
+        }
+        const mcpConfigPath = path.join(sessionDir, 'mcp.json');
+        fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+        parts.push('--mcp-config-file', quoteArg(toForwardSlash(mcpConfigPath), shell));
+      }
     }
 
     // Prompt delivery. Empirically `--prompt <TEXT>` is the canonical

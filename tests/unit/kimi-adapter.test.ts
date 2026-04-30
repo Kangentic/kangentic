@@ -8,8 +8,10 @@
  * schema. These tests are the regression net against future Kimi
  * releases that change either surface.
  */
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { quoteArg } from '../../src/shared/paths';
 import { KimiCommandBuilder } from '../../src/main/agent/adapters/kimi/command-builder';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
@@ -280,87 +282,175 @@ describe('KimiAdapter', () => {
     });
 
     describe('MCP config injection', () => {
-      it('adds --mcp-config with kangentic server when enabled', () => {
+      // Each test gets a fresh temp directory that mimics the per-session
+      // directory created by sessionOutputPaths(). The command builder
+      // writes mcp.json into path.dirname(statusOutputPath), so we point
+      // statusOutputPath at <tempDir>/status.json and expect mcp.json
+      // alongside it.
+      let testSessionDir: string;
+      let testStatusOutputPath: string;
+
+      beforeEach(() => {
+        testSessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-kimi-mcp-'));
+        testStatusOutputPath = path.join(testSessionDir, 'status.json');
+      });
+
+      afterEach(() => {
+        fs.rmSync(testSessionDir, { recursive: true, force: true });
+      });
+
+      it('emits --mcp-config-file pointing at <sessionDir>/mcp.json', () => {
         const command = adapter.buildCommand(makeOptions({
           mcpServerEnabled: true,
           mcpServerUrl: 'http://127.0.0.1:54321',
           mcpServerToken: 'secret-token',
+          statusOutputPath: testStatusOutputPath,
           shell: 'bash',
         }));
-        expect(command).toContain('--mcp-config');
-        expect(command).toContain('mcpServers');
-        expect(command).toContain('kangentic');
-        expect(command).toContain('http://127.0.0.1:54321');
-        expect(command).toContain('X-Kangentic-Token');
+        expect(command).toContain('--mcp-config-file');
+        // Path is forward-slashed before being placed in the command
+        // string so PowerShell and bash both parse it identically.
+        const expectedPath = path.join(testSessionDir, 'mcp.json').replace(/\\/g, '/');
+        expect(command).toContain(expectedPath);
+      });
+
+      it('writes a parseable JSON file with the kangentic MCP server entry', () => {
+        adapter.buildCommand(makeOptions({
+          mcpServerEnabled: true,
+          mcpServerUrl: 'http://127.0.0.1:54321',
+          mcpServerToken: 'secret-token',
+          statusOutputPath: testStatusOutputPath,
+          shell: 'bash',
+        }));
+        const mcpConfigPath = path.join(testSessionDir, 'mcp.json');
+        const parsed = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
+        expect(parsed).toEqual({
+          mcpServers: {
+            kangentic: {
+              url: 'http://127.0.0.1:54321',
+              headers: { 'X-Kangentic-Token': 'secret-token' },
+            },
+          },
+        });
       });
 
       it('omits headers when no token is provided', () => {
-        const command = adapter.buildCommand(makeOptions({
+        adapter.buildCommand(makeOptions({
           mcpServerEnabled: true,
           mcpServerUrl: 'http://127.0.0.1:54321',
+          statusOutputPath: testStatusOutputPath,
           shell: 'bash',
         }));
-        expect(command).toContain('--mcp-config');
-        expect(command).not.toContain('X-Kangentic-Token');
+        const mcpConfigPath = path.join(testSessionDir, 'mcp.json');
+        const parsed = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
+        expect(parsed.mcpServers.kangentic).not.toHaveProperty('headers');
+        expect(parsed.mcpServers.kangentic.url).toBe('http://127.0.0.1:54321');
+      });
+
+      it('produces valid JSON on PowerShell (regression: previously contained single quotes)', () => {
+        // Regression test for the original bug: an earlier implementation
+        // replaced every " with ' in the JSON payload on PowerShell to
+        // dodge shell quote-stripping, producing invalid JSON that
+        // kimi's CLI rejected. The new path writes the file to disk so
+        // PowerShell only sees a path argument; the JSON on disk must
+        // parse cleanly regardless of shell.
+        adapter.buildCommand(makeOptions({
+          mcpServerEnabled: true,
+          mcpServerUrl: 'http://127.0.0.1:54321',
+          mcpServerToken: 'tok-abc',
+          statusOutputPath: testStatusOutputPath,
+          shell: 'powershell',
+        }));
+        const mcpConfigPath = path.join(testSessionDir, 'mcp.json');
+        const raw = fs.readFileSync(mcpConfigPath, 'utf-8');
+        // The original bug would have written content with single quotes
+        // around property names. Valid JSON requires double quotes.
+        expect(raw).toContain('"mcpServers"');
+        expect(raw).toContain('"kangentic"');
+        const parsed = JSON.parse(raw);
+        expect(parsed.mcpServers.kangentic.url).toBe('http://127.0.0.1:54321');
       });
 
       it('omits MCP config entirely when disabled', () => {
         const command = adapter.buildCommand(makeOptions({
           mcpServerEnabled: false,
           mcpServerUrl: 'http://127.0.0.1:54321',
+          statusOutputPath: testStatusOutputPath,
         }));
-        expect(command).not.toContain('--mcp-config');
+        expect(command).not.toContain('--mcp-config-file');
       });
 
       it('omits MCP config when enabled but URL is missing', () => {
         const command = adapter.buildCommand(makeOptions({
           mcpServerEnabled: true,
+          statusOutputPath: testStatusOutputPath,
         }));
-        expect(command).not.toContain('--mcp-config');
+        expect(command).not.toContain('--mcp-config-file');
       });
 
-      it('replaces embedded double quotes with single quotes in MCP JSON for powershell', () => {
-        // PowerShell treats embedded " as string delimiters. The JSON payload
-        // from JSON.stringify() contains plenty of them (keys, URL, token value).
-        // The builder must replace every " with ' before passing to quoteArg so
-        // PowerShell receives a correctly-quoted argument.
-        const command = adapter.buildCommand(makeOptions({
-          mcpServerEnabled: true,
-          mcpServerUrl: 'http://127.0.0.1:54321',
-          mcpServerToken: 'tok-abc',
-          shell: 'powershell',
-        }));
-        expect(command).toContain('--mcp-config');
-        // No raw double quotes should survive inside the MCP JSON segment.
-        // The outer quoteArg wrapper may add double quotes on its own, so we
-        // strip the first and last char before checking for embedded ones.
-        const mcpFlagIndex = command.indexOf('--mcp-config');
-        const afterFlag = command.slice(mcpFlagIndex + '--mcp-config'.length).trimStart();
-        // After the flag, the next token is the JSON payload wrapped by quoteArg.
-        // We check that the unwrapped content contains single-quote-delimited keys.
-        expect(afterFlag).toContain("'mcpServers'");
-        expect(afterFlag).toContain("'kangentic'");
-      });
-
-      it('replaces double quotes with single quotes in MCP JSON when shell is undefined on win32', () => {
-        // When shell is not provided and we are on win32, the builder checks
-        // process.platform and applies the same double->single quote replacement.
-        // We simulate win32 by temporarily patching process.platform.
-        const originalPlatform = process.platform;
-        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-
+      it('skips MCP wiring with a warning when statusOutputPath is missing', () => {
+        // Defensive guard: every production spawn path populates
+        // statusOutputPath, but if a caller forgets it we warn rather
+        // than silently lose MCP.
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
         try {
           const command = adapter.buildCommand(makeOptions({
             mcpServerEnabled: true,
             mcpServerUrl: 'http://127.0.0.1:54321',
-            // shell intentionally omitted (undefined) - tests the platform fallback
+            mcpServerToken: 'tok-abc',
+            // statusOutputPath intentionally omitted
           }));
-          expect(command).toContain('--mcp-config');
-          const mcpFlagIndex = command.indexOf('--mcp-config');
-          const afterFlag = command.slice(mcpFlagIndex + '--mcp-config'.length).trimStart();
-          expect(afterFlag).toContain("'mcpServers'");
+          expect(command).not.toContain('--mcp-config-file');
+          expect(warnSpy).toHaveBeenCalledWith(
+            expect.stringContaining('statusOutputPath is missing'),
+          );
         } finally {
-          Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+          warnSpy.mockRestore();
+        }
+      });
+
+      it('emits --mcp-config-file when shell is undefined (platform quoting fallback)', () => {
+        // Transient-session code paths call buildCommand without a shell value,
+        // which makes quoteArg(path, undefined) fall back to
+        // process.platform === 'win32' for the quoting decision. The important
+        // contract is that --mcp-config-file is still emitted and the path
+        // appears in the command regardless of which quoting branch is taken.
+        const command = adapter.buildCommand(makeOptions({
+          mcpServerEnabled: true,
+          mcpServerUrl: 'http://127.0.0.1:54321',
+          mcpServerToken: 'tok-xyz',
+          statusOutputPath: testStatusOutputPath,
+          // shell intentionally omitted - exercises the platform-fallback branch
+        }));
+        expect(command).toContain('--mcp-config-file');
+        const expectedPath = path.join(testSessionDir, 'mcp.json').replace(/\\/g, '/');
+        expect(command).toContain(expectedPath);
+        // The JSON file must be written and be valid regardless of quoting branch.
+        const mcpConfigPath = path.join(testSessionDir, 'mcp.json');
+        const parsed = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
+        expect(parsed.mcpServers.kangentic.url).toBe('http://127.0.0.1:54321');
+      });
+
+      it('re-throws with a contextualised message when session directory creation fails', () => {
+        // The command builder wraps fs.mkdirSync in a try/catch and re-throws
+        // with a human-readable message that includes the path and the
+        // underlying OS reason. This test verifies the re-throw shape so that
+        // callers (prepareAgentSpawn) surface a useful error rather than the
+        // raw EACCES/ENOENT from Node.
+        const mkdirSpy = vi.spyOn(fs, 'mkdirSync').mockImplementationOnce(() => {
+          throw new Error('EACCES: permission denied');
+        });
+        try {
+          expect(() => {
+            adapter.buildCommand(makeOptions({
+              mcpServerEnabled: true,
+              mcpServerUrl: 'http://127.0.0.1:54321',
+              statusOutputPath: testStatusOutputPath,
+              shell: 'bash',
+            }));
+          }).toThrow(/Cannot create session directory at .+: EACCES: permission denied/);
+        } finally {
+          mkdirSpy.mockRestore();
         }
       });
     });

@@ -39,9 +39,11 @@ import { ActivityDetection } from '../../../../shared/types';
  *   `~/.kimi/sessions/*\/<uuid>/`) covers the rare case where PTY
  *   capture misses the banner.
  *
- * - MCP support via `--mcp-config <JSON>` (repeatable). The command
- *   builder synthesizes a single fastmcp-compatible config containing
- *   Kangentic's in-process HTTP MCP server URL + token header.
+ * - MCP support via `--mcp-config-file <FILE>` (repeatable). The command
+ *   builder writes a single fastmcp-compatible config to
+ *   `<sessionDir>/mcp.json` containing Kangentic's in-process HTTP MCP
+ *   server URL + token header. Inline `--mcp-config <JSON>` is avoided
+ *   because PowerShell mangles embedded double quotes.
  *
  * - Plan mode (`--plan`), YOLO (`--yolo`), and the same prompt/work-dir/
  *   model knobs that other agents use.
