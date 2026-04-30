@@ -9,10 +9,14 @@
  * canonical scheme description.
  *
  * Qwen command shapes (see src/main/agent/adapters/qwen-code/command-builder.ts):
- *   qwen --version                                                  -> detector probe
- *   qwen [--approval-mode <m>] --resume <sessionId> [prompt]        -> resume
- *   qwen [--approval-mode <m>] --session-id <sessionId> [prompt]    -> new (caller-owned)
- *   qwen [--approval-mode <m>] [-p] [prompt]                        -> new session
+ *   qwen --version                                                       -> detector probe
+ *   qwen [--approval-mode <m>] --resume <sessionId> [-i|-p <prompt>]     -> resume
+ *   qwen [--approval-mode <m>] --session-id <sessionId> [-i|-p <prompt>] -> new (caller-owned)
+ *   qwen [--approval-mode <m>] [-i|-p <prompt>]                          -> new session
+ *
+ * Prompt is always delivered via -i (interactive TUI) or -p (one-shot).
+ * Bare positional prompts are never emitted by the adapter, since real
+ * Qwen Code treats them as headless / one-shot.
  *
  * `--session-id` and `--resume` are mutex (real Qwen's yargs enforces
  * this); the mock rejects with exit code 1 if both are passed.
@@ -67,8 +71,25 @@ for (let i = 0; i < args.length; i++) {
     i++;
     continue;
   }
-  if (a === '--approval-mode' || a === '-p') {
+  if (a === '--approval-mode') {
     if (args[i + 1] && !args[i + 1].startsWith('-')) i++;
+    continue;
+  }
+  // -p / --prompt-non-interactive: one-shot headless mode - consume next arg as prompt.
+  if (a === '-p') {
+    if (args[i + 1] && !args[i + 1].startsWith('-')) {
+      prompt = args[i + 1];
+      i++;
+    }
+    continue;
+  }
+  // -i / --prompt-interactive: launches TUI with the prompt pre-loaded.
+  // This is the flag the Kangentic adapter emits for all interactive spawns.
+  if (a === '-i') {
+    if (args[i + 1] && !args[i + 1].startsWith('-')) {
+      prompt = args[i + 1];
+      i++;
+    }
     continue;
   }
   if (a.startsWith('-')) continue;

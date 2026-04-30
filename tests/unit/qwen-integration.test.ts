@@ -257,18 +257,32 @@ describe('Qwen Code - integration harness', () => {
       expect(command).not.toContain('--session-id');
     });
 
-    it('non-interactive prompt uses -p (mutex with positional per Qwen yargs)', () => {
+    it('non-interactive prompt uses -p (one-shot headless mode)', () => {
       const command = builder.buildQwenCommand({
         ...baseOptions,
         permissionMode: 'default',
         nonInteractive: true,
         prompt: 'Refactor utils',
       });
-      expect(command).toContain('-p');
+      // Space-pad the flag match so we don't collide with the `-i` substring
+      // inside `--session-id` (or future flags containing `-p` / `-i`).
+      expect(command).toMatch(/ -p /);
       expect(command).toContain('Refactor utils');
+      expect(command).not.toMatch(/ -i /);
     });
 
-    it('flag ordering: approval-mode comes before --resume comes before prompt', () => {
+    it('interactive prompt uses -i (--prompt-interactive launches TUI)', () => {
+      const command = builder.buildQwenCommand({
+        ...baseOptions,
+        permissionMode: 'default',
+        prompt: 'Refactor utils',
+      });
+      expect(command).toMatch(/ -i /);
+      expect(command).toContain('Refactor utils');
+      expect(command).not.toMatch(/ -p /);
+    });
+
+    it('flag ordering: approval-mode before --resume before -i prompt', () => {
       const command = builder.buildQwenCommand({
         ...baseOptions,
         permissionMode: 'plan',
@@ -471,6 +485,21 @@ describe('Qwen Code - integration harness', () => {
       expect(resumedMatch![1]).toBe(ourSessionId);
       expect(resumeRun.stdout).not.toContain('MOCK_QWEN_SESSION:');
     }, 30000);
+
+    it('runMockQwen with -i flag delivers prompt text and emits MOCK_QWEN_PROMPT marker', async () => {
+      // This test locks in the mock's argv parsing for the -i flag so that if
+      // the explicit -i arm in mock-qwen.js is changed or removed, this test
+      // fails loudly instead of silently relying on the catch-all positional
+      // fall-through.
+      const promptText = 'some prompt text';
+      const result = await runMockQwen(['-i', promptText], sandbox);
+
+      expect(result.stdout).toContain(`MOCK_QWEN_PROMPT:${promptText}`);
+      // Verify the session marker is also present (mock spawned successfully).
+      expect(result.stdout).toContain('MOCK_QWEN_SESSION:');
+      // Sanity: no error exit.
+      expect(result.exitCode).toBe(0);
+    }, 15000);
 
     it('mock rejects --session-id and --resume passed together (mutex)', async () => {
       const sessionId = randomUUID();

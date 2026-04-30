@@ -113,31 +113,44 @@ describe('QwenCommandBuilder', () => {
   });
 
   describe('prompt delivery', () => {
-    it('interactive prompt is a positional argument', () => {
+    // Use word-boundary regexes (or space-padded substrings) to test for
+    // the -i / -p flags rather than bare `toContain('-i')`. The substring
+    // `-i` appears inside `--session-id`, so a naive `toContain` would
+    // silently false-positive whenever a session id is present.
+    const hasInteractiveFlag = (command: string) => / -i /.test(command);
+    const hasOneShotFlag = (command: string) => / -p /.test(command);
+
+    it('interactive prompt uses -i flag (--prompt-interactive launches TUI)', () => {
       const command = buildCommand({ prompt: 'Fix the bug' });
+      expect(hasInteractiveFlag(command)).toBe(true);
       expect(command).toContain(quoteArg('Fix the bug'));
-      expect(command).not.toContain('-p');
+      // A bare positional prompt would be treated as one-shot by Qwen Code,
+      // so we must never emit one. Also guard against -p creeping into the
+      // interactive branch.
+      expect(hasOneShotFlag(command)).toBe(false);
     });
 
     it('non-interactive prompt uses -p flag', () => {
       const command = buildCommand({ nonInteractive: true, prompt: 'Fix the bug' });
-      expect(command).toContain('-p');
+      expect(hasOneShotFlag(command)).toBe(true);
       expect(command).toContain(quoteArg('Fix the bug'));
+      expect(hasInteractiveFlag(command)).toBe(false);
     });
 
-    it('no prompt produces no positional argument', () => {
+    it('no prompt produces no prompt flag', () => {
       const command = buildCommand();
       expect(command).toBe('/usr/bin/qwen');
     });
 
     it('non-interactive without prompt produces no -p flag', () => {
       const command = buildCommand({ nonInteractive: true });
-      expect(command).not.toContain('-p');
+      expect(hasOneShotFlag(command)).toBe(false);
+      expect(hasInteractiveFlag(command)).toBe(false);
     });
   });
 
   describe('flag ordering', () => {
-    it('permission mode comes before resume and prompt', () => {
+    it('permission mode comes before resume, resume before -i prompt', () => {
       const command = buildCommand({
         permissionMode: 'plan',
         resume: true,
@@ -147,10 +160,14 @@ describe('QwenCommandBuilder', () => {
 
       const approvalIndex = command.indexOf('--approval-mode');
       const resumeIndex = command.indexOf('--resume');
+      // Match ` -i ` (space-padded) so this never collides with the `-i`
+      // substring inside `--session-id` if a future test combines flags.
+      const interactiveFlagIndex = command.indexOf(' -i ');
       const promptIndex = command.indexOf(quoteArg('Do something'));
 
       expect(approvalIndex).toBeLessThan(resumeIndex);
-      expect(resumeIndex).toBeLessThan(promptIndex);
+      expect(resumeIndex).toBeLessThan(interactiveFlagIndex);
+      expect(interactiveFlagIndex).toBeLessThan(promptIndex);
     });
   });
 

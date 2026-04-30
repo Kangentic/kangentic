@@ -94,15 +94,16 @@ export class QwenCommandBuilder {
       parts.push(flag, quoteArg(options.sessionId, shell));
     }
 
-    // Prompt delivery differs between interactive and non-interactive mode.
-    // Qwen Code's yargs validation rejects combining a positional prompt
-    // with --prompt/-p, so we pick exactly one based on nonInteractive.
-    if (options.nonInteractive && options.prompt) {
+    // Prompt delivery: Qwen Code requires an explicit flag for prompts.
+    // A bare positional argument is treated as headless / one-shot
+    // (equivalent to -p) and exits after printing a single response, so
+    // we never use one. Use -p for non-interactive and -i
+    // (--prompt-interactive) to launch the TUI with the prompt
+    // pre-loaded.
+    if (options.prompt) {
       const safePrompt = sanitizePrompt(options.prompt, shell);
-      parts.push('-p', quoteArg(safePrompt, shell));
-    } else if (options.prompt) {
-      const safePrompt = sanitizePrompt(options.prompt, shell);
-      parts.push(quoteArg(safePrompt, shell));
+      const flag = options.nonInteractive ? '-p' : '-i';
+      parts.push(flag, quoteArg(safePrompt, shell));
     }
 
     return parts.join(' ');
