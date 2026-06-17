@@ -18,6 +18,7 @@ import {
   removeWindowFromTree,
   setSplitRatio,
   treeContainsWindow,
+  wrapTreeWithRoot,
 } from '../tiling/tree-ops';
 import type { TileInsertSide } from '../tiling/tree-ops';
 
@@ -53,6 +54,27 @@ let tileSequence = preserved?.tileSequence ?? 0;
 function nextTileId(prefix: 'split' | 'leaf'): string {
   tileSequence += 1;
   return `${prefix}-${tileSequence}`;
+}
+
+/** Mark a window as a tiled pane, remembering its pre-tile geometry so dragging
+ *  it back out restores the user's floating size. */
+function markWindowTiled(windowState: ManagedWindow, leafId: string): ManagedWindow {
+  return {
+    ...windowState,
+    state: 'tiled',
+    leafId,
+    restoreGeometry: windowState.restoreGeometry ?? windowState.geometry,
+  };
+}
+
+/** Which side of the tree's footprint a not-yet-tiled window sits on, so it joins
+ *  the tree as a root pane on that side (a left-snapped window joins on the left).
+ *  The dominant axis of the window-center-to-footprint-center offset decides. */
+function rootSideForWindow(geometry: FractionalRect, footprint: FractionalRect): TileInsertSide {
+  const deltaX = geometry.x + geometry.w / 2 - (footprint.x + footprint.w / 2);
+  const deltaY = geometry.y + geometry.h / 2 - (footprint.y + footprint.h / 2);
+  if (Math.abs(deltaX) >= Math.abs(deltaY)) return deltaX < 0 ? 'left' : 'right';
+  return deltaY < 0 ? 'top' : 'bottom';
 }
 
 /**
@@ -305,6 +327,28 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     const current = get();
     const target = current.windows[id];
     if (!target) return;
+
+    // A tree already exists and this window is not part of it: JOIN the tree as a
+    // new full-overlay root pane on `edge`, so edge-snapping builds ONE cohesive
+    // tiling (with a resizable seam to the rest) instead of orphaning a lone snap
+    // beside it. This is also how an existing lone-snapped window is merged in:
+    // drag it back to the edge and it joins the tree.
+    if (current.tileTree && !treeContainsWindow(current.tileTree, id)) {
+      const newLeafId = nextTileId('leaf');
+      const nextTree = wrapTreeWithRoot(
+        current.tileTree,
+        { kind: 'leaf', id: newLeafId, windowId: id },
+        edge,
+        nextTileId('split'),
+      );
+      set((state) => ({
+        tileTree: nextTree,
+        tileTreeRect: FULL_TILE_RECT,
+        windows: { ...state.windows, [id]: markWindowTiled(state.windows[id], newLeafId) },
+      }));
+      return;
+    }
+
     const half = (side: 'left' | 'right'): FractionalRect =>
       side === 'left' ? { x: 0, y: 0, w: 0.5, h: 1 } : { x: 0.5, y: 0, w: 0.5, h: 1 };
     // Tile when the OPPOSITE SIDE is already "taken" by a window the user put
@@ -372,15 +416,6 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     const target = current.windows[targetId];
     if (!dragged || !target || draggedId === targetId) return;
 
-    // Mark a window as a tiled pane, remembering its pre-tile geometry so
-    // dragging it back out restores the user's floating size.
-    const markTiled = (windowState: ManagedWindow, leafId: string): ManagedWindow => ({
-      ...windowState,
-      state: 'tiled',
-      leafId,
-      restoreGeometry: windowState.restoreGeometry ?? windowState.geometry,
-    });
-
     const tree = current.tileTree;
     // Insert beside the target when it is already a tiled pane (arbitrary N-way).
     if (tree && treeContainsWindow(tree, targetId)) {
@@ -388,22 +423,19 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
       const nextTree = insertWindowIntoTree(tree, targetId, draggedId, newLeafId, nextTileId('split'), side);
       set((state) => ({
         tileTree: nextTree,
-        windows: { ...state.windows, [draggedId]: markTiled(state.windows[draggedId], newLeafId) },
+        windows: { ...state.windows, [draggedId]: markWindowTiled(state.windows[draggedId], newLeafId) },
       }));
       return;
     }
 
-    // Single-tree invariant: seed a fresh pair only when no tree exists. While a
-    // tree exists, floating windows are not offered as drop targets, so the
-    // target is always a tiled pane (handled above) and we never reach here.
-    if (tree) return;
+    // Build the (target + dragged) pane split per the drop `side`.
     const direction = side === 'left' || side === 'right' ? 'horizontal' : 'vertical';
     const draggedFirst = side === 'left' || side === 'top';
     const draggedLeafId = nextTileId('leaf');
     const targetLeafId = nextTileId('leaf');
     const draggedLeaf: TileNode = { kind: 'leaf', id: draggedLeafId, windowId: draggedId };
     const targetLeaf: TileNode = { kind: 'leaf', id: targetLeafId, windowId: targetId };
-    const newTree: TileNode = {
+    const pairTree: TileNode = {
       kind: 'split',
       id: nextTileId('split'),
       direction,
@@ -411,19 +443,29 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
       a: draggedFirst ? draggedLeaf : targetLeaf,
       b: draggedFirst ? targetLeaf : draggedLeaf,
     };
-    // The new group is confined to the TARGET's footprint (a half-snapped window
-    // splits within its half; a maximized target fills the overlay), so docking
-    // does not blow the layout up to full width.
+
+    const markBoth = (state: WindowStoreState) => ({
+      ...state.windows,
+      [draggedId]: markWindowTiled(state.windows[draggedId], draggedLeafId),
+      [targetId]: markWindowTiled(state.windows[targetId], targetLeafId),
+    });
+
+    if (tree) {
+      // A tree exists but the TARGET is a lone snapped/floating window outside it.
+      // Merge into the SINGLE tree: wrap the existing tree under a new root with
+      // the target+dragged pane on the side of the footprint the target sits on,
+      // so everything stays one cohesive, resizable tiling (no second tree).
+      const rootSide = rootSideForWindow(target.geometry, current.tileTreeRect);
+      const nextTree = wrapTreeWithRoot(tree, pairTree, rootSide, nextTileId('split'));
+      set((state) => ({ tileTree: nextTree, tileTreeRect: FULL_TILE_RECT, windows: markBoth(state) }));
+      return;
+    }
+
+    // No tree yet: seed a fresh pair confined to the TARGET's footprint (a half-
+    // snapped window splits within its half; a maximized target fills the overlay),
+    // so docking does not blow the layout up to full width.
     const footprint = target.state === 'maximized' ? FULL_TILE_RECT : clampGeometry(target.geometry);
-    set((state) => ({
-      tileTree: newTree,
-      tileTreeRect: footprint,
-      windows: {
-        ...state.windows,
-        [draggedId]: markTiled(state.windows[draggedId], draggedLeafId),
-        [targetId]: markTiled(state.windows[targetId], targetLeafId),
-      },
-    }));
+    set((state) => ({ tileTree: pairTree, tileTreeRect: footprint, windows: markBoth(state) }));
   },
 
   setTileRatio: (splitId, ratio) => {

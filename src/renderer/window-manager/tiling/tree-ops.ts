@@ -95,6 +95,32 @@ export function insertWindowIntoTree(
   return replace(tree);
 }
 
+/**
+ * Wrap an entire existing tree under a NEW root split, placing `newSubtree` on
+ * `side` and the existing tree on the opposite side. This grows the ONE tree to
+ * span a larger region: it is how an edge-snapped window (newSubtree = a leaf) or
+ * a merged lone window + its drop partner (newSubtree = a 2-leaf split) joins the
+ * tiling as a full root pane, so the boundary between it and the existing tree
+ * gets its own resizable seam. 'left'/'top' put `newSubtree` first (child a).
+ */
+export function wrapTreeWithRoot(
+  existingTree: TileNode,
+  newSubtree: TileNode,
+  side: TileInsertSide,
+  newSplitId: string,
+): TileNode {
+  const direction = side === 'left' || side === 'right' ? 'horizontal' : 'vertical';
+  const newSubtreeFirst = side === 'left' || side === 'top';
+  return {
+    kind: 'split',
+    id: newSplitId,
+    direction,
+    ratio: 0.5,
+    a: newSubtreeFirst ? newSubtree : existingTree,
+    b: newSubtreeFirst ? existingTree : newSubtree,
+  };
+}
+
 /** Set the ratio (clamped) of the split with `splitId`. Returns a new tree. */
 export function setSplitRatio(tree: TileNode, splitId: string, ratio: number): TileNode {
   if (tree.kind === 'leaf') return tree;

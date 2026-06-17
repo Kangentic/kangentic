@@ -388,6 +388,38 @@ describe('window-store tiling', () => {
     expect(useWindowStore.getState().tileTreeRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
   });
 
+  it('dockWindow joins an existing tree as a new root pane (cohesive full-overlay tiling)', () => {
+    const { a, b } = makeTiledPair(); // A | B, full overlay
+    const c = useWindowStore.getState().openWindow({ taskId: 'c', sessionId: 's3', title: 'C' });
+    // Edge-snap C to the right while a tree exists -> it JOINS the tree (not a lone snap).
+    useWindowStore.getState().dockWindow(c, 'right');
+    const state = useWindowStore.getState();
+    expect(state.windows[c].state).toBe('tiled');
+    expect(collectLeafWindowIds(state.tileTree).sort()).toEqual([a, b, c].sort());
+    expect(state.tileTreeRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+  });
+
+  it('dockIntoWindow merges a lone snapped window (outside the tree) into the single tree', () => {
+    // A tree confined to the right half.
+    const a = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
+    useWindowStore.getState().snapWindow(a, { x: 0.5, y: 0, w: 0.5, h: 1 });
+    const b = useWindowStore.getState().openWindow({ taskId: 'b', sessionId: 's2', title: 'B' });
+    useWindowStore.getState().dockIntoWindow(b, a, 'bottom'); // seed pair in the right half
+    expect(useWindowStore.getState().tileTreeRect).toEqual({ x: 0.5, y: 0, w: 0.5, h: 1 });
+    // A lone snapped window parked on the LEFT, outside the tree (the orphan case).
+    const c = useWindowStore.getState().openWindow({ taskId: 'c', sessionId: 's3', title: 'C' });
+    useWindowStore.getState().snapWindow(c, { x: 0, y: 0, w: 0.5, h: 1 });
+    expect(useWindowStore.getState().windows[c].state).toBe('snapped');
+    // Drag a 4th window onto the orphan -> merges the orphan + dragged into the ONE tree.
+    const d = useWindowStore.getState().openWindow({ taskId: 'd', sessionId: 's4', title: 'D' });
+    useWindowStore.getState().dockIntoWindow(d, c, 'bottom');
+    const state = useWindowStore.getState();
+    expect(state.windows[c].state).toBe('tiled');
+    expect(state.windows[d].state).toBe('tiled');
+    expect(collectLeafWindowIds(state.tileTree).sort()).toEqual([a, b, c, d].sort());
+    expect(state.tileTreeRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+  });
+
   it('collapsing a footprint-confined group resets the footprint to the full overlay', () => {
     const a = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
     useWindowStore.getState().snapWindow(a, { x: 0, y: 0, w: 0.5, h: 1 });

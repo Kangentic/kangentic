@@ -74,6 +74,29 @@ describe('collectCandidatePanes', () => {
     expect(panes[0].rect).toEqual({ left: 250, top: 80, width: 500, height: 400 });
   });
 
+  it('also offers lone non-tree windows as candidates when a tree exists (so an orphan is dockable)', () => {
+    const tree: TileNode = {
+      kind: 'split',
+      id: 's1',
+      direction: 'horizontal',
+      ratio: 0.5,
+      a: { kind: 'leaf', id: 'la', windowId: 'w1' },
+      b: { kind: 'leaf', id: 'lb', windowId: 'w2' },
+    };
+    const windows: Record<string, ManagedWindow> = {
+      w1: makeWindow({ id: 'w1', state: 'tiled' }),
+      w2: makeWindow({ id: 'w2', state: 'tiled', zIndex: 2 }),
+      orphan: makeWindow({ id: 'orphan', state: 'snapped', geometry: { x: 0, y: 0, w: 0.5, h: 1 }, zIndex: 3 }),
+      dragged: makeWindow({ id: 'dragged', zIndex: 4 }),
+    };
+    // Tree confined to the right half; the orphan is a separate snapped window.
+    const panes = collectCandidatePanes('dragged', windows, tree, CONTAINER, { x: 0.5, y: 0, w: 0.5, h: 1 });
+    const ids = panes.map((pane) => pane.windowId).sort();
+    expect(ids).toEqual(['orphan', 'w1', 'w2']);
+    // The orphan is hit-tested at its own geometry (left half), not a tree rect.
+    expect(panes.find((pane) => pane.windowId === 'orphan')?.rect).toEqual({ left: 0, top: 0, width: 500, height: 800 });
+  });
+
   it('projects a maximized window to the full container', () => {
     const windows: Record<string, ManagedWindow> = {
       dragged: makeWindow({ id: 'dragged' }),

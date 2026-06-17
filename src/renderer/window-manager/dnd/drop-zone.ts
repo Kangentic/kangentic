@@ -51,11 +51,12 @@ export interface DropTarget {
 
 /**
  * Project every dockable window (except `draggedWindowId`) to its current pixel
- * rect. When a tile tree exists, the candidates are exactly its tiled panes
- * (resolved edge-to-edge within the tree's footprint, so the whole pane is a hit
- * target); otherwise every visible floating/snapped window is a candidate, so
- * dropping onto one seeds a fresh tile pair. Minimized windows are never
- * candidates.
+ * rect. Tiled panes come from the tree (resolved edge-to-edge within its
+ * footprint, so the whole pane is a hit target). EVERY other visible window
+ * (lone snapped / floating / maximized) is ALSO a candidate, whether or not a
+ * tree exists: dropping onto a non-tree window merges it into the single tree
+ * (or seeds the first pair). Minimized windows are never candidates. This is what
+ * lets a window left beside a tree be docked into, instead of being a dead zone.
  */
 export function collectCandidatePanes(
   draggedWindowId: string,
@@ -65,6 +66,7 @@ export function collectCandidatePanes(
   tileTreeRect: FractionalRect,
 ): CandidatePane[] {
   const candidates: CandidatePane[] = [];
+  const tiledWindowIds = new Set<string>();
   if (tileTree) {
     const layout = resolveTileLayout(
       tileTree,
@@ -74,14 +76,15 @@ export function collectCandidatePanes(
       { left: tileTreeRect.x * container.width, top: tileTreeRect.y * container.height },
     );
     for (const [windowId, rect] of layout.rects) {
+      tiledWindowIds.add(windowId);
       if (windowId === draggedWindowId) continue;
       candidates.push({ windowId, zIndex: windows[windowId]?.zIndex ?? 0, rect });
     }
-    return candidates;
   }
   for (const managedWindow of Object.values(windows)) {
     if (managedWindow.id === draggedWindowId) continue;
     if (managedWindow.state === 'minimized') continue;
+    if (tiledWindowIds.has(managedWindow.id)) continue; // already added as a tiled pane
     const geometry = managedWindow.state === 'maximized' ? { x: 0, y: 0, w: 1, h: 1 } : managedWindow.geometry;
     candidates.push({ windowId: managedWindow.id, zIndex: managedWindow.zIndex, rect: fractionalToPixels(geometry, container) });
   }

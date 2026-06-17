@@ -131,7 +131,10 @@ export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seam
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      className={`group pointer-events-auto absolute z-[60] ${isHorizontal ? 'cursor-col-resize' : 'cursor-row-resize'}`}
+      // z above any window: window zIndex grows by 1 per focus and is unbounded,
+      // so a fixed-low seam z would slip under the windows after enough focus
+      // clicks (and become un-grabbable). Stays below the snap preview (~2.147e9).
+      className={`group pointer-events-auto absolute z-[2000000000] ${isHorizontal ? 'cursor-col-resize' : 'cursor-row-resize'}`}
       style={{ left: seam.rect.left, top: seam.rect.top, width: seam.rect.width, height: seam.rect.height }}
       data-testid={`tile-splitter-${seam.splitId}`}
     >

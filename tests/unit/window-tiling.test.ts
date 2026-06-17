@@ -5,6 +5,7 @@ import {
   collectWindowIds,
   removeWindowFromTree,
   insertWindowIntoTree,
+  wrapTreeWithRoot,
   setSplitRatio,
   clampTileRatio,
   MIN_TILE_RATIO,
@@ -162,5 +163,17 @@ describe('tile tree-ops', () => {
   it('insertWindowIntoTree returns the tree unchanged when the target is absent', () => {
     const tree = hsplit('s1', leaf('la', 'wa'), leaf('lb', 'wb'), 0.5);
     expect(insertWindowIntoTree(tree, 'wz', 'wn', 'ln', 'sn', 'left')).toBe(tree);
+  });
+
+  it('wrapTreeWithRoot wraps the whole tree under a new root, new subtree on the requested side', () => {
+    const tree = hsplit('s1', leaf('la', 'wa'), leaf('lb', 'wb'), 0.5);
+    const newLeaf = leaf('ln', 'wn');
+    expect(wrapTreeWithRoot(tree, newLeaf, 'left', 'sr')).toEqual(hsplit('sr', leaf('ln', 'wn'), tree, 0.5));
+    expect(wrapTreeWithRoot(tree, newLeaf, 'right', 'sr')).toEqual(hsplit('sr', tree, leaf('ln', 'wn'), 0.5));
+    expect(wrapTreeWithRoot(tree, newLeaf, 'top', 'sr')).toEqual(vsplit('sr', leaf('ln', 'wn'), tree, 0.5));
+    expect(wrapTreeWithRoot(tree, newLeaf, 'bottom', 'sr')).toEqual(vsplit('sr', tree, leaf('ln', 'wn'), 0.5));
+    // The existing tree keeps its exact reference as the untouched child.
+    const wrapped = wrapTreeWithRoot(tree, newLeaf, 'left', 'sr') as Extract<TileNode, { kind: 'split' }>;
+    expect(wrapped.b).toBe(tree);
   });
 });
