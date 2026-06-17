@@ -42,6 +42,21 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
   useEffect(() => {
     const previousProjectId = previousProjectIdRef.current;
 
+    // HMR parity: a Vite Fast Refresh runs App.tsx's `vite:afterUpdate` handler,
+    // which calls `loadCurrent()` / `loadProjects()` and replaces `currentProject`
+    // with a NEW object that has the SAME id. That reference change re-fires this
+    // effect even though no project switch happened. Running the switch logic then
+    // wrongly resets per-project view state - notably `dialogSessionIds: []`, which
+    // wipes the claims of HMR-preserved detail windows. Those windows do not
+    // re-claim (their claim effect is keyed on `session?.id`, unchanged across
+    // HMR), so the bottom-panel focus set collapses and every non-active window's
+    // PTY output is suppressed (a frozen, unresizable terminal). A same-id re-fire
+    // is never a real switch, and `vite:afterUpdate` already re-syncs board /
+    // config / sessions on its own, so this effect must be inert here.
+    if (previousProjectId !== null && previousProjectId === (currentProject?.id ?? null)) {
+      return;
+    }
+
     // Capture the outgoing project's slice state before we mutate the
     // stores. Skip self-switches (same id) and the initial cold mount
     // (no previous project to snapshot).

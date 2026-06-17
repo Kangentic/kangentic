@@ -21,6 +21,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useWindowStore } from '../store/window-store';
 import { useTaskDetailWindowBridge } from '../bridge/useTaskDetailWindowBridge';
+import { useWindowSessionClaims } from '../bridge/useWindowSessionClaims';
 import type { ContainerSize } from '../store/geometry';
 import { resolveTileLayout } from '../tiling/resolve-layout';
 import { WindowFrame } from './WindowFrame';
@@ -53,6 +54,10 @@ export function WindowLayer() {
   // Open/close task-detail windows in response to the renderer's `detailTaskId`
   // signal (the single open path every entry point already drives).
   useTaskDetailWindowBridge();
+  // Keep the window-owned session claim set (`dialogSessionIds`) reconciled to
+  // the open windows, so an HMR re-sync (or any external reset) that clobbers it
+  // self-heals instead of leaving a window's terminal suppressed.
+  useWindowSessionClaims();
 
   const [containerSize, setContainerSize] = useState<ContainerSize>({ width: 0, height: 0 });
   const windows = useWindowStore((state) => state.windows);

@@ -85,7 +85,7 @@ describe('collectCandidatePanes', () => {
 });
 
 describe('detectDropTarget', () => {
-  it('arms the nearest edge (left band) and previews that half', () => {
+  it('arms the LEFT band and previews the left half', () => {
     const target = detectDropTarget(40, 400, [PANE]);
     expect(target).toEqual({
       targetWindowId: 'w1',
@@ -94,23 +94,43 @@ describe('detectDropTarget', () => {
     });
   });
 
-  it('arms top when the cursor is near the top edge (vertical split preview)', () => {
+  it('arms the RIGHT band and previews the right half', () => {
+    const target = detectDropTarget(960, 400, [PANE]);
+    expect(target?.side).toBe('right');
+    expect(target?.previewRect).toEqual({ left: 500, top: 0, width: 500, height: 800 });
+  });
+
+  it('arms TOP in the center column above the midline (horizontal split preview)', () => {
     const target = detectDropTarget(500, 40, [PANE]);
     expect(target?.side).toBe('top');
     expect(target?.previewRect).toEqual({ left: 0, top: 0, width: 1000, height: 400 });
   });
 
-  it('arms bottom near the bottom edge', () => {
+  it('arms BOTTOM in the center column below the midline', () => {
     const target = detectDropTarget(500, 760, [PANE]);
     expect(target?.side).toBe('bottom');
     expect(target?.previewRect).toEqual({ left: 0, top: 400, width: 1000, height: 400 });
   });
 
-  it('returns null in the dead center (release floats, no dock)', () => {
-    expect(detectDropTarget(500, 400, [PANE])).toBeNull();
+  it('left/right bands are FULL-HEIGHT: the side is the same at top, middle, and bottom', () => {
+    // The reported inconsistency: near the vertical middle on the left side it
+    // used to flip left <-> top/bottom along a diagonal. The left third now docks
+    // LEFT at every height (right third docks RIGHT), so the choice is predictable.
+    expect(detectDropTarget(150, 80, [PANE])?.side).toBe('left');
+    expect(detectDropTarget(150, 400, [PANE])?.side).toBe('left');
+    expect(detectDropTarget(150, 720, [PANE])?.side).toBe('left');
+    expect(detectDropTarget(850, 80, [PANE])?.side).toBe('right');
+    expect(detectDropTarget(850, 720, [PANE])?.side).toBe('right');
   });
 
-  it('returns null when the cursor is over no pane', () => {
+  it('ALWAYS docks while over a pane - no dead zone; the center column splits at the midline', () => {
+    // Center column (x in the middle third): top above the midline, bottom below.
+    expect(detectDropTarget(500, 400, [PANE])).not.toBeNull();
+    expect(detectDropTarget(500, 360, [PANE])?.side).toBe('top');
+    expect(detectDropTarget(500, 440, [PANE])?.side).toBe('bottom');
+  });
+
+  it('returns null only when the center is over no pane (then it floats / edge-snaps)', () => {
     expect(detectDropTarget(1200, 400, [PANE])).toBeNull();
   });
 

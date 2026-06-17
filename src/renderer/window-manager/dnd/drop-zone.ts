@@ -1,15 +1,20 @@
 /**
  * Pure drag-to-dock drop-zone math (3b). No React, no store, no DOM.
  *
- * While a window is dragged OVER another pane, the pane under the dragged
- * window's CENTER offers four edge drop zones (left/right/top/bottom) plus a dead
- * center. Keying off the window's center (NOT the mouse pointer) matches the
- * screen-edge snap, which keys off the window's own rect: where you grabbed the
- * title bar is irrelevant, and top vs bottom are symmetric. The edge the center
- * is nearest decides where the dragged window docks (and which way the pane
- * splits); the dead center is a no-dock region so a window can be dragged ACROSS
- * a pane and dropped floating on top of it without tiling (the hybrid float+tile
- * model). This is the discovery mechanism for arbitrary N-way tiling.
+ * Whenever the dragged window's CENTER is over another pane, that pane ALWAYS
+ * offers a dock zone (no dead area). The pane is carved into PRIORITY BANDS, not
+ * diagonals: the left and right thirds are FULL-HEIGHT (so "the center is on the
+ * left side" always means dock LEFT, at any height), and only the center column
+ * splits top vs bottom at the horizontal midline. Diagonals were unpredictable -
+ * near the vertical middle a small move flipped left <-> top/bottom along the
+ * diagonal. Straight band edges (one vertical line at each third, one horizontal
+ * line down the middle) make the left/right vs top/bottom choice predictable.
+ *
+ * Keying off the window's center (NOT the mouse pointer) matches the screen-edge
+ * snap, which keys off the window's own rect: where you grabbed the title bar is
+ * irrelevant. To drop a window FLOATING over another (no tile), keep its center
+ * off the other window (less than half over). This is the discovery mechanism for
+ * arbitrary N-way tiling.
  *
  * Two pure steps, both unit-tested:
  *  - `collectCandidatePanes` projects the current windows to their pixel rects
@@ -25,9 +30,10 @@ import { fractionalToPixels } from '../store/geometry';
 import { resolveTileLayout } from '../tiling/resolve-layout';
 import type { TileInsertSide } from '../tiling/tree-ops';
 
-/** Fraction of the pane (each axis) reserved as the dead center: drop here and
- *  the window floats rather than docking. The outer band is the edge zones. */
-const CENTER_DEAD_ZONE = 0.4;
+/** Width of the left/right priority bands as a fraction of the pane. The outer
+ *  third on each side docks left/right at any height; the center third splits
+ *  top vs bottom. Tunable: larger = easier left/right, smaller center column. */
+const SIDE_BAND_FRACTION = 1 / 3;
 
 export interface CandidatePane {
   windowId: string;
@@ -109,9 +115,11 @@ function previewRectFor(pane: PixelRect, side: TileInsertSide): PixelRect {
 
 /**
  * Resolve the drop target for a reference point (the dragged window's center),
- * or null when it is over no pane or in a pane's dead center. Picks the
- * front-most (highest zIndex) pane under the point, then the nearest of its four
- * edges.
+ * or null only when it is over no pane at all. When it IS over a pane, priority
+ * bands pick the side deterministically (no dead zone, no diagonals): the left
+ * third docks LEFT and the right third docks RIGHT at any height; the center
+ * third docks TOP above the midline and BOTTOM below it. Picks the front-most
+ * (highest zIndex) pane under the point.
  */
 export function detectDropTarget(referenceX: number, referenceY: number, candidates: CandidatePane[]): DropTarget | null {
   let pane: CandidatePane | null = null;
@@ -124,22 +132,13 @@ export function detectDropTarget(referenceX: number, referenceY: number, candida
   // Normalised position within the pane (0..1 on each axis).
   const normalizedX = (referenceX - pane.rect.left) / pane.rect.width;
   const normalizedY = (referenceY - pane.rect.top) / pane.rect.height;
-  const lowEdge = (1 - CENTER_DEAD_ZONE) / 2; // 0.3 with a 0.4 dead zone
-  const highEdge = 1 - lowEdge; // 0.7
-  if (normalizedX > lowEdge && normalizedX < highEdge && normalizedY > lowEdge && normalizedY < highEdge) {
-    return null; // dead center: release floats, no dock
-  }
+  // Full-height left/right bands take priority over top/bottom, so being on the
+  // left side always docks left regardless of vertical position; only the center
+  // column resolves top vs bottom by the midline.
+  let side: TileInsertSide;
+  if (normalizedX < SIDE_BAND_FRACTION) side = 'left';
+  else if (normalizedX > 1 - SIDE_BAND_FRACTION) side = 'right';
+  else side = normalizedY < 0.5 ? 'top' : 'bottom';
 
-  // Nearest edge wins (distance to each pane edge as a fraction).
-  const distances: Array<{ side: TileInsertSide; distance: number }> = [
-    { side: 'left', distance: normalizedX },
-    { side: 'right', distance: 1 - normalizedX },
-    { side: 'top', distance: normalizedY },
-    { side: 'bottom', distance: 1 - normalizedY },
-  ];
-  let nearest = distances[0];
-  for (const candidate of distances) {
-    if (candidate.distance < nearest.distance) nearest = candidate;
-  }
-  return { targetWindowId: pane.windowId, side: nearest.side, previewRect: previewRectFor(pane.rect, nearest.side) };
+  return { targetWindowId: pane.windowId, side, previewRect: previewRectFor(pane.rect, side) };
 }
