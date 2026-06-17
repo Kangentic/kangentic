@@ -1,27 +1,30 @@
 /**
  * Pure drag-to-dock drop-zone math (3b). No React, no store, no DOM.
  *
- * Whenever the dragged window's CENTER is over another pane, that pane ALWAYS
- * offers a dock zone (no dead area). The pane is carved into PRIORITY BANDS, not
- * diagonals: the left and right thirds are FULL-HEIGHT (so "the center is on the
+ * INTERIOR slots use the dragged window's BODY CENTER: whenever it is over another
+ * pane, that pane offers a dock zone (no dead area), carved into PRIORITY BANDS, not
+ * diagonals - the left and right thirds are FULL-HEIGHT (so "the center is on the
  * left side" always means dock LEFT, at any height), and only the center column
- * splits top vs bottom at the horizontal midline. Diagonals were unpredictable -
- * near the vertical middle a small move flipped left <-> top/bottom along the
- * diagonal. Straight band edges (one vertical line at each third, one horizontal
- * line down the middle) make the left/right vs top/bottom choice predictable.
+ * splits top vs bottom at the horizontal midline. Diagonals were unpredictable: near
+ * the vertical middle a small move flipped left <-> top/bottom. Straight band edges
+ * make the choice predictable. Keying off the window's BODY CENTER (not the grab
+ * point, not the header) is grab-INDEPENDENT and matches where the window visually
+ * sits, so the trigger fires when the body looks centered over the target.
  *
- * Keying off the window's center (NOT the mouse pointer) matches the screen-edge
- * snap, which keys off the window's own rect: where you grabbed the title bar is
- * irrelevant. To drop a window FLOATING over another (no tile), keep its center
- * off the other window (less than half over). This is the discovery mechanism for
- * arbitrary N-way tiling.
+ * The body center alone cannot reach a stack's FIRST or LAST slot: the dragged window
+ * is taller (or wider) than a pane, so its center would have to leave the screen. So
+ * the tree's OUTER slots get a second signal - the dragged window's LEADING EDGE
+ * reaching the tree's outer boundary (see `detectTiledDropTarget`): push the window's
+ * top edge to the stack top to insert at the very top, etc. Reachable, and the body
+ * keeps driving every interior slot. To drop a window FLOATING over another (no
+ * tile), keep its center off the other panes. Discovery mechanism for N-way tiling.
  *
- * Two pure steps, both unit-tested:
- *  - `collectCandidatePanes` projects the current windows to their pixel rects
- *    (tiled panes from the tile tree; otherwise each floating window's geometry).
- *  - `detectDropTarget` hit-tests a reference point (the dragged window's center)
- *    against those panes and resolves the armed zone + the preview rect (the
- *    half/area the dragged window would take).
+ * Pure steps, unit-tested:
+ *  - `collectCandidatePanes` projects the windows to pixel rects (tiled panes from
+ *    the tree; otherwise each floating window's geometry).
+ *  - `detectDropTarget` hit-tests the body-center point against those panes (interior
+ *    bands). `detectTiledDropTarget` wraps it with the outer-slot edge zones for a
+ *    drag over an existing tree.
  */
 
 import type { FractionalRect, ManagedWindow, TileNode } from '../store/types';
@@ -117,12 +120,13 @@ function previewRectFor(pane: PixelRect, side: TileInsertSide): PixelRect {
 }
 
 /**
- * Resolve the drop target for a reference point (the dragged window's center),
- * or null only when it is over no pane at all. When it IS over a pane, priority
- * bands pick the side deterministically (no dead zone, no diagonals): the left
- * third docks LEFT and the right third docks RIGHT at any height; the center
+ * Resolve the INTERIOR drop target for a reference point (the dragged window's body
+ * center), or null only when it is over no pane at all. When it IS over a pane,
+ * priority bands pick the side deterministically (no dead zone, no diagonals): the
+ * left third docks LEFT and the right third docks RIGHT at any height; the center
  * third docks TOP above the midline and BOTTOM below it. Picks the front-most
- * (highest zIndex) pane under the point.
+ * (highest zIndex) pane under the point. Outer-slot reachability is added by
+ * `detectTiledDropTarget`.
  */
 export function detectDropTarget(referenceX: number, referenceY: number, candidates: CandidatePane[]): DropTarget | null {
   let pane: CandidatePane | null = null;
@@ -144,4 +148,82 @@ export function detectDropTarget(referenceX: number, referenceY: number, candida
   else side = normalizedY < 0.5 ? 'top' : 'bottom';
 
   return { targetWindowId: pane.windowId, side, previewRect: previewRectFor(pane.rect, side) };
+}
+
+/** The tile tree's outer pixel boundary (its footprint), for the edge zones. */
+export interface TreeBounds {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/** Within this distance (px) of the tree's outer boundary, the dragged window's
+ *  leading edge counts as "pushed to the edge", arming an outer-slot insert.
+ *  Tunable: larger = the extreme slots arm sooner / are easier to hit. */
+const EDGE_ZONE_PX = 28;
+
+/** The extreme pane along an axis: topmost / bottommost / leftmost / rightmost. */
+function extremePane(candidates: CandidatePane[], edge: TileInsertSide): CandidatePane | null {
+  let chosen: CandidatePane | null = null;
+  for (const candidate of candidates) {
+    if (!chosen) {
+      chosen = candidate;
+      continue;
+    }
+    const next = candidate.rect;
+    const best = chosen.rect;
+    if (edge === 'top' && next.top < best.top) chosen = candidate;
+    else if (edge === 'bottom' && next.top + next.height > best.top + best.height) chosen = candidate;
+    else if (edge === 'left' && next.left < best.left) chosen = candidate;
+    else if (edge === 'right' && next.left + next.width > best.left + best.width) chosen = candidate;
+  }
+  return chosen;
+}
+
+/**
+ * Drop target for a dragged window over an EXISTING tile tree. Two-signal model:
+ *  - The tree's OUTER slots (the stack's extremes) are armed when the dragged
+ *    window's LEADING EDGE reaches the tree's outer boundary on the root axis -
+ *    reachable by pushing the window's edge to the edge. `rootDirection` picks the
+ *    axis: a vertical root (stack) owns top/bottom; a horizontal root (row) owns
+ *    left/right. The window's body center must be over the tree on the cross axis
+ *    (and in the matching half, so a window taller than the whole tree resolves to
+ *    one extreme, not both) before an edge zone arms - a window flung to an empty
+ *    corner never falsely grabs an extreme.
+ *  - Every INTERIOR slot falls through to `detectDropTarget`'s body-center bands,
+ *    so the trigger matches where the window visually sits.
+ */
+export function detectTiledDropTarget(
+  draggedRect: PixelRect,
+  candidates: CandidatePane[],
+  rootDirection: 'horizontal' | 'vertical',
+  treeBounds: TreeBounds,
+): DropTarget | null {
+  const centerX = draggedRect.left + draggedRect.width / 2;
+  const centerY = draggedRect.top + draggedRect.height / 2;
+  if (rootDirection === 'vertical') {
+    const overTree = centerX >= treeBounds.left && centerX <= treeBounds.right;
+    const midY = (treeBounds.top + treeBounds.bottom) / 2;
+    if (overTree && centerY < midY && draggedRect.top <= treeBounds.top + EDGE_ZONE_PX) {
+      const pane = extremePane(candidates, 'top');
+      if (pane) return { targetWindowId: pane.windowId, side: 'top', previewRect: previewRectFor(pane.rect, 'top') };
+    }
+    if (overTree && centerY >= midY && draggedRect.top + draggedRect.height >= treeBounds.bottom - EDGE_ZONE_PX) {
+      const pane = extremePane(candidates, 'bottom');
+      if (pane) return { targetWindowId: pane.windowId, side: 'bottom', previewRect: previewRectFor(pane.rect, 'bottom') };
+    }
+  } else {
+    const overTree = centerY >= treeBounds.top && centerY <= treeBounds.bottom;
+    const midX = (treeBounds.left + treeBounds.right) / 2;
+    if (overTree && centerX < midX && draggedRect.left <= treeBounds.left + EDGE_ZONE_PX) {
+      const pane = extremePane(candidates, 'left');
+      if (pane) return { targetWindowId: pane.windowId, side: 'left', previewRect: previewRectFor(pane.rect, 'left') };
+    }
+    if (overTree && centerX >= midX && draggedRect.left + draggedRect.width >= treeBounds.right - EDGE_ZONE_PX) {
+      const pane = extremePane(candidates, 'right');
+      if (pane) return { targetWindowId: pane.windowId, side: 'right', previewRect: previewRectFor(pane.rect, 'right') };
+    }
+  }
+  return detectDropTarget(centerX, centerY, candidates);
 }

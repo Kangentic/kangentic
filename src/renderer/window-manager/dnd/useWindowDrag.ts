@@ -25,8 +25,8 @@ import { pixelsToFractional } from '../store/geometry';
 import type { PixelRect } from '../store/geometry';
 import { detectSnapEdge, snapEdgeToGeometry } from './snap';
 import { hideSnapPreview, showSnapPreview } from './snap-preview-controller';
-import { collectCandidatePanes, detectDropTarget } from './drop-zone';
-import type { CandidatePane, DropTarget } from './drop-zone';
+import { collectCandidatePanes, detectDropTarget, detectTiledDropTarget } from './drop-zone';
+import type { CandidatePane, DropTarget, TreeBounds } from './drop-zone';
 import { resolveTileLayout } from '../tiling/resolve-layout';
 import { insertWindowIntoTree, treeContainsWindow } from '../tiling/tree-ops';
 import { useWindowStore } from '../store/window-store';
@@ -36,9 +36,12 @@ import type { SnapEdge } from '../store/types';
  *  click that only raises or maximizes the window does not nudge its geometry. */
 const DRAG_ACTIVATION_PX = 4;
 
-/** Vertical offset of the cursor below a restored window's top when a maximized
- *  window is dragged off full-screen, so the cursor lands on the title bar. */
-const UNMAXIMIZE_GRAB_OFFSET_PX = 16;
+/** When the cursor is within this many px of the overlay's left/right edge it is
+ *  treated as "shoved against the screen edge" - the user has run out of monitor
+ *  room to drag the window's reference further, so that edge's dock is armed
+ *  directly (Aero-Snap feel). The overlay spans the full window width, so its edge
+ *  is the monitor edge when maximized. */
+const EDGE_PIN_PX = 6;
 
 /** Cached overlay geometry (client coords + size). The overlay does not resize
  *  mid-drag, so caching it at pointerdown means zero layout reads per move. */
@@ -59,6 +62,11 @@ interface DragSession {
   lastClientY: number;
   /** Frame rect relative to the overlay's top-left at drag start. */
   startRect: PixelRect;
+  /** The pruned tile tree's pixel footprint + root split axis, snapshotted at
+   *  activation (after un-dock removes the dragged window). Drives the outer-slot
+   *  edge zones. Both null when there is no multi-pane tree to dock into. */
+  treeBounds: TreeBounds | null;
+  rootDirection: 'horizontal' | 'vertical' | null;
   overlay: OverlayBounds;
   activated: boolean;
   snapEdge: SnapEdge | null;
@@ -176,6 +184,8 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
         width: frameRect.width,
         height: frameRect.height,
       },
+      treeBounds: null,
+      rootDirection: null,
       overlay: { left: overlayRect.left, top: overlayRect.top, width: overlayRect.width, height: overlayRect.height },
       activated: false,
       snapEdge: null,
@@ -202,8 +212,20 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     if (managedWindow.state === 'tiled') useWindowStore.getState().untileWindow(windowId);
     const width = restore.w * drag.overlay.width;
     const height = restore.h * drag.overlay.height;
-    const left = clamp(event.clientX - drag.overlay.left - width / 2, 0, Math.max(0, drag.overlay.width - width));
-    const top = clamp(event.clientY - drag.overlay.top - UNMAXIMIZE_GRAB_OFFSET_PX, 0, Math.max(0, drag.overlay.height - height));
+    // Shrink the window AROUND the grab point so it does not jump to re-center
+    // under the cursor (the jarring ~50px hop). Keep the cursor at the spot it
+    // grabbed: the same FRACTION across the title bar horizontally, and the same
+    // PIXEL offset down it vertically (the title bar is a fixed-height strip, so a
+    // fraction would drift off it when the restore size differs from the pane).
+    // Vertically this leaves the window's top ~where it was; horizontally it
+    // contracts toward the grab. (Windows un-maximize feel.)
+    const pointerOverlayX = event.clientX - drag.overlay.left;
+    const pointerOverlayY = event.clientY - drag.overlay.top;
+    const grabFractionX =
+      drag.startRect.width > 0 ? clamp((pointerOverlayX - drag.startRect.left) / drag.startRect.width, 0, 1) : 0.5;
+    const grabOffsetY = clamp(pointerOverlayY - drag.startRect.top, 0, height);
+    const left = clamp(pointerOverlayX - grabFractionX * width, 0, Math.max(0, drag.overlay.width - width));
+    const top = clamp(pointerOverlayY - grabOffsetY, 0, Math.max(0, drag.overlay.height - height));
     useWindowStore.getState().setGeometry(
       windowId,
       pixelsToFractional({ left, top, width, height }, { width: drag.overlay.width, height: drag.overlay.height }),
@@ -273,6 +295,18 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
         { width: drag.overlay.width, height: drag.overlay.height },
         store.tileTreeRect,
       );
+      // Snapshot the pruned tree's footprint + root axis for the outer-slot edge
+      // zones (only a multi-pane split root has extremes to push into).
+      const tree = store.tileTree;
+      drag.rootDirection = tree && tree.kind === 'split' ? tree.direction : null;
+      drag.treeBounds = tree
+        ? {
+            left: store.tileTreeRect.x * drag.overlay.width,
+            top: store.tileTreeRect.y * drag.overlay.height,
+            right: (store.tileTreeRect.x + store.tileTreeRect.w) * drag.overlay.width,
+            bottom: (store.tileTreeRect.y + store.tileTreeRect.h) * drag.overlay.height,
+          }
+        : null;
     }
 
     // Unclamped: the window follows the pointer freely (it hard-snaps back
@@ -281,14 +315,41 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     const deltaY = event.clientY - drag.startClientY;
     frame.style.transform = `translate3d(${deltaX}px, ${deltaY}px, 0)`;
 
-    // Drag-to-dock (3b) takes precedence: when the dragged window's CENTER sits in
-    // a pane's edge zone, preview docking onto that pane and arm it. Keying off
-    // the window's center (not the pointer) matches the screen-edge snap below and
-    // makes top vs bottom symmetric regardless of where the title bar was grabbed.
-    // Only with no pane under the center do we fall back to a SCREEN-edge fling.
-    const draggedCenterX = drag.startRect.left + deltaX + drag.startRect.width / 2;
-    const draggedCenterY = drag.startRect.top + deltaY + drag.startRect.height / 2;
-    const dropTarget = detectDropTarget(draggedCenterX, draggedCenterY, drag.candidatePanes);
+    // Cursor shoved against the overlay's left/right edge: the user has run out of
+    // monitor room to drag the window's reference further (the maximized edge case).
+    // Arm that edge's half-snap directly, taking precedence over the body-center
+    // tiling - which a wide window cannot push to the side third when the cursor is
+    // bounded by the screen. The cursor always reaches the screen edge regardless of
+    // window size or grab, so this is the reliable way to dock left/right there.
+    const pointerOverlayX = event.clientX - drag.overlay.left;
+    const pinnedEdge: SnapEdge | null =
+      pointerOverlayX <= EDGE_PIN_PX ? 'left' : pointerOverlayX >= drag.overlay.width - EDGE_PIN_PX ? 'right' : null;
+
+    // Drag-to-dock (3b) takes precedence over the screen-edge fling (unless the
+    // cursor is pinned at an edge, above). Two-signal targeting (drop-zone.ts), all
+    // keyed off the window itself so it is grab-INDEPENDENT - where on the header you
+    // grabbed never changes the result:
+    //  - INTERIOR slots use the window's BODY CENTER, so the trigger fires when the
+    //    body looks centered over the gap (matches what the user sees).
+    //  - The tree's OUTER slots (a stack's very top/bottom, a row's far left/right)
+    //    are armed when the window's LEADING EDGE reaches the tree boundary, since
+    //    the body center alone cannot reach them (the window is bigger than a pane).
+    // With no tree (floating candidates) the body center is enough on its own.
+    const draggedRect = {
+      left: drag.startRect.left + deltaX,
+      top: drag.startRect.top + deltaY,
+      width: drag.startRect.width,
+      height: drag.startRect.height,
+    };
+    const dropTarget = pinnedEdge
+      ? null
+      : drag.treeBounds && drag.rootDirection
+        ? detectTiledDropTarget(draggedRect, drag.candidatePanes, drag.rootDirection, drag.treeBounds)
+        : detectDropTarget(
+            draggedRect.left + draggedRect.width / 2,
+            draggedRect.top + draggedRect.height / 2,
+            drag.candidatePanes,
+          );
     if (dropTarget) {
       drag.dropTarget = dropTarget;
       drag.snapEdge = null;
@@ -302,17 +363,19 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     }
     drag.dropTarget = null;
 
-    // Every dock keys off the CONTAINER'S own edge dragged past the boundary
-    // (not the grab point or the pointer).
-    const edge = detectSnapEdge(
-      {
-        left: drag.startRect.left + deltaX,
-        top: drag.startRect.top + deltaY,
-        width: drag.startRect.width,
-        height: drag.startRect.height,
-      },
-      { width: drag.overlay.width, height: drag.overlay.height },
-    );
+    // A cursor pinned at the edge wins outright; otherwise the screen-edge fling
+    // keys off the CONTAINER'S own edge dragged past the boundary (not the pointer).
+    const edge =
+      pinnedEdge ??
+      detectSnapEdge(
+        {
+          left: drag.startRect.left + deltaX,
+          top: drag.startRect.top + deltaY,
+          width: drag.startRect.width,
+          height: drag.startRect.height,
+        },
+        { width: drag.overlay.width, height: drag.overlay.height },
+      );
     drag.snapEdge = edge;
     if (edge) {
       const snap = snapEdgeToGeometry(edge);

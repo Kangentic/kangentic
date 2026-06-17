@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   collectCandidatePanes,
   detectDropTarget,
+  detectTiledDropTarget,
 } from '../../src/renderer/window-manager/dnd/drop-zone';
-import type { CandidatePane } from '../../src/renderer/window-manager/dnd/drop-zone';
+import type { CandidatePane, TreeBounds } from '../../src/renderer/window-manager/dnd/drop-zone';
 import type { ManagedWindow, TileNode } from '../../src/renderer/window-manager/store/types';
 
 const CONTAINER = { width: 1000, height: 800 };
@@ -168,5 +169,53 @@ describe('detectDropTarget', () => {
     const front: CandidatePane = { windowId: 'front', zIndex: 5, rect: { left: 0, top: 0, width: 1000, height: 800 } };
     const target = detectDropTarget(40, 400, [back, front]);
     expect(target?.targetWindowId).toBe('front');
+  });
+});
+
+describe('detectTiledDropTarget', () => {
+  // A vertical stack of three full-width panes (each 300 tall) over a 1000x900 tree.
+  const STACK: CandidatePane[] = [
+    { windowId: 'a', zIndex: 1, rect: { left: 0, top: 0, width: 1000, height: 300 } },
+    { windowId: 'b', zIndex: 2, rect: { left: 0, top: 300, width: 1000, height: 300 } },
+    { windowId: 'c', zIndex: 3, rect: { left: 0, top: 600, width: 1000, height: 300 } },
+  ];
+  const STACK_BOUNDS: TreeBounds = { left: 0, top: 0, right: 1000, bottom: 900 };
+
+  it('arms the TOP extreme when the dragged window TOP EDGE reaches the stack top', () => {
+    // Window pushed to the top: top edge at 0, center in the upper half.
+    const dragged = { left: 250, top: 0, width: 500, height: 350 };
+    const target = detectTiledDropTarget(dragged, STACK, 'vertical', STACK_BOUNDS);
+    expect(target).toMatchObject({ targetWindowId: 'a', side: 'top' });
+  });
+
+  it('arms the BOTTOM extreme when the dragged window BOTTOM EDGE reaches the stack bottom', () => {
+    const dragged = { left: 250, top: 550, width: 500, height: 350 }; // bottom edge at 900
+    const target = detectTiledDropTarget(dragged, STACK, 'vertical', STACK_BOUNDS);
+    expect(target).toMatchObject({ targetWindowId: 'c', side: 'bottom' });
+  });
+
+  it('uses the BODY CENTER for interior gaps, even when the window is TALLER than a pane', () => {
+    // 350-tall window (taller than a 300 pane), centered in pane B, not near an edge.
+    const dragged = { left: 250, top: 300, width: 500, height: 350 }; // center y = 475
+    const target = detectTiledDropTarget(dragged, STACK, 'vertical', STACK_BOUNDS);
+    // 475 sits in pane B's lower half -> insert BELOW B (the B/C gap), via body center.
+    expect(target).toMatchObject({ targetWindowId: 'b', side: 'bottom' });
+  });
+
+  it('does NOT arm an extreme when the window is flung off the stack (cross-axis guard)', () => {
+    // Top edge at the boundary, but the center is far left of the stack.
+    const dragged = { left: -800, top: 0, width: 500, height: 350 };
+    expect(detectTiledDropTarget(dragged, STACK, 'vertical', STACK_BOUNDS)).toBeNull();
+  });
+
+  it('a HORIZONTAL root owns left/right extremes: left edge to the row left arms LEFT', () => {
+    const row: CandidatePane[] = [
+      { windowId: 'l', zIndex: 1, rect: { left: 0, top: 0, width: 500, height: 800 } },
+      { windowId: 'r', zIndex: 2, rect: { left: 500, top: 0, width: 500, height: 800 } },
+    ];
+    const rowBounds: TreeBounds = { left: 0, top: 0, right: 1000, bottom: 800 };
+    const dragged = { left: 0, top: 200, width: 350, height: 400 }; // left edge at 0
+    const target = detectTiledDropTarget(dragged, row, 'horizontal', rowBounds);
+    expect(target).toMatchObject({ targetWindowId: 'l', side: 'left' });
   });
 });
