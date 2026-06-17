@@ -101,7 +101,7 @@ function resetStore(): void {
     _sessionByTaskId: new Map(),
     activeSessionId: null,
     detailTaskId: null,
-    dialogSessionId: null,
+    dialogSessionIds: [],
     sessionUsage: {},
     latestRateLimits: null,
     sessionFirstOutput: {},

@@ -96,7 +96,7 @@ function summarizeSession(state: unknown): unknown {
     sessionCount: sessions.length,
     activeSessionId: partial.activeSessionId ?? null,
     detailTaskId: partial.detailTaskId ?? null,
-    dialogSessionId: partial.dialogSessionId ?? null,
+    dialogSessionIds: partial.dialogSessionIds ?? [],
     scrollToEventKey: partial.scrollToEventKey ?? null,
     seenIdleSessions: partial.seenIdleSessions ?? null,
     latestRateLimits: partial.latestRateLimits ?? null,

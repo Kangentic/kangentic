@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw } from 'lucide-react';
+import { X, Minus, Trash2, Pencil, Loader2, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
@@ -47,6 +47,8 @@ interface TaskDetailHeaderProps {
   onToggleBrowser: () => void;
   isMaximized: boolean;
   onToggleMaximized: () => void;
+  /** When provided (window-hosted), render a minimize control before maximize. */
+  onMinimize?: () => void;
 }
 
 export function TaskDetailHeader({
@@ -79,6 +81,7 @@ export function TaskDetailHeader({
   onToggleBrowser,
   isMaximized,
   onToggleMaximized,
+  onMinimize,
 }: TaskDetailHeaderProps) {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const commandButtonRef = useRef<HTMLDivElement>(null);
@@ -315,8 +318,19 @@ export function TaskDetailHeader({
         )}
       </KebabMenu>
 
-      {/* Divider + Maximize + Close */}
+      {/* Divider + Minimize (window only) + Maximize + Close */}
       <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
+      {onMinimize && (
+        <button
+          onClick={onMinimize}
+          data-testid="task-detail-minimize"
+          aria-label="Minimize window"
+          title="Minimize"
+          className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
+        >
+          <Minus size={16} />
+        </button>
+      )}
       <MaximizeToggleButton
         isMaximized={isMaximized}
         onToggle={onToggleMaximized}

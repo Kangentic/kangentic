@@ -1,0 +1,133 @@
+/**
+ * The window layer: a body-level portal overlay that floats windows over the
+ * live, clickable board. The overlay is `pointer-events:none` so clicks in the
+ * gaps fall through to the board; each `WindowFrame` is `pointer-events:auto`.
+ * Mounted once in `AppLayout`.
+ *
+ * The portal host is a `document.body` sibling of `#root` (not a child) so the
+ * overlay escapes the layout column's `overflow-hidden` wrappers. It is looked
+ * up or created once and never removed, so StrictMode double-invoke and HMR
+ * remounts reuse the same node.
+ *
+ * The overlay sits between the app chrome (title bar h-10, status bar h-9),
+ * matching the maximize convention in `dialog-maximize.tsx`. It renders at
+ * `z-40`, BELOW true modal dialogs (`BaseDialog` is `z-50`): while the
+ * task-detail surface is still a modal, the modal must sit on top of floating
+ * windows. When that surface becomes a window (the end state), there is no
+ * competing modal.
+ */
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useWindowStore } from '../store/window-store';
+import { useTaskDetailWindowBridge } from '../bridge/useTaskDetailWindowBridge';
+import type { ContainerSize } from '../store/geometry';
+import { resolveTileLayout } from '../tiling/resolve-layout';
+import { WindowFrame } from './WindowFrame';
+import { TileSplitter } from './TileSplitter';
+import { SnapPreview } from './SnapPreview';
+import { WindowDock } from './WindowDock';
+
+const PORTAL_HOST_ID = 'window-layer-root';
+
+/** Panes sit FLUSH (zero reserved gap) so nothing shows through behind a tiled
+ *  layout. The draggable seam is an invisible OVERLAY of this width, centered on
+ *  the boundary, that only paints a thin accent line on hover/drag. */
+const TILE_GAP_PX = 0;
+const TILE_SEAM_PX = 10;
+
+function getPortalHost(): HTMLElement {
+  const existing = document.getElementById(PORTAL_HOST_ID);
+  if (existing) return existing;
+  const host = document.createElement('div');
+  host.id = PORTAL_HOST_ID;
+  document.body.appendChild(host);
+  return host;
+}
+
+export function WindowLayer() {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const hostRef = useRef<HTMLElement | null>(null);
+  if (!hostRef.current) hostRef.current = getPortalHost();
+
+  // Open/close task-detail windows in response to the renderer's `detailTaskId`
+  // signal (the single open path every entry point already drives).
+  useTaskDetailWindowBridge();
+
+  const [containerSize, setContainerSize] = useState<ContainerSize>({ width: 0, height: 0 });
+  const windows = useWindowStore((state) => state.windows);
+  const tileTree = useWindowStore((state) => state.tileTree);
+  const tileTreeRect = useWindowStore((state) => state.tileTreeRect);
+
+  // The tile tree lives inside this pixel sub-region of the overlay (the whole
+  // overlay for edge-snap pairs; a half-snapped window's footprint for a group
+  // seeded by docking onto it). Size + origin both derive from `tileTreeRect`.
+  const treeBounds = useMemo(
+    () => ({
+      size: { width: tileTreeRect.w * containerSize.width, height: tileTreeRect.h * containerSize.height },
+      origin: { left: tileTreeRect.x * containerSize.width, top: tileTreeRect.y * containerSize.height },
+    }),
+    [tileTreeRect, containerSize],
+  );
+
+  // Flatten the logical tile tree into absolute pixel rects (one per tiled
+  // window) + seam regions, WITHIN the tree's footprint. Windows stay flat
+  // overlay children; only their position/size change, so a tiled terminal never
+  // reparents.
+  const tileLayout = useMemo(
+    () =>
+      tileTree && containerSize.width > 0
+        ? resolveTileLayout(tileTree, treeBounds.size, TILE_GAP_PX, TILE_SEAM_PX, treeBounds.origin)
+        : null,
+    [tileTree, containerSize, treeBounds],
+  );
+
+  // Measure the overlay so fractional geometry projects to pixels, and reproject
+  // on viewport/overlay resize (the geometry value itself is unchanged).
+  useEffect(() => {
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    const measure = () => setContainerSize({ width: overlay.clientWidth, height: overlay.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(overlay);
+    return () => observer.disconnect();
+  }, []);
+
+  // Render in a STABLE dom order (object insertion order) and stack purely via
+  // each window's `zIndex`. The old z-order DOM mapping moved a window's node to
+  // the front on focus, and moving a node mid-click cancels the click in
+  // Chromium - so a button on a BACKGROUND window only focused it (a second
+  // click was needed to actually act). Stable DOM + zIndex stacking lets one
+  // click both raise the window AND trigger the button under the cursor.
+  const renderedWindows = Object.values(windows);
+
+  return createPortal(
+    <div ref={overlayRef} className="fixed left-0 right-0 top-10 bottom-9 z-40 pointer-events-none">
+      {renderedWindows.map((managedWindow) => (
+        <WindowFrame
+          key={managedWindow.id}
+          managedWindow={managedWindow}
+          containerSize={containerSize}
+          overlayRef={overlayRef}
+          tiledRect={tileLayout?.rects.get(managedWindow.id) ?? null}
+        />
+      ))}
+      {tileTree && tileLayout?.seams.map((seam) => (
+        <TileSplitter
+          key={seam.splitId}
+          seam={seam}
+          tileTree={tileTree}
+          treeSize={treeBounds.size}
+          treeOrigin={treeBounds.origin}
+          gapPx={TILE_GAP_PX}
+          seamPx={TILE_SEAM_PX}
+          overlayRef={overlayRef}
+        />
+      ))}
+      <SnapPreview />
+      <WindowDock />
+    </div>,
+    hostRef.current,
+  );
+}

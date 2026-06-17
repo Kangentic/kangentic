@@ -22,12 +22,12 @@ interface TaskSessionState {
 }
 
 /**
- * Derives the task-detail dialog's session-related view state and wires
+ * Derives the task-detail window's session-related view state and wires
  * the side effects around session lifecycle:
  *
- *   - Registers this session as the `dialogSessionId` so the bottom
- *     panel unmounts its TerminalTab before this dialog's terminal
- *     effects fire. Uses useLayoutEffect so the swap is synchronous.
+ *   - Claims this session in `dialogSessionIds` so the bottom panel drops
+ *     its TerminalTab before this window's terminal effects fire (one xterm
+ *     per PTY). Uses useLayoutEffect so the swap is synchronous.
  *   - Emits a `terminal-panel-resize` event when the session status
  *     flips to `running` so the embedded xterm instance refits.
  *   - Emits a `terminal-panel-resize` event when `isEditing` toggles
@@ -47,7 +47,6 @@ export function useTaskSessionState(input: {
   const session = useSessionStore((state) =>
     state.sessions.find((candidate) => candidate.taskId === input.task.id) ?? null,
   );
-  const setDialogSessionId = useSessionStore((state) => state.setDialogSessionId);
   const reconcileSession = useSessionStore((state) => state.reconcileSession);
 
   const displayState = useTaskProgress(input.task.id, session?.id);
@@ -77,17 +76,16 @@ export function useTaskSessionState(input: {
   // Works with or without a branch/worktree - tasks on main show uncommitted working tree changes.
   const canShowChanges = !input.isArchived && !input.isInTodo && !isInDone;
 
-  // Register this session with the store so the bottom panel unmounts its
-  // TerminalTab BEFORE any terminal effects fire. useLayoutEffect runs
-  // synchronously after DOM mutations but before paint.
+  // Claim this session for this detail window so the bottom panel drops its
+  // TerminalTab BEFORE any terminal effects fire (one xterm per PTY).
+  // useLayoutEffect runs synchronously after DOM mutations but before paint.
+  // Each open window claims its own session; the claim is released on close.
   useLayoutEffect(() => {
-    if (session?.id) {
-      if (useSessionStore.getState().dialogSessionId !== session.id) {
-        setDialogSessionId(session.id);
-      }
-      return () => setDialogSessionId(null);
-    }
-  }, [session?.id, setDialogSessionId]);
+    const sessionId = session?.id;
+    if (!sessionId) return;
+    useSessionStore.getState().claimDialogSession(sessionId);
+    return () => useSessionStore.getState().releaseDialogSession(sessionId);
+  }, [session?.id]);
 
   // Refit terminal when session resumes
   useEffect(() => {

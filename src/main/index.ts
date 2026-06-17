@@ -55,13 +55,15 @@ function safeReadDeveloperFlag(
     const stored = manager.load().developer?.[key];
     if (stored !== undefined) return stored === true;
     // Default values when the user has never touched the toggle. The
-    // inspection bridge defaults ON in dev builds because anyone running
-    // `npm start` is by definition a kangentic dev session and almost
-    // certainly wants the bridge available to their agent. Every other
-    // toggle (overlay, log mirror, IPC recorder, eval) defaults OFF
-    // because they have non-zero cost (UI overlay on screen, disk I/O,
-    // arbitrary-code surface) and the user should opt in deliberately.
-    if (key === 'previewInspectionServer') return __KANGENTIC_DEV__;
+    // inspection bridge AND its eval/unsafe gate default ON in dev builds:
+    // anyone running `npm start` / `/preview` is by definition a kangentic dev
+    // session and almost certainly wants the agent-driven inspection bridge
+    // (including eval, inject-event, raw-PTY) available without flipping a
+    // toggle each launch. Both are localhost-only and dropped from production
+    // builds via `__KANGENTIC_DEV__`. The other toggles (overlay, log mirror,
+    // IPC recorder) still default OFF because they have a visible/disk cost the
+    // user should opt into deliberately. An explicit stored value always wins.
+    if (key === 'previewInspectionServer' || key === 'previewEvalEnabled') return __KANGENTIC_DEV__;
     return false;
   } catch {
     return false;

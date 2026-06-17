@@ -58,7 +58,7 @@ function makeFocusedInput(
     activeView: 'board',
     terminalPanelVisible: true,
     panelSessionId: null,
-    dialogSessionId: null,
+    dialogSessionIds: [],
     commandBarVisible: false,
     transientSessionId: null,
     ...overrides,
@@ -90,7 +90,7 @@ describe('deriveFocusedSessionIds', () => {
   it('returns dialog session only when dialog is open', () => {
     const result = deriveFocusedSessionIds(
       makeFocusedInput({
-        dialogSessionId: 'sess-dialog',
+        dialogSessionIds: ['sess-dialog'],
         panelSessionId: 'sess-panel',
         activeView: 'board',
         terminalPanelVisible: true,
@@ -102,10 +102,24 @@ describe('deriveFocusedSessionIds', () => {
   it('excludes panel session when dialog is open (dialog takes priority)', () => {
     const result = deriveFocusedSessionIds(
       makeFocusedInput({
-        dialogSessionId: 'sess-dialog',
+        dialogSessionIds: ['sess-dialog'],
         panelSessionId: 'sess-panel',
       }),
     );
+    expect(result).not.toContain('sess-panel');
+  });
+
+  it('focuses every window-owned session when multiple detail windows are open', () => {
+    // Multi-window: each open window owns a session, and ALL must be in the
+    // focused set or the main process suppresses that window's PTY output. The
+    // panel session is excluded (the panel steps aside while windows are open).
+    const result = deriveFocusedSessionIds(
+      makeFocusedInput({
+        dialogSessionIds: ['sess-a', 'sess-b'],
+        panelSessionId: 'sess-panel',
+      }),
+    );
+    expect(result).toEqual(['sess-a', 'sess-b']);
     expect(result).not.toContain('sess-panel');
   });
 
@@ -115,7 +129,7 @@ describe('deriveFocusedSessionIds', () => {
         activeView: 'board',
         terminalPanelVisible: true,
         panelSessionId: 'sess-panel',
-        dialogSessionId: null,
+        dialogSessionIds: [],
       }),
     );
     expect(result).toEqual(['sess-panel']);
@@ -127,7 +141,7 @@ describe('deriveFocusedSessionIds', () => {
         activeView: 'board',
         terminalPanelVisible: false,
         panelSessionId: 'sess-panel',
-        dialogSessionId: null,
+        dialogSessionIds: [],
       }),
     );
     expect(result).toEqual([]);
@@ -139,7 +153,7 @@ describe('deriveFocusedSessionIds', () => {
         activeView: 'board',
         terminalPanelVisible: true,
         panelSessionId: null,
-        dialogSessionId: null,
+        dialogSessionIds: [],
       }),
     );
     expect(result).toEqual([]);
@@ -150,7 +164,7 @@ describe('deriveFocusedSessionIds', () => {
       makeFocusedInput({
         activeView: 'backlog',
         panelSessionId: 'sess-panel',
-        dialogSessionId: null,
+        dialogSessionIds: [],
         commandBarVisible: false,
       }),
     );
@@ -162,7 +176,7 @@ describe('deriveFocusedSessionIds', () => {
       makeFocusedInput({
         activeView: 'backlog',
         panelSessionId: 'sess-panel',
-        dialogSessionId: null,
+        dialogSessionIds: [],
         commandBarVisible: true,
         transientSessionId: 'sess-transient',
       }),
@@ -177,7 +191,7 @@ describe('deriveFocusedSessionIds', () => {
         activeView: 'board',
         terminalPanelVisible: true,
         panelSessionId: 'sess-panel',
-        dialogSessionId: null,
+        dialogSessionIds: [],
         commandBarVisible: true,
         transientSessionId: 'sess-transient',
       }),
@@ -186,10 +200,10 @@ describe('deriveFocusedSessionIds', () => {
   });
 
   it('does not duplicate transient session when it is already in the focused set', () => {
-    // Contrived scenario: dialogSessionId === transientSessionId
+    // Contrived scenario: a window-owned session === transientSessionId
     const result = deriveFocusedSessionIds(
       makeFocusedInput({
-        dialogSessionId: 'sess-shared',
+        dialogSessionIds: ['sess-shared'],
         commandBarVisible: true,
         transientSessionId: 'sess-shared',
       }),

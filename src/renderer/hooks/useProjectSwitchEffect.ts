@@ -108,10 +108,10 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           // and may have written the previous project's session id here;
           // clearing it lets the lastActiveTaskByProject lookup land.
           activeSessionId: null,
-          // dialogSessionId is derived elsewhere from detailTaskId, so it
-          // does not need a separate restore. It will re-resolve when the
-          // dialog re-renders against the live session list.
-          dialogSessionId: null,
+          // Window-owned session claims are per-window and re-claimed when a
+          // detail window re-renders against the live session list, so they
+          // need no separate restore - clear them on switch.
+          dialogSessionIds: [],
         });
 
         // Re-derive the active tab from config rather than the live
@@ -170,7 +170,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         }
         useSessionStore.setState({
           activeSessionId: null,
-          dialogSessionId: null,
+          dialogSessionIds: [],
           detailTaskId: null,
           sessionEvents: preservedEvents,
         });
@@ -220,7 +220,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
       useBoardStore.setState({ tasks: [], swimlanes: [], archivedTasks: [] });
       useSessionStore.setState({
         activeSessionId: null,
-        dialogSessionId: null,
+        dialogSessionIds: [],
         detailTaskId: null,
       });
       // Reset effective config to global defaults (no project overrides)

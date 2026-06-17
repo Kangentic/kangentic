@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { AppLayout } from './components/layout/AppLayout';
 import { ActivityDebugOverlay } from './components/debug/ActivityDebugOverlay';
 import { DevtoolsBootstrap } from '../devtools/renderer/install';
+import { TestHarness } from '../devtools/renderer/TestHarness';
 import { useProjectStore } from './stores/project-store';
 import { useBoardStore } from './stores/board-store';
 import { useConfigStore } from './stores/config-store';
@@ -14,6 +15,7 @@ import { invalidateProject } from './stores/project-cache';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
 import { requiresUserInteraction } from '../shared/activity-state';
 import { bumpHmrGeneration } from './utils/hmr-generation';
+import { clearSnapPreviewDom } from './window-manager';
 import {
   autoNameTimers,
   scheduleAutoNameSuggestion,
@@ -408,7 +410,7 @@ export function App() {
               sessionId,
               newState: state,
               currentActiveSessionId: sessionStore.activeSessionId,
-              dialogSessionId: sessionStore.dialogSessionId,
+              dialogSessionIds: sessionStore.dialogSessionIds,
               sessionActivity: sessionStore.sessionActivity,
               sessions: projectSessions,
             });
@@ -586,6 +588,11 @@ export function App() {
         `__KANGENTIC_DEV__` dead-code elimination + Vite tree-shaking.
       */}
       {__KANGENTIC_DEV__ && <DevtoolsBootstrap />}
+      {/*
+        Dev-only preview test harness (floating "Create Task" toolbar). Same
+        dead-code-elimination guard as DevtoolsBootstrap; never ships to prod.
+      */}
+      {__KANGENTIC_DEV__ && <TestHarness />}
     </>
   );
 }
@@ -620,6 +627,10 @@ if (import.meta.hot) {
 
     // Cancel stale drop highlights (HMR unmounts DndContext without firing dragEnd)
     document.querySelectorAll('.drop-highlight').forEach(element => element.classList.remove('drop-highlight'));
+
+    // Window-manager Pattern D: an HMR mid window-drag fires no pointerup, so
+    // hide the snap preview and clear any leftover frame transforms.
+    clearSnapPreviewDom();
 
     // Snapshot active tab before sync - syncSessions may transiently clear
     // activeSessionId if the sessions array is briefly empty during re-fetch.

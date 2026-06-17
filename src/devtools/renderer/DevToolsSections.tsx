@@ -29,10 +29,11 @@ export function DevToolsSections({ globalConfig }: { globalConfig: AppConfig }) 
   // of `safeReadDeveloperFlag` in `src/main/index.ts` so the displayed
   // toggle state matches the actual bridge state.
   const inspectionEnabled = developerConfig.previewInspectionServer ?? __KANGENTIC_DEV__;
-  // Eval stays default-off even in dev. Genuinely dangerous surface
-  // (arbitrary JS in the renderer, raw bytes to PTY, synthetic engine
-  // events); devs opt in deliberately when stress-testing.
-  const evalEnabled = developerConfig.previewEvalEnabled === true;
+  // Eval defaults ON in dev builds (mirrors the inspection bridge) so the
+  // agent-driven workflow has the high-risk endpoints available on every
+  // `/preview` without a manual toggle. Localhost-only and excluded from
+  // production builds. An explicit stored value still wins.
+  const evalEnabled = developerConfig.previewEvalEnabled ?? __KANGENTIC_DEV__;
 
   return (
     <div className="space-y-3 pt-4 mt-2 border-t border-edge">

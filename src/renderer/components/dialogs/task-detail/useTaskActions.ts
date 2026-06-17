@@ -10,7 +10,7 @@ import type { useBranchConfig } from './useBranchConfig';
 import type { useTaskProgress } from '../../../utils/task-progress';
 
 /**
- * Orchestration hook for TaskDetailDialog. Owns:
+ * Orchestration hook for the task-detail surface (TaskDetailWindow). Owns:
  *
  *   - Action handlers: toggle/suspend/resume, command injection, move
  *     to column, save, cancel, send to backlog, archive, delete.
