@@ -11,12 +11,13 @@
 import { create } from 'zustand';
 import type { FractionalRect, ManagedWindow, TileNode, WindowState } from './types';
 import { clampGeometry, defaultWindowGeometry } from './geometry';
+import type { PixelRect } from './geometry';
 import { resolveTileLayout } from '../tiling/resolve-layout';
 import {
   collectWindowIds,
   insertWindowIntoTree,
   removeWindowFromTree,
-  setSplitRatio,
+  setSeamRatio,
   treeContainsWindow,
   wrapTreeWithRoot,
 } from '../tiling/tree-ops';
@@ -125,10 +126,30 @@ function evictWindowFromTiling(
   }
 
   const remainingIds = collectWindowIds(prunedTree);
-  if (remainingIds.length >= 2) {
-    // Still a valid multi-pane tree: the remainder stays tiled in the SAME
-    // footprint (rects re-resolve to fill the freed sub-space).
-    return { tileTree: prunedTree, windows: nextWindows, tileTreeRect };
+  if (remainingIds.length >= 2 && prunedTree) {
+    // Still a valid multi-pane tree. If removing the window collapsed the ROOT (a
+    // top-level pane left, so a sub-group was promoted to the root - detected by
+    // the root node changing identity), the freed region should stay EMPTY board
+    // rather than the surviving group expanding into it. Shrink the footprint to
+    // the surviving group's former region so it keeps its size and position
+    // (e.g. moving the left pane away leaves the right column at its right-half
+    // width, not stretched full-screen). A removal WITHIN a container keeps the
+    // same root, so the footprint is unchanged and the siblings renormalise to
+    // fill that container as before.
+    let nextFootprint = tileTreeRect;
+    if (tileTree.kind === 'split' && prunedTree.kind === 'split' && prunedTree.id !== tileTree.id) {
+      const survivorRects = remainingIds
+        .map((id) => originalLayout.rects.get(id))
+        .filter((rect): rect is PixelRect => !!rect);
+      if (survivorRects.length > 0) {
+        const minX = Math.min(...survivorRects.map((rect) => rect.left));
+        const minY = Math.min(...survivorRects.map((rect) => rect.top));
+        const maxX = Math.max(...survivorRects.map((rect) => rect.left + rect.width));
+        const maxY = Math.max(...survivorRects.map((rect) => rect.top + rect.height));
+        nextFootprint = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+      }
+    }
+    return { tileTree: prunedTree, windows: nextWindows, tileTreeRect: nextFootprint };
   }
   if (remainingIds.length === 1) {
     // Collapsed to one pane and the tree clears. A FULL-overlay group leaves the
@@ -197,8 +218,13 @@ interface WindowStoreState {
    *  the existing tree when the target is already tiled (arbitrary N-way), else
    *  seeds a fresh two-pane split between the two windows. */
   dockIntoWindow: (draggedId: string, targetId: string, side: TileInsertSide) => void;
-  /** Adjust a tile split's ratio (the draggable seam). */
-  setTileRatio: (splitId: string, ratio: number) => void;
+  /** Resize one seam: the boundary between children `index` and `index + 1` of
+   *  the split with `splitId`. `pairRatio` is the first pane's share of the pair. */
+  setSeamRatio: (splitId: string, index: number, pairRatio: number) => void;
+  /** Resize the whole tiling footprint (the group's outer region) - e.g. drag a
+   *  right-docked group's left edge to widen all its panes while it stays docked
+   *  right. The vacated space stays empty board. */
+  setTileTreeRect: (rect: FractionalRect) => void;
   /** Pull a window out of tiling (drag-out); dissolves the group to floating. */
   untileWindow: (id: string) => void;
   toggleMaximizeWindow: (id: string) => void;
@@ -384,9 +410,11 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
       kind: 'split',
       id: nextTileId('split'),
       direction: 'horizontal',
-      ratio: 0.5,
-      a: { kind: 'leaf', id: leftLeafId, windowId: leftWindowId },
-      b: { kind: 'leaf', id: rightLeafId, windowId: rightWindowId },
+      children: [
+        { kind: 'leaf', id: leftLeafId, windowId: leftWindowId },
+        { kind: 'leaf', id: rightLeafId, windowId: rightWindowId },
+      ],
+      sizes: [0.5, 0.5],
     };
     set((state) => ({
       tileTree: tree,
@@ -439,9 +467,8 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
       kind: 'split',
       id: nextTileId('split'),
       direction,
-      ratio: 0.5,
-      a: draggedFirst ? draggedLeaf : targetLeaf,
-      b: draggedFirst ? targetLeaf : draggedLeaf,
+      children: draggedFirst ? [draggedLeaf, targetLeaf] : [targetLeaf, draggedLeaf],
+      sizes: [0.5, 0.5],
     };
 
     const markBoth = (state: WindowStoreState) => ({
@@ -468,11 +495,15 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     set((state) => ({ tileTree: pairTree, tileTreeRect: footprint, windows: markBoth(state) }));
   },
 
-  setTileRatio: (splitId, ratio) => {
+  setSeamRatio: (splitId, index, pairRatio) => {
     set((current) => {
       if (!current.tileTree) return current;
-      return { tileTree: setSplitRatio(current.tileTree, splitId, ratio) };
+      return { tileTree: setSeamRatio(current.tileTree, splitId, index, pairRatio) };
     });
+  },
+
+  setTileTreeRect: (rect) => {
+    set((current) => (current.tileTree ? { tileTreeRect: clampGeometry(rect) } : current));
   },
 
   untileWindow: (id) => {

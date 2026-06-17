@@ -57,9 +57,15 @@ export interface ManagedWindow {
 }
 
 /**
- * Binary-split tiling tree (P2). Floating windows live OUTSIDE this tree; a
- * window is in the tree iff `state === 'tiled'`, with exactly one leaf
- * referencing it.
+ * N-ary tiling tree. Floating windows live OUTSIDE this tree; a window is in the
+ * tree iff `state === 'tiled'`, with exactly one leaf referencing it.
+ *
+ * A split is a row or column CONTAINER holding two-or-more children in order,
+ * each with its own fractional size. This (golden-layout / i3 model, not nested
+ * binary splits) is what lets three windows tile as true equal thirds and lets
+ * each boundary resize only its two adjacent panes. Adding a window to a
+ * container whose axis already matches just appends a child; the other axis nests
+ * a new container.
  */
 export interface TileLeaf {
   kind: 'leaf';
@@ -72,14 +78,16 @@ export interface TileSplit {
   id: string;
   /**
    * Names the axis the children are arranged ALONG:
-   * 'horizontal' = side by side (a | b), a vertical splitter bar between them.
-   * 'vertical'   = stacked (a over b), a horizontal splitter bar between them.
+   * 'horizontal' = side by side (left to right), vertical splitter bars between.
+   * 'vertical'   = stacked (top to bottom),      horizontal splitter bars between.
    */
   direction: 'horizontal' | 'vertical';
-  a: TileNode;
-  b: TileNode;
-  /** Fraction (0..1) of the split allotted to child `a`. */
-  ratio: number;
+  /** Two or more children, in left-to-right / top-to-bottom order. */
+  children: TileNode[];
+  /** Fraction (0..1) of the split allotted to each child; parallel to `children`
+   *  and summing to 1. There are `children.length - 1` seams (one per adjacent
+   *  pair), each resizing only its two neighbours. */
+  sizes: number[];
 }
 
 export type TileNode = TileLeaf | TileSplit;

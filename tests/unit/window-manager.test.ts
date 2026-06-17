@@ -265,13 +265,14 @@ describe('window-store tiling', () => {
     expect(state.tileTree).toBeNull();
   });
 
-  it('setTileRatio adjusts the active split, clamped', () => {
+  it('setSeamRatio resizes the active pair, clamped', () => {
     makeTiledPair();
-    const splitId = (useWindowStore.getState().tileTree as Extract<ReturnType<typeof useWindowStore.getState>['tileTree'], { kind: 'split' }>).id;
-    useWindowStore.getState().setTileRatio(splitId, 0.7);
-    expect((useWindowStore.getState().tileTree as Extract<ReturnType<typeof useWindowStore.getState>['tileTree'], { kind: 'split' }>).ratio).toBe(0.7);
-    useWindowStore.getState().setTileRatio(splitId, 0.99);
-    expect((useWindowStore.getState().tileTree as Extract<ReturnType<typeof useWindowStore.getState>['tileTree'], { kind: 'split' }>).ratio).toBe(0.9);
+    type Split = Extract<ReturnType<typeof useWindowStore.getState>['tileTree'], { kind: 'split' }>;
+    const splitId = (useWindowStore.getState().tileTree as Split).id;
+    useWindowStore.getState().setSeamRatio(splitId, 0, 0.7);
+    expect((useWindowStore.getState().tileTree as Split).sizes[0]).toBeCloseTo(0.7, 6);
+    useWindowStore.getState().setSeamRatio(splitId, 0, 0.99);
+    expect((useWindowStore.getState().tileTree as Split).sizes[0]).toBeCloseTo(0.9, 6); // clamped
   });
 
   it('untileWindow evicts the window (floats it) and snaps the lone remaining partner', () => {
@@ -327,9 +328,9 @@ describe('window-store tiling', () => {
     const split = state.tileTree as Extract<typeof state.tileTree, { kind: 'split' }>;
     expect(split.kind).toBe('split');
     expect(split.direction).toBe('vertical');
-    // 'top' => the dragged window (A) is child `a` (rendered above).
-    expect(split.a).toMatchObject({ kind: 'leaf', windowId: a });
-    expect(split.b).toMatchObject({ kind: 'leaf', windowId: b });
+    // 'top' => the dragged window (A) is the first child (rendered above).
+    expect(split.children[0]).toMatchObject({ kind: 'leaf', windowId: a });
+    expect(split.children[1]).toMatchObject({ kind: 'leaf', windowId: b });
   });
 
   it('dockIntoWindow inserts a third window into the existing tree (arbitrary N-way)', () => {
@@ -429,11 +430,41 @@ describe('window-store tiling', () => {
     useWindowStore.getState().untileWindow(b); // 2-up -> collapse -> footprint resets
     expect(useWindowStore.getState().tileTreeRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
   });
+
+  it('evicting a top-level pane keeps the surviving group in its region (no full-width expansion)', () => {
+    // Root = [ left window | right column of two ], filling the overlay.
+    const a = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
+    useWindowStore.getState().snapWindow(a, { x: 0, y: 0, w: 0.5, h: 1 });
+    const b = useWindowStore.getState().openWindow({ taskId: 'b', sessionId: 's2', title: 'B' });
+    useWindowStore.getState().dockWindow(b, 'right'); // A | B across the overlay
+    const c = useWindowStore.getState().openWindow({ taskId: 'c', sessionId: 's3', title: 'C' });
+    useWindowStore.getState().dockIntoWindow(c, b, 'bottom'); // B's cell -> column(B, C)
+    expect(useWindowStore.getState().tileTreeRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+    // Pull the LEFT pane out: the right column must KEEP its right-half width
+    // (the freed left half becomes empty board), not stretch to full screen.
+    useWindowStore.getState().untileWindow(a);
+    const state = useWindowStore.getState();
+    expect(state.windows[a].state).toBe('floating');
+    expect(collectLeafWindowIds(state.tileTree).sort()).toEqual([b, c].sort());
+    expect(state.tileTreeRect.x).toBeCloseTo(0.5, 6);
+    expect(state.tileTreeRect.w).toBeCloseTo(0.5, 6);
+    expect(state.tileTreeRect.h).toBeCloseTo(1, 6);
+  });
+
+  it('setTileTreeRect resizes the group footprint when tiled, and no-ops without a tree', () => {
+    makeTiledPair(); // full-overlay tree
+    useWindowStore.getState().setTileTreeRect({ x: 0.3, y: 0, w: 0.7, h: 1 });
+    expect(useWindowStore.getState().tileTreeRect).toEqual({ x: 0.3, y: 0, w: 0.7, h: 1 });
+    // With no tree it is a no-op (nothing to resize).
+    useWindowStore.setState({ tileTree: null, tileTreeRect: { x: 0, y: 0, w: 1, h: 1 } });
+    useWindowStore.getState().setTileTreeRect({ x: 0.5, y: 0, w: 0.5, h: 1 });
+    expect(useWindowStore.getState().tileTreeRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+  });
 });
 
 /** Walk a tile tree and collect every leaf's windowId (test-local helper). */
 function collectLeafWindowIds(tree: ReturnType<typeof useWindowStore.getState>['tileTree']): string[] {
   if (!tree) return [];
   if (tree.kind === 'leaf') return [tree.windowId];
-  return [...collectLeafWindowIds(tree.a), ...collectLeafWindowIds(tree.b)];
+  return tree.children.flatMap((child) => collectLeafWindowIds(child));
 }

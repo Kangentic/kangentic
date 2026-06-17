@@ -32,9 +32,11 @@ describe('collectCandidatePanes', () => {
       kind: 'split',
       id: 's1',
       direction: 'horizontal',
-      ratio: 0.5,
-      a: { kind: 'leaf', id: 'la', windowId: 'w1' },
-      b: { kind: 'leaf', id: 'lb', windowId: 'w2' },
+      children: [
+        { kind: 'leaf', id: 'la', windowId: 'w1' },
+        { kind: 'leaf', id: 'lb', windowId: 'w2' },
+      ],
+      sizes: [0.5, 0.5],
     };
     const windows: Record<string, ManagedWindow> = {
       w1: makeWindow({ id: 'w1', state: 'tiled', zIndex: 3 }),
@@ -50,9 +52,11 @@ describe('collectCandidatePanes', () => {
       kind: 'split',
       id: 's1',
       direction: 'horizontal',
-      ratio: 0.5,
-      a: { kind: 'leaf', id: 'la', windowId: 'w1' },
-      b: { kind: 'leaf', id: 'lb', windowId: 'w2' },
+      children: [
+        { kind: 'leaf', id: 'la', windowId: 'w1' },
+        { kind: 'leaf', id: 'lb', windowId: 'w2' },
+      ],
+      sizes: [0.5, 0.5],
     };
     const windows: Record<string, ManagedWindow> = {
       w1: makeWindow({ id: 'w1', state: 'tiled' }),
@@ -79,9 +83,11 @@ describe('collectCandidatePanes', () => {
       kind: 'split',
       id: 's1',
       direction: 'horizontal',
-      ratio: 0.5,
-      a: { kind: 'leaf', id: 'la', windowId: 'w1' },
-      b: { kind: 'leaf', id: 'lb', windowId: 'w2' },
+      children: [
+        { kind: 'leaf', id: 'la', windowId: 'w1' },
+        { kind: 'leaf', id: 'lb', windowId: 'w2' },
+      ],
+      sizes: [0.5, 0.5],
     };
     const windows: Record<string, ManagedWindow> = {
       w1: makeWindow({ id: 'w1', state: 'tiled' }),

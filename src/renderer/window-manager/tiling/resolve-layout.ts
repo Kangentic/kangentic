@@ -16,15 +16,19 @@ import type { TileNode } from '../store/types';
 import type { ContainerSize, PixelRect } from '../store/geometry';
 
 export interface TileSeam {
-  /** The split whose ratio this seam adjusts. */
+  /** The split whose sizes this seam adjusts. */
   splitId: string;
+  /** Index of the FIRST child of the adjacent pair this seam divides; the seam
+   *  resizes `children[index]` vs `children[index + 1]` only. */
+  index: number;
   /** 'horizontal' = children side by side, a VERTICAL seam bar (drag left/right).
    *  'vertical'   = children stacked,     a HORIZONTAL seam bar (drag up/down). */
   direction: 'horizontal' | 'vertical';
   /** The draggable seam region, in pixels relative to the container. */
   rect: PixelRect;
-  /** The full area this split divides (the split node's rect). The splitter
-   *  computes a new ratio from the pointer position relative to these bounds. */
+  /** The COMBINED region of the two adjacent children this seam divides. The
+   *  splitter maps a pointer position within these bounds to the pair's new
+   *  split ratio (the rest of the container is untouched). */
   bounds: PixelRect;
 }
 
@@ -65,33 +69,47 @@ export function resolveTileLayout(
       rects.set(node.windowId, rect);
       return;
     }
-    if (node.direction === 'horizontal') {
-      // Side by side; split the WIDTH at `ratio`, a vertical seam between.
-      const splitX = rect.left + rect.width * node.ratio;
-      const aWidth = Math.max(0, splitX - gapHalf - rect.left);
-      const bLeft = splitX + gapHalf;
-      const bWidth = Math.max(0, rect.left + rect.width - bLeft);
-      walk(node.a, { left: rect.left, top: rect.top, width: aWidth, height: rect.height });
-      walk(node.b, { left: bLeft, top: rect.top, width: bWidth, height: rect.height });
+    const horizontal = node.direction === 'horizontal';
+    const extent = horizontal ? rect.width : rect.height;
+    const start = horizontal ? rect.left : rect.top;
+    const total = node.sizes.reduce((sum, size) => sum + size, 0) || 1;
+
+    // Boundaries[i] is the position of the start of child i along the axis;
+    // boundaries[N] is the container's far edge. A seam sits on each interior
+    // boundary (between child i and i+1).
+    const boundaries: number[] = [start];
+    for (let childIndex = 0; childIndex < node.children.length; childIndex += 1) {
+      boundaries.push(boundaries[childIndex] + (extent * node.sizes[childIndex]) / total);
+    }
+    const lastChild = node.children.length - 1;
+
+    node.children.forEach((child, childIndex) => {
+      // Inset each child by half the gap on every side that abuts a seam.
+      const childStart = boundaries[childIndex] + (childIndex > 0 ? gapHalf : 0);
+      const childEnd = boundaries[childIndex + 1] - (childIndex < lastChild ? gapHalf : 0);
+      const childExtent = Math.max(0, childEnd - childStart);
+      walk(
+        child,
+        horizontal
+          ? { left: childStart, top: rect.top, width: childExtent, height: rect.height }
+          : { left: rect.left, top: childStart, width: rect.width, height: childExtent },
+      );
+    });
+
+    for (let pairIndex = 0; pairIndex < lastChild; pairIndex += 1) {
+      const seamPosition = boundaries[pairIndex + 1];
+      const pairStart = boundaries[pairIndex];
+      const pairExtent = boundaries[pairIndex + 2] - pairStart;
       seams.push({
         splitId: node.id,
-        direction: 'horizontal',
-        rect: { left: splitX - seamHalf, top: rect.top, width: seamPx, height: rect.height },
-        bounds: rect,
-      });
-    } else {
-      // Stacked; split the HEIGHT at `ratio`, a horizontal seam between.
-      const splitY = rect.top + rect.height * node.ratio;
-      const aHeight = Math.max(0, splitY - gapHalf - rect.top);
-      const bTop = splitY + gapHalf;
-      const bHeight = Math.max(0, rect.top + rect.height - bTop);
-      walk(node.a, { left: rect.left, top: rect.top, width: rect.width, height: aHeight });
-      walk(node.b, { left: rect.left, top: bTop, width: rect.width, height: bHeight });
-      seams.push({
-        splitId: node.id,
-        direction: 'vertical',
-        rect: { left: rect.left, top: splitY - seamHalf, width: rect.width, height: seamPx },
-        bounds: rect,
+        index: pairIndex,
+        direction: node.direction,
+        rect: horizontal
+          ? { left: seamPosition - seamHalf, top: rect.top, width: seamPx, height: rect.height }
+          : { left: rect.left, top: seamPosition - seamHalf, width: rect.width, height: seamPx },
+        bounds: horizontal
+          ? { left: pairStart, top: rect.top, width: pairExtent, height: rect.height }
+          : { left: rect.left, top: pairStart, width: rect.width, height: pairExtent },
       });
     }
   };

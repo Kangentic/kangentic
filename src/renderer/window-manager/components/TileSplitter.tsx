@@ -19,7 +19,7 @@ import type { ContainerSize } from '../store/geometry';
 import type { TileNode } from '../store/types';
 import { resolveTileLayout } from '../tiling/resolve-layout';
 import type { TileSeam } from '../tiling/resolve-layout';
-import { clampTileRatio, setSplitRatio } from '../tiling/tree-ops';
+import { clampTileRatio, setSeamRatio as resizeSeamInTree } from '../tiling/tree-ops';
 
 interface TileSplitterProps {
   seam: TileSeam;
@@ -50,8 +50,15 @@ function applyRect(node: HTMLElement, rect: { left: number; top: number; width: 
   node.style.height = `${rect.height}px`;
 }
 
+/** A seam is identified by its split AND its adjacent-pair index (a split has
+ *  one seam per interior boundary), so multiple seams of one container stay
+ *  distinct for DOM caching and React keys. */
+function seamKey(seam: Pick<TileSeam, 'splitId' | 'index'>): string {
+  return `${seam.splitId}:${seam.index}`;
+}
+
 export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seamPx, overlayRef }: TileSplitterProps) {
-  const setTileRatio = useWindowStore((state) => state.setTileRatio);
+  const commitSeamRatio = useWindowStore((state) => state.setSeamRatio);
   const dragRef = useRef<SeamDrag | null>(null);
   // Keeps the accent line lit through the whole drag (CSS :hover drops out when
   // the captured pointer travels off the thin overlay).
@@ -71,8 +78,8 @@ export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seam
     }
     const seamNodes = new Map<string, HTMLElement>();
     for (const candidate of layout.seams) {
-      const node = document.querySelector<HTMLElement>(`[data-testid="tile-splitter-${candidate.splitId}"]`);
-      if (node) seamNodes.set(candidate.splitId, node);
+      const node = document.querySelector<HTMLElement>(`[data-testid="tile-splitter-${seamKey(candidate)}"]`);
+      if (node) seamNodes.set(seamKey(candidate), node);
     }
     dragRef.current = {
       pointerId: event.pointerId,
@@ -97,16 +104,16 @@ export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seam
         : (event.clientY - drag.overlayTop - seam.bounds.top) / seam.bounds.height,
     );
     drag.ratio = ratio;
-    // Re-resolve at the proposed ratio and write rects imperatively. No store
+    // Re-resolve at the proposed pair ratio and write rects imperatively. No store
     // write -> no React render -> no terminal fit until release.
-    const proposed = setSplitRatio(tileTree, seam.splitId, ratio);
+    const proposed = resizeSeamInTree(tileTree, seam.splitId, seam.index, ratio);
     const layout = resolveTileLayout(proposed, treeSize, gapPx, seamPx, treeOrigin);
     for (const [windowId, rect] of layout.rects) {
       const node = drag.frameNodes.get(windowId);
       if (node) applyRect(node, rect);
     }
     for (const candidate of layout.seams) {
-      const node = drag.seamNodes.get(candidate.splitId);
+      const node = drag.seamNodes.get(seamKey(candidate));
       if (node) applyRect(node, candidate.rect);
     }
   };
@@ -120,7 +127,7 @@ export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seam
     if (element.hasPointerCapture(drag.pointerId)) element.releasePointerCapture(drag.pointerId);
     // Commit once: the re-render sets the same rects React just had imperatively
     // overwritten (identical values -> no jump) and each terminal fits a single time.
-    setTileRatio(seam.splitId, drag.ratio);
+    commitSeamRatio(seam.splitId, seam.index, drag.ratio);
   };
 
   const isHorizontal = seam.direction === 'horizontal';
@@ -136,7 +143,7 @@ export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seam
       // clicks (and become un-grabbable). Stays below the snap preview (~2.147e9).
       className={`group pointer-events-auto absolute z-[2000000000] ${isHorizontal ? 'cursor-col-resize' : 'cursor-row-resize'}`}
       style={{ left: seam.rect.left, top: seam.rect.top, width: seam.rect.width, height: seam.rect.height }}
-      data-testid={`tile-splitter-${seam.splitId}`}
+      data-testid={`tile-splitter-${seamKey(seam)}`}
     >
       {/* Invisible at rest (panes sit flush); a thin accent line at the boundary
           appears only on hover or while dragging. */}

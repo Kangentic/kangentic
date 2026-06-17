@@ -27,6 +27,8 @@ import { detectSnapEdge, snapEdgeToGeometry } from './snap';
 import { hideSnapPreview, showSnapPreview } from './snap-preview-controller';
 import { collectCandidatePanes, detectDropTarget } from './drop-zone';
 import type { CandidatePane, DropTarget } from './drop-zone';
+import { resolveTileLayout } from '../tiling/resolve-layout';
+import { insertWindowIntoTree, treeContainsWindow } from '../tiling/tree-ops';
 import { useWindowStore } from '../store/window-store';
 import type { SnapEdge } from '../store/types';
 
@@ -213,6 +215,38 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     drag.startClientY = event.clientY;
   };
 
+  /** Where the dragged window would actually land for `dropTarget`. When the
+   *  target is a tiled pane, simulate the insert against the live tree and
+   *  resolve the new leaf's rect (an equal sibling slot for a same-axis dock, or
+   *  half the cell for a perpendicular one). Falls back to the detector's
+   *  half-of-pane rect for the seed/merge cases (a fresh 2-up, where half is
+   *  exact). */
+  const previewLandingRect = (dropTarget: DropTarget, overlay: OverlayBounds): PixelRect => {
+    const store = useWindowStore.getState();
+    const tree = store.tileTree;
+    if (tree && treeContainsWindow(tree, dropTarget.targetWindowId)) {
+      const footprint = store.tileTreeRect;
+      const previewTree = insertWindowIntoTree(
+        tree,
+        dropTarget.targetWindowId,
+        windowId,
+        '__preview_leaf__',
+        '__preview_split__',
+        dropTarget.side,
+      );
+      const layout = resolveTileLayout(
+        previewTree,
+        { width: footprint.w * overlay.width, height: footprint.h * overlay.height },
+        0,
+        0,
+        { left: footprint.x * overlay.width, top: footprint.y * overlay.height },
+      );
+      const landed = layout.rects.get(windowId);
+      if (landed) return landed;
+    }
+    return dropTarget.previewRect;
+  };
+
   const framePointerMove = (event: React.PointerEvent) => {
     const drag = dragRef.current;
     const frame = frameRef.current;
@@ -258,7 +292,12 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     if (dropTarget) {
       drag.dropTarget = dropTarget;
       drag.snapEdge = null;
-      showSnapPreview(dropTarget.previewRect);
+      // Preview the ACTUAL landing rect, not a generic half of the target pane.
+      // Docking onto a tiled pane along its container's axis inserts a new EQUAL
+      // sibling (e.g. a third row repartitions to thirds), so the new window's
+      // real slot is not "half the target" - simulate the insert and show where
+      // it actually lands.
+      showSnapPreview(previewLandingRect(dropTarget, drag.overlay));
       return;
     }
     drag.dropTarget = null;

@@ -23,9 +23,12 @@ import { useWindowStore } from '../store/window-store';
 import { useTaskDetailWindowBridge } from '../bridge/useTaskDetailWindowBridge';
 import { useWindowSessionClaims } from '../bridge/useWindowSessionClaims';
 import type { ContainerSize } from '../store/geometry';
+import type { FractionalRect } from '../store/types';
 import { resolveTileLayout } from '../tiling/resolve-layout';
 import { WindowFrame } from './WindowFrame';
 import { TileSplitter } from './TileSplitter';
+import { FootprintResizer } from './FootprintResizer';
+import type { FootprintEdge } from './FootprintResizer';
 import { SnapPreview } from './SnapPreview';
 import { WindowDock } from './WindowDock';
 
@@ -36,6 +39,18 @@ const PORTAL_HOST_ID = 'window-layer-root';
  *  the boundary, that only paints a thin accent line on hover/drag. */
 const TILE_GAP_PX = 0;
 const TILE_SEAM_PX = 10;
+
+/** A footprint edge gets an outer resizer only if it borders empty board (it is
+ *  not flush against the overlay boundary). */
+const FOOTPRINT_EDGE_EPSILON = 0.001;
+function footprintEdges(rect: FractionalRect): FootprintEdge[] {
+  const edges: FootprintEdge[] = [];
+  if (rect.x > FOOTPRINT_EDGE_EPSILON) edges.push('left');
+  if (rect.x + rect.w < 1 - FOOTPRINT_EDGE_EPSILON) edges.push('right');
+  if (rect.y > FOOTPRINT_EDGE_EPSILON) edges.push('top');
+  if (rect.y + rect.h < 1 - FOOTPRINT_EDGE_EPSILON) edges.push('bottom');
+  return edges;
+}
 
 function getPortalHost(): HTMLElement {
   const existing = document.getElementById(PORTAL_HOST_ID);
@@ -120,11 +135,25 @@ export function WindowLayer() {
       ))}
       {tileTree && tileLayout?.seams.map((seam) => (
         <TileSplitter
-          key={seam.splitId}
+          key={`${seam.splitId}:${seam.index}`}
           seam={seam}
           tileTree={tileTree}
           treeSize={treeBounds.size}
           treeOrigin={treeBounds.origin}
+          gapPx={TILE_GAP_PX}
+          seamPx={TILE_SEAM_PX}
+          overlayRef={overlayRef}
+        />
+      ))}
+      {/* Outer-edge resizers: one per footprint edge that borders empty board, so
+          a docked group can be widened/heightened while staying docked. */}
+      {tileTree && containerSize.width > 0 && footprintEdges(tileTreeRect).map((edge) => (
+        <FootprintResizer
+          key={`footprint-${edge}`}
+          edge={edge}
+          tileTree={tileTree}
+          tileTreeRect={tileTreeRect}
+          containerSize={containerSize}
           gapPx={TILE_GAP_PX}
           seamPx={TILE_SEAM_PX}
           overlayRef={overlayRef}

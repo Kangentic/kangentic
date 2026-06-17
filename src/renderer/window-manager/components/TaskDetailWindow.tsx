@@ -99,6 +99,8 @@ export function TaskDetailWindow({
 
   const toggleMaximizeWindow = useWindowStore((s) => s.toggleMaximizeWindow);
   const minimizeWindow = useWindowStore((s) => s.minimizeWindow);
+  const untileWindow = useWindowStore((s) => s.untileWindow);
+  const isTiled = useWindowStore((s) => s.windows[windowId]?.state === 'tiled');
 
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
@@ -209,6 +211,7 @@ export function TaskDetailWindow({
 
   const handleToggleMaximized = useCallback(() => toggleMaximizeWindow(windowId), [toggleMaximizeWindow, windowId]);
   const handleMinimize = useCallback(() => minimizeWindow(windowId), [minimizeWindow, windowId]);
+  const handleUndock = useCallback(() => untileWindow(windowId), [untileWindow, windowId]);
 
   const handleToggleBrowser = useCallback(() => {
     if (!browserOpen && changesOpen) toggleChangesOpen(task.id);
@@ -351,6 +354,7 @@ export function TaskDetailWindow({
       isMaximized={isMaximized}
       onToggleMaximized={handleToggleMaximized}
       onMinimize={handleMinimize}
+      onUndock={isTiled ? handleUndock : undefined}
     />
   );
 
