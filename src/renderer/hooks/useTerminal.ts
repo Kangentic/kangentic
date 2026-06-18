@@ -29,7 +29,10 @@ if (import.meta.hot) {
 const TERMINAL_THEME = {
   background: '#18181b',
   foreground: '#e4e4e7',
-  cursor: '#18181b',
+  // Light cursor. It was the background color (#18181b) - i.e. invisible - which is
+  // why no cursor ever showed. cursorAccent is the dark background so the character
+  // under a block cursor stays readable (dark glyph on the light block).
+  cursor: '#e4e4e7',
   cursorAccent: '#18181b',
   selectionBackground: 'rgba(58, 130, 246, 0.35)',
   black: '#18181b',
@@ -106,8 +109,13 @@ export function useTerminal(options: UseTerminalOptions) {
       fontSize: options.fontSize || 14,
       theme: xtermTheme,
       scrollback: options.scrollbackLines || 5000,
-      cursorBlink: false,
+      cursorBlink: true,
       cursorStyle: options.cursorStyle || 'block',
+      // HIDE the cursor when this terminal is BLURRED. Only the focused pane (where
+      // you are typing) shows a cursor - a solid blinking block - so the cursor is a
+      // clean "you are here" cue. The window's accent outline + pulsing line carry
+      // the "which window is selected" cue for the unfocused panes.
+      cursorInactiveStyle: 'none',
       allowProposedApi: true,
     });
 

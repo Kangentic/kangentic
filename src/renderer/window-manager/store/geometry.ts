@@ -54,13 +54,21 @@ export function clampGeometry(geometry: FractionalRect): FractionalRect {
   return { x, y, w: width, h: height };
 }
 
-const CASCADE_STEP = 0.04;
-const DEFAULT_WIDTH = 0.46;
-const DEFAULT_HEIGHT = 0.62;
+const CASCADE_STEP = 0.03;
+const CASCADE_CYCLE = 5;
+const DEFAULT_WIDTH = 0.58;
+const DEFAULT_HEIGHT = 0.7;
 
-/** Smart default placement: cascade each new window down-right so opening
- *  several in a row does not stack them exactly on top of one another. */
+/** Smart default placement: the FIRST window opens centered at a comfortable
+ *  large size; each subsequent window cascades a small step down-right FROM
+ *  center so opening several in a row does not stack them exactly on top of one
+ *  another. clampGeometry keeps a cascaded window inside the overlay. */
 export function defaultWindowGeometry(openIndex: number): FractionalRect {
-  const shift = (openIndex % 6) * CASCADE_STEP;
-  return clampGeometry({ x: 0.12 + shift, y: 0.08 + shift, w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT });
+  const shift = (openIndex % CASCADE_CYCLE) * CASCADE_STEP;
+  return clampGeometry({
+    x: (1 - DEFAULT_WIDTH) / 2 + shift,
+    y: (1 - DEFAULT_HEIGHT) / 2 + shift,
+    w: DEFAULT_WIDTH,
+    h: DEFAULT_HEIGHT,
+  });
 }

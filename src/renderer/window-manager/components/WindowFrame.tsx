@@ -103,6 +103,18 @@ export function WindowFrame({ managedWindow, containerSize, overlayRef, tiledRec
     <div
       ref={frameRef}
       onPointerDownCapture={() => focusWindow(managedWindow.id)}
+      onMouseDownCapture={(event) => {
+        // Clicking the window's chrome (header, padding - anything that is not a
+        // control and not the terminal itself) focuses the terminal, so the focus
+        // cue + blinking cursor activate and you can type right away. preventDefault
+        // stops the browser's default focus-reset to <body> (the header is not
+        // focusable), so the terminal focus actually sticks.
+        const target = event.target as HTMLElement;
+        if (target.closest('button, a, input, textarea, select, [role="button"], [role="menuitem"], [contenteditable="true"]')) return;
+        if (target.closest('.xterm')) return;
+        event.preventDefault();
+        frameRef.current?.querySelector<HTMLElement>('.xterm-helper-textarea')?.focus();
+      }}
       onPointerMove={handleFramePointerMove}
       onPointerUp={handleFramePointerUp}
       onPointerCancel={handleFramePointerCancel}
@@ -115,13 +127,21 @@ export function WindowFrame({ managedWindow, containerSize, overlayRef, tiledRec
         height: pixelRect.height,
         zIndex: managedWindow.zIndex,
       }}
-      className={`pointer-events-auto bg-surface-raised border ${
-        isFocused ? 'border-accent' : 'border-edge'
-      } ${isMaximized || isTiled ? 'rounded-none' : 'rounded-lg'} ${
-        isTiled ? '' : 'shadow-2xl'
-      } flex flex-col overflow-hidden ${contentClassName}`}
+      className={`pointer-events-auto group bg-surface-raised border border-edge focus-within:border-accent/40 ${
+        isMaximized || isTiled ? 'rounded-none' : 'rounded-lg'
+      } ${isTiled ? '' : 'shadow-2xl'} flex flex-col overflow-hidden ${contentClassName}`}
       data-testid={`window-frame-${managedWindow.id}`}
     >
+      {/* Focus cue driven by REAL focus (:focus-within), not the sticky
+          focusedWindowId: a faint 1px accent outline (border above) + a 2px dimmed
+          accent line along the top that gently pulses, shown ONLY while this window
+          actually holds keyboard focus (its terminal or a control) - so it drops the
+          moment focus moves to a dialog or another window, matching the blinking
+          cursor. Always rendered; CSS toggles visibility, so no layout shift. */}
+      <div
+        className="pointer-events-none absolute inset-x-0 top-0 z-20 hidden h-0.5 bg-accent/70 animate-pulse group-focus-within:block"
+        aria-hidden
+      />
       <WindowContent
         managedWindow={managedWindow}
         isFocused={isFocused}

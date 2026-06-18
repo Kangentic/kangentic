@@ -30,7 +30,7 @@ import type { CandidatePane, DropTarget, TreeBounds } from './drop-zone';
 import { resolveTileLayout } from '../tiling/resolve-layout';
 import { insertWindowIntoTree, treeContainsWindow } from '../tiling/tree-ops';
 import { useWindowStore } from '../store/window-store';
-import type { SnapEdge } from '../store/types';
+import type { SnapEdge, FractionalRect } from '../store/types';
 
 /** Pointer travel (px) before a press becomes a drag, so a plain click/double
  *  click that only raises or maximizes the window does not nudge its geometry. */
@@ -76,6 +76,17 @@ interface DragSession {
   /** Dockable panes (others' rects), snapshotted once on activation. No store
    *  writes happen during a drag, so these rects stay valid for the whole gesture. */
   candidatePanes: CandidatePane[];
+  /** Set when the dragged window is TILED: the header drags the whole docked group
+   *  as a unit instead of popping the pane out. Null for a normal float/snap drag. */
+  groupMove: GroupMoveSession | null;
+}
+
+/** A tiled-group move: every pane's frame element + the group's starting footprint,
+ *  snapshotted at activation. The move translates all frames together; the commit
+ *  writes the new footprint via setTileTreeRect. */
+interface GroupMoveSession {
+  frames: HTMLElement[];
+  startRect: FractionalRect;
 }
 
 interface UseWindowDragArgs {
@@ -86,6 +97,20 @@ interface UseWindowDragArgs {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+/** Clamp a group-move pixel delta so the group's footprint stays inside the overlay. */
+function clampGroupDelta(
+  startRect: FractionalRect,
+  deltaX: number,
+  deltaY: number,
+  overlay: OverlayBounds,
+): { dx: number; dy: number } {
+  const minDx = -startRect.x * overlay.width;
+  const maxDx = (1 - startRect.w - startRect.x) * overlay.width;
+  const minDy = -startRect.y * overlay.height;
+  const maxDy = (1 - startRect.h - startRect.y) * overlay.height;
+  return { dx: clamp(deltaX, minDx, maxDx), dy: clamp(deltaY, minDy, maxDy) };
 }
 
 /** Hard-clamp a proposed top-left so the whole frame stays inside the overlay
@@ -112,6 +137,26 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     // frame at its final position.
     frame.style.transform = '';
     if (!drag.activated) return; // a click / double-click, not a drag
+
+    // GROUP MOVE commit: clear every pane's transform and write the new footprint.
+    // setTileTreeRect re-renders the panes at the new origin (position only, so no
+    // terminal refit) and clampGeometry keeps the group in bounds.
+    if (drag.groupMove) {
+      for (const element of drag.groupMove.frames) element.style.transform = '';
+      const moved = clampGroupDelta(
+        drag.groupMove.startRect,
+        drag.lastClientX - drag.startClientX,
+        drag.lastClientY - drag.startClientY,
+        drag.overlay,
+      );
+      useWindowStore.getState().setTileTreeRect({
+        x: drag.groupMove.startRect.x + moved.dx / drag.overlay.width,
+        y: drag.groupMove.startRect.y + moved.dy / drag.overlay.height,
+        w: drag.groupMove.startRect.w,
+        h: drag.groupMove.startRect.h,
+      });
+      return;
+    }
 
     const container = { width: drag.overlay.width, height: drag.overlay.height };
     const store = useWindowStore.getState();
@@ -191,6 +236,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
       snapEdge: null,
       dropTarget: null,
       candidatePanes: [],
+      groupMove: null,
     };
     // NOTE: do NOT setPointerCapture here. Capturing on pointerdown suppresses
     // the native dblclick used for maximize/restore. Capture on activation.
@@ -281,38 +327,65 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
       const deltaY = event.clientY - drag.startClientY;
       if (Math.abs(deltaX) < DRAG_ACTIVATION_PX && Math.abs(deltaY) < DRAG_ACTIVATION_PX) return;
       drag.activated = true;
-      undockUnderCursor(drag, event);
-      // Capture only now, so a stationary double-click is never intercepted.
-      frame.setPointerCapture(drag.pointerId);
-      // Snapshot the dockable panes ONCE, AFTER any undock (which may have pruned
-      // the tree). No store writes happen during the drag, so these rects stay
-      // valid for the whole gesture (the dragged window moves only via transform).
-      const store = useWindowStore.getState();
-      drag.candidatePanes = collectCandidatePanes(
-        windowId,
-        store.windows,
-        store.tileTree,
-        { width: drag.overlay.width, height: drag.overlay.height },
-        store.tileTreeRect,
-      );
-      // Snapshot the pruned tree's footprint + root axis for the outer-slot edge
-      // zones (only a multi-pane split root has extremes to push into).
-      const tree = store.tileTree;
-      drag.rootDirection = tree && tree.kind === 'split' ? tree.direction : null;
-      drag.treeBounds = tree
-        ? {
-            left: store.tileTreeRect.x * drag.overlay.width,
-            top: store.tileTreeRect.y * drag.overlay.height,
-            right: (store.tileTreeRect.x + store.tileTreeRect.w) * drag.overlay.width,
-            bottom: (store.tileTreeRect.y + store.tileTreeRect.h) * drag.overlay.height,
-          }
-        : null;
+      if (useWindowStore.getState().windows[windowId]?.state === 'tiled') {
+        // GROUP MOVE: a tiled window's header drags the WHOLE docked group as a
+        // unit (detaching a pane is the pop-out button / close, not the header
+        // drag). Snapshot every tiled pane's frame + the group's footprint; the
+        // move body translates them all together. No undock, no snap/dock.
+        const store = useWindowStore.getState();
+        drag.groupMove = {
+          frames: Object.values(store.windows)
+            .filter((candidate) => candidate.state === 'tiled')
+            .map((candidate) => document.querySelector<HTMLElement>(`[data-testid="window-frame-${candidate.id}"]`))
+            .filter((element): element is HTMLElement => element !== null),
+          startRect: store.tileTreeRect,
+        };
+        // Capture only now, so a stationary double-click is never intercepted.
+        frame.setPointerCapture(drag.pointerId);
+      } else {
+        undockUnderCursor(drag, event);
+        // Capture only now, so a stationary double-click is never intercepted.
+        frame.setPointerCapture(drag.pointerId);
+        // Snapshot the dockable panes ONCE, AFTER any undock (which may have pruned
+        // the tree). No store writes happen during the drag, so these rects stay
+        // valid for the whole gesture (the dragged window moves only via transform).
+        const store = useWindowStore.getState();
+        drag.candidatePanes = collectCandidatePanes(
+          windowId,
+          store.windows,
+          store.tileTree,
+          { width: drag.overlay.width, height: drag.overlay.height },
+          store.tileTreeRect,
+        );
+        // Snapshot the pruned tree's footprint + root axis for the outer-slot edge
+        // zones (only a multi-pane split root has extremes to push into).
+        const tree = store.tileTree;
+        drag.rootDirection = tree && tree.kind === 'split' ? tree.direction : null;
+        drag.treeBounds = tree
+          ? {
+              left: store.tileTreeRect.x * drag.overlay.width,
+              top: store.tileTreeRect.y * drag.overlay.height,
+              right: (store.tileTreeRect.x + store.tileTreeRect.w) * drag.overlay.width,
+              bottom: (store.tileTreeRect.y + store.tileTreeRect.h) * drag.overlay.height,
+            }
+          : null;
+      }
     }
 
-    // Unclamped: the window follows the pointer freely (it hard-snaps back
-    // inside on release). GPU transform: no store write, no render, no reflow.
     const deltaX = event.clientX - drag.startClientX;
     const deltaY = event.clientY - drag.startClientY;
+
+    // GROUP MOVE: translate every pane in the docked group together (clamped so the
+    // footprint stays on-screen). No snap/dock - the group just repositions.
+    if (drag.groupMove) {
+      const moved = clampGroupDelta(drag.groupMove.startRect, deltaX, deltaY, drag.overlay);
+      const groupTransform = `translate3d(${moved.dx}px, ${moved.dy}px, 0)`;
+      for (const element of drag.groupMove.frames) element.style.transform = groupTransform;
+      return;
+    }
+
+    // Unclamped: the window follows the pointer freely (it hard-snaps back inside
+    // on release). GPU transform: no store write, no render, no reflow.
     frame.style.transform = `translate3d(${deltaX}px, ${deltaY}px, 0)`;
 
     // Cursor shoved against the overlay's left/right edge: the user has run out of
