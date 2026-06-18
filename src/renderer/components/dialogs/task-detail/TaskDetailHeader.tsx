@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
 import { X, Minus, Trash2, Pencil, Loader2, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2 } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
@@ -9,6 +9,7 @@ import { Pill } from '../../Pill';
 import { IsolatedBadge } from '../../IsolatedBadge';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
 import { CommandPalettePopover } from './CommandPalettePopover';
+import { CommandSearchList } from './CommandSearchList';
 import { MaximizeToggleButton } from '../dialog-maximize';
 import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { useConfigStore } from '../../../stores/config-store';
@@ -318,6 +319,9 @@ export function TaskDetailHeader({
             canShowChanges={canShowChanges}
             changesOpen={changesOpen}
             onToggleChanges={onToggleChanges}
+            canShowBrowser={canShowBrowser}
+            browserOpen={browserOpen}
+            onToggleBrowser={onToggleBrowser}
           />
         )}
       </KebabMenu>
@@ -388,6 +392,9 @@ interface TaskDetailKebabItemsProps {
   canShowChanges: boolean;
   changesOpen: boolean;
   onToggleChanges: () => void;
+  canShowBrowser: boolean;
+  browserOpen: boolean;
+  onToggleBrowser: () => void;
 }
 
 function TaskDetailKebabItems({
@@ -411,10 +418,12 @@ function TaskDetailKebabItems({
   canShowChanges,
   changesOpen,
   onToggleChanges,
+  canShowBrowser,
+  browserOpen,
+  onToggleBrowser,
 }: TaskDetailKebabItemsProps) {
   const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
   const [showCommandsSubmenu, setShowCommandsSubmenu] = useState(false);
-  const [kebabCommands, setKebabCommands] = useState<AgentCommand[]>([]);
   const [linkingPr, setLinkingPr] = useState(false);
 
   const handleLinkPr = async () => {
@@ -458,16 +467,6 @@ function TaskDetailKebabItems({
   const { placement: commandsFlyoutPlacement } = usePopoverPosition(commandsFlyoutTriggerRef, commandsFlyoutRef, showCommandsSubmenu, { mode: 'flyout' });
   const { placement: moveFlyoutPlacement } = usePopoverPosition(moveFlyoutTriggerRef, moveFlyoutRef, showMoveSubmenu, { mode: 'flyout' });
 
-  // Fetch commands on mount (kebab is open)
-  useEffect(() => {
-    if (!isSessionActive) return;
-    let cancelled = false;
-    window.electronAPI.agent.listCommands(task.worktree_path ?? projectPath ?? undefined)
-      .then((result) => { if (!cancelled) setKebabCommands(result); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [isSessionActive, task.worktree_path, projectPath]);
-
   const closeAll = () => {
     setShowMoveSubmenu(false);
     setShowCommandsSubmenu(false);
@@ -501,6 +500,16 @@ function TaskDetailKebabItems({
         />
       )}
 
+      {/* Browser (parity with the header Browser pill, so the overflow holds the
+          full action set when the header hides quick-access pills on resize) */}
+      {canShowBrowser && (
+        <KebabMenuItem
+          icon={<Globe size={14} />}
+          label={browserOpen ? 'Hide browser' : 'Show browser'}
+          onClick={() => { closeAll(); onToggleBrowser(); }}
+        />
+      )}
+
       {/* View PR */}
       {task.pr_url && (
         <KebabMenuItem
@@ -530,8 +539,12 @@ function TaskDetailKebabItems({
         />
       )}
 
-      {/* Commands -- flyout submenu */}
-      {isSessionActive && kebabCommands.length > 0 && (
+      {/* Commands -- searchable flyout (shares CommandSearchList with the header
+          pill). Hover to open / leave to close, like Move to: the flyout is a DOM
+          child of this container, so moving the pointer INTO it (to type in the
+          search) stays within the container and keeps it open; the search input
+          auto-focuses on open so you can type immediately. */}
+      {isSessionActive && (
         <div
           ref={commandsFlyoutTriggerRef}
           className="relative"
@@ -548,24 +561,16 @@ function TaskDetailKebabItems({
             {commandsFlyoutPlacement.horizontal === 'left' ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
           </button>
           {showCommandsSubmenu && (
-            <div ref={commandsFlyoutRef} style={{ transformOrigin: commandsFlyoutPlacement.horizontal === 'left' ? 'right center' : 'left center' }} className="absolute min-w-[220px] max-h-[300px] overflow-y-auto bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 py-1 overlay-popover-in">
-              {kebabCommands.map((command) => (
-                <button
-                  key={command.name}
-                  onClick={() => { closeAll(); onCommandSelect(command); }}
-                  className="w-full text-left px-3 py-1.5 text-xs text-fg-tertiary hover:bg-surface-hover hover:text-fg transition-colors"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span className="truncate">{command.displayName}</span>
-                    {command.argumentHint && (
-                      <span className="text-[11px] font-mono text-fg-disabled truncate">{command.argumentHint}</span>
-                    )}
-                  </div>
-                  {command.description && (
-                    <span className="block text-[11px] text-fg-faint truncate">{command.description}</span>
-                  )}
-                </button>
-              ))}
+            <div
+              ref={commandsFlyoutRef}
+              style={{ transformOrigin: commandsFlyoutPlacement.horizontal === 'left' ? 'right center' : 'left center' }}
+              className="absolute w-[280px] max-h-[300px] flex flex-col bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 overflow-hidden overlay-popover-in"
+            >
+              <CommandSearchList
+                cwd={task.worktree_path ?? projectPath ?? undefined}
+                onSelect={(command) => { closeAll(); onCommandSelect(command); }}
+                onClose={() => setShowCommandsSubmenu(false)}
+              />
             </div>
           )}
         </div>
