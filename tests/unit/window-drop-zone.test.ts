@@ -20,7 +20,6 @@ function makeWindow(overrides: Partial<ManagedWindow> & { id: string }): Managed
     leafId: overrides.leafId ?? null,
     sessionStatus: overrides.sessionStatus ?? 'live',
     restoreGeometry: overrides.restoreGeometry ?? null,
-    previousState: overrides.previousState ?? null,
     title: overrides.title ?? overrides.id,
   };
 }
@@ -68,11 +67,10 @@ describe('collectCandidatePanes', () => {
     expect(panes[0]).toEqual({ windowId: 'w2', zIndex: 2, rect: { left: 250, top: 0, width: 250, height: 800 } });
   });
 
-  it('returns every visible floating window when no tree exists, excluding dragged + minimized', () => {
+  it('returns every visible floating window when no tree exists, excluding the dragged one', () => {
     const windows: Record<string, ManagedWindow> = {
       dragged: makeWindow({ id: 'dragged' }),
       floater: makeWindow({ id: 'floater', geometry: { x: 0.25, y: 0.1, w: 0.5, h: 0.5 }, zIndex: 2 }),
-      hidden: makeWindow({ id: 'hidden', state: 'minimized' }),
     };
     const panes = collectCandidatePanes('dragged', windows, null, CONTAINER, { x: 0, y: 0, w: 1, h: 1 });
     expect(panes.map((pane) => pane.windowId)).toEqual(['floater']);

@@ -5,8 +5,8 @@
  * pointermove is reliably delivered even when the cursor leaves the thin handle.
  *
  * The handles sit at the frame's perimeter (z-20); the title-bar controls are
- * raised above them (z-30, see WindowTitleBar) so the close/maximize/minimize
- * buttons stay clickable at the top corners.
+ * raised above them (z-30, see WindowTitleBar) so the close/maximize buttons
+ * stay clickable at the top corners.
  */
 
 import type { ResizeDirection } from '../dnd/useWindowResize';

@@ -24,7 +24,7 @@ export interface FractionalRect {
  * not full-screen) but, like `maximized`, remembers `restoreGeometry` so dragging
  * the window away restores the user's pre-snap size (Win11 behavior).
  */
-export type WindowState = 'floating' | 'tiled' | 'snapped' | 'maximized' | 'minimized';
+export type WindowState = 'floating' | 'tiled' | 'snapped' | 'maximized';
 
 /** Live-session disposition mirrored onto the window so it can render a
  *  suspended/closed shell after its `sessionId` is cleared (P3 reconciliation). */
@@ -47,8 +47,6 @@ export interface ManagedWindow {
   sessionStatus: WindowSessionStatus;
   /** Geometry to return to when un-maximizing / un-tiling. */
   restoreGeometry: FractionalRect | null;
-  /** State to return to when un-minimizing. */
-  previousState: WindowState | null;
   /** Title-bar label. */
   title: string;
   /** When true, the hosted task-detail content opens in edit mode (set from the

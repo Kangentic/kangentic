@@ -58,8 +58,8 @@ export interface DropTarget {
  * footprint, so the whole pane is a hit target). EVERY other visible window
  * (lone snapped / floating / maximized) is ALSO a candidate, whether or not a
  * tree exists: dropping onto a non-tree window merges it into the single tree
- * (or seeds the first pair). Minimized windows are never candidates. This is what
- * lets a window left beside a tree be docked into, instead of being a dead zone.
+ * (or seeds the first pair). This is what lets a window left beside a tree be
+ * docked into, instead of being a dead zone.
  */
 export function collectCandidatePanes(
   draggedWindowId: string,
@@ -86,7 +86,6 @@ export function collectCandidatePanes(
   }
   for (const managedWindow of Object.values(windows)) {
     if (managedWindow.id === draggedWindowId) continue;
-    if (managedWindow.state === 'minimized') continue;
     if (tiledWindowIds.has(managedWindow.id)) continue; // already added as a tiled pane
     const geometry = managedWindow.state === 'maximized' ? { x: 0, y: 0, w: 1, h: 1 } : managedWindow.geometry;
     candidates.push({ windowId: managedWindow.id, zIndex: managedWindow.zIndex, rect: fractionalToPixels(geometry, container) });

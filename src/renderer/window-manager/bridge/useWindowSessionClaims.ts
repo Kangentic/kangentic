@@ -34,12 +34,11 @@ export function useWindowSessionClaims(): void {
   const dialogSessionIds = useSessionStore((state) => state.dialogSessionIds);
 
   useEffect(() => {
-    // The live session of each open (non-minimized) detail window, resolved by
-    // taskId - a window's stored `sessionId` can be stale after a respawn, but
-    // the taskId anchor is durable.
+    // The live session of each open detail window, resolved by taskId - a window's
+    // stored `sessionId` can be stale after a respawn, but the taskId anchor is
+    // durable.
     const ownedSessionIds: string[] = [];
     for (const managedWindow of Object.values(windows)) {
-      if (managedWindow.state === 'minimized') continue;
       const session = sessions.find((candidate) => candidate.taskId === managedWindow.taskId);
       if (session && !ownedSessionIds.includes(session.id)) ownedSessionIds.push(session.id);
     }

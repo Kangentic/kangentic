@@ -1,11 +1,11 @@
 /**
- * Window title bar: a drag handle plus three ALWAYS-VISIBLE controls (minimize,
- * maximize/restore, close). No hover-only controls (ui-conventions rule). The
+ * Window title bar: a drag handle plus two ALWAYS-VISIBLE controls
+ * (maximize/restore, close). No hover-only controls (ui-conventions rule). The
  * maximize control reuses the shared `MaximizeToggleButton` so it carries the
  * `panel.maximize` tooltip; double-clicking the handle also toggles maximize.
  */
 
-import { Minus, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
 import { useWindowStore } from '../store/window-store';
 
@@ -29,7 +29,6 @@ export function WindowTitleBar({
   onHandlePointerDown,
   onRequestClose,
 }: WindowTitleBarProps) {
-  const minimizeWindow = useWindowStore((state) => state.minimizeWindow);
   const toggleMaximizeWindow = useWindowStore((state) => state.toggleMaximizeWindow);
 
   return (
@@ -44,15 +43,6 @@ export function WindowTitleBar({
       {/* Raised above the corner resize handles (z-20) so the controls stay
           clickable at the top corners. */}
       <div className="relative z-30 flex items-center gap-1">
-        <button
-          type="button"
-          onClick={() => minimizeWindow(windowId)}
-          aria-label="Minimize window"
-          title="Minimize"
-          className={CONTROL_CLASS}
-        >
-          <Minus size={16} />
-        </button>
         <MaximizeToggleButton
           isMaximized={isMaximized}
           onToggle={() => toggleMaximizeWindow(windowId)}

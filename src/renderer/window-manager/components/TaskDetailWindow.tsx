@@ -6,8 +6,8 @@
  * instead of a `BaseDialog`:
  *
  *  - The header (view) or an edit-mode bar IS the window title bar: a drag
- *    handle (pointer-down forwarded from `WindowFrame`) plus minimize / maximize
- *    / close wired to the window store. Double-clicking it toggles maximize.
+ *    handle (pointer-down forwarded from `WindowFrame`) plus maximize / close
+ *    wired to the window store. Double-clicking it toggles maximize.
  *  - Close routes through the unsaved-changes guard, then the frame's animated
  *    `requestClose`. Escape (pointer outside the PTY) and `panel.close` do the
  *    same; keybindings are gated on `isFocused` so only the focused window reacts.
@@ -20,7 +20,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Copy, Minus, Pencil, Trash2, X } from 'lucide-react';
+import { Check, Copy, Pencil, Trash2, X } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
@@ -98,7 +98,6 @@ export function TaskDetailWindow({
   const browserEnabledConfig = useConfigStore((s) => s.config.browser?.enabled);
 
   const toggleMaximizeWindow = useWindowStore((s) => s.toggleMaximizeWindow);
-  const minimizeWindow = useWindowStore((s) => s.minimizeWindow);
   const untileWindow = useWindowStore((s) => s.untileWindow);
   const isTiled = useWindowStore((s) => s.windows[windowId]?.state === 'tiled');
   const openedDone = useWindowStore((s) => s.windows[windowId]?.openedDone ?? false);
@@ -224,7 +223,6 @@ export function TaskDetailWindow({
   }, [openedDone, isDone, isEditing, isEditDirty, requestClose]);
 
   const handleToggleMaximized = useCallback(() => toggleMaximizeWindow(windowId), [toggleMaximizeWindow, windowId]);
-  const handleMinimize = useCallback(() => minimizeWindow(windowId), [minimizeWindow, windowId]);
   const handleUndock = useCallback(() => untileWindow(windowId), [untileWindow, windowId]);
 
   const handleToggleBrowser = useCallback(() => {
@@ -367,7 +365,6 @@ export function TaskDetailWindow({
       onToggleBrowser={handleToggleBrowser}
       isMaximized={isMaximized}
       onToggleMaximized={handleToggleMaximized}
-      onMinimize={handleMinimize}
       onUndock={isTiled ? handleUndock : undefined}
     />
   );
@@ -393,16 +390,6 @@ export function TaskDetailWindow({
         <PriorityBadge priority={task.priority ?? 0} />
       </h3>
       <div className="flex-1" />
-      <button
-        type="button"
-        onClick={handleMinimize}
-        data-testid="task-detail-minimize"
-        aria-label="Minimize window"
-        title="Minimize"
-        className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-      >
-        <Minus size={16} />
-      </button>
       <MaximizeToggleButton
         isMaximized={isMaximized}
         onToggle={handleToggleMaximized}

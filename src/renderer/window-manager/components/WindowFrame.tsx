@@ -99,9 +99,6 @@ export function WindowFrame({ managedWindow, containerSize, overlayRef, tiledRec
     scheduleWindowTerminalResize();
   }, [pixelRect.width, pixelRect.height, managedWindow.state]);
 
-  // Minimized windows are represented in the dock strip (P1), not as a frame.
-  if (managedWindow.state === 'minimized') return null;
-
   return (
     <div
       ref={frameRef}

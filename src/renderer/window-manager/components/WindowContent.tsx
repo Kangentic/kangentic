@@ -3,7 +3,7 @@
  * the full task-detail surface (`TaskDetailWindow`), which owns its own title
  * bar (the window drag handle) plus the terminal / changes / browser / edit
  * form. The window's drag handle and animated close are forwarded from
- * `WindowFrame`; maximize / minimize the content reads from the window store
+ * `WindowFrame`; the content reads its maximize state from the window store
  * directly via its `windowId`.
  *
  * A task can be on the board (`tasks`) or archived (`archivedTasks`, opened from

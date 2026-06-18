@@ -30,7 +30,6 @@ import { TileSplitter } from './TileSplitter';
 import { FootprintResizer } from './FootprintResizer';
 import type { FootprintEdge } from './FootprintResizer';
 import { SnapPreview } from './SnapPreview';
-import { WindowDock } from './WindowDock';
 
 const PORTAL_HOST_ID = 'window-layer-root';
 
@@ -160,7 +159,6 @@ export function WindowLayer() {
         />
       ))}
       <SnapPreview />
-      <WindowDock />
     </div>,
     hostRef.current,
   );

@@ -9,7 +9,7 @@
  */
 
 import { create } from 'zustand';
-import type { FractionalRect, ManagedWindow, TileNode, WindowState } from './types';
+import type { FractionalRect, ManagedWindow, TileNode } from './types';
 import { clampGeometry, defaultWindowGeometry } from './geometry';
 import type { PixelRect } from './geometry';
 import { resolveTileLayout } from '../tiling/resolve-layout';
@@ -82,11 +82,11 @@ function rootSideForWindow(geometry: FractionalRect, footprint: FractionalRect):
  * Evict ONE window from the tile tree (PARTIAL eviction, 3b). The removed
  * window's leaf is pruned and its sibling subtree promoted to fill the space;
  * every OTHER tiled window stays tiled and simply re-resolves to a larger rect.
- * Used whenever a single window leaves tiling (close / minimize / drag-out).
+ * Used whenever a single window leaves tiling (close / drag-out).
  *
  * The evicted window goes back to FLOATING at its pre-tile geometry (undo the
- * tiling). The caller may then override it (close deletes it, minimize hides it,
- * drag-out floats it under the cursor); this is just the standalone default.
+ * tiling). The caller may then override it (close deletes it, drag-out floats it
+ * under the cursor); this is just the standalone default.
  *
  * Collapse case: when removing the window leaves a single remaining leaf (a 2-up
  * losing one side), that lone window can no longer be "tiled" (a tree needs two
@@ -230,7 +230,6 @@ interface WindowStoreState {
   /** Pull a window out of tiling (drag-out); dissolves the group to floating. */
   untileWindow: (id: string) => void;
   toggleMaximizeWindow: (id: string) => void;
-  minimizeWindow: (id: string) => void;
   restoreWindow: (id: string) => void;
 }
 
@@ -262,7 +261,6 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
       leafId: null,
       sessionStatus: input.sessionId ? 'live' : 'closed',
       restoreGeometry: null,
-      previousState: null,
       title: input.title,
       initialEdit: input.initialEdit,
       openedDone: input.openedDone,
@@ -329,7 +327,7 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
       return {
         windows: {
           ...current.windows,
-          [id]: { ...target, state: 'maximized', restoreGeometry: target.geometry, previousState: target.state },
+          [id]: { ...target, state: 'maximized', restoreGeometry: target.geometry },
         },
       };
     });
@@ -523,33 +521,6 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     else get().maximizeWindow(id);
   },
 
-  minimizeWindow: (id) => {
-    set((current) => {
-      const target = current.windows[id];
-      if (!target || target.state === 'minimized') return current;
-      // Minimizing a tiled window evicts it (the remaining panes stay tiled, or
-      // the last partner snaps to its half); the evicted window is floated by the
-      // eviction, so it restores as a floating window (not back into the tree it
-      // left). previousState is its post-eviction state.
-      const base = evictWindowFromTiling(current.windows, current.tileTree, current.tileTreeRect, id);
-      const baseTarget = base.windows[id] ?? target;
-      const nextWindows = {
-        ...base.windows,
-        [id]: { ...baseTarget, state: 'minimized' as const, previousState: baseTarget.state },
-      };
-      // If the minimized window was focused, move focus to the top-most
-      // remaining non-minimized window so its terminal hands back cleanly.
-      let focusedWindowId = current.focusedWindowId;
-      if (focusedWindowId === id) {
-        const visible = current.order.filter(
-          (candidate) => candidate !== id && nextWindows[candidate]?.state !== 'minimized',
-        );
-        focusedWindowId = visible[visible.length - 1] ?? null;
-      }
-      return { windows: nextWindows, focusedWindowId, tileTree: base.tileTree, tileTreeRect: base.tileTreeRect };
-    });
-  },
-
   restoreWindow: (id) => {
     set((current) => {
       const target = current.windows[id];
@@ -564,18 +535,8 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
               state: 'floating',
               geometry: target.restoreGeometry ?? target.geometry,
               restoreGeometry: null,
-              previousState: null,
             },
           },
-        };
-      }
-      // Un-minimize: back to the state it was in before minimizing (which may be
-      // maximized). Geometry is unchanged by minimize.
-      if (target.state === 'minimized') {
-        const restoreState: WindowState =
-          target.previousState && target.previousState !== 'minimized' ? target.previousState : 'floating';
-        return {
-          windows: { ...current.windows, [id]: { ...target, state: restoreState, previousState: null } },
         };
       }
       return current;

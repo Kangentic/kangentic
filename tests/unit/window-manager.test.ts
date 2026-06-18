@@ -169,33 +169,6 @@ describe('window-store actions', () => {
     expect(state.windows[second]).toBeUndefined();
     expect(state.focusedWindowId).toBe(first);
   });
-
-  it('minimizes a window and moves focus to the next visible window', () => {
-    const first = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
-    const second = useWindowStore.getState().openWindow({ taskId: 'b', sessionId: 's2', title: 'B' });
-    // `second` is focused (opened last). Minimizing it focuses `first`.
-    useWindowStore.getState().minimizeWindow(second);
-    const state = useWindowStore.getState();
-    expect(state.windows[second].state).toBe('minimized');
-    expect(state.focusedWindowId).toBe(first);
-  });
-
-  it('restores a minimized window to its pre-minimize state', () => {
-    const id = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
-    useWindowStore.getState().minimizeWindow(id);
-    expect(useWindowStore.getState().windows[id].state).toBe('minimized');
-    useWindowStore.getState().restoreWindow(id);
-    expect(useWindowStore.getState().windows[id].state).toBe('floating');
-  });
-
-  it('restores a window minimized from maximized back to maximized', () => {
-    const id = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
-    useWindowStore.getState().maximizeWindow(id);
-    useWindowStore.getState().minimizeWindow(id);
-    expect(useWindowStore.getState().windows[id].state).toBe('minimized');
-    useWindowStore.getState().restoreWindow(id);
-    expect(useWindowStore.getState().windows[id].state).toBe('maximized');
-  });
 });
 
 describe('window-store tiling', () => {
@@ -296,17 +269,6 @@ describe('window-store tiling', () => {
     expect(state.windows[b].state).toBe('snapped');
     // B was the right pane, so it stays snapped on the right half.
     expect(state.windows[b].geometry.x).toBeCloseTo(0.5, 5);
-  });
-
-  it('minimizing a tiled window evicts it; it restores to floating, partner snapped', () => {
-    const { a, b } = makeTiledPair();
-    useWindowStore.getState().minimizeWindow(a);
-    const state = useWindowStore.getState();
-    expect(state.windows[a].state).toBe('minimized');
-    // Evicted -> floating, so it restores as a floating window (it left the tree).
-    expect(state.windows[a].previousState).toBe('floating');
-    expect(state.tileTree).toBeNull();
-    expect(state.windows[b].state).toBe('snapped');
   });
 
   /** A | B (via dockWindow), then C dropped onto B's right edge -> a three-leaf tree. */
