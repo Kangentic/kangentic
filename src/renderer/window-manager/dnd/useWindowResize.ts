@@ -21,8 +21,16 @@ import { useWindowStore } from '../store/window-store';
 
 export type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 
-const MIN_WIDTH_PX = 320;
-const MIN_HEIGHT_PX = 200;
+// Floor for a MANUALLY resized window: the comfortable minimum where the
+// task-detail header shows a typical full title plus the trailing controls
+// (overflow / expand / close), with the quick-access pills folded into the
+// overflow. Set from a user-picked reference width (Task #1 at ~633px). Tiling
+// presets may still drive a pane narrower than this on a small screen - the header
+// degrades gracefully there (title truncates toward its smaller CSS min).
+const MIN_WIDTH_PX = 650;
+// Floor for height: enough for the header + a usable slice of the task body /
+// terminal below it, so a manually resized window never collapses to a sliver.
+const MIN_HEIGHT_PX = 400;
 
 interface OverlayBounds {
   left: number;
@@ -36,6 +44,11 @@ interface ResizeSession {
   direction: ResizeDirection;
   startClientX: number;
   startClientY: number;
+  /** Last observed pointer position. The commit uses THIS, not the end event's
+   *  coords, because a captured-pointer pointerup/pointercancel can arrive with
+   *  (0,0) - which would compute a huge bogus delta and collapse the window. */
+  lastClientX: number;
+  lastClientY: number;
   startRect: PixelRect;
   overlay: OverlayBounds;
   /** Pointer capture is taken on the first move (deferred), not on pointerdown,
@@ -93,6 +106,13 @@ export function useWindowResize({ windowId, frameRef, overlayRef }: UseWindowRes
     const frame = frameRef.current;
     const overlay = overlayRef.current;
     if (!frame || !overlay) return;
+    // Suppress the browser's default press behavior + text selection for the whole
+    // gesture. Without this, dragging the cursor inward over selectable content (the
+    // terminal text) starts a selection, which Chromium resolves by firing a
+    // spurious `pointercancel` (zeroed coords) that ends the resize mid-drag - so it
+    // "moves a few px then stops". Restored in endResize.
+    event.preventDefault();
+    document.body.style.userSelect = 'none';
     const frameRect = frame.getBoundingClientRect();
     const overlayRect = overlay.getBoundingClientRect();
     resizeRef.current = {
@@ -100,6 +120,8 @@ export function useWindowResize({ windowId, frameRef, overlayRef }: UseWindowRes
       direction,
       startClientX: event.clientX,
       startClientY: event.clientY,
+      lastClientX: event.clientX,
+      lastClientY: event.clientY,
       startRect: {
         left: frameRect.left - overlayRect.left,
         top: frameRect.top - overlayRect.top,
@@ -129,6 +151,10 @@ export function useWindowResize({ windowId, frameRef, overlayRef }: UseWindowRes
       }
       resize.captured = true;
     }
+    // Remember the last good pointer position; the commit reads it instead of the
+    // pointerup/cancel coords (which can be a bogus (0,0) on a captured release).
+    resize.lastClientX = event.clientX;
+    resize.lastClientY = event.clientY;
     const rect = resolveRect(resize, event.clientX - resize.startClientX, event.clientY - resize.startClientY);
     frame.style.left = `${rect.left}px`;
     frame.style.top = `${rect.top}px`;
@@ -140,9 +166,14 @@ export function useWindowResize({ windowId, frameRef, overlayRef }: UseWindowRes
     const resize = resizeRef.current;
     const frame = frameRef.current;
     resizeRef.current = null;
+    // Always restore text selection, even on the guard return below.
+    document.body.style.userSelect = '';
     if (!resize || !frame || event.pointerId !== resize.pointerId) return;
     if (frame.hasPointerCapture(event.pointerId)) frame.releasePointerCapture(event.pointerId);
-    const rect = resolveRect(resize, event.clientX - resize.startClientX, event.clientY - resize.startClientY);
+    // Commit from the LAST tracked move position, never the end event's coords: a
+    // captured-pointer pointerup/cancel can report (0,0), and that bogus delta is
+    // what collapsed the window to its minimum on release.
+    const rect = resolveRect(resize, resize.lastClientX - resize.startClientX, resize.lastClientY - resize.startClientY);
     // Clamp into the overlay on commit (the live drag was free).
     const width = clamp(rect.width, MIN_WIDTH_PX, resize.overlay.width);
     const height = clamp(rect.height, MIN_HEIGHT_PX, resize.overlay.height);

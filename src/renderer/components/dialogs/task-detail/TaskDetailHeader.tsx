@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
 import { X, Trash2, Pencil, Loader2, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2 } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
@@ -10,6 +10,7 @@ import { IsolatedBadge } from '../../IsolatedBadge';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
 import { CommandPalettePopover } from './CommandPalettePopover';
 import { CommandSearchList } from './CommandSearchList';
+import { useHeaderPillOverflow, type HeaderPillSpec } from './useHeaderPillOverflow';
 import { MaximizeToggleButton } from '../dialog-maximize';
 import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { useConfigStore } from '../../../stores/config-store';
@@ -87,6 +88,11 @@ export function TaskDetailHeader({
 }: TaskDetailHeaderProps) {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   const commandButtonRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
+  const leadingRef = useRef<HTMLDivElement>(null);
+  const trailingRef = useRef<HTMLDivElement>(null);
+  const pillsRef = useRef<HTMLDivElement>(null);
+  const titleSpanRef = useRef<HTMLSpanElement>(null);
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
   const defaultBaseBranch = useConfigStore((s) => s.config.git.defaultBaseBranch);
   const worktreeBaseBranch = task.base_branch || defaultBaseBranch || null;
@@ -94,8 +100,46 @@ export function TaskDetailHeader({
   const browserCombo = useFormattedCombo('taskDetail.toggleBrowser');
   const changesCombo = useFormattedCombo('taskDetail.toggleChanges');
 
+  // Quick-access pills, highest priority collapses LAST. The user-chosen order is
+  // Browser -> Changes -> Project -> Commands (Browser drops first). Header
+  // shortcuts stay longest (the user put them in the header deliberately) and, if
+  // one does collapse and is not already a menu shortcut, it folds into the kebab.
+  const pillSpecs = useMemo<HeaderPillSpec[]>(() => {
+    const specs: HeaderPillSpec[] = [];
+    if (!isEditing) specs.push({ id: 'commands', priority: 50 });
+    if (task.worktree_path || projectPath) specs.push({ id: 'folder', priority: 40 });
+    if (canShowChanges) specs.push({ id: 'changes', priority: 30 });
+    if (task.pr_url) specs.push({ id: 'pr', priority: 25 });
+    if (canShowBrowser) specs.push({ id: 'browser', priority: 20 });
+    for (const action of headerShortcuts) {
+      specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 60 });
+    }
+    return specs;
+  }, [isEditing, task.worktree_path, task.pr_url, projectPath, canShowChanges, canShowBrowser, headerShortcuts]);
+
+  const hiddenPillIds = useHeaderPillOverflow(headerRef, leadingRef, trailingRef, titleSpanRef, pillsRef, pillSpecs);
+  const showPill = (id: string) => !hiddenPillIds.has(id);
+
+  // A header-only shortcut that collapsed must surface in the kebab so the overflow
+  // stays the complete action set. Built-in pills are always in the kebab already;
+  // a 'both'-display shortcut is already a menu shortcut, so it is skipped here.
+  const overflowMenuShortcuts = useMemo(
+    () => [
+      ...menuShortcuts,
+      ...headerShortcuts.filter(
+        (action) =>
+          hiddenPillIds.has(`shortcut:${action.id ?? action.label}`)
+          && !menuShortcuts.some((menuAction) => (menuAction.id ?? menuAction.label) === (action.id ?? action.label)),
+      ),
+    ],
+    [menuShortcuts, headerShortcuts, hiddenPillIds],
+  );
+
   return (
-    <div className="flex items-center gap-3 px-4 py-3 min-w-0">
+    <div ref={headerRef} className="flex items-center gap-3 px-4 py-3 min-w-0">
+      {/* Leading cluster: pause / id / priority. flex-shrink-0 so the priority
+          badge never compresses, and so it measures as one unit for the overflow calc. */}
+      <div ref={leadingRef} className="flex items-center gap-3 flex-shrink-0">
       {/* Pause / Resume toggle */}
       {canToggle && (
         <button
@@ -141,13 +185,18 @@ export function TaskDetailHeader({
 
       {/* Priority badge (hidden when priority is 0) */}
       <PriorityBadge priority={task.priority ?? 0} />
+      </div>
 
-      {/* Title */}
+      {/* Title - wins the space fight: the overflow calc reserves its FULL natural
+          width (so pills fold first), and it only truncates once every pill has
+          folded. The hard min-w-[64px] keeps it from fully vanishing in a tiny
+          tiled pane. The inner span is content-sized, so its scrollWidth is the
+          title's natural width (read by useHeaderPillOverflow). */}
       <h2
-        className="text-base font-semibold text-fg truncate min-w-0 flex-1 basis-0 flex items-center gap-2"
+        className="text-base font-semibold text-fg truncate flex-1 min-w-[64px] flex items-center gap-2"
         title={task.title}
       >
-        <span className="truncate">{task.title}</span>
+        <span ref={titleSpanRef} className="truncate">{task.title}</span>
         {isArchived && (
           <span
             className="flex-shrink-0 inline-flex items-center gap-1 text-[11px] text-fg-disabled bg-surface-hover/60 border border-edge/40 rounded px-1.5 py-0.5"
@@ -159,19 +208,15 @@ export function TaskDetailHeader({
         {isIsolated && <IsolatedBadge data-testid="task-detail-isolated-badge" />}
       </h2>
 
-      {/* Scrollable pills container - hidden for archived tasks */}
-      {!isArchived ? (
-        <div
-          className={[
-            'flex items-center flex-wrap gap-3 min-w-0 flex-shrink-0',
-            // Clip the row to a single line until the command palette opens so
-            // its popover isn't cut off by overflow-hidden.
-            showCommandPalette ? '' : 'overflow-hidden max-h-8',
-          ].filter(Boolean).join(' ')}
-        >
+      {/* Quick-access pills - progressively fold into the kebab as the window
+          narrows (useHeaderPillOverflow). Hidden for archived tasks; the title then
+          fills the row. Each pill is wrapped so the overflow calc can measure it via
+          `data-pill-id`. */}
+      {!isArchived && (
+        <div ref={pillsRef} className="flex items-center gap-3 flex-shrink-0">
           {/* Commands button */}
-          {!isEditing && (
-            <div className="relative flex-shrink-0" ref={commandButtonRef}>
+          {showPill('commands') && !isEditing && (
+            <div data-pill-id="commands" className="relative flex-shrink-0" ref={commandButtonRef}>
               <Pill
                 shape="square"
                 onClick={() => setShowCommandPalette(!showCommandPalette)}
@@ -197,158 +242,174 @@ export function TaskDetailHeader({
           )}
 
           {/* Open folder pill */}
-          {(task.worktree_path || projectPath) && (
-            <Pill
-              shape="square"
-              onClick={() => window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!)}
-              className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
-              title={[
-                task.branch_name,
-                worktreeBaseBranch ? `from ${worktreeBaseBranch}` : null,
-                task.worktree_path ?? projectPath,
-              ].filter(Boolean).join('\n') || 'Open working directory'}
-              data-testid="branch-pill"
-            >
-              {task.worktree_path ? <FolderGit2 size={14} /> : <FolderOpen size={14} />}
-              {task.worktree_path ? 'Worktree' : 'Project'}
-              {worktreeBaseBranch && (
-                <span className="text-fg-faint" data-testid="branch-pill-base">
-                  ({worktreeBaseBranch})
-                </span>
-              )}
-            </Pill>
+          {showPill('folder') && (task.worktree_path || projectPath) && (
+            <div data-pill-id="folder" className="flex-shrink-0">
+              <Pill
+                shape="square"
+                onClick={() => window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!)}
+                className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
+                title={[
+                  task.branch_name,
+                  worktreeBaseBranch ? `from ${worktreeBaseBranch}` : null,
+                  task.worktree_path ?? projectPath,
+                ].filter(Boolean).join('\n') || 'Open working directory'}
+                data-testid="branch-pill"
+              >
+                {task.worktree_path ? <FolderGit2 size={14} /> : <FolderOpen size={14} />}
+                {task.worktree_path ? 'Worktree' : 'Project'}
+                {worktreeBaseBranch && (
+                  <span className="text-fg-faint" data-testid="branch-pill-base">
+                    ({worktreeBaseBranch})
+                  </span>
+                )}
+              </Pill>
+            </div>
           )}
 
           {/* PR pill */}
-          {task.pr_url && (
-            <Pill
-              shape="square"
-              onClick={() => window.electronAPI.shell.openExternal(task.pr_url!)}
-              className={`bg-surface-hover/50 hover:bg-surface-hover transition-colors flex-shrink-0 ${prStatePresentation(task.pr_state).textClass}`}
-              title={task.pr_state ? `${task.pr_url} (${task.pr_state})` : task.pr_url}
-              data-testid="pr-pill"
-            >
-              <GitPullRequest size={14} />
-              PR #{task.pr_number}
-              {task.pr_state && <span className="opacity-70">· {task.pr_state}</span>}
-            </Pill>
+          {showPill('pr') && task.pr_url && (
+            <div data-pill-id="pr" className="flex-shrink-0">
+              <Pill
+                shape="square"
+                onClick={() => window.electronAPI.shell.openExternal(task.pr_url!)}
+                className={`bg-surface-hover/50 hover:bg-surface-hover transition-colors flex-shrink-0 ${prStatePresentation(task.pr_state).textClass}`}
+                title={task.pr_state ? `${task.pr_url} (${task.pr_state})` : task.pr_url}
+                data-testid="pr-pill"
+              >
+                <GitPullRequest size={14} />
+                PR #{task.pr_number}
+                {task.pr_state && <span className="opacity-70">· {task.pr_state}</span>}
+              </Pill>
+            </div>
           )}
 
           {/* Changes toggle pill */}
-          {canShowChanges && (
-            <Pill
-              shape="square"
-              onClick={onToggleChanges}
-              className={`flex-shrink-0 transition-colors border ${
-                changesOpen
-                  ? 'bg-accent/15 text-accent-fg border-accent/30'
-                  : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
-              }`}
-              title={`${changesOpen ? 'Hide' : 'Show'} changes (${changesCombo})`}
-              data-testid="changes-toggle"
-            >
-              <GitCompare size={14} />
-              Changes
-            </Pill>
+          {showPill('changes') && canShowChanges && (
+            <div data-pill-id="changes" className="flex-shrink-0">
+              <Pill
+                shape="square"
+                onClick={onToggleChanges}
+                className={`flex-shrink-0 transition-colors border ${
+                  changesOpen
+                    ? 'bg-accent/15 text-accent-fg border-accent/30'
+                    : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
+                }`}
+                title={`${changesOpen ? 'Hide' : 'Show'} changes (${changesCombo})`}
+                data-testid="changes-toggle"
+              >
+                <GitCompare size={14} />
+                Changes
+              </Pill>
+            </div>
           )}
 
           {/* Browser toggle pill */}
-          {canShowBrowser && (
-            <Pill
-              shape="square"
-              onClick={onToggleBrowser}
-              className={`flex-shrink-0 transition-colors border ${
-                browserOpen
-                  ? 'bg-accent/15 text-accent-fg border-accent/30'
-                  : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
-              }`}
-              title={`${browserOpen ? 'Hide' : 'Show'} browser (${browserCombo})`}
-              data-testid="browser-toggle"
-            >
-              <Globe size={14} />
-              Browser
-            </Pill>
+          {showPill('browser') && canShowBrowser && (
+            <div data-pill-id="browser" className="flex-shrink-0">
+              <Pill
+                shape="square"
+                onClick={onToggleBrowser}
+                className={`flex-shrink-0 transition-colors border ${
+                  browserOpen
+                    ? 'bg-accent/15 text-accent-fg border-accent/30'
+                    : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
+                }`}
+                title={`${browserOpen ? 'Hide' : 'Show'} browser (${browserCombo})`}
+                data-testid="browser-toggle"
+              >
+                <Globe size={14} />
+                Browser
+              </Pill>
+            </div>
           )}
 
           {/* Shortcut header pills */}
           {headerShortcuts.map((action) => {
+            if (!showPill(`shortcut:${action.id ?? action.label}`)) return null;
             const ActionIcon = ICON_REGISTRY.get(action.icon ?? 'zap') ?? Zap;
             return (
-              <Pill
+              <div
                 key={action.id ?? action.label}
-                shape="square"
-                onClick={() => executeShortcut(action)}
-                className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
-                title={action.command}
-                data-testid={`shortcut-pill-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
+                data-pill-id={`shortcut:${action.id ?? action.label}`}
+                className="flex-shrink-0"
               >
-                <ActionIcon size={14} />
-                {action.label}
-              </Pill>
+                <Pill
+                  shape="square"
+                  onClick={() => executeShortcut(action)}
+                  className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
+                  title={action.command}
+                  data-testid={`shortcut-pill-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
+                >
+                  <ActionIcon size={14} />
+                  {action.label}
+                </Pill>
+              </div>
             );
           })}
         </div>
-      ) : (
-        <div className="flex-1" />
       )}
 
-      {/* Actions */}
-      <KebabMenu>
-        {(close) => (
-          <TaskDetailKebabItems
-            task={task}
-            close={close}
-            setIsEditing={setIsEditing}
-            canToggle={canToggle}
-            isSessionActive={isSessionActive}
-            isArchived={isArchived}
-            toggling={toggling}
-            onToggle={onToggle}
-            onCommandSelect={onCommandSelect}
-            onArchive={onArchive}
-            onSendToBacklog={onSendToBacklog}
-            onDelete={onDelete}
-            onMoveTo={onMoveTo}
-            moveTargets={moveTargets}
-            menuShortcuts={menuShortcuts}
-            executeShortcut={executeShortcut}
-            projectPath={projectPath}
-            canShowChanges={canShowChanges}
-            changesOpen={changesOpen}
-            onToggleChanges={onToggleChanges}
-            canShowBrowser={canShowBrowser}
-            browserOpen={browserOpen}
-            onToggleBrowser={onToggleBrowser}
-          />
-        )}
-      </KebabMenu>
+      {/* Trailing controls: overflow menu + divider + pop-out (tiled) + maximize +
+          close. flex-shrink-0 and measured as one unit so it is always reserved. */}
+      <div ref={trailingRef} className="flex items-center gap-3 flex-shrink-0">
+        {/* Actions */}
+        <KebabMenu>
+          {(close) => (
+            <TaskDetailKebabItems
+              task={task}
+              close={close}
+              setIsEditing={setIsEditing}
+              canToggle={canToggle}
+              isSessionActive={isSessionActive}
+              isArchived={isArchived}
+              toggling={toggling}
+              onToggle={onToggle}
+              onCommandSelect={onCommandSelect}
+              onArchive={onArchive}
+              onSendToBacklog={onSendToBacklog}
+              onDelete={onDelete}
+              onMoveTo={onMoveTo}
+              moveTargets={moveTargets}
+              menuShortcuts={overflowMenuShortcuts}
+              executeShortcut={executeShortcut}
+              projectPath={projectPath}
+              canShowChanges={canShowChanges}
+              changesOpen={changesOpen}
+              onToggleChanges={onToggleChanges}
+              canShowBrowser={canShowBrowser}
+              browserOpen={browserOpen}
+              onToggleBrowser={onToggleBrowser}
+            />
+          )}
+        </KebabMenu>
 
-      {/* Divider + Pop out (tiled only) + Maximize + Close */}
-      <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
-      {onUndock && (
+        {/* Divider + Pop out (tiled only) + Maximize + Close */}
+        <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
+        {onUndock && (
+          <button
+            onClick={onUndock}
+            data-testid="task-detail-undock"
+            aria-label="Pop out of tiling"
+            title="Pop out (float this window out of the tiled layout)"
+            className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
+          >
+            <PictureInPicture2 size={16} />
+          </button>
+        )}
+        <MaximizeToggleButton
+          isMaximized={isMaximized}
+          onToggle={onToggleMaximized}
+          testId="task-detail-maximize"
+        />
         <button
-          onClick={onUndock}
-          data-testid="task-detail-undock"
-          aria-label="Pop out of tiling"
-          title="Pop out (float this window out of the tiled layout)"
+          onClick={onClose}
+          data-testid="task-detail-close"
+          title={`Close (${closeCombo})`}
           className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
         >
-          <PictureInPicture2 size={16} />
+          <X size={16} />
         </button>
-      )}
-      <MaximizeToggleButton
-        isMaximized={isMaximized}
-        onToggle={onToggleMaximized}
-        testId="task-detail-maximize"
-      />
-      <button
-        onClick={onClose}
-        data-testid="task-detail-close"
-        title={`Close (${closeCombo})`}
-        className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-      >
-        <X size={16} />
-      </button>
+      </div>
     </div>
   );
 }
