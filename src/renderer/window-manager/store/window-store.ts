@@ -184,6 +184,8 @@ interface OpenWindowInput {
   title: string;
   /** Open the hosted task-detail content directly in edit mode. */
   initialEdit?: boolean;
+  /** The task is already Done/archived at open time (so it must NOT auto-close). */
+  openedDone?: boolean;
 }
 
 interface WindowStoreState {
@@ -263,6 +265,7 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
       previousState: null,
       title: input.title,
       initialEdit: input.initialEdit,
+      openedDone: input.openedDone,
     };
 
     set((current) => ({

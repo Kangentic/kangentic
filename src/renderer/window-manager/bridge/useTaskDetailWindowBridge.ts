@@ -52,11 +52,18 @@ export function useTaskDetailWindowBridge(): void {
     if (!task) return; // task not loaded yet; a later board load re-fires this effect
 
     const session = useSessionStore.getState();
+    // Baseline for auto-close: a task opened while already Done/archived (e.g. from
+    // the Completed Tasks list) must NOT auto-close - only a later transition into
+    // Done does. Captured here so it survives the content remount the Done fly causes.
+    const openedDone =
+      task.archived_at !== null
+      || board.swimlanes.find((lane) => lane.id === task.swimlane_id)?.role === 'done';
     detailWindowIdRef.current = windowStore.openWindow({
       taskId: detailTaskId,
       sessionId: session._sessionByTaskId.get(detailTaskId)?.id ?? null,
       title: task.title,
       initialEdit: session.detailTaskInitialEdit,
+      openedDone,
     });
   }, [detailTaskId]);
 

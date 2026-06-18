@@ -101,6 +101,7 @@ export function TaskDetailWindow({
   const minimizeWindow = useWindowStore((s) => s.minimizeWindow);
   const untileWindow = useWindowStore((s) => s.untileWindow);
   const isTiled = useWindowStore((s) => s.windows[windowId]?.state === 'tiled');
+  const openedDone = useWindowStore((s) => s.windows[windowId]?.openedDone ?? false);
 
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
@@ -208,6 +209,19 @@ export function TaskDetailWindow({
   const closeWithGuard = useCallback(() => {
     if (handleCloseAttempt()) requestClose();
   }, [handleCloseAttempt, requestClose]);
+
+  // Auto-close when the task TRANSITIONS into Done (moved to a done-role column or
+  // archived, from the board or by an agent). Done kills the session, so the window
+  // would otherwise sit on a dead terminal. A window opened on an ALREADY-done task
+  // (e.g. from the Completed Tasks list) keeps `openedDone` and is left alone - only
+  // a transition closes it. Held while editing with unsaved changes (respects the
+  // discard guard); it fires once the edit is saved or cancelled.
+  const isDone = isArchived || currentSwimlane?.role === 'done';
+  useEffect(() => {
+    if (openedDone || !isDone) return;
+    if (isEditing && isEditDirty) return;
+    requestClose();
+  }, [openedDone, isDone, isEditing, isEditDirty, requestClose]);
 
   const handleToggleMaximized = useCallback(() => toggleMaximizeWindow(windowId), [toggleMaximizeWindow, windowId]);
   const handleMinimize = useCallback(() => minimizeWindow(windowId), [minimizeWindow, windowId]);

@@ -54,6 +54,12 @@ export interface ManagedWindow {
   /** When true, the hosted task-detail content opens in edit mode (set from the
    *  open intent, e.g. the context-menu "Edit" or a To Do task with no session). */
   initialEdit?: boolean;
+  /** The task was ALREADY in a Done-role column / archived when this window opened
+   *  (e.g. opened from the Completed Tasks list). Such a window is left alone; only
+   *  a window whose task TRANSITIONS into Done while open auto-closes. Stored here
+   *  (not a component ref) so it survives the content remount the Done "fly" causes
+   *  when the task briefly leaves `tasks`. */
+  openedDone?: boolean;
 }
 
 /**
