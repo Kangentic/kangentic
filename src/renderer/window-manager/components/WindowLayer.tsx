@@ -22,6 +22,7 @@ import { createPortal } from 'react-dom';
 import { useWindowStore } from '../store/window-store';
 import { useTaskDetailWindowBridge } from '../bridge/useTaskDetailWindowBridge';
 import { useWindowSessionClaims } from '../bridge/useWindowSessionClaims';
+import { useWindowAutoCloseOnDone } from '../bridge/useWindowAutoCloseOnDone';
 import type { ContainerSize } from '../store/geometry';
 import type { FractionalRect } from '../store/types';
 import { resolveTileLayout } from '../tiling/resolve-layout';
@@ -72,6 +73,9 @@ export function WindowLayer() {
   // the open windows, so an HMR re-sync (or any external reset) that clobbers it
   // self-heals instead of leaving a window's terminal suppressed.
   useWindowSessionClaims();
+  // Close a window the instant its task leaves the board (Done / delete / backlog),
+  // so it never lingers on the "no longer available" placeholder.
+  useWindowAutoCloseOnDone();
 
   const [containerSize, setContainerSize] = useState<ContainerSize>({ width: 0, height: 0 });
   const windows = useWindowStore((state) => state.windows);
