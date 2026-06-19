@@ -86,12 +86,6 @@ jobs:
       - name: Install dependencies (npm ci)
         run: npm ci
       - name: Unit tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-        # Oversubscribe workers on the 4-vCPU runner: the suite only reached ~2x
-        # parallelism with the default worker count (it is import / main-thread
-        # bound, not CPU-bound), so more workers overlap import waits. Faster
-        # shards also let the merge gate start sooner.
-        env:
-          VITEST_MAX_WORKERS: '8'
         run: npx vitest run tests/unit --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} --reporter=blob --reporter=default --outputFile.blob=.vitest/blob/blob-${{ matrix.shardIndex }}.json
       - name: Upload blob report
         if: ${{ !cancelled() }}
