@@ -116,6 +116,12 @@ import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
 
+// The two describe blocks each launch an isolated Electron app with unique
+// TEST_NAMEs ('bg-shell-idle-positive', 'bg-shell-idle-negative'). Running
+// them in parallel saves the sequential second launch overhead (~3-5s boot +
+// test duration) on whichever shard this file lands on.
+test.describe.configure({ mode: 'parallel' });
+
 const runId = Date.now();
 
 function standardMockPath(): string {

@@ -36,6 +36,16 @@ import path from 'node:path';
 import fs from 'node:fs';
 import type { ActivityState, SessionUsage, SessionEvent } from '../../src/shared/types';
 
+// Each describe block launches its own Electron app against its own isolated
+// KANGENTIC_DATA_DIR and tmpDir (unique TEST_NAME per block). Running them in
+// parallel cuts the file wall-clock from the sequential sum (~3 x 30-50s) to
+// the slowest single describe block (~30-50s), which is the dominant gain on
+// shard 5/10 (previously 154s). The MOCK_KIMI_PLAN_DISPLAY and
+// MOCK_KIMI_SUBAGENT env vars are set inside each describe's beforeAll via
+// process.env and then deleted in afterAll; because mode:'parallel' dispatches
+// each describe to a separate worker process, the mutations are fully isolated.
+test.describe.configure({ mode: 'parallel' });
+
 const runId = Date.now();
 
 test.describe('Kimi Agent - Activity Detection', () => {

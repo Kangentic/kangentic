@@ -55,6 +55,15 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 
+// The two describe blocks each launch an isolated Electron app with unique
+// TEST_NAMEs ('agent-session-id-capture', 'kimi-fs-capture'). Describe 1
+// passes suppressor env vars into the Electron process (MOCK_CODEX_NO_HEADER
+// etc.) via launchApp({ extraEnv }), so the env mutation is contained inside
+// the spawned Electron process, not in process.env. Running the blocks in
+// parallel shaves the sequential second-launch overhead on whichever shard
+// this file lands.
+test.describe.configure({ mode: 'parallel' });
+
 const runId = Date.now();
 
 // UUIDs that the Codex / Gemini cases plant explicitly. Mock binaries echo

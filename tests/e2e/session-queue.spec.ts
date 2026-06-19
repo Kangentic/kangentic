@@ -25,6 +25,12 @@ import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
 
+// The two describe blocks each launch an isolated Electron app with unique
+// derived TEST_NAMEs ('session-queue-multi', 'session-queue-queue'). Running
+// them in parallel saves the sequential second-launch overhead on whatever
+// shard this file lands on.
+test.describe.configure({ mode: 'parallel' });
+
 const TEST_NAME = 'session-queue';
 const runId = Date.now();
 
