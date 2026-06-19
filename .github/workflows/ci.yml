@@ -14,12 +14,25 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Each check is its own standalone job (deliberately NOT a matrix) so all of
-# them render as always-visible top-level nodes in the run graph and the checks
-# list - no "Show all jobs" collapse to click through. They run in parallel, so
-# wall-clock is the slowest single job. None consume another's output: build is a
-# "does it bundle" gate, not a dependency (the UI tier runs the Vite dev server,
-# not the build).
+# CI architecture:
+# - Standalone checks (lint, typecheck, build) each run as their own top-level
+#   job, always-visible in the checks list. None consume another's output (build
+#   is a "does it bundle" gate; the UI tier runs the Vite dev server, not build).
+# - The three test tiers (unit / UI / E2E) are sharded matrices, each behind a
+#   thin gate job whose `name:` is the required status check ("Unit tests
+#   (Vitest)", "UI tests (Playwright)", "E2E tests (Electron)"). The shards are
+#   an implementation detail; the gate is the required check.
+#
+# Concurrency budget (GitHub Free caps concurrent jobs at ~20): shard counts are
+# sized so the test shards plus the always-on jobs fit the cap with NO queueing
+# (queueing, not shard count, was the real wall-clock bottleneck). Current
+# budget: UI 9 + E2E 5 + unit 2 = 16 shards, plus lint + typecheck + build + the
+# CLA workflow = 4, totalling 20. The thin gates run AFTER their shards (`needs`),
+# so they do not consume a shard-phase slot. To scale as the suites grow: either
+# rebalance within the 16 (UI is test-count-bound and wants the most shards; E2E
+# is launch-bound and one-waves at workers=8 so ~5 suffices; unit is npm-ci-
+# floored, so beyond ~2-3 shards you mostly pay setup), or raise the ceiling by
+# upgrading the GitHub plan (Team = 60 concurrent).
 #
 # The job `name:` is the status-check context used by branch protection - keep
 # these in sync with main's required checks if you rename one.
@@ -225,11 +238,10 @@ jobs:
   # the local workers=1 lock (concurrent electron.launch() on Windows) does not
   # apply, so on CI each shard runs workers=8 (set in playwright.config.ts: the
   # top-level cap AND the electron project are both 8; Windows and local stay at
-  # 1) and the suite is sharded 10 ways. workers=8 lets a shard launch all its
-  # spec files in one wave (the slowest shards hold ~5-6 files); per-file
-  # teardown is I/O-bound so it overlaps cleanly. (10 UI + 10 E2E shards can exceed GitHub Free's
-  # ~20-job concurrency cap, so a few shards may briefly queue; adjust the counts
-  # if that starts to dominate the wall-clock.) Concurrent launches are safe on
+  # 1) and the suite is sharded 5 ways (see the concurrency-budget note at the
+  # top of this file). workers=8 lets a shard launch all its spec files in one
+  # wave (the slowest shards hold ~5-6 files); per-file teardown is I/O-bound so
+  # it overlaps cleanly. Concurrent launches are safe on
   # CI: the leaked-Electron janitor is a no-op under
   # GITHUB_ACTIONS, each test has an isolated KANGENTIC_DATA_DIR, and the
   # single-instance lock is bypassed under NODE_ENV=test. helpers.ts adds
