@@ -33,7 +33,11 @@ process.env.PLAYWRIGHT_VITE_PORT = String(vitePort);
 export default defineConfig({
   timeout: 60000,
   retries: 0,
-  workers: 4,
+  // Top-level cap on parallelism: a per-project `workers` can go BELOW this but
+  // never above it (Playwright caps per-project to the global). 8 on CI so the
+  // ui and electron shards can each run 8 workers; 4 locally. The electron
+  // project also sets 8 (CI Linux) / 1 (Windows/local) below.
+  workers: process.env.CI ? 8 : 4,
   // Sweep leaked app-under-test Electron instances before and after every run.
   // These hooks run once per invocation for every project filter, including
   // CI's `--project=ui` run on Linux, where the sweep finds nothing and is a
@@ -68,13 +72,13 @@ export default defineConfig({
       // should not spawn a swarm of app windows - so workers=1 there. On CI's
       // headless Linux runners (xvfb) concurrent launches are safe, so use 4 to
       // parallelize the per-file app launch/teardown overhead within each shard.
-      // A per-project `workers` overrides the CLI --workers flag, so this is the
-      // single source of truth for the electron tier's concurrency. 6 (not 4) so
-      // a shard that lands 5-6 spec files launches them all in ONE wave instead
-      // of leaving the extra file(s) for a serial 2nd wave (~25s/file of app
-      // launch + teardown). Per-file teardown is I/O-bound and overlaps cleanly;
-      // per-pid temp-dir isolation keeps concurrent launches safe.
-      workers: process.env.CI && process.platform !== 'win32' ? 6 : 1,
+      // 8 on CI Linux (capped by the top-level `workers: 8` above - both must
+      // allow it). 8 >= the max spec files a shard lands (~5-6), so a shard
+      // launches all its files in ONE wave instead of a serial 2nd wave
+      // (~25s/file of app launch + teardown). Windows/local stay at 1 (no
+      // concurrent electron.launch()). Per-file teardown is I/O-bound and
+      // overlaps cleanly; per-pid temp-dir isolation keeps launches safe.
+      workers: process.env.CI && process.platform !== 'win32' ? 8 : 1,
       // Slowest legitimate test is ~15s; 45s gives ~3x headroom while still
       // catching hangs faster than the global 60s default. The 45s budget
       // also covers `afterAll` Electron app close + PTY cleanup, which can
