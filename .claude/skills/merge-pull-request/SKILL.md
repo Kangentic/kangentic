@@ -10,8 +10,11 @@ dogfooding `npm start` picks it up via HMR. This is the **Ship It column** skill
 **Tests column** (`/pull-request`) already created the PR and drove its CI checks to all-green and
 flake-free.
 
-It does a normal merge that requires green checks - it does NOT bypass the gate by default. (For a
-deliberate direct quick-push that skips the PR gate, use `/merge-back` instead.)
+It verifies the required CI checks are green, then merges with `--admin` to waive the review
+requirement: `main` requires one approving review, but a maintainer's own PRs get no second
+reviewer, so that bypass is the normal Ship It path. It NEVER bypasses the CI checks - those are
+confirmed green first; the `--admin` only waives the missing review. (For a deliberate direct
+quick-push that skips the whole PR gate, use `/merge-back` instead.)
 
 **Usage:** `/merge-pull-request`
 
@@ -61,8 +64,12 @@ gap cannot slip through:
    (resolve conflicts the same way `/pull-request` does, or abort and report). If the rebase changed
    history, push: `git push origin HEAD:<branch> --force-with-lease`.
 3. Re-read the PR state: `gh pr view <branch> --json mergeable,mergeStateStatus,statusCheckRollup`.
-   **Require `mergeStateStatus` to be `CLEAN` and all required checks green.** Do not rely on the
-   merge command alone to enforce the gate.
+   **Require every required status check in `statusCheckRollup` to be green (SUCCESS).** That is the
+   real gate - do not rely on the merge command to enforce it. `mergeStateStatus` will usually read
+   `BLOCKED` rather than `CLEAN` here because the maintainer's own PR has no approving review; that
+   block is EXPECTED and is waived by the `--admin` merge in Step 3. But if a required CHECK is
+   failing or still pending (not merely the review), stop (or wait - step 4); never `--admin` past a
+   red or pending check.
 4. If the rebase (step 2) re-triggered checks and they are pending, wait for them with
    `gh pr checks <branch> --watch --fail-fast --interval 30` (Bash `timeout` about `2400000` ms). If
    they go red, stop and report - this should be rare because Tests already drove them green; the
@@ -70,16 +77,20 @@ gap cannot slip through:
 
 ## Step 3 - Merge the PR
 
-Merge with a normal (gate-respecting) merge - no `--admin` by default:
+Only after Step 2 confirmed every required CHECK is green, merge with the maintainer bypass that
+waives the missing review:
 
-Run: `gh pr merge <branch> --rebase --delete-branch`
+Run: `gh pr merge <branch> --admin --rebase --delete-branch`
 
+- `--admin`: waives the required approving review (the maintainer's own PR gets no second reviewer).
+  It does NOT relax the CI gate - Step 2 already verified the checks are green; this only clears the
+  review block. NEVER run it without that green-check verification (it would also bypass the checks).
 - `--rebase`: lands the individual commits on the source branch (no merge commit).
 - `--delete-branch`: deletes the local and remote PR branch after merge.
 
-**If the merge fails** because checks are not satisfied: do NOT reach for `--admin`. Report the
-unmet requirement and stop. `--admin` is reserved for a deliberate, user-requested bypass of a
-misconfigured-protection emergency, never the default path.
+**If the merge fails** for any reason other than the expected missing-review block (e.g. the branch
+is behind and needs a rebase first, or a required check actually went red), do NOT force past it -
+report the unmet requirement and stop.
 
 ## Step 4 - Pull back into the local main checkout
 
