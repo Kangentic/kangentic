@@ -176,8 +176,11 @@ test.describe('Task Delete', () => {
     const card = codeReviewColumn.locator(`text=${title}`).first();
     await card.click();
 
-    // Open kebab menu and click Archive (no confirmation needed)
-    const dialog = page.locator('.fixed.inset-0');
+    // Open kebab menu and click Archive (no confirmation needed).
+    // Use data-testid to target the task-detail content panel specifically -
+    // the backdrop class .fixed.inset-0 is ambiguous when a confirm dialog
+    // briefly coexists with the detail dialog (strict-mode violation on Linux).
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 3000 });
     await clickKebabAction(dialog, 'Archive');
 
@@ -233,8 +236,11 @@ test.describe('Task Delete', () => {
     const card = page.locator('[data-testid="swimlane"]').locator(`text=${title}`).first();
     await card.click();
 
-    // Open kebab menu and click Archive
-    const dialog = page.locator('.fixed.inset-0');
+    // Open kebab menu and click Archive.
+    // Use data-testid to target the task-detail content panel specifically -
+    // the backdrop class .fixed.inset-0 is ambiguous when a confirm dialog
+    // briefly coexists with the detail dialog (strict-mode violation on Linux).
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 3000 });
     await clickKebabAction(dialog, 'Archive');
 
@@ -393,8 +399,11 @@ test.describe('Task Delete', () => {
     const card = page.locator('[data-testid="swimlane"]').locator(`text=${title}`).first();
     await card.click();
 
-    // Dialog opens in edit mode for no-session tasks -- Delete is in the footer
-    const dialog = page.locator('.fixed.inset-0');
+    // Dialog opens in edit mode for no-session tasks -- Delete is in the footer.
+    // Use data-testid to target the task-detail content panel specifically -
+    // the backdrop class .fixed.inset-0 is ambiguous when a confirm dialog
+    // briefly coexists with the detail dialog (strict-mode violation on Linux).
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 3000 });
     await dialog.locator('button:has-text("Delete")').click();
 
