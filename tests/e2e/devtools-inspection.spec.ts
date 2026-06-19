@@ -19,7 +19,6 @@ import { test, expect } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import {
   launchApp,
   createTempProject,
@@ -34,36 +33,24 @@ const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const MAIN_BUNDLE = path.join(PROJECT_ROOT, '.vite/build/index.js');
 
 /**
- * The inspection bridge lives under `src/devtools/` which is gated behind
- * `__KANGENTIC_DEV__`. Default `npm run build` sets that flag to `false`
- * and esbuild tree-shakes the entire bridge out of the bundle, so the
- * tests below would fail with "lockfile never appears" no matter what
- * `previewInspectionServer: true` is set in config.
+ * The inspection bridge lives under `src/devtools/` gated behind
+ * `__KANGENTIC_DEV__`. The default `npm run build` (production) sets that flag to
+ * `false` and esbuild tree-shakes the whole bridge out, so these tests can only
+ * pass against a dev build (`KANGENTIC_BUILD_DEV=1`). CI builds production, so
+ * this spec SKIPS there (see the describe below) rather than rebuilding a dev
+ * bundle in-place - that rebuild cost ~28s AND left co-located E2E specs running
+ * against the dev bundle instead of the prod one we want to validate. To exercise
+ * the bridge, run this spec locally against a dev build.
  *
- * Detect a tree-shaken build via a marker string only present when the
- * bridge is in the bundle (`preview.lock`), and rebuild with
- * `KANGENTIC_BUILD_DEV=1` once if it's missing. Subsequent E2E runs that
- * keep the dev-flagged build skip the rebuild.
+ * Detect a tree-shaken (production) build via a marker string only present when
+ * the bridge is bundled (`preview.lock`); a missing bundle also counts as skip.
  */
-function ensureDevtoolsBuild(): void {
-  let bundle: string;
+function isBundleTreeShaken(): boolean {
   try {
-    bundle = fs.readFileSync(MAIN_BUNDLE, 'utf-8');
+    return !fs.readFileSync(MAIN_BUNDLE, 'utf-8').includes('preview.lock');
   } catch {
-    throw new Error(
-      `Built main bundle not found at ${MAIN_BUNDLE}. Run "npm run build" first.`,
-    );
+    return true;
   }
-  if (bundle.includes('preview.lock')) return;
-  // eslint-disable-next-line no-console
-  console.log(
-    '[devtools-inspection] Build was tree-shaken; rebuilding with KANGENTIC_BUILD_DEV=1...',
-  );
-  execFileSync('node', ['scripts/build.js'], {
-    cwd: PROJECT_ROOT,
-    env: { ...process.env, KANGENTIC_BUILD_DEV: '1' },
-    stdio: 'inherit',
-  });
 }
 
 const TEST_NAME = 'devtools-inspection';
@@ -160,12 +147,19 @@ function postJson(
 }
 
 test.describe('Devtools inspection bridge', () => {
+  // Dev-only: the inspection bridge is tree-shaken out of production builds, so
+  // skip on a prod bundle (CI) rather than rebuilding a dev one in-place. Runs
+  // locally against a KANGENTIC_BUILD_DEV=1 build.
+  test.skip(
+    isBundleTreeShaken(),
+    'dev-only: inspection bridge is excluded from production builds',
+  );
+
   let app: ElectronApplication;
   let projectPath: string;
   let dataDir: string;
 
   test.beforeAll(async () => {
-    ensureDevtoolsBuild();
     dataDir = getTestDataDir(TEST_NAME, runId);
     projectPath = await createTempProject('devtools-inspection');
 
