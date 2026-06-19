@@ -102,7 +102,7 @@ jobs:
   # ubuntu-latest, so the browser install needs no --with-deps; the binary is
   # cached. The single required status check is the thin `ui` gate below.
   playwright-shards:
-    name: UI Test ${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+    name: UI Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -183,7 +183,7 @@ jobs:
   # cache miss. No Playwright browser download (the electron project drives the
   # bundled Electron). retries=1 on CI comes from playwright.config.ts.
   e2e-shards:
-    name: E2E Test ${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+    name: E2E Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
