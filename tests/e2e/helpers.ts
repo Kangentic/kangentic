@@ -11,10 +11,18 @@ export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp' | 'ope
 // --- Test data isolation ---
 // Each test run uses its own data directory so E2E tests never pollute
 // the real user data at %APPDATA%/kangentic (or ~/.config/kangentic).
-const TEST_DATA_ROOT = path.join(__dirname, '..', '.test-data');
+//
+// Both the project temp dir and the data dir are keyed on process.pid so that
+// concurrent Playwright workers (workers=4 on CI) never share a filesystem
+// path. This mirrors the ensureGitTemplate() isolation pattern: each worker
+// owns its own subtree under the parent, wipes only its own subtree, and never
+// races with a sibling. Stale subdirs from prior runs (different PIDs)
+// accumulate but are small and are cleaned by global teardown on Linux.
+const TEST_DATA_ROOT = path.join(__dirname, '..', '.test-data', `worker-${process.pid}`);
 
 /**
  * Get an isolated data directory for a specific test suite.
+ * Keyed on process.pid so concurrent workers never share a path.
  * Removes stale data from previous runs, then recreates the directory.
  */
 export function getTestDataDir(suiteName: string): string {
@@ -43,6 +51,12 @@ export function cleanupTestDataDir(suiteName: string): void {
 // .tmp tree so it's not wiped by individual test cleanup.
 const TEMPLATE_PARENT = path.join(__dirname, '..', '.tmp-template');
 const TEMPLATE_DIR = path.join(TEMPLATE_PARENT, `worker-${process.pid}`);
+
+// Per-worker root for temp project directories. Keyed on process.pid so that
+// concurrent Playwright workers (workers=4 on CI) never share a path and
+// cannot race on rmSync/cpSync. Mirrors the TEMPLATE_DIR / TEST_DATA_ROOT
+// isolation pattern.
+const TMP_PROJECT_ROOT = path.join(__dirname, '..', '.tmp', `worker-${process.pid}`);
 let templateInitialized = false;
 
 function ensureGitTemplate(): string {
@@ -73,9 +87,11 @@ function ensureGitTemplate(): string {
   return TEMPLATE_DIR;
 }
 
-// Temp project directory for tests -- always starts fresh
+// Temp project directory for tests -- always starts fresh.
+// Path is keyed on process.pid (via TMP_PROJECT_ROOT) so concurrent workers
+// never collide on rmSync/cpSync even when two describes use the same testName.
 export function createTempProject(testName: string): string {
-  const tmpDir = path.join(__dirname, '..', '.tmp', testName);
+  const tmpDir = path.join(TMP_PROJECT_ROOT, testName);
   // Remove stale data from previous runs to avoid session saturation
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
   // Copy from the cached git template instead of running git init + commit
@@ -86,7 +102,7 @@ export function createTempProject(testName: string): string {
 }
 
 export function cleanupTempProject(testName: string): void {
-  const tmpDir = path.join(__dirname, '..', '.tmp', testName);
+  const tmpDir = path.join(TMP_PROJECT_ROOT, testName);
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   } catch {
