@@ -4,7 +4,7 @@ model: sonnet
 description: |
   Specialist for writing and refactoring tests across all three Kangentic test tiers (unit, UI, E2E). Use when adding tests for new features, fixing flaky tests, replacing fixed `waitForTimeout` calls with conditional waits, picking the right tier for a scenario, or migrating tests between tiers. This agent has read-write access and can run the test suite to validate its changes.
 
-  Encodes the lessons from the 2026-04-11 E2E speedup audit so future tests are clean, fast, and not flaky from the start. Knows the Windows Electron quirks (workers=1 lock, single-instance lock bypass, debug-pipe retry), the mock CLI fixtures, the PTY scrollback race patterns, and the canonical `expect.poll` / `locator.waitFor` patterns.
+  Encodes the lessons from the 2026-04-11 E2E speedup audit so future tests are clean, fast, and not flaky from the start. Knows the Windows Electron quirks (workers=1 on Windows/local, single-instance lock bypass, debug-pipe retry) AND the Linux CI E2E setup (ubuntu under xvfb with --no-sandbox, workers=4, sharded, per-pid temp-dir isolation, opt-in `mode: 'parallel'`), the mock CLI fixtures, the PTY scrollback race patterns, and the canonical `expect.poll` / `locator.waitFor` patterns.
 
   <example>
   User adds a new feature: a "Re-run task" button on the task detail dialog that re-spawns the agent.
@@ -85,7 +85,7 @@ These are project rules learned from production incidents. Violating any of them
 
 3. **Run only ONE Playwright pass at a time.** Concurrent Playwright runs collide on the Vite dev server port and produce confusing failures. Wait for one to finish before starting the next.
 
-4. **`workers: 1` is locked for the electron project.** Windows cannot reliably handle concurrent `electron.launch()`. Do not propose raising it. The retry loop in `helpers.ts:launchApp()` covers transient debug-pipe failures even at workers=1. Reference: commit 484e58c.
+4. **The electron project's `workers` is Windows/local=1, CI Linux=4.** `playwright.config.ts` sets `workers: process.env.CI && process.platform !== 'win32' ? 4 : 1`. On **Windows/local** keep it 1 - Windows cannot reliably handle concurrent `electron.launch()`; the `helpers.ts:launchApp()` retry loop covers transient debug-pipe failures at workers=1 (commit 484e58c). On **CI Linux** (ubuntu, xvfb, `--no-sandbox`) concurrent launches are safe, so CI runs workers=4, sharded. Do NOT raise workers on Windows/local. Parallel safety relies on per-pid temp-dir isolation in `helpers.ts` (`createTempProject` / `getTestDataDir` / `ensureGitTemplate` all key on `process.pid`).
 
 5. **NODE_ENV=test bypasses single-instance lock.** `src/main/index.ts` skips `app.requestSingleInstanceLock()` under NODE_ENV=test. Without this, every E2E test fails with `<ws disconnected> code=1006` whenever the dogfooding app is running. Do not remove this branch.
 
@@ -147,7 +147,7 @@ Use for: dialog flows, form validation, DnD interactions, store mutations, anyth
 Use for: anything that touches a real PTY, real IPC, real session lifecycle, real file watchers, real git operations, or app-restart scenarios.
 
 - Run with `npx playwright test --project=electron`
-- 1 worker (locked), opens a real Electron window on Windows
+- workers=1 on Windows/local (opens a real Electron window); CI runs it on `ubuntu-latest` under xvfb at workers=4, sharded
 - Build required first: `npm run build`
 - Always uses mock CLI fixtures (mock-claude / mock-codex / mock-gemini)
 - Examples: `branch-rename.spec.ts`, `session-resume.spec.ts`, `terminal-rendering.spec.ts`
@@ -587,7 +587,7 @@ All unit and UI tests must pass on Linux, even though most developers run Kangen
 
 - **Never hardcode personal usernames, emails, or machine-specific paths.** Use generic placeholders like `C:\Users\dev` or `/home/dev`. The repo is or will be public.
 
-- **E2E tests specifically do NOT run on CI** (workers=1 Windows-only constraint), but if you write a unit or UI test that happens to touch E2E helpers, the same Linux-safety rules apply.
+- **E2E now runs on CI** on `ubuntu-latest` (xvfb, `--no-sandbox`), sharded, at workers=4 (since 2026-06-19; the workers=1 lock is Windows-only). So the Linux-safety rules above apply to E2E specs too - a spec that only ever ran green on local Windows can now fail on CI Linux. Per-test-isolated multi-`describe` specs may opt into `test.describe.configure({ mode: 'parallel' })` to use the CI workers; shared-page specs (one app shared across the file via `beforeAll`) must stay serial.
 
 ## Historical Reference: 2026-04-11 Audit
 

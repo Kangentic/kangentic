@@ -260,7 +260,7 @@ The `/test` command is the full local gate: typecheck, build, then unit + UI + E
 no selection heuristic). `/test quick` runs unit + UI only for the fast inner loop. It is for
 manual local runs - the automated gate now runs on CI as PR checks (the **Tests** column runs
 `/pull-request`, which pushes a branch and drives the CI checks to green; CI runs lint, typecheck,
-unit, build, the UI shards, and the Windows Electron E2E job). To run tiers directly:
+unit, build, the UI shards, and the Linux Electron E2E shards under xvfb). To run tiers directly:
 
 ```bash
 npx playwright test              # UI + E2E

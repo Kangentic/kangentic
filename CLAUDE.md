@@ -122,7 +122,7 @@ below is the part that must stay in context.
 
 The expensive and flaky tiers now run on CI as PR checks, not on the local machine. Moving a task
 into the **Tests** column runs `/pull-request`: it creates a PR and drives its CI checks (lint,
-typecheck, unit, build, the UI shards, and the Windows Electron E2E job) to all-green, auto-fixing
+typecheck, unit, build, the UI shards, and the Linux Electron E2E shards) to all-green, auto-fixing
 the code and de-flaking or rewriting tests along the way, then stops without merging. Moving it into
 **Ship It** runs `/merge-pull-request`: it merges the green PR and fast-forwards the local `main`
 checkout for HMR. PRs are the normal path to `main` (CI gates it); `/merge-back` stays a direct
