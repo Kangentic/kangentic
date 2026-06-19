@@ -20,6 +20,7 @@ import {
   cleanupTempProject,
   getTestDataDir,
   cleanupTestDataDir,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -166,7 +167,7 @@ test.describe('Done worktree lifecycle (worktrees enabled)', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);
   });

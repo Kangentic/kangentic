@@ -30,6 +30,7 @@ import {
   getTaskIdByTitle,
   getSwimlaneIds,
   moveTaskIpc,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -81,7 +82,7 @@ test.describe('Kimi Agent - Activity Detection', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupKimiSessionsForCwd(tmpDir);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);
@@ -157,7 +158,7 @@ test.describe('Kimi Agent - PlanDisplay notification detail round-trip (MOCK_KIM
 
   test.afterAll(async () => {
     delete process.env.MOCK_KIMI_PLAN_DISPLAY;
-    await app?.close();
+    await closeApp(app);
     cleanupKimiSessionsForCwd(tmpDir);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);
@@ -244,7 +245,7 @@ test.describe('Kimi Agent - SubagentEvent lifecycle decoding (MOCK_KIMI_SUBAGENT
 
   test.afterAll(async () => {
     delete process.env.MOCK_KIMI_SUBAGENT;
-    await app?.close();
+    await closeApp(app);
     cleanupKimiSessionsForCwd(tmpDir);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);

@@ -20,6 +20,7 @@ import {
   cleanupTempProject,
   getTestDataDir,
   cleanupTestDataDir,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -117,7 +118,7 @@ test.describe('Claude Agent -- Multiple Simultaneous Spawns', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupTempProject(`${TEST_NAME}-multi`);
     cleanupTestDataDir(`${TEST_NAME}-multi`);
   });
@@ -200,7 +201,7 @@ test.describe('Claude Agent -- Session Queue', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupTempProject(`${TEST_NAME}-queue`);
     cleanupTestDataDir(`${TEST_NAME}-queue`);
   });

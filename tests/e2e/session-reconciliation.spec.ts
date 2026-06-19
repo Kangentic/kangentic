@@ -8,6 +8,7 @@ import {
   cleanupTempProject,
   getTestDataDir,
   cleanupTestDataDir,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -124,7 +125,7 @@ test.describe('Session Reconciliation', () => {
     await expect(sessionTab).toBeVisible({ timeout: 5000 });
 
     // === Phase 2: Close the app ===
-    await app.close();
+    await closeApp(app);
 
     // Brief pause to ensure cleanup completes
     await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -158,6 +159,6 @@ test.describe('Session Reconciliation', () => {
     await waitForRunningSession(page, 30000);
 
     // Cleanup
-    await app.close();
+    await closeApp(app);
   });
 });

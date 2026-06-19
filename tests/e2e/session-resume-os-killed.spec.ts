@@ -35,6 +35,7 @@ import {
   waitForScrollback,
   getTaskIdByTitle,
   getSwimlaneIds,
+  closeApp,
 } from './helpers';
 import type { Session } from '../../src/shared/types';
 import path from 'node:path';
@@ -114,7 +115,7 @@ test.describe('Claude Agent -- OS-killed session recovery on startup', () => {
     });
     expect(projectId).toBeTruthy();
 
-    await app.close();
+    await closeApp(app);
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // === Phase 2: simulate the hard kill via DB surgery (app closed) ===
@@ -166,6 +167,6 @@ test.describe('Claude Agent -- OS-killed session recovery on startup', () => {
       { timeout: 20_000 },
     );
 
-    await app.close();
+    await closeApp(app);
   });
 });

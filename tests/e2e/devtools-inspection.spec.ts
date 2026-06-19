@@ -26,6 +26,7 @@ import {
   cleanupTempProject,
   getTestDataDir,
   cleanupTestDataDir,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication } from '@playwright/test';
 
@@ -213,7 +214,7 @@ test.describe('Devtools inspection bridge', () => {
   });
 
   test.afterAll(async () => {
-    if (app) await app.close();
+    await closeApp(app);
     if (projectPath) cleanupTempProject(projectPath);
     if (dataDir) cleanupTestDataDir(dataDir);
   });

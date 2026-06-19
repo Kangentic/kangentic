@@ -24,6 +24,7 @@ import {
   getTestDataDir,
   cleanupTestDataDir,
   mockAgentPath,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -138,7 +139,7 @@ test.describe('Claude Agent -- Session Resume via Column Move', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupTempProject(`${TEST_NAME}-move`);
     cleanupTestDataDir(`${TEST_NAME}-move`);
   });
@@ -288,7 +289,7 @@ test.describe('Claude Agent -- Session Resume across App Restart', () => {
     expect(originalSessionId).toBeTruthy();
 
     // === Phase 2: Close the app (triggers shutdownSessions) ===
-    await app.close();
+    await closeApp(app);
 
     // Brief pause for shutdown to complete
     await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -358,7 +359,7 @@ test.describe('Claude Agent -- Session Resume across App Restart', () => {
     expect(recoveredSessionId).not.toBeNull();
 
     // Cleanup
-    await app.close();
+    await closeApp(app);
   });
 });
 
@@ -505,7 +506,7 @@ test.describe('Claude Agent -- Session Recovery with autoResumeSessionsOnRestart
 
     // Close the app - triggers syncShutdownCleanup which marks sessions
     // 'suspended' + 'system' and clears task.session_id
-    await phase1App.close();
+    await closeApp(phase1App);
 
     // Allow shutdown cleanup to flush (the shutdown is sync, but process
     // teardown races with Electron's own cleanup on Windows).
@@ -565,7 +566,7 @@ test.describe('Claude Agent -- Session Recovery with autoResumeSessionsOnRestart
   });
 
   test.afterAll(async () => {
-    await app2?.close();
+    await closeApp(app2);
     cleanupTempProject(`${TEST_NAME}-no-auto-resume`);
     cleanupTestDataDir(`${TEST_NAME}-no-auto-resume`);
   });

@@ -33,6 +33,7 @@ import {
   getTaskIdByTitle,
   getSwimlaneIds,
   moveTaskIpc,
+  closeApp,
   type AgentName,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
@@ -92,7 +93,7 @@ test.describe('Agent activity detection - special TUI / output modes', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);
   });

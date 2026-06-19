@@ -111,6 +111,7 @@ import {
   createTempProject,
   cleanupTempProject,
   getTestDataDir,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -313,7 +314,7 @@ test.describe('Background-shell idle bug -- positive control (bg Bash + live det
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupTempProject(TEST_NAME);
   });
 
@@ -467,7 +468,7 @@ test.describe('Background-shell idle bug -- negative control (no detached child)
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupTempProject(TEST_NAME);
   });
 

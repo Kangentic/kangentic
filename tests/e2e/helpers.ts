@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import type { Session, Swimlane, Task } from '../../src/shared/types';
 
 export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp' | 'opencode' | 'kimi' | 'qwen' | 'droid';
@@ -232,6 +232,104 @@ export async function launchApp(options?: {
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
   return { app, page };
+}
+
+/**
+ * Resilient app teardown for E2E afterAll hooks.
+ *
+ * Wraps `app.close()` in a 25-second race. If Electron's graceful shutdown
+ * stalls (e.g. a hung PTY child blocks before-quit under CI load, or a worker
+ * process crash leaves the app without its IPC pipe), this helper force-kills
+ * the Electron process tree instead of letting the afterAll hook time out and
+ * fail the entire worker (the CI failure mode this was written to fix).
+ *
+ * The 25s budget is chosen to be well within the project-level 45s test
+ * timeout: a graceful shutdown rarely exceeds 5-8s, so 25s gives Electron
+ * ample time for a clean exit while still leaving 20s margin for the timeout
+ * budget and any subsequent afterAll cleanup (temp-dir removal, etc.).
+ *
+ * Normal path cost: zero. `Promise.race` resolves as soon as `app.close()`
+ * settles, which is before the timeout promise even schedules its callback in
+ * the normal case. The timeout promise is created unconditionally but never
+ * resolves on the fast path.
+ *
+ * Force-kill is cross-platform:
+ *   - Windows: `taskkill /PID <pid> /T /F` (walks the child tree, matches
+ *     the existing janitor / zombie-reaper pattern in electron-janitor.ts and
+ *     src/main/git/zombie-reaper.ts).
+ *   - POSIX (Linux/macOS): `process.kill(pid, 'SIGKILL')`. Chromium GPU and
+ *     network-utility children receive SIGTERM from the kernel when the main
+ *     dies (they are not tree-killed explicitly on POSIX, but those children
+ *     self-exit when their parent is gone). This is the same behavior as the
+ *     global teardown janitor on Linux CI.
+ *
+ * This is a TEST-SIDE fix only. It does not touch any product shutdown code
+ * in src/main/ (the synchronous before-quit path is intentionally synchronous
+ * per .claude/rules/synchronous-shutdown.md).
+ */
+export async function closeApp(app: ElectronApplication | undefined): Promise<void> {
+  if (!app) return;
+
+  // 25s is the force-kill deadline. Well under the 45s electron project timeout.
+  const CLOSE_TIMEOUT_MS = 25_000;
+
+  let didTimeout = false;
+
+  const timeoutPromise = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      didTimeout = true;
+      resolve();
+    }, CLOSE_TIMEOUT_MS);
+  });
+
+  await Promise.race([app.close(), timeoutPromise]);
+
+  if (!didTimeout) {
+    // Normal path: app.close() resolved before the timeout.
+    return;
+  }
+
+  // Force-kill path: app.close() hung. Get the PID from the Electron process
+  // handle and kill it cross-platform.
+  console.warn(
+    '[E2E closeApp] app.close() did not resolve within ' +
+      `${CLOSE_TIMEOUT_MS}ms - force-killing Electron process`,
+  );
+
+  const electronProcess = app.process();
+  const pid = electronProcess?.pid;
+
+  if (!pid) {
+    console.warn('[E2E closeApp] Could not obtain Electron PID - nothing to kill');
+    return;
+  }
+
+  if (process.platform === 'win32') {
+    // taskkill /T walks the child tree, /F is force-kill. Mirrors the pattern
+    // in electron-janitor.ts and src/main/git/zombie-reaper.ts.
+    await new Promise<void>((resolve) => {
+      const taskkillProcess = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+      taskkillProcess.on('close', () => resolve());
+      taskkillProcess.on('error', (error) => {
+        console.warn(`[E2E closeApp] taskkill failed for pid=${pid}:`, error);
+        resolve();
+      });
+      // Taskkill is near-instantaneous; cap it at 3s to avoid a second hang.
+      setTimeout(resolve, 3000);
+    });
+  } else {
+    // POSIX: SIGKILL the main process. GPU/network-utility children
+    // self-exit when the main dies (no explicit tree-kill needed).
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch (error) {
+      // Process may have already exited between the race and here.
+      console.warn(`[E2E closeApp] SIGKILL failed for pid=${pid}:`, error);
+    }
+  }
 }
 
 // Wait for the board to load (swimlanes visible)

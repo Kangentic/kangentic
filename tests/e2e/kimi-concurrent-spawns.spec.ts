@@ -71,6 +71,7 @@ import {
   setProjectDefaultAgent,
   getTaskIdByTitle,
   getSwimlaneIds,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -139,7 +140,7 @@ test.describe('Kimi Agent - Concurrent Spawns Same Work Dir', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupKimiSessionsForCwd(tmpDir);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);
