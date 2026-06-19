@@ -167,9 +167,11 @@ jobs:
   # Windows. It runs ONLY on Linux: the suite is platform-neutral, so Linux
   # covers the macOS/Linux users while the team dogfoods the Windows build, and
   # the local workers=1 lock (concurrent electron.launch() on Windows) does not
-  # apply, so on CI each shard runs workers=4 (set per-project in
+  # apply, so on CI each shard runs workers=6 (set per-project in
   # playwright.config.ts; Windows and local runs stay at 1) and the suite is
-  # sharded 10 ways. (10 UI + 10 E2E shards can exceed GitHub Free's
+  # sharded 10 ways. workers=6 lets a shard launch all its spec files in one
+  # wave (the slowest shards hold ~5 files); per-file teardown is I/O-bound so it
+  # overlaps cleanly. (10 UI + 10 E2E shards can exceed GitHub Free's
   # ~20-job concurrency cap, so a few shards may briefly queue; adjust the counts
   # if that starts to dominate the wall-clock.) Concurrent launches are safe on
   # CI: the leaked-Electron janitor is a no-op under

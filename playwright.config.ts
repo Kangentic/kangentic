@@ -69,8 +69,12 @@ export default defineConfig({
       // headless Linux runners (xvfb) concurrent launches are safe, so use 4 to
       // parallelize the per-file app launch/teardown overhead within each shard.
       // A per-project `workers` overrides the CLI --workers flag, so this is the
-      // single source of truth for the electron tier's concurrency.
-      workers: process.env.CI && process.platform !== 'win32' ? 4 : 1,
+      // single source of truth for the electron tier's concurrency. 6 (not 4) so
+      // a shard that lands 5-6 spec files launches them all in ONE wave instead
+      // of leaving the extra file(s) for a serial 2nd wave (~25s/file of app
+      // launch + teardown). Per-file teardown is I/O-bound and overlaps cleanly;
+      // per-pid temp-dir isolation keeps concurrent launches safe.
+      workers: process.env.CI && process.platform !== 'win32' ? 6 : 1,
       // Slowest legitimate test is ~15s; 45s gives ~3x headroom while still
       // catching hangs faster than the global 60s default. The 45s budget
       // also covers `afterAll` Electron app close + PTY cleanup, which can
