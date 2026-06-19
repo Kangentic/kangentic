@@ -139,6 +139,13 @@ export async function launchApp(options?: {
   if (options?.cwd) {
     args.push(`--cwd=${options.cwd}`);
   }
+  // On a headless Linux CI runner (xvfb) Chromium's sandbox cannot initialize,
+  // so Electron fails to launch without --no-sandbox. Windows, macOS, and local
+  // Linux desktops are unaffected (the e2e suite historically ran only on
+  // Windows). Guard it to linux so it never weakens the dev-machine runs.
+  if (process.platform === 'linux') {
+    args.push('--no-sandbox');
+  }
 
   // Retry electron.launch() with backoff -- Windows can transiently fail
   // to attach the debugger pipe under resource pressure or AV scans.

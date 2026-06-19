@@ -161,36 +161,28 @@ jobs:
           fi
           echo "All Playwright shards passed."
 
-  # E2E tier: launches the REAL bundled Electron app via electron.launch()
-  # (tests/e2e/helpers.ts). Two structural choices keep it fast:
+  # E2E tier (Linux primary): launches the REAL bundled Electron app via
+  # electron.launch() (tests/e2e/helpers.ts) under xvfb. Sharded across
+  # ubuntu-latest runners (Playwright `--shard`) - faster and 1x cost vs Windows,
+  # and Linux can run concurrent electron.launch() (the workers=1 lock is a
+  # Windows-only limitation). `--grep-invert @windows` runs everything that is
+  # NOT Windows-specific; the Windows-specific specs run on the e2e-windows
+  # matrix. helpers.ts adds --no-sandbox on Linux (xvfb has no Chromium sandbox).
   #
-  #  1. SHARDING across windows-latest runners (Playwright `--shard`), exactly
-  #     like the UI tier, so the ~12min serial suite runs in parallel. Each
-  #     runner still uses workers=1 (Windows cannot do concurrent
-  #     electron.launch()) and retries=1 on CI - both come from
-  #     playwright.config.ts.
-  #  2. CACHED node_modules. Unlike the UI shards, E2E CANNOT use
-  #     `npm ci --ignore-scripts`: it needs the native better-sqlite3 / node-pty
-  #     build and the extracted Electron binary (all under node_modules). So
-  #     node_modules is cached keyed on the lockfile and `npm ci` only runs on a
-  #     cache miss, cutting ~55s off each shard's setup once the cache is warm.
-  #     postinstall is just the native rebuild (output lives in node_modules), so
-  #     skipping it on a cache hit is safe.
-  #
-  # No Playwright browser download: the electron project drives the bundled
-  # Electron binary, not a downloaded Chromium. Per-shard `list` reporter, no
-  # blob/merge job. The thin `e2e` gate below is the single branch-protection
-  # status-check context (mirrors the `ui` gate over the Playwright shards) -
-  # keep its name in sync with main's required checks if you rename it.
-  e2e-shards:
-    name: E2E ${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
-    runs-on: windows-latest
+  # node_modules is cached keyed on the lockfile: E2E needs the native
+  # better-sqlite3 / node-pty build and the extracted Electron binary, so it
+  # cannot use the UI tier's `npm ci --ignore-scripts`; npm ci only runs on a
+  # cache miss. No Playwright browser download (the electron project drives the
+  # bundled Electron). retries=1 on CI comes from playwright.config.ts.
+  e2e-linux:
+    name: E2E Linux ${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-        shardTotal: [12]
+        shardIndex: [1, 2, 3, 4, 5, 6, 7, 8]
+        shardTotal: [8]
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -199,9 +191,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      # Cache the fully-built node_modules (native better-sqlite3 / node-pty and
-      # the extracted Electron binary all live under it), keyed on the lockfile,
-      # so npm ci only runs when dependencies actually change.
       - name: Cache node_modules (native build + Electron binary)
         id: cache-node-modules
         uses: actions/cache@v5
@@ -214,22 +203,23 @@ jobs:
       - name: Build (production bundle)
         run: npm run build
       - name: Run E2E tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-        run: npx playwright test --project=electron --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+        run: xvfb-run -a npx playwright test --project=electron --grep-invert "@windows" --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
   # Thin required gate: the single "E2E tests (Electron)" check that branch
   # protection requires, green only if every E2E shard passed. Mirrors the `ui`
-  # gate over the Playwright shards - no checkout/install, just job spin-up.
+  # gate. (The e2e-windows matrix for Windows-specific specs is added to `needs`
+  # once those specs are tagged @windows.)
   e2e:
     name: E2E tests (Electron)
-    needs: [e2e-shards]
+    needs: [e2e-linux]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Gate on shard results
         run: |
-          if [ "${{ needs.e2e-shards.result }}" != "success" ]; then
-            echo "One or more E2E shards did not succeed (result: ${{ needs.e2e-shards.result }})"
+          if [ "${{ needs.e2e-linux.result }}" != "success" ]; then
+            echo "One or more E2E Linux shards did not succeed (result: ${{ needs.e2e-linux.result }})"
             exit 1
           fi
           echo "All E2E shards passed."
