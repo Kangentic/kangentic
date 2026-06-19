@@ -117,6 +117,12 @@ async function dragTaskToColumn(taskTitle: string, targetColumn: string) {
   await page.mouse.up();
   // Confirm landing instead of a fixed 500ms post-drop wait.
   await expect(target.locator(`text=${taskTitle}`).first()).toBeVisible({ timeout: 5000 });
+  // Wait for the dnd-kit DragOverlay drop animation to finish. dnd-kit freezes
+  // the overlay's children (the TaskCard) for up to 250ms after mouse.up(). If a
+  // click fires before the overlay is gone, two TaskCard instances for the same
+  // task.id are live simultaneously and both render a TaskDetailDialog, producing
+  // a strict-mode violation. Poll until the overlay element is absent.
+  await expect(page.locator('.drag-overlay')).toHaveCount(0, { timeout: 2000 });
 }
 
 /** Wait for a running session to appear for the given task title */

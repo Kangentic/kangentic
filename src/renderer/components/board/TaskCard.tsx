@@ -202,7 +202,13 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           )}
         </div>
 
-        {showDetail && (
+        {/* Guard isDragOverlay: dnd-kit freezes the DragOverlay's children during
+            the drop animation, keeping this TaskCard mounted for up to 250ms after
+            the real card has landed. Without the guard, both the live card and the
+            frozen overlay card would mount a TaskDetailDialog when detailTaskId is
+            set during that window, causing a strict-mode violation (two elements
+            with [data-testid="task-detail-dialog"]). */}
+        {!isDragOverlay && showDetail && (
           <TaskDetailDialog task={task} onClose={() => setDetailTaskId(null)} initialEdit={displayState.kind === 'none' && !task.archived_at} />
         )}
 
@@ -404,7 +410,13 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         })()}
       </div>
 
-      {showDetail && (
+      {/* Guard isDragOverlay: dnd-kit freezes the DragOverlay's children during
+          the drop animation, keeping this TaskCard mounted for up to 250ms after
+          the real card has landed. Without the guard, both the live card and the
+          frozen overlay card would mount a TaskDetailDialog when detailTaskId is
+          set during that window, causing a strict-mode violation (two elements
+          with [data-testid="task-detail-dialog"]). */}
+      {!isDragOverlay && showDetail && (
         <TaskDetailDialog task={task} onClose={() => { setDetailTaskId(null); setForceEdit(false); }} initialEdit={forceEdit || (displayState.kind === 'none' && !task.archived_at)} />
       )}
 
