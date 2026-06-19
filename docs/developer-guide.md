@@ -222,7 +222,10 @@ npx playwright test --project=electron
 ```
 
 - **Runner:** Playwright with `_electron.launch()`
-- **Speed:** Slower, opens real windows (no headless mode on Windows). `workers` is locked at 1.
+- **Speed:** Slower, opens real windows (no headless mode on Windows). `workers` is 1 on
+  Windows/local (concurrent `electron.launch()` is flaky there); CI runs the tier on Linux/xvfb at
+  `workers: 8`, sharded, with node_modules caching and the `closeApp()` teardown helper (see
+  `.github/workflows/ci.yml` and `playwright.config.ts`).
 - **What to test here:** PTY sessions, terminal rendering, session lifecycle, shell detection, config persistence
 - **Build required** before running
 - **Boot reuse (opt-in):** a spec that uses the canonical default config and never relaunches
