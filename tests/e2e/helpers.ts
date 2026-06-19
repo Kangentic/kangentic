@@ -47,9 +47,17 @@ let templateInitialized = false;
 
 function ensureGitTemplate(): string {
   if (templateInitialized && fs.existsSync(TEMPLATE_DIR)) return TEMPLATE_DIR;
-  // Wipe the whole parent to also clean up stale directories from prior
-  // runs whose PIDs are no longer live.
-  try { fs.rmSync(TEMPLATE_PARENT, { recursive: true, force: true }); } catch { /* ignore */ }
+  // Only remove OUR own PID-specific subdirectory. Do NOT rmSync the entire
+  // TEMPLATE_PARENT: with workers=4 on CI, multiple worker processes call
+  // ensureGitTemplate concurrently and each owns a unique pid-keyed dir under
+  // the parent. Wiping the parent races with sibling workers who have already
+  // created their dirs and may be mid-way through `git init`, causing
+  // `fs.cpSync(template, tmpDir)` in createTempProject to fail or copy an
+  // empty tree - which is the root cause of the 0ms beforeAll failures seen
+  // under workers=4. Stale dirs from prior runs (different PIDs) accumulate
+  // but are small (~400KB each) and are cleaned up by the next run's
+  // `npm run build` or global teardown on Linux.
+  try { fs.rmSync(TEMPLATE_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
   fs.mkdirSync(TEMPLATE_DIR, { recursive: true });
   // `-b main` pins the initial branch name. Without it, the branch comes from
   // the machine's `init.defaultBranch`: dev machines set `main` (so this was
