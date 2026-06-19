@@ -161,28 +161,34 @@ jobs:
           fi
           echo "All Playwright shards passed."
 
-  # E2E tier (Linux primary): launches the REAL bundled Electron app via
+  # E2E tier (Linux only): launches the REAL bundled Electron app via
   # electron.launch() (tests/e2e/helpers.ts) under xvfb. Sharded across
-  # ubuntu-latest runners (Playwright `--shard`) - faster and 1x cost vs Windows,
-  # and Linux can run concurrent electron.launch() (the workers=1 lock is a
-  # Windows-only limitation). `--grep-invert @windows` runs everything that is
-  # NOT Windows-specific; the Windows-specific specs run on the e2e-windows
-  # matrix. helpers.ts adds --no-sandbox on Linux (xvfb has no Chromium sandbox).
+  # ubuntu-latest runners (Playwright `--shard`) - 1x cost and faster than
+  # Windows. It runs ONLY on Linux: the suite is platform-neutral, so Linux
+  # covers the macOS/Linux users while the team dogfoods the Windows build, and
+  # the local workers=1 lock (concurrent electron.launch() on Windows) does not
+  # apply, so each shard runs --workers=4 (like the UI tier). A small shard count
+  # x 4 workers keeps the matrix within the ~20-job concurrency cap that the 14 UI
+  # shards already mostly fill, instead of queueing behind them. Concurrent
+  # launches are safe on CI: the leaked-Electron janitor is a no-op under
+  # GITHUB_ACTIONS, each test has an isolated KANGENTIC_DATA_DIR, and the
+  # single-instance lock is bypassed under NODE_ENV=test. helpers.ts adds
+  # --no-sandbox on Linux (xvfb has no Chromium sandbox).
   #
   # node_modules is cached keyed on the lockfile: E2E needs the native
   # better-sqlite3 / node-pty build and the extracted Electron binary, so it
   # cannot use the UI tier's `npm ci --ignore-scripts`; npm ci only runs on a
   # cache miss. No Playwright browser download (the electron project drives the
   # bundled Electron). retries=1 on CI comes from playwright.config.ts.
-  e2e-linux:
-    name: E2E Linux ${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+  e2e-shards:
+    name: E2E ${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3, 4, 5, 6, 7, 8]
-        shardTotal: [8]
+        shardIndex: [1, 2, 3, 4]
+        shardTotal: [4]
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -203,23 +209,22 @@ jobs:
       - name: Build (production bundle)
         run: npm run build
       - name: Run E2E tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-        run: xvfb-run -a npx playwright test --project=electron --grep-invert "@windows" --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+        run: xvfb-run -a npx playwright test --project=electron --workers=4 --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
   # Thin required gate: the single "E2E tests (Electron)" check that branch
   # protection requires, green only if every E2E shard passed. Mirrors the `ui`
-  # gate. (The e2e-windows matrix for Windows-specific specs is added to `needs`
-  # once those specs are tagged @windows.)
+  # gate - no checkout/install, just job spin-up.
   e2e:
     name: E2E tests (Electron)
-    needs: [e2e-linux]
+    needs: [e2e-shards]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Gate on shard results
         run: |
-          if [ "${{ needs.e2e-linux.result }}" != "success" ]; then
-            echo "One or more E2E Linux shards did not succeed (result: ${{ needs.e2e-linux.result }})"
+          if [ "${{ needs.e2e-shards.result }}" != "success" ]; then
+            echo "One or more E2E shards did not succeed (result: ${{ needs.e2e-shards.result }})"
             exit 1
           fi
           echo "All E2E shards passed."
