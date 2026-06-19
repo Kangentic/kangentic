@@ -89,7 +89,7 @@ jobs:
         run: npx vitest run tests/unit --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} --reporter=blob --reporter=default --outputFile.blob=.vitest/blob/blob-${{ matrix.shardIndex }}.json
       - name: Upload blob report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-blob-${{ matrix.shardIndex }}
           path: .vitest/blob/
@@ -119,7 +119,7 @@ jobs:
       - name: Install dependencies (npm ci)
         run: npm ci
       - name: Download shard blob reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: unit-blob-*
           merge-multiple: true
