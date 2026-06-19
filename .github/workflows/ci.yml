@@ -125,7 +125,7 @@ jobs:
           merge-multiple: true
           path: .vitest/blob
       - name: Merge blob reports into one Vitest summary
-        run: npx vitest --merge-reports --reporter=github-actions --reporter=default
+        run: npx vitest --merge-reports=.vitest/blob --reporter=github-actions --reporter=default
       - name: Fail if any unit shard job did not succeed
         if: ${{ needs.unit-shards.result != 'success' }}
         run: exit 1
