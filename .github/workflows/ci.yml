@@ -59,10 +59,21 @@ jobs:
       - name: Type check (tsc)
         run: npm run typecheck
 
-  unit:
-    name: Unit tests (Vitest)
+  # Unit tier, sharded across ubuntu runners like the UI/E2E tiers (Vitest
+  # `--shard`). The suite is volume-bound (~360 files, no single long pole), and
+  # within one runner Vitest only reaches ~2x parallelism (import / main-thread
+  # Vite-server overhead), so cross-runner sharding is how it scales as the suite
+  # grows. Each shard reports via the default reporter into its own log (no
+  # blob/merge job) and the thin `unit` gate below is the required status check.
+  unit-shards:
+    name: Unit Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shardIndex: [1, 2, 3]
+        shardTotal: [3]
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -73,8 +84,26 @@ jobs:
           cache: npm
       - name: Install dependencies (npm ci)
         run: npm ci
-      - name: Unit tests (Vitest)
-        run: npm run test:unit
+      - name: Unit tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+        run: npx vitest run tests/unit --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+
+  # Thin required gate over the unit shards (mirrors the `ui` / `e2e` gates).
+  # Keep the name "Unit tests (Vitest)" - it is the branch-protection required
+  # status-check context.
+  unit:
+    name: Unit tests (Vitest)
+    needs: [unit-shards]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Gate on shard results
+        run: |
+          if [ "${{ needs.unit-shards.result }}" != "success" ]; then
+            echo "One or more unit shards did not succeed (result: ${{ needs.unit-shards.result }})"
+            exit 1
+          fi
+          echo "All unit shards passed."
 
   build:
     name: Build (production bundle)
