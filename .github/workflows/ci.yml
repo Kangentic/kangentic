@@ -102,7 +102,7 @@ jobs:
   # ubuntu-latest, so the browser install needs no --with-deps; the binary is
   # cached. The single required status check is the thin `ui` gate below.
   playwright-shards:
-    name: Playwright ${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+    name: UI Test ${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -167,8 +167,9 @@ jobs:
   # Windows. It runs ONLY on Linux: the suite is platform-neutral, so Linux
   # covers the macOS/Linux users while the team dogfoods the Windows build, and
   # the local workers=1 lock (concurrent electron.launch() on Windows) does not
-  # apply, so each shard runs --workers=4 (like the UI tier) and the suite is
-  # sharded 10 ways to match it. (10 UI + 10 E2E shards can exceed GitHub Free's
+  # apply, so on CI each shard runs workers=4 (set per-project in
+  # playwright.config.ts; Windows and local runs stay at 1) and the suite is
+  # sharded 10 ways. (10 UI + 10 E2E shards can exceed GitHub Free's
   # ~20-job concurrency cap, so a few shards may briefly queue; adjust the counts
   # if that starts to dominate the wall-clock.) Concurrent launches are safe on
   # CI: the leaked-Electron janitor is a no-op under
@@ -182,7 +183,7 @@ jobs:
   # cache miss. No Playwright browser download (the electron project drives the
   # bundled Electron). retries=1 on CI comes from playwright.config.ts.
   e2e-shards:
-    name: E2E ${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+    name: E2E Test ${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -210,7 +211,7 @@ jobs:
       - name: Build (production bundle)
         run: npm run build
       - name: Run E2E tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-        run: xvfb-run -a npx playwright test --project=electron --workers=4 --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+        run: xvfb-run -a npx playwright test --project=electron --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
   # Thin required gate: the single "E2E tests (Electron)" check that branch
   # protection requires, green only if every E2E shard passed. Mirrors the `ui`

@@ -64,7 +64,13 @@ export default defineConfig({
       name: 'electron',
       testDir: './tests/e2e',
       testMatch: '**/*.spec.ts',
-      workers: 1,
+      // Windows cannot run concurrent electron.launch(), and a local run (any OS)
+      // should not spawn a swarm of app windows - so workers=1 there. On CI's
+      // headless Linux runners (xvfb) concurrent launches are safe, so use 4 to
+      // parallelize the per-file app launch/teardown overhead within each shard.
+      // A per-project `workers` overrides the CLI --workers flag, so this is the
+      // single source of truth for the electron tier's concurrency.
+      workers: process.env.CI && process.platform !== 'win32' ? 4 : 1,
       // Slowest legitimate test is ~15s; 45s gives ~3x headroom while still
       // catching hangs faster than the global 60s default. The 45s budget
       // also covers `afterAll` Electron app close + PTY cleanup, which can
