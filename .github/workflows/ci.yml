@@ -108,8 +108,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
-        shardTotal: [14]
+        shardIndex: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shardTotal: [10]
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -167,10 +167,11 @@ jobs:
   # Windows. It runs ONLY on Linux: the suite is platform-neutral, so Linux
   # covers the macOS/Linux users while the team dogfoods the Windows build, and
   # the local workers=1 lock (concurrent electron.launch() on Windows) does not
-  # apply, so each shard runs --workers=4 (like the UI tier). A small shard count
-  # x 4 workers keeps the matrix within the ~20-job concurrency cap that the 14 UI
-  # shards already mostly fill, instead of queueing behind them. Concurrent
-  # launches are safe on CI: the leaked-Electron janitor is a no-op under
+  # apply, so each shard runs --workers=4 (like the UI tier) and the suite is
+  # sharded 10 ways to match it. (10 UI + 10 E2E shards can exceed GitHub Free's
+  # ~20-job concurrency cap, so a few shards may briefly queue; adjust the counts
+  # if that starts to dominate the wall-clock.) Concurrent launches are safe on
+  # CI: the leaked-Electron janitor is a no-op under
   # GITHUB_ACTIONS, each test has an isolated KANGENTIC_DATA_DIR, and the
   # single-instance lock is bypassed under NODE_ENV=test. helpers.ts adds
   # --no-sandbox on Linux (xvfb has no Chromium sandbox).
@@ -187,8 +188,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3, 4]
-        shardTotal: [4]
+        shardIndex: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        shardTotal: [10]
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
