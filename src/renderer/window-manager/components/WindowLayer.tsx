@@ -130,7 +130,7 @@ export function WindowLayer() {
   const renderedWindows = Object.values(windows);
 
   return createPortal(
-    <div ref={overlayRef} className="fixed left-0 right-0 top-10 bottom-9 z-40 pointer-events-none">
+    <div ref={overlayRef} data-testid="window-overlay" className="fixed left-0 right-0 top-10 bottom-9 z-40 pointer-events-none">
       {renderedWindows.map((managedWindow) => (
         <WindowFrame
           key={managedWindow.id}

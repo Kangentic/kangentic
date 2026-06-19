@@ -43,6 +43,20 @@ const DRAG_ACTIVATION_PX = 4;
  *  is the monitor edge when maximized. */
 const EDGE_PIN_PX = 6;
 
+/** A tiled group whose footprint covers (within this fraction of) the whole
+ *  overlay has nowhere to move, so dragging a pane pops it OUT instead of moving
+ *  the group. */
+const FOOTPRINT_FILL_TOLERANCE = 0.02;
+
+function footprintFillsOverlay(rect: FractionalRect): boolean {
+  return (
+    rect.x <= FOOTPRINT_FILL_TOLERANCE &&
+    rect.y <= FOOTPRINT_FILL_TOLERANCE &&
+    rect.x + rect.w >= 1 - FOOTPRINT_FILL_TOLERANCE &&
+    rect.y + rect.h >= 1 - FOOTPRINT_FILL_TOLERANCE
+  );
+}
+
 /** Cached overlay geometry (client coords + size). The overlay does not resize
  *  mid-drag, so caching it at pointerdown means zero layout reads per move. */
 interface OverlayBounds {
@@ -327,18 +341,23 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
       const deltaY = event.clientY - drag.startClientY;
       if (Math.abs(deltaX) < DRAG_ACTIVATION_PX && Math.abs(deltaY) < DRAG_ACTIVATION_PX) return;
       drag.activated = true;
-      if (useWindowStore.getState().windows[windowId]?.state === 'tiled') {
-        // GROUP MOVE: a tiled window's header drags the WHOLE docked group as a
-        // unit (detaching a pane is the pop-out button / close, not the header
-        // drag). Snapshot every tiled pane's frame + the group's footprint; the
-        // move body translates them all together. No undock, no snap/dock.
-        const store = useWindowStore.getState();
+      const activationStore = useWindowStore.getState();
+      // A tiled window's header drags the WHOLE docked group as a unit - UNLESS the
+      // group fills the overlay (a full-screen tiling has nowhere to move), where
+      // dragging a pane instead POPS IT OUT (undock below), the only useful drag
+      // there. Detaching a pane is otherwise the pop-out button / close.
+      if (
+        activationStore.windows[windowId]?.state === 'tiled' &&
+        !footprintFillsOverlay(activationStore.tileTreeRect)
+      ) {
+        // GROUP MOVE: snapshot every tiled pane's frame + the group's footprint;
+        // the move body translates them all together. No undock, no snap/dock.
         drag.groupMove = {
-          frames: Object.values(store.windows)
+          frames: Object.values(activationStore.windows)
             .filter((candidate) => candidate.state === 'tiled')
             .map((candidate) => document.querySelector<HTMLElement>(`[data-testid="window-frame-${candidate.id}"]`))
             .filter((element): element is HTMLElement => element !== null),
-          startRect: store.tileTreeRect,
+          startRect: activationStore.tileTreeRect,
         };
         // Capture only now, so a stationary double-click is never intercepted.
         frame.setPointerCapture(drag.pointerId);

@@ -42,6 +42,8 @@ import {
   useTaskActions,
 } from '../../components/dialogs/task-detail';
 import { useWindowStore } from '../store/window-store';
+import { classifySnapZone, nextSnap } from '../dnd/snap-zones';
+import type { SnapDirection } from '../dnd/snap-zones';
 import type { Task, ShortcutConfig } from '../../../shared/types';
 
 interface TaskDetailWindowProps {
@@ -98,6 +100,13 @@ export function TaskDetailWindow({
   const browserEnabledConfig = useConfigStore((s) => s.config.browser?.enabled);
 
   const toggleMaximizeWindow = useWindowStore((s) => s.toggleMaximizeWindow);
+  const dockWindow = useWindowStore((s) => s.dockWindow);
+  const applyTilePreset = useWindowStore((s) => s.applyTilePreset);
+  const windowCount = useWindowStore((s) => Object.keys(s.windows).length);
+  const maximizeWindow = useWindowStore((s) => s.maximizeWindow);
+  const restoreWindow = useWindowStore((s) => s.restoreWindow);
+  const setGeometry = useWindowStore((s) => s.setGeometry);
+  const snapWindow = useWindowStore((s) => s.snapWindow);
   const untileWindow = useWindowStore((s) => s.untileWindow);
   const isTiled = useWindowStore((s) => s.windows[windowId]?.state === 'tiled');
 
@@ -210,6 +219,48 @@ export function TaskDetailWindow({
 
   const handleToggleMaximized = useCallback(() => toggleMaximizeWindow(windowId), [toggleMaximizeWindow, windowId]);
   const handleUndock = useCallback(() => untileWindow(windowId), [untileWindow, windowId]);
+  // Pop the window back to floating from whatever docked state it is in
+  // (maximized / snapped / tiled) - the "down" restore step.
+  const popToFloat = useCallback(() => {
+    const target = useWindowStore.getState().windows[windowId];
+    if (!target) return;
+    if (target.state === 'maximized') restoreWindow(windowId);
+    else if (target.state === 'snapped') setGeometry(windowId, target.restoreGeometry ?? target.geometry);
+    else if (target.state === 'tiled') untileWindow(windowId);
+  }, [windowId, restoreWindow, setGeometry, untileWindow]);
+
+  // Win11-style stateful snap: the result depends on the window's current zone,
+  // read from its RENDERED rect (a tiled pane's stored geometry is its pre-tile
+  // float, not where it renders). Halves dock (pair); corners are lone snaps; a
+  // tiled pane cannot slide within its pair horizontally. See snap-zones.ts.
+  const handleSnapDirection = useCallback((direction: SnapDirection) => {
+    const target = useWindowStore.getState().windows[windowId];
+    if (!target) return;
+    const frameElement = document.querySelector(`[data-testid="window-frame-${windowId}"]`);
+    const overlayElement = document.querySelector('[data-testid="window-overlay"]');
+    if (!(frameElement instanceof HTMLElement) || !(overlayElement instanceof HTMLElement)) return;
+    const frameRect = frameElement.getBoundingClientRect();
+    const overlayRect = overlayElement.getBoundingClientRect();
+    if (overlayRect.width === 0 || overlayRect.height === 0) return;
+    const zone = classifySnapZone({
+      x: (frameRect.left - overlayRect.left) / overlayRect.width,
+      y: (frameRect.top - overlayRect.top) / overlayRect.height,
+      w: frameRect.width / overlayRect.width,
+      h: frameRect.height / overlayRect.height,
+    });
+    // A tiled (paired) pane cannot slide within its pair horizontally.
+    if (target.state === 'tiled' && (direction === 'left' || direction === 'right')) return;
+    const action = nextSnap(zone, direction);
+    if (action.kind === 'maximize') maximizeWindow(windowId);
+    else if (action.kind === 'restore') popToFloat();
+    else if (action.kind === 'dock') {
+      if (target.state === 'tiled') untileWindow(windowId);
+      dockWindow(windowId, action.edge);
+    } else if (action.kind === 'snap') {
+      if (target.state === 'tiled') untileWindow(windowId);
+      snapWindow(windowId, action.geometry);
+    }
+  }, [windowId, maximizeWindow, dockWindow, snapWindow, untileWindow, popToFloat]);
 
   const handleToggleBrowser = useCallback(() => {
     if (!browserOpen && changesOpen) toggleChangesOpen(task.id);
@@ -292,6 +343,10 @@ export function TaskDetailWindow({
   useKeybinding('panel.close', closeWithGuard, { capture: true, enabled: isFocused });
   useKeybinding('taskDetail.toggleBrowser', handleToggleBrowser, { capture: true, enabled: isFocused && canShowBrowser });
   useKeybinding('taskDetail.toggleChanges', handleToggleChanges, { capture: true, enabled: isFocused && sessionState.canShowChanges });
+  useKeybinding('window.snapLeft', () => handleSnapDirection('left'), { capture: true, enabled: isFocused });
+  useKeybinding('window.snapRight', () => handleSnapDirection('right'), { capture: true, enabled: isFocused });
+  useKeybinding('window.snapUp', () => handleSnapDirection('up'), { capture: true, enabled: isFocused });
+  useKeybinding('window.snapDown', () => handleSnapDirection('down'), { capture: true, enabled: isFocused });
 
   // Escape closes the focused window through the discard guard. Structural
   // dialog Escape (keybindings-registry exception, like BaseDialog): a
@@ -352,6 +407,8 @@ export function TaskDetailWindow({
       isMaximized={isMaximized}
       onToggleMaximized={handleToggleMaximized}
       onUndock={isTiled ? handleUndock : undefined}
+      onApplyTilePreset={applyTilePreset}
+      canTileMultiple={windowCount >= 2}
     />
   );
 
