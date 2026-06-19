@@ -24,6 +24,7 @@ import { useTaskDetailWindowBridge } from '../bridge/useTaskDetailWindowBridge';
 import { useWindowSessionClaims } from '../bridge/useWindowSessionClaims';
 import { useWindowAutoCloseOnDone } from '../bridge/useWindowAutoCloseOnDone';
 import { useWindowFocusReconcile } from '../bridge/useWindowFocusReconcile';
+import { useWorkspacePersistence } from '../bridge/useWorkspacePersistence';
 import type { ContainerSize } from '../store/geometry';
 import type { FractionalRect } from '../store/types';
 import { resolveTileLayout } from '../tiling/resolve-layout';
@@ -80,6 +81,9 @@ export function WindowLayer() {
   // When closing a window orphans keyboard focus, move it to a remaining window's
   // terminal so the group keeps an active pane.
   useWindowFocusReconcile();
+  // Persist the layout (debounced) to the open project's config so it survives a
+  // project switch + app restart. Restore is wired into the project-switch effect.
+  useWorkspacePersistence();
 
   const [containerSize, setContainerSize] = useState<ContainerSize>({ width: 0, height: 0 });
   const windows = useWindowStore((state) => state.windows);

@@ -24,6 +24,8 @@ import {
 import type { TileInsertSide } from '../tiling/tree-ops';
 import { buildPresetTree, presetHalfGeometry } from '../tiling/presets';
 import type { TilePreset } from '../tiling/presets';
+import { serializeWorkspace as toSerializedWorkspace, deserializeWorkspace } from '../persistence/workspace';
+import type { SerializedWorkspace } from '../../../shared/types';
 
 /** The whole overlay: the default tiling footprint (edge-snap pairs fill it). */
 const FULL_TILE_RECT: FractionalRect = { x: 0, y: 0, w: 1, h: 1 };
@@ -237,6 +239,16 @@ interface WindowStoreState {
   untileWindow: (id: string) => void;
   toggleMaximizeWindow: (id: string) => void;
   restoreWindow: (id: string) => void;
+  /** Snapshot the current layout into the persisted, taskId-anchored form. */
+  serializeWorkspace: () => SerializedWorkspace;
+  /** Replace the layout with a restored one (taskId-anchored): re-resolve each
+   *  window's live sessionId from its taskId, drop windows whose task is gone, and
+   *  regenerate window + tile-node ids. */
+  applyWorkspace: (
+    workspace: SerializedWorkspace,
+    resolveSessionId: (taskId: string) => string | null,
+    isKnownTask: (taskId: string) => boolean,
+  ) => void;
 }
 
 export const useWindowStore = create<WindowStoreState>((set, get) => ({
@@ -584,6 +596,34 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
         };
       }
       return current;
+    });
+  },
+
+  serializeWorkspace: () => {
+    const current = get();
+    return toSerializedWorkspace(
+      Object.values(current.windows),
+      current.tileTree,
+      current.tileTreeRect,
+      current.focusedWindowId,
+    );
+  },
+
+  applyWorkspace: (workspace, resolveSessionId, isKnownTask) => {
+    const restored = deserializeWorkspace(workspace, {
+      resolveSessionId,
+      isKnownTask,
+      makeWindowId: nextWindowId,
+      makeTileId: nextTileId,
+    });
+    if (!restored) return;
+    set({
+      windows: restored.windows,
+      order: restored.order,
+      focusedWindowId: restored.focusedWindowId,
+      zCounter: Object.keys(restored.windows).length,
+      tileTree: restored.tileTree,
+      tileTreeRect: restored.tileTreeRect,
     });
   },
 }));

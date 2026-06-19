@@ -31,6 +31,7 @@ import {
   snapshotProject,
   getProjectSnapshot,
 } from '../stores/project-cache';
+import { restoreWorkspaceForProject } from '../window-manager/persistence/restore-workspace';
 
 export function useProjectSwitchEffect(currentProject: Project | null): void {
   // Tracks the project we last rendered so we can snapshot its store
@@ -155,11 +156,16 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           useSessionStore.getState().setPendingOpenTaskId(null);
           useSessionStore.getState().setDetailTaskId(pendingTaskId);
         }
+
+        // Restore the persisted window layout. Warm switches keep sessions live,
+        // so this resolves synchronously; a cheap setState lets the restored
+        // windows appear with the board (no flash) without blocking the swap.
+        restoreWorkspaceForProject();
       } else {
         // Cold path: fire the IPC fan-out and reset stale per-project
         // view state. After loads resolve, mark the project as seen so
         // the next switch to it takes the warm path.
-        void Promise.all([
+        const coldLoads = Promise.all([
           useBoardStore.getState().loadBoard(),
           useBacklogStore.getState().loadBacklog(),
           useConfigStore.getState().loadConfig(),
@@ -222,6 +228,16 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           }
 
           markProjectSeen(currentProject.id);
+
+          // Restore the persisted window layout once the board + config loads AND
+          // sessions have all resolved, so windows re-bind to live sessions and the
+          // task-existence check sees the real board. Deferred off the switch's
+          // critical path (the board paints first); skipped if a newer switch has
+          // superseded this one mid-load.
+          void coldLoads.then(() => {
+            if (previousProjectIdRef.current !== currentProject.id) return;
+            restoreWorkspaceForProject();
+          });
         });
       }
 
