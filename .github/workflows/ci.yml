@@ -63,8 +63,9 @@ jobs:
   # `--shard`). The suite is volume-bound (~360 files, no single long pole), and
   # within one runner Vitest only reaches ~2x parallelism (import / main-thread
   # Vite-server overhead), so cross-runner sharding is how it scales as the suite
-  # grows. Each shard reports via the default reporter into its own log (no
-  # blob/merge job) and the thin `unit` gate below is the required status check.
+  # grows. Each shard emits a `blob` report (uploaded as an artifact) plus the
+  # default reporter into its own log; the `unit` gate below merges the blobs into
+  # ONE Vitest summary on the run page and is the required status check.
   unit-shards:
     name: Unit Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
     runs-on: ubuntu-latest
@@ -72,8 +73,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3, 4, 5]
-        shardTotal: [5]
+        shardIndex: [1, 2]
+        shardTotal: [2]
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -85,11 +86,22 @@ jobs:
       - name: Install dependencies (npm ci)
         run: npm ci
       - name: Unit tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
-        run: npx vitest run tests/unit --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+        run: npx vitest run tests/unit --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} --reporter=blob --reporter=default --outputFile.blob=.vitest/blob/blob-${{ matrix.shardIndex }}.json
+      - name: Upload blob report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-blob-${{ matrix.shardIndex }}
+          path: .vitest/blob/
+          retention-days: 1
 
-  # Thin required gate over the unit shards (mirrors the `ui` / `e2e` gates).
-  # Keep the name "Unit tests (Vitest)" - it is the branch-protection required
-  # status-check context.
+  # Required gate AND report merge: downloads the shard blob reports and merges
+  # them into ONE Vitest summary rendered natively on the run page (the
+  # github-actions reporter writes GITHUB_STEP_SUMMARY - no artifact download
+  # needed to read it). `vitest --merge-reports` exits non-zero on any test
+  # failure (so it gates), and the final step also fails if a shard job died
+  # without producing a blob. Keep the name "Unit tests (Vitest)" - it is the
+  # branch-protection required status-check context.
   unit:
     name: Unit tests (Vitest)
     needs: [unit-shards]
@@ -97,13 +109,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Gate on shard results
-        run: |
-          if [ "${{ needs.unit-shards.result }}" != "success" ]; then
-            echo "One or more unit shards did not succeed (result: ${{ needs.unit-shards.result }})"
-            exit 1
-          fi
-          echo "All unit shards passed."
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies (npm ci)
+        run: npm ci
+      - name: Download shard blob reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: unit-blob-*
+          merge-multiple: true
+          path: .vitest/blob
+      - name: Merge blob reports into one Vitest summary
+        run: npx vitest --merge-reports --reporter=github-actions --reporter=default
+      - name: Fail if any unit shard job did not succeed
+        if: ${{ needs.unit-shards.result != 'success' }}
+        run: exit 1
 
   build:
     name: Build (production bundle)
@@ -137,8 +162,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-        shardTotal: [10]
+        shardIndex: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        shardTotal: [9]
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -220,8 +245,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-        shardTotal: [10]
+        shardIndex: [1, 2, 3, 4, 5]
+        shardTotal: [5]
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
