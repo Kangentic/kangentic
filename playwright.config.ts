@@ -54,6 +54,13 @@ export default defineConfig({
       testDir: './tests/ui',
       testMatch: '**/*.spec.ts',
       timeout: 15_000,
+      // 4 workers (caps below the global 8): UI shards are headless Chromium
+      // pages and gain ~nothing from 8 on a 4-vCPU runner (~93s vs ~96s), but at
+      // 8 the page event loop starves under contention and timing-sensitive
+      // specs (e.g. Escape-to-close-dropdown in new-task-dialog) drop input and
+      // fail deterministically. The electron project keeps 8 - its per-file
+      // launch overlap is the real win there.
+      workers: 4,
       // CI-only single retry: the UI suite has a few timing-sensitive specs
       // (drag-and-drop settle/animation) that flake under load. A retry marks
       // them "flaky" (still visible) rather than failing the whole run on one
