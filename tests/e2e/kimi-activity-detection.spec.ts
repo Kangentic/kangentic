@@ -34,7 +34,7 @@ import {
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
-import type { ActivityState, SessionUsage, SessionEvent } from '../../src/shared/types';
+import type { ActivityState, SessionEvent } from '../../src/shared/types';
 
 // Each describe block launches its own Electron app against its own isolated
 // KANGENTIC_DATA_DIR and tmpDir (unique TEST_NAME per block). Running them in
@@ -107,66 +107,14 @@ test.describe('Kimi Agent - Activity Detection', () => {
     }, { timeout: 15000 }).toContain('idle');
   });
 
-  test('session history reader delivers usage data from wire.jsonl', async () => {
-    // 30s internal poll + setup exceeds 30s default.
-    test.slow();
-    const title = `Kimi Usage ${runId}`;
-    await createTask(page, title, 'Verify wire.jsonl pipeline delivers token + context telemetry');
-
-    const swimlaneIds = await getSwimlaneIds(page);
-    const taskId = await getTaskIdByTitle(page, title);
-
-    await moveTaskIpc(page, taskId, swimlaneIds.planning);
-    await waitForScrollback(page, 'MOCK_KIMI_SESSION:');
-
-    // The mock writes a wire.jsonl containing a StatusUpdate with
-    // context_usage=0.12, max_context_tokens=200000, and a token_usage
-    // payload (input_other=800, output=150, cache_read=1024,
-    // cache_creation=256). After the file watcher catches up, getUsage()
-    // should expose the parsed snapshot.
-    await expect.poll(async () => {
-      const usageMap = await page.evaluate(() => window.electronAPI.sessions.getUsage());
-      const usages = Object.values(usageMap as Record<string, SessionUsage>);
-      return usages.some((usage) => usage.contextWindow.contextWindowSize > 0);
-    }, { timeout: 30000, message: 'Expected wire.jsonl-derived usage with contextWindowSize > 0' }).toBe(true);
-
-    const usageMap = await page.evaluate(() => window.electronAPI.sessions.getUsage());
-    const usages = Object.values(usageMap as Record<string, SessionUsage>);
-    const kimiUsage = usages.find((usage) => usage.contextWindow.contextWindowSize > 0);
-    expect(kimiUsage).toBeDefined();
-    expect(kimiUsage!.contextWindow.contextWindowSize).toBe(200000);
-    // input_other(800) + cache_read(1024) + cache_creation(256) = 2080
-    expect(kimiUsage!.contextWindow.totalInputTokens).toBe(2080);
-    expect(kimiUsage!.contextWindow.totalOutputTokens).toBe(150);
-    expect(kimiUsage!.contextWindow.usedPercentage).toBeGreaterThan(0);
-  });
-
-  test('tool events from wire.jsonl appear in the events cache', async () => {
-    // 30s internal poll + setup exceeds 30s default.
-    test.slow();
-    const title = `Kimi Tools ${runId}`;
-    await createTask(page, title, 'Verify ToolCall/ToolResult parsing into events cache');
-
-    const swimlaneIds = await getSwimlaneIds(page);
-    const taskId = await getTaskIdByTitle(page, title);
-
-    await moveTaskIpc(page, taskId, swimlaneIds.planning);
-    await waitForScrollback(page, 'MOCK_KIMI_SESSION:');
-
-    await expect.poll(async () => {
-      const eventsMap = await page.evaluate(() => window.electronAPI.sessions.getEventsCache());
-      const allEvents = Object.values(eventsMap as Record<string, SessionEvent[]>).flat();
-      return allEvents.filter((event) => event.type === 'tool_start').length > 0;
-    }, { timeout: 30000, message: 'Expected tool_start event from wire.jsonl ToolCall' }).toBe(true);
-
-    const eventsMap = await page.evaluate(() => window.electronAPI.sessions.getEventsCache());
-    const allEvents = Object.values(eventsMap as Record<string, SessionEvent[]>).flat();
-    const toolStarts = allEvents.filter((event) => event.type === 'tool_start');
-    const toolEnds = allEvents.filter((event) => event.type === 'tool_end');
-    expect(toolStarts.length).toBeGreaterThan(0);
-    expect(toolEnds.length).toBeGreaterThan(0);
-    expect(toolStarts[0].detail).toBe('Shell');
-  });
+  // Removed 2026-06-19: 'session history reader delivers usage data from
+  // wire.jsonl' and 'tool events from wire.jsonl appear in the events cache'.
+  // Their StatusUpdate token-math and ToolCall/ToolResult parsing are fully
+  // covered by tests/unit/kimi-wire-parser.test.ts, and the IPC wiring
+  // (getUsage / getEventsCache) is agent-generic (also exercised by the codex
+  // and gemini E2E specs). They were the two slowest serial tests in this
+  // describe; dropping them keeps high-value Kimi-specific coverage (activity
+  // idle here, PlanDisplay and SubagentEvent below) without the redundancy.
 });
 
 test.describe('Kimi Agent - PlanDisplay notification detail round-trip (MOCK_KIMI_PLAN_DISPLAY=1)', () => {
