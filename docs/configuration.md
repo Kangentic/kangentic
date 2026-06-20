@@ -27,7 +27,7 @@ Both panels use a VS Code-style layout: a sidebar with tab navigation on the lef
 These settings appear only in App Settings and cannot be overridden per-project:
 
 - `sidebarVisible`, `boardLayout`, `sidebar.width`
-- `cardDensity`, `columnWidth`, `terminalPanelVisible`, `animationsEnabled`, `statusBarVisible`
+- `cardDensity`, `columnWidth`, `terminalPanelVisible`, `animationsEnabled`, `statusBarVisible`, `diffViewMode`
 - `restoreWindowPosition`
 - `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`
 - `terminal.panelHeight`, `terminal.showPreview`
@@ -64,6 +64,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `terminalPanelVisible` | boolean | `true` | Show the terminal panel below the board. Global-only. |
 | `animationsEnabled` | boolean | `true` | Enable CSS keyframe animations (idle pulse, dialog fades, status bar pulses). Global-only. |
 | `statusBarVisible` | boolean | `true` | Show the status bar at the bottom of the window. Global-only. |
+| `diffViewMode` | `'split'` \| `'inline'` | `'split'` | Default layout for viewing file diffs (`split` = side-by-side, `inline` = unified). The in-diff toggle and the Layout settings tab write this same key, so the choice sticks. Global-only. |
 | `skipDeleteConfirm` | boolean | `false` | Skip confirmation dialog on task delete. Written by the delete dialog's "don't ask again" checkbox. No longer surfaced in the Settings panel. |
 | `autoFocusIdleSession` | boolean | `false` | Auto-switch to session tab when agent goes idle. Idle tabs are always highlighted regardless of this setting. |
 | `restoreWindowPosition` | boolean | `true` | Remember window size and position between launches. Global-only. |

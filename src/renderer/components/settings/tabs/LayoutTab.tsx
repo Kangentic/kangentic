@@ -26,6 +26,15 @@ export function LayoutTab({ globalConfig }: { globalConfig: AppConfig }) {
           <option value="wide">Wide</option>
         </Select>
       </SettingRow>
+      <SettingRow {...settingProps('diffViewMode')}>
+        <Select
+          value={globalConfig.diffViewMode}
+          onChange={(event) => updateGlobal({ diffViewMode: event.target.value as AppConfig['diffViewMode'] })}
+        >
+          <option value="split">Side by side</option>
+          <option value="inline">Inline</option>
+        </Select>
+      </SettingRow>
       <SettingToggleRow
         {...settingProps('terminalPanelVisible')}
         checked={globalConfig.terminalPanelVisible !== false}

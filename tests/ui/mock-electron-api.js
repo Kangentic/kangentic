@@ -38,6 +38,7 @@
     terminalPanelVisible: true,
     animationsEnabled: true,
     statusBarVisible: true,
+    diffViewMode: 'split',
     terminal: {
       shell: null,
       fontFamily: 'Consolas, "Courier New", monospace',

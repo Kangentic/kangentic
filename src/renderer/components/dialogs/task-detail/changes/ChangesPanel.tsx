@@ -4,6 +4,7 @@ import { RefreshCw, ChevronsLeftRight, ChevronsRightLeft } from 'lucide-react';
 import { FileTreePanel } from './FileTreePanel';
 import { DiffViewer } from './DiffViewer';
 import { useSessionStore } from '../../../../stores/session-store';
+import { useConfigStore } from '../../../../stores/config-store';
 import type { GitDiffFileEntry, GitDiffFilesResult, GitFileContentResult } from '../../../../../shared/types';
 
 // Scoped error boundary prevents Monaco failures from crashing the entire app.
@@ -124,7 +125,11 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
   const [fileContent, setFileContent] = useState<DisplayedFileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
-  const [viewMode, setViewMode] = useState<'split' | 'inline'>('split');
+  // Split-vs-inline diff rendering is a single global preference: the in-diff
+  // toggle and the Layout settings tab read and write the same config key, so
+  // the choice sticks across every diff, all mount points, and restarts.
+  const viewMode = useConfigStore((state) => state.config.diffViewMode);
+  const updateConfig = useConfigStore((state) => state.updateConfig);
 
   // Refs for values needed inside callbacks to avoid stale closures
   // and subscription churn on every file selection or re-render.
@@ -349,7 +354,7 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
                 scrollKey={effectiveScrollKey}
                 status={selectedFileEntry?.status ?? 'M'}
                 viewMode={viewMode}
-                onViewModeChange={setViewMode}
+                onViewModeChange={(mode) => updateConfig({ diffViewMode: mode })}
                 binary={selectedFileEntry?.binary ?? false}
                 trailingControls={panelControls ?? undefined}
               />

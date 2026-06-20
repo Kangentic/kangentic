@@ -1078,6 +1078,7 @@ export interface AppConfig {
   terminalPanelVisible: boolean;
   animationsEnabled: boolean;
   statusBarVisible: boolean;
+  diffViewMode: 'split' | 'inline'; // split = side-by-side, inline = unified
 
   terminal: {
     shell: string | null; // null = auto-detect
@@ -1243,6 +1244,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   terminalPanelVisible: true,
   animationsEnabled: true,
   statusBarVisible: true,
+  diffViewMode: 'split',
   terminal: {
     shell: null,
     fontFamily: 'Menlo, Consolas, "Courier New", monospace',
