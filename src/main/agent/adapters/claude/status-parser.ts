@@ -102,6 +102,7 @@ export class ClaudeStatusParser {
               iconKind: 'session',
               usedPercentage: clampPercentage(fiveHourRaw.used_percentage),
               resetsAt: finiteOrZero(fiveHourRaw.resets_at),
+              windowDurationSeconds: 5 * 60 * 60,
             },
             {
               id: 'seven-day',
@@ -109,6 +110,7 @@ export class ClaudeStatusParser {
               iconKind: 'period',
               usedPercentage: clampPercentage(sevenDayRaw.used_percentage),
               resetsAt: finiteOrZero(sevenDayRaw.resets_at),
+              windowDurationSeconds: 7 * 24 * 60 * 60,
             },
           ]
         : undefined;

@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { ArrowUp, ArrowDown, Loader2, Clock, Calendar, Wrench, Hourglass, ChevronDown } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { RateLimitWindow } from '../../../shared/types';
@@ -6,6 +6,7 @@ import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { getProgressColor } from '../../utils/color-lerp';
+import { windowElapsedPercentage } from '../../utils/rate-limit-window';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
 import { formatDateTime, formatTime } from '../../lib/datetime';
@@ -38,6 +39,65 @@ const RATE_LIMIT_ICON: Record<RateLimitWindow['iconKind'], LucideIcon> = {
   session: Clock,
   period: Calendar,
 };
+
+/**
+ * One rate-limit window row: icon + usage track + percent. The colored fill is
+ * driven by `usedPercentage` (budget spent); the thin vertical line overlaid on
+ * the track marks how far through the time window we are (elapsed time, not
+ * budget), creeping right as the reset time draws nearer.
+ *
+ * Isolated as a leaf with its own interval so the periodic re-render that advances
+ * the time marker touches only this row, not the whole ContextBar (model picker,
+ * context bar, rate-limit math). Same rationale as ElapsedTime. A 30s tick is
+ * ample: the 5h marker moves ~0.0056%/s, imperceptible per second. The interval
+ * is component-local and cleared on unmount, so it needs no HMR Pattern A
+ * preservation (see .claude/rules/hmr-patterns.md).
+ */
+function RateLimitBar({ limitWindow }: { limitWindow: RateLimitWindow }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const intervalId = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  const Icon = RATE_LIMIT_ICON[limitWindow.iconKind];
+  const pctRow = Math.round(limitWindow.usedPercentage);
+  // windowDurationSeconds is optional: a window with no fixed duration draws no
+  // time marker, so only compute the position when the adapter supplied one.
+  const markerPct = limitWindow.windowDurationSeconds === undefined
+    ? null
+    : windowElapsedPercentage(limitWindow.resetsAt, limitWindow.windowDurationSeconds, now);
+
+  return (
+    <span className="flex items-center gap-1.5 flex-1 min-w-0">
+      <Icon size={11} className="text-fg-faint flex-shrink-0" aria-label={limitWindow.label} />
+      {/* No overflow-hidden: the marker line below extends a couple px past the
+          track so it stays visible where it overlaps the fill. The fill keeps
+          its own rounded-full, so the track still reads as a pill. */}
+      <span className="relative flex-1 min-w-[40px] h-1.5 bg-surface-hover rounded-full">
+        <span
+          className="block h-full rounded-full transition-[width,background-color] duration-300"
+          style={{
+            width: `${Math.min(pctRow, 100)}%`,
+            minWidth: pctRow > 0 ? '2px' : undefined,
+            backgroundColor: getProgressColor(pctRow),
+          }}
+        />
+        {markerPct !== null && (
+          <span
+            data-testid="rate-limit-time-marker"
+            aria-hidden="true"
+            className="absolute -inset-y-0.5 w-px bg-fg/70"
+            style={{ left: `${markerPct}%` }}
+            title={formatResetTime(limitWindow.resetsAt)}
+          />
+        )}
+      </span>
+      <span className="flex-shrink-0">{pctRow}%</span>
+    </span>
+  );
+}
 
 /**
  * Visual context window usage bar displayed below terminal areas. Same
@@ -257,26 +317,9 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
             title={`${tooltipBody}${updatedSuffix}`}
             data-testid="rate-limits-pill"
           >
-            {rateLimits.map((limitWindow) => {
-              const Icon = RATE_LIMIT_ICON[limitWindow.iconKind];
-              const pctRow = Math.round(limitWindow.usedPercentage);
-              return (
-                <span key={limitWindow.id} className="flex items-center gap-1.5 flex-1 min-w-0">
-                  <Icon size={11} className="text-fg-faint flex-shrink-0" aria-label={limitWindow.label} />
-                  <span className="flex-1 min-w-[40px] h-1.5 bg-surface-hover rounded-full overflow-hidden">
-                    <span
-                      className="block h-full rounded-full transition-[width,background-color] duration-300"
-                      style={{
-                        width: `${Math.min(pctRow, 100)}%`,
-                        minWidth: pctRow > 0 ? '2px' : undefined,
-                        backgroundColor: getProgressColor(pctRow),
-                      }}
-                    />
-                  </span>
-                  <span className="flex-shrink-0">{pctRow}%</span>
-                </span>
-              );
-            })}
+            {rateLimits.map((limitWindow) => (
+              <RateLimitBar key={limitWindow.id} limitWindow={limitWindow} />
+            ))}
           </span>
         );
       })()}

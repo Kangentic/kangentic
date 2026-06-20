@@ -146,14 +146,14 @@ function makePreConfig(): string {
       var result = {};
       result['${SESSION_STALE_ID}'] = Object.assign({}, baseUsage, {
         rateLimits: [
-          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
-          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 4, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
+          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsAt: Math.floor(Date.now() / 1000) + 3600, windowDurationSeconds: 5 * 60 * 60 },
+          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 4, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
         ],
       });
       result['${SESSION_FRESH_ID}'] = Object.assign({}, baseUsage, {
         rateLimits: [
-          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 73, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
-          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 41, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
+          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 73, resetsAt: Math.floor(Date.now() / 1000) + 3600, windowDurationSeconds: 5 * 60 * 60 },
+          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 41, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
         ],
       });
       return result;
@@ -206,6 +206,36 @@ test.describe('Rate limits cross-session sync', () => {
     await expect(pill).toBeVisible();
     await expect(pill).toContainText('73%');
     await expect(pill).toContainText('41%');
+
+    await page.locator('[data-testid="task-detail-close"]').click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+  });
+
+  test('each rate-limit bar shows a time-elapsed marker positioned by time into the window', async () => {
+    await page.locator(`[data-task-id="${TASK_FRESH_ID}"]`).first().click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+    const contextBar = page.locator('[data-testid="task-detail-dialog"] [data-testid="usage-bar"].min-h-8');
+    await expect(contextBar).toBeVisible({ timeout: 10000 });
+
+    const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
+    await expect(pill).toBeVisible();
+
+    // One marker per window (5h session + 7d weekly).
+    const markers = pill.locator('[data-testid="rate-limit-time-marker"]');
+    await expect(markers).toHaveCount(2);
+
+    // 5h window: resetsAt is now + 3600s of an 18000s window, so ~80% of the
+    // window has elapsed. Tolerance absorbs the seconds between fixture build
+    // and render, and avoids a pixel-exact assertion (cross-platform-parity).
+    const fiveHourLeft = await markers.nth(0).evaluate((el) => parseFloat((el as HTMLElement).style.left));
+    expect(fiveHourLeft).toBeGreaterThan(75);
+    expect(fiveHourLeft).toBeLessThan(85);
+
+    // 7d window: resetsAt is now + 5d of a 7d window, so ~28.6% has elapsed.
+    const sevenDayLeft = await markers.nth(1).evaluate((el) => parseFloat((el as HTMLElement).style.left));
+    expect(sevenDayLeft).toBeGreaterThan(23);
+    expect(sevenDayLeft).toBeLessThan(34);
 
     await page.locator('[data-testid="task-detail-close"]').click();
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });

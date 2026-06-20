@@ -67,6 +67,7 @@ function makeRateLimits(fiveHourPct: number, sevenDayPct: number): NonNullable<S
       iconKind: 'session',
       usedPercentage: fiveHourPct,
       resetsAt: Math.floor(Date.now() / 1000) + 3600,
+      windowDurationSeconds: 5 * 60 * 60,
     },
     {
       id: 'seven-day',
@@ -74,6 +75,7 @@ function makeRateLimits(fiveHourPct: number, sevenDayPct: number): NonNullable<S
       iconKind: 'period',
       usedPercentage: sevenDayPct,
       resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5,
+      windowDurationSeconds: 7 * 24 * 60 * 60,
     },
   ];
 }
