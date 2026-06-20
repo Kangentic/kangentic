@@ -1,4 +1,4 @@
-import type { AppConfig } from '../../../../shared/types';
+import type { AppConfig, TerminalCursorStyle } from '../../../../shared/types';
 import { DEFAULT_CONFIG } from '../../../../shared/types';
 import { SectionHeader, SettingRow, Select, CompactToggleList, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
@@ -66,11 +66,12 @@ export function TerminalTab({ config, globalConfig, shells }: {
       <SettingRow {...settingProps('terminal.cursorStyle')}>
         <Select
           value={config.terminal.cursorStyle}
-          onChange={(event) => updateProject({ terminal: { cursorStyle: event.target.value as 'block' | 'underline' | 'bar' } })}
+          onChange={(event) => updateProject({ terminal: { cursorStyle: event.target.value as TerminalCursorStyle } })}
         >
           <option value="block">Block</option>
           <option value="underline">Underline</option>
           <option value="bar">Bar</option>
+          <option value="none">None (hidden)</option>
         </Select>
       </SettingRow>
 

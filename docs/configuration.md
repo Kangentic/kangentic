@@ -89,7 +89,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `terminal.panelHeight` | number | `250` | Bottom panel height (px). Global-only. |
 | `terminal.panelCollapsed` | boolean | `false` | Whether the bottom terminal panel is collapsed. Global-only. |
 | `terminal.scrollbackLines` | number | `5000` | Lines kept in the visible xterm scrollback (1000-100000). Full session history is preserved separately by the main-process PTY buffer for replay regardless of this value. |
-| `terminal.cursorStyle` | `'block'` \| `'underline'` \| `'bar'` | `'block'` | Terminal cursor appearance |
+| `terminal.cursorStyle` | `'block'` \| `'underline'` \| `'bar'` \| `'none'` | `'block'` | Terminal cursor appearance. `'none'` hides the cursor entirely (focused and unfocused). |
 
 ### agent.*
 

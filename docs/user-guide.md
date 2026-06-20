@@ -346,7 +346,7 @@ Choose from 10 themes:
 | Font Size | Terminal text size in pixels |
 | Font Family | CSS font-family for the terminal |
 | Scrollback Lines | Lines kept in the visible scrollback (1000 to 100000, default 5000). Full session history is preserved for replay regardless of this value. |
-| Cursor Style | Terminal cursor appearance (block, underline, or bar) |
+| Cursor Style | Terminal cursor appearance (block, underline, bar, or none - none hides the cursor entirely) |
 
 ### Context Bar
 

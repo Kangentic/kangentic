@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
+import type { TerminalCursorStyle } from '../../shared/types';
 import { FitAddon } from '../addons/fit-addon';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { cleanSelection, enableTerminalClipboard } from '../utils/terminal-clipboard';
@@ -25,11 +26,14 @@ if (import.meta.hot) {
   });
 }
 
-/** Fixed dark terminal theme -- Claude Code's TUI is designed for dark backgrounds. */
+/** Fixed dark terminal theme -- Claude Code's TUI is designed for dark backgrounds.
+ *  `cursor` is the cursor color and `cursorAccent` the color of the glyph under a
+ *  block cursor; they render a visible cursor. The `'none'` cursor style hides it
+ *  by overriding both to the background color (see initTerminal). */
 const TERMINAL_THEME = {
   background: '#18181b',
   foreground: '#e4e4e7',
-  cursor: '#18181b',
+  cursor: '#e4e4e7',
   cursorAccent: '#18181b',
   selectionBackground: 'rgba(58, 130, 246, 0.35)',
   black: '#18181b',
@@ -55,7 +59,7 @@ interface UseTerminalOptions {
   fontFamily?: string;
   fontSize?: number;
   scrollbackLines?: number;
-  cursorStyle?: 'block' | 'underline' | 'bar';
+  cursorStyle?: TerminalCursorStyle;
   shellName?: string;
   /** Let Escape bubble (to close the containing dialog) when the mouse pointer
    *  is outside the terminal. Used by the task detail dialog. */
@@ -99,15 +103,28 @@ export function useTerminal(options: UseTerminalOptions) {
   const initTerminal = useCallback(() => {
     if (!terminalRef.current || xtermRef.current) return;
 
-    const xtermTheme = TERMINAL_THEME;
+    // The `'none'` style hides the cursor by painting it the background color
+    // (xterm's `cursorStyle` has no `'none'`; only `cursorInactiveStyle` does,
+    // so the theme override is what hides the focused cursor too). Any other
+    // style renders a visible cursor with the default theme colors.
+    const hideCursor = options.cursorStyle === 'none';
+    const xtermTheme = hideCursor
+      ? { ...TERMINAL_THEME, cursor: TERMINAL_THEME.background, cursorAccent: TERMINAL_THEME.background }
+      : TERMINAL_THEME;
+    const xtermCursorStyle = options.cursorStyle && options.cursorStyle !== 'none'
+      ? options.cursorStyle
+      : 'block';
 
     const terminal = new Terminal({
       fontFamily: options.fontFamily || 'Menlo, Consolas, "Courier New", monospace',
       fontSize: options.fontSize || 14,
       theme: xtermTheme,
       scrollback: options.scrollbackLines || 5000,
+      // Blink stays off: Claude Code's TUI flickers with a blinking cursor, a
+      // known issue even in the official terminal app.
       cursorBlink: false,
-      cursorStyle: options.cursorStyle || 'block',
+      cursorStyle: xtermCursorStyle,
+      cursorInactiveStyle: hideCursor ? 'none' : 'outline',
       allowProposedApi: true,
     });
 

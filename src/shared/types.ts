@@ -1069,6 +1069,11 @@ export interface NotificationConfig {
   cooldownSeconds: number;
 }
 
+/** Terminal cursor appearance. `'none'` hides the cursor entirely (focused and
+ *  unfocused), for users who find the cursor distracting while a TUI like Claude
+ *  Code redraws. The other three map directly to xterm's focused `cursorStyle`. */
+export type TerminalCursorStyle = 'block' | 'underline' | 'bar' | 'none';
+
 export interface AppConfig {
   theme: ThemeMode;
   sidebarVisible: boolean;
@@ -1087,7 +1092,7 @@ export interface AppConfig {
     panelHeight: number; // persisted terminal panel height in px
     panelCollapsed: boolean; // persisted collapsed state
     scrollbackLines: number;
-    cursorStyle: 'block' | 'underline' | 'bar';
+    cursorStyle: TerminalCursorStyle;
   };
 
   agent: {
