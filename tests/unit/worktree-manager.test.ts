@@ -44,13 +44,13 @@ vi.mock('node:fs', () => ({
 const { mockSpawn, recordedSpawnCalls, spawnOverrides } = vi.hoisted(() => {
   const recordedSpawnCalls: Array<{ command: string; args: readonly string[] }> = [];
   const spawnOverrides: Array<{
-    match: (args: readonly string[]) => boolean;
+    match: (args: readonly string[], command: string) => boolean;
     behavior: { exitCode?: number; stderr?: string; stdout?: string };
   }> = [];
 
   const mockSpawn = vi.fn((command: string, args: readonly string[]) => {
     recordedSpawnCalls.push({ command, args });
-    const override = spawnOverrides.find((entry) => entry.match(args));
+    const override = spawnOverrides.find((entry) => entry.match(args, command));
     const behavior = override?.behavior ?? { exitCode: 0 };
 
     const EventEmitter = require('node:events').EventEmitter;
@@ -79,10 +79,19 @@ vi.mock('node:child_process', () => ({
   spawn: mockSpawn,
 }));
 
+// Stub node_modules linking so we can assert WHETHER it runs (the git.linkNodeModules
+// gate) without touching original-fs. removeNodeModulesPath is stubbed to a no-op
+// resolve; the removeWorktree tests below only assert the git remove spawn.
+vi.mock('../../src/main/git/node-modules-link', () => ({
+  linkNodeModules: vi.fn(() => Promise.resolve()),
+  removeNodeModulesPath: vi.fn(() => Promise.resolve()),
+}));
+
 import fs from 'node:fs';
 import { WorktreeManager, GitQueuePriority } from '../../src/main/git/worktree-manager';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../src/main/git/git-checks';
 import { clearFetchCache } from '../../src/main/git/fetch-throttle';
+import { linkNodeModules } from '../../src/main/git/node-modules-link';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -203,6 +212,70 @@ describe('WorktreeManager -- sparse-checkout', () => {
       (c) => String(c[0]).includes('.claude'),
     );
     expect(rmCalls).toHaveLength(0);
+  });
+});
+
+// ── initScript + linkNodeModules ──────────────────────────────────────────
+
+describe('WorktreeManager -- initScript and node_modules linking', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearFetchCache();
+    recordedSpawnCalls.length = 0;
+    spawnOverrides.length = 0;
+    setupCreateWorktreeMocks();
+  });
+
+  it('runs the initScript in the new worktree after creation', async () => {
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, {
+      initScript: 'echo setup',
+    });
+
+    const initCall = recordedSpawnCalls.find((call) => call.command === 'echo setup');
+    expect(initCall).toBeDefined();
+  });
+
+  it('fails worktree creation when the initScript exits non-zero (fatal)', async () => {
+    spawnOverrides.push({
+      match: (_args, command) => command === 'failing-script',
+      behavior: { exitCode: 1, stderr: 'boom' },
+    });
+
+    const mgr = new WorktreeManager('/project');
+    await expect(
+      mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, { initScript: 'failing-script' }),
+    ).rejects.toThrow(/boom/);
+  });
+
+  it('skips the initScript when it is empty or whitespace', async () => {
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, { initScript: '   ' });
+
+    // Only git spawns (fetch); no shell command spawned for the blank script.
+    const nonGitSpawns = recordedSpawnCalls.filter((call) => call.command !== 'git');
+    expect(nonGitSpawns).toHaveLength(0);
+  });
+
+  it('links node_modules by default (option omitted)', async () => {
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree('abcd1234-0000', 'Test task');
+
+    expect(vi.mocked(linkNodeModules)).toHaveBeenCalledTimes(1);
+  });
+
+  it('links node_modules when linkNodeModules is true', async () => {
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, { linkNodeModules: true });
+
+    expect(vi.mocked(linkNodeModules)).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT link node_modules when linkNodeModules is false', async () => {
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, { linkNodeModules: false });
+
+    expect(vi.mocked(linkNodeModules)).not.toHaveBeenCalled();
   });
 });
 

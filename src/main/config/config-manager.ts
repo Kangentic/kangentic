@@ -55,6 +55,7 @@ export function pickOverridableSubset(source: DeepPartial<AppConfig>): Partial<A
     defaultBaseBranch: source.git?.defaultBaseBranch,
     copyFiles: source.git?.copyFiles,
     initScript: source.git?.initScript,
+    linkNodeModules: source.git?.linkNodeModules,
     prRefreshIntervalMinutes: source.git?.prRefreshIntervalMinutes,
   });
   if (git) result.git = git;

@@ -51,8 +51,9 @@ When a removal fails because a process still pins the worktree, `removeWorktree`
 9. `git config kangentic.baseBranch <baseBranch>` (in worktree)
 10. Set up sparse-checkout (see below)
 11. Copy optional files from repo root (configured via `config.git.copyFiles`)
-12. Create `node_modules` junction/symlink to root repo's `node_modules`
-13. Pre-populate `~/.claude.json` trust entry for the worktree path
+12. Create `node_modules` junction/symlink to root repo's `node_modules` (skipped when `config.git.linkNodeModules` is `false`, so a worktree can own its own dependencies)
+13. Run the Post-Worktree Script if `config.git.initScript` is set (see below)
+14. Pre-populate `~/.claude.json` trust entry for the worktree path
 
 ### Windows Long Paths
 
@@ -64,6 +65,16 @@ Kangentic enables `core.longpaths` in two places:
 2. **Worktree local config** - after creation, `git config core.longpaths true` is set in the worktree's local config so all subsequent operations (sparse-checkout, agent commits, merges) also use extended-length paths.
 
 This setting uses the `\\?\` extended-length path prefix on Windows. macOS and Linux have 1024-4096 byte `PATH_MAX` limits and are unaffected - the setting is only applied on `process.platform === 'win32'`.
+
+## node_modules Linking and the Post-Worktree Script
+
+By default Kangentic symlinks (junction on Windows, directory symlink on POSIX) the root repo's `node_modules` into each new worktree so agents can run typecheck/tests immediately without a slow `npm install`. The link is non-fatal: if the root has no `node_modules` yet, the step is skipped silently.
+
+The shared link has a trade-off: the worktree runs the *root's* dependencies, not the branch's, and a worktree `npm install` writes back through the link into the main repo. For a branch that changes dependencies, set `config.git.linkNodeModules` to `false` to skip linking, then use the Post-Worktree Script to install the worktree's own dependencies.
+
+The **Post-Worktree Script** (`config.git.initScript`, surfaced as "Post-Worktree Script" in Git settings) runs once in each new worktree, after files are copied and `node_modules` is linked (or deliberately skipped). It runs through the platform shell - `cmd.exe` on Windows, `/bin/sh` on POSIX - so the same configured command works cross-platform for simple cases like `npm install`. While it runs, the task card shows a "Running setup script..." phase.
+
+The script is **fatal**: a non-zero exit, a timeout (10-minute cap), or cancellation (a superseding move or app shutdown) rejects worktree creation and fails the task move / agent spawn, surfacing the captured output. The worktree directory is left on disk on failure, exactly as a failed file copy is; the next attempt reuses or recreates it.
 
 ## Sparse-Checkout
 

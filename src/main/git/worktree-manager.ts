@@ -7,7 +7,16 @@ import { linkNodeModules, removeNodeModulesPath } from './node-modules-link';
 import { fetchIfStale } from './fetch-throttle';
 import { removeWithRetry, type RemoveWithRetryOptions } from './rm-with-retry';
 import { runGitWithTimeout as runGitWithTimeoutShared } from './git-spawn';
+import { runInitScript, INIT_SCRIPT_TIMEOUT_MS } from './run-init-script';
 import { reapProcessesForWorktree } from './zombie-reaper';
+
+/**
+ * Re-emit the `init-script` progress label this often while the init script
+ * runs. spawn-progress's SPAWN_PROGRESS_TTL_MS is 120s, so a multi-minute
+ * install would otherwise be TTL-pruned from the queryable map on the next
+ * syncSessions/HMR reconcile; the heartbeat keeps the card label alive.
+ */
+const INIT_SCRIPT_PROGRESS_HEARTBEAT_MS = 30_000;
 
 /**
  * Wall-clock ceiling for git ops in the worktree-removal path. Small repos
@@ -366,7 +375,7 @@ export class WorktreeManager {
    */
   async ensureWorktree(
     task: { id: string; title: string; worktree_path: string | null; branch_name?: string | null; base_branch?: string | null; use_worktree?: number | null },
-    gitConfig: { worktreesEnabled: boolean; defaultBaseBranch: string; copyFiles: string[] },
+    gitConfig: { worktreesEnabled: boolean; defaultBaseBranch: string; copyFiles: string[]; initScript?: string | null; linkNodeModules?: boolean },
     options?: { onProgress?: (phase: string) => void; signal?: AbortSignal },
   ): Promise<{ worktreePath: string; branchName: string } | null> {
     // Trust worktree_path only if the worktree still genuinely exists on disk.
@@ -387,7 +396,7 @@ export class WorktreeManager {
 
     const defaultBaseBranch = gitConfig.defaultBaseBranch || 'main';
     const baseBranch = task.base_branch || defaultBaseBranch;
-    return this.createWorktree(task.id, task.title, baseBranch, gitConfig.copyFiles, task.branch_name, { onProgress: options?.onProgress, signal: options?.signal, defaultBaseBranch });
+    return this.createWorktree(task.id, task.title, baseBranch, gitConfig.copyFiles, task.branch_name, { onProgress: options?.onProgress, signal: options?.signal, defaultBaseBranch, initScript: gitConfig.initScript, linkNodeModules: gitConfig.linkNodeModules });
   }
 
   /**
@@ -404,7 +413,7 @@ export class WorktreeManager {
     baseBranch: string = 'main',
     copyFiles: string[] = [],
     customBranchName?: string | null,
-    options?: { onProgress?: (phase: string) => void; signal?: AbortSignal; defaultBaseBranch?: string },
+    options?: { onProgress?: (phase: string) => void; signal?: AbortSignal; defaultBaseBranch?: string; initScript?: string | null; linkNodeModules?: boolean },
   ): Promise<{ worktreePath: string; branchName: string }> {
     const shortId = taskId.slice(0, 8);
     const defaultBaseBranch = options?.defaultBaseBranch ?? 'main';
@@ -595,8 +604,40 @@ export class WorktreeManager {
     }
 
     // Link node_modules from root so worktree agents can run typecheck/test
-    // without a slow npm install. Non-fatal if it fails.
-    await linkNodeModules(worktreePath, this.projectPath);
+    // without a slow npm install. Non-fatal if it fails. Linking is the default
+    // (undefined/true link); only an explicit `false` skips it -- e.g. so an
+    // initScript install can own the worktree's deps instead of sharing root's.
+    const shouldLinkNodeModules = options?.linkNodeModules ?? true;
+    if (shouldLinkNodeModules) {
+      await linkNodeModules(worktreePath, this.projectPath);
+    }
+
+    // Run the user's Post-Worktree Script (git.initScript) last, so it sees the
+    // copied files and the linked (or deliberately absent) node_modules. A
+    // non-zero exit, timeout, or abort is FATAL: it rejects createWorktree,
+    // failing the task move / agent spawn, exactly like a failed copyFile above.
+    const initScript = options?.initScript?.trim();
+    if (initScript) {
+      options?.onProgress?.('init-script');
+      // npm install can take minutes; re-emit the phase so the card label
+      // survives the 120s spawn-progress TTL during a long run.
+      const heartbeat = setInterval(() => options?.onProgress?.('init-script'), INIT_SCRIPT_PROGRESS_HEARTBEAT_MS);
+      try {
+        console.log(`[INIT-SCRIPT] Running post-worktree script in ${worktreePath}: ${initScript}`);
+        const { stdout, stderr } = await runInitScript(initScript, worktreePath, {
+          timeoutMs: INIT_SCRIPT_TIMEOUT_MS,
+          signal: options?.signal,
+        });
+        if (stdout.trim()) console.log(`[INIT-SCRIPT] stdout:\n${stdout.trim()}`);
+        if (stderr.trim()) console.log(`[INIT-SCRIPT] stderr:\n${stderr.trim()}`);
+        console.log('[INIT-SCRIPT] Post-worktree script completed');
+      } catch (error) {
+        console.error(`[INIT-SCRIPT] Post-worktree script failed in ${worktreePath}:`, error);
+        throw error;
+      } finally {
+        clearInterval(heartbeat);
+      }
+    }
 
     return { worktreePath, branchName };
   }

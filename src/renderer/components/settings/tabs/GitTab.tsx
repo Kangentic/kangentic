@@ -58,6 +58,11 @@ export function GitTab({ config }: { config: AppConfig }) {
           className={`${INPUT_CLASS} placeholder-fg-faint`}
         />
       </SettingRow>
+      <SettingToggleRow
+        {...settingProps('git.linkNodeModules')}
+        checked={config.git.linkNodeModules}
+        onChange={(value) => updateProject({ git: { linkNodeModules: value } })}
+      />
       <SettingRow {...settingProps('git.prRefreshIntervalMinutes')}>
         <Select
           value={config.git.prRefreshIntervalMinutes == null ? 'off' : String(config.git.prRefreshIntervalMinutes)}
