@@ -282,7 +282,7 @@ test.describe('Settings Panel', () => {
     await expect(page.getByText('Give agents tools to interact with your board')).toBeVisible();
 
     // Tools list should be visible (spot-check a few)
-    await expect(page.getByText('Create Task')).toBeVisible();
+    await expect(page.getByRole('list').getByText('Create Task')).toBeVisible();
     await expect(page.getByText('Board Summary')).toBeVisible();
     await expect(page.getByText('Session History')).toBeVisible();
 
