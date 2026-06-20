@@ -54,11 +54,18 @@ async function start() {
     // Fresh data dir every boot so a previous (possibly crashed) preview's clones
     // never persist. The node_modules junction lives OUTSIDE .kangentic/ and clones
     // are source-only (no junctions), so this rm is safe.
-    fs.rmSync(ephemeralDataDir, { recursive: true, force: true });
+    // force suppresses ENOENT but not EBUSY/EPERM from a still-locked handle a
+    // previous (crashed) preview left behind; retry briefly, then degrade to a
+    // warning rather than crashing the dev server before the build starts.
+    try {
+      fs.rmSync(ephemeralDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch (rmError) {
+      console.warn('[dev] could not fully clear the ephemeral data dir (a previous preview may still hold a lock):', rmError);
+    }
     fs.mkdirSync(ephemeralDataDir, { recursive: true });
     fs.writeFileSync(path.join(ephemeralDataDir, 'config.json'), JSON.stringify({ hasCompletedFirstRun: true }, null, 2));
     const preClone = (cloneDir) => new Promise((resolve) => {
-      const cloneProc = spawn('git', ['clone', '--no-checkout', '--local', resolvedTarget, cloneDir], { stdio: 'inherit' });
+      const cloneProc = spawn('git', ['clone', '--no-checkout', '--local', resolvedTarget, cloneDir], { stdio: 'inherit', windowsHide: true });
       cloneProc.on('close', () => resolve());
       cloneProc.on('error', (cloneErr) => { console.warn('[dev] preview pre-clone failed:', cloneErr); resolve(); });
     });

@@ -224,10 +224,10 @@ Sessions are resumable on next launch via `--resume <agent_session_id>` from the
 ## Terminal Ownership Handoff
 
 - Each PTY session spawns exactly one Claude Code CLI process.
-- The bottom panel and task detail dialog share that single process.
-- `dialogSessionId` in `SessionStore` ensures mutual exclusion.
-- When the dialog opens: the panel unmounts its xterm instance.
-- When the dialog closes: the panel recreates xterm from PTY scrollback buffer.
+- The bottom panel and the modeless task-detail windows share that process, one xterm per session at a time.
+- `dialogSessionIds: string[]` in `SessionStore` lists every session owned by an open task-detail window. It replaced the scalar `dialogSessionId` once task detail became modeless and windows can stack.
+- When a window claims a session: the panel unmounts that session's xterm instance.
+- When the window releases it: the panel recreates xterm from the PTY scrollback buffer.
 - This prevents duplicate xterm instances from sending conflicting resize calls.
 
 ## Project-Scoped Session State
@@ -236,7 +236,7 @@ Sessions from non-active projects must not interfere with the active project's t
 
 1. **IPC event forwarding** -- All session events (`data`, `usage`, `activity`, `event`, `status`, `exit`) include the session's `projectId`. The renderer filters events by comparing against the current project.
 2. **Cache getters** -- `getUsage`, `getActivity`, and `getEventsCache` accept an optional `projectId` parameter. When provided, `SessionManager` returns only data for sessions belonging to that project.
-3. **Store scoping** -- `syncSessions()` fetches usage and events scoped to the current project, but activity unscoped (sidebar badges need cross-project data). On project switch, `activeSessionId`, `dialogSessionId`, `openTaskId`, `sessionUsage`, and `sessionEvents` are cleared; `sessions` and `sessionActivity` are preserved for the sidebar. A generation counter invalidates any in-flight `syncSessions()` calls from the previous project, and a snapshot-based merge preserves IPC-delivered status updates that arrive during the async gap.
+3. **Store scoping** -- `syncSessions()` fetches usage and events scoped to the current project, but activity unscoped (sidebar badges need cross-project data). On project switch, `activeSessionId`, `dialogSessionIds`, `openTaskId`, `sessionUsage`, and `sessionEvents` are cleared; `sessions` and `sessionActivity` are preserved for the sidebar. A generation counter invalidates any in-flight `syncSessions()` calls from the previous project, and a snapshot-based merge preserves IPC-delivered status updates that arrive during the async gap.
 
 **Sidebar exception:** Activity state (`thinking`/`idle`) is always forwarded and stored regardless of project, so the sidebar can show badge counts for all projects. Auto-focus and sync triggers are gated to the current project only.
 
