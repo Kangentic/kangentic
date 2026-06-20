@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { gitHubPRConnector } from '../../src/main/pty/pr/github-pr-detector';
-import { matchesPRCommand, detectPR, detectCanonicalPR } from '../../src/main/pty/pr/pr-connectors';
+import { gitHubPRConnector } from '../../src/main/pr/adapters/github/github-connector';
+import { matchesPRCommand, detectPR, detectCanonicalPR } from '../../src/main/pr/pr-registry';
 
 describe('gitHubPRConnector.extract', () => {
   it('extracts PR URL from gh pr create bare output', () => {

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
 import { TaskRepository } from '../../db/repositories/task-repository';
-import { sessionOutputPaths } from '../../engine/session-paths';
+import { sessionOutputPaths } from '../../transition-engine/session-paths';
 import { agentRegistry } from '../../agent/agent-registry';
 import { resolveTask } from './task-resolver';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';

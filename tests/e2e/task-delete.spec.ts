@@ -28,6 +28,7 @@ import {
   createTempProject,
   cleanupTempProject,
   getTestDataDir,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -77,7 +78,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await app?.close();
+  await closeApp(app);
   cleanupTempProject(TEST_NAME);
 });
 
@@ -117,6 +118,12 @@ async function dragTaskToColumn(taskTitle: string, targetColumn: string) {
   await page.mouse.up();
   // Confirm landing instead of a fixed 500ms post-drop wait.
   await expect(target.locator(`text=${taskTitle}`).first()).toBeVisible({ timeout: 5000 });
+  // Wait for the dnd-kit DragOverlay drop animation to finish. dnd-kit freezes
+  // the overlay's children (the TaskCard) for up to 250ms after mouse.up(). If a
+  // click fires before the overlay is gone, two TaskCard instances for the same
+  // task.id are live simultaneously and both render a TaskDetailDialog, producing
+  // a strict-mode violation. Poll until the overlay element is absent.
+  await expect(page.locator('.drag-overlay')).toHaveCount(0, { timeout: 2000 });
 }
 
 /** Wait for a running session to appear for the given task title */
@@ -176,8 +183,11 @@ test.describe('Task Delete', () => {
     const card = codeReviewColumn.locator(`text=${title}`).first();
     await card.click();
 
-    // Open kebab menu and click Archive (no confirmation needed)
-    const dialog = page.locator('.fixed.inset-0');
+    // Open kebab menu and click Archive (no confirmation needed).
+    // Use data-testid to target the task-detail content panel specifically -
+    // the backdrop class .fixed.inset-0 is ambiguous when a confirm dialog
+    // briefly coexists with the detail dialog (strict-mode violation on Linux).
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 3000 });
     await clickKebabAction(dialog, 'Archive');
 
@@ -233,8 +243,11 @@ test.describe('Task Delete', () => {
     const card = page.locator('[data-testid="swimlane"]').locator(`text=${title}`).first();
     await card.click();
 
-    // Open kebab menu and click Archive
-    const dialog = page.locator('.fixed.inset-0');
+    // Open kebab menu and click Archive.
+    // Use data-testid to target the task-detail content panel specifically -
+    // the backdrop class .fixed.inset-0 is ambiguous when a confirm dialog
+    // briefly coexists with the detail dialog (strict-mode violation on Linux).
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 3000 });
     await clickKebabAction(dialog, 'Archive');
 
@@ -393,8 +406,11 @@ test.describe('Task Delete', () => {
     const card = page.locator('[data-testid="swimlane"]').locator(`text=${title}`).first();
     await card.click();
 
-    // Dialog opens in edit mode for no-session tasks -- Delete is in the footer
-    const dialog = page.locator('.fixed.inset-0');
+    // Dialog opens in edit mode for no-session tasks -- Delete is in the footer.
+    // Use data-testid to target the task-detail content panel specifically -
+    // the backdrop class .fixed.inset-0 is ambiguous when a confirm dialog
+    // briefly coexists with the detail dialog (strict-mode violation on Linux).
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 3000 });
     await dialog.locator('button:has-text("Delete")').click();
 

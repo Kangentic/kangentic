@@ -20,15 +20,19 @@ vi.mock('node:util', () => ({
   promisify: (fn: unknown) => fn,
 }));
 
-vi.mock('node:fs', () => ({
-  default: {
-    readdirSync: vi.fn(),
-    statSync: vi.fn(),
-    openSync: vi.fn(),
-    readSync: vi.fn(),
-    closeSync: vi.fn(),
-  },
-}));
+// The session-history walk now goes through the shared async primitives in
+// history-scan. Mock the I/O primitives (listing + head read) but keep
+// parseJsonlRecords real so the adapter's record-extraction logic is exercised;
+// the fs walk itself is covered by tests/unit/history-scan.test.ts.
+vi.mock('../../src/main/agent/shared/history-scan', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/main/agent/shared/history-scan')>();
+  return {
+    ...actual,
+    listMostRecentDirs: vi.fn(),
+    listMostRecentFiles: vi.fn(),
+    readHeadBytes: vi.fn(),
+  };
+});
 
 // The /model picker probe spawns a real PTY - always mocked here. Its own
 // behavior is covered by tests/unit/claude-model-picker-probe.test.ts.
@@ -38,20 +42,18 @@ vi.mock('../../src/main/agent/adapters/claude/model-picker-probe', () => ({
 }));
 
 import { execFile, exec } from 'node:child_process';
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { discoverClaudeCapabilities } from '../../src/main/agent/adapters/claude/capability-discovery';
 import { getCachedModelPickerModels } from '../../src/main/agent/adapters/claude/model-picker-probe';
+import { listMostRecentDirs, listMostRecentFiles, readHeadBytes } from '../../src/main/agent/shared/history-scan';
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
 const probeMock = getCachedModelPickerModels as unknown as ReturnType<typeof vi.fn>;
-const readdirMock = fs.readdirSync as unknown as ReturnType<typeof vi.fn>;
-const statMock = fs.statSync as unknown as ReturnType<typeof vi.fn>;
-const openMock = fs.openSync as unknown as ReturnType<typeof vi.fn>;
-const readMock = fs.readSync as unknown as ReturnType<typeof vi.fn>;
-const closeMock = fs.closeSync as unknown as ReturnType<typeof vi.fn>;
+const listDirsMock = listMostRecentDirs as unknown as ReturnType<typeof vi.fn>;
+const listFilesMock = listMostRecentFiles as unknown as ReturnType<typeof vi.fn>;
+const readHeadMock = readHeadBytes as unknown as ReturnType<typeof vi.fn>;
 
 function setHelpOutput(stdout: string): void {
   // Both code paths (Windows exec and Unix execFile) just need to resolve
@@ -65,80 +67,59 @@ function setHelpOutput(stdout: string): void {
 const PROJECTS_ROOT = path.join(os.homedir(), '.claude', 'projects');
 
 /**
- * Wire up the readdirSync/statSync/openSync/readSync/closeSync chain that
- * `discoverHistoricalModels` walks: a map of `<projectDir>` to a list of
- * session JSONL files, each with a head-of-file payload. Setting it to null
- * makes ~/.claude/projects appear missing entirely.
+ * Wire up the history-scan primitives that `discoverHistoricalModels` walks: a
+ * map of `<projectDir>` to a list of session JSONL files, each with a
+ * head-of-file payload. `listMostRecentDirs` returns the project dirs,
+ * `listMostRecentFiles` returns each project's session files, and
+ * `readHeadBytes` returns a file's contents. Setting the store to null makes
+ * ~/.claude/projects appear missing entirely (empty listings).
  */
 function setSessionStore(
   store: Record<string, Record<string, string>> | null,
 ): void {
-  readdirMock.mockReset();
-  statMock.mockReset();
-  openMock.mockReset();
-  readMock.mockReset();
-  closeMock.mockReset();
+  listDirsMock.mockReset();
+  listFilesMock.mockReset();
+  readHeadMock.mockReset();
 
   if (store === null) {
-    readdirMock.mockImplementation(() => {
-      throw new Error('ENOENT');
-    });
+    listDirsMock.mockResolvedValue([]);
+    listFilesMock.mockResolvedValue([]);
+    readHeadMock.mockResolvedValue('');
     return;
   }
 
-  // Map per-fd -> the file's contents so readSync can return them.
-  const fdContents = new Map<number, string>();
-  let nextFd = 100;
+  const projectNames = Object.keys(store);
 
-  readdirMock.mockImplementation((dirPath: string, options?: { withFileTypes?: boolean }) => {
-    if (dirPath === PROJECTS_ROOT) {
-      const projectNames = Object.keys(store);
-      if (options?.withFileTypes) {
-        return projectNames.map((name) => ({
-          name,
-          isDirectory: () => true,
-        })) as unknown as fs.Dirent[];
-      }
-      return projectNames;
-    }
-    // Project subdirectory listing (returns session file names).
-    for (const projectName of Object.keys(store)) {
+  listDirsMock.mockImplementation(async (parent: string) => {
+    if (parent !== PROJECTS_ROOT) return [];
+    // Descending mtime so scan order is deterministic; the adapter dedupes by Set.
+    return projectNames.map((name, index) => ({
+      fullPath: path.join(PROJECTS_ROOT, name),
+      mtimeMs: projectNames.length - index,
+    }));
+  });
+
+  listFilesMock.mockImplementation(async (directory: string, predicate: (name: string) => boolean) => {
+    for (const projectName of projectNames) {
       const projectFullPath = path.join(PROJECTS_ROOT, projectName);
-      if (dirPath === projectFullPath) {
-        return Object.keys(store[projectName]);
+      if (directory === projectFullPath) {
+        const fileNames = Object.keys(store[projectName]).filter(predicate);
+        return fileNames.map((sessionName, index) => ({
+          fullPath: path.join(projectFullPath, sessionName),
+          mtimeMs: fileNames.length - index,
+        }));
       }
     }
-    throw new Error(`Unexpected readdir: ${dirPath}`);
+    return [];
   });
 
-  statMock.mockImplementation((targetPath: string) => {
-    return { mtimeMs: Date.now() } as fs.Stats;
-  });
-
-  openMock.mockImplementation((filePath: string) => {
+  readHeadMock.mockImplementation(async (filePath: string) => {
     for (const [projectName, sessions] of Object.entries(store)) {
       for (const [sessionName, contents] of Object.entries(sessions)) {
-        const fullPath = path.join(PROJECTS_ROOT, projectName, sessionName);
-        if (filePath === fullPath) {
-          const fd = nextFd++;
-          fdContents.set(fd, contents);
-          return fd;
-        }
+        if (filePath === path.join(PROJECTS_ROOT, projectName, sessionName)) return contents;
       }
     }
-    throw new Error(`Unexpected open: ${filePath}`);
-  });
-
-  readMock.mockImplementation((fd: number, buffer: Buffer, _offset: number, length: number) => {
-    const text = fdContents.get(fd) ?? '';
-    const bytes = Buffer.from(text, 'utf-8');
-    const toCopy = Math.min(length, bytes.length);
-    bytes.copy(buffer, 0, 0, toCopy);
-    return toCopy;
-  });
-
-  closeMock.mockImplementation((fd: number) => {
-    fdContents.delete(fd);
+    return '';
   });
 }
 
@@ -376,7 +357,7 @@ Commands:
       expect(capabilities.supportsModelOverride).toBeUndefined();
       expect(capabilities.models).toBeUndefined();
       // We never even tried to walk the directory.
-      expect(readdirMock).not.toHaveBeenCalled();
+      expect(listDirsMock).not.toHaveBeenCalled();
     });
   });
 

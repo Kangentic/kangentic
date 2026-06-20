@@ -1,6 +1,6 @@
 # Transition Engine
 
-`src/main/engine/transition-engine.ts`
+`src/main/transition-engine/transition-engine.ts`
 
 The transition engine executes action chains when tasks move between swimlanes. It handles the logic that makes Kanban columns "active" -- spawning agents, sending commands, managing worktrees, and more.
 
@@ -214,7 +214,7 @@ New projects get:
 
 ## Cross-Agent Handoff
 
-When a task moves to a column with a different agent (detected by `resolveTargetAgent()` in `src/main/engine/agent-resolver.ts`), a cross-agent handoff occurs:
+When a task moves to a column with a different agent (detected by `resolveTargetAgent()` in `src/main/transition-engine/agent-resolver.ts`), a cross-agent handoff occurs:
 
 1. **Agent resolution** detects agent change: `resolveTargetAgent()` checks `task.agent_override` first (highest priority - the user's create-time lock), then column `agent_override`, then project `default_agent`, then global fallback (`'claude'`). If the resolved agent differs from the current session's agent, a handoff is triggered. Tasks with a non-null `task.agent_override` never trigger a handoff on column moves - the locked agent supersedes column settings.
 2. **Task-move Priority 3** suspends the current session.

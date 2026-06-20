@@ -1,6 +1,6 @@
 # Activity Detection Subsystem
 
-This directory implements Kangentic's activity-detection engine. The full architecture is documented at [`docs/activity-detection.md`](../../../../docs/activity-detection.md). This README is a quick reference for code-readers.
+This directory implements Kangentic's activity-detection engine. The full architecture is documented at [`docs/activity-detection.md`](../../../docs/activity-detection.md). This README is a quick reference for code-readers.
 
 ## Files
 
@@ -64,7 +64,7 @@ Both have a 1.5s internal timeout. Probe failure degrades to the 5-min escape ha
 
 ## When to read the full doc
 
-Read [`docs/activity-detection.md`](../../../../docs/activity-detection.md) before:
+Read [`docs/activity-detection.md`](../../../docs/activity-detection.md) before:
 - Adding a new event type that affects activity (extend the engine's `TURN_INITIATING_EVENTS` / `LOG_ONLY_EVENTS` sets)
 - Touching the watcher's polling cadence or the escape hatch latency
 - Adding a new ActivityReason kind

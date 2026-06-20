@@ -9,7 +9,7 @@ import { BoardConfigManager } from '../config/board-config-manager';
 import { DiffWatcher } from '../git/diff-watcher';
 import { GitDetector } from '../git/git-detector';
 import { ShellResolver } from '../pty/spawn/shell-resolver';
-import { TerminalSubmitScheduler } from '../engine/terminal-submit-scheduler';
+import { TerminalSubmitScheduler } from '../transition-engine/terminal-submit-scheduler';
 import { createPasteEngine } from '../pty/paste-engine';
 import { TerminalSubmit } from '../pty/terminal-submit';
 import {

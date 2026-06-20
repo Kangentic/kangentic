@@ -14,9 +14,14 @@
 
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import {
+  listMostRecentDirs,
+  readHeadBytes,
+  parseJsonlRecords,
+  SESSION_SCAN_HEAD_BYTES,
+} from '../../shared/history-scan';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 const execAsync = promisify(exec);
@@ -72,80 +77,38 @@ async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
  * any event with a `payload.model` and any nested string `model` field
  * to stay forward-compatible.
  */
-function scanKimiSessionHistory(): string[] {
+async function scanKimiSessionHistory(): Promise<string[]> {
   const modelSet = new Set<string>();
+  const sessionsDir = path.join(os.homedir(), '.kimi', 'sessions');
 
-  try {
-    const sessionsDir = path.join(os.homedir(), '.kimi', 'sessions');
-    if (!fs.existsSync(sessionsDir)) {
-      return [];
-    }
-
-    // Walk the workdir-hash directories (top level), then the session
-    // UUID dirs inside each. Cap each level so we never scan more than
-    // ~30 files end-to-end.
-    const workdirDirs = fs.readdirSync(sessionsDir, { withFileTypes: true })
-      .filter(e => e.isDirectory())
-      .map(e => {
-        const fullPath = path.join(sessionsDir, e.name);
-        let mtime = 0;
-        try { mtime = fs.statSync(fullPath).mtimeMs; } catch { /* skip */ }
-        return { fullPath, mtime };
-      })
-      .sort((a, b) => b.mtime - a.mtime)
-      .slice(0, 10);
-
-    for (const workdirDir of workdirDirs) {
-      let sessionDirs: string[];
-      try {
-        sessionDirs = fs.readdirSync(workdirDir.fullPath, { withFileTypes: true })
-          .filter(e => e.isDirectory())
-          .map(e => path.join(workdirDir.fullPath, e.name));
-      } catch {
-        continue;
-      }
-
-      for (const sessionDir of sessionDirs.slice(0, 3)) {
-        const wirePath = path.join(sessionDir, 'wire.jsonl');
-        try {
-          const stats = fs.statSync(wirePath);
-          const size = Math.min(stats.size, 256 * 1024);
-          const buffer = Buffer.alloc(size);
-          const fd = fs.openSync(wirePath, 'r');
-          fs.readSync(fd, buffer, 0, size, null);
-          fs.closeSync(fd);
-
-          const content = buffer.toString('utf-8');
-          for (const line of content.split('\n')) {
-            if (!line.trim()) continue;
-            try {
-              const obj = JSON.parse(line);
-              // Top-level model.
-              if (typeof obj.model === 'string' && obj.model.length > 0) {
-                modelSet.add(obj.model);
-              }
-              // message.payload.model (TurnEnd, StatusUpdate, etc.)
-              const message = (obj as { message?: unknown }).message;
-              if (message && typeof message === 'object') {
-                const payload = (message as { payload?: unknown }).payload;
-                if (payload && typeof payload === 'object') {
-                  const m = (payload as { model?: unknown }).model;
-                  if (typeof m === 'string' && m.length > 0) {
-                    modelSet.add(m);
-                  }
-                }
-              }
-            } catch {
-              // Ignore unparseable lines
+  // Walk the workdir-hash directories (top level), then the session UUID dirs
+  // inside each. Cap each level so we never scan more than ~30 files end-to-end.
+  const workdirDirs = await listMostRecentDirs(sessionsDir, 10);
+  for (const workdirDir of workdirDirs) {
+    const sessionDirs = await listMostRecentDirs(workdirDir.fullPath, 3);
+    for (const sessionDir of sessionDirs) {
+      const wirePath = path.join(sessionDir.fullPath, 'wire.jsonl');
+      const text = await readHeadBytes(wirePath, SESSION_SCAN_HEAD_BYTES);
+      if (text.length === 0) continue;
+      for (const record of parseJsonlRecords(text, false)) {
+        // Top-level model.
+        const topModel = record.model;
+        if (typeof topModel === 'string' && topModel.length > 0) {
+          modelSet.add(topModel);
+        }
+        // message.payload.model (TurnEnd, StatusUpdate, etc.)
+        const message = record.message;
+        if (message && typeof message === 'object') {
+          const payload = (message as { payload?: unknown }).payload;
+          if (payload && typeof payload === 'object') {
+            const model = (payload as { model?: unknown }).model;
+            if (typeof model === 'string' && model.length > 0) {
+              modelSet.add(model);
             }
           }
-        } catch {
-          // Ignore session dirs without wire.jsonl
         }
       }
     }
-  } catch {
-    // Session history scan is best-effort
   }
 
   return Array.from(modelSet).sort();
@@ -173,7 +136,7 @@ export async function discoverKimiCapabilities(cliPath: string): Promise<AgentCa
   let discoveredModels: string[] = [];
   if (supportsModelOverride) {
     try {
-      discoveredModels = scanKimiSessionHistory();
+      discoveredModels = await scanKimiSessionHistory();
     } catch {
       // Session history scan failure - continue with empty list
     }

@@ -6,7 +6,7 @@ description: Diagnose activity-engine issues - a task shows active or idle wrong
 
 A playbook for diagnosing why a task's board indicator shows the wrong state (active/thinking when it should be idle, idle when work is still running, or stuck). Reference this skill when investigating activity-engine behavior so the diagnostic method and known failure signatures are already in context.
 
-`docs/activity-detection.md` is the authoritative architecture reference: read the relevant section instead of re-deriving behavior from the symptom. `src/main/pty/activity/README.md` is the code-reader quick ref.
+`docs/activity-detection.md` is the authoritative architecture reference: read the relevant section instead of re-deriving behavior from the symptom. `src/main/activity-engine/README.md` is the code-reader quick ref.
 
 **Route the symptom first.** If the engine state is correct but a renderer surface *buckets* it wrong (sidebar active/idle counts, card-pill grouping), that is a classification bug, not an engine bug: route through `.claude/rules/activity-state-classification.md` and the `requiresUserInteraction` / `isActive` helpers in `src/shared/activity-state.ts`, not this playbook. This skill is for the engine's own state being wrong.
 
@@ -26,7 +26,7 @@ The activity engine is core/critical. These constraints are not optional:
 thinking IFF (turnActive OR subagentDepth > 0 OR bgShells > 0) AND NOT permissionPending
 ```
 
-`src/main/pty/activity/engine/predicate.ts` (`derivePredicate`); `bgShells` = named (`activeBackgroundShellIds`) + anonymous (`anonymousBackgroundShellCount`). `permissionPending` forces `permission`. Every wrong indicator is one of two things: a predicate input is wrong (a counter stuck high or cleared early), or a watchdog / forced transition overrode the predicate. Triage is identifying which.
+`src/main/activity-engine/engine/predicate.ts` (`derivePredicate`); `bgShells` = named (`activeBackgroundShellIds`) + anonymous (`anonymousBackgroundShellCount`). `permissionPending` forces `permission`. Every wrong indicator is one of two things: a predicate input is wrong (a counter stuck high or cleared early), or a watchdog / forced transition overrode the predicate. Triage is identifying which.
 
 ## Evidence-gathering ladder
 
@@ -57,7 +57,7 @@ A watchdog fire time is `anchor + threshold + 400ms stability window`. The ancho
 - **Stale-thinking** anchors on `max(lastSignalAt, lastPtyOutputAt)` (streaming PTY output defers it; a finished turn sits at a quiet prompt with no PTY data, so the safety net still fires).
 - **Stuck-pending-tools** anchors on `max(lastSignalAt, lastPtyOutputAt)` (streaming foreground output keeps it alive).
 
-Point at `src/main/pty/activity/engine/watchdog.ts` (the `buildWatchdogHolds` table) and `engine/shapes.ts` (the `DEFAULT_*` threshold constants) for live values. Do NOT copy the numbers into the diagnosis - they drift.
+Point at `src/main/activity-engine/engine/watchdog.ts` (the `buildWatchdogHolds` table) and `engine/shapes.ts` (the `DEFAULT_*` threshold constants) for live values. Do NOT copy the numbers into the diagnosis - they drift.
 
 ## Known failure signatures
 
@@ -77,17 +77,17 @@ Durable pins (committed fixtures, run by the harness): `session-009-phantom-bg-s
 
 - Harness: `tests/unit/activity-engine-replay.test.ts`. It replays each fixture with timing windows zeroed (`idleStabilityWindowMs: 0`, long stale timeout) for deterministic assertions on final activity, transition count, and compensation-counter flips.
 - Sanitize any new fixture with `tests/fixtures/replay/_sanitize.mjs` before committing (the repo is public; strip personal paths). Use `tests/fixtures/replay/_inspect.mjs` to eyeball a fixture.
-- Capture a portable fixture from a live incident via the dev-only trace recorder (`src/main/pty/activity/trace-recorder.ts`) or `kangentic_devtools_capture_trace`.
+- Capture a portable fixture from a live incident via the dev-only trace recorder (`src/main/activity-engine/trace-recorder.ts`) or `kangentic_devtools_capture_trace`.
 - Red-green: disable the fix, confirm the new fixture fails, re-enable, confirm green.
 
 ## Key source files
 
-- `src/main/pty/activity/engine/predicate.ts` - the single predicate (`derivePredicate`, `deriveReasonForActivity`, `idleHintEndsTurn`).
-- `src/main/pty/activity/engine/activity-engine.ts` - orchestration, transition recording, force-thinking/idle, bg-shell-end labels.
-- `src/main/pty/activity/engine/event-handlers.ts` - per-event counter mutations and the permission flag.
-- `src/main/pty/activity/engine/watchdog.ts` - the four watchdog holds, predicates, thresholds, anchors.
-- `src/main/pty/activity/engine/shapes.ts` - core types, `TransitionTrigger`, `CompensationCounters`, `DEFAULT_*` constants.
-- `src/main/pty/activity/engine/counter-snapshot.ts` - `formatCounterDelta` (the trace delta strings).
-- `src/main/pty/activity/background-shell/watcher.ts` - Tier A PID capture / liveness, Tier B count heuristic, named-drain deficit branch.
-- `src/main/pty/activity/session-telemetry.ts` - feeds events into the engine, Ctrl+C interrupt synthesis.
+- `src/main/activity-engine/engine/predicate.ts` - the single predicate (`derivePredicate`, `deriveReasonForActivity`, `idleHintEndsTurn`).
+- `src/main/activity-engine/engine/activity-engine.ts` - orchestration, transition recording, force-thinking/idle, bg-shell-end labels.
+- `src/main/activity-engine/engine/event-handlers.ts` - per-event counter mutations and the permission flag.
+- `src/main/activity-engine/engine/watchdog.ts` - the four watchdog holds, predicates, thresholds, anchors.
+- `src/main/activity-engine/engine/shapes.ts` - core types, `TransitionTrigger`, `CompensationCounters`, `DEFAULT_*` constants.
+- `src/main/activity-engine/engine/counter-snapshot.ts` - `formatCounterDelta` (the trace delta strings).
+- `src/main/activity-engine/background-shell/watcher.ts` - Tier A PID capture / liveness, Tier B count heuristic, named-drain deficit branch.
+- `src/main/activity-engine/session-telemetry.ts` - feeds events into the engine, Ctrl+C interrupt synthesis.
 - `src/shared/activity-state.ts` - the idle-vs-active bucketing helpers (`requiresUserInteraction` / `isActive`) and the `ActivityDisposition` table; the `ActivityState` union itself lives in `src/shared/types.ts` (for classification questions; see `.claude/rules/activity-state-classification.md`).

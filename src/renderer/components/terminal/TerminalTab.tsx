@@ -115,7 +115,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
         setTerminalReady(false);
       }
     };
-  }, [initTerminal]);
+  }, [initTerminal, terminalRef]);
 
   // Lift overlay when Claude Code's TUI activates the alternate screen buffer
   // (first-output) or when usage data arrives (fallback). No clear() needed:
@@ -251,7 +251,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
       observer.disconnect();
       window.removeEventListener('terminal-panel-resize', handlePanelResize);
     };
-  }, [active, fit, focus, deferContainerResize, immediatePanelResize, reloadScrollback]);
+  }, [active, fit, focus, deferContainerResize, immediatePanelResize, reloadScrollback, terminalRef, scrollbackPending]);
 
   const fileDrop = useTerminalFileDrop(sessionId, focus, sessionShell);
 

@@ -63,7 +63,7 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 
 const markRecordExitedMock = vi.fn(() => true);
 const markRecordSuspendedMock = vi.fn(() => true);
-vi.mock('../../src/main/engine/session-lifecycle', () => ({
+vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: (...args: unknown[]) => markRecordExitedMock(...args),
   markRecordSuspended: (...args: unknown[]) => markRecordSuspendedMock(...args),
   promoteRecord: vi.fn(),
@@ -91,8 +91,10 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   ensureTaskWorktree: vi.fn(async () => {}),
   createTransitionEngine: vi.fn(() => ({ executeTransition: vi.fn(async () => {}), resumeSuspendedSession: vi.fn(async () => {}) })),
   resolveSpawnOverrides: vi.fn(() => ({})),
-  resolveAndLinkPR: vi.fn(async () => {}),
-  maybeResolvePRAfterMove: vi.fn(async () => {}),
+}));
+vi.mock('../../src/main/pr/pr-linking', () => ({
+  linkPR: vi.fn(async () => {}),
+  linkPRForMovedTask: vi.fn(),
 }));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn(async () => {}) }));
 vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({

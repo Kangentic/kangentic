@@ -78,7 +78,7 @@ vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
 vi.mock('simple-git', () => ({ default: vi.fn(() => ({})) }));
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn(), on: vi.fn() } }));
 
-import { pruneOrphanedDirectories } from '../../src/main/engine/resource-cleanup';
+import { pruneOrphanedDirectories } from '../../src/main/transition-engine/resource-cleanup';
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 

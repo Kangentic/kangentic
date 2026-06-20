@@ -163,7 +163,7 @@ For a deep, no-expense-spared cloud audit, use the `ultra` built-in instead (see
 
 ## Apply Phase
 
-Default mode applies fixes immediately after the findings table. Fixes land in the working tree only - **never commit**; the user runs `/merge-back` for that.
+Default mode applies fixes immediately after the findings table. Fixes land in the working tree only - **never commit**; the user runs `/commit` (then `/pull-request` or `/merge-back`) for that.
 
 ### What gets auto-fixed
 
@@ -271,4 +271,4 @@ The driver uses `Bash` (git/npm/npx only) for pre-flight + diff gathering, the `
 
 **CRITICAL: Use `git -C <path>` for all git commands in other directories.** Never use `cd <path> && git ...` - the `cd && git` pattern triggers an unbypasable Claude Code security prompt.
 
-**Do not commit.** The skill applies fixes to the working tree only. The user runs `/merge-back` to commit and push.
+**Do not commit.** The skill applies fixes to the working tree only. The user runs `/commit` to commit locally, then lands via the board PR flow (`/pull-request`) or `/merge-back` for a direct quick-push.

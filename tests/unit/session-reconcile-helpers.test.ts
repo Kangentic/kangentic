@@ -60,7 +60,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
 
 // session-lifecycle helpers are called by applySuspendDbWrites, not by
 // reconcileTaskSessionRef. Mock them to keep these tests focused.
-vi.mock('../../src/main/engine/session-lifecycle', () => ({
+vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
   promoteRecord: vi.fn(),

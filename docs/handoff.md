@@ -14,7 +14,7 @@ The handoff system uses a **session history passthrough** approach: instead of m
 
 ## When Handoff Triggers
 
-Handoff is triggered by `resolveTargetAgent()` in `src/main/engine/agent-resolver.ts` when all three conditions are met:
+Handoff is triggered by `resolveTargetAgent()` in `src/main/transition-engine/agent-resolver.ts` when all three conditions are met:
 
 1. The task has a previous agent (`task.agent` is set)
 2. The resolved target agent differs from `task.agent`

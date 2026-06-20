@@ -1,5 +1,5 @@
 /**
- * Unit tests for startStartupTimer (src/main/engine/session-startup/timing.ts).
+ * Unit tests for startStartupTimer (src/main/transition-engine/session-startup/timing.ts).
  *
  * Verifies the two log gates:
  *   - work gate: a pass that did real work (workCount > 0) always logs.
@@ -17,7 +17,7 @@ const { appMock } = vi.hoisted(() => ({ appMock: { isPackaged: false } }));
 
 vi.mock('electron', () => ({ app: appMock }));
 
-import { startStartupTimer, STARTUP_TIMING_LOG_THRESHOLD_MS } from '../../src/main/engine/session-startup/timing';
+import { startStartupTimer, STARTUP_TIMING_LOG_THRESHOLD_MS } from '../../src/main/transition-engine/session-startup/timing';
 
 const PROJECT_ID = '1a2b3c4d-5678-90ab-cdef-1234567890ab';
 

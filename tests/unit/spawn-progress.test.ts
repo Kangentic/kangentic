@@ -1,6 +1,6 @@
 /**
  * Unit tests for the queryable spawn-progress map in
- * src/main/engine/spawn-progress.ts.
+ * src/main/transition-engine/spawn-progress.ts.
  *
  * Contract:
  *  - emit/createProgressCallback set the in-flight map AND push IPC.
@@ -20,7 +20,7 @@ import {
   clearSpawnProgress,
   getInFlightSpawnProgress,
   __resetSpawnProgressForTest,
-} from '../../src/main/engine/spawn-progress';
+} from '../../src/main/transition-engine/spawn-progress';
 
 function makeWindow(isDestroyed = false): { window: BrowserWindow; send: ReturnType<typeof vi.fn> } {
   const send = vi.fn();

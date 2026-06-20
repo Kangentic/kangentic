@@ -65,6 +65,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'git.defaultBaseBranch', tabId: 'git', label: 'Default Base Branch', description: 'Branch to create worktrees from', scope: 'project', keywords: ['main', 'master'] },
   { id: 'git.copyFiles', tabId: 'git', label: 'Copy Files', description: 'Additional files copied into each worktree', scope: 'project', keywords: ['env', 'dotfiles'] },
   { id: 'git.initScript', tabId: 'git', label: 'Post-Worktree Script', description: 'Shell script to run after worktree creation', scope: 'project', keywords: ['install', 'setup', 'hook'] },
+  { id: 'git.prRefreshIntervalMinutes', tabId: 'git', label: 'Auto-refresh PRs', description: 'How often to refresh linked PR state in the background', scope: 'project', keywords: ['pull request', 'pr', 'refresh', 'poll', 'merged', 'sync', 'stale'] },
 
   // ── Browser ──
   { id: 'browser.enabled', tabId: 'browser', label: 'Enable Browser Pane', description: 'Show the Browser pill in task detail headers. Disable for security-sensitive projects that should not embed external sites.', scope: 'project', keywords: ['webview', 'embedded', 'preview', 'disable', 'security'] },

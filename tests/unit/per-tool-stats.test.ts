@@ -6,7 +6,7 @@
  * resilience that motivated the standalone counter (see audit failure mode #5).
  */
 import { describe, it, expect } from 'vitest';
-import { SessionTelemetry } from '../../src/main/pty/activity/session-telemetry';
+import { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
 import { EventType } from '../../src/shared/types';
 import type { SessionEvent } from '../../src/shared/types';
 

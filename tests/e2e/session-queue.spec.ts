@@ -20,10 +20,17 @@ import {
   cleanupTempProject,
   getTestDataDir,
   cleanupTestDataDir,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
+
+// The two describe blocks each launch an isolated Electron app with unique
+// derived TEST_NAMEs ('session-queue-multi', 'session-queue-queue'). Running
+// them in parallel saves the sequential second-launch overhead on whatever
+// shard this file lands on.
+test.describe.configure({ mode: 'parallel' });
 
 const TEST_NAME = 'session-queue';
 const runId = Date.now();
@@ -111,7 +118,7 @@ test.describe('Claude Agent -- Multiple Simultaneous Spawns', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupTempProject(`${TEST_NAME}-multi`);
     cleanupTestDataDir(`${TEST_NAME}-multi`);
   });
@@ -194,7 +201,7 @@ test.describe('Claude Agent -- Session Queue', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupTempProject(`${TEST_NAME}-queue`);
     cleanupTestDataDir(`${TEST_NAME}-queue`);
   });

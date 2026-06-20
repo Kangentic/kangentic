@@ -14,10 +14,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { SessionTelemetry } from '../../src/main/pty/activity/session-telemetry';
-import type { SessionTelemetryOptions } from '../../src/main/pty/activity/session-telemetry';
-import type { ProcessInfo, ProcessTreeProbe } from '../../src/main/pty/activity/background-shell/process-tree';
-import { looksLikeShellId } from '../../src/main/pty/activity/background-shell/looks-like-shell-id';
+import { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
+import type { SessionTelemetryOptions } from '../../src/main/activity-engine/session-telemetry';
+import type { ProcessInfo, ProcessTreeProbe } from '../../src/main/activity-engine/background-shell/process-tree';
+import { looksLikeShellId } from '../../src/main/activity-engine/background-shell/looks-like-shell-id';
 import { EventType } from '../../src/shared/types';
 import type { ActivityState, ActivityReason, SessionUsage, SessionEvent } from '../../src/shared/types';
 

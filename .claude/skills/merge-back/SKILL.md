@@ -1,12 +1,20 @@
 ---
-description: Push / land / merge back changes - commit, rebase, and push to the source branch. Use only when the user explicitly asks to push, land, or merge back. NOT for a plain local commit (use /commit for that).
+description: Direct quick-push escape hatch - commit, rebase, and push straight to the source branch, bypassing the PR gate. Use only when the user explicitly asks to push, land, or merge back a quick change. The normal flow is the board (Tests -> /pull-request, Ship It -> /merge-pull-request). NOT for a plain local commit (use /commit for that).
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Agent
 argument-hint: [commit message]
 ---
 
 # Merge Back
 
-Safely commit, rebase, and push changes. Works from both worktrees and the main repo.
+Safely commit, rebase, and push changes straight to the source branch. Works from both worktrees and
+the main repo.
+
+This is the **direct quick-push escape hatch**: it bypasses the pull-request gate, so it relies on
+admin push access (`enforce_admins` is off on `main`). It is no longer wired to a board column. The
+normal flow now goes through a PR: the **Tests** column runs `/pull-request` (create a PR and drive
+its checks green) and the **Ship It** column runs `/merge-pull-request` (merge the green PR and pull
+back). Reach for `/merge-back` only for a small, urgent change you want to land without a PR (e.g.
+CI is down, or a one-line hotfix).
 
 **Usage:** `/merge-back [commit message]`
 
@@ -37,7 +45,7 @@ Report the mode, branch name, source branch, and working tree status before proc
 1. Run `npm ci`. This ensures `node_modules` matches the lockfile exactly, preventing typecheck failures from stale or missing packages. The `postinstall` script automatically rebuilds native modules for Electron. If it fails with EBUSY, stop with: "A file in node_modules is locked by a running process. Close the Kangentic dev server (`npm start`) and retry."
 2. Run `npm run typecheck`. If it fails, report the type errors and stop - do not proceed with the merge. Type errors must be fixed before merging back.
 3. Run `npm run lint`. ESLint runs in CI (`.github/workflows/ci.yml`), so a lint error will fail the push you are about to make. If it reports any errors, report them and stop - fix them before merging back. Warnings (e.g. `react-hooks/exhaustive-deps`) do not fail lint and do not block the merge.
-4. Run `npx vitest run tests/unit/test-fs-writes-sandboxed.test.ts`. This is a sub-second static scan that catches a test writing to a hardcoded absolute root (e.g. `/projects/new-app`), which is green on a Windows dev drive but `EACCES` on CI's Linux runner - the failure mode that kept `main` red for days. The full unit tier already runs per-task via `/test` in the Test column; this single-file guard is the fast pre-push backstop for a test edited after that gate or a merge-back that skipped it. If it fails, report the offending `file:line` and stop - move the write under `os.tmpdir()` before merging back. Enforces `.claude/rules/cross-platform-parity.md`.
+4. Run `npx vitest run tests/unit/test-fs-writes-sandboxed.test.ts`. This is a sub-second static scan that catches a test writing to a hardcoded absolute root (e.g. `/projects/new-app`), which is green on a Windows dev drive but `EACCES` on CI's Linux runner - the failure mode that kept `main` red for days. The full unit tier runs on CI as a PR check (the Tests column's `/pull-request` monitor loop); this single-file guard is the fast pre-push backstop for a test edited after that gate or a merge-back that skipped it. If it fails, report the offending `file:line` and stop - move the write under `os.tmpdir()` before merging back. Enforces `.claude/rules/cross-platform-parity.md`.
 
 ## Step 1 - Commit Changes
 

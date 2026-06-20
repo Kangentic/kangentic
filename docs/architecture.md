@@ -366,7 +366,7 @@ Repositories follow a simple pattern -- one class per table, all queries are syn
 
 ## Agent Resolution
 
-`src/main/engine/agent-resolver.ts`
+`src/main/transition-engine/agent-resolver.ts`
 
 `resolveTargetAgent()` determines which agent CLI to use when spawning a session. Resolution priority:
 
@@ -379,7 +379,7 @@ This function is used by task-move (to detect cross-agent handoff), session-reco
 
 ## Transition Engine
 
-`src/main/engine/transition-engine.ts`
+`src/main/transition-engine/transition-engine.ts`
 
 When a task moves between swimlanes, the IPC handler checks priorities in order:
 
@@ -466,7 +466,7 @@ Shell-specific adaptations:
 | Graceful shutdown | 2000 ms | `suspendAll()` timeout (exists in code but NOT used during app quit; synchronous shutdown kills PTYs immediately) |
 | Idle timeout check | 60000 ms | Polling interval for `checkIdleTimeouts()` |
 
-Stale-thinking detection is no longer a `SessionManager` constant. It now lives in the activity engine watchdog (`src/main/pty/activity/engine/`), which emits a synthetic idle transition after `DEFAULT_STALE_THINKING_TIMEOUT_MS` (180000 ms) of no activity signal while in the "thinking" state. The engine is event-driven, so there is no separate polling timer. See [Activity Detection](activity-detection.md).
+Stale-thinking detection is no longer a `SessionManager` constant. It now lives in the activity engine watchdog (`src/main/activity-engine/engine/`), which emits a synthetic idle transition after `DEFAULT_STALE_THINKING_TIMEOUT_MS` (180000 ms) of no activity signal while in the "thinking" state. The engine is event-driven, so there is no separate polling timer. See [Activity Detection](activity-detection.md).
 
 ## Session Queue
 
@@ -572,7 +572,7 @@ For each session, a merged settings file is created at `.kangentic/sessions/<ses
 
 ## Session Recovery
 
-On project open (`src/main/engine/session-recovery.ts`):
+On project open (`src/main/transition-engine/session-startup/`):
 
 1. **Prune orphaned worktrees** -- delete tasks whose worktree directories were removed externally
 2. **Mark crash recovery** -- leftover `running` DB records become `orphaned`

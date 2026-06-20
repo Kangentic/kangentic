@@ -13,9 +13,15 @@
 
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import {
+  listMostRecentDirs,
+  listMostRecentFiles,
+  readHeadBytes,
+  parseJsonlRecords,
+  SESSION_SCAN_HEAD_BYTES,
+} from '../../shared/history-scan';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 const execAsync = promisify(exec);
@@ -68,106 +74,38 @@ async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
  * historically, the broader `payload.model` check below still picks it
  * up so the parser is forward-compatible.
  */
-function listMostRecentDirs(parent: string, maxEntries: number): string[] {
-  const entries = fs.readdirSync(parent, { withFileTypes: true });
-  return entries
-    .filter(e => e.isDirectory())
-    .sort((a, b) => {
-      const aTime = fs.statSync(path.join(parent, a.name)).mtimeMs;
-      const bTime = fs.statSync(path.join(parent, b.name)).mtimeMs;
-      return bTime - aTime;
-    })
-    .slice(0, maxEntries)
-    .map(e => e.name);
-}
-
-function scanCodexSessionHistory(): string[] {
+async function scanCodexSessionHistory(): Promise<string[]> {
   const modelSet = new Set<string>();
+  const sessionsDir = path.join(os.homedir(), '.codex', 'sessions');
 
-  try {
-    const sessionsDir = path.join(os.homedir(), '.codex', 'sessions');
-    if (!fs.existsSync(sessionsDir)) {
-      return [];
-    }
-
-    // Walk YYYY/MM/DD/. Cap each level so a long-running install doesn't
-    // pay an unbounded scan cost.
-    const yearDirs = listMostRecentDirs(sessionsDir, 2);
-    for (const year of yearDirs) {
-      const yearPath = path.join(sessionsDir, year);
-      let monthDirs: string[];
-      try {
-        monthDirs = listMostRecentDirs(yearPath, 3);
-      } catch {
-        continue;
-      }
-      for (const month of monthDirs) {
-        const monthPath = path.join(yearPath, month);
-        let dayDirs: string[];
-        try {
-          dayDirs = listMostRecentDirs(monthPath, 5);
-        } catch {
-          continue;
-        }
-        for (const day of dayDirs) {
-          const dayPath = path.join(monthPath, day);
-          let files: string[];
-          try {
-            files = fs.readdirSync(dayPath).filter(f => f.endsWith('.jsonl'));
-          } catch {
-            continue;
-          }
-          // Read up to 3 most recent JSONL files per day
-          const ranked = files
-            .map(name => {
-              const fullPath = path.join(dayPath, name);
-              let mtime = 0;
-              try { mtime = fs.statSync(fullPath).mtimeMs; } catch { /* skip */ }
-              return { fullPath, mtime };
-            })
-            .sort((a, b) => b.mtime - a.mtime)
-            .slice(0, 3);
-
-          for (const { fullPath } of ranked) {
-            try {
-              // Only read first 256KB to avoid huge files
-              const stats = fs.statSync(fullPath);
-              const size = Math.min(stats.size, 256 * 1024);
-              const buffer = Buffer.alloc(size);
-              const fd = fs.openSync(fullPath, 'r');
-              fs.readSync(fd, buffer, 0, size, null);
-              fs.closeSync(fd);
-
-              const content = buffer.toString('utf-8');
-              for (const line of content.split('\n')) {
-                if (!line.trim()) continue;
-                try {
-                  const obj = JSON.parse(line);
-                  // Codex 0.128.0+: `turn_context` events carry
-                  // `payload.model`. Older builds may have placed it on
-                  // `session_meta`; checking any event with
-                  // `payload.model` covers both shapes without us having
-                  // to enumerate event types.
-                  const payload = (obj as { payload?: unknown }).payload;
-                  if (payload && typeof payload === 'object') {
-                    const model = (payload as { model?: unknown }).model;
-                    if (typeof model === 'string' && model.length > 0) {
-                      modelSet.add(model);
-                    }
-                  }
-                } catch {
-                  // Ignore unparseable lines
-                }
+  // Walk YYYY/MM/DD/. Cap each level so a long-running install doesn't pay an
+  // unbounded scan cost. listMostRecentDirs returns [] for a missing dir, so
+  // an absent `.codex/sessions` simply yields no models.
+  const yearDirs = await listMostRecentDirs(sessionsDir, 2);
+  for (const year of yearDirs) {
+    const monthDirs = await listMostRecentDirs(year.fullPath, 3);
+    for (const month of monthDirs) {
+      const dayDirs = await listMostRecentDirs(month.fullPath, 5);
+      for (const day of dayDirs) {
+        const files = await listMostRecentFiles(day.fullPath, (name) => name.endsWith('.jsonl'), 3);
+        for (const { fullPath } of files) {
+          const text = await readHeadBytes(fullPath, SESSION_SCAN_HEAD_BYTES);
+          for (const record of parseJsonlRecords(text, false)) {
+            // Codex 0.128.0+: `turn_context` events carry `payload.model`.
+            // Older builds may have placed it on `session_meta`; checking any
+            // event with `payload.model` covers both shapes without us having
+            // to enumerate event types.
+            const payload = record.payload;
+            if (payload && typeof payload === 'object') {
+              const model = (payload as { model?: unknown }).model;
+              if (typeof model === 'string' && model.length > 0) {
+                modelSet.add(model);
               }
-            } catch {
-              // Ignore file read errors
             }
           }
         }
       }
     }
-  } catch {
-    // Session history scan is best-effort
   }
 
   // Ascending alphabetical: groups by family naturally (shared prefix
@@ -196,7 +134,7 @@ export async function discoverCodexCapabilities(cliPath: string): Promise<AgentC
   let discoveredModels: string[] = [];
   if (supportsModelOverride) {
     try {
-      discoveredModels = scanCodexSessionHistory();
+      discoveredModels = await scanCodexSessionHistory();
     } catch {
       // Session history scan failure - continue with empty list
     }

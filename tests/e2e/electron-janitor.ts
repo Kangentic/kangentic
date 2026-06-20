@@ -20,10 +20,13 @@
  *            -> reason 'e2e-build-entry'. The dogfooding `npm start` argv is
  *            `electron.exe <projectDir> --cwd=<dir>` (a bare directory, never
  *            the build entry), so this never matches the dogfooding app.
- *   2. Orphan gate: the parent is dead (ppid <= 4 or absent from the scan).
- *      This protects the dogfooding window, /preview instances, and concurrent
- *      Playwright runs in OTHER worktrees, whose electron mains all have a live
- *      worker/node parent. The design therefore does not assume workers=1.
+ *   2. Orphan gate: the parent is dead (ppid <= 4, or absent from the COMPLETE
+ *      liveness scan `scanLivePids`, which enumerates every process image - not
+ *      just electron/node). This protects the dogfooding window, /preview
+ *      instances, and concurrent Playwright runs in OTHER worktrees, whose
+ *      electron mains have a live supervising parent of SOME image (a worker
+ *      node.exe, or a pwsh/cmd that launched it). The design does not assume
+ *      workers=1.
  *   3. Self-skip: the janitor's own PID and walked parent chain are never
  *      touched.
  *
@@ -43,12 +46,16 @@
  * one, so PID reuse of a dead dogfooding parent can never drag an orphaned
  * dogfooding main into the closure.
  *
- * Caveat: the underlying Windows scan only enumerates electron.exe and node.exe,
- * so a supervising parent of some other image name (a human's pwsh/cmd that
- * launched the worktree electron by hand, say) reads as dead and its child can
- * match pass 1. In practice the process still needs our exact worktree or build
- * path in its argv to match at all, which only this tooling (or that manual
- * re-run of it) produces.
+ * Orphan-gate completeness (bug #258): the MATCHING scan (`scanProcesses`) stays
+ * image-filtered to electron.exe/node.exe for speed - only their argv carries our
+ * path needles - but the orphan gate's liveness set comes from a SEPARATE
+ * complete scan (`scanLivePids`, every image). So a live worktree app whose
+ * supervising parent is a non-enumerated image (a pwsh/cmd, or another worktree's
+ * Playwright worker that the filtered scan happened to drop under load) resolves
+ * as supervised and is never swept. This is what makes two concurrent
+ * cross-worktree runs safe from reaping each other mid-test. If `scanLivePids`
+ * fails (returns an empty set), the sweep ABORTS rather than treat every process
+ * as orphaned (fail closed); the next run's setup sweep retries.
  *
  * Do NOT add a test that deliberately orphans an app-under-test process (e.g.
  * `app.relaunch()`): the relaunched instance carries the worktree argv with a
@@ -72,6 +79,7 @@
 import path from 'node:path';
 import {
   scanProcesses,
+  scanLivePids,
   buildSelfSkipSet,
   killProcess,
   normalizePath,
@@ -105,21 +113,28 @@ export function deriveMainRepoRoot(checkoutRoot: string): string {
 }
 
 /**
- * Pure predicate. Given a process table, the main repo root, and a self-skip
- * set, return the leaked test instances per the safety contract above. No I/O,
- * no throwing; unit-tested in tests/unit/e2e-janitor.test.ts.
+ * Pure predicate. Given a process table, the main repo root, a self-skip set,
+ * and the COMPLETE live-pid set, return the leaked test instances per the safety
+ * contract above. No I/O, no throwing; unit-tested in
+ * tests/unit/e2e-janitor.test.ts.
+ *
+ * `livePids` MUST be the complete set of live pids (from `scanLivePids`), NOT the
+ * electron/node-only matching `rows`. Pass 1's orphan gate reads it: a concurrent
+ * worktree's LIVE Electron whose supervising parent is a non-enumerated image (a
+ * `pwsh.exe`/`cmd.exe` Playwright supervisor) must resolve as supervised, or it
+ * reads as an orphan and is wrongly swept mid-test. See the header caveat.
  */
 export function findLeakedTestInstances(
   rows: ProcessRow[],
   mainRepoRoot: string,
   skipPids: Set<number>,
+  livePids: Set<number>,
 ): LeakedInstance[] {
   const root = normalizePath(mainRepoRoot).replace(/\/+$/, '');
   const worktreeNeedle = `${root}/.kangentic/worktrees/`;
   const buildEntryNeedle = `${root}/.vite/build/index.js`;
   const repoElectronNeedle = `${root}/node_modules/electron/`;
   const genericElectronNeedle = '/node_modules/electron/';
-  const livePids = new Set(rows.map((row) => row.pid));
 
   const matched = new Map<number, LeakedInstance>();
   // Root flavor of each condemned pid's ancestry: 'worktree' (rooted at a
@@ -203,14 +218,41 @@ export function findLeakedTestInstances(
  */
 export async function sweepLeakedElectronInstances(label: 'setup' | 'teardown'): Promise<void> {
   try {
+    // GitHub Actions runners are ephemeral and single-worker: no previous run
+    // can have leaked an instance, there is no dogfooding `npm start` to avoid
+    // killing, no concurrent worktree runs to coexist with, and the runner is
+    // destroyed immediately after teardown. The whole-process scan would only
+    // ever find zero leaks there, so skip it. Gated on GITHUB_ACTIONS, not CI:
+    // per GitHub's docs GITHUB_ACTIONS is "always set to true when GitHub Actions
+    // is running the workflow" and cannot be overwritten, whereas CI is generic
+    // and overwritable, so a stray local `CI=true` must never disable the
+    // janitor's local-machine protection (the dogfooding window and cross-run /
+    // cross-worktree leak cleanup it exists for).
+    if (_internals.isGitHubActions()) return;
     const mainRepoRoot = deriveMainRepoRoot(path.resolve(__dirname, '..', '..'));
-    const rows = await _internals.scanProcesses(SWEEP_SCAN_TIMEOUT_MS);
+    // Independent scans, run concurrently: the image-filtered matching scan
+    // (needs CommandLine for path needles) and the complete liveness scan (the
+    // orphan gate's source of truth - see findLeakedTestInstances).
+    const [rows, livePids] = await Promise.all([
+      _internals.scanProcesses(SWEEP_SCAN_TIMEOUT_MS),
+      _internals.scanLivePids(SWEEP_SCAN_TIMEOUT_MS),
+    ]);
     if (rows.length === 0) {
       console.log(`[E2E-JANITOR] ${label}: scanned 0 processes, found 0 leaked instance(s)`);
       return;
     }
+    if (livePids.size === 0) {
+      // The complete liveness scan failed or returned nothing. An empty live set
+      // makes every path-matching row read as orphaned, so refuse to kill and let
+      // the next run's setup sweep retry. Fail closed.
+      console.warn(
+        `[E2E-JANITOR] ${label}: complete liveness scan returned 0 pids; aborting sweep (kills nothing)`,
+      );
+      return;
+    }
     const skipPids = _internals.buildSelfSkipSet(rows, process.pid);
-    const leaks = _internals.findLeakedTestInstances(rows, mainRepoRoot, skipPids);
+    const leaks = _internals.findLeakedTestInstances(rows, mainRepoRoot, skipPids, livePids);
+    const rowByPid = new Map(rows.map((row) => [row.pid, row]));
     console.log(
       `[E2E-JANITOR] ${label}: scanned ${rows.length} processes, found ${leaks.length} leaked instance(s)`,
     );
@@ -229,8 +271,16 @@ export async function sweepLeakedElectronInstances(label: 'setup' | 'teardown'):
       }
       try {
         await _internals.killProcess(leak.pid);
+        // Correlation fields for auditing a mistaken kill from logs alone: the
+        // resolved parent pid, and whether the orphan gate fired because that
+        // parent was confirmed absent from the COMPLETE live scan. For
+        // child-of-leak the kill is driven by a condemned parent, not the gate,
+        // so the absence fact is not applicable there.
+        const ppid = rowByPid.get(leak.pid)?.ppid ?? -1;
+        const parentAbsent = leak.reason !== 'child-of-leak' && !livePids.has(ppid);
         console.log(
-          `[E2E-JANITOR] ${label}: killed pid=${leak.pid} reason=${leak.reason} cmd=${leak.commandLine.slice(0, 200)}`,
+          `[E2E-JANITOR] ${label}: killed pid=${leak.pid} ppid=${ppid} reason=${leak.reason} ` +
+            `parent-absent-from-live-scan=${parentAbsent} cmd=${leak.commandLine.slice(0, 200)}`,
         );
       } catch (error) {
         console.warn(`[E2E-JANITOR] ${label}: kill failed for pid=${leak.pid}:`, error);
@@ -247,7 +297,13 @@ export async function sweepLeakedElectronInstances(label: 'setup' | 'teardown'):
 
 export const _internals = {
   scanProcesses,
+  scanLivePids,
   buildSelfSkipSet,
   findLeakedTestInstances,
   killProcess,
+  /** True when running on a GitHub Actions runner (`GITHUB_ACTIONS=true`, a
+   *  non-overwritable default env var). Behind `_internals` so the sweep unit
+   *  tests - which themselves run on CI - can force it false to exercise the
+   *  scan/kill path. */
+  isGitHubActions: (): boolean => process.env.GITHUB_ACTIONS === 'true',
 };

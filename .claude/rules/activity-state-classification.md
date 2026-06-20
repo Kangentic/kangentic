@@ -47,7 +47,7 @@ allowlisted in the test.
 ## Scope
 
 Renderer consumers of the idle-vs-active bucket, plus the classifier module itself. The activity
-engine's internal state machine (`src/main/pty/activity/**`, `predicate.ts`) PRODUCES
+engine's internal state machine (`src/main/activity-engine/**`, `predicate.ts`) PRODUCES
 `ActivityState` and is its own source of truth - it is out of scope. Main-process consumers that
 ask the same product question (e.g. `task-crud.ts`) should also use the shared helpers, but the
 mechanical scan is scoped to the renderer, where the bug class and new UI consumers live.

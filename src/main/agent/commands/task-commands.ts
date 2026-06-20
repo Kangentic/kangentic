@@ -5,7 +5,7 @@ import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
 import { handleCreateBacklogTask } from './backlog-commands';
-import { resolveAndLinkPRForTask } from '../../ipc/helpers/pr-linking';
+import { linkPRForTask } from '../../pr/pr-linking';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type { TaskUpdateInput } from '../../../shared/types';
 
@@ -214,7 +214,7 @@ export const handleLinkPr: CommandHandler = async (
 
   let result;
   try {
-    result = await resolveAndLinkPRForTask(task.id, {
+    result = await linkPRForTask(task.id, {
       tasks: taskRepo,
       projectPath: context.getProjectPath(),
       force: true,

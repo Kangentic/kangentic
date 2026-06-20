@@ -73,7 +73,7 @@ vi.mock('../../src/main/ipc/task-lifecycle-lock', () => ({
   withTaskLock: <T,>(_taskId: string, fn: () => Promise<T>) => fn(),
 }));
 
-import { retryFailedDoneCleanups } from '../../src/main/engine/resource-cleanup';
+import { retryFailedDoneCleanups } from '../../src/main/transition-engine/resource-cleanup';
 import { GitQueuePriority } from '../../src/main/git/worktree-manager';
 
 const FAST_OPTS = { timeoutMs: 3000, removalProfile: 'fast' };

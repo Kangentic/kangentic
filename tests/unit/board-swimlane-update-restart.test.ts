@@ -31,7 +31,7 @@ const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
 const hoisted = vi.hoisted(() => ({
   restartSessionForSettingsChange: vi.fn(async () => ({ ok: true as const })),
-  prepareInjectionPlan: vi.fn(() => null as ReturnType<typeof import('../../src/main/engine/injection-plan').prepareInjectionPlan>),
+  prepareInjectionPlan: vi.fn(() => null as ReturnType<typeof import('../../src/main/transition-engine/injection-plan').prepareInjectionPlan>),
 }));
 
 // ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({
     hoisted.restartSessionForSettingsChange(...args),
 }));
 
-vi.mock('../../src/main/engine/injection-plan', () => ({
+vi.mock('../../src/main/transition-engine/injection-plan', () => ({
   prepareInjectionPlan: (...args: unknown[]) => hoisted.prepareInjectionPlan(...args as [never]),
 }));
 

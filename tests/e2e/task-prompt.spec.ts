@@ -31,6 +31,7 @@ import {
   createTempProject,
   cleanupTempProject,
   getTestDataDir,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -83,7 +84,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await app?.close();
+  await closeApp(app);
   cleanupTempProject(TEST_NAME);
 });
 

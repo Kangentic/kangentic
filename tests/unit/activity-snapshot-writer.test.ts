@@ -17,7 +17,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { ActivitySnapshotWriter } from '../../src/main/pty/activity/engine/snapshot-writer';
+import { ActivitySnapshotWriter } from '../../src/main/activity-engine/engine/snapshot-writer';
 import type { ActivityStatsSnapshot } from '../../src/shared/types';
 
 afterEach(() => {

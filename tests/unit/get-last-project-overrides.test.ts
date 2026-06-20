@@ -75,11 +75,11 @@ vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({
 vi.mock('../../src/main/db/repositories/transcript-repository', () => ({
   TranscriptRepository: class {},
 }));
-vi.mock('../../src/main/engine/session-startup', () => ({
+vi.mock('../../src/main/transition-engine/session-startup', () => ({
   resumeSuspendedSessions: vi.fn(async () => {}),
   autoSpawnTasks: vi.fn(async () => {}),
 }));
-vi.mock('../../src/main/engine/resource-cleanup', () => ({
+vi.mock('../../src/main/transition-engine/resource-cleanup', () => ({
   cleanupStaleResourcesAsync: vi.fn(async () => {}),
   pruneOrphanedWorktreeTasks: vi.fn(),
 }));

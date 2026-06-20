@@ -105,6 +105,7 @@ export function App() {
       cleanupPathMissing?.();
       cleanupUpdateListener?.();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap: every callee is a stable Zustand action or an IPC listener registered exactly once
   }, []);
 
   // Owns the warm-switch cache lifecycle. See

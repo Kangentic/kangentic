@@ -75,7 +75,7 @@ vi.mock('../../src/main/pty/lifecycle/pty-kill', () => ({
   safeKillPty: vi.fn(),
 }));
 
-vi.mock('../../src/main/pty/pr/pr-connectors', () => ({
+vi.mock('../../src/main/pr/pr-registry', () => ({
   detectPR: vi.fn(() => null),
 }));
 
@@ -86,7 +86,7 @@ vi.mock('../../src/shared/paths', () => ({
 // trace-recorder is the only module the onExit body touches that the
 // session-spawn-flow harness does not otherwise stub. Mock it so firing
 // onExit stays a pure in-memory operation.
-vi.mock('../../src/main/pty/activity/trace-recorder', () => ({
+vi.mock('../../src/main/activity-engine/trace-recorder', () => ({
   setSessionDir: vi.fn(),
   recordPtyChunk: vi.fn(),
   clearSessionDir: vi.fn(),

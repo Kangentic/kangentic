@@ -46,7 +46,7 @@ interface ConfigStore {
 
   // -- Agent detection --
   agentList: AgentDetectionInfo[];
-  loadAgentList: () => Promise<void>;
+  loadAgentList: (forceRefresh?: boolean) => Promise<void>;
 
   /** Record a model that's been seen for an agent (live usage event or override
    *  assignment). Idempotent and cheap: no-op when already known. Persists via
@@ -139,8 +139,8 @@ export const useConfigStore = create<ConfigStore>((set, get) => ({
     set({ gitInfo });
   },
 
-  loadAgentList: async () => {
-    const agentList = await window.electronAPI.agents.list();
+  loadAgentList: async (forceRefresh?: boolean) => {
+    const agentList = await window.electronAPI.agents.list(forceRefresh);
     set({ agentList });
 
     // Seed the discovered-models cache from `capabilities.models` so every

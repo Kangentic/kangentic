@@ -50,33 +50,33 @@ This subsystem aims to be near-100% accurate: notification fires within seconds 
 
 ## Key files
 
-The engine itself is split across modules under `pty/activity/engine/`. External consumers import from `engine/index.ts`; internal modules are implementation details.
+The engine itself is split across modules under `activity-engine/engine/`. External consumers import from `engine/index.ts`; internal modules are implementation details.
 
 | File | Role |
 |------|------|
-| `src/main/pty/activity/engine/index.ts` | Public surface re-exports (`ActivityEngine`, `ActivitySnapshotWriter`, types, default constants) |
-| `src/main/pty/activity/engine/activity-engine.ts` | Engine class - lifecycle + orchestration (delegates to the modules below) |
-| `src/main/pty/activity/engine/shapes.ts` | `SessionEngineState`, `ActivityEngineOptions`, `TransitionRecord`, `PendingTool`, event sets, default thresholds |
-| `src/main/pty/activity/engine/predicate.ts` | Pure `derivePredicate` / `deriveReason` / `deriveActivityAndReason` - no engine reference, no mutation |
-| `src/main/pty/activity/engine/event-handlers.ts` | Pure `updateCounters` / `updatePermissionFlag` - the big switch on event type |
-| `src/main/pty/activity/engine/counter-snapshot.ts` | `snapshotCounters` and `formatCounterDelta` for the audit log |
-| `src/main/pty/activity/engine/state-factory.ts` | `createSessionEngineState` initial-state factory |
-| `src/main/pty/activity/engine/watchdog.ts` | `WatchdogHold` table + `findActiveWatchdogHold` lookup - declarative safety nets |
-| `src/main/pty/activity/engine/snapshot-writer.ts` | `ActivitySnapshotWriter` - atomic JSON snapshots for post-mortem diagnostics |
+| `src/main/activity-engine/engine/index.ts` | Public surface re-exports (`ActivityEngine`, `ActivitySnapshotWriter`, types, default constants) |
+| `src/main/activity-engine/engine/activity-engine.ts` | Engine class - lifecycle + orchestration (delegates to the modules below) |
+| `src/main/activity-engine/engine/shapes.ts` | `SessionEngineState`, `ActivityEngineOptions`, `TransitionRecord`, `PendingTool`, event sets, default thresholds |
+| `src/main/activity-engine/engine/predicate.ts` | Pure `derivePredicate` / `deriveReason` / `deriveActivityAndReason` - no engine reference, no mutation |
+| `src/main/activity-engine/engine/event-handlers.ts` | Pure `updateCounters` / `updatePermissionFlag` - the big switch on event type |
+| `src/main/activity-engine/engine/counter-snapshot.ts` | `snapshotCounters` and `formatCounterDelta` for the audit log |
+| `src/main/activity-engine/engine/state-factory.ts` | `createSessionEngineState` initial-state factory |
+| `src/main/activity-engine/engine/watchdog.ts` | `WatchdogHold` table + `findActiveWatchdogHold` lookup - declarative safety nets |
+| `src/main/activity-engine/engine/snapshot-writer.ts` | `ActivitySnapshotWriter` - atomic JSON snapshots for post-mortem diagnostics |
 
 Surrounding infrastructure:
 
 | File | Role |
 |------|------|
-| `src/main/pty/activity/session-telemetry.ts` | Wires the engine to event ingestion + PTY tracker + watchers + user-interrupt coordinator |
-| `src/main/pty/activity/user-interrupt-coordinator.ts` | 3-second settle timer for Ctrl+C; synthesizes Interrupted if engine still hot |
-| `src/main/pty/activity/usage-accumulator.ts` | Per-tool usage stats (call count, cost, tokens) |
-| `src/main/pty/activity/pr-command-detector.ts` | PR command pattern detector |
-| `src/main/pty/activity/pty-activity-tracker.ts` | PTY-byte fallback for non-hook agents |
-| `src/main/pty/activity/background-shell/watcher.ts` | Process-tree-based natural-exit detector |
-| `src/main/pty/activity/background-shell/process-tree.ts` | Cross-platform descendant enumeration; `listAllProcesses` shared once per cycle |
-| `src/main/pty/activity/background-shell/resume.ts` | Resume-time orphan adoption |
-| `src/main/pty/activity/background-shell/looks-like-shell-id.ts` | Shell-id shape gate |
+| `src/main/activity-engine/session-telemetry.ts` | Wires the engine to event ingestion + PTY tracker + watchers + user-interrupt coordinator |
+| `src/main/activity-engine/user-interrupt-coordinator.ts` | 3-second settle timer for Ctrl+C; synthesizes Interrupted if engine still hot |
+| `src/main/activity-engine/usage-accumulator.ts` | Per-tool usage stats (call count, cost, tokens) |
+| `src/main/activity-engine/pr-command-detector.ts` | PR command pattern detector |
+| `src/main/activity-engine/pty-activity-tracker.ts` | PTY-byte fallback for non-hook agents |
+| `src/main/activity-engine/background-shell/watcher.ts` | Process-tree-based natural-exit detector |
+| `src/main/activity-engine/background-shell/process-tree.ts` | Cross-platform descendant enumeration; `listAllProcesses` shared once per cycle |
+| `src/main/activity-engine/background-shell/resume.ts` | Resume-time orphan adoption |
+| `src/main/activity-engine/background-shell/looks-like-shell-id.ts` | Shell-id shape gate |
 | `src/main/agent/event-bridge.js` | Generic hook-to-JSONL bridge; decodes typed `<kind>:<base64(JSON)>` directives (extractTool, extractDetail, setTypeWhen, ...) built by `src/main/agent/shared/directive-builders.ts` |
 | `src/main/agent/adapters/claude/hook-manager.ts` | Claude Code hook configuration |
 | `src/shared/types.ts` | `ActivityState`, `ActivityReason`, `EventType`, `SessionEvent.toolId` |
@@ -371,7 +371,7 @@ Polls `getActivityStats(sessionId)` every 2 seconds. Hidden by default - power u
 
 ### Reading a transition trace
 
-Each entry in `recentTransitions` (the ring of 50 returned by `getStatsSnapshot` / the MCP `kangentic_devtools_engine_state` tool; the overlay renders the last 10) carries a `trigger` label naming what caused it. The label vocabulary (`TransitionTrigger` in `src/main/pty/activity/engine/shapes.ts`):
+Each entry in `recentTransitions` (the ring of 50 returned by `getStatsSnapshot` / the MCP `kangentic_devtools_engine_state` tool; the overlay renders the last 10) carries a `trigger` label naming what caused it. The label vocabulary (`TransitionTrigger` in `src/main/activity-engine/engine/shapes.ts`):
 
 | Trigger | Meaning |
 |---------|---------|
@@ -393,7 +393,7 @@ Each transition also carries an optional counter-delta string (`formatCounterDel
 
 ### Trace capture and replay (dev only)
 
-`src/main/pty/activity/trace-recorder.ts` is a dev-only passive recorder that writes two per-session JSONL files to the session directory:
+`src/main/activity-engine/trace-recorder.ts` is a dev-only passive recorder that writes two per-session JSONL files to the session directory:
 
 - `pty-chunks.jsonl` - one `{ts, length}` line per PTY chunk arrival (no content, just timestamps and sizes)
 - `status-deltas.jsonl` - one `{ts, ...usage}` line per `status.json` update

@@ -49,6 +49,12 @@
  *
  * Draw mode and inspect mode shortcut tests (the affirmative paths) belong in
  * tests/e2e/ where a real Electron webview provides executeJavaScript.
+ *
+ * Performance note: all 8 tests use the same pre-configured mock state and a
+ * single browser instance shared via beforeAll/afterAll. Each test gets fresh
+ * React and mock state via page.goto() in beforeEach, which re-runs all
+ * registered addInitScript callbacks on the context. A page navigation is
+ * ~200-400ms vs ~1-2s for a full chromium.launch(), saving ~7 launch cycles.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -122,22 +128,37 @@ const preConfig = `
   });
 `;
 
-async function launchBrowserShortcuts(): Promise<{ browser: Browser; page: Page }> {
+let sharedBrowser: Browser;
+let sharedPage: Page;
+
+test.beforeAll(async () => {
   await waitForViteReady(VITE_URL);
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
-  const page = await context.newPage();
+  sharedBrowser = await chromium.launch({ headless: true });
+  const context = await sharedBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+  sharedPage = await context.newPage();
 
-  await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.addInitScript(preConfig);
+  await sharedPage.addInitScript({ path: MOCK_SCRIPT });
+  await sharedPage.addInitScript(preConfig);
 
-  await page.goto(VITE_URL);
-  await page.waitForLoadState('load');
-  await page.waitForSelector('text=Kangentic', { timeout: 15000 });
-  await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
+  await sharedPage.goto(VITE_URL);
+  await sharedPage.waitForLoadState('load');
+  await sharedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+  await sharedPage.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
+});
 
-  return { browser, page };
-}
+test.afterAll(async () => {
+  await sharedBrowser?.close();
+});
+
+test.beforeEach(async () => {
+  // Full page navigation resets both mock API state (init scripts re-run) and
+  // React component state (app re-mounts). This is faster than a new browser
+  // launch while providing the same isolation guarantee.
+  await sharedPage.goto(VITE_URL);
+  await sharedPage.waitForLoadState('load');
+  await sharedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+  await sharedPage.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
+});
 
 /** Seed task URL and open the browser pane. */
 async function openBrowserPane(page: Page): Promise<void> {
@@ -163,28 +184,23 @@ test.describe('BrowserPaneActive keyboard shortcuts - form-field guards', () => 
     // The inFormField guard in the document-level listener prevents Ctrl+D
     // from calling setDrawMode when the event target is an INPUT element.
     // The draw button must remain in non-active state after the shortcut.
-    const { browser, page } = await launchBrowserShortcuts();
-    try {
-      await openBrowserPane(page);
+    await openBrowserPane(sharedPage);
 
-      const urlInput = page.locator('[data-testid="browser-url-input"]');
-      const drawButton = page.locator('[data-testid="browser-draw-toggle"]');
+    const urlInput = sharedPage.locator('[data-testid="browser-url-input"]');
+    const drawButton = sharedPage.locator('[data-testid="browser-draw-toggle"]');
 
-      // Verify draw is initially off.
-      await expect(drawButton).not.toHaveClass(/bg-accent/);
+    // Verify draw is initially off.
+    await expect(drawButton).not.toHaveClass(/bg-accent/);
 
-      // Focus the URL input and fire the shortcut.
-      await urlInput.click();
-      await page.keyboard.press('Control+d');
+    // Focus the URL input and fire the shortcut.
+    await urlInput.click();
+    await sharedPage.keyboard.press('Control+d');
 
-      // The draw button must remain non-active (guard fired).
-      // If the guard had NOT fired, executeJavaScript would be called and
-      // the component would crash -- an implicit crash assertion.
-      await expect(drawButton).not.toHaveClass(/bg-accent/);
-      await expect(page.locator('[data-testid="browser-pane"]')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
+    // The draw button must remain non-active (guard fired).
+    // If the guard had NOT fired, executeJavaScript would be called and
+    // the component would crash -- an implicit crash assertion.
+    await expect(drawButton).not.toHaveClass(/bg-accent/);
+    await expect(sharedPage.locator('[data-testid="browser-pane"]')).toBeVisible();
   });
 
   test('Ctrl+Enter outside the note input does NOT trigger send', async () => {
@@ -195,31 +211,26 @@ test.describe('BrowserPaneActive keyboard shortcuts - form-field guards', () => 
     // the note input) must be a no-op. If handleSend ran, webview.executeJavaScript
     // would throw in headless and the ErrorBoundary would tear down the pane.
     // We assert the pane stays mounted to confirm send was NOT triggered.
-    const { browser, page } = await launchBrowserShortcuts();
-    try {
-      await openBrowserPane(page);
+    await openBrowserPane(sharedPage);
 
-      // Move focus away from the note input by clicking the URL bar.
-      await page.locator('[data-testid="browser-url-input"]').click();
+    // Move focus away from the note input by clicking the URL bar.
+    await sharedPage.locator('[data-testid="browser-url-input"]').click();
 
-      // Dispatch Ctrl+Enter at document level (bypasses xterm capture).
-      await page.evaluate(() => {
-        document.dispatchEvent(
-          new KeyboardEvent('keydown', {
-            key: 'Enter',
-            ctrlKey: true,
-            bubbles: true,
-            cancelable: true,
-          }),
-        );
-      });
+    // Dispatch Ctrl+Enter at document level (bypasses xterm capture).
+    await sharedPage.evaluate(() => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Enter',
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
 
-      // Pane stays mounted (handleSend was NOT called -> no executeJavaScript crash).
-      await expect(page.locator('[data-testid="browser-pane"]')).toBeVisible();
-      await expect(page.locator('[data-testid="task-detail-dialog"]')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
+    // Pane stays mounted (handleSend was NOT called -> no executeJavaScript crash).
+    await expect(sharedPage.locator('[data-testid="browser-pane"]')).toBeVisible();
+    await expect(sharedPage.locator('[data-testid="task-detail-dialog"]')).toBeVisible();
   });
 
   test('Shift+Enter in the note input does NOT trigger send', async () => {
@@ -229,54 +240,44 @@ test.describe('BrowserPaneActive keyboard shortcuts - form-field guards', () => 
     // prevents the browser send path from firing. If the guard had NOT fired,
     // handleSend() would call webview.executeJavaScript() -> crash in headless.
     // We assert the pane stays mounted as an implicit no-crash assertion.
-    const { browser, page } = await launchBrowserShortcuts();
-    try {
-      await openBrowserPane(page);
+    await openBrowserPane(sharedPage);
 
-      const noteInput = page.locator('[data-testid="browser-note-input"]');
+    const noteInput = sharedPage.locator('[data-testid="browser-note-input"]');
 
-      // Type something so the note is non-empty (send guard also checks sending
-      // state, but the shiftKey guard fires before the webview call regardless).
-      await noteInput.fill('test note');
+    // Type something so the note is non-empty (send guard also checks sending
+    // state, but the shiftKey guard fires before the webview call regardless).
+    await noteInput.fill('test note');
 
-      // Focus the note input, then press Shift+Enter.
-      await noteInput.click();
-      await page.keyboard.press('Shift+Enter');
+    // Focus the note input, then press Shift+Enter.
+    await noteInput.click();
+    await sharedPage.keyboard.press('Shift+Enter');
 
-      // Dialog and pane must still be visible (handleSend was NOT called).
-      await expect(page.locator('[data-testid="browser-pane"]')).toBeVisible();
-      await expect(page.locator('[data-testid="task-detail-dialog"]')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
+    // Dialog and pane must still be visible (handleSend was NOT called).
+    await expect(sharedPage.locator('[data-testid="browser-pane"]')).toBeVisible();
+    await expect(sharedPage.locator('[data-testid="task-detail-dialog"]')).toBeVisible();
   });
 
   test('Ctrl+I in the note input (INPUT) does NOT start inspect', async () => {
     // The inFormField guard prevents Ctrl+I from calling startInspect() when
     // the event target is an INPUT element. The inspect button must remain
     // non-active and the component must not crash.
-    const { browser, page } = await launchBrowserShortcuts();
-    try {
-      await openBrowserPane(page);
+    await openBrowserPane(sharedPage);
 
-      const noteInput = page.locator('[data-testid="browser-note-input"]');
-      const inspectButton = page.locator('[data-testid="browser-inspect-toggle"]');
+    const noteInput = sharedPage.locator('[data-testid="browser-note-input"]');
+    const inspectButton = sharedPage.locator('[data-testid="browser-inspect-toggle"]');
 
-      // Inspect is initially off.
-      await expect(inspectButton).not.toHaveClass(/bg-accent/);
+    // Inspect is initially off.
+    await expect(inspectButton).not.toHaveClass(/bg-accent/);
 
-      // Focus the note input and fire the shortcut.
-      await noteInput.click();
-      await page.keyboard.press('Control+i');
+    // Focus the note input and fire the shortcut.
+    await noteInput.click();
+    await sharedPage.keyboard.press('Control+i');
 
-      // Inspect must remain off (guard fired).
-      await expect(inspectButton).not.toHaveClass(/bg-accent/);
-      // Dialog and pane must still be visible.
-      await expect(page.locator('[data-testid="task-detail-dialog"]')).toBeVisible();
-      await expect(page.locator('[data-testid="browser-pane"]')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
+    // Inspect must remain off (guard fired).
+    await expect(inspectButton).not.toHaveClass(/bg-accent/);
+    // Dialog and pane must still be visible.
+    await expect(sharedPage.locator('[data-testid="task-detail-dialog"]')).toBeVisible();
+    await expect(sharedPage.locator('[data-testid="browser-pane"]')).toBeVisible();
   });
 });
 
@@ -292,21 +293,16 @@ test.describe('BrowserPaneActive keyboard shortcuts - Esc handling', () => {
     // event when inspect is inactive.
     //
     // We use document.dispatchEvent (anti-pattern 10) to bypass xterm capture.
-    const { browser, page } = await launchBrowserShortcuts();
-    try {
-      await openBrowserPane(page);
+    await openBrowserPane(sharedPage);
 
-      // Dispatch Esc at document level -- should propagate to dialog's handler.
-      await page.evaluate(() => {
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
-      });
+    // Dispatch Esc at document level -- should propagate to dialog's handler.
+    await sharedPage.evaluate(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    });
 
-      // When inspect is NOT active the BrowserPane Esc handler does nothing,
-      // so the dialog's own Esc listener fires and closes the dialog.
-      await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
-    } finally {
-      await browser.close();
-    }
+    // When inspect is NOT active the BrowserPane Esc handler does nothing,
+    // so the dialog's own Esc listener fires and closes the dialog.
+    await sharedPage.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
   });
 });
 
@@ -316,18 +312,13 @@ test.describe('BrowserPaneActive keyboard shortcuts - URL input Enter', () => {
     // an INPUT element (the form's onSubmit fires, not the document listener).
     // `:bad` is not a valid hostname so new URL('http://:bad') throws, setting
     // the error state WITHOUT calling loadURL -- safe in headless.
-    const { browser, page } = await launchBrowserShortcuts();
-    try {
-      await openBrowserPane(page);
-      const urlInput = page.locator('[data-testid="browser-url-input"]');
-      await urlInput.fill(':bad');
-      await urlInput.press('Enter');
-      await expect(page.getByText(/Invalid URL:/)).toBeVisible({ timeout: 3000 });
-      // Pane must still be mounted (the error branch returns before loadURL).
-      await expect(page.locator('[data-testid="browser-pane"]')).toBeVisible();
-    } finally {
-      await browser.close();
-    }
+    await openBrowserPane(sharedPage);
+    const urlInput = sharedPage.locator('[data-testid="browser-url-input"]');
+    await urlInput.fill(':bad');
+    await urlInput.press('Enter');
+    await expect(sharedPage.getByText(/Invalid URL:/)).toBeVisible({ timeout: 3000 });
+    // Pane must still be mounted (the error branch returns before loadURL).
+    await expect(sharedPage.locator('[data-testid="browser-pane"]')).toBeVisible();
   });
 });
 
@@ -336,59 +327,49 @@ test.describe('BrowserPaneActive zoom controls', () => {
     // applyZoom uses `if (typeof webview.setZoomFactor === 'function')` so the
     // missing method on the headless HTMLElement does not crash -- the React
     // state still updates and the toolbar % reflects it.
-    const { browser, page } = await launchBrowserShortcuts();
-    try {
-      await openBrowserPane(page);
+    await openBrowserPane(sharedPage);
 
-      const zoomReset = page.locator('[data-testid="browser-zoom-reset"]');
-      const zoomIn = page.locator('[data-testid="browser-zoom-in"]');
-      const zoomOut = page.locator('[data-testid="browser-zoom-out"]');
+    const zoomReset = sharedPage.locator('[data-testid="browser-zoom-reset"]');
+    const zoomIn = sharedPage.locator('[data-testid="browser-zoom-in"]');
+    const zoomOut = sharedPage.locator('[data-testid="browser-zoom-out"]');
 
-      // Initial state: 100%.
-      await expect(zoomReset).toHaveText('100%');
+    // Initial state: 100%.
+    await expect(zoomReset).toHaveText('100%');
 
-      // Step up once -> 110% (next rung on the Chrome ladder).
-      await zoomIn.click();
-      await expect(zoomReset).toHaveText('110%');
+    // Step up once -> 110% (next rung on the Chrome ladder).
+    await zoomIn.click();
+    await expect(zoomReset).toHaveText('110%');
 
-      // Step up again -> 125%.
-      await zoomIn.click();
-      await expect(zoomReset).toHaveText('125%');
+    // Step up again -> 125%.
+    await zoomIn.click();
+    await expect(zoomReset).toHaveText('125%');
 
-      // Reset via the % button.
-      await zoomReset.click();
-      await expect(zoomReset).toHaveText('100%');
+    // Reset via the % button.
+    await zoomReset.click();
+    await expect(zoomReset).toHaveText('100%');
 
-      // Step down -> 90%.
-      await zoomOut.click();
-      await expect(zoomReset).toHaveText('90%');
-    } finally {
-      await browser.close();
-    }
+    // Step down -> 90%.
+    await zoomOut.click();
+    await expect(zoomReset).toHaveText('90%');
   });
 
   test('Ctrl+= and Ctrl+0 work when focus is inside the pane', async () => {
     // The keydown handler gates zoom shortcuts on hovered OR focus-within.
     // Focusing the % button (which is inside paneRef) is the most reliable
     // way to set focus-within in a headless test, and doesn't mutate state.
-    const { browser, page } = await launchBrowserShortcuts();
-    try {
-      await openBrowserPane(page);
-      const zoomReset = page.locator('[data-testid="browser-zoom-reset"]');
-      await expect(zoomReset).toHaveText('100%');
+    await openBrowserPane(sharedPage);
+    const zoomReset = sharedPage.locator('[data-testid="browser-zoom-reset"]');
+    await expect(zoomReset).toHaveText('100%');
 
-      // Focus the % button so paneRef.current.contains(document.activeElement)
-      // becomes true; the gate then admits the zoom shortcuts.
-      await zoomReset.focus();
+    // Focus the % button so paneRef.current.contains(document.activeElement)
+    // becomes true; the gate then admits the zoom shortcuts.
+    await zoomReset.focus();
 
-      await page.keyboard.press('Control+=');
-      await expect(zoomReset).toHaveText('110%');
+    await sharedPage.keyboard.press('Control+=');
+    await expect(zoomReset).toHaveText('110%');
 
-      await page.keyboard.press('Control+0');
-      await expect(zoomReset).toHaveText('100%');
-    } finally {
-      await browser.close();
-    }
+    await sharedPage.keyboard.press('Control+0');
+    await expect(zoomReset).toHaveText('100%');
   });
 
   test('Ctrl+= does NOT fire when the pane is neither hovered nor focused', async () => {
@@ -396,41 +377,36 @@ test.describe('BrowserPaneActive zoom controls', () => {
     // zoom while the user is interacting elsewhere. We move the mouse away
     // from the pane (onto the page body well outside the pane) and ensure
     // no input inside the pane is focused.
-    const { browser, page } = await launchBrowserShortcuts();
-    try {
-      await openBrowserPane(page);
-      const zoomReset = page.locator('[data-testid="browser-zoom-reset"]');
+    await openBrowserPane(sharedPage);
+    const zoomReset = sharedPage.locator('[data-testid="browser-zoom-reset"]');
 
-      // Prime the zoom to a non-default so a missed reset would be visible.
-      await page.locator('[data-testid="browser-zoom-in"]').click();
-      await expect(zoomReset).toHaveText('110%');
+    // Prime the zoom to a non-default so a missed reset would be visible.
+    await sharedPage.locator('[data-testid="browser-zoom-in"]').click();
+    await expect(zoomReset).toHaveText('110%');
 
-      // First move INTO the pane center so onMouseEnter fires and sets
-      // hoveredRef = true. This ensures that the subsequent move OUT
-      // provably triggers onMouseLeave (not assumed to be starting outside).
-      const paneBox = await page.locator('[data-testid="browser-pane"]').boundingBox();
-      if (paneBox) {
-        await page.mouse.move(
-          paneBox.x + paneBox.width / 2,
-          paneBox.y + paneBox.height / 2,
-        );
-      }
-
-      // Now blur and move to (0,0) so onMouseLeave fires and hoveredRef = false.
-      await page.evaluate(() => {
-        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-      });
-      await page.mouse.move(0, 0);
-
-      // hoveredRef is now false and nothing inside the pane has focus.
-      // Ctrl+0 at the document level must not reset zoom.
-      await page.keyboard.press('Control+0');
-
-      // The gate should have prevented reset.
-      await expect(zoomReset).toHaveText('110%');
-    } finally {
-      await browser.close();
+    // First move INTO the pane center so onMouseEnter fires and sets
+    // hoveredRef = true. This ensures that the subsequent move OUT
+    // provably triggers onMouseLeave (not assumed to be starting outside).
+    const paneBox = await sharedPage.locator('[data-testid="browser-pane"]').boundingBox();
+    if (paneBox) {
+      await sharedPage.mouse.move(
+        paneBox.x + paneBox.width / 2,
+        paneBox.y + paneBox.height / 2,
+      );
     }
+
+    // Now blur and move to (0,0) so onMouseLeave fires and hoveredRef = false.
+    await sharedPage.evaluate(() => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    });
+    await sharedPage.mouse.move(0, 0);
+
+    // hoveredRef is now false and nothing inside the pane has focus.
+    // Ctrl+0 at the document level must not reset zoom.
+    await sharedPage.keyboard.press('Control+0');
+
+    // The gate should have prevented reset.
+    await expect(zoomReset).toHaveText('110%');
   });
 
   test('Ctrl+= fires when pane is hovered but no element inside has focus', async () => {
@@ -446,35 +422,30 @@ test.describe('BrowserPaneActive zoom controls', () => {
     // The zoom-reset button is in the URL bar row which sits ABOVE the
     // webview/canvas overlay, so pointer events reach the element without
     // being intercepted by absolute-positioned children.
-    const { browser, page } = await launchBrowserShortcuts();
-    try {
-      await openBrowserPane(page);
-      const zoomReset = page.locator('[data-testid="browser-zoom-reset"]');
-      await expect(zoomReset).toHaveText('100%');
+    await openBrowserPane(sharedPage);
+    const zoomReset = sharedPage.locator('[data-testid="browser-zoom-reset"]');
+    await expect(zoomReset).toHaveText('100%');
 
-      // Hover the zoom-reset button. Playwright's .hover() moves the mouse
-      // and waits for the element to be actionable, then dispatches mouse
-      // events ending with mouseenter on the element and its ancestors -
-      // including the [data-testid="browser-pane"] root which owns
-      // onMouseEnter -> hoveredRef.current = true.
-      await zoomReset.hover();
+    // Hover the zoom-reset button. Playwright's .hover() moves the mouse
+    // and waits for the element to be actionable, then dispatches mouse
+    // events ending with mouseenter on the element and its ancestors -
+    // including the [data-testid="browser-pane"] root which owns
+    // onMouseEnter -> hoveredRef.current = true.
+    await zoomReset.hover();
 
-      // Blur everything. zoomReset.hover() may have left focus on the button
-      // (browsers sometimes focus buttons on hover). We need focusInside to
-      // be false so only the hover branch admits the shortcut.
-      await page.evaluate(() => {
-        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-      });
+    // Blur everything. zoomReset.hover() may have left focus on the button
+    // (browsers sometimes focus buttons on hover). We need focusInside to
+    // be false so only the hover branch admits the shortcut.
+    await sharedPage.evaluate(() => {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    });
 
-      // Fire Ctrl+= at the document level. hoveredRef.current should be true
-      // (the hover event chain sets it) so the gate admits the shortcut even
-      // though nothing inside the pane is focused.
-      await page.keyboard.press('Control+=');
+    // Fire Ctrl+= at the document level. hoveredRef.current should be true
+    // (the hover event chain sets it) so the gate admits the shortcut even
+    // though nothing inside the pane is focused.
+    await sharedPage.keyboard.press('Control+=');
 
-      // hoveredRef was true -> shortcut fires -> zoomFactor steps from 1.0 to 1.1.
-      await expect(zoomReset).toHaveText('110%');
-    } finally {
-      await browser.close();
-    }
+    // hoveredRef was true -> shortcut fires -> zoomFactor steps from 1.0 to 1.1.
+    await expect(zoomReset).toHaveText('110%');
   });
 });

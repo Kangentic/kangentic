@@ -5,12 +5,13 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
-import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides, resolveAndLinkPR, maybeResolvePRAfterMove } from '../helpers';
+import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides } from '../helpers';
+import { linkPR, linkPRForMovedTask } from '../../pr/pr-linking';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
-import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessionId } from '../../engine/session-lifecycle';
+import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessionId } from '../../transition-engine/session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import { abortInFlightResume, registerResumeController, releaseResumeController } from './session-resume-controllers';
@@ -579,10 +580,10 @@ export function registerSessionHandlers(context: IpcContext): void {
 
   // Auto-link PR when an agent's `gh pr ...` command finishes (or on session
   // exit if its ToolEnd was lost). The candidate is just the hint; the
-  // authoritative branch->PR query runs in resolveAndLinkPR, with the scrollback
+  // authoritative branch->PR query runs in linkPR, with the scrollback
   // passed through only as the gh-unavailable degradation fallback.
   context.sessionManager.on('pr-candidate', (sessionId: string, scrollback: string) => {
-    void resolveAndLinkPR(context, { sessionId, scrollback }).catch((error) => {
+    void linkPR(context, { sessionId, scrollback }).catch((error) => {
       console.error(`[pr-candidate] Failed to resolve PR for session ${sessionId}:`, error);
     });
   });
@@ -592,7 +593,7 @@ export function registerSessionHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.TASK_RESOLVE_PR, async (_, taskId: string, projectId?: string | null): Promise<TaskResolvePrResult> => {
     const resolvedProjectId = projectId ?? context.currentProjectId;
     if (!resolvedProjectId) return { task: null, linked: false, reason: 'no-anchor' };
-    const result = await resolveAndLinkPR(context, { projectId: resolvedProjectId, taskId, force: true });
+    const result = await linkPR(context, { projectId: resolvedProjectId, taskId, force: true });
     return {
       task: result.task,
       linked: result.status === 'linked' || result.status === 'unchanged',
@@ -651,7 +652,7 @@ export function registerSessionHandlers(context: IpcContext): void {
       }
       console.log(`[plan-exit] Auto-moved "${task.title}" -> "${target.name}"`);
       // Resolve the PR for the new (non-To Do) lane - runs after the move's lock released.
-      maybeResolvePRAfterMove(context, task.id, resolvedProjectId);
+      linkPRForMovedTask(context, task.id, resolvedProjectId);
     } catch (err) {
       console.error('[plan-exit] Auto-move failed:', err);
     }

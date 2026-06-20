@@ -3,7 +3,7 @@ import { UsageHistoryRepository } from '../../db/repositories/usage-history-repo
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, createTransitionEngine, resolveSpawnOverrides } from '../helpers';
 import { captureSessionMetrics } from './session-metrics';
-import { markRecordExited, markRecordSuspended } from '../../engine/session-lifecycle';
+import { markRecordExited, markRecordSuspended } from '../../transition-engine/session-lifecycle';
 import { decideSuspendDbAction, isLiveSession } from '../../pty/session-registry';
 import { isAbortError } from '../../../shared/abort-utils';
 import type { Session, SuspendedBy, Task } from '../../../shared/types';

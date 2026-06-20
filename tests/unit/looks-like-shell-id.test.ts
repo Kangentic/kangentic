@@ -13,7 +13,7 @@
  * is absent (the case the gate exists to reject).
  */
 import { describe, it, expect } from 'vitest';
-import { looksLikeShellId } from '../../src/main/pty/activity/background-shell/looks-like-shell-id';
+import { looksLikeShellId } from '../../src/main/activity-engine/background-shell/looks-like-shell-id';
 
 describe('looksLikeShellId', () => {
   describe('accepts real shell ids (named tracking)', () => {

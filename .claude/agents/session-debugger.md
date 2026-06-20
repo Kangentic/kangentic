@@ -38,7 +38,7 @@ Then read the key implementation files:
 
 - `src/main/pty/session-manager.ts` -- PTY spawn, suspend, kill, generation counters
 - `src/main/pty/session-queue.ts` -- concurrency queue, processQueue logic
-- `src/main/engine/transition-engine.ts` -- action execution on lane transitions
+- `src/main/transition-engine/transition-engine.ts` -- action execution on lane transitions
 - `src/main/ipc/handlers/tasks.ts` -- `handleTaskMove` priority cascade
 - `src/renderer/stores/session-store.ts` -- renderer-side session state
 - `src/renderer/components/terminal/TerminalPanel.tsx` -- terminal ownership, xterm lifecycle

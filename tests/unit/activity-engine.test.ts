@@ -25,7 +25,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ActivityEngine, type ActivityEngineOptions } from '../../src/main/pty/activity/engine';
+import { ActivityEngine, type ActivityEngineOptions } from '../../src/main/activity-engine/engine';
 import { EventType, IdleReason } from '../../src/shared/types';
 import type { ActivityState, ActivityReason, SessionEvent } from '../../src/shared/types';
 

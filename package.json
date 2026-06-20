@@ -19,7 +19,7 @@
     "publish": "npm run rebuild && npm run build && electron-builder --publish always",
     "postinstall": "node scripts/rebuild-native.js",
     "rebuild": "node scripts/rebuild-native.js",
-    "lint": "eslint src/",
+    "lint": "eslint src/ --max-warnings 0",
     "test": "npx playwright test --project=ui --project=electron",
     "test:headed": "HEADED=1 npx playwright test --project=ui --project=electron",
     "capture": "npx playwright test --project=captures",

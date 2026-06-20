@@ -14,30 +14,332 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# CI architecture:
+# - Standalone checks (lint, typecheck, build) each run as their own top-level
+#   job, always-visible in the checks list. None consume another's output (build
+#   is a "does it bundle" gate; the UI tier runs the Vite dev server, not build).
+# - The three test tiers (unit / UI / E2E) are sharded matrices, each behind a
+#   thin gate job whose `name:` is the required status check ("Unit tests
+#   (Vitest)", "UI tests (Playwright)", "E2E tests (Electron)"). The shards are
+#   an implementation detail; the gate is the required check.
+#
+# Concurrency budget (GitHub Free caps concurrent jobs at ~20): shard counts are
+# sized so the test shards plus the always-on jobs fit the cap with NO queueing
+# (queueing, not shard count, was the real wall-clock bottleneck). Current
+# budget: UI 9 + E2E 5 + unit 3 = 17 shards, plus lint + typecheck + build + the
+# CLA workflow = 4, totalling 21 - one over the cap, deliberately: the CLA check
+# finishes in ~10-17s and frees its slot, so the single over-cap shard queues
+# only that briefly (far under its ~70-90s runtime) and still lands inside the
+# envelope. node_modules is cached under one shared lockfile-keyed key, so npm ci
+# runs only on a lockfile change. The thin gates run AFTER their shards (`needs`),
+# so they do not consume a shard-phase slot. To scale as the suites grow: either
+# rebalance the shard counts (UI is test-count-bound and wants the most shards;
+# E2E is launch-bound and one-waves at workers=8 so ~5 suffices; unit is npm-ci-
+# floored once cached, so a few shards suffice), or raise the ceiling by upgrading
+# the GitHub plan (Team = 60 concurrent).
+#
+# The job `name:` is the status-check context used by branch protection - keep
+# these in sync with main's required checks if you rename one.
+
 jobs:
-  validate:
+  lint:
+    name: Lint (ESLint)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v5
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
         with:
           node-version: 22
+          cache: npm
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies (npm ci)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Lint (ESLint)
+        run: npm run lint
 
-      - run: npm ci
+  typecheck:
+    name: Type check (tsc)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies (npm ci)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Type check (tsc)
+        run: npm run typecheck
 
-      - run: npm run build
+  # Unit tier, sharded across ubuntu runners like the UI/E2E tiers (Vitest
+  # `--shard`). The suite is volume-bound (~360 files, no single long pole), and
+  # within one runner Vitest only reaches ~2x parallelism (import / main-thread
+  # Vite-server overhead), so cross-runner sharding is how it scales as the suite
+  # grows. Each shard emits a `blob` report (uploaded as an artifact) plus the
+  # default reporter into its own log; the `unit` gate below merges the blobs into
+  # ONE Vitest summary on the run page and is the required status check.
+  unit-shards:
+    name: Unit Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shardIndex: [1, 2, 3]
+        shardTotal: [3]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies (npm ci)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Unit tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+        run: npx vitest run tests/unit --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} --reporter=blob --reporter=default --outputFile.blob=.vitest/blob/blob-${{ matrix.shardIndex }}.json
+      - name: Upload blob report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: unit-blob-${{ matrix.shardIndex }}
+          path: .vitest/blob/
+          retention-days: 1
 
-      - run: npm run typecheck
+  # Required gate AND report merge: downloads the shard blob reports and merges
+  # them into ONE Vitest summary rendered natively on the run page (the
+  # github-actions reporter writes GITHUB_STEP_SUMMARY - no artifact download
+  # needed to read it). `vitest --merge-reports` exits non-zero on any test
+  # failure (so it gates), and the final step also fails if a shard job died
+  # without producing a blob. Keep the name "Unit tests (Vitest)" - it is the
+  # branch-protection required status-check context.
+  unit:
+    name: Unit tests (Vitest)
+    needs: [unit-shards]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies (npm ci)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Download shard blob reports
+        uses: actions/download-artifact@v8
+        with:
+          pattern: unit-blob-*
+          merge-multiple: true
+          path: .vitest/blob
+      - name: Merge blob reports into one Vitest summary
+        run: npx vitest --merge-reports=.vitest/blob --reporter=github-actions --reporter=default
+      - name: Fail if any unit shard job did not succeed
+        if: ${{ needs.unit-shards.result != 'success' }}
+        run: exit 1
 
-      - run: npm run lint
+  build:
+    name: Build (production bundle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies (npm ci)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Build (production bundle)
+        run: npm run build
 
-      - run: npm run test:unit
+  # UI tier, sharded across parallel ubuntu runners (Playwright `--shard`). Each
+  # shard prints its own per-test results via the `list` reporter (visible in the
+  # shard's job log) - there is NO blob upload or merged-report job, so the run is
+  # not gated by a serial merge. npm ci uses --ignore-scripts (the headless UI
+  # tests never load node-pty/better-sqlite3/electron) then rebuilds just esbuild,
+  # which the Vite dev server needs. Chromium's system libs already ship on
+  # ubuntu-latest, so the browser install needs no --with-deps; the binary is
+  # cached. The single required status check is the thin `ui` gate below.
+  playwright-shards:
+    name: UI Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shardIndex: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        shardTotal: [9]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      # Shared node_modules cache (keyed on the lockfile, same key as every tier):
+      # on a hit the shard skips install entirely; on a miss it runs a full
+      # npm ci. The native modules go unused by the headless UI tests, but keeping
+      # one shared cache is simpler and esbuild is built into the cached tree (no
+      # separate rebuild needed).
+      - name: Cache node_modules
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies (npm ci)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-playwright-
+      # No --with-deps: GitHub's ubuntu-latest image already ships Chromium's
+      # system libraries, so the ~2min --with-deps apt install was nearly all
+      # redundant (the browser binary itself is the cached step above, ~3s). If a
+      # required lib is ever missing, Chromium fails to launch - re-add --with-deps.
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+      - name: Run UI tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+        run: npx playwright test --project=ui --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+  # Thin required gate: this single check ("UI tests (Playwright)") is what branch
+  # protection requires, so the matrix shards stay an impl detail. It only fails if
+  # any shard failed - no checkout / install / merge, so it adds just job spin-up
+  # to the UI tier (the serial merged-report job is gone). Per-shard results are
+  # visible in each shard's own log.
+  ui:
+    name: UI tests (Playwright)
+    needs: [playwright-shards]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Gate on shard results
+        run: |
+          if [ "${{ needs.playwright-shards.result }}" != "success" ]; then
+            echo "One or more Playwright shards did not succeed (result: ${{ needs.playwright-shards.result }})"
+            exit 1
+          fi
+          echo "All Playwright shards passed."
 
-      - name: Run UI tests
-        run: npx playwright test --project=ui
+  # E2E tier (Linux only): launches the REAL bundled Electron app via
+  # electron.launch() (tests/e2e/helpers.ts) under xvfb. Sharded across
+  # ubuntu-latest runners (Playwright `--shard`) - 1x cost and faster than
+  # Windows. It runs ONLY on Linux: the suite is platform-neutral, so Linux
+  # covers the macOS/Linux users while the team dogfoods the Windows build, and
+  # the local workers=1 lock (concurrent electron.launch() on Windows) does not
+  # apply, so on CI each shard runs workers=8 (set in playwright.config.ts: the
+  # top-level cap AND the electron project are both 8; Windows and local stay at
+  # 1) and the suite is sharded 5 ways (see the concurrency-budget note at the
+  # top of this file). workers=8 lets a shard launch all its spec files in one
+  # wave (the slowest shards hold ~5-6 files); per-file teardown is I/O-bound so
+  # it overlaps cleanly. Concurrent launches are safe on
+  # CI: the leaked-Electron janitor is a no-op under
+  # GITHUB_ACTIONS, each test has an isolated KANGENTIC_DATA_DIR, and the
+  # single-instance lock is bypassed under NODE_ENV=test. helpers.ts adds
+  # --no-sandbox on Linux (xvfb has no Chromium sandbox).
+  #
+  # node_modules is restored from the shared lockfile-keyed cache (same key as
+  # every tier); npm ci runs only on a cache miss. E2E relies on the cached tree
+  # carrying the native better-sqlite3 / node-pty build and the extracted Electron
+  # binary. No Playwright browser download (the electron project drives the
+  # bundled Electron). retries=1 on CI comes from playwright.config.ts.
+  e2e-shards:
+    name: E2E Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shardIndex: [1, 2, 3, 4, 5]
+        shardTotal: [5]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Cache node_modules (native build + Electron binary)
+        id: cache-node-modules
+        uses: actions/cache@v5
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+      - name: Install dependencies (npm ci, full native build)
+        if: steps.cache-node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Build (production bundle)
+        run: npm run build
+      - name: Run E2E tests (shard ${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+        run: xvfb-run -a npx playwright test --project=electron --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }}
+
+  # Thin required gate: the single "E2E tests (Electron)" check that branch
+  # protection requires, green only if every E2E shard passed. Mirrors the `ui`
+  # gate - no checkout/install, just job spin-up.
+  e2e:
+    name: E2E tests (Electron)
+    needs: [e2e-shards]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Gate on shard results
+        run: |
+          if [ "${{ needs.e2e-shards.result }}" != "success" ]; then
+            echo "One or more E2E shards did not succeed (result: ${{ needs.e2e-shards.result }})"
+            exit 1
+          fi
+          echo "All E2E shards passed."

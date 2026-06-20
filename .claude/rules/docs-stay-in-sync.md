@@ -20,8 +20,9 @@ When you change an anchor source file (a union / interface / default in `src/sha
 an IPC channel, a DB migration, an adapter capability, a settings tab or registry entry, or a
 template variable), the docs that enumerate it must be updated to match.
 
-- You do not have to hand-edit docs mid-task: `/merge-back` runs `/sync-docs` automatically, and
-  the `doc-auditor` agent reports missing or extra anchor items.
+- You do not have to hand-edit docs mid-task: the PR and push skills (`/pull-request`,
+  `/merge-pull-request`, `/merge-back`) run the targeted doc-anchor check automatically, and the
+  `doc-auditor` agent reports missing or extra anchor items.
 - But keep the relationship in mind, and run `/sync-docs` (or note the affected docs) when a
   change adds or removes an enumerable item.
 - The canonical mapping, anchor list, and workflow live in `.claude/skills/sync-docs/SKILL.md`.
@@ -31,8 +32,8 @@ template variable), the docs that enumerate it must be updated to match.
 
 - **Agent:** the `doc-auditor` agent mechanically counts anchor items in source vs docs and
   reports the diff.
-- **Workflow:** `/sync-docs` (run standalone or automatically during `/merge-back`) performs the
-  update pass.
+- **Workflow:** `/sync-docs` (run standalone) performs the full update pass; its targeted anchor
+  check also runs automatically inside `/pull-request`, `/merge-pull-request`, and `/merge-back`.
 
 ## Scope
 

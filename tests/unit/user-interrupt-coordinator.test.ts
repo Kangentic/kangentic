@@ -14,8 +14,8 @@
  *   even if `activity === 'thinking'` (hooks already recovered naturally)
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { UserInterruptCoordinator } from '../../src/main/pty/activity/user-interrupt-coordinator';
-import { ActivityEngine } from '../../src/main/pty/activity/engine';
+import { UserInterruptCoordinator } from '../../src/main/activity-engine/user-interrupt-coordinator';
+import { ActivityEngine } from '../../src/main/activity-engine/engine';
 import { EventType } from '../../src/shared/types';
 import type { SessionEvent } from '../../src/shared/types';
 

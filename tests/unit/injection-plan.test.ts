@@ -23,7 +23,7 @@
  * - appliedSettings reports the new running effort for a concrete effort change
  */
 import { describe, it, expect } from 'vitest';
-import { prepareInjectionPlan } from '../../src/main/engine/injection-plan';
+import { prepareInjectionPlan } from '../../src/main/transition-engine/injection-plan';
 import type { AgentAdapter, SettingsChangeSpec } from '../../src/main/agent/agent-adapter';
 import type { SessionRepository } from '../../src/main/db/repositories/session-repository';
 import type { SessionRecord, Swimlane } from '../../src/shared/types';

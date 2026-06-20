@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { UsageAccumulator } from '../../src/main/pty/activity/usage-accumulator';
+import { UsageAccumulator } from '../../src/main/activity-engine/usage-accumulator';
 import { EventType } from '../../src/shared/types';
 import type { SessionUsage, SessionEvent } from '../../src/shared/types';
 

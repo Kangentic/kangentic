@@ -20,31 +20,33 @@ vi.mock('node:util', () => ({
   promisify: (fn: unknown) => fn,
 }));
 
-vi.mock('node:fs', () => ({
-  default: {
-    existsSync: vi.fn(),
-    readdirSync: vi.fn(),
-    statSync: vi.fn(),
-    openSync: vi.fn(),
-    readSync: vi.fn(),
-    closeSync: vi.fn(),
-  },
-}));
+// The session-history walk now goes through the shared async primitives in
+// history-scan. Copilot reads from the tail of a fixed `events.jsonl` per
+// session dir (no listMostRecentFiles), so we mock listMostRecentDirs +
+// readTailBytes only. parseJsonlRecords stays real so the adapter's
+// record-extraction logic is exercised.
+vi.mock('../../src/main/agent/shared/history-scan', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/main/agent/shared/history-scan')>();
+  return {
+    ...actual,
+    listMostRecentDirs: vi.fn(),
+    readTailBytes: vi.fn(),
+  };
+});
 
 import { execFile, exec } from 'node:child_process';
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { discoverCopilotCapabilities } from '../../src/main/agent/adapters/copilot/capability-discovery';
+import {
+  listMostRecentDirs,
+  readTailBytes,
+} from '../../src/main/agent/shared/history-scan';
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
-const existsMock = fs.existsSync as unknown as ReturnType<typeof vi.fn>;
-const readdirMock = fs.readdirSync as unknown as ReturnType<typeof vi.fn>;
-const statMock = fs.statSync as unknown as ReturnType<typeof vi.fn>;
-const openMock = fs.openSync as unknown as ReturnType<typeof vi.fn>;
-const readMock = fs.readSync as unknown as ReturnType<typeof vi.fn>;
-const closeMock = fs.closeSync as unknown as ReturnType<typeof vi.fn>;
+const listDirsMock = listMostRecentDirs as unknown as ReturnType<typeof vi.fn>;
+const readTailMock = readTailBytes as unknown as ReturnType<typeof vi.fn>;
 
 const SESSIONS_ROOT = path.join(os.homedir(), '.copilot', 'session-state');
 
@@ -54,73 +56,44 @@ function setHelpOutput(stdout: string): void {
   execFileMock.mockReturnValue(result);
 }
 
-/** Layout: `<root>/<sessionId>/events.jsonl` */
+/**
+ * Wire up the history-scan primitives for Copilot's session store.
+ * Layout: `<root>/<sessionId>/events.jsonl`
+ * listMostRecentDirs returns the session dirs; readTailBytes returns the
+ * contents of the fixed `events.jsonl` path inside each session dir.
+ * Setting the store to null makes ~/.copilot/session-state appear missing
+ * (empty listing).
+ */
 type SessionTree = Record<string, string>;
 
 function setSessionStore(store: SessionTree | null): void {
-  existsMock.mockReset();
-  readdirMock.mockReset();
-  statMock.mockReset();
-  openMock.mockReset();
-  readMock.mockReset();
-  closeMock.mockReset();
+  listDirsMock.mockReset();
+  readTailMock.mockReset();
 
   if (store === null) {
-    existsMock.mockReturnValue(false);
+    listDirsMock.mockResolvedValue([]);
+    readTailMock.mockResolvedValue('');
     return;
   }
-  existsMock.mockReturnValue(true);
 
-  const fdContents = new Map<number, string>();
-  let nextFd = 100;
+  const sessionIds = Object.keys(store);
 
-  readdirMock.mockImplementation((dirPath: string, options?: { withFileTypes?: boolean }) => {
-    const asDirents = (names: string[]): fs.Dirent[] =>
-      names.map((name) => ({ name, isDirectory: () => true })) as unknown as fs.Dirent[];
-
-    if (dirPath === SESSIONS_ROOT) {
-      const sessions = Object.keys(store);
-      return options?.withFileTypes ? asDirents(sessions) : sessions;
-    }
-    throw new Error(`Unexpected readdir: ${dirPath}`);
+  listDirsMock.mockImplementation(async (parent: string) => {
+    if (parent !== SESSIONS_ROOT) return [];
+    // Descending mtime so scan order is deterministic.
+    return sessionIds.map((sessionId, index) => ({
+      fullPath: path.join(SESSIONS_ROOT, sessionId),
+      mtimeMs: sessionIds.length - index,
+    }));
   });
 
-  statMock.mockImplementation((targetPath: string) => {
-    for (const sessionId of Object.keys(store)) {
-      const eventsPath = path.join(SESSIONS_ROOT, sessionId, 'events.jsonl');
-      if (targetPath === eventsPath) {
-        const size = Buffer.byteLength(store[sessionId], 'utf-8');
-        return { mtimeMs: Date.now(), size } as fs.Stats;
-      }
-    }
-    return { mtimeMs: Date.now(), size: 0 } as fs.Stats;
-  });
-
-  openMock.mockImplementation((filePath: string) => {
+  // Copilot reads the FIXED `events.jsonl` inside each session dir via readTailBytes.
+  readTailMock.mockImplementation(async (filePath: string) => {
     for (const [sessionId, contents] of Object.entries(store)) {
-      const full = path.join(SESSIONS_ROOT, sessionId, 'events.jsonl');
-      if (filePath === full) {
-        const fd = nextFd++;
-        fdContents.set(fd, contents);
-        return fd;
-      }
+      const eventsPath = path.join(SESSIONS_ROOT, sessionId, 'events.jsonl');
+      if (filePath === eventsPath) return contents;
     }
-    throw new Error(`Unexpected open: ${filePath}`);
-  });
-
-  readMock.mockImplementation((fd: number, buffer: Buffer, _offset: number, length: number, position: number | null) => {
-    const text = fdContents.get(fd) ?? '';
-    const bytes = Buffer.from(text, 'utf-8');
-    // Copilot reads from the END of the file - support `position` correctly.
-    const start = position ?? 0;
-    const available = Math.max(0, bytes.length - start);
-    const toCopy = Math.min(length, available);
-    bytes.copy(buffer, 0, start, start + toCopy);
-    return toCopy;
-  });
-
-  closeMock.mockImplementation((fd: number) => {
-    fdContents.delete(fd);
+    return '';
   });
 }
 
@@ -170,6 +143,20 @@ describe('discoverCopilotCapabilities', () => {
     const capabilities = await discoverCopilotCapabilities('/missing/copilot');
     expect(capabilities.supportsModelOverride).toBe(false);
     expect(capabilities.effortLevels).toEqual([]);
+  });
+
+  it('does not invoke the session history scan when --help lacks --model', async () => {
+    // When supportsModelOverride is false the adapter returns early before
+    // calling scanCopilotSessionHistory(), so readTailBytes must never be invoked.
+    // Seed a non-empty session store so that, absent the early return, the scan
+    // WOULD reach readTailBytes - this is what makes the assertion load-bearing
+    // (and red if the supportsModelOverride guard is ever removed).
+    setSessionStore({
+      'session-uuid-1': '{"type":"session.shutdown","data":{"currentModel":"gpt-5"}}\n',
+    });
+    setHelpOutput('Usage: copilot\n  -h, --help  Show help\n');
+    await discoverCopilotCapabilities('/usr/bin/copilot');
+    expect(readTailMock).not.toHaveBeenCalled();
   });
 
   describe('historical model discovery (events.jsonl tail)', () => {
@@ -237,7 +224,7 @@ describe('discoverCopilotCapabilities', () => {
 
     it('skips when sessions root is missing', async () => {
       setHelpOutput('  --model <model> Set model\n');
-      // setSessionStore(null) -> existsSync=false
+      // setSessionStore(null) -> listMostRecentDirs returns []
       const capabilities = await discoverCopilotCapabilities('/usr/bin/copilot');
       expect(capabilities.models).toBeUndefined();
     });

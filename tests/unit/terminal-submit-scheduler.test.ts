@@ -1,5 +1,5 @@
 /**
- * Unit tests for src/main/engine/terminal-submit-scheduler.ts.
+ * Unit tests for src/main/transition-engine/terminal-submit-scheduler.ts.
  *
  * `TerminalSubmitScheduler` adds task-keyed lifecycle on top of
  * `TerminalSubmit.submitKeystrokes`. The scheduler's responsibilities:
@@ -20,7 +20,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { TerminalSubmitScheduler } from '../../src/main/engine/terminal-submit-scheduler';
+import { TerminalSubmitScheduler } from '../../src/main/transition-engine/terminal-submit-scheduler';
 import type { TerminalSubmit } from '../../src/main/pty/terminal-submit';
 import type { SubmitKeystrokesOptions } from '../../src/main/pty/terminal-submit';
 

@@ -9,8 +9,9 @@ paths:
 
 # Rule: code and tests must behave identically across Windows, macOS, Linux, and CI
 
-The team develops and dogfoods on Windows, but CI runs the `validate` job (typecheck, build,
-lint, unit, and UI tests) on **headless Linux** (`ubuntu-latest`). Anything that silently depends
+The team develops and dogfoods on Windows, but CI runs its checks (typecheck, build,
+lint, unit, UI, and E2E tests) on **headless Linux** (`ubuntu-latest`; the E2E/electron tier under
+xvfb). Anything that silently depends
 on the local OS therefore passes on a developer's machine and fails only in CI, where it is
 slowest and most expensive to diagnose. This bit us with four UI tests (the Ctrl+N hotkey and the
 three split-divider drag tests) that were green on local Windows and red on every CI run because
@@ -66,17 +67,19 @@ A test must pass on CI's headless Linux runner, not merely on local Windows. Con
 
 ## Enforcement (self-maintaining)
 
-- **CI is the mechanical backstop for tests (primary):** the `validate` job runs the unit and UI
-  tiers on `ubuntu-latest` on every push (`.github/workflows/ci.yml`), so a Windows-only-green
-  test fails CI. This is the load-bearing guarantee; keep the UI tier in the required checks.
+- **CI is the mechanical backstop for tests (primary):** the `unit`, `ui`, and `e2e-shards` jobs run
+  the unit, UI, and E2E (electron, under xvfb at workers=4) tiers on `ubuntu-latest` on every push
+  (`.github/workflows/ci.yml`), so a Windows-only-green test now fails CI at every tier - including
+  E2E, which previously ran only on local Windows. This is the load-bearing guarantee; keep the UI
+  and E2E gates in the required checks.
 - **Author-time guard for test fs writes (runs locally on Windows AND Linux):**
   `tests/unit/test-fs-writes-sandboxed.test.ts` statically scans `tests/**` for a write call
   (`mkdirSync`, `writeFileSync`, `rmSync`, `mkdtempSync`, and the rest) whose first argument is a
-  hardcoded absolute string literal, and fails before the test ever runs. It rides the unit tier
-  (so `/test` runs it per task via the Test column) and also runs in `/merge-back` Step 0 as the
-  pre-push backstop. This is the one mechanical layer that catches the absolute-write subclass
-  without a Linux runner, closing the "green locally, red on CI" gap that let `main` go red by
-  design.
+  hardcoded absolute string literal, and fails before the test ever runs. It rides the unit tier,
+  so it runs on CI as a PR check (caught and fixed by the Tests column's `/pull-request`
+  monitor-and-fix loop) and also locally in `/merge-back` Step 0 for a direct push and in a manual
+  `/test` run. Because it is a static scan it flags the absolute-write subclass on any OS, without a
+  Linux runner, closing the "green locally, red on CI" gap that let `main` go red by design.
 - **Review for code:** the `platform-guard` agent audits `src/main/pty`, `src/main/agent`,
   `src/main/git`, and any `path` / `fs.rm` / `child_process` usage for the code rules above
   (hardcoded `C:\\Users\\`, missing platform guards, missing `{ force: true }`, em-dashes).

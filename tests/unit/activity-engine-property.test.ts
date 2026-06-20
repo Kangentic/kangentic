@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fc from 'fast-check';
-import { ActivityEngine } from '../../src/main/pty/activity/engine';
+import { ActivityEngine } from '../../src/main/activity-engine/engine';
 import { EventType, IdleReason } from '../../src/shared/types';
 import type { ActivityState, ActivityReason, SessionEvent } from '../../src/shared/types';
 

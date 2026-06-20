@@ -1,5 +1,5 @@
 ---
-description: Create a LOCAL commit only - stage and commit on the current branch with no push and no rebase. Use for "commit" / "commit changes" / "commit current changes" / "save my work". NOT for pushing, landing, or merging back (use /merge-back for that).
+description: Create a LOCAL commit only - stage and commit on the current branch with no push and no rebase. Use for "commit" / "commit changes" / "commit current changes" / "save my work". NOT for pushing, landing, or merging back (use /pull-request or /merge-back for that).
 allowed-tools: Read, Glob, Grep, Bash(git:*), Write
 argument-hint: [commit message]
 ---
@@ -9,7 +9,8 @@ argument-hint: [commit message]
 Create a local commit of the current changes. Does NOT push, rebase, fetch, or run
 heavy validation. The point is a fast, safe snapshot of the working tree (for example,
 to protect changes before testing in `/preview`, or to capture changes made while
-testing). To push / land / merge back, use `/merge-back` instead.
+testing). To push and land, move the task through the board (Tests runs `/pull-request`, Ship It runs
+`/merge-pull-request`), or use `/merge-back` for a direct quick-push.
 
 **Usage:** `/commit [commit message]`
 
@@ -24,7 +25,7 @@ git ...` (triggers an unbypassable security prompt). Never use `$(...)` or backt
 substitution. Never write to `.git/` (in worktrees `.git` is a file, not a directory).
 
 This skill never pushes, rebases, fetches, force-pushes, or amends. It only stages and creates a
-new local commit. If the user wants any of those, stop and point them at `/merge-back`.
+new local commit. If the user wants any of those, stop and point them at the PR flow (`/pull-request`) or `/merge-back` for a direct quick-push.
 
 ## Step 0 - Confirm intent
 
@@ -33,7 +34,7 @@ proceeding (never commit without an explicit go-ahead). If they approved, contin
 
 Do NOT run `npm ci`, `npm install`, `npm run typecheck`, or `npm run lint` here. A local commit
 is a snapshot and must stay fast; running `npm ci` would also break the `node_modules` junction a
-running `/preview` relies on. Full validation is `/merge-back`'s job before it pushes.
+running `/preview` relies on. Full validation happens at push time (CI's PR checks via `/pull-request`, or `/merge-back` before a direct push).
 
 ## Step 1 - Inspect the working tree
 
@@ -70,4 +71,4 @@ Use conventional-commit format (`type(scope): subject`), matching `/merge-back`.
 ## Step 4 - Report
 
 Report the new commit's short hash and subject, the branch it landed on, and the file count.
-Remind the user this is a local commit only - when they are ready to push, run `/merge-back`.
+Remind the user this is a local commit only - when they are ready to push, move the task to the Tests column (`/pull-request`) or run `/merge-back` for a direct quick-push.

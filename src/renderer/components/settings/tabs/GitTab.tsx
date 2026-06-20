@@ -1,7 +1,16 @@
 import type { AppConfig } from '../../../../shared/types';
 import { BranchPicker } from '../../dialogs/BranchPicker';
-import { SettingRow, SettingToggleRow, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { SettingRow, SettingToggleRow, Select, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
+
+/** Preset cadences for the background PR-state refresh timer. "off" disables the timer (the on-open sweep still runs). */
+const PR_REFRESH_OPTIONS: { value: string; label: string }[] = [
+  { value: '2', label: 'Every 2 minutes' },
+  { value: '5', label: 'Every 5 minutes' },
+  { value: '10', label: 'Every 10 minutes' },
+  { value: '15', label: 'Every 15 minutes' },
+  { value: 'off', label: 'Off' },
+];
 
 export function GitTab({ config }: { config: AppConfig }) {
   const updateProject = useScopedUpdate('project');
@@ -48,6 +57,19 @@ export function GitTab({ config }: { config: AppConfig }) {
           placeholder="npm install"
           className={`${INPUT_CLASS} placeholder-fg-faint`}
         />
+      </SettingRow>
+      <SettingRow {...settingProps('git.prRefreshIntervalMinutes')}>
+        <Select
+          value={config.git.prRefreshIntervalMinutes == null ? 'off' : String(config.git.prRefreshIntervalMinutes)}
+          onChange={(event) => {
+            const raw = event.target.value;
+            updateProject({ git: { prRefreshIntervalMinutes: raw === 'off' ? null : parseInt(raw, 10) } });
+          }}
+        >
+          {PR_REFRESH_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </Select>
       </SettingRow>
     </>
   );

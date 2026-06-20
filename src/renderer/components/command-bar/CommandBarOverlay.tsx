@@ -190,7 +190,7 @@ export function CommandBarOverlay({ onClose }: CommandBarOverlayProps) {
       observer?.disconnect();
       initialized.current = false;
     };
-  }, [effectiveSessionId, initTerminal]);
+  }, [effectiveSessionId, initTerminal, terminalRef]);
 
   // Re-fit when phase becomes visible (animation done, container has final dimensions)
   useEffect(() => {

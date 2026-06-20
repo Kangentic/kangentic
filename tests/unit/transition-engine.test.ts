@@ -21,7 +21,7 @@
  * what was interpolated.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TransitionEngine } from '../../src/main/engine/transition-engine';
+import { TransitionEngine } from '../../src/main/transition-engine/transition-engine';
 import { buildTaskXml } from '../../src/main/agent/shared/prompt-xml';
 import { sanitizeForPty } from '../../src/shared/paths';
 

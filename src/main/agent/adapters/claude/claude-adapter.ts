@@ -79,7 +79,7 @@ export class ClaudeAdapter implements AgentAdapter {
     if (!staticCapabilities.supportsModelOverride) {
       return staticCapabilities;
     }
-    const models = rescanClaudeModels(cliPath);
+    const models = await rescanClaudeModels(cliPath);
     return models ? { ...staticCapabilities, models } : staticCapabilities;
   }
 

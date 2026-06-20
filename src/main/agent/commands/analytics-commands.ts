@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { TaskRepository } from '../../db/repositories/task-repository';
-import { sessionOutputPaths } from '../../engine/session-paths';
+import { sessionOutputPaths } from '../../transition-engine/session-paths';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { BacklogRepository } from '../../db/repositories/backlog-repository';

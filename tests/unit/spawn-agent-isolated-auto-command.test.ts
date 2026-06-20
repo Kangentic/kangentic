@@ -36,7 +36,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Task, Swimlane, SessionRecord } from '../../src/shared/types';
 
-vi.mock('../../src/main/engine/agent-resolver', () => ({
+vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(() => ({ agent: 'claude', isHandoff: false })),
 }));
 
@@ -46,7 +46,7 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 
 // These mocks are only exercised by the handoff-branch describe block below.
 // They are harmless for the normal-path tests (those tests never enter hasHandoffContext).
-vi.mock('../../src/main/engine/spawn-progress', () => ({
+vi.mock('../../src/main/transition-engine/spawn-progress', () => ({
   emitSpawnProgress: vi.fn(),
   emitSpawnWaiting: vi.fn(),
   clearSpawnProgress: vi.fn(),
@@ -70,7 +70,7 @@ vi.mock('../../src/main/agent/handoff/session-history-reference', () => ({
 }));
 
 import { spawnAgent } from '../../src/main/ipc/helpers/agent-spawn';
-import { resolveTargetAgent } from '../../src/main/engine/agent-resolver';
+import { resolveTargetAgent } from '../../src/main/transition-engine/agent-resolver';
 import { agentRegistry } from '../../src/main/agent/agent-registry';
 
 const TASK_ID = 'task-aaa00001';

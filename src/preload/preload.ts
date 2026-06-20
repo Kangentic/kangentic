@@ -238,7 +238,7 @@ const api: ElectronAPI = {
   },
 
   agents: {
-    list: () => ipcRenderer.invoke(IPC.AGENT_LIST),
+    list: (forceRefresh?: boolean) => ipcRenderer.invoke(IPC.AGENT_LIST, forceRefresh),
   },
 
   handoffs: {

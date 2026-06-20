@@ -152,10 +152,15 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   useKeybinding('panel.maximize', handleToggleMaximized, { capture: true });
   useKeybinding('panel.close', closeWithAnimation, { capture: true });
 
-  // Cleanup object URLs on unmount
+  // Cleanup object URLs on unmount. Track the latest attachments in a ref so the
+  // unmount-only cleanup revokes the CURRENT set: a [] dep captures the
+  // mount-time (empty) array and leaks later previews, while an `attachments`
+  // dep would revoke URLs still on screen on every add/remove.
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
   useEffect(() => {
     return () => {
-      attachments.forEach((a) => URL.revokeObjectURL(a.previewUrl));
+      attachmentsRef.current.forEach((a) => URL.revokeObjectURL(a.previewUrl));
     };
   }, []);
 

@@ -7,7 +7,7 @@ import { getProjectRepos } from '../helpers';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
-import { prepareInjectionPlan } from '../../engine/injection-plan';
+import { prepareInjectionPlan } from '../../transition-engine/injection-plan';
 import { restartSessionForSettingsChange } from './session-reconcile';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';

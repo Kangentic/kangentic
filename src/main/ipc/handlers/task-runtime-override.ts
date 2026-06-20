@@ -7,7 +7,7 @@ import { getProjectDb } from '../../db/database';
 import { getProjectRepos } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { restartSessionForSettingsChange } from './session-reconcile';
-import { buildCommandInjectionVerifier } from '../../engine/injection-plan';
+import { buildCommandInjectionVerifier } from '../../transition-engine/injection-plan';
 import type { SettingsChangeSpec } from '../../agent/agent-adapter';
 import type {
   TaskSetRuntimeOverrideInput,

@@ -1,10 +1,10 @@
 # Command Injection
 
-Kangentic injects per-column "auto-commands" and per-column model/effort settings into a live agent session when a task moves between columns. `TerminalSubmitScheduler` (`src/main/engine/terminal-submit-scheduler.ts`) schedules each task's burst and decides whether the burst is prefixed with a `Ctrl+C` (live-injection) or not (fresh-spawn). `TerminalSubmit.submitKeystrokes` (`src/main/pty/terminal-submit.ts`) executes the byte-level keystroke sequence (`Ctrl+C? → text → Esc → Enter` per command). This document covers how the **command-injection** verification context confirms each chained command lands cleanly on the agent's TUI.
+Kangentic injects per-column "auto-commands" and per-column model/effort settings into a live agent session when a task moves between columns. `TerminalSubmitScheduler` (`src/main/transition-engine/terminal-submit-scheduler.ts`) schedules each task's burst and decides whether the burst is prefixed with a `Ctrl+C` (live-injection) or not (fresh-spawn). `TerminalSubmit.submitKeystrokes` (`src/main/pty/terminal-submit.ts`) executes the byte-level keystroke sequence (`Ctrl+C? → text → Esc → Enter` per command). This document covers how the **command-injection** verification context confirms each chained command lands cleanly on the agent's TUI.
 
 ## What gets injected (the settings delta)
 
-`prepareInjectionPlan` (`src/main/engine/injection-plan.ts`) decides which `/model` / `/effort`
+`prepareInjectionPlan` (`src/main/transition-engine/injection-plan.ts`) decides which `/model` / `/effort`
 slashes a column transition emits by diffing a **source** against a **target**:
 
 - **Target** is the destination column's effective value: `task.<override> ?? toLane.<override> ?? null`.
@@ -113,8 +113,8 @@ A non-Claude adapter could implement `'command-injection'` verification once its
 
 ## Files
 
-- `src/main/engine/injection-plan.ts` -- builds the chained sequence + verifier from a column transition spec; sources the delta from the session record's `applied_model` / `applied_effort` and returns `appliedSettings` for the caller to persist.
-- `src/main/engine/terminal-submit-scheduler.ts` -- task-keyed lifecycle wrapper: cancel-on-rerun, freshlySpawned wait, drag-burst coalesce, and `sendCtrlC` routing (suppressed for fresh-spawn, enabled for live-injection).
+- `src/main/transition-engine/injection-plan.ts` -- builds the chained sequence + verifier from a column transition spec; sources the delta from the session record's `applied_model` / `applied_effort` and returns `appliedSettings` for the caller to persist.
+- `src/main/transition-engine/terminal-submit-scheduler.ts` -- task-keyed lifecycle wrapper: cancel-on-rerun, freshlySpawned wait, drag-burst coalesce, and `sendCtrlC` routing (suppressed for fresh-spawn, enabled for live-injection).
 - `src/main/pty/terminal-submit.ts` -- byte-level engine: `submitContent` (bracketed paste) + `submitKeystrokes` (manual keypress sequence with retry-on-unconfirmed).
 - `src/main/agent/adapters/claude/slash-command-verifier.ts` -- Claude-specific JSONL-polling implementation.
 - `src/shared/types.ts` -- `SubmissionContext`, `SubmissionContextType`, `SubmissionVerifier` type definitions.

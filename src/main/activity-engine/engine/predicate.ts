@@ -1,4 +1,4 @@
-import type { ActivityState, ActivityReason } from '../../../../shared/types';
+import type { ActivityState, ActivityReason } from '../../../shared/types';
 import type { SessionEngineState } from './shapes';
 
 /**

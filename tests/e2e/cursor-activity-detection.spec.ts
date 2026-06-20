@@ -26,11 +26,19 @@ import {
   getTaskIdByTitle,
   getSwimlaneIds,
   moveTaskIpc,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
 import type { ActivityState } from '../../src/shared/types';
+
+// Each describe block launches its own Electron app against a unique
+// KANGENTIC_DATA_DIR and tmpDir. Running them in parallel on the available
+// workers cuts the file wall-clock by roughly half (2 describes, each ~30s
+// serial) and eliminates the 20-30s inter-describe gap that inflated shard
+// 4/10 to 115s. No shared mutable state between the blocks.
+test.describe.configure({ mode: 'parallel' });
 
 const runId = Date.now();
 
@@ -67,7 +75,7 @@ test.describe('Cursor Agent - Activity Detection', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);
   });
@@ -170,7 +178,7 @@ test.describe('Cursor Agent - Session Lifecycle', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);
   });

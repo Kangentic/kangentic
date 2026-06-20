@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { SessionUsage } from '../../../shared/types';
+import type { SessionUsage } from '../../shared/types';
 
 /**
  * Dev-only passive recording of PTY chunk arrivals and status.json

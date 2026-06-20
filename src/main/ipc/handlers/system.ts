@@ -12,6 +12,7 @@ import { getProjectDb } from '../../db/database';
 import { HandoffRepository } from '../../db/repositories/handoff-repository';
 import { syncProjectMcpConfig } from './projects';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
+import { listAgents, invalidateAgentListCache } from '../../agent/agent-list';
 import type {
   NotificationInput,
   AgentCommand,
@@ -42,8 +43,10 @@ export function registerSystemHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.CONFIG_SET, (_, config) => {
     context.configManager.save(config);
     applyRuntimeConfig(context.sessionManager, context.configManager, context.currentProjectPath);
-    // Invalidate cached detection for all agents so the next detect() call picks up new cliPaths
+    // Invalidate cached detection for all agents so the next detect() call picks up new cliPaths,
+    // and drop the cached agents.list() result so it rebuilds against the new config.
     if (config.agent) {
+      invalidateAgentListCache();
       import('../../agent/agent-registry').then(({ agentRegistry }) => {
         for (const agentName of agentRegistry.list()) {
           agentRegistry.getOrThrow(agentName).invalidateDetectionCache();
@@ -79,13 +82,20 @@ export function registerSystemHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.CONFIG_SET_PROJECT_BY_PATH, (_, projectPath: string, overrides) => {
-    const known = context.projectRepo.list().some((p) => p.path === projectPath);
-    if (!known) throw new Error('Unknown project path');
+    const project = context.projectRepo.list().find((p) => p.path === projectPath);
+    if (!project) throw new Error('Unknown project path');
     context.configManager.saveProjectOverrides(projectPath, overrides);
     // Background projects pick up changes when they next open; only the
     // currently-open project needs its in-memory state refreshed now.
     if (projectPath === context.currentProjectPath) {
       applyRuntimeConfig(context.sessionManager, context.configManager, projectPath);
+      // Re-arm the PR-refresh timer so a changed interval (Git tab) takes effect
+      // immediately without reopening the project. Imported lazily so registering
+      // the system handlers does not pull the gh-backed PR runtime into this
+      // module's graph (keeps unit tests that stub node:child_process light).
+      void import('../../pr/pr-refresh-scheduler').then(({ prRefreshScheduler }) => {
+        prRefreshScheduler.startForProject(context, project);
+      });
     }
   });
 
@@ -157,42 +167,13 @@ export function registerSystemHandlers(context: IpcContext): void {
   });
 
   // === Agents ===
-  ipcMain.handle(IPC.AGENT_LIST, async (): Promise<AgentDetectionInfo[]> => {
-    const { agentRegistry } = await import('../../agent/agent-registry');
+  // The inventory is cached across calls (bootstrap, welcome screen, Settings,
+  // and the column manager all request it) and rebuilt only on agent-config
+  // change or an explicit forceRefresh (the Agent settings "re-detect" button).
+  // See src/main/agent/agent-list.ts.
+  ipcMain.handle(IPC.AGENT_LIST, async (_event, forceRefresh?: boolean): Promise<AgentDetectionInfo[]> => {
     const config = context.configManager.load();
-    const cliPathOverrides = config.agent.cliPaths;
-    // Each adapter probes an independent CLI binary - detect spawns
-    // `<binary> --version`, probeAuth spawns auth introspection, and
-    // discoverCapabilities spawns `--help`. Running them sequentially
-    // serializes ~10 subprocesses; running per-adapter pipelines in
-    // parallel cuts the wall time to roughly the slowest single agent.
-    // Within an agent the steps stay sequential because capability
-    // discovery requires the resolved path from detect.
-    return Promise.all(agentRegistry.list().map(async (agentName): Promise<AgentDetectionInfo> => {
-      const adapter = agentRegistry.getOrThrow(agentName);
-      const info = await adapter.detect(cliPathOverrides[agentName] ?? null);
-      const [authenticated, capabilities] = await Promise.all([
-        info.found && adapter.probeAuth
-          ? adapter.probeAuth().catch(() => null)
-          : Promise.resolve(undefined),
-        info.found && info.path && adapter.discoverCapabilities
-          ? adapter.discoverCapabilities(info.path).catch(() => undefined)
-          : Promise.resolve(undefined),
-      ]);
-      return {
-        name: agentName,
-        displayName: adapter.displayName,
-        found: info.found,
-        path: info.path,
-        version: info.version,
-        authenticated,
-        permissions: adapter.permissions,
-        defaultPermission: adapter.defaultPermission,
-        liveTelemetryUnsupported: adapter.liveTelemetryUnsupported,
-        supportsSummarize: typeof adapter.summarize === 'function',
-        capabilities,
-      };
-    }));
+    return listAgents(config.agent.cliPaths, forceRefresh ?? false);
   });
 
   // Sliding-window rate limit for summarize calls. Each entry is a Date.now()

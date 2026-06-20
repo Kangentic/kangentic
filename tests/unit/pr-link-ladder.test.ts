@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Task } from '../../src/shared/types';
 
 /**
- * Unit tests for the confidence ladder in resolveAndLinkPRForTask: which anchor
+ * Unit tests for the confidence ladder in linkPRForTask: which anchor
  * wins (pr_number -> worktree branch -> commit SHA -> slug), write-only-on-change,
  * the TTL coalesce + terminal-skip throttle (force bypasses), and transient-error
  * surfacing that preserves an existing link.
@@ -38,7 +38,7 @@ vi.mock('simple-git', () => ({
 // pull in the DB/electron chain.
 vi.mock('../../src/main/ipc/helpers/project-repos', () => ({ getProjectRepos: () => ({}) }));
 
-vi.mock('../../src/main/pty/pr/pr-connectors', () => {
+vi.mock('../../src/main/pr/pr-registry', () => {
   class PRResolverUnavailableError extends Error {
     constructor(message: string) { super(message); this.name = 'PRResolverUnavailableError'; }
   }
@@ -62,8 +62,8 @@ vi.mock('../../src/main/pty/pr/pr-connectors', () => {
   };
 });
 
-import { resolveAndLinkPRForTask } from '../../src/main/ipc/helpers/pr-linking';
-import { PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pty/pr/pr-connectors';
+import { linkPRForTask } from '../../src/main/pr/pr-linking';
+import { PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pr/pr-registry';
 
 let idCounter = 0;
 function makeTask(overrides: Partial<Task> = {}): Task {
@@ -95,11 +95,11 @@ beforeEach(() => {
   git.branch = 'real-branch'; git.sha = 'sha-current'; git.parents = 'commit-sha parent-sha';
 });
 
-describe('resolveAndLinkPRForTask confidence ladder', () => {
+describe('linkPRForTask confidence ladder', () => {
   it('tier 1: prefers pr_number over branch and commit', async () => {
     conn.byNumber = resolved(10); conn.byBranch = resolved(20); conn.byCommit = resolved(30);
     const task = makeTask({ pr_number: 99, head_sha: 'sha' });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task));
+    const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.status).toBe('linked');
     expect(result.task?.pr_number).toBe(10);
     expect(conn.calls[0]).toBe('byNumber');
@@ -109,7 +109,7 @@ describe('resolveAndLinkPRForTask confidence ladder', () => {
   it('tier 2: worktree present resolves by the real HEAD branch', async () => {
     conn.byBranch = resolved(20);
     const task = makeTask();
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task));
+    const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(20);
     expect(conn.calls).toEqual(['byBranch']);
   });
@@ -117,7 +117,7 @@ describe('resolveAndLinkPRForTask confidence ladder', () => {
   it('tier 3: no worktree but head_sha set resolves by commit', async () => {
     conn.byCommit = resolved(30, 'merged');
     const task = makeTask({ worktree_path: null, head_sha: 'sha-stored' });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task));
+    const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(30);
     expect(result.task?.pr_state).toBe('merged');
     expect(conn.calls).toContain('byCommit');
@@ -126,7 +126,7 @@ describe('resolveAndLinkPRForTask confidence ladder', () => {
   it('tier 4: no worktree and no sha falls back to the slug branch', async () => {
     conn.byBranch = resolved(40);
     const task = makeTask({ worktree_path: null, head_sha: null });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task));
+    const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(40);
     expect(conn.calls).toContain('byBranch');
   });
@@ -135,7 +135,7 @@ describe('resolveAndLinkPRForTask confidence ladder', () => {
     git.parents = 'merge-sha parent-1 parent-2'; // a `Merge pull request #N` commit has two parents
     conn.byCommit = resolved(702, 'merged'); // the PR that merge commit closed - not this task's PR
     const task = makeTask({ worktree_path: null, branch_name: null, head_sha: 'develop-tip-merge' });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task));
+    const result = await linkPRForTask(task.id, depsFor(task));
     expect(conn.calls).not.toContain('byCommit');
     expect(result.status).toBe('not-found');
   });
@@ -144,7 +144,7 @@ describe('resolveAndLinkPRForTask confidence ladder', () => {
     conn.byNumber = resolved(50, 'open');
     const updateSpy = vi.fn();
     const task = makeTask({ pr_number: 50, pr_url: 'u50', pr_state: 'open', worktree_path: null });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task, { updateSpy }));
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
     expect(result.status).toBe('unchanged');
     expect(updateSpy).not.toHaveBeenCalled();
   });
@@ -152,7 +152,7 @@ describe('resolveAndLinkPRForTask confidence ladder', () => {
   it('resolver-unavailable: surfaces the reason when the resolver throws and no scrollback exists', async () => {
     conn.byNumber = new PRResolverUnavailableError('gh CLI not found');
     const task = makeTask({ pr_number: 60, worktree_path: null });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task));
+    const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.status).toBe('resolver-unavailable');
     expect(result.message).toMatch(/gh/i);
   });
@@ -161,7 +161,7 @@ describe('resolveAndLinkPRForTask confidence ladder', () => {
     conn.byNumber = new PRResolverTransientError('HTTP 503');
     const updateSpy = vi.fn();
     const task = makeTask({ pr_number: 61, pr_url: 'u61', pr_state: 'open', worktree_path: null });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task, { updateSpy }));
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
     expect(result.status).toBe('transient-error');
     expect(updateSpy).not.toHaveBeenCalled();   // existing link preserved
     expect(result.task?.pr_url).toBe('u61');
@@ -171,19 +171,19 @@ describe('resolveAndLinkPRForTask confidence ladder', () => {
     git.sha = 'sha-new';
     const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
     const task = makeTask({ head_sha: 'sha-old' });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task, { updateSpy }));
+    const result = await linkPRForTask(task.id, depsFor(task, { updateSpy }));
     expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ head_sha: 'sha-new' }));
     expect(result.status).toBe('not-found');
   });
 });
 
-describe('resolveAndLinkPRForTask description anchor (tier 0)', () => {
+describe('linkPRForTask description anchor (tier 0)', () => {
   it('tier 0: a PR URL in the description wins over the develop-tip commit anchor', async () => {
     conn.canonical = { url: 'https://github.com/o/r/pull/708', number: 708 };
     conn.byNumber = resolved(708, 'open');
     conn.byCommit = resolved(702, 'merged'); // what the develop-tip merge commit would resolve to
     const task = makeTask({ head_sha: 'develop-tip', description: 'Reviews https://github.com/o/r/pull/708' });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task));
+    const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(708);
     expect(result.task?.pr_state).toBe('open');
     expect(conn.calls).not.toContain('byCommit');
@@ -194,7 +194,7 @@ describe('resolveAndLinkPRForTask description anchor (tier 0)', () => {
     conn.canonical = { url: 'https://github.com/o/r/pull/706', number: 706 };
     conn.byNumber = resolved(706, 'open');
     const task = makeTask({ pr_number: 702, pr_url: 'u702', pr_state: 'merged', head_sha: 'develop-tip' });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task));
+    const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.status).toBe('linked');
     expect(result.task?.pr_number).toBe(706);
     expect(result.task?.pr_state).toBe('open');
@@ -205,7 +205,7 @@ describe('resolveAndLinkPRForTask description anchor (tier 0)', () => {
     conn.byNumber = null; // gh ran cleanly but matched nothing
     conn.byCommit = resolved(702, 'merged');
     const task = makeTask({ head_sha: 'develop-tip' });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task));
+    const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(708);
     expect(result.task?.pr_state).toBeNull();
     expect(conn.calls).not.toContain('byCommit');
@@ -216,7 +216,7 @@ describe('resolveAndLinkPRForTask description anchor (tier 0)', () => {
     conn.byNumber = new PRResolverUnavailableError('gh CLI not found'); // gh down on the Tier 0 lookup
     conn.byCommit = resolved(702, 'merged'); // the wrong PR the commit tier would have linked
     const task = makeTask({ head_sha: 'develop-tip' });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task)); // no getScrollback -> nothing to scrape
+    const result = await linkPRForTask(task.id, depsFor(task)); // no getScrollback -> nothing to scrape
     expect(result.status).toBe('resolver-unavailable');
     expect(result.message).toMatch(/gh/i);
     expect(conn.calls).not.toContain('byCommit'); // never fell through to the wrong git tiers
@@ -227,18 +227,18 @@ describe('resolveAndLinkPRForTask description anchor (tier 0)', () => {
     conn.byNumber = resolved(708, 'open');
     // No pr_number, branch, head_sha, or worktree - the old guard would no-anchor bail here.
     const task = makeTask({ pr_number: null, branch_name: null, head_sha: null, worktree_path: null });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task));
+    const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.status).toBe('linked');
     expect(result.task?.pr_number).toBe(708);
     expect(result.task?.pr_state).toBe('open');
   });
 });
 
-describe('resolveAndLinkPRForTask throttle (auto triggers only)', () => {
+describe('linkPRForTask throttle (auto triggers only)', () => {
   it('skips a terminal (merged/closed) PR on auto triggers without calling the resolver', async () => {
     conn.byNumber = resolved(70);
     const task = makeTask({ pr_number: 70, pr_url: 'u70', pr_state: 'merged', worktree_path: null });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task, { force: false }));
+    const result = await linkPRForTask(task.id, depsFor(task, { force: false }));
     expect(result.status).toBe('unchanged');
     expect(conn.calls).toEqual([]); // resolver never invoked
   });
@@ -246,7 +246,7 @@ describe('resolveAndLinkPRForTask throttle (auto triggers only)', () => {
   it('force bypasses the terminal-skip and re-resolves', async () => {
     conn.byNumber = resolved(71, 'merged');
     const task = makeTask({ pr_number: 71, pr_url: 'u71', pr_state: 'merged', worktree_path: null });
-    const result = await resolveAndLinkPRForTask(task.id, depsFor(task, { force: true }));
+    const result = await linkPRForTask(task.id, depsFor(task, { force: true }));
     expect(conn.calls).toContain('byNumber');
     expect(result.status).toBe('unchanged'); // resolved to the same PR
   });
@@ -254,11 +254,11 @@ describe('resolveAndLinkPRForTask throttle (auto triggers only)', () => {
   it('coalesces back-to-back auto resolves within the TTL window', async () => {
     conn.byBranch = resolved(80);
     const task = makeTask(); // worktree present, no pr_number
-    const first = await resolveAndLinkPRForTask(task.id, depsFor(task, { force: false }));
+    const first = await linkPRForTask(task.id, depsFor(task, { force: false }));
     expect(first.task?.pr_number).toBe(80);
     const callsAfterFirst = conn.calls.length;
 
-    const second = await resolveAndLinkPRForTask(task.id, depsFor(task, { force: false }));
+    const second = await linkPRForTask(task.id, depsFor(task, { force: false }));
     expect(second.status).toBe('unchanged');
     expect(conn.calls.length).toBe(callsAfterFirst); // no new resolver calls
   });

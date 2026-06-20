@@ -51,8 +51,8 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 import { GitHubImporter, GhUnavailableError, GhTransientError } from '../../src/main/boards/adapters/github-common/gh-client';
-import { gitHubPRConnector } from '../../src/main/pty/pr/github-pr-detector';
-import { resolvePRForBranch, resolvePRByNumber, resolvePRByCommit, PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pty/pr/pr-connectors';
+import { gitHubPRConnector } from '../../src/main/pr/adapters/github/github-connector';
+import { resolvePRForBranch, resolvePRByNumber, resolvePRByCommit, PRResolverUnavailableError, PRResolverTransientError } from '../../src/main/pr/pr-registry';
 
 function pr(overrides: Partial<GhPrListItem>): GhPrListItem {
   return {

@@ -10,9 +10,14 @@
 
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  listMostRecentDirs,
+  readTailBytes,
+  parseJsonlRecords,
+  SESSION_SCAN_HEAD_BYTES,
+} from '../../shared/history-scan';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 const execAsync = promisify(exec);
@@ -95,76 +100,35 @@ async function detectStaticCapabilities(cliPath: string): Promise<AgentCapabilit
  * Bounded to the most-recent 10 sessions x 256KB head per file so the
  * scan runs quickly even on heavy users.
  */
-function scanCopilotSessionHistory(): string[] {
+async function scanCopilotSessionHistory(): Promise<string[]> {
   const modelSet = new Set<string>();
   const sessionsRoot = path.join(os.homedir(), '.copilot', 'session-state');
-  if (!fs.existsSync(sessionsRoot)) return [];
-
-  let sessionDirs: string[];
-  try {
-    sessionDirs = fs.readdirSync(sessionsRoot, { withFileTypes: true })
-      .filter(e => e.isDirectory())
-      .map(e => {
-        const fullPath = path.join(sessionsRoot, e.name);
-        let mtime = 0;
-        try { mtime = fs.statSync(fullPath).mtimeMs; } catch { /* skip */ }
-        return { fullPath, mtime };
-      })
-      .sort((a, b) => b.mtime - a.mtime)
-      .slice(0, 10)
-      .map(e => e.fullPath);
-  } catch {
-    return [];
-  }
+  const sessionDirs = await listMostRecentDirs(sessionsRoot, 10);
 
   for (const sessionDir of sessionDirs) {
-    const eventsPath = path.join(sessionDir, 'events.jsonl');
-    try {
-      const stats = fs.statSync(eventsPath);
-      const size = Math.min(stats.size, 256 * 1024);
-      const buffer = Buffer.alloc(size);
-      const fd = fs.openSync(eventsPath, 'r');
-      // Read from the END of the file rather than the start: Copilot's
-      // session.shutdown event (which carries currentModel and
-      // modelMetrics) lands at the tail, while the head holds setup
-      // chatter that does not name a model.
-      const startOffset = Math.max(0, stats.size - size);
-      fs.readSync(fd, buffer, 0, size, startOffset);
-      fs.closeSync(fd);
-
-      const content = buffer.toString('utf-8');
-      // When we started reading mid-file (file > 256KB), the first line
-      // of the buffer is almost certainly truncated; drop it. When we
-      // read from offset 0 (smaller file), every line is intact and the
-      // first line carries data we need.
-      const safeContent = startOffset > 0
-        ? content.slice(content.indexOf('\n') + 1)
-        : content;
-      for (const line of safeContent.split('\n')) {
-        if (!line.trim()) continue;
-        try {
-          const obj = JSON.parse(line);
-          const data = (obj as { data?: unknown }).data;
-          if (!data || typeof data !== 'object') continue;
-          const dataRecord = data as Record<string, unknown>;
-          if (typeof dataRecord.currentModel === 'string' && dataRecord.currentModel.length > 0) {
-            modelSet.add(dataRecord.currentModel);
-          }
-          if (typeof dataRecord.model === 'string' && dataRecord.model.length > 0) {
-            modelSet.add(dataRecord.model);
-          }
-          // `modelMetrics` is an object keyed by model name; harvest its keys.
-          if (dataRecord.modelMetrics && typeof dataRecord.modelMetrics === 'object') {
-            for (const key of Object.keys(dataRecord.modelMetrics)) {
-              if (key.length > 0) modelSet.add(key);
-            }
-          }
-        } catch {
-          // Ignore unparseable lines
+    const eventsPath = path.join(sessionDir.fullPath, 'events.jsonl');
+    // Read from the END of the file rather than the start: Copilot's
+    // session.shutdown event (which carries currentModel and modelMetrics)
+    // lands at the tail, while the head holds setup chatter that does not name
+    // a model. readTailBytes drops the truncated first line for us.
+    const text = await readTailBytes(eventsPath, SESSION_SCAN_HEAD_BYTES);
+    if (text.length === 0) continue;
+    for (const record of parseJsonlRecords(text, false)) {
+      const data = record.data;
+      if (!data || typeof data !== 'object') continue;
+      const dataRecord = data as Record<string, unknown>;
+      if (typeof dataRecord.currentModel === 'string' && dataRecord.currentModel.length > 0) {
+        modelSet.add(dataRecord.currentModel);
+      }
+      if (typeof dataRecord.model === 'string' && dataRecord.model.length > 0) {
+        modelSet.add(dataRecord.model);
+      }
+      // `modelMetrics` is an object keyed by model name; harvest its keys.
+      if (dataRecord.modelMetrics && typeof dataRecord.modelMetrics === 'object') {
+        for (const key of Object.keys(dataRecord.modelMetrics)) {
+          if (key.length > 0) modelSet.add(key);
         }
       }
-    } catch {
-      // Ignore session dirs without events.jsonl
     }
   }
 
@@ -187,7 +151,7 @@ export async function discoverCopilotCapabilities(cliPath: string): Promise<Agen
   }
   let models: string[] = [];
   try {
-    models = scanCopilotSessionHistory();
+    models = await scanCopilotSessionHistory();
   } catch {
     // Best-effort - leave models empty on any failure.
   }

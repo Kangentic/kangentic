@@ -73,12 +73,12 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
 
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: vi.fn() }));
 
-vi.mock('../../src/main/engine/session-lifecycle', () => ({
+vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
 }));
 
-vi.mock('../../src/main/engine/spawn-progress', () => ({
+vi.mock('../../src/main/transition-engine/spawn-progress', () => ({
   emitSpawnProgress: vi.fn(),
   emitSpawnWaiting: vi.fn(),
   clearSpawnProgress: vi.fn(),
@@ -86,11 +86,11 @@ vi.mock('../../src/main/engine/spawn-progress', () => ({
   getInFlightSpawnProgress: vi.fn(() => ({})),
 }));
 
-vi.mock('../../src/main/engine/agent-resolver', () => ({
+vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(() => ({ agent: 'claude', isHandoff: false })),
 }));
 
-vi.mock('../../src/main/engine/injection-plan', () => ({
+vi.mock('../../src/main/transition-engine/injection-plan', () => ({
   prepareInjectionPlan: vi.fn(() => null),
 }));
 
@@ -123,13 +123,15 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   buildAutoCommandVars: (...args: unknown[]) => mockBuildAutoCommandVars(...args),
   cleanupTaskResources: vi.fn(async () => {}),
   deleteTaskWorktree: vi.fn(async () => true),
-  maybeResolvePRAfterMove: vi.fn(),
   autoSpawnForTask: vi.fn(async () => {}),
+}));
+vi.mock('../../src/main/pr/pr-linking', () => ({
+  linkPRForMovedTask: vi.fn(),
 }));
 
 import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';
-import { markRecordSuspended } from '../../src/main/engine/session-lifecycle';
-import { prepareInjectionPlan } from '../../src/main/engine/injection-plan';
+import { markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
+import { prepareInjectionPlan } from '../../src/main/transition-engine/injection-plan';
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {

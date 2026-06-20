@@ -1,5 +1,5 @@
-import { EventType } from '../../../../shared/types';
-import type { ActivityState, ActivityReason, SessionEvent } from '../../../../shared/types';
+import { EventType } from '../../../shared/types';
+import type { ActivityState, ActivityReason, SessionEvent } from '../../../shared/types';
 
 /**
  * Shapes for the activity engine: types, default constants, and

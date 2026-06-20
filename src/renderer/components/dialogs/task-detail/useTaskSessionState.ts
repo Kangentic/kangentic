@@ -104,6 +104,7 @@ export function useTaskSessionState(input: {
       window.dispatchEvent(new Event('terminal-panel-resize'));
     }, 100);
     return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on session.id intentionally; the full session object would refit on every unrelated session update
   }, [input.isEditing, session?.id]);
 
   // Proactively reconcile a 'suspended' view against main's registry on dialog
@@ -126,6 +127,7 @@ export function useTaskSessionState(input: {
     reconcileSession(input.task.id).catch((error) => {
       console.warn('[useTaskSessionState] reconcile probe failed', error);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on session.id/status only; the full session object would re-probe on every flap (loop hazard, see comment above)
   }, [session?.id, session?.status, input.task.id, reconcileSession]);
 
   return {

@@ -126,7 +126,7 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude via `--se
 
 ## Agent Resolution
 
-`src/main/engine/agent-resolver.ts`
+`src/main/transition-engine/agent-resolver.ts`
 
 When a task moves to a column, `resolveTargetAgent()` determines which agent to spawn:
 

@@ -7,9 +7,9 @@
  * reads engine behavior through, so every render branch is pinned here.
  */
 import { describe, it, expect } from 'vitest';
-import { snapshotCounters, formatCounterDelta } from '../../src/main/pty/activity/engine/counter-snapshot';
-import { createSessionEngineState } from '../../src/main/pty/activity/engine/state-factory';
-import type { CountersSnapshot } from '../../src/main/pty/activity/engine/shapes';
+import { snapshotCounters, formatCounterDelta } from '../../src/main/activity-engine/engine/counter-snapshot';
+import { createSessionEngineState } from '../../src/main/activity-engine/engine/state-factory';
+import type { CountersSnapshot } from '../../src/main/activity-engine/engine/shapes';
 
 describe('snapshotCounters', () => {
   it('captures all-zero counters from a fresh session state', () => {

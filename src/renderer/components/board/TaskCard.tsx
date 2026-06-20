@@ -2,9 +2,8 @@ import React, { useCallback, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Loader2, CirclePause, Mail, Paperclip, GitPullRequest, Trash2 } from 'lucide-react';
+import { Loader2, CirclePause, Mail, Paperclip, Trash2 } from 'lucide-react';
 import { formatRelativeTime } from '../../lib/datetime';
-import { prStatePresentation } from '../../lib/pr-state';
 import { TaskChangesDialog } from '../dialogs/TaskChangesDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { stripMarkdown } from '../../utils/strip-markdown';
@@ -18,6 +17,7 @@ import { useTaskProgress } from '../../utils/task-progress';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { getProgressColor } from '../../utils/color-lerp';
 import { LabelPills } from '../Pill';
+import { PrLink } from '../PrLink';
 import type { Task } from '../../../shared/types';
 import { TaskContextMenu } from './TaskContextMenu';
 import { ArchivedTaskContextMenu } from './ArchivedTaskContextMenu';
@@ -276,19 +276,12 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
 
         {!isCompactDensity && task.pr_url && (
           <div className="flex items-center gap-2 mt-1.5">
-            <button
-              onClick={(event) => {
-                event.stopPropagation();
-                window.electronAPI.shell.openExternal(task.pr_url!);
-              }}
-              className={`text-xs hover:underline flex items-center gap-1 ${prStatePresentation(task.pr_state).textClass}`}
-              title={task.pr_state ? `PR #${task.pr_number} (${task.pr_state})` : `PR #${task.pr_number}`}
-              data-testid="task-card-pr-link"
-            >
-              <GitPullRequest size={12} />
-              PR #{task.pr_number}
-              {task.pr_state && <span className="opacity-70">· {task.pr_state}</span>}
-            </button>
+            <PrLink
+              prUrl={task.pr_url}
+              prNumber={task.pr_number}
+              prState={task.pr_state}
+              testId="task-card-pr-link"
+            />
           </div>
         )}
 

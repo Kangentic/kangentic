@@ -64,7 +64,7 @@ src/
         session-repository.ts
         swimlane-repository.ts
         task-repository.ts
-    engine/                # Transition engine and session recovery
+    transition-engine/     # Transition engine and session recovery
       terminal-submit-scheduler.ts # Task-keyed lifecycle wrapper around TerminalSubmit (cancel-on-rerun, freshlySpawned wait, drag-burst coalesce)
       resource-cleanup.ts  # Task resource cleanup (session, worktree, files)
       session-paths.ts     # Session directory path utilities
@@ -223,7 +223,10 @@ npx playwright test --project=electron
 ```
 
 - **Runner:** Playwright with `_electron.launch()`
-- **Speed:** Slower, opens real windows (no headless mode on Windows). `workers` is locked at 1.
+- **Speed:** Slower, opens real windows (no headless mode on Windows). `workers` is 1 on
+  Windows/local (concurrent `electron.launch()` is flaky there); CI runs the tier on Linux/xvfb at
+  `workers: 8`, sharded, with node_modules caching and the `closeApp()` teardown helper (see
+  `.github/workflows/ci.yml` and `playwright.config.ts`).
 - **What to test here:** PTY sessions, terminal rendering, session lifecycle, shell detection, config persistence
 - **Build required** before running
 - **Boot reuse (opt-in):** a spec that uses the canonical default config and never relaunches
@@ -236,10 +239,14 @@ npx playwright test --project=electron
   and `globalTeardown` (`playwright.config.ts`) to sweep these. It is conservative: a process is
   killed only when its command line points at the repo's `.kangentic/worktrees/` or the main
   checkout's `.vite/build/index.js` AND its parent is dead, so the dogfooding `npm start` app, any
-  `/preview` window, and concurrent runs in other worktrees are never touched. Every kill is logged
-  under the `[E2E-JANITOR]` prefix with PID, reason, and a command-line excerpt. The pure
-  matching predicate is unit-tested in `tests/unit/e2e-janitor.test.ts`; the janitor reuses the
-  scan and kill primitives from `src/main/git/zombie-reaper.ts`.
+  `/preview` window, and concurrent runs in other worktrees are never touched. "Parent is dead" is
+  resolved against the COMPLETE liveness scan (`scanLivePids`, every process image), not the
+  electron/node-only matching scan, so a concurrent worktree's live app whose supervising parent is
+  a non-enumerated image is not mistaken for an orphan and reaped mid-test (bug #258); if that
+  liveness scan returns nothing the sweep aborts rather than treat every process as orphaned. Every
+  kill is logged under the `[E2E-JANITOR]` prefix with PID, parent PID, reason, and a command-line
+  excerpt. The pure matching predicate is unit-tested in `tests/unit/e2e-janitor.test.ts`; the
+  janitor reuses the scan and kill primitives from `src/main/git/zombie-reaper.ts`.
 
 ### Decision Guide
 
@@ -254,8 +261,10 @@ Release-time manual validation against real authenticated agent CLIs lives in [r
 ### Run All
 
 The `/test` command is the full local gate: typecheck, build, then unit + UI + E2E (all tests,
-no selection heuristic). `/test quick` runs unit + UI only for the fast inner loop. To run tiers
-directly:
+no selection heuristic). `/test quick` runs unit + UI only for the fast inner loop. It is for
+manual local runs - the automated gate now runs on CI as PR checks (the **Tests** column runs
+`/pull-request`, which pushes a branch and drives the CI checks to green; CI runs lint, typecheck,
+unit, build, the UI shards, and the Linux Electron E2E shards under xvfb). To run tiers directly:
 
 ```bash
 npx playwright test              # UI + E2E
@@ -334,7 +343,9 @@ Run `/sync-docs` to review and update documentation after code changes. This com
 - Checks for stale facts (schema, config keys, constants, types)
 - Updates docs in-place and reports what changed
 
-This runs automatically as part of `/merge-back` (Step 4.5). To run manually: `/sync-docs`.
+The targeted doc-anchor check runs automatically inside `/pull-request` (commit time),
+`/merge-pull-request` (merge time), and `/merge-back` (direct push). To run the full review
+manually: `/sync-docs`.
 
 ## Packaging
 

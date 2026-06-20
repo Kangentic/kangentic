@@ -13,17 +13,17 @@ Each doc file and the source files that are its authority:
 
 | Doc | Primary Source Files |
 |-----|---------------------|
-| `architecture.md` | `src/shared/ipc-channels.ts`, `src/preload/preload.ts`, `src/renderer/stores/`, `src/main/pty/session-manager.ts`, `src/main/engine/transition-engine.ts`, `src/main/boards/board-registry.ts` |
-| `session-lifecycle.md` | `src/main/pty/session-manager.ts`, `src/main/pty/session-queue.ts`, `src/main/engine/session-lifecycle.ts`, `src/main/engine/resource-cleanup.ts` |
+| `architecture.md` | `src/shared/ipc-channels.ts`, `src/preload/preload.ts`, `src/renderer/stores/`, `src/main/pty/session-manager.ts`, `src/main/transition-engine/transition-engine.ts`, `src/main/boards/board-registry.ts` |
+| `session-lifecycle.md` | `src/main/pty/session-manager.ts`, `src/main/pty/session-queue.ts`, `src/main/transition-engine/session-lifecycle.ts`, `src/main/transition-engine/resource-cleanup.ts` |
 | `configuration.md` | `src/shared/types.ts` (AppConfig, DEFAULT_CONFIG, GLOBAL_ONLY_PATHS), `src/main/config/config-manager.ts` |
-| `agent-integration.md` | `src/main/agent/agent-adapter.ts`, `src/main/agent/agent-registry.ts`, `src/main/agent/adapters/**` (per-adapter command builders, hook managers, trust managers, capability-discovery, detectors), `src/main/engine/agent-resolver.ts` |
+| `agent-integration.md` | `src/main/agent/agent-adapter.ts`, `src/main/agent/agent-registry.ts`, `src/main/agent/adapters/**` (per-adapter command builders, hook managers, trust managers, capability-discovery, detectors), `src/main/transition-engine/agent-resolver.ts` |
 | `handoff.md` | `src/main/agent/handoff/**`, `src/main/db/repositories/handoff-repository.ts`, `src/main/ipc/helpers/agent-spawn.ts` (handoff path) |
-| `transition-engine.md` | `src/main/engine/transition-engine.ts`, `src/shared/types.ts` (ActionType, ActionConfig) |
-| `command-injection.md` | `src/main/engine/injection-plan.ts`, `src/main/engine/terminal-submit-scheduler.ts`, `src/main/pty/terminal-submit.ts`, `src/main/agent/adapters/claude/slash-command-verifier.ts` |
+| `transition-engine.md` | `src/main/transition-engine/transition-engine.ts`, `src/shared/types.ts` (ActionType, ActionConfig) |
+| `command-injection.md` | `src/main/transition-engine/injection-plan.ts`, `src/main/transition-engine/terminal-submit-scheduler.ts`, `src/main/pty/terminal-submit.ts`, `src/main/agent/adapters/claude/slash-command-verifier.ts` |
 | `database.md` | `src/main/db/migrations/**`, `src/main/db/database.ts`, `src/main/db/repositories/*.ts` |
 | `cross-platform.md` | `src/main/pty/spawn/shell-resolver.ts`, `src/main/pty/session-manager.ts` (adaptCommandForShell), `electron-builder.yml`, `scripts/build.js` |
 | `worktree-strategy.md` | `src/main/git/worktree-manager.ts`, `src/main/agent/adapters/claude/hook-manager.ts`, `src/main/agent/adapters/claude/trust-manager.ts` |
-| `activity-detection.md` | `src/main/agent/event-bridge.js`, `src/shared/types.ts` (EventType, EventTypeActivity, HookEvent), `src/main/pty/activity/engine/shapes.ts` (TransitionTrigger, default thresholds), `src/main/pty/activity/engine/watchdog.ts` (hold table) |
+| `activity-detection.md` | `src/main/agent/event-bridge.js`, `src/shared/types.ts` (EventType, EventTypeActivity, HookEvent), `src/main/activity-engine/engine/shapes.ts` (TransitionTrigger, default thresholds), `src/main/activity-engine/engine/watchdog.ts` (hold table) |
 | `mcp-server.md` | `src/main/agent/mcp-http-server.ts`, `src/main/agent/mcp-http/**`, `src/main/agent/commands/`, `src/main/ipc/handlers/sessions.ts`, `src/shared/types.ts` (MCP types) |
 | `overview.md` | `README.md`, high-level features |
 | `user-guide.md` | `src/renderer/components/`, `src/renderer/stores/`, `src/shared/types.ts` |
@@ -172,7 +172,7 @@ Determine what source files changed:
 
 ### Step 2 - Anchor Point Verification
 
-This is the **canonical anchor source list**. Both `/sync-docs` and `/merge-back` consult this list. When updating, never duplicate — `/merge-back` reads it from here.
+This is the **canonical anchor source list**. `/sync-docs`, `/pull-request`, `/merge-pull-request`, and `/merge-back` all consult this list. When updating, never duplicate - they read it from here.
 
 Each entry has a one-line rationale so future edits know what the entry was protecting. Do not remove an entry without checking that its rationale no longer applies.
 
@@ -199,16 +199,16 @@ Each entry has a one-line rationale so future edits know what the entry was prot
 - `src/main/db/repositories/handoff-repository.ts`
   WHY: handoff DB column list is tabulated in handoff.md "Database Storage" table.
 
-- `src/main/engine/transition-engine.ts`
+- `src/main/transition-engine/transition-engine.ts`
   WHY: spawn/transition/handoff state machine is described in transition-engine.md and architecture.md. Action types and transition flow are enumerated here.
 
-- `src/main/engine/injection-plan.ts`
+- `src/main/transition-engine/injection-plan.ts`
   WHY: command-injection precedence rules (per-task model/effort overrides, swimlane defaults) are described in command-injection.md and architecture.md.
 
-- `src/main/engine/terminal-submit-scheduler.ts`
+- `src/main/transition-engine/terminal-submit-scheduler.ts`
   WHY: keystroke submission lifecycle wrapper enumerated in command-injection.md pipeline table.
 
-- `src/main/engine/session-lifecycle.ts`
+- `src/main/transition-engine/session-lifecycle.ts`
   WHY: session state transitions enumerated in session-lifecycle.md.
 
 - `src/main/pty/session-manager.ts`
@@ -226,10 +226,10 @@ Each entry has a one-line rationale so future edits know what the entry was prot
 - `src/main/agent/event-bridge.js`
   WHY: hook → JSONL → store pipeline backs activity-detection.md.
 
-- `src/main/pty/activity/engine/shapes.ts`
+- `src/main/activity-engine/engine/shapes.ts`
   WHY: the TransitionTrigger label vocabulary and ActivityEngineOptions default thresholds are enumerated in activity-detection.md ("Reading a transition trace", "Configuration").
 
-- `src/main/pty/activity/engine/watchdog.ts`
+- `src/main/activity-engine/engine/watchdog.ts`
   WHY: the four watchdog holds (predicates, thresholds, anchors) are enumerated in activity-detection.md "Four safety nets (the watchdog table)".
 
 - `src/renderer/components/settings/AppSettingsPanel.tsx`

@@ -1,7 +1,8 @@
 /**
- * GitHub PR connector - detects PR URLs from gh CLI terminal output.
+ * GitHub PR connector - resolves PRs via the `gh` CLI and detects PR URLs from
+ * terminal output.
  *
- * Captures from:
+ * Detects from:
  * - `gh pr create` stdout: bare URL on a line
  * - `gh pr view` TTY mode: "View this pull request on GitHub: <url>"
  * - `gh pr view` non-TTY: "url:\t<url>"
@@ -13,9 +14,9 @@
  */
 
 import PQueue from 'p-queue';
-import type { PRConnector, DetectedPR, ResolvedPR, PRState } from './pr-connectors';
-import { PRResolverUnavailableError, PRResolverTransientError } from './pr-errors';
-import { GitHubImporter, GhUnavailableError, GhTransientError, type GhPrListItem } from '../../boards/adapters/github-common/gh-client';
+import type { PRConnector, DetectedPR, ResolvedPR, PRState } from '../../shared/pr-connector';
+import { PRResolverUnavailableError, PRResolverTransientError } from '../../shared/pr-errors';
+import { GitHubImporter, GhUnavailableError, GhTransientError, type GhPrListItem } from '../../../boards/adapters/github-common/gh-client';
 
 /**
  * Shared gh client for authoritative PR resolution. Reuses the same binary

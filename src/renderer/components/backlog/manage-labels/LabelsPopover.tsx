@@ -24,7 +24,10 @@ export function LabelsPopover() {
   const deleteLabel = useBacklogStore((state) => state.deleteLabel);
   const config = useConfigStore((state) => state.config);
   const updateConfig = useConfigStore((state) => state.updateConfig);
-  const labelColors = config.backlog?.labelColors ?? {};
+  // useMemo so the empty-object fallback keeps a stable identity across renders;
+  // otherwise `?? {}` makes a fresh object each render and destabilizes every
+  // hook below that depends on labelColors.
+  const labelColors = useMemo(() => config.backlog?.labelColors ?? {}, [config.backlog?.labelColors]);
 
   // Close on click outside
   useEffect(() => {

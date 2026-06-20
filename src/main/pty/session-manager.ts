@@ -6,7 +6,7 @@ import { SessionQueue } from './session-queue';
 import { PtyBufferManager } from './buffer/pty-buffer-manager';
 import { SessionHistoryReader } from './readers/session-history-reader';
 import { StatusFileReader } from './readers/status-file-reader';
-import { SessionTelemetry } from './activity/session-telemetry';
+import { SessionTelemetry } from '../activity-engine/session-telemetry';
 import { TranscriptWriter } from './buffer/transcript-writer';
 import { SessionIdManager } from './lifecycle/session-id-manager';
 import { SessionFileManager } from './lifecycle/session-file-manager';
@@ -30,7 +30,7 @@ import type {
   SpawnSessionInput,
   PerToolStat,
 } from '../../shared/types';
-import type { ActivityEngineOptions, ActivityStatsSnapshot } from './activity/engine';
+import type { ActivityEngineOptions, ActivityStatsSnapshot } from '../activity-engine/engine';
 
 export interface SessionManagerOptions {
   /**

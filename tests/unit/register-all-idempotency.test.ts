@@ -81,7 +81,7 @@ vi.mock('../../src/main/config/board-config-manager', () => ({
     detach = vi.fn();
   },
 }));
-vi.mock('../../src/main/engine/terminal-submit-scheduler', () => ({
+vi.mock('../../src/main/transition-engine/terminal-submit-scheduler', () => ({
   TerminalSubmitScheduler: class {
     constructor() {}
     cancelAll = vi.fn();

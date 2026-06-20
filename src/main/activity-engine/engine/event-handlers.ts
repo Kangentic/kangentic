@@ -1,5 +1,5 @@
-import { EventType, IdleReason } from '../../../../shared/types';
-import type { SessionEvent } from '../../../../shared/types';
+import { EventType, IdleReason } from '../../../shared/types';
+import type { SessionEvent } from '../../../shared/types';
 import type { SessionEngineState } from './shapes';
 import { looksLikeShellId } from '../background-shell/looks-like-shell-id';
 

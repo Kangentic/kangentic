@@ -1,6 +1,6 @@
 /**
  * Startup recovery of OS-killed agent sessions
- * (src/main/engine/session-startup/resume-suspended.ts).
+ * (src/main/transition-engine/session-startup/resume-suspended.ts).
  *
  * Incident (2026-06-06): a computer restart hard-killed three live agents
  * (tasks #172/#173/#174). Windows recorded each as status='exited' with the
@@ -83,7 +83,7 @@ vi.mock('../../src/main/shutdown-state', () => ({
 
 const markRecordSuspendedMock = vi.fn(() => true);
 const retireRecordMock = vi.fn(() => true);
-vi.mock('../../src/main/engine/session-lifecycle', () => ({
+vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordSuspended: (...args: unknown[]) => markRecordSuspendedMock(...args),
   retireRecord: (...args: unknown[]) => retireRecordMock(...args),
 }));
@@ -133,7 +133,7 @@ vi.mock('../../src/main/db/repositories/swimlane-repository', () => {
   return { SwimlaneRepository: FakeSwimlaneRepository };
 });
 
-vi.mock('../../src/main/engine/session-startup/prepare-spawn', () => ({
+vi.mock('../../src/main/transition-engine/session-startup/prepare-spawn', () => ({
   prepareAgentSpawn: vi.fn(),
 }));
 
@@ -141,7 +141,7 @@ vi.mock('../../src/main/engine/session-startup/prepare-spawn', () => ({
 // the test stays hermetic (no transitive imports) while exercising the real
 // decision: a non-null agent_session_id, not run_script, not queued is eligible,
 // regardless of exited vs suspended vs orphaned status.
-vi.mock('../../src/main/engine/spawn-intent', () => ({
+vi.mock('../../src/main/transition-engine/spawn-intent', () => ({
   isResumeEligible: (record: SessionRecord | undefined) =>
     !!record?.agent_session_id &&
     record.session_type !== 'run_script' &&
@@ -152,8 +152,8 @@ vi.mock('../../src/main/engine/spawn-intent', () => ({
 // Import module under test AFTER all mocks are registered
 // ---------------------------------------------------------------------------
 
-import { resumeSuspendedSessions } from '../../src/main/engine/session-startup/resume-suspended';
-import { prepareAgentSpawn } from '../../src/main/engine/session-startup/prepare-spawn';
+import { resumeSuspendedSessions } from '../../src/main/transition-engine/session-startup/resume-suspended';
+import { prepareAgentSpawn } from '../../src/main/transition-engine/session-startup/prepare-spawn';
 
 // ---------------------------------------------------------------------------
 // Helpers

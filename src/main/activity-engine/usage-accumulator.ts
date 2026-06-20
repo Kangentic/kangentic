@@ -1,5 +1,5 @@
-import { EventType } from '../../../shared/types';
-import type { SessionUsage, SessionEvent, PerToolStat } from '../../../shared/types';
+import { EventType } from '../../shared/types';
+import type { SessionUsage, SessionEvent, PerToolStat } from '../../shared/types';
 
 /**
  * Per-session token, cost, and per-tool aggregator. Pure logic - no

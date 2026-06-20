@@ -14,8 +14,8 @@
  * engine timings are collapsed so transitions are synchronous.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { SessionTelemetry } from '../../src/main/pty/activity/session-telemetry';
-import type { SessionTelemetryOptions } from '../../src/main/pty/activity/session-telemetry';
+import { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
+import type { SessionTelemetryOptions } from '../../src/main/activity-engine/session-telemetry';
 import { EventType, Activity, IdleReason, PromptReason } from '../../src/shared/types';
 import type { ActivityState, ActivityReason, SessionEvent, SessionUsage } from '../../src/shared/types';
 

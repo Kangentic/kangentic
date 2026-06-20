@@ -371,12 +371,13 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   }, [swimlanes]);
 
   // ── Refresh agent capabilities ─────────────────────────────────────
-  // Dispatch through the store so the agentList subscription above picks
-  // up the new data; any other component reading `useConfigStore.agentList`
-  // (e.g. the New Task dialog's `useAgentCapabilityResolution`) sees the
-  // same refreshed snapshot.
+  // The agent inventory is loaded once at app bootstrap (App.tsx) and cached in
+  // the main process, so the column manager reads the existing snapshot instead
+  // of re-probing every open; only fetch when the store is empty. Any component
+  // reading `useConfigStore.agentList` (e.g. the New Task dialog's
+  // `useAgentCapabilityResolution`) sees the same snapshot.
   useEffect(() => {
-    void loadAgentList();
+    if (useConfigStore.getState().agentList.length === 0) void loadAgentList();
   }, [loadAgentList]);
 
   // ── Add-new-draft side effect ─────────────────────────────────────
@@ -488,6 +489,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // Sync hexInput when the active draft's color changes.
   useEffect(() => {
     if (draft) setHexInput(draft.color.toLowerCase());
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-sync only when the color changes, not on every draft identity change, so editing other fields does not clobber in-progress hex input
   }, [draft?.color]);
 
   // ── Mutators ───────────────────────────────────────────────────────

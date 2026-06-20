@@ -20,6 +20,7 @@ import {
   cleanupTempProject,
   getTestDataDir,
   cleanupTestDataDir,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -165,7 +166,7 @@ test.describe('Claude Agent -- Session Move Lifecycle', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);
   });

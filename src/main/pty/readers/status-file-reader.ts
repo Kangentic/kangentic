@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { FileWatcher } from './file-watcher';
-import * as traceRecorder from '../activity/trace-recorder';
+import * as traceRecorder from '../../activity-engine/trace-recorder';
 import type { SessionUsage, SessionEvent, AdapterRuntimeStrategy } from '../../../shared/types';
 
 /**

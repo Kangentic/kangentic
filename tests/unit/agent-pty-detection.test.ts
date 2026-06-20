@@ -29,7 +29,7 @@ import { CodexAdapter } from '../../src/main/agent/adapters/codex';
 import { GeminiAdapter } from '../../src/main/agent/adapters/gemini';
 import { WarpAdapter } from '../../src/main/agent/adapters/warp';
 import { DroidAdapter } from '../../src/main/agent/adapters/droid';
-import { sessionOutputPaths } from '../../src/main/engine/session-paths';
+import { sessionOutputPaths } from '../../src/main/transition-engine/session-paths';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
 
 const FIXTURE_DIR = path.join(__dirname, '..', 'fixtures', 'agent-pty');

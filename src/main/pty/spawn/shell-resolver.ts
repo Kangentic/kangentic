@@ -1,13 +1,32 @@
 import which from 'which';
-import { execSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createCachedSingleton } from '../../shared/cached-singleton';
+
+const execFileAsync = promisify(execFile);
 
 export interface ShellInfo {
   name: string;
   path: string;
 }
 
+// Installed shells do not change within a session, and the Windows enumeration
+// shells out to `wsl --list` (previously a synchronous execSync that blocked
+// the main thread). Cache the result once and share it across the two
+// ShellResolver instances (SessionManager + IpcContext); a restart re-probes.
+const availableShellsCache = createCachedSingleton<ShellInfo[]>();
+
+/** Test-only: clear the cached shell list between cases. */
+export function resetShellResolverCacheForTests(): void {
+  availableShellsCache.invalidate();
+}
+
 export class ShellResolver {
   async getAvailableShells(): Promise<ShellInfo[]> {
+    return availableShellsCache.get(() => this.computeAvailableShells());
+  }
+
+  private async computeAvailableShells(): Promise<ShellInfo[]> {
     const shells: ShellInfo[] = [];
     const platform = process.platform;
 
@@ -28,9 +47,10 @@ export class ShellResolver {
 
       // WSL distributions (skip Docker-internal distros)
       try {
-        const wslOutput = execSync('wsl --list --quiet', {
+        const { stdout: wslOutput } = await execFileAsync('wsl', ['--list', '--quiet'], {
           encoding: 'utf-8',
           timeout: 5000,
+          windowsHide: true,
         });
         const distros = wslOutput
           .split('\n')

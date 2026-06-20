@@ -1,7 +1,7 @@
-import { IPC } from '../../../shared/ipc-channels';
-import { withTaskLock } from '../task-lifecycle-lock';
-import { readWorktreeHead, isMergeCommit } from '../../git/worktree-head';
-import { getProjectRepos } from './project-repos';
+import { IPC } from '../../shared/ipc-channels';
+import { withTaskLock } from '../ipc/task-lifecycle-lock';
+import { readWorktreeHead, isMergeCommit } from '../git/worktree-head';
+import { getProjectRepos } from '../ipc/helpers/project-repos';
 import {
   resolvePRForBranch,
   resolvePRByNumber,
@@ -11,10 +11,10 @@ import {
   PRResolverUnavailableError,
   PRResolverTransientError,
   type DetectedPR,
-} from '../../pty/pr/pr-connectors';
-import type { TaskRepository } from '../../db/repositories/task-repository';
-import type { Task, PRState, PRLinkStatus, TaskUpdateInput } from '../../../shared/types';
-import type { IpcContext } from '../ipc-context';
+} from './pr-registry';
+import type { TaskRepository } from '../db/repositories/task-repository';
+import type { Task, PRState, PRLinkStatus, TaskUpdateInput } from '../../shared/types';
+import type { IpcContext } from '../ipc/ipc-context';
 
 export interface PRLinkResult {
   status: PRLinkStatus;
@@ -34,7 +34,7 @@ let resolverUnavailableHintShown = false;
 const lastResolveAt = new Map<string, number>();
 const RESOLVE_TTL_MS = 60_000;
 
-export interface PrLinkDeps {
+export interface PRLinkDeps {
   tasks: TaskRepository;
   /** Repo root used as the resolver `cwd` when the task has no worktree of its own. */
   projectPath: string | null;
@@ -122,7 +122,7 @@ async function resolvePRViaLadder(args: {
  * Also opportunistically persists the worktree HEAD SHA so the commit anchor is
  * available later, after the worktree is reclaimed on Done.
  */
-export async function resolveAndLinkPRForTask(taskId: string, deps: PrLinkDeps): Promise<PRLinkResult> {
+export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<PRLinkResult> {
   return withTaskLock(taskId, async (): Promise<PRLinkResult> => {
     const task = deps.tasks.getById(taskId);
     if (!task) return { status: 'no-anchor', task: null };
@@ -224,7 +224,7 @@ export async function resolveAndLinkPRForTask(taskId: string, deps: PrLinkDeps):
   });
 }
 
-interface ResolveAndLinkOptions {
+interface LinkPROptions {
   projectId?: string | null;
   taskId?: string;
   sessionId?: string;
@@ -235,12 +235,12 @@ interface ResolveAndLinkOptions {
 }
 
 /**
- * IPC-side wrapper around `resolveAndLinkPRForTask`: resolves the project + task
- * (by id, else live session, else branch name) and wires the renderer
- * notification. Mapping by branch/session means exited or suspended sessions and
- * human-created PRs still link.
+ * IPC-side wrapper around `linkPRForTask`: resolves the project + task (by id,
+ * else live session, else branch name) and wires the renderer notification.
+ * Mapping by branch/session means exited or suspended sessions and human-created
+ * PRs still link.
  */
-export async function resolveAndLinkPR(context: IpcContext, options: ResolveAndLinkOptions): Promise<PRLinkResult> {
+export async function linkPR(context: IpcContext, options: LinkPROptions): Promise<PRLinkResult> {
   const projectId = options.projectId
     ?? (options.sessionId ? context.sessionManager.getSessionProjectId(options.sessionId) : null)
     ?? context.currentProjectId;
@@ -262,7 +262,7 @@ export async function resolveAndLinkPR(context: IpcContext, options: ResolveAndL
 
   const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
 
-  return resolveAndLinkPRForTask(task.id, {
+  return linkPRForTask(task.id, {
     tasks,
     projectPath,
     force: options.force,
@@ -276,19 +276,20 @@ export async function resolveAndLinkPR(context: IpcContext, options: ResolveAndL
 }
 
 /**
- * Fire-and-forget PR resolution after a task moves into a non-To Do lane. Keeps
- * platform logic in the connector; here we only gate on having a branch/worktree
- * and a post-To Do lane (To Do resets the task, so there is no PR to link there).
- * Called AFTER `handleTaskMove` returns so it runs outside the move's task lock.
+ * Fire-and-forget best-effort auto-resolve of a task's PR, gated on the task
+ * being in a post-To Do lane (To Do resets the task, so there is no PR to link
+ * there). Keeps platform logic in the connector; here we only gate on having a
+ * branch/worktree and a non-To Do lane. Called AFTER `handleTaskMove` returns so
+ * it runs outside the move's task lock.
  */
-export function maybeResolvePRAfterMove(context: IpcContext, taskId: string, projectId: string | null): void {
+export function linkPRForMovedTask(context: IpcContext, taskId: string, projectId: string | null): void {
   try {
     const { tasks, swimlanes } = getProjectRepos(context, projectId);
     const task = tasks.getById(taskId);
     if (!task || (!task.branch_name && !task.worktree_path && !task.head_sha && task.pr_number == null)) return;
     const lane = swimlanes.getById(task.swimlane_id);
     if (!lane || lane.role === 'todo') return;
-    void resolveAndLinkPR(context, { projectId, taskId }).catch((error) => {
+    void linkPR(context, { projectId, taskId }).catch((error) => {
       console.error(`[pr-linking] post-move resolve failed for task ${taskId.slice(0, 8)}:`, error);
     });
   } catch {

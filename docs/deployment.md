@@ -47,7 +47,7 @@ To roll back to a previous version, run `npx kangentic@X.Y.Z` with the desired v
 
 ### Commit Conventions
 
-All commits must use [Conventional Commits](https://www.conventionalcommits.org/) format. A husky commit-msg hook runs commitlint to enforce this. `/merge-back` auto-generates conventional commit messages from diffs.
+All commits must use [Conventional Commits](https://www.conventionalcommits.org/) format. A husky commit-msg hook runs commitlint to enforce this. The commit skills (`/commit`, `/pull-request`, `/merge-pull-request`, `/merge-back`) auto-generate conventional commit messages from diffs.
 
 Common prefixes: `feat:`, `fix:`, `refactor:`, `chore:`, `docs:`, `test:`, `perf:`, `ci:`, `build:`. Add `!` after the type for breaking changes (e.g., `feat!:`).
 

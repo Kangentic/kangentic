@@ -23,7 +23,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SessionTelemetry } from '../../src/main/pty/activity/session-telemetry';
+import { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
 import { EventType } from '../../src/shared/types';
 import type { SessionUsage, SessionEvent } from '../../src/shared/types';
 

@@ -25,7 +25,9 @@ type ProbeStatus = 'available' | 'taken' | 'unsupported';
  */
 export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
-  const overrides = globalConfig.hotkeyOverrides ?? {};
+  // useMemo so the empty-object fallback is stable; otherwise `?? {}` makes a
+  // fresh object each render and destabilizes the hooks that depend on it.
+  const overrides = useMemo(() => globalConfig.hotkeyOverrides ?? {}, [globalConfig.hotkeyOverrides]);
   // devOnly bindings (the activity debug overlay) appear only in dev builds, in
   // line with the project's __KANGENTIC_DEV__ build-exclusion convention.
   const isDev = __KANGENTIC_DEV__;
@@ -40,7 +42,7 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
   const conflicts = useMemo(
     () => detectConflicts(overrides, { includeDevOnly: isDev }),
     // Re-derive when the override map reference changes (after any update).
-    [globalConfig.hotkeyOverrides, isDev],
+    [overrides, isDev],
   );
 
   const conflictIds = useMemo(() => {

@@ -1,9 +1,15 @@
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile, exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getCachedModelPickerModels } from './model-picker-probe';
+import {
+  listMostRecentDirs,
+  listMostRecentFiles,
+  readHeadBytes,
+  parseJsonlRecords,
+  SESSION_SCAN_HEAD_BYTES,
+} from '../../shared/history-scan';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 const execFileAsync = promisify(execFile);
@@ -39,7 +45,6 @@ async function readHelpText(cliPath: string): Promise<string> {
 // the models a user picks from.
 const MAX_PROJECT_DIRS_TO_SCAN = 30;
 const MAX_SESSIONS_PER_PROJECT = 3;
-const MAX_BYTES_PER_SESSION_FILE = 256 * 1024;
 
 /**
  * Read up to `lookupBytes` from the head of a JSONL file and collect every
@@ -49,54 +54,29 @@ const MAX_BYTES_PER_SESSION_FILE = 256 * 1024;
  * iterate until we either run out of head bytes or find at least one
  * assistant turn with a model. Returns an empty set on any read failure.
  */
-function readModelsFromHead(filePath: string, lookupBytes: number): Set<string> {
+async function readModelsFromHead(filePath: string, lookupBytes: number): Promise<Set<string>> {
   const found = new Set<string>();
-  let fd: number | null = null;
-  try {
-    fd = fs.openSync(filePath, 'r');
-    const buffer = Buffer.alloc(lookupBytes);
-    const bytesRead = fs.readSync(fd, buffer, 0, lookupBytes, 0);
-    const text = buffer.toString('utf-8', 0, bytesRead);
-    // Drop the final element after split: the head buffer almost certainly
-    // truncated the last line mid-record, and parsing a half-line would
-    // throw. Whole-line records still parse correctly because JSONL writes
-    // a newline after every record.
-    const lines = text.split('\n');
-    if (lines.length > 0) lines.pop();
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.length === 0) continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(trimmed);
-      } catch {
-        continue;
-      }
-      if (!parsed || typeof parsed !== 'object') continue;
-      const record = parsed as Record<string, unknown>;
-      if (record.type !== 'assistant') continue;
-      const message = record.message as Record<string, unknown> | undefined;
-      if (!message || typeof message.model !== 'string' || message.model.length === 0) continue;
-      // Claude Code uses angle-bracket sentinels (e.g. `<synthetic>`) on
-      // assistant records that did not come from a real API call - tool
-      // result framing, replays, error placeholders. They are not valid
-      // values for `--model`, so drop anything wrapped in `<...>`.
-      if (message.model.startsWith('<') && message.model.endsWith('>')) continue;
-      // Preserve the exact form Claude wrote into the transcript. Empirical
-      // probe (scripts/probe-claude-model-forms.js) showed that
-      // `claude-haiku-4-5` and `claude-haiku-4-5-20251001` are NOT aliased on
-      // the API side - Claude echoes back whatever you pass. Stripping the
-      // dated suffix would silently turn a pinned build into "latest", which
-      // loses reproducibility for users who want to port back to a specific
-      // version.
-      found.add(message.model);
-    }
-  } catch {
-    // Read failure - leave the set empty.
-  } finally {
-    if (fd !== null) {
-      try { fs.closeSync(fd); } catch { /* swallow */ }
-    }
+  const text = await readHeadBytes(filePath, lookupBytes);
+  if (text.length === 0) return found;
+  // parseJsonlRecords drops the truncated final line for us; a half-line would
+  // never parse anyway, and well-formed JSONL ends with a newline.
+  for (const record of parseJsonlRecords(text, true)) {
+    if (record.type !== 'assistant') continue;
+    const message = record.message as Record<string, unknown> | undefined;
+    if (!message || typeof message.model !== 'string' || message.model.length === 0) continue;
+    // Claude Code uses angle-bracket sentinels (e.g. `<synthetic>`) on
+    // assistant records that did not come from a real API call - tool
+    // result framing, replays, error placeholders. They are not valid
+    // values for `--model`, so drop anything wrapped in `<...>`.
+    if (message.model.startsWith('<') && message.model.endsWith('>')) continue;
+    // Preserve the exact form Claude wrote into the transcript. Empirical
+    // probe (scripts/probe-claude-model-forms.js) showed that
+    // `claude-haiku-4-5` and `claude-haiku-4-5-20251001` are NOT aliased on
+    // the API side - Claude echoes back whatever you pass. Stripping the
+    // dated suffix would silently turn a pinned build into "latest", which
+    // loses reproducibility for users who want to port back to a specific
+    // version.
+    found.add(message.model);
   }
   return found;
 }
@@ -113,61 +93,26 @@ function readModelsFromHead(filePath: string, lookupBytes: number): Set<string> 
  * it finds a model. Returns undefined on any directory listing failure or
  * when no models could be extracted.
  */
-function discoverHistoricalModels(): string[] | undefined {
+async function discoverHistoricalModels(): Promise<string[] | undefined> {
   const projectsRoot = path.join(os.homedir(), '.claude', 'projects');
-  let projectDirs: fs.Dirent[];
-  try {
-    projectDirs = fs.readdirSync(projectsRoot, { withFileTypes: true });
-  } catch {
-    return undefined;
-  }
-
   // Sort projects by directory mtime (proxy for "recently active") so we scan
   // the freshest data first when capped by MAX_PROJECT_DIRS_TO_SCAN.
-  const dirEntries = projectDirs
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => {
-      const fullPath = path.join(projectsRoot, entry.name);
-      let mtime = 0;
-      try {
-        mtime = fs.statSync(fullPath).mtimeMs;
-      } catch {
-        // Stat failure - keep the entry but sort it to the back.
-      }
-      return { fullPath, mtime };
-    })
-    .sort((a, b) => b.mtime - a.mtime)
-    .slice(0, MAX_PROJECT_DIRS_TO_SCAN);
+  const projectDirs = await listMostRecentDirs(projectsRoot, MAX_PROJECT_DIRS_TO_SCAN);
+  if (projectDirs.length === 0) return undefined;
 
   const models = new Set<string>();
-  for (const projectDir of dirEntries) {
-    let sessionFiles: string[];
-    try {
-      sessionFiles = fs.readdirSync(projectDir.fullPath).filter((name) => name.endsWith('.jsonl'));
-    } catch {
-      continue;
-    }
-
-    const ranked = sessionFiles
-      .map((name) => {
-        const fullPath = path.join(projectDir.fullPath, name);
-        let mtime = 0;
-        try {
-          mtime = fs.statSync(fullPath).mtimeMs;
-        } catch {
-          // Skip unreadable files.
-        }
-        return { fullPath, mtime };
-      })
-      .sort((a, b) => b.mtime - a.mtime)
-      .slice(0, MAX_SESSIONS_PER_PROJECT);
-
-    for (const sessionFile of ranked) {
+  for (const projectDir of projectDirs) {
+    const sessionFiles = await listMostRecentFiles(
+      projectDir.fullPath,
+      (name) => name.endsWith('.jsonl'),
+      MAX_SESSIONS_PER_PROJECT,
+    );
+    for (const sessionFile of sessionFiles) {
       // Native Claude session JSONL stores the model on assistant messages
       // under `message.model` (see transcript-parser.ts:92 for the canonical
       // shape). Sessions lead with summary/user records, so we have to scan
       // past those to reach the first assistant turn.
-      const fileModels = readModelsFromHead(sessionFile.fullPath, MAX_BYTES_PER_SESSION_FILE);
+      const fileModels = await readModelsFromHead(sessionFile.fullPath, SESSION_SCAN_HEAD_BYTES);
       for (const modelId of fileModels) models.add(modelId);
     }
   }
@@ -245,8 +190,8 @@ export async function discoverClaudeStaticCapabilities(cliPath: string): Promise
  * Returns undefined when neither source yields a model, in which case the
  * renderer falls back to a free-form text input.
  */
-export function rescanClaudeModels(cliPath: string): string[] | undefined {
-  const transcriptModels = discoverHistoricalModels();
+export async function rescanClaudeModels(cliPath: string): Promise<string[] | undefined> {
+  const transcriptModels = await discoverHistoricalModels();
   const pickerModels = getCachedModelPickerModels(cliPath);
 
   if (!transcriptModels && !pickerModels) return undefined;
@@ -262,7 +207,7 @@ export function rescanClaudeModels(cliPath: string): string[] | undefined {
 export async function discoverClaudeCapabilities(cliPath: string): Promise<AgentCapabilities> {
   const capabilities = await discoverClaudeStaticCapabilities(cliPath);
   if (capabilities.supportsModelOverride) {
-    const models = rescanClaudeModels(cliPath);
+    const models = await rescanClaudeModels(cliPath);
     if (models) capabilities.models = models;
   }
   return capabilities;

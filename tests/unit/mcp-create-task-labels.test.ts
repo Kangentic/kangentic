@@ -65,8 +65,8 @@ vi.mock('../../src/main/db/repositories/backlog-attachment-repository', () => ({
 vi.mock('../../src/main/db/repositories/attachment-utils', () => ({
   readFileAsAttachment: vi.fn(),
 }));
-vi.mock('../../src/main/ipc/helpers/pr-linking', () => ({
-  resolveAndLinkPRForTask: vi.fn(),
+vi.mock('../../src/main/pr/pr-linking', () => ({
+  linkPRForTask: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------

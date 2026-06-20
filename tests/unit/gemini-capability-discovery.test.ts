@@ -19,30 +19,38 @@ vi.mock('node:util', () => ({
   promisify: (fn: unknown) => fn,
 }));
 
-vi.mock('node:fs', () => ({
-  default: {
-    existsSync: vi.fn(),
-    readdirSync: vi.fn(),
-    statSync: vi.fn(),
-    readFileSync: vi.fn(),
-    openSync: vi.fn(),
-    readSync: vi.fn(),
-    closeSync: vi.fn(),
-  },
-}));
+// The session-history walk now goes through the shared async primitives in
+// history-scan. Mock the I/O primitives (listing + head/whole-file read) and
+// keep parseJsonlRecords real so the adapter's record-extraction logic is
+// exercised; the fs walk itself is covered by tests/unit/history-scan.test.ts.
+vi.mock('../../src/main/agent/shared/history-scan', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/main/agent/shared/history-scan')>();
+  return {
+    ...actual,
+    listMostRecentDirs: vi.fn(),
+    listMostRecentFiles: vi.fn(),
+    readHeadBytes: vi.fn(),
+    readWholeFile: vi.fn(),
+  };
+});
 
 import { execFile, exec } from 'node:child_process';
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { discoverGeminiCapabilities } from '../../src/main/agent/adapters/gemini/capability-discovery';
+import {
+  listMostRecentDirs,
+  listMostRecentFiles,
+  readHeadBytes,
+  readWholeFile,
+} from '../../src/main/agent/shared/history-scan';
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
-const existsMock = fs.existsSync as unknown as ReturnType<typeof vi.fn>;
-const readdirMock = fs.readdirSync as unknown as ReturnType<typeof vi.fn>;
-const statMock = fs.statSync as unknown as ReturnType<typeof vi.fn>;
-const readFileMock = fs.readFileSync as unknown as ReturnType<typeof vi.fn>;
+const listDirsMock = listMostRecentDirs as unknown as ReturnType<typeof vi.fn>;
+const listFilesMock = listMostRecentFiles as unknown as ReturnType<typeof vi.fn>;
+const readHeadMock = readHeadBytes as unknown as ReturnType<typeof vi.fn>;
+const readWholeMock = readWholeFile as unknown as ReturnType<typeof vi.fn>;
 
 const TMP_ROOT = path.join(os.homedir(), '.gemini', 'tmp');
 
@@ -53,64 +61,70 @@ function setHelpOutput(stdout: string): void {
 }
 
 /**
- * Wire up the fs chain that scanGeminiSessionHistory walks.
+ * Wire up the history-scan primitives for Gemini's session store.
  * Layout: `<tmpRoot>/<project-slug>/chats/<session-file>`
- * The scanner ranks project dirs by `chats/` mtime, not the project root.
+ * The scanner ranks project dirs by `chats/` mtime (listMostRecentDirs options),
+ * then lists session files in each `chats/` dir. `.jsonl` files are read via
+ * readHeadBytes; `.json` files via readWholeFile.
+ * Setting the store to null makes ~/.gemini/tmp appear missing (empty listings).
  */
 type SessionTree = Record<string, Record<string, string>>;
 
 function setSessionStore(store: SessionTree | null): void {
-  existsMock.mockReset();
-  readdirMock.mockReset();
-  statMock.mockReset();
-  readFileMock.mockReset();
+  listDirsMock.mockReset();
+  listFilesMock.mockReset();
+  readHeadMock.mockReset();
+  readWholeMock.mockReset();
 
   if (store === null) {
-    existsMock.mockReturnValue(false);
+    listDirsMock.mockResolvedValue([]);
+    listFilesMock.mockResolvedValue([]);
+    readHeadMock.mockResolvedValue('');
+    readWholeMock.mockResolvedValue('');
     return;
   }
-  existsMock.mockReturnValue(true);
 
-  readdirMock.mockImplementation((dirPath: string, options?: { withFileTypes?: boolean }) => {
-    const asDirents = (names: string[]): fs.Dirent[] =>
-      names.map((name) => ({ name, isDirectory: () => true })) as unknown as fs.Dirent[];
+  const projectNames = Object.keys(store);
 
-    if (dirPath === TMP_ROOT) {
-      const projects = Object.keys(store);
-      return options?.withFileTypes ? asDirents(projects) : projects;
-    }
-    for (const project of Object.keys(store)) {
-      const chatsPath = path.join(TMP_ROOT, project, 'chats');
-      if (dirPath === chatsPath) {
-        return Object.keys(store[project]);
-      }
-    }
-    throw new Error(`Unexpected readdir: ${dirPath}`);
+  listDirsMock.mockImplementation(async (parent: string) => {
+    if (parent !== TMP_ROOT) return [];
+    // Descending mtime so scan order is deterministic.
+    return projectNames.map((name, index) => ({
+      fullPath: path.join(TMP_ROOT, name),
+      mtimeMs: projectNames.length - index,
+    }));
   });
 
-  statMock.mockImplementation((targetPath: string) => {
-    // The chats/ subdir's mtime is what the scanner ranks by; existence
-    // of statSync without throwing is what filters real-session dirs from
-    // test-artifact dirs that have no chats/.
-    for (const project of Object.keys(store)) {
-      const chatsPath = path.join(TMP_ROOT, project, 'chats');
-      if (targetPath === chatsPath) {
-        return { mtimeMs: Date.now(), size: 0 } as fs.Stats;
+  listFilesMock.mockImplementation(async (directory: string, predicate: (name: string) => boolean) => {
+    for (const projectName of projectNames) {
+      const chatsDir = path.join(TMP_ROOT, projectName, 'chats');
+      if (directory === chatsDir) {
+        const fileNames = Object.keys(store[projectName]).filter(predicate);
+        return fileNames.map((fileName, index) => ({
+          fullPath: path.join(chatsDir, fileName),
+          mtimeMs: fileNames.length - index,
+        }));
       }
     }
-    return { mtimeMs: Date.now(), size: 1024 } as fs.Stats;
+    return [];
   });
 
-  readFileMock.mockImplementation((filePath: string) => {
-    for (const project of Object.keys(store)) {
-      for (const file of Object.keys(store[project])) {
-        const full = path.join(TMP_ROOT, project, 'chats', file);
-        if (filePath === full) {
-          return store[project][file];
-        }
+  readHeadMock.mockImplementation(async (filePath: string) => {
+    for (const [projectName, files] of Object.entries(store)) {
+      for (const [fileName, contents] of Object.entries(files)) {
+        if (filePath === path.join(TMP_ROOT, projectName, 'chats', fileName)) return contents;
       }
     }
-    throw new Error(`Unexpected readFile: ${filePath}`);
+    return '';
+  });
+
+  readWholeMock.mockImplementation(async (filePath: string) => {
+    for (const [projectName, files] of Object.entries(store)) {
+      for (const [fileName, contents] of Object.entries(files)) {
+        if (filePath === path.join(TMP_ROOT, projectName, 'chats', fileName)) return contents;
+      }
+    }
+    return '';
   });
 }
 
@@ -194,47 +208,66 @@ describe('discoverGeminiCapabilities', () => {
 
     it('skips project dirs whose chats/ subdir does not exist', async () => {
       setHelpOutput('  -m, --model Model\n');
-      // Two projects in store, but the test-artifact has no chats/.
-      // The scanner mocks statSync to throw for missing dirs - so
-      // we manually arrange that here.
-      existsMock.mockReturnValue(true);
-      readdirMock.mockImplementation((dirPath: string, options?: { withFileTypes?: boolean }) => {
-        const asDirents = (names: string[]): fs.Dirent[] =>
-          names.map((name) => ({ name, isDirectory: () => true })) as unknown as fs.Dirent[];
+      // Two projects in store; the test-artifact has no chats/ session files.
+      // With history-scan, a missing chats/ dir means listMostRecentDirs does
+      // not include it (requireMtimeSubpath=true filters it). We replicate this
+      // by only returning the real project from listDirsMock.
+      listDirsMock.mockReset();
+      listFilesMock.mockReset();
+      readHeadMock.mockReset();
+      readWholeMock.mockReset();
 
-        if (dirPath === TMP_ROOT) {
-          const projects = ['gemini-test-artifact', 'kangentic'];
-          return options?.withFileTypes ? asDirents(projects) : projects;
+      // Only 'kangentic' appears in the listing; 'gemini-test-artifact' is
+      // filtered out by the requireMtimeSubpath option in the real scanner.
+      listDirsMock.mockImplementation(async (parent: string) => {
+        if (parent === TMP_ROOT) {
+          return [{ fullPath: path.join(TMP_ROOT, 'kangentic'), mtimeMs: 2 }];
         }
-        if (dirPath === path.join(TMP_ROOT, 'kangentic', 'chats')) {
-          return ['session-real.json'];
-        }
-        // gemini-test-artifact/chats listing should not be reached.
-        throw new Error(`Unexpected readdir: ${dirPath}`);
+        return [];
       });
-      statMock.mockImplementation((target: string) => {
-        if (target === path.join(TMP_ROOT, 'kangentic', 'chats')) {
-          return { mtimeMs: Date.now() } as fs.Stats;
+
+      listFilesMock.mockImplementation(async (directory: string, predicate: (name: string) => boolean) => {
+        const chatsDir = path.join(TMP_ROOT, 'kangentic', 'chats');
+        if (directory === chatsDir) {
+          const name = 'session-real.json';
+          return predicate(name) ? [{ fullPath: path.join(chatsDir, name), mtimeMs: 1 }] : [];
         }
-        if (target === path.join(TMP_ROOT, 'gemini-test-artifact', 'chats')) {
-          throw new Error('ENOENT');
-        }
-        return { mtimeMs: Date.now() } as fs.Stats;
+        return [];
       });
-      readFileMock.mockImplementation((target: string) => {
-        if (target === path.join(TMP_ROOT, 'kangentic', 'chats', 'session-real.json')) {
+
+      readWholeMock.mockImplementation(async (filePath: string) => {
+        if (filePath === path.join(TMP_ROOT, 'kangentic', 'chats', 'session-real.json')) {
           return realSessionJson('gemini-2.5-pro');
         }
-        throw new Error(`Unexpected readFile: ${target}`);
+        return '';
       });
+
+      readHeadMock.mockResolvedValue('');
 
       const capabilities = await discoverGeminiCapabilities('/usr/bin/gemini');
       expect(capabilities.models).toEqual(['gemini-2.5-pro']);
     });
 
+    it('harvests models from both .json and .jsonl files in the same project chats dir', async () => {
+      // One project directory containing two session files: one .json and one .jsonl.
+      // Both file types must be scanned in a single pass so both models appear in
+      // the result, regardless of which format Gemini uses in a given session.
+      setHelpOutput('  -m, --model Model\n');
+      setSessionStore({
+        kangentic: {
+          'session-2026-04-01T23-37.json': realSessionJson('gemini-pro'),
+          'session-2026-04-28T18-52.jsonl': realSessionJsonl('gemini-flash'),
+        },
+      });
+
+      const capabilities = await discoverGeminiCapabilities('/usr/bin/gemini');
+      // Order-independent: both models must be present.
+      expect(capabilities.models?.sort()).toEqual(['gemini-flash', 'gemini-pro']);
+    });
+
     it('returns models=undefined when sessions root is missing', async () => {
       setHelpOutput('  -m, --model Model\n');
-      // setSessionStore(null) -> existsSync returns false
+      // setSessionStore(null) -> listMostRecentDirs returns []
       const capabilities = await discoverGeminiCapabilities('/usr/bin/gemini');
       expect(capabilities.models).toBeUndefined();
     });

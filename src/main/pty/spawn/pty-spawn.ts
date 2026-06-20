@@ -37,15 +37,38 @@ export function resolveShellArgs(shell: string): ShellInvocation {
 /**
  * Build the environment block for `pty.spawn`.
  *
- * Strips `CLAUDECODE` so spawned Claude CLI sessions don't refuse to
- * start when Kangentic itself was launched from inside a Claude Code
- * session.
+ * Strips the parent Claude Code session's detection/identity markers. When
+ * Kangentic is launched from inside a Claude Code session (the team dogfoods
+ * this way, and `/preview` is often started from an agent), Claude Code exports
+ * these into the environment and they would otherwise leak into every spawned
+ * agent PTY:
+ *   - `CLAUDECODE`               - "you are inside Claude Code" (made the child refuse to start)
+ *   - `CLAUDE_CODE_ENTRYPOINT`   - the parent's entry point (e.g. `cli`)
+ *   - `CLAUDE_CODE_CHILD_SESSION`- "you are a nested session" (Claude Code v2.1.172+)
+ *   - `CLAUDE_CODE_SESSION_ID`   - the PARENT's session UUID
+ *   - `CLAUDE_CODE_EXECPATH`     - the parent's claude binary
+ *
+ * A child that inherits the parent's session identity does not persist its own
+ * transcript under the `--session-id <uuid>` Kangentic assigns it, so a later
+ * `claude --resume <uuid>` reports "No conversation found" and the conversation
+ * is lost on a Done -> back round-trip. (Clearing `CLAUDECODE` alone, the prior
+ * behavior, only stopped the child from refusing to start.) A Kangentic-spawned
+ * agent must always be a clean top-level session, so drop every `CLAUDE_CODE_*`
+ * marker. This is the documented practice for tools that spawn the Claude CLI as
+ * a subprocess; it is harmless for non-Claude agents, which ignore these vars,
+ * and it deliberately leaves `ANTHROPIC_*` keys (BYOK / API auth) untouched.
  */
 export function buildSpawnEnv(
   inputEnv: Record<string, string> | undefined,
 ): Record<string, string> {
-  const { CLAUDECODE: _, ...rest } = { ...process.env, ...inputEnv };
-  return rest as Record<string, string>;
+  const merged = { ...process.env, ...inputEnv };
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(merged)) {
+    if (value === undefined) continue;
+    if (key === 'CLAUDECODE' || key.startsWith('CLAUDE_CODE_')) continue;
+    result[key] = value;
+  }
+  return result;
 }
 
 /**

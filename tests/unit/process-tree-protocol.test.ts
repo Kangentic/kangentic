@@ -37,7 +37,7 @@ vi.mock('node:child_process');
 // Import the mock-controlled module after vi.mock so we can shape the mock.
 import * as childProcessMock from 'node:child_process';
 // Import after vi.mock so the module sees the mocked spawn.
-import { createProcessTreeProbe } from '../../src/main/pty/activity/background-shell/process-tree';
+import { createProcessTreeProbe } from '../../src/main/activity-engine/background-shell/process-tree';
 
 // ---------------------------------------------------------------------------
 // Fake child process infrastructure

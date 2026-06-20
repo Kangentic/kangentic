@@ -1,6 +1,6 @@
 /**
  * Tests for the auto-resume-disabled branch in resumeSuspendedSessions
- * (src/main/engine/session-startup/resume-suspended.ts).
+ * (src/main/transition-engine/session-startup/resume-suspended.ts).
  *
  * When `autoResumeSessionsOnRestart=false`, the branch does NOT spawn a new
  * session. For orphaned records it atomically transitions status to
@@ -54,7 +54,7 @@ vi.mock('../../src/main/shutdown-state', () => ({
 
 const markRecordSuspendedMock = vi.fn(() => true);
 const retireRecordMock = vi.fn(() => true);
-vi.mock('../../src/main/engine/session-lifecycle', () => ({
+vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordSuspended: (...args: unknown[]) => markRecordSuspendedMock(...args),
   retireRecord: (...args: unknown[]) => retireRecordMock(...args),
 }));
@@ -99,11 +99,11 @@ vi.mock('../../src/main/db/repositories/swimlane-repository', () => {
 
 // prepareAgentSpawn is never reached because all records are filtered out
 // before the preparation pass in these tests.
-vi.mock('../../src/main/engine/session-startup/prepare-spawn', () => ({
+vi.mock('../../src/main/transition-engine/session-startup/prepare-spawn', () => ({
   prepareAgentSpawn: vi.fn(),
 }));
 
-vi.mock('../../src/main/engine/spawn-intent', () => ({
+vi.mock('../../src/main/transition-engine/spawn-intent', () => ({
   isResumeEligible: vi.fn(() => false),
 }));
 
@@ -111,7 +111,7 @@ vi.mock('../../src/main/engine/spawn-intent', () => ({
 // Import module under test AFTER all mocks are registered
 // ---------------------------------------------------------------------------
 
-import { resumeSuspendedSessions } from '../../src/main/engine/session-startup/resume-suspended';
+import { resumeSuspendedSessions } from '../../src/main/transition-engine/session-startup/resume-suspended';
 
 // ---------------------------------------------------------------------------
 // Test data helpers
@@ -358,7 +358,7 @@ describe('resumeSuspendedSessions: auto-resume-disabled branch (autoResumeSessio
     // pass will retire the record (prepareAgentSpawn returns a failure),
     // which is fine - we only care that the branch did not fire.
     const { prepareAgentSpawn } = await import(
-      '../../src/main/engine/session-startup/prepare-spawn'
+      '../../src/main/transition-engine/session-startup/prepare-spawn'
     );
     vi.mocked(prepareAgentSpawn).mockResolvedValue({
       ok: false,

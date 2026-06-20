@@ -74,18 +74,18 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
   },
 }));
 
-vi.mock('../../src/main/engine/session-lifecycle', () => ({
+vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
   promoteRecord: vi.fn(),
   recoverStaleSessionId: vi.fn(),
 }));
 
-vi.mock('../../src/main/engine/agent-resolver', () => ({
+vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(() => ({ agent: 'claude', isHandoff: false })),
 }));
 
-vi.mock('../../src/main/engine/spawn-progress', () => ({
+vi.mock('../../src/main/transition-engine/spawn-progress', () => ({
   emitSpawnProgress: vi.fn(),
   clearSpawnProgress: vi.fn(),
   createProgressCallback: vi.fn(() => vi.fn()),
@@ -148,7 +148,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 // Import under test AFTER all mocks are registered.
 import { registerSessionHandlers } from '../../src/main/ipc/handlers/sessions';
 import { IPC } from '../../src/shared/ipc-channels';
-import { markRecordSuspended } from '../../src/main/engine/session-lifecycle';
+import { markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
 
 // ---------------------------------------------------------------------------
 // Shared fixture factory

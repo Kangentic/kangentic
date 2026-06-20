@@ -19,6 +19,7 @@ import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './s
 import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds } from './window-utils';
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
+import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { restoreShellEnv } from './shell-env';
 import { MIN_ZOOM, MAX_ZOOM } from '../shared/zoom-steps';
 
@@ -784,6 +785,9 @@ function getShutdownDependencies() {
         clearInterval(heartbeatInterval);
         heartbeatInterval = null;
       }
+      // Stop the background PR-refresh timer (also .unref()'d, but clear it
+      // explicitly so no tick fires mid-shutdown).
+      prRefreshScheduler.stop();
       // Stop accepting new MCP requests synchronously. The server's close()
       // is non-blocking; in-flight requests are abandoned, which is fine
       // because they're idempotent (the agent will retry on reconnect or

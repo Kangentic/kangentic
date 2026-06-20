@@ -25,7 +25,7 @@ spawn() called
                            [exited]
 ```
 
-All DB status transitions flow through `src/main/engine/session-lifecycle.ts` using atomic compare-and-set SQL (`compareAndUpdateStatus`) to prevent race conditions between concurrent writers.
+All DB status transitions flow through `src/main/transition-engine/session-lifecycle.ts` using atomic compare-and-set SQL (`compareAndUpdateStatus`) to prevent race conditions between concurrent writers.
 
 **Legal transitions (enforced by `compareAndUpdateStatus`):**
 - `queued -> running` (via `promoteRecord()`)
@@ -107,8 +107,8 @@ keyed by the working directory (`slug = cwd.replace(/[/\\:.]/g, '-')`). `--resum
 succeeds when run from the cwd the original session ran in. Resume happens in coordinated
 layers:
 
-1. **Lifecycle check** (`src/main/engine/session-lifecycle.ts`, `canResume()` / `isResumeEligible()`): cheap DB-only gate on `agent_session_id` existence (not status).
-2. **Transition engine** (`src/main/engine/transition-engine.ts`): retires the old record via `retireRecord()`, spawns a new PTY with `--resume <agent_session_id>` in the task's worktree cwd.
+1. **Lifecycle check** (`src/main/transition-engine/session-lifecycle.ts`, `canResume()` / `isResumeEligible()`): cheap DB-only gate on `agent_session_id` existence (not status).
+2. **Transition engine** (`src/main/transition-engine/transition-engine.ts`): retires the old record via `retireRecord()`, spawns a new PTY with `--resume <agent_session_id>` in the task's worktree cwd.
 3. **Session manager / store**: scrollback preservation + `syncSessions()` reconciliation.
 
 **Worktree path must stay stable.** Because the transcript is cwd-keyed, the worktree must be recreated at the SAME path across a Done round-trip. `WorktreeManager.createWorktree` derives the folder from the title for auto-generated branches to guarantee this. A regression here (e.g. re-slugifying the preserved branch name, which already ends in `-<shortId>`, and appending the suffix again -> `foo-abcd1234-abcd1234`) changes the cwd and silently orphans the session.
@@ -142,10 +142,10 @@ layers:
 
 ## Key Source Files
 
-- `src/main/engine/session-lifecycle.ts` -- Centralized state machine (canResume, markRecordExited, markRecordSuspended, retireRecord, promoteRecord, recoverStaleSessionId)
+- `src/main/transition-engine/session-lifecycle.ts` -- Centralized state machine (canResume, markRecordExited, markRecordSuspended, retireRecord, promoteRecord, recoverStaleSessionId)
 - `src/main/pty/session-manager.ts` -- PTY lifecycle, spawn, suspend, kill, scrollback
 - `src/main/pty/session-queue.ts` -- Concurrency control, max concurrent sessions
-- `src/main/engine/transition-engine.ts` -- Action execution, resume logic
+- `src/main/transition-engine/transition-engine.ts` -- Action execution, resume logic
 - `src/main/ipc/handlers/task-move.ts` -- handleTaskMove priority cascade
 - `src/main/git/worktree-manager.ts` -- `createWorktree` (stable, title-derived folder naming)
 - `src/renderer/stores/session-store.ts` -- Zustand store, sync generation guard

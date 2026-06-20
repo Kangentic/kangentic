@@ -15,7 +15,7 @@
  * use fake timers so they run in single-digit ms.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { PtyActivityTracker } from '../../src/main/pty/activity/pty-activity-tracker';
+import { PtyActivityTracker } from '../../src/main/activity-engine/pty-activity-tracker';
 import { IdleReason } from '../../src/shared/types';
 import type { ActivityState } from '../../src/shared/types';
 

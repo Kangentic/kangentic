@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { PRCommandDetector } from '../../src/main/pty/activity/pr-command-detector';
+import { PRCommandDetector } from '../../src/main/activity-engine/pr-command-detector';
 import { EventType, AgentTool } from '../../src/shared/types';
 import type { SessionEvent } from '../../src/shared/types';
 

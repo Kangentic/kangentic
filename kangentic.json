@@ -48,7 +48,7 @@
       "color": "#06b6d4",
       "autoSpawn": true,
       "permissionMode": "auto",
-      "autoCommand": "/test",
+      "autoCommand": "/pull-request",
       "modelOverride": "claude-opus-4-8",
       "effortOverride": "xhigh"
     },
@@ -59,7 +59,7 @@
       "color": "#f97316",
       "autoSpawn": true,
       "permissionMode": "auto",
-      "autoCommand": "/merge-back",
+      "autoCommand": "/merge-pull-request",
       "modelOverride": "claude-opus-4-8",
       "effortOverride": "xhigh"
     },

@@ -14,8 +14,8 @@
  * watcher is disabled so we don't need a process-tree probe here.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { SessionTelemetry } from '../../src/main/pty/activity/session-telemetry';
-import type { SessionTelemetryOptions } from '../../src/main/pty/activity/session-telemetry';
+import { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
+import type { SessionTelemetryOptions } from '../../src/main/activity-engine/session-telemetry';
 import { EventType } from '../../src/shared/types';
 import type { ActivityState, ActivityReason, SessionUsage, SessionEvent } from '../../src/shared/types';
 

@@ -74,6 +74,20 @@ vi.mock('../../src/main/ipc/handlers/projects', () => ({
   syncProjectMcpConfig: vi.fn(),
 }));
 
+// Stub out the lazily-imported PR-refresh scheduler so the dynamic import
+// inside CONFIG_SET_PROJECT_BY_PATH resolves to a controllable spy, not the
+// real scheduler (which pulls in gh-backed runtime code).
+// vitest hoists vi.mock() calls, so this mock intercepts the
+// `void import('../../pr/pr-refresh-scheduler')` inside system.ts even though
+// that import is dynamic. The spy is reset in each relevant beforeEach.
+const startForProjectSpy = vi.fn();
+vi.mock('../../src/main/pr/pr-refresh-scheduler', () => ({
+  prRefreshScheduler: {
+    startForProject: (...args: unknown[]) => startForProjectSpy(...args),
+    stop: vi.fn(),
+  },
+}));
+
 // ---------------------------------------------------------------------------
 // Import under test (after all mocks are registered)
 // ---------------------------------------------------------------------------
@@ -262,6 +276,68 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - applyRuntimeConfig wiring', (
       invokeHandler('config:setProjectByPath', '/unknown/path', {}),
     ).toThrow('Unknown project path');
     expect(applyRuntimeConfigSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', () => {
+  beforeEach(() => {
+    capturedHandlers.clear();
+    applyRuntimeConfigSpy.mockClear();
+    startForProjectSpy.mockClear();
+  });
+
+  it('calls startForProject with (context, project) when path is the currently-open project', async () => {
+    const projectPath = '/repo/active';
+    const context = makeContext({
+      currentProjectPath: projectPath,
+      projectPaths: [projectPath],
+    });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:setProjectByPath', projectPath, { git: { prRefreshIntervalMinutes: 10 } });
+
+    // The call is behind a lazy dynamic import that resolves on a microtask.
+    // vi.waitFor polls until the assertion passes (or times out at 1 second).
+    await vi.waitFor(() => expect(startForProjectSpy).toHaveBeenCalledTimes(1));
+
+    // The project arg must be the entry from projectRepo.list() matching the path.
+    const [_contextArg, projectArg] = startForProjectSpy.mock.calls[0] as [unknown, { path: string }];
+    expect(projectArg.path).toBe(projectPath);
+  });
+
+  it('does NOT call startForProject for a background (non-current) project', async () => {
+    const backgroundPath = '/repo/other';
+    const currentPath = '/repo/active';
+    const context = makeContext({
+      currentProjectPath: currentPath,
+      projectPaths: [backgroundPath, currentPath],
+    });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:setProjectByPath', backgroundPath, { git: { prRefreshIntervalMinutes: 10 } });
+
+    // Drain the microtask queue. The dynamic import is behind the if-branch that
+    // only fires when projectPath === currentProjectPath, so it is never queued.
+    // A single microtask flush is sufficient to confirm no-call for the negative case.
+    // (Intentional fixed budget - we cannot poll for non-occurrence.)
+    await Promise.resolve();
+
+    expect(startForProjectSpy).not.toHaveBeenCalled();
+    // saveProjectOverrides is still called for background projects.
+    expect(context.configManager.saveProjectOverrides).toHaveBeenCalledWith(
+      backgroundPath,
+      { git: { prRefreshIntervalMinutes: 10 } },
+    );
+  });
+
+  it('does NOT call startForProject when the project path is unknown (throws before scheduler)', () => {
+    const context = makeContext({ currentProjectPath: '/repo/active', projectPaths: [] });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    expect(() =>
+      invokeHandler('config:setProjectByPath', '/unknown/path', {}),
+    ).toThrow('Unknown project path');
+    expect(startForProjectSpy).not.toHaveBeenCalled();
   });
 });
 

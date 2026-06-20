@@ -33,7 +33,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 }));
 
 import { SessionManager } from '../../src/main/pty/session-manager';
-import type { SessionTelemetry } from '../../src/main/pty/activity/session-telemetry';
+import type { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
 import { EventType } from '../../src/shared/types';
 
 /** Type-cast helper to reach the private telemetry field for test setup. */

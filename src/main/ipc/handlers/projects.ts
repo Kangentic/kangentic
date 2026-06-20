@@ -5,8 +5,8 @@ import { IPC, PROJECT_PATH_MISSING_PREFIX } from '../../../shared/ipc-channels';
 import { relocateProject } from './project-relocate';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
-import { resumeSuspendedSessions, autoSpawnTasks } from '../../engine/session-startup';
-import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../engine/resource-cleanup';
+import { resumeSuspendedSessions, autoSpawnTasks } from '../../transition-engine/session-startup';
+import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../transition-engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { TranscriptRepository } from '../../db/repositories/transcript-repository';
 import { WorktreeManager } from '../../git/worktree-manager';
@@ -20,6 +20,7 @@ import { searchProjectEntries } from '../helpers/project-entry-search';
 import { trackEvent } from '../../analytics/analytics';
 import { isShuttingDown } from '../../shutdown-state';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
+import { prRefreshScheduler } from '../../pr/pr-refresh-scheduler';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type { Project, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
@@ -95,6 +96,10 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   // down. Once the project row is removed below, the server's per-request
   // factory stops resolving CommandContexts for this project.
   context.boardConfigManager.detach();
+
+  // Stop this project's background PR-refresh timer (no-op if it is not the
+  // active one). Before the path-exists guard so both cleanup paths tear it down.
+  prRefreshScheduler.stop(projectId);
 
   // Guard: project path must exist
   if (!fs.existsSync(projectPath)) {
@@ -555,6 +560,12 @@ export function registerProjectHandlers(context: IpcContext): void {
 
     // Apply project config overrides (always -- config may have changed)
     applyRuntimeConfig(context.sessionManager, context.configManager, project.path);
+
+    // Background PR-state refresh: an immediate (deferred) sweep + the periodic
+    // timer. Runs on EVERY open (cold restart AND warm switch-back) so a PR
+    // merged off-app while away is reflected on return; the sweep is deferred off
+    // the IPC critical path and the timer is torn down on switch/delete/shutdown.
+    prRefreshScheduler.startForProject(context, project);
 
     if (!isWarmReopen) {
       const db = getProjectDb(id);

@@ -25,6 +25,7 @@ import {
   getTestDataDir,
   waitForRunningSession,
   getTaskIdByTitle,
+  closeApp,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
@@ -94,7 +95,7 @@ async function setupVariant(variant: Variant): Promise<{
     page: result.page,
     tmpDir,
     cleanup: async () => {
-      await result.app.close();
+      await closeApp(result.app);
       cleanupTempProject(testName);
     },
   };

@@ -29,8 +29,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { SessionTelemetry } from '../../src/main/pty/activity/session-telemetry';
-import type { SessionTelemetryOptions } from '../../src/main/pty/activity/session-telemetry';
+import { SessionTelemetry } from '../../src/main/activity-engine/session-telemetry';
+import type { SessionTelemetryOptions } from '../../src/main/activity-engine/session-telemetry';
 import { EventType, AgentTool } from '../../src/shared/types';
 import type { SessionEvent } from '../../src/shared/types';
 

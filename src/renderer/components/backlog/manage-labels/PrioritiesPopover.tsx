@@ -35,13 +35,16 @@ export function PrioritiesPopover() {
   // Re-key DndContext on HMR; see src/renderer/utils/hmr-generation.ts.
   const hmrGeneration = useHmrGeneration();
 
-  const priorities = config.backlog?.priorities ?? [
+  // useMemo so the default-array fallback keeps a stable identity across renders;
+  // otherwise `?? [...]` makes a fresh array each render and destabilizes every
+  // hook below that depends on priorities.
+  const priorities = useMemo(() => config.backlog?.priorities ?? [
     { label: 'None', color: '#6b7280' },
     { label: 'Low', color: '#6b7280' },
     { label: 'Medium', color: '#eab308' },
     { label: 'High', color: '#f97316' },
     { label: 'Urgent', color: '#ef4444' },
-  ];
+  ], [config.backlog?.priorities]);
 
   // Close on click outside
   useEffect(() => {

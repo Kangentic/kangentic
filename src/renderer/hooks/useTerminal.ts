@@ -248,7 +248,7 @@ export function useTerminal(options: UseTerminalOptions) {
       // No session -- just fit immediately
       fitAddon.fit();
     }
-  }, [options.sessionId, options.fontFamily, options.fontSize, options.scrollbackLines, options.cursorStyle, options.shellName]);
+  }, [options.sessionId, options.fontFamily, options.fontSize, options.scrollbackLines, options.cursorStyle, options.shellName, options.releaseEscapeWhenPointerOutside]);
 
   // Set up data listener
   useEffect(() => {
@@ -334,6 +334,7 @@ export function useTerminal(options: UseTerminalOptions) {
       xtermRef.current = null;
       fitAddonRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount-only teardown; adding options.sessionId would dispose and recreate the xterm on every session switch. The scroll-save reads sessionId from the disposing render, which is correct because the component remounts per session (terminal ownership handoff)
   }, []);
 
   // fit() only refits xterm visually. The debounced onResize callback

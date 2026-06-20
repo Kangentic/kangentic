@@ -20,8 +20,8 @@ New projects start with seven columns:
 | **Planning** | (plan mode) | Spawns Claude in plan mode. Agent creates a plan, then task auto-moves to Executing. |
 | **Executing** | (auto) | Spawns Claude in default permission mode. Agent works on the task. |
 | **Code Review** | (auto) | Agent keeps running. Can attach an auto-command for review prompts. |
-| **Tests** | (auto) | Agent keeps running. |
-| **Ship It** | (auto) | Agent keeps running. |
+| **Tests** | (auto) | Agent keeps running. Can attach an auto-command (e.g. open a PR and drive its checks green). |
+| **Ship It** | (auto) | Agent keeps running. Can attach an auto-command (e.g. merge a verified PR and pull back). |
 | **Done** | done | Suspends the session (preserving context) and archives the task. |
 
 ## Task Lifecycle

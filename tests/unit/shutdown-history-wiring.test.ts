@@ -73,7 +73,7 @@ vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({
   captureSessionMetrics: (...args: unknown[]) => mockCaptureSessionMetrics(...args),
 }));
 
-vi.mock('../../src/main/engine/session-lifecycle', () => ({
+vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
 }));

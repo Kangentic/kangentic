@@ -12,7 +12,7 @@ The session-history subsystem is split into four layers with strict separation o
 |---|---|---|
 | Adapter parser | `adapters/<agent>/session-history-parser.ts` | Agent-specific file format knowledge. Implements `locate()` + `parse()`. |
 | Reader (dispatcher) | `src/main/pty/readers/session-history-reader.ts` | Generic file watching, cursor tracking, parse dispatch. Owns all session-history-specific runtime logic. |
-| Consumer primitives | `src/main/pty/activity/session-telemetry.ts` | Generic primitives (`setSessionUsage`, `ingestEvents`, `forceActivity`, `notifyPtyData`, `processStatusUpdate`, `captureHookSessionIds`) - no telemetry-source-specific vocabulary. |
+| Consumer primitives | `src/main/activity-engine/session-telemetry.ts` | Generic primitives (`setSessionUsage`, `ingestEvents`, `forceActivity`, `notifyPtyData`, `processStatusUpdate`, `captureHookSessionIds`) - no telemetry-source-specific vocabulary. |
 | Session lifecycle | `src/main/pty/session-manager.ts` | Calls `reader.attach()` on agent-session-id capture, `reader.detach()` on removal. Composes both telemetry readers symmetrically. Knows nothing else about session history. |
 
 **Symmetric pipeline**: `StatusFileReader` (`src/main/pty/readers/status-file-reader.ts`) handles Claude's hook-based telemetry (status.json + events.jsonl) using the exact same pattern. Both readers own their own `FileWatcher` instances and dispatch through generic `SessionTelemetry` primitives. Neither reader mentions a specific agent name. See the "Claude status-file pipeline" section below for details.
@@ -207,6 +207,97 @@ readonly runtime: AdapterRuntimeStrategy = {
 | `isFullRewrite` | True for `status.json` (whole-file rewrite on every update). The events file is always append-only, tracked by a separate byte cursor regardless of this flag. |
 
 **File paths** (`status.json`, `events.jsonl` under `.kangentic/sessions/<sessionId>/`) are caller-supplied at spawn time on `SpawnSessionInput.statusOutputPath` / `eventsOutputPath`. They are runtime values, not static adapter metadata.
+
+## Resume mechanisms (the resume artifact is not always the history file)
+
+The sections above describe the **history file** each adapter reads for live telemetry and for
+the `get_transcript` MCP feature, located by `adapter.locateSessionHistoryFile(agentSessionId,
+cwd)`. That is a separate question from **what `--resume` actually reads** to restore a
+conversation. The two are usually the same file, but not always: Copilot and Cursor return `null`
+from `locateSessionHistoryFile` (no telemetry history file wired) yet still persist resumable
+session state elsewhere on disk. So do not assume "history file" equals "resume file" - this
+section records the resume side, audited separately.
+
+**How this was audited:** empirically, from (a) the on-disk session stores that real CLI runs
+left in this environment, (b) each adapter's command builder (the exact `--resume` form Kangentic
+emits), (c) the adapters' `session-history-parser.ts` locators, and (d) the `project-relocation.ts`
+modules for Codex and Copilot, which encode Kangentic's reverse-engineered model of how those
+CLIs resolve a resume across a working-directory change. (Codex's binary was not on the audit
+shell's PATH, so Codex is grounded in its on-disk rollout files plus the relocation module rather
+than a live `--help` run.) Per-adapter parsers describe the history-file format; the resolution
+behavior below is the resume contract.
+
+### Per-adapter resume map
+
+| Agent | Resume invocation | Where `--resume` reads | Keyed by | cwd-bound resume? | Same path as `locateSessionHistoryFile`? |
+|---|---|---|---|---|---|
+| Claude | `claude --resume <id>` | `~/.claude/projects/<slug(cwd)>/<id>.jsonl` | cwd slug + id | yes | yes |
+| Codex | `codex resume <id> -C <cwd>` | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<id>.jsonl` | session id (filename scan) | no | yes |
+| Gemini | `gemini --resume <id>` | `~/.gemini/tmp/<basename(cwd)>/chats/session-<id>.json` | cwd basename + id | yes | yes |
+| Qwen | `qwen --resume <id>` / `--session-id <id>` | `~/.qwen/projects/<slug(cwd)>/chats/<id>.jsonl` | cwd slug + id | yes | yes |
+| Kimi | `kimi --session <id>` | `~/.kimi/sessions/<md5(cwd)>/<id>/` (wire JSONL) | md5(cwd) + id | yes | yes |
+| Droid | `droid --resume <id>` | `~/.factory/sessions/<slug(cwd)>/<id>.jsonl` | cwd slug + id | yes | yes |
+| OpenCode | `opencode --session <id>` | `~/.local/share/opencode/opencode.db` (+ `storage/session_diff/ses_<id>.json`) | session id (global DB) | no | yes (the DB) |
+| Copilot | `copilot --resume <id>` | `~/.copilot/session-state/<id>/` (+ `session-store.db`) | session id (global) | no | **no** (locator returns null) |
+| Cursor | `agent --resume=<id>` | `~/.cursor/chats/<chat-id-hash>/` | chat id (global) | no | **no** (locator returns null) |
+| Aider | `aider --restore-chat-history` | `<cwd>/.aider.chat.history.md` | cwd file (no session id) | yes | n/a (no per-session file) |
+| Warp | (no resume) | none | n/a | n/a | n/a |
+
+Reading the table by class:
+
+- **cwd-keyed per-session file that `--resume` reads (Claude-like):** Gemini, Qwen, Kimi, Droid
+  (and Claude). The resume target is a file under a directory derived from the cwd (basename,
+  slug, or `md5`), so moving the project to a path with a different cwd-derived key, or deleting
+  that file, makes the stored id unresolvable.
+- **id-keyed / global store (cwd-independent):** Codex, OpenCode, Copilot, Cursor. Resume
+  resolves by session id against a global location, so the working directory does not gate it.
+  Codex scans `~/.codex/sessions/` by id (`codex-rs find_thread_path_by_id_str`; the per-rollout
+  cwd only filters the interactive picker, which has an `--all` escape hatch). OpenCode keys the
+  shared SQLite DB by session id. Copilot and Cursor attach by id; for Copilot the saved `cwd`
+  only affects *where* the resumed session reopens, not whether it attaches, and Cursor's
+  per-cwd `~/.cursor/projects/<slug>/` directory holds only `repo.json` / trust metadata, not the
+  conversation, which lives in `~/.cursor/chats/<chat-id-hash>/`.
+- **project-wide reload, no session id:** Aider. `--restore-chat-history` reloads the cwd-local
+  `.aider.chat.history.md`; there is no per-session id, so there is nothing to verify or
+  downgrade.
+- **no resume at all:** Warp. The `oz` one-shot runner streams and exits.
+
+### Why there is no `canResumeSession` transcript-presence guard
+
+A natural-looking robustness idea is an optional `canResumeSession(agentSessionId, cwd)` adapter
+method that returns `false` when the resume target is verifiably absent, plus a shared chokepoint
+(`isResumeTranscriptMissing`) in both spawn paths that downgrades a doomed `--resume <id>` to a
+clean fresh spawn. **That guard was built in full for Claude and then deliberately removed during
+task #255 ("Done then back loses the Claude conversation"). Do not re-introduce it.** Two
+empirical findings killed it:
+
+1. **It broke the test suite.** `mock-claude.js` (and the other agent mocks) never write a real
+   native transcript at the located path, so a `canResumeSession` wired to the real locator
+   returned `false` and downgraded *every* mocked resume to a fresh spawn - 10 E2E session-resume
+   specs timed out waiting for `MOCK_CLAUDE_RESUMED:`. The only fix would be to make the mocks
+   write under the real home directory, which violates the `cross-platform-parity` rule ("test
+   filesystem writes stay under `os.tmpdir()`").
+2. **It traded a visible failure for silent conversation loss on the critical path.** The guard
+   gated *every* resume on an `fs.accessSync` of a computed path. Any slug-algorithm drift,
+   long-path edge, transient filesystem hiccup, or future change to a CLI's storage layout would
+   silently turn a recoverable resume into a fresh session - worse than the visible "No
+   conversation found" it was meant to replace. The cwd-keyed agents above each have a *more*
+   fragile locator than Claude's (Gemini basename collisions, Kimi `md5(cwd)`, Droid/Qwen slugs),
+   so extending the guard to them would multiply that risk, not reduce it.
+
+The actual root cause of the #255 bug was unrelated to a missing transcript: when Kangentic was
+launched from inside a Claude Code session it leaked `CLAUDE_CODE_*` markers into spawned agents,
+so a Claude spawned with `--session-id <id>` never persisted a transcript under that id and the
+later `--resume` found nothing. The cure was `buildSpawnEnv` stripping `CLAUDECODE` plus every
+`CLAUDE_CODE_*` marker (`src/main/pty/spawn/pty-spawn.ts`, commit `4b236593`), which makes every
+spawned Claude a clean top-level session that persists its own resumable transcript. With that in
+place the resume target reliably exists, so the presence guard earns nothing and was dropped.
+
+The non-Claude agents never exhibited an analogous missing-resume-target failure: each captures
+or owns its session id against a store the CLI itself writes, and none inherits the Claude env
+leak. If a future, *demonstrated* resume regression for a specific agent ever needs a guard, scope
+it to that one adapter with a mock that round-trips the resume artifact under `os.tmpdir()` - do
+not reinstate a blanket transcript-presence check on the shared spawn path.
 
 ## Known gaps
 

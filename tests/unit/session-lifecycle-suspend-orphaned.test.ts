@@ -12,7 +12,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type Database from 'better-sqlite3';
 import { SessionRepository } from '../../src/main/db/repositories/session-repository';
-import { markRecordSuspended } from '../../src/main/engine/session-lifecycle';
+import { markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
 
 function createMockDb() {
   const executedStatements: Array<{ sql: string; params: unknown[] }> = [];

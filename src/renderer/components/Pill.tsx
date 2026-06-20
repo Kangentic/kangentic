@@ -1,6 +1,6 @@
 import React from 'react';
 
-type PillSize = 'sm' | 'md' | 'lg';
+type PillSize = 'xs' | 'sm' | 'md' | 'lg';
 type PillShape = 'round' | 'square';
 
 type PillElement = 'button' | 'span' | 'div';
@@ -22,6 +22,7 @@ type DivAttrs = Omit<React.HTMLAttributes<HTMLDivElement>, keyof PillOwnProps>;
 type PillProps = PillOwnProps & (ButtonAttrs | SpanAttrs | DivAttrs);
 
 const SIZE_CLASSES: Record<PillSize, string> = {
+  xs: 'gap-1.5 px-2.5 py-[3px] text-xs',
   sm: 'gap-1 min-w-[32px] px-2.5 py-1 text-xs',
   md: 'gap-1.5 min-w-[40px] px-3 py-1.5 text-xs',
   lg: 'gap-2 min-w-[48px] px-4 py-2 text-sm',

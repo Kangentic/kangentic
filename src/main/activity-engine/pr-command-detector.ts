@@ -1,6 +1,6 @@
-import { EventType, AgentTool } from '../../../shared/types';
-import type { SessionEvent } from '../../../shared/types';
-import { matchesPRCommand } from '../pr/pr-connectors';
+import { EventType, AgentTool } from '../../shared/types';
+import type { SessionEvent } from '../../shared/types';
+import { matchesPRCommand } from '../pr/pr-registry';
 
 /**
  * Detects `gh pr ...` (and equivalent) commands so the orchestrator knows when

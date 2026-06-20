@@ -39,6 +39,7 @@ import {
   getTaskIdByTitle,
   getSwimlaneIds,
   moveTaskIpc,
+  closeApp,
   type AgentName,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
@@ -130,7 +131,7 @@ test.describe('Agent suspend/resume pipeline', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupKimiSessionsForCwd(tmpDir);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);

@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type { ActivityStatsSnapshot } from '../../../../shared/types';
+import type { ActivityStatsSnapshot } from '../../../shared/types';
 
 /**
  * Async, per-session coalescing writer for activity-engine snapshots.

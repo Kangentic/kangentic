@@ -46,6 +46,7 @@ import {
   getTaskIdByTitle,
   getSwimlaneIds,
   moveTaskIpc,
+  closeApp,
   type AgentName,
 } from './helpers';
 import type { ElectronApplication, Page } from '@playwright/test';
@@ -54,6 +55,15 @@ import type { GeminiHookEntry } from '../../src/main/agent/adapters/gemini/hook-
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+
+// The two describe blocks each launch an isolated Electron app with unique
+// TEST_NAMEs ('agent-session-id-capture', 'kimi-fs-capture'). Describe 1
+// passes suppressor env vars into the Electron process (MOCK_CODEX_NO_HEADER
+// etc.) via launchApp({ extraEnv }), so the env mutation is contained inside
+// the spawned Electron process, not in process.env. Running the blocks in
+// parallel shaves the sequential second-launch overhead on whichever shard
+// this file lands.
+test.describe.configure({ mode: 'parallel' });
 
 const runId = Date.now();
 
@@ -260,7 +270,7 @@ test.describe('Agent session-ID capture pipeline', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupKimiSessionsForCwd(tmpDir);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);
@@ -377,7 +387,7 @@ test.describe('Kimi filesystem fallback session-ID capture', () => {
   });
 
   test.afterAll(async () => {
-    await app?.close();
+    await closeApp(app);
     cleanupKimiSessionsForCwd(tmpDir);
     cleanupTempProject(TEST_NAME);
     cleanupTestDataDir(TEST_NAME);

@@ -1,5 +1,5 @@
-import { EventType, AgentTool, IdleReason, PromptReason, Activity } from '../../../shared/types';
-import type { SessionUsage, ActivityState, ActivityReason, SessionEvent, AgentParser, PerToolStat } from '../../../shared/types';
+import { EventType, AgentTool, IdleReason, PromptReason, Activity } from '../../shared/types';
+import type { SessionUsage, ActivityState, ActivityReason, SessionEvent, AgentParser, PerToolStat } from '../../shared/types';
 import { PtyActivityTracker } from './pty-activity-tracker';
 import { ActivityEngine, ActivitySnapshotWriter, type ActivityEngineOptions, type ActivityStatsSnapshot } from './engine';
 import { BgShellWatcher } from './background-shell/watcher';

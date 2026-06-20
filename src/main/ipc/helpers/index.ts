@@ -10,5 +10,3 @@ export { ensureTaskWorktree, ensureTaskBranchCheckout } from './task-git';
 export { buildAutoCommandVars, createTransitionEngine, spawnAgent, autoSpawnForTask, resolveSpawnOverrides } from './agent-spawn';
 export type { AgentSpawnOptions } from './agent-spawn';
 export { cleanupTaskSession, cleanupTaskResources, deleteTaskWorktree } from './task-cleanup';
-export { resolveAndLinkPR, resolveAndLinkPRForTask, maybeResolvePRAfterMove } from './pr-linking';
-export type { PrLinkDeps } from './pr-linking';

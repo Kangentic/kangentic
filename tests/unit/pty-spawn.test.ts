@@ -51,6 +51,32 @@ describe('buildSpawnEnv', () => {
     expect(env.OTHER).toBe('kept');
   });
 
+  it('strips every parent Claude session identity marker (CLAUDE_CODE_*)', () => {
+    // Leaked from a parent Claude session, these make the spawned child attach
+    // to the parent's identity and never persist its own --session-id
+    // transcript, so a later --resume reports "No conversation found".
+    const env = buildSpawnEnv({
+      CLAUDECODE: '1',
+      CLAUDE_CODE_CHILD_SESSION: '1',
+      CLAUDE_CODE_SESSION_ID: 'parent-session-uuid',
+      CLAUDE_CODE_ENTRYPOINT: 'cli',
+      CLAUDE_CODE_EXECPATH: 'C:/Users/dev/.local/bin/claude.exe',
+      OTHER: 'kept',
+    });
+    expect(env.CLAUDECODE).toBeUndefined();
+    expect(env.CLAUDE_CODE_CHILD_SESSION).toBeUndefined();
+    expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
+    expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
+    expect(env.CLAUDE_CODE_EXECPATH).toBeUndefined();
+    expect(env.OTHER).toBe('kept');
+  });
+
+  it('preserves ANTHROPIC_* auth keys (BYOK / API auth must pass through)', () => {
+    const env = buildSpawnEnv({ ANTHROPIC_API_KEY: 'sk-test', CLAUDE_CODE_SESSION_ID: 'parent' });
+    expect(env.ANTHROPIC_API_KEY).toBe('sk-test');
+    expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
+  });
+
   it('inherits process.env but lets input override', () => {
     const original = process.env.PATH;
     const env = buildSpawnEnv({ PATH: '/custom' });

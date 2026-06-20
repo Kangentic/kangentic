@@ -44,7 +44,9 @@ export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
   const handleRefreshAgents = async () => {
     setRefreshing(true);
     const minimumDelay = new Promise((resolve) => setTimeout(resolve, 800));
-    await Promise.all([minimumDelay, refreshAgentList()]);
+    // Force a fresh probe: the user clicks this to pick up a CLI they just
+    // installed or signed into, which the cached result would not reflect.
+    await Promise.all([minimumDelay, refreshAgentList(true)]);
     setRefreshing(false);
   };
 

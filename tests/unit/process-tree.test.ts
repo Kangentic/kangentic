@@ -13,7 +13,7 @@ import {
   _parseWindowsCsv,
   _parsePosixPs,
   _buildReadLoopScript,
-} from '../../src/main/pty/activity/background-shell/process-tree';
+} from '../../src/main/activity-engine/background-shell/process-tree';
 
 const skip = process.env.SKIP_PROCESS_TREE_PROBE === '1';
 

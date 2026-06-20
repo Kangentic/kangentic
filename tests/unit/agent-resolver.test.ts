@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveTargetAgent } from '../../src/main/engine/agent-resolver';
+import { resolveTargetAgent } from '../../src/main/transition-engine/agent-resolver';
 
 describe('resolveTargetAgent', () => {
   it('uses column agent_override when set', () => {

@@ -1,12 +1,12 @@
 import * as pty from 'node-pty';
 import * as path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
-import * as traceRecorder from '../activity/trace-recorder';
+import * as traceRecorder from '../../activity-engine/trace-recorder';
 import type { Session, SessionContext, SpawnSessionInput } from '../../../shared/types';
 import type { SessionRegistry, ManagedSession } from '../session-registry';
 import { toSession } from '../session-registry';
 import type { PtyBufferManager } from '../buffer/pty-buffer-manager';
-import type { SessionTelemetry } from '../activity/session-telemetry';
+import type { SessionTelemetry } from '../../activity-engine/session-telemetry';
 import type { SessionIdManager } from './session-id-manager';
 import type { SessionFileManager } from './session-file-manager';
 import type { ResizeManager } from './resize-manager';

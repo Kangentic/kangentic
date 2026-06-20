@@ -1,5 +1,5 @@
-import { EventType } from '../../../shared/types';
-import type { SessionEvent } from '../../../shared/types';
+import { EventType } from '../../shared/types';
+import type { SessionEvent } from '../../shared/types';
 import type { ActivityEngine } from './engine';
 
 /**

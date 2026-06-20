@@ -33,7 +33,11 @@ process.env.PLAYWRIGHT_VITE_PORT = String(vitePort);
 export default defineConfig({
   timeout: 60000,
   retries: 0,
-  workers: 4,
+  // Top-level cap on parallelism: a per-project `workers` can go BELOW this but
+  // never above it (Playwright caps per-project to the global). 8 on CI so the
+  // ui and electron shards can each run 8 workers; 4 locally. The electron
+  // project also sets 8 (CI Linux) / 1 (Windows/local) below.
+  workers: process.env.CI ? 8 : 4,
   // Sweep leaked app-under-test Electron instances before and after every run.
   // These hooks run once per invocation for every project filter, including
   // CI's `--project=ui` run on Linux, where the sweep finds nothing and is a
@@ -50,6 +54,18 @@ export default defineConfig({
       testDir: './tests/ui',
       testMatch: '**/*.spec.ts',
       timeout: 15_000,
+      // 4 workers (caps below the global 8): UI shards are headless Chromium
+      // pages and gain ~nothing from 8 on a 4-vCPU runner (~93s vs ~96s), but at
+      // 8 the page event loop starves under contention and timing-sensitive
+      // specs (e.g. Escape-to-close-dropdown in new-task-dialog) drop input and
+      // fail deterministically. The electron project keeps 8 - its per-file
+      // launch overlap is the real win there.
+      workers: 4,
+      // CI-only single retry: the UI suite has a few timing-sensitive specs
+      // (drag-and-drop settle/animation) that flake under load. A retry marks
+      // them "flaky" (still visible) rather than failing the whole run on one
+      // flake. Mirrors the `electron` project. Local runs keep retries: 0.
+      retries: process.env.CI ? 1 : 0,
       use: {
         browserName: 'chromium',
         headless: true,
@@ -59,7 +75,17 @@ export default defineConfig({
       name: 'electron',
       testDir: './tests/e2e',
       testMatch: '**/*.spec.ts',
-      workers: 1,
+      // Windows cannot run concurrent electron.launch(), and a local run (any OS)
+      // should not spawn a swarm of app windows - so workers=1 there. On CI's
+      // headless Linux runners (xvfb) concurrent launches are safe, so use 4 to
+      // parallelize the per-file app launch/teardown overhead within each shard.
+      // 8 on CI Linux (capped by the top-level `workers: 8` above - both must
+      // allow it). 8 >= the max spec files a shard lands (~5-6), so a shard
+      // launches all its files in ONE wave instead of a serial 2nd wave
+      // (~25s/file of app launch + teardown). Windows/local stay at 1 (no
+      // concurrent electron.launch()). Per-file teardown is I/O-bound and
+      // overlaps cleanly; per-pid temp-dir isolation keeps launches safe.
+      workers: process.env.CI && process.platform !== 'win32' ? 8 : 1,
       // Slowest legitimate test is ~15s; 45s gives ~3x headroom while still
       // catching hangs faster than the global 60s default. The 45s budget
       // also covers `afterAll` Electron app close + PTY cleanup, which can
@@ -89,8 +115,13 @@ export default defineConfig({
     reuseExistingServer: reuseServer,
     timeout: 60000,
   },
-  reporter: [
-    ['list'],
-    ['html', { outputFolder: 'tests/reports', open: 'never' }],
-  ],
+  // On CI: `list` only, so each shard's job log prints a line per test as it runs.
+  // The per-shard logs ARE the results - there is no merged-report job (see
+  // .github/workflows/ci.yml). Locally: human-readable list + on-demand HTML.
+  reporter: process.env.CI
+    ? [['list']]
+    : [
+        ['list'],
+        ['html', { outputFolder: 'tests/reports', open: 'never' }],
+      ],
 });

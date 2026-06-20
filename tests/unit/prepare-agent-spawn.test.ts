@@ -1,5 +1,5 @@
 /**
- * Unit tests for prepareAgentSpawn (src/main/engine/session-startup/prepare-spawn.ts).
+ * Unit tests for prepareAgentSpawn (src/main/transition-engine/session-startup/prepare-spawn.ts).
  *
  * Focuses on the extraEnv field: the result of adapter.buildEnv?.() being captured
  * correctly (or absent correctly) in the returned PreparedSpawn.
@@ -66,14 +66,14 @@ vi.mock('node:crypto', () => ({
 }));
 
 // sessionOutputPaths builds file paths from a session directory.
-vi.mock('../../src/main/engine/session-paths', () => ({
+vi.mock('../../src/main/transition-engine/session-paths', () => ({
   sessionOutputPaths: sessionOutputPathsMock,
 }));
 
 // resolveTargetAgent always returns 'opencode' so agentRegistry.get('opencode')
 // is called. Individual tests configure agentRegistryGetMock to return the
 // desired adapter.
-vi.mock('../../src/main/engine/agent-resolver', () => ({
+vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(() => ({ agent: 'opencode', isHandoff: false })),
 }));
 
@@ -84,7 +84,7 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 // ---------------------------------------------------------------------------
 // Import the module under test AFTER all mocks are declared.
 // ---------------------------------------------------------------------------
-import { prepareAgentSpawn } from '../../src/main/engine/session-startup/prepare-spawn';
+import { prepareAgentSpawn } from '../../src/main/transition-engine/session-startup/prepare-spawn';
 
 // ---------------------------------------------------------------------------
 // Test fixtures

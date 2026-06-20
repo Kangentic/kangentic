@@ -1,5 +1,5 @@
-import { EventType, IdleReason } from '../../../../shared/types';
-import type { ActivityState, ActivityReason, SessionEvent } from '../../../../shared/types';
+import { EventType, IdleReason } from '../../../shared/types';
+import type { ActivityState, ActivityReason, SessionEvent } from '../../../shared/types';
 import {
   DEFAULT_BG_SHELL_ESCAPE_HATCH_MS,
   DEFAULT_BG_SHELL_ONLY_GRACE_MS,

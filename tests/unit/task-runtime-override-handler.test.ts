@@ -61,7 +61,7 @@ vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({
 }));
 
 const mockBuildCommandInjectionVerifier = vi.fn(() => null);
-vi.mock('../../src/main/engine/injection-plan', () => ({
+vi.mock('../../src/main/transition-engine/injection-plan', () => ({
   buildCommandInjectionVerifier: (...args: unknown[]) =>
     mockBuildCommandInjectionVerifier(...(args as [never, never, never])),
 }));

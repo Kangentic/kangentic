@@ -14,9 +14,15 @@
 
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import {
+  listMostRecentDirs,
+  listMostRecentFiles,
+  readHeadBytes,
+  parseJsonlRecords,
+  SESSION_SCAN_HEAD_BYTES,
+} from '../../shared/history-scan';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 const execAsync = promisify(exec);
@@ -69,65 +75,29 @@ async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
  * Each line is a JSON event. The init event contains:
  * {"type":"system","subtype":"init","session_id":"uuid","model":"display name",...}
  */
-function scanCursorSessionHistory(): string[] {
+async function scanCursorSessionHistory(): Promise<string[]> {
   const modelSet = new Set<string>();
+  const sessionsDir = path.join(os.homedir(), '.cursor', 'sessions');
 
-  try {
-    const sessionsDir = path.join(os.homedir(), '.cursor', 'sessions');
-    if (!fs.existsSync(sessionsDir)) {
-      return [];
-    }
-
-    // Read up to 10 most recent session directories (by mtime)
-    const dirEntries = fs.readdirSync(sessionsDir, { withFileTypes: true });
-    const dirs = dirEntries
-      .filter(e => e.isDirectory())
-      .sort((a, b) => {
-        const aTime = fs.statSync(path.join(sessionsDir, a.name)).mtimeMs;
-        const bTime = fs.statSync(path.join(sessionsDir, b.name)).mtimeMs;
-        return bTime - aTime; // newest first
-      })
-      .slice(0, 10)
-      .map(e => e.name);
-
-    // Scan each session directory for JSONL files
-    for (const dir of dirs) {
-      const dirPath = path.join(sessionsDir, dir);
-      const files = fs.readdirSync(dirPath).filter(f => f.endsWith('.jsonl'));
-
-      // Read up to 3 most recent JSONL files per directory
-      for (const file of files.slice(0, 3)) {
-        const filePath = path.join(dirPath, file);
-        try {
-          // Only read first 256KB to avoid huge files
-          const stats = fs.statSync(filePath);
-          const size = Math.min(stats.size, 256 * 1024);
-          const buffer = Buffer.alloc(size);
-          const fd = fs.openSync(filePath, 'r');
-          fs.readSync(fd, buffer, 0, size, null);
-          fs.closeSync(fd);
-
-          const content = buffer.toString('utf-8');
-          // Parse JSONL lines
-          for (const line of content.split('\n')) {
-            if (!line.trim()) continue;
-            try {
-              const obj = JSON.parse(line);
-              // Extract model from init event
-              if (obj.type === 'system' && obj.subtype === 'init' && obj.model) {
-                modelSet.add(obj.model);
-              }
-            } catch {
-              // Ignore unparseable lines
-            }
-          }
-        } catch {
-          // Ignore file read errors
+  // Read up to 10 most recent session directories (by mtime).
+  const dirs = await listMostRecentDirs(sessionsDir, 10);
+  for (const dir of dirs) {
+    // Read up to 3 most recent JSONL files per directory.
+    const files = await listMostRecentFiles(dir.fullPath, (name) => name.endsWith('.jsonl'), 3);
+    for (const { fullPath } of files) {
+      const text = await readHeadBytes(fullPath, SESSION_SCAN_HEAD_BYTES);
+      for (const record of parseJsonlRecords(text, false)) {
+        // Extract model from the init event.
+        if (
+          record.type === 'system' &&
+          record.subtype === 'init' &&
+          typeof record.model === 'string' &&
+          record.model.length > 0
+        ) {
+          modelSet.add(record.model);
         }
       }
     }
-  } catch {
-    // Session history scan is best-effort
   }
 
   // Ascending alphabetical: groups by family naturally (shared prefix
@@ -170,7 +140,7 @@ export async function discoverCursorCapabilities(cliPath: string): Promise<Agent
   // Discover models from session history (best-effort)
   let discoveredModels: string[] = [];
   try {
-    discoveredModels = scanCursorSessionHistory();
+    discoveredModels = await scanCursorSessionHistory();
   } catch {
     // Session history scan failure - continue with empty list
   }

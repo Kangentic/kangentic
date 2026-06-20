@@ -19,31 +19,35 @@ vi.mock('node:util', () => ({
   promisify: (fn: unknown) => fn,
 }));
 
-vi.mock('node:fs', () => ({
-  default: {
-    existsSync: vi.fn(),
-    readdirSync: vi.fn(),
-    statSync: vi.fn(),
-    openSync: vi.fn(),
-    readSync: vi.fn(),
-    closeSync: vi.fn(),
-  },
-}));
+// The session-history walk now goes through the shared async primitives in
+// history-scan. Mock the I/O primitives (listing + head read) and keep
+// parseJsonlRecords real so the adapter's record-extraction logic is exercised;
+// the fs walk itself is covered by tests/unit/history-scan.test.ts.
+vi.mock('../../src/main/agent/shared/history-scan', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/main/agent/shared/history-scan')>();
+  return {
+    ...actual,
+    listMostRecentDirs: vi.fn(),
+    listMostRecentFiles: vi.fn(),
+    readHeadBytes: vi.fn(),
+  };
+});
 
 import { execFile, exec } from 'node:child_process';
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { discoverCursorCapabilities } from '../../src/main/agent/adapters/cursor/capability-discovery';
+import {
+  listMostRecentDirs,
+  listMostRecentFiles,
+  readHeadBytes,
+} from '../../src/main/agent/shared/history-scan';
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
-const existsMock = fs.existsSync as unknown as ReturnType<typeof vi.fn>;
-const readdirMock = fs.readdirSync as unknown as ReturnType<typeof vi.fn>;
-const statMock = fs.statSync as unknown as ReturnType<typeof vi.fn>;
-const openMock = fs.openSync as unknown as ReturnType<typeof vi.fn>;
-const readMock = fs.readSync as unknown as ReturnType<typeof vi.fn>;
-const closeMock = fs.closeSync as unknown as ReturnType<typeof vi.fn>;
+const listDirsMock = listMostRecentDirs as unknown as ReturnType<typeof vi.fn>;
+const listFilesMock = listMostRecentFiles as unknown as ReturnType<typeof vi.fn>;
+const readHeadMock = readHeadBytes as unknown as ReturnType<typeof vi.fn>;
 
 const SESSIONS_ROOT = path.join(os.homedir(), '.cursor', 'sessions');
 
@@ -53,81 +57,60 @@ function setHelpOutput(stdout: string): void {
   execFileMock.mockReturnValue(result);
 }
 
-/** Layout: `<root>/<dated-dir>/<chatId>.jsonl` */
+/**
+ * Wire up the history-scan primitives for Cursor's session store.
+ * Layout: `<root>/<dated-dir>/<chatId>.jsonl`
+ * listMostRecentDirs returns the dated dirs from the sessions root, then
+ * listMostRecentFiles returns the .jsonl files within each dated dir, and
+ * readHeadBytes returns file contents. Setting the store to null makes
+ * ~/.cursor/sessions appear missing (empty listings).
+ */
 type SessionTree = Record<string, Record<string, string>>;
 
 function setSessionStore(store: SessionTree | null): void {
-  existsMock.mockReset();
-  readdirMock.mockReset();
-  statMock.mockReset();
-  openMock.mockReset();
-  readMock.mockReset();
-  closeMock.mockReset();
+  listDirsMock.mockReset();
+  listFilesMock.mockReset();
+  readHeadMock.mockReset();
 
   if (store === null) {
-    existsMock.mockReturnValue(false);
+    listDirsMock.mockResolvedValue([]);
+    listFilesMock.mockResolvedValue([]);
+    readHeadMock.mockResolvedValue('');
     return;
   }
-  existsMock.mockReturnValue(true);
 
-  const fdContents = new Map<number, string>();
-  let nextFd = 100;
+  const datedDirs = Object.keys(store);
 
-  readdirMock.mockImplementation((dirPath: string, options?: { withFileTypes?: boolean }) => {
-    if (dirPath === SESSIONS_ROOT) {
-      const entries = Object.keys(store);
-      if (options?.withFileTypes) {
-        return entries.map((name) => ({ name, isDirectory: () => true })) as unknown as fs.Dirent[];
-      }
-      return entries;
-    }
-    for (const dir of Object.keys(store)) {
-      const sessionPath = path.join(SESSIONS_ROOT, dir);
-      if (dirPath === sessionPath) {
-        return Object.keys(store[dir]);
-      }
-    }
-    throw new Error(`Unexpected readdir: ${dirPath}`);
+  listDirsMock.mockImplementation(async (parent: string) => {
+    if (parent !== SESSIONS_ROOT) return [];
+    // Descending mtime so scan order is deterministic.
+    return datedDirs.map((name, index) => ({
+      fullPath: path.join(SESSIONS_ROOT, name),
+      mtimeMs: datedDirs.length - index,
+    }));
   });
 
-  statMock.mockImplementation((targetPath: string) => {
-    const size = (() => {
-      for (const [dir, files] of Object.entries(store)) {
-        for (const [file, contents] of Object.entries(files)) {
-          if (targetPath === path.join(SESSIONS_ROOT, dir, file)) {
-            return Buffer.byteLength(contents, 'utf-8');
-          }
-        }
-      }
-      return 0;
-    })();
-    return { mtimeMs: Date.now(), size } as fs.Stats;
-  });
-
-  openMock.mockImplementation((filePath: string) => {
-    for (const [dir, files] of Object.entries(store)) {
-      for (const [file, contents] of Object.entries(files)) {
-        const full = path.join(SESSIONS_ROOT, dir, file);
-        if (filePath === full) {
-          const fd = nextFd++;
-          fdContents.set(fd, contents);
-          return fd;
-        }
+  listFilesMock.mockImplementation(async (directory: string, predicate: (name: string) => boolean) => {
+    for (const datedDir of datedDirs) {
+      const datedPath = path.join(SESSIONS_ROOT, datedDir);
+      if (directory === datedPath) {
+        const fileNames = Object.keys(store[datedDir]).filter(predicate);
+        return fileNames.map((fileName, index) => ({
+          fullPath: path.join(datedPath, fileName),
+          mtimeMs: fileNames.length - index,
+        }));
       }
     }
-    throw new Error(`Unexpected open: ${filePath}`);
+    return [];
   });
 
-  readMock.mockImplementation((fd: number, buffer: Buffer, _offset: number, length: number) => {
-    const text = fdContents.get(fd) ?? '';
-    const bytes = Buffer.from(text, 'utf-8');
-    const toCopy = Math.min(length, bytes.length);
-    bytes.copy(buffer, 0, 0, toCopy);
-    return toCopy;
-  });
-
-  closeMock.mockImplementation((fd: number) => {
-    fdContents.delete(fd);
+  readHeadMock.mockImplementation(async (filePath: string) => {
+    for (const [datedDir, files] of Object.entries(store)) {
+      for (const [fileName, contents] of Object.entries(files)) {
+        if (filePath === path.join(SESSIONS_ROOT, datedDir, fileName)) return contents;
+      }
+    }
+    return '';
   });
 }
 

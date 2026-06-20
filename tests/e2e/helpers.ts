@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import type { Session, Swimlane, Task } from '../../src/shared/types';
 
 export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp' | 'opencode' | 'kimi' | 'qwen' | 'droid';
@@ -11,10 +11,18 @@ export type AgentName = 'claude' | 'codex' | 'gemini' | 'cursor' | 'warp' | 'ope
 // --- Test data isolation ---
 // Each test run uses its own data directory so E2E tests never pollute
 // the real user data at %APPDATA%/kangentic (or ~/.config/kangentic).
-const TEST_DATA_ROOT = path.join(__dirname, '..', '.test-data');
+//
+// Both the project temp dir and the data dir are keyed on process.pid so that
+// concurrent Playwright workers (workers=4 on CI) never share a filesystem
+// path. This mirrors the ensureGitTemplate() isolation pattern: each worker
+// owns its own subtree under the parent, wipes only its own subtree, and never
+// races with a sibling. Stale subdirs from prior runs (different PIDs)
+// accumulate but are small and are cleaned by global teardown on Linux.
+const TEST_DATA_ROOT = path.join(__dirname, '..', '.test-data', `worker-${process.pid}`);
 
 /**
  * Get an isolated data directory for a specific test suite.
+ * Keyed on process.pid so concurrent workers never share a path.
  * Removes stale data from previous runs, then recreates the directory.
  */
 export function getTestDataDir(suiteName: string): string {
@@ -43,23 +51,47 @@ export function cleanupTestDataDir(suiteName: string): void {
 // .tmp tree so it's not wiped by individual test cleanup.
 const TEMPLATE_PARENT = path.join(__dirname, '..', '.tmp-template');
 const TEMPLATE_DIR = path.join(TEMPLATE_PARENT, `worker-${process.pid}`);
+
+// Per-worker root for temp project directories. Keyed on process.pid so that
+// concurrent Playwright workers (workers=4 on CI) never share a path and
+// cannot race on rmSync/cpSync. Mirrors the TEMPLATE_DIR / TEST_DATA_ROOT
+// isolation pattern.
+const TMP_PROJECT_ROOT = path.join(__dirname, '..', '.tmp', `worker-${process.pid}`);
 let templateInitialized = false;
 
 function ensureGitTemplate(): string {
   if (templateInitialized && fs.existsSync(TEMPLATE_DIR)) return TEMPLATE_DIR;
-  // Wipe the whole parent to also clean up stale directories from prior
-  // runs whose PIDs are no longer live.
-  try { fs.rmSync(TEMPLATE_PARENT, { recursive: true, force: true }); } catch { /* ignore */ }
+  // Only remove OUR own PID-specific subdirectory. Do NOT rmSync the entire
+  // TEMPLATE_PARENT: with workers=4 on CI, multiple worker processes call
+  // ensureGitTemplate concurrently and each owns a unique pid-keyed dir under
+  // the parent. Wiping the parent races with sibling workers who have already
+  // created their dirs and may be mid-way through `git init`, causing
+  // `fs.cpSync(template, tmpDir)` in createTempProject to fail or copy an
+  // empty tree - which is the root cause of the 0ms beforeAll failures seen
+  // under workers=4. Stale dirs from prior runs (different PIDs) accumulate
+  // but are small (~400KB each) and are cleaned up by the next run's
+  // `npm run build` or global teardown on Linux.
+  try { fs.rmSync(TEMPLATE_DIR, { recursive: true, force: true }); } catch { /* ignore */ }
   fs.mkdirSync(TEMPLATE_DIR, { recursive: true });
-  execSync('git init', { cwd: TEMPLATE_DIR, stdio: 'ignore' });
-  execSync('git commit --allow-empty -m "init"', { cwd: TEMPLATE_DIR, stdio: 'ignore' });
+  // `-b main` pins the initial branch name. Without it, the branch comes from
+  // the machine's `init.defaultBranch`: dev machines set `main` (so this was
+  // green locally) but a fresh CI runner defaults to `master`, and the app then
+  // fails to create a worktree off `main` ("invalid reference: main").
+  execSync('git init -b main', { cwd: TEMPLATE_DIR, stdio: 'ignore' });
+  // Pass identity inline with `-c` so the commit does not depend on a global
+  // git user being configured. Dev machines have one (so this was green
+  // locally), but a fresh CI runner does not, which made `git commit` fail and
+  // every E2E test error at 0ms during setup.
+  execSync('git -c user.email=ci@kangentic.test -c user.name=kangentic commit --allow-empty -m "init"', { cwd: TEMPLATE_DIR, stdio: 'ignore' });
   templateInitialized = true;
   return TEMPLATE_DIR;
 }
 
-// Temp project directory for tests -- always starts fresh
+// Temp project directory for tests -- always starts fresh.
+// Path is keyed on process.pid (via TMP_PROJECT_ROOT) so concurrent workers
+// never collide on rmSync/cpSync even when two describes use the same testName.
 export function createTempProject(testName: string): string {
-  const tmpDir = path.join(__dirname, '..', '.tmp', testName);
+  const tmpDir = path.join(TMP_PROJECT_ROOT, testName);
   // Remove stale data from previous runs to avoid session saturation
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
   // Copy from the cached git template instead of running git init + commit
@@ -70,7 +102,7 @@ export function createTempProject(testName: string): string {
 }
 
 export function cleanupTempProject(testName: string): void {
-  const tmpDir = path.join(__dirname, '..', '.tmp', testName);
+  const tmpDir = path.join(TMP_PROJECT_ROOT, testName);
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   } catch {
@@ -130,6 +162,13 @@ export async function launchApp(options?: {
   const args = [mainEntry];
   if (options?.cwd) {
     args.push(`--cwd=${options.cwd}`);
+  }
+  // On a headless Linux CI runner (xvfb) Chromium's sandbox cannot initialize,
+  // so Electron fails to launch without --no-sandbox. Windows, macOS, and local
+  // Linux desktops are unaffected (the e2e suite historically ran only on
+  // Windows). Guard it to linux so it never weakens the dev-machine runs.
+  if (process.platform === 'linux') {
+    args.push('--no-sandbox');
   }
 
   // Retry electron.launch() with backoff -- Windows can transiently fail
@@ -193,6 +232,104 @@ export async function launchApp(options?: {
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
   return { app, page };
+}
+
+/**
+ * Resilient app teardown for E2E afterAll hooks.
+ *
+ * Wraps `app.close()` in a 25-second race. If Electron's graceful shutdown
+ * stalls (e.g. a hung PTY child blocks before-quit under CI load, or a worker
+ * process crash leaves the app without its IPC pipe), this helper force-kills
+ * the Electron process tree instead of letting the afterAll hook time out and
+ * fail the entire worker (the CI failure mode this was written to fix).
+ *
+ * The 25s budget is chosen to be well within the project-level 45s test
+ * timeout: a graceful shutdown rarely exceeds 5-8s, so 25s gives Electron
+ * ample time for a clean exit while still leaving 20s margin for the timeout
+ * budget and any subsequent afterAll cleanup (temp-dir removal, etc.).
+ *
+ * Normal path cost: zero. `Promise.race` resolves as soon as `app.close()`
+ * settles, which is before the timeout promise even schedules its callback in
+ * the normal case. The timeout promise is created unconditionally but never
+ * resolves on the fast path.
+ *
+ * Force-kill is cross-platform:
+ *   - Windows: `taskkill /PID <pid> /T /F` (walks the child tree, matches
+ *     the existing janitor / zombie-reaper pattern in electron-janitor.ts and
+ *     src/main/git/zombie-reaper.ts).
+ *   - POSIX (Linux/macOS): `process.kill(pid, 'SIGKILL')`. Chromium GPU and
+ *     network-utility children receive SIGTERM from the kernel when the main
+ *     dies (they are not tree-killed explicitly on POSIX, but those children
+ *     self-exit when their parent is gone). This is the same behavior as the
+ *     global teardown janitor on Linux CI.
+ *
+ * This is a TEST-SIDE fix only. It does not touch any product shutdown code
+ * in src/main/ (the synchronous before-quit path is intentionally synchronous
+ * per .claude/rules/synchronous-shutdown.md).
+ */
+export async function closeApp(app: ElectronApplication | undefined): Promise<void> {
+  if (!app) return;
+
+  // 25s is the force-kill deadline. Well under the 45s electron project timeout.
+  const CLOSE_TIMEOUT_MS = 25_000;
+
+  let didTimeout = false;
+
+  const timeoutPromise = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      didTimeout = true;
+      resolve();
+    }, CLOSE_TIMEOUT_MS);
+  });
+
+  await Promise.race([app.close(), timeoutPromise]);
+
+  if (!didTimeout) {
+    // Normal path: app.close() resolved before the timeout.
+    return;
+  }
+
+  // Force-kill path: app.close() hung. Get the PID from the Electron process
+  // handle and kill it cross-platform.
+  console.warn(
+    '[E2E closeApp] app.close() did not resolve within ' +
+      `${CLOSE_TIMEOUT_MS}ms - force-killing Electron process`,
+  );
+
+  const electronProcess = app.process();
+  const pid = electronProcess?.pid;
+
+  if (!pid) {
+    console.warn('[E2E closeApp] Could not obtain Electron PID - nothing to kill');
+    return;
+  }
+
+  if (process.platform === 'win32') {
+    // taskkill /T walks the child tree, /F is force-kill. Mirrors the pattern
+    // in electron-janitor.ts and src/main/git/zombie-reaper.ts.
+    await new Promise<void>((resolve) => {
+      const taskkillProcess = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+      taskkillProcess.on('close', () => resolve());
+      taskkillProcess.on('error', (error) => {
+        console.warn(`[E2E closeApp] taskkill failed for pid=${pid}:`, error);
+        resolve();
+      });
+      // Taskkill is near-instantaneous; cap it at 3s to avoid a second hang.
+      setTimeout(resolve, 3000);
+    });
+  } else {
+    // POSIX: SIGKILL the main process. GPU/network-utility children
+    // self-exit when the main dies (no explicit tree-kill needed).
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch (error) {
+      // Process may have already exited between the race and here.
+      console.warn(`[E2E closeApp] SIGKILL failed for pid=${pid}:`, error);
+    }
+  }
 }
 
 // Wait for the board to load (swimlanes visible)

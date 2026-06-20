@@ -17,24 +17,24 @@ import {
   deleteTaskWorktree,
   spawnAgent,
   buildAutoCommandVars,
-  maybeResolvePRAfterMove,
 } from '../helpers';
+import { linkPRForMovedTask } from '../../pr/pr-linking';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { interpolateTemplate } from '../../agent/shared';
 import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
-import { markRecordExited, markRecordSuspended } from '../../engine/session-lifecycle';
+import { markRecordExited, markRecordSuspended } from '../../transition-engine/session-lifecycle';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
 import { abortBacklogPromotion } from './backlog';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { isShuttingDown } from '../../shutdown-state';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
-import { emitSpawnProgress, emitSpawnWaiting, clearSpawnProgress, createProgressCallback, getInFlightSpawnProgress } from '../../engine/spawn-progress';
-import { resolveTargetAgent } from '../../engine/agent-resolver';
+import { emitSpawnProgress, emitSpawnWaiting, clearSpawnProgress, createProgressCallback, getInFlightSpawnProgress } from '../../transition-engine/spawn-progress';
+import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
 import { agentRegistry } from '../../agent/agent-registry';
-import { prepareInjectionPlan } from '../../engine/injection-plan';
-import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../engine/session-isolation';
+import { prepareInjectionPlan } from '../../transition-engine/injection-plan';
+import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
 import type { Task, Swimlane, SessionRecord } from '../../../shared/types';
 
 /**
@@ -919,7 +919,7 @@ export function registerTaskMoveHandlers(context: IpcContext): void {
       // After the move's task lock has released, resolve the PR for the new lane
       // (gated on a branch + non-To Do lane inside the helper). Fire-and-forget so
       // a slow gh query never blocks the move response.
-      maybeResolvePRAfterMove(context, input.taskId, resolvedProjectId ?? context.currentProjectId);
+      linkPRForMovedTask(context, input.taskId, resolvedProjectId ?? context.currentProjectId);
       return result;
     } catch (error) {
       // Shutdown closes the DB synchronously; any handler that crossed an

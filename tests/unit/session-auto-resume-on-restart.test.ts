@@ -24,7 +24,7 @@ vi.mock('../../src/main/db/database', () => ({
 
 const markRecordSuspendedMock = vi.fn(() => true);
 const markRecordExitedMock = vi.fn(() => true);
-vi.mock('../../src/main/engine/session-lifecycle', () => ({
+vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordSuspended: (...args: unknown[]) => markRecordSuspendedMock(...args),
   markRecordExited: (...args: unknown[]) => markRecordExitedMock(...args),
 }));

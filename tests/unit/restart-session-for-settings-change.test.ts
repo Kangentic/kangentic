@@ -71,7 +71,7 @@ vi.mock('../../src/main/db/repositories/usage-history-repository', () => ({
   UsageHistoryRepository: class {},
 }));
 
-vi.mock('../../src/main/engine/session-lifecycle', () => ({
+vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordSuspended: (...args: unknown[]) => hoisted.markRecordSuspended(...args),
   markRecordExited: (...args: unknown[]) => hoisted.markRecordExited(...args),
 }));

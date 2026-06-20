@@ -44,7 +44,7 @@ vi.mock('node:util', () => ({
 // Import under test
 // ---------------------------------------------------------------------------
 
-import { cleanupStaleResources, cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks, pruneOrphanedDirectories } from '../../src/main/engine/resource-cleanup';
+import { cleanupStaleResources, cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks, pruneOrphanedDirectories } from '../../src/main/transition-engine/resource-cleanup';
 
 // ---------------------------------------------------------------------------
 // Mock factories

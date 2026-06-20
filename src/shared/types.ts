@@ -526,7 +526,7 @@ export type ActivityReason =
  * `ActivityReason`. Subscribed via `getActivityStats(sessionId)`.
  *
  * Keep the scalar fields in sync with the parallel `ActivityStatsSnapshot`
- * in `src/main/pty/activity/engine/shapes.ts` (the engine-internal copy).
+ * in `src/main/activity-engine/engine/shapes.ts` (the engine-internal copy).
  * There is no mechanical parity check yet, so a one-sided field add will
  * not fail typecheck.
  */
@@ -1109,6 +1109,8 @@ export interface AppConfig {
     defaultBaseBranch: string;
     copyFiles: string[];
     initScript: string | null;
+    /** Minutes between background PR-state refresh sweeps for the open project. null = off (on-open sweep only). */
+    prRefreshIntervalMinutes: number | null;
   };
 
   mcpServer: {
@@ -1300,6 +1302,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     defaultBaseBranch: 'main',
     copyFiles: [],
     initScript: null,
+    prRefreshIntervalMinutes: 5,
   },
   mcpServer: {
     enabled: true,
@@ -2430,7 +2433,9 @@ export interface ElectronAPI {
 
   // Agents
   agents: {
-    list: () => Promise<AgentDetectionInfo[]>;
+    // forceRefresh bypasses the main-process cache and re-probes detection
+    // (the Agent settings "re-detect" button); omit/false uses the cache.
+    list: (forceRefresh?: boolean) => Promise<AgentDetectionInfo[]>;
   };
 
   // Handoffs

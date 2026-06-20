@@ -114,6 +114,7 @@ vi.mock('node:child_process', () => ({
 // ---------------------------------------------------------------------------
 
 import { registerSystemHandlers } from '../../src/main/ipc/handlers/system';
+import { resetAgentListForTests } from '../../src/main/agent/agent-list';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -200,10 +201,17 @@ function makeContext() {
   };
 }
 
-async function invokeAgentList(): Promise<AgentDetectionInfo[]> {
+async function invokeAgentList(forceRefresh?: boolean): Promise<AgentDetectionInfo[]> {
   const handler = capturedHandlers.get('agent:list');
   if (!handler) throw new Error('agent:list handler not registered');
-  return handler() as Promise<AgentDetectionInfo[]>;
+  // The real handler signature is (event, forceRefresh); pass a placeholder event.
+  return handler(undefined, forceRefresh) as Promise<AgentDetectionInfo[]>;
+}
+
+function invokeConfigSet(config: unknown): void {
+  const handler = capturedHandlers.get('config:set');
+  if (!handler) throw new Error('config:set handler not registered');
+  handler(undefined, config);
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +222,9 @@ describe('AGENT_LIST IPC handler - probeAuth integration', () => {
   beforeEach(() => {
     capturedHandlers.clear();
     mockRegistryAdapters = [];
+    // The handler delegates to a module-level cache; clear it so each case
+    // starts cold and does not see a prior case's cached inventory.
+    resetAgentListForTests();
     const context = makeContext();
     registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
   });
@@ -336,5 +347,60 @@ describe('AGENT_LIST IPC handler - probeAuth integration', () => {
     expect(result.version).toBe('1.0.0');
     expect(Array.isArray(result.permissions)).toBe(true);
     expect(result.defaultPermission).toBe('default');
+  });
+});
+
+describe('AGENT_LIST IPC handler - caching', () => {
+  beforeEach(() => {
+    capturedHandlers.clear();
+    mockRegistryAdapters = [];
+    resetAgentListForTests();
+    const context = makeContext();
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+  });
+
+  it('serves a cached inventory on the second call without re-probing', async () => {
+    const detect = vi.fn(async () => ({ found: true, path: '/usr/bin/claude', version: '1.0.0' }));
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', detect })];
+
+    const first = await invokeAgentList();
+    const second = await invokeAgentList();
+
+    expect(detect).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
+  });
+
+  it('forceRefresh rebuilds and invalidates every adapter detection cache', async () => {
+    const detect = vi.fn(async () => ({ found: true, path: '/usr/bin/claude', version: '1.0.0' }));
+    const invalidateDetectionCache = vi.fn();
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', detect, invalidateDetectionCache })];
+
+    await invokeAgentList();
+    await invokeAgentList(true);
+
+    expect(detect).toHaveBeenCalledTimes(2);
+    expect(invalidateDetectionCache).toHaveBeenCalled();
+  });
+
+  it('rebuilds after CONFIG_SET invalidates the cache on an agent-config change', async () => {
+    const detect = vi.fn(async () => ({ found: true, path: '/usr/bin/claude', version: '1.0.0' }));
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', detect })];
+
+    await invokeAgentList();
+    invokeConfigSet({ agent: { cliPaths: { claude: '/opt/claude' } } });
+    await invokeAgentList();
+
+    expect(detect).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not rebuild after CONFIG_SET that does not touch agent config', async () => {
+    const detect = vi.fn(async () => ({ found: true, path: '/usr/bin/claude', version: '1.0.0' }));
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', detect })];
+
+    await invokeAgentList();
+    invokeConfigSet({ terminal: { shell: 'bash' } });
+    await invokeAgentList();
+
+    expect(detect).toHaveBeenCalledTimes(1);
   });
 });

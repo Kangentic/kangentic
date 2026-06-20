@@ -13,9 +13,16 @@
 
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import {
+  listMostRecentDirs,
+  listMostRecentFiles,
+  readHeadBytes,
+  readWholeFile,
+  parseJsonlRecords,
+  SESSION_SCAN_HEAD_BYTES,
+} from '../../shared/history-scan';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 const execAsync = promisify(exec);
@@ -64,116 +71,72 @@ async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
  *
  * Each JSON file contains chat history and metadata including model selection.
  */
-function scanGeminiSessionHistory(): string[] {
-  const modelSet = new Set<string>();
-
-  try {
-    const tmpDir = path.join(os.homedir(), '.gemini', 'tmp');
-    if (!fs.existsSync(tmpDir)) {
-      return [];
-    }
-
-    // Walk the project directories, ranking by the `chats/` subdirectory's
-    // mtime rather than the project root. This keeps test-artifact dirs
-    // (which never get a `chats/` written to them) from monopolizing the
-    // top-N slots and pushing real sessions out of scan range. Cap at 50
-    // to keep total stat cost bounded on installs with thousands of
-    // project dirs (we read at most 3 files per dir, 256KB each, so the
-    // wall-time cost is dominated by directory walking).
-    let projectDirs: string[] = [];
-    try {
-      const dirEntries = fs.readdirSync(tmpDir, { withFileTypes: true });
-      projectDirs = dirEntries
-        .filter(e => e.isDirectory())
-        .map(e => {
-          const projectRoot = path.join(tmpDir, e.name);
-          const chatsPath = path.join(projectRoot, 'chats');
-          let chatsMtime = 0;
-          try {
-            chatsMtime = fs.statSync(chatsPath).mtimeMs;
-          } catch {
-            // No chats subdir - sort to the back so dirs that have actually
-            // hosted Gemini sessions are scanned first.
-          }
-          return { fullPath: projectRoot, chatsMtime };
-        })
-        .filter(e => e.chatsMtime > 0)
-        .sort((a, b) => b.chatsMtime - a.chatsMtime)
-        .slice(0, 50)
-        .map(e => e.fullPath);
-    } catch {
-      return [];
-    }
-
-    // Scan each project directory for chat session files. Gemini ships
-    // both `.json` (single-document) and `.jsonl` (newline-delimited) for
-    // its session history; the schema for both has model on each
-    // gemini-typed message under `.model`. We accept both so the scan
-    // does not regress when Gemini changes its on-disk format.
-    for (const projectDir of projectDirs) {
-      const chatsDir = path.join(projectDir, 'chats');
-      let sessionFiles: { fullPath: string; mtime: number }[] = [];
-      try {
-        sessionFiles = fs.readdirSync(chatsDir)
-          .filter(f => f.startsWith('session-') && (f.endsWith('.json') || f.endsWith('.jsonl')))
-          .map(f => {
-            const fullPath = path.join(chatsDir, f);
-            let mtime = 0;
-            try { mtime = fs.statSync(fullPath).mtimeMs; } catch { /* skip */ }
-            return { fullPath, mtime };
-          })
-          .sort((a, b) => b.mtime - a.mtime);
-      } catch {
-        continue;
-      }
-
-      // Read up to 3 most recent session files per directory
-      for (const { fullPath } of sessionFiles.slice(0, 3)) {
-        try {
-          const content = fs.readFileSync(fullPath, 'utf-8');
-
-          if (fullPath.endsWith('.jsonl')) {
-            // Newline-delimited: each line is a record. Look at every
-            // line for `model` at top level or inside `messages[]`.
-            for (const line of content.split('\n')) {
-              if (!line.trim()) continue;
-              try {
-                const obj = JSON.parse(line);
-                if (obj.model && typeof obj.model === 'string') {
-                  modelSet.add(obj.model);
-                }
-                if (Array.isArray(obj.messages)) {
-                  for (const msg of obj.messages) {
-                    if (msg.model && typeof msg.model === 'string') {
-                      modelSet.add(msg.model);
-                    }
-                  }
-                }
-              } catch {
-                // Ignore unparseable lines
-              }
-            }
-          } else {
-            // Single-document JSON
-            const obj = JSON.parse(content);
-            if (obj.model && typeof obj.model === 'string') {
-              modelSet.add(obj.model);
-            }
-            if (Array.isArray(obj.messages)) {
-              for (const msg of obj.messages) {
-                if (msg.model && typeof msg.model === 'string') {
-                  modelSet.add(msg.model);
-                }
-              }
-            }
-          }
-        } catch {
-          // Ignore file read/parse errors
+/** Collect `model` from a record's top level and from each entry of its
+ *  `messages[]` array (the two places Gemini writes it). */
+function harvestGeminiModels(record: unknown, modelSet: Set<string>): void {
+  if (!record || typeof record !== 'object') return;
+  const typed = record as { model?: unknown; messages?: unknown };
+  if (typeof typed.model === 'string' && typed.model.length > 0) {
+    modelSet.add(typed.model);
+  }
+  if (Array.isArray(typed.messages)) {
+    for (const message of typed.messages) {
+      if (message && typeof message === 'object') {
+        const model = (message as { model?: unknown }).model;
+        if (typeof model === 'string' && model.length > 0) {
+          modelSet.add(model);
         }
       }
     }
-  } catch {
-    // Session history scan is best-effort
+  }
+}
+
+async function scanGeminiSessionHistory(): Promise<string[]> {
+  const modelSet = new Set<string>();
+  const tmpDir = path.join(os.homedir(), '.gemini', 'tmp');
+
+  // Walk the project directories, ranking by the `chats/` subdirectory's mtime
+  // rather than the project root. This keeps test-artifact dirs (which never
+  // get a `chats/` written to them) from monopolizing the top-N slots and
+  // pushing real sessions out of scan range. Cap at 50 to keep total stat cost
+  // bounded on installs with thousands of project dirs.
+  const projectDirs = await listMostRecentDirs(tmpDir, 50, {
+    mtimeSubpath: 'chats',
+    requireMtimeSubpath: true,
+  });
+
+  // Scan each project directory for chat session files. Gemini ships both
+  // `.json` (single-document) and `.jsonl` (newline-delimited) for its session
+  // history; the schema for both has model on each gemini-typed message under
+  // `.model`. We accept both so the scan does not regress when Gemini changes
+  // its on-disk format.
+  for (const projectDir of projectDirs) {
+    const chatsDir = path.join(projectDir.fullPath, 'chats');
+    const sessionFiles = await listMostRecentFiles(
+      chatsDir,
+      (name) => name.startsWith('session-') && (name.endsWith('.json') || name.endsWith('.jsonl')),
+      3,
+    );
+    for (const { fullPath } of sessionFiles) {
+      if (fullPath.endsWith('.jsonl')) {
+        // Newline-delimited: each line is a record. The model id sits on early
+        // records, so a bounded head read is enough.
+        const text = await readHeadBytes(fullPath, SESSION_SCAN_HEAD_BYTES);
+        for (const record of parseJsonlRecords(text, false)) {
+          harvestGeminiModels(record, modelSet);
+        }
+      } else {
+        // Single-document JSON: the whole file is one record, so it must be
+        // read in full to parse (a truncated head would not parse).
+        const text = await readWholeFile(fullPath);
+        if (text.length === 0) continue;
+        try {
+          harvestGeminiModels(JSON.parse(text), modelSet);
+        } catch {
+          // Ignore unparseable files.
+        }
+      }
+    }
   }
 
   // Ascending alphabetical: groups by family naturally (shared prefix
@@ -202,7 +165,7 @@ export async function discoverGeminiCapabilities(cliPath: string): Promise<Agent
   let discoveredModels: string[] = [];
   if (supportsModelOverride) {
     try {
-      discoveredModels = scanGeminiSessionHistory();
+      discoveredModels = await scanGeminiSessionHistory();
     } catch {
       // Session history scan failure - continue with empty list
     }

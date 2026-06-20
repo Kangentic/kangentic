@@ -69,7 +69,7 @@ vi.mock('../../src/main/pty/lifecycle/pty-kill', () => ({
 }));
 
 // Stub PR detection.
-vi.mock('../../src/main/pty/pr/pr-connectors', () => ({
+vi.mock('../../src/main/pr/pr-registry', () => ({
   detectPR: vi.fn(() => null),
 }));
 

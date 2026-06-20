@@ -6,6 +6,7 @@ import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
 import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
 import { Pill } from '../../Pill';
+import { PrLink } from '../../PrLink';
 import { IsolatedBadge } from '../../IsolatedBadge';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
 import { CommandPalettePopover } from './CommandPalettePopover';
@@ -16,7 +17,6 @@ import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { useConfigStore } from '../../../stores/config-store';
 import { useToastStore } from '../../../stores/toast-store';
 import { useProjectStore } from '../../../stores/project-store';
-import { prStatePresentation } from '../../../lib/pr-state';
 import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
 import { OverlayPopover } from '../../OverlayPopover';
 import { TILE_PRESETS, type TilePreset } from '../../../window-manager/tiling/presets';
@@ -356,17 +356,12 @@ export function TaskDetailHeader({
           {/* PR pill */}
           {showPill('pr') && task.pr_url && (
             <div data-pill-id="pr" className="flex-shrink-0">
-              <Pill
-                shape="square"
-                onClick={() => window.electronAPI.shell.openExternal(task.pr_url!)}
-                className={`bg-surface-hover/50 hover:bg-surface-hover transition-colors flex-shrink-0 ${prStatePresentation(task.pr_state).textClass}`}
-                title={task.pr_state ? `${task.pr_url} (${task.pr_state})` : task.pr_url}
-                data-testid="pr-pill"
-              >
-                <GitPullRequest size={14} />
-                PR #{task.pr_number}
-                {task.pr_state && <span className="opacity-70">· {task.pr_state}</span>}
-              </Pill>
+              <PrLink
+                prUrl={task.pr_url}
+                prNumber={task.pr_number}
+                prState={task.pr_state}
+                testId="pr-pill"
+              />
             </div>
           )}
 

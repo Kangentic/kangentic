@@ -34,12 +34,21 @@
  *   - Self-skip: own PID and walked parent PIDs are never killed.
  *   - Orphan gate: a process whose parent is still alive is never killed (it is
  *     actively supervised - a live Playwright worker, the dogfooding `npm start`
- *     window, a `/preview` window). See `hasLiveParent`.
+ *     window, a `/preview` window). See `hasLiveParent`. The boot sweep
+ *     (`reapWorktreeElectronZombies`) resolves liveness against the COMPLETE
+ *     `scanLivePids` set (every process image), so a live app from a concurrent
+ *     worktree whose supervising parent is a non-enumerated image is correctly
+ *     spared (bug #258). The per-worktree Done-move reap
+ *     (`findWorktreePathProcesses`) DELIBERATELY keeps the narrow electron/node
+ *     liveness so it can still end a shell-parented pinner - see that function's
+ *     header.
  *   - Path needle: only processes whose CommandLine references the matched path
  *     are candidates. The per-worktree needle carries a trailing separator so
  *     `worktrees/foo` never matches `worktrees/foo-bar`.
- *   - Defensive: any scan/walk failure aborts the reaper with an empty return,
- *     so a broken `Get-CimInstance` can never escalate into a wrong-process kill.
+ *   - Defensive: any scan/walk failure aborts the reaper with an empty return
+ *     (including an empty complete-liveness scan, which would otherwise read
+ *     every process as orphaned), so a broken `Get-CimInstance` can never
+ *     escalate into a wrong-process kill.
  *   - Time-capped: `scanTimeoutMs` bounds the OS-level enumeration (boot sweep
  *     1500ms; per-worktree 5000ms, since a cold PowerShell `Get-CimInstance`
  *     start often exceeds 1500ms - the too-tight cap is why a prior incident's
@@ -125,6 +134,115 @@ export async function scanProcesses(scanTimeoutMs: number): Promise<ProcessRow[]
     return scanProcessesWindows(scanTimeoutMs);
   }
   return scanProcessesUnix(scanTimeoutMs);
+}
+
+/**
+ * Enumerate the pids of EVERY live process (not just electron/node) into the set
+ * the orphan gate consults as its source of truth. The matching scan
+ * (`scanProcesses`) is image-filtered for speed because only electron/node argv
+ * carries our path needles, but the LIVENESS check must see every image: a live
+ * process whose parent is a non-enumerated image (a `pwsh.exe`/`cmd.exe`
+ * supervisor of another worktree's Playwright run) otherwise reads as an orphan
+ * and is wrongly killed. On POSIX `ps -ax` already lists every process, so this
+ * brings Windows to parity rather than adding new behavior there.
+ *
+ * Returns an empty Set on any failure (timeout, non-zero exit, parse error,
+ * empty stdout). Callers MUST treat an empty Set as "scan failed" and refuse to
+ * kill, because an empty live set makes every process read as orphaned.
+ *
+ * Exposed for unit-test replacement via the `_internals` export below.
+ */
+export async function scanLivePids(scanTimeoutMs: number): Promise<Set<number>> {
+  if (process.platform === 'win32') {
+    return scanLivePidsWindows(scanTimeoutMs);
+  }
+  return scanLivePidsUnix(scanTimeoutMs);
+}
+
+async function scanLivePidsWindows(scanTimeoutMs: number): Promise<Set<number>> {
+  // Unfiltered, single-column projection: every live pid, no CommandLine. Far
+  // cheaper to serialize than the matching scan, so far less likely to truncate
+  // under load. Keep it a single `ConvertTo-Json -Compress` document: a
+  // truncated stream then fails JSON.parse and degrades to an empty Set (caller
+  // fails closed) rather than yielding a partial-but-valid set that silently
+  // drops a parent. Do NOT switch to streaming / per-object output.
+  const psCommand =
+    'Get-CimInstance Win32_Process ' +
+    '| Select-Object ProcessId ' +
+    '| ConvertTo-Json -Compress';
+  let stdout: string;
+  try {
+    stdout = await runCommandWithTimeout(
+      'powershell',
+      ['-NoProfile', '-NonInteractive', '-Command', psCommand],
+      { timeoutMs: scanTimeoutMs, windowsHide: true },
+    );
+  } catch {
+    return new Set();
+  }
+  return parseLivePidsFromJson(stdout);
+}
+
+async function scanLivePidsUnix(scanTimeoutMs: number): Promise<Set<number>> {
+  let stdout: string;
+  try {
+    stdout = await runCommandWithTimeout('ps', ['-ax', '-o', 'pid='], { timeoutMs: scanTimeoutMs });
+  } catch {
+    return new Set();
+  }
+  return parseLivePidsFromPs(stdout);
+}
+
+/**
+ * Parse the stdout of the POSIX live-pid scan (`ps -ax -o pid=`) into a set of
+ * pids. Pure and extracted so the line-parse logic is unit-testable on any
+ * platform without spawning `ps`. Mirrors `parseLivePidsFromJson` for the win32
+ * path. Each line is a whitespace-trimmed integer; empty lines, whitespace-only
+ * lines, and non-numeric lines are skipped. Returns an empty Set on empty input;
+ * never throws.
+ */
+export function parseLivePidsFromPs(stdout: string): Set<number> {
+  const result = new Set<number>();
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const pid = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(pid)) result.add(pid);
+  }
+  return result;
+}
+
+/**
+ * Parse the stdout of the Windows live-pid scan into a set of pids. Pure and
+ * extracted so the win32 JSON shapes are unit-testable on Linux CI without
+ * spawning PowerShell. The `Select-Object ProcessId` pipeline emits a single
+ * `{ ProcessId }` object for one row or an array of them for many; the parser
+ * also accepts a bare integer or an array of bare integers defensively. Returns
+ * an empty Set on empty or malformed input; never throws.
+ */
+export function parseLivePidsFromJson(stdout: string): Set<number> {
+  const result = new Set<number>();
+  if (!stdout) return result;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return result;
+  }
+  const items = Array.isArray(parsed) ? parsed : [parsed];
+  for (const item of items) {
+    if (typeof item === 'number') {
+      if (Number.isFinite(item)) result.add(item);
+      continue;
+    }
+    if (item && typeof item === 'object') {
+      const candidate = (item as { ProcessId?: unknown }).ProcessId;
+      if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+        result.add(candidate);
+      }
+    }
+  }
+  return result;
 }
 
 /**
@@ -247,16 +365,20 @@ export function buildSelfSkipSet(rows: ProcessRow[], ownPid: number): Set<number
  * runs, the dogfooding `npm start` window, /preview windows). Only
  * processes whose parent has terminated are true zombies that warrant
  * cleanup.
+ *
+ * `livePids` MUST be the COMPLETE set of live pids (from `scanLivePids`), not
+ * the electron/node-only matching scan: a live process whose supervising parent
+ * is a non-enumerated image otherwise reads as an orphan and is wrongly killed.
  */
 export function findZombies(
   rows: ProcessRow[],
   projectPath: string,
   skipPids: Set<number>,
+  livePids: Set<number>,
 ): ReapedProcess[] {
   const normalizedRoot = normalizePath(projectPath);
   const worktreeNeedle = `${normalizedRoot}/.kangentic/worktrees/`;
   const mainCheckoutNeedle = `${normalizedRoot}/node_modules/electron/`;
-  const livePids = new Set(rows.map((row) => row.pid));
 
   const reaped: ReapedProcess[] = [];
   for (const row of rows) {
@@ -319,6 +441,10 @@ export function findWorktreePathProcesses(
 ): ReapedProcess[] {
   let needle = normalizePath(worktreePath);
   if (!needle.endsWith('/')) needle = `${needle}/`;
+  // Deliberate narrow liveness (NOT the complete `scanLivePids` set that
+  // `findZombies` takes): this per-worktree Done-move reap is meant to end even a
+  // shell-parented pinner whose parent image the filtered scan never enumerates.
+  // See this function's header and the module header (bug #258).
   const livePids = new Set(rows.map((row) => row.pid));
 
   const reaped: ReapedProcess[] = [];
@@ -382,14 +508,28 @@ export async function reapWorktreeElectronZombies(
 ): Promise<ReapedProcess[]> {
   const scanTimeoutMs = options.scanTimeoutMs ?? DEFAULT_SCAN_TIMEOUT_MS;
   let rows: ProcessRow[];
+  let livePids: Set<number>;
   try {
-    rows = await _internals.scanProcesses(scanTimeoutMs);
+    // Independent scans, run concurrently: the image-filtered matching scan
+    // (needs CommandLine) and the complete liveness scan (the orphan gate's
+    // source of truth).
+    [rows, livePids] = await Promise.all([
+      _internals.scanProcesses(scanTimeoutMs),
+      _internals.scanLivePids(scanTimeoutMs),
+    ]);
   } catch (error) {
     console.warn('[REAPER] scan failed:', error);
     return [];
   }
   if (rows.length === 0) {
     console.log('[REAPER] no processes returned by scan');
+    return [];
+  }
+  if (livePids.size === 0) {
+    // The complete liveness scan failed or returned nothing. An empty live set
+    // makes every process read as orphaned, so refuse to kill and let the next
+    // boot sweep retry. Fail closed.
+    console.warn('[REAPER] complete liveness scan returned 0 pids; aborting sweep');
     return [];
   }
 
@@ -403,7 +543,7 @@ export async function reapWorktreeElectronZombies(
     return [];
   }
 
-  const candidates = _internals.findZombies(rows, options.projectPath, skipPids);
+  const candidates = _internals.findZombies(rows, options.projectPath, skipPids, livePids);
   if (candidates.length === 0) {
     console.log('[REAPER] no zombies found');
     return [];
@@ -476,6 +616,7 @@ export async function reapProcessesForWorktree(
 
 export const _internals = {
   scanProcesses,
+  scanLivePids,
   scanProcessesCached,
   buildSelfSkipSet,
   findZombies,

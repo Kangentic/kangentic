@@ -19,31 +19,30 @@ vi.mock('node:util', () => ({
   promisify: (fn: unknown) => fn,
 }));
 
-vi.mock('node:fs', () => ({
-  default: {
-    existsSync: vi.fn(),
-    readdirSync: vi.fn(),
-    statSync: vi.fn(),
-    openSync: vi.fn(),
-    readSync: vi.fn(),
-    closeSync: vi.fn(),
-  },
-}));
+// The session-history walk now goes through the shared async primitives in
+// history-scan. Kimi uses a two-level dir walk (workdir-hash -> session-uuid)
+// so listMostRecentDirs branches on `parent`. Mock listMostRecentDirs +
+// readHeadBytes; parseJsonlRecords stays real so the adapter's record-extraction
+// logic is exercised. The fs walk itself is covered by tests/unit/history-scan.test.ts.
+vi.mock('../../src/main/agent/shared/history-scan', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/main/agent/shared/history-scan')>();
+  return {
+    ...actual,
+    listMostRecentDirs: vi.fn(),
+    readHeadBytes: vi.fn(),
+  };
+});
 
 import { execFile, exec } from 'node:child_process';
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { discoverKimiCapabilities } from '../../src/main/agent/adapters/kimi/capability-discovery';
+import { listMostRecentDirs, readHeadBytes } from '../../src/main/agent/shared/history-scan';
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
-const existsMock = fs.existsSync as unknown as ReturnType<typeof vi.fn>;
-const readdirMock = fs.readdirSync as unknown as ReturnType<typeof vi.fn>;
-const statMock = fs.statSync as unknown as ReturnType<typeof vi.fn>;
-const openMock = fs.openSync as unknown as ReturnType<typeof vi.fn>;
-const readMock = fs.readSync as unknown as ReturnType<typeof vi.fn>;
-const closeMock = fs.closeSync as unknown as ReturnType<typeof vi.fn>;
+const listDirsMock = listMostRecentDirs as unknown as ReturnType<typeof vi.fn>;
+const readHeadMock = readHeadBytes as unknown as ReturnType<typeof vi.fn>;
 
 const SESSIONS_ROOT = path.join(os.homedir(), '.kimi', 'sessions');
 
@@ -53,82 +52,60 @@ function setHelpOutput(stdout: string): void {
   execFileMock.mockReturnValue(result);
 }
 
-/** Layout: `<root>/<workdir-hash>/<session-uuid>/wire.jsonl` */
+/**
+ * Wire up the history-scan primitives for Kimi's two-level session store.
+ * Layout: `<root>/<workdir-hash>/<session-uuid>/wire.jsonl`
+ * listMostRecentDirs is called twice per workdir-hash: once with SESSIONS_ROOT
+ * to get workdir dirs, then once with each workdir dir's fullPath to get
+ * session-uuid dirs. readHeadBytes is called with the fixed `wire.jsonl` path
+ * inside each session-uuid dir.
+ * Setting the store to null makes ~/.kimi/sessions appear missing (empty listing).
+ */
 type SessionTree = Record<string, Record<string, string>>;
 
 function setSessionStore(store: SessionTree | null): void {
-  existsMock.mockReset();
-  readdirMock.mockReset();
-  statMock.mockReset();
-  openMock.mockReset();
-  readMock.mockReset();
-  closeMock.mockReset();
+  listDirsMock.mockReset();
+  readHeadMock.mockReset();
 
   if (store === null) {
-    existsMock.mockReturnValue(false);
+    listDirsMock.mockResolvedValue([]);
+    readHeadMock.mockResolvedValue('');
     return;
   }
-  existsMock.mockReturnValue(true);
 
-  const fdContents = new Map<number, string>();
-  let nextFd = 100;
+  const workdirNames = Object.keys(store);
 
-  readdirMock.mockImplementation((dirPath: string, options?: { withFileTypes?: boolean }) => {
-    const asDirents = (names: string[]): fs.Dirent[] =>
-      names.map((name) => ({ name, isDirectory: () => true })) as unknown as fs.Dirent[];
-
-    if (dirPath === SESSIONS_ROOT) {
-      const workdirs = Object.keys(store);
-      return options?.withFileTypes ? asDirents(workdirs) : workdirs;
+  listDirsMock.mockImplementation(async (parent: string) => {
+    // Top-level call: return the workdir-hash directories.
+    if (parent === SESSIONS_ROOT) {
+      return workdirNames.map((name, index) => ({
+        fullPath: path.join(SESSIONS_ROOT, name),
+        mtimeMs: workdirNames.length - index,
+      }));
     }
-    for (const workdir of Object.keys(store)) {
-      const workdirPath = path.join(SESSIONS_ROOT, workdir);
-      if (dirPath === workdirPath) {
-        const sessions = Object.keys(store[workdir]);
-        return options?.withFileTypes ? asDirents(sessions) : sessions;
+    // Second-level call: return the session-uuid directories inside a workdir.
+    for (const workdirName of workdirNames) {
+      const workdirPath = path.join(SESSIONS_ROOT, workdirName);
+      if (parent === workdirPath) {
+        const sessionIds = Object.keys(store[workdirName]);
+        return sessionIds.map((sessionId, index) => ({
+          fullPath: path.join(workdirPath, sessionId),
+          mtimeMs: sessionIds.length - index,
+        }));
       }
     }
-    throw new Error(`Unexpected readdir: ${dirPath}`);
+    return [];
   });
 
-  statMock.mockImplementation((targetPath: string) => {
-    const size = (() => {
-      for (const [workdir, sessions] of Object.entries(store)) {
-        for (const [sessionId, contents] of Object.entries(sessions)) {
-          if (targetPath === path.join(SESSIONS_ROOT, workdir, sessionId, 'wire.jsonl')) {
-            return Buffer.byteLength(contents, 'utf-8');
-          }
-        }
-      }
-      return 0;
-    })();
-    return { mtimeMs: Date.now(), size } as fs.Stats;
-  });
-
-  openMock.mockImplementation((filePath: string) => {
-    for (const [workdir, sessions] of Object.entries(store)) {
+  // Kimi reads the FIXED `wire.jsonl` inside each session-uuid dir via readHeadBytes.
+  readHeadMock.mockImplementation(async (filePath: string) => {
+    for (const [workdirName, sessions] of Object.entries(store)) {
       for (const [sessionId, contents] of Object.entries(sessions)) {
-        const full = path.join(SESSIONS_ROOT, workdir, sessionId, 'wire.jsonl');
-        if (filePath === full) {
-          const fd = nextFd++;
-          fdContents.set(fd, contents);
-          return fd;
-        }
+        const wirePath = path.join(SESSIONS_ROOT, workdirName, sessionId, 'wire.jsonl');
+        if (filePath === wirePath) return contents;
       }
     }
-    throw new Error(`Unexpected open: ${filePath}`);
-  });
-
-  readMock.mockImplementation((fd: number, buffer: Buffer, _offset: number, length: number) => {
-    const text = fdContents.get(fd) ?? '';
-    const bytes = Buffer.from(text, 'utf-8');
-    const toCopy = Math.min(length, bytes.length);
-    bytes.copy(buffer, 0, 0, toCopy);
-    return toCopy;
-  });
-
-  closeMock.mockImplementation((fd: number) => {
-    fdContents.delete(fd);
+    return '';
   });
 }
 
@@ -212,8 +189,7 @@ describe('discoverKimiCapabilities', () => {
 
     it('returns models=undefined for sessions whose events lack model info', async () => {
       setHelpOutput('  --model TEXT Model\n');
-      // Test mocks - typical for Kimi's wire format which does not always
-      // carry the model on every event type.
+      // Kimi's wire format does not always carry the model on every event type.
       setSessionStore({
         'workdir-hash': {
           'session-uuid': `${metadataLine()}\n${turnBeginLine()}\n`,

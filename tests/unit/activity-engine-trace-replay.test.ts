@@ -25,8 +25,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ActivityEngine } from '../../src/main/pty/activity/engine';
-import type { TransitionRecord, ActivityStatsSnapshot } from '../../src/main/pty/activity/engine';
+import { ActivityEngine } from '../../src/main/activity-engine/engine';
+import type { TransitionRecord, ActivityStatsSnapshot } from '../../src/main/activity-engine/engine';
 import type { ActivityState, SessionEvent } from '../../src/shared/types';
 
 const FIXTURES_DIR = path.join(__dirname, '..', 'fixtures', 'replay');

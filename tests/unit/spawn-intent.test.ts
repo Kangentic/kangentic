@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { resolveSpawnIntent } from '../../src/main/engine/spawn-intent';
+import { resolveSpawnIntent } from '../../src/main/transition-engine/spawn-intent';
 
 /** Minimal mock session record for testing. */
 function mockSessionRecord(overrides: Record<string, unknown> = {}) {

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import readline from 'node:readline';
 import type Database from 'better-sqlite3';
 import { getProjectDb } from '../db/database';
-import { sessionOutputPaths } from '../engine/session-paths';
+import { sessionOutputPaths } from '../transition-engine/session-paths';
 import { agentRegistry } from '../agent/agent-registry';
 import type {
   SessionEvent,

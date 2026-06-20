@@ -3,9 +3,20 @@
  *
  * Tests the TitleBar button visibility, transient session filtering from
  * the terminal panel, and the Ctrl+Shift+P hotkey toggle behavior.
+ *
+ * Performance note: tests that share the same pre-configured mock state are
+ * grouped into a shared browser instance via beforeAll/afterAll. Each test
+ * still gets a fresh page state via page.goto() in beforeEach, which re-runs
+ * all registered addInitScript callbacks on the context. This avoids the
+ * ~1-2 s overhead of chromium.launch() per test while still providing full
+ * state isolation between tests.
+ *
+ * Tests with unique per-test spawnTransient overrides (ContextBar group) and
+ * tests with different base pre-configs (TitleBar Button group) keep their
+ * own per-test browser launches.
  */
 import { test, expect } from '@playwright/test';
-import { chromium, type Browser, type Page } from '@playwright/test';
+import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady } from './helpers';
 
@@ -142,6 +153,37 @@ function twoProjectPreConfig(): string {
   `;
 }
 
+/**
+ * Launch a fresh browser+context with the given preconfig registered as an init
+ * script. The returned browser and context are shared across multiple tests via
+ * beforeAll/afterAll. Each test navigates to VITE_URL in beforeEach so the
+ * init scripts re-run and state is fully fresh for every test.
+ */
+async function launchSharedBrowser(preConfigScript: string): Promise<{
+  browser: Browser;
+  context: BrowserContext;
+  page: Page;
+}> {
+  await waitForViteReady();
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const page = await context.newPage();
+
+  await page.addInitScript({ path: MOCK_SCRIPT });
+  await page.addInitScript(preConfigScript);
+
+  await page.goto(VITE_URL);
+  await page.waitForLoadState('load');
+  await page.waitForSelector('text=Kangentic', { timeout: 15000 });
+
+  return { browser, context, page };
+}
+
+/**
+ * Launch a one-off browser for a single test with a unique preconfig.
+ * Used when the preconfig is test-specific (e.g. custom spawnTransient overrides)
+ * or when sharing is not safe.
+ */
 async function launchWithState(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady();
   const browser = await chromium.launch({ headless: true });
@@ -159,6 +201,10 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
 }
 
 test.describe('Command Terminal', () => {
+  // ---------------------------------------------------------------------------
+  // TitleBar Button - these two tests use different base preconfigs so each
+  // gets its own browser launch.
+  // ---------------------------------------------------------------------------
   test.describe('TitleBar Button', () => {
     test('Command Terminal button is visible when a project is open', async () => {
       const { browser, page } = await launchWithState(preConfigWithTransientSession());
@@ -190,71 +236,73 @@ test.describe('Command Terminal', () => {
     });
   });
 
-  test.describe('Terminal Panel Filtering', () => {
-    test('transient sessions are excluded from the terminal panel tabs', async () => {
-      const { browser, page } = await launchWithState(preConfigWithTransientSession());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+  // ---------------------------------------------------------------------------
+  // Shared browser: Terminal Panel Filtering + Hotkey + Background Session
+  // Indicator + Overlay Header Controls - all use preConfigWithTransientSession()
+  // and do not mutate state in ways that would affect sibling tests after a
+  // full page navigation in beforeEach.
+  // ---------------------------------------------------------------------------
+  test.describe('Transient Session - shared browser group', () => {
+    let sharedBrowser: Browser;
+    let sharedPage: Page;
 
+    test.beforeAll(async () => {
+      ({ browser: sharedBrowser, page: sharedPage } = await launchSharedBrowser(
+        preConfigWithTransientSession(),
+      ));
+    });
+
+    test.afterAll(async () => {
+      await sharedBrowser?.close();
+    });
+
+    test.beforeEach(async () => {
+      await sharedPage.goto(VITE_URL);
+      await sharedPage.waitForLoadState('load');
+      await sharedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+      await sharedPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+    });
+
+    test.describe('Terminal Panel Filtering', () => {
+      test('transient sessions are excluded from the terminal panel tabs', async () => {
         // The regular task session tab should be visible
-        const taskTab = page.locator('button:has-text("regular-task")');
+        const taskTab = sharedPage.locator('button:has-text("regular-task")');
         await expect(taskTab).toBeVisible();
 
         // The transient session should NOT appear as a tab
-        const transientTab = page.locator('button:has-text("ephemeral-uuid")');
+        const transientTab = sharedPage.locator('button:has-text("ephemeral-uuid")');
         await expect(transientTab).not.toBeVisible();
-      } finally {
-        await browser.close();
-      }
+      });
     });
-  });
 
-  test.describe('Hotkey', () => {
-    test('Ctrl+Shift+P opens the command bar overlay', async () => {
-      const { browser, page } = await launchWithState(preConfigWithTransientSession());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
+    test.describe('Hotkey', () => {
+      test('Ctrl+Shift+P opens the command bar overlay', async () => {
         // Command bar should not be visible initially
-        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible();
+        await expect(sharedPage.getByTestId('command-bar-overlay')).not.toBeVisible();
 
         // Press Ctrl+Shift+P
-        await page.keyboard.press('Control+Shift+P');
+        await sharedPage.keyboard.press('Control+Shift+P');
 
         // Command bar should appear
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
-        await expect(page.getByText('Command Terminal', { exact: true })).toBeVisible();
-      } finally {
-        await browser.close();
-      }
-    });
+        await expect(sharedPage.getByTestId('command-bar-overlay')).toBeVisible();
+        await expect(sharedPage.getByText('Command Terminal', { exact: true })).toBeVisible();
+      });
 
-    test('Ctrl+Shift+P toggles the command bar closed', async () => {
-      const { browser, page } = await launchWithState(preConfigWithTransientSession());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
+      test('Ctrl+Shift+P toggles the command bar closed', async () => {
         // Open
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await sharedPage.keyboard.press('Control+Shift+P');
+        await expect(sharedPage.getByTestId('command-bar-overlay')).toBeVisible();
 
         // Close
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
-      } finally {
-        await browser.close();
-      }
+        await sharedPage.keyboard.press('Control+Shift+P');
+        await expect(sharedPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+      });
     });
-  });
 
-  test.describe('Background Session Indicator', () => {
-    test('pulsing indicator appears on TitleBar button when transient session is in background', async () => {
-      const { browser, page } = await launchWithState(preConfigWithTransientSession());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
+    test.describe('Background Session Indicator', () => {
+      test('pulsing indicator appears on TitleBar button when transient session is in background', async () => {
         // Set transientSessionId in the session store to simulate a background session
-        await page.evaluate(() => {
+        await sharedPage.evaluate(() => {
           const { useSessionStore } = require('./src/renderer/stores/session-store');
           useSessionStore.setState({ transientSessionId: 'sess-transient-1' });
         }).catch(() => {
@@ -263,92 +311,64 @@ test.describe('Command Terminal', () => {
 
         // Use a pre-configured approach: inject transientSessionId via mock state
         // The mock spawnTransient sets transientSessionId when called, so open and close the overlay
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await sharedPage.keyboard.press('Control+Shift+P');
+        await expect(sharedPage.getByTestId('command-bar-overlay')).toBeVisible();
 
         // Close overlay - session should remain in background
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+        await sharedPage.keyboard.press('Control+Shift+P');
+        await expect(sharedPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
 
         // The pulsing indicator should appear on the TitleBar button
-        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
-      } finally {
-        await browser.close();
-      }
+        await expect(sharedPage.getByTestId('transient-session-indicator')).toBeVisible();
+      });
     });
-  });
 
-  test.describe('Overlay Header Controls', () => {
-    test('close button (X) hides the overlay without killing session', async () => {
-      const { browser, page } = await launchWithState(preConfigWithTransientSession());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
+    test.describe('Overlay Header Controls', () => {
+      test('close button (X) hides the overlay without killing session', async () => {
         // Open overlay
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await sharedPage.keyboard.press('Control+Shift+P');
+        await expect(sharedPage.getByTestId('command-bar-overlay')).toBeVisible();
 
         // Click the X close button
-        await page.locator('[aria-label="Hide terminal"]').click();
-        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+        await sharedPage.locator('[aria-label="Hide terminal"]').click();
+        await expect(sharedPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
 
         // Indicator should show - session still alive in background
-        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
-      } finally {
-        await browser.close();
-      }
-    });
+        await expect(sharedPage.getByTestId('transient-session-indicator')).toBeVisible();
+      });
 
-    test('stop button terminates the session and closes overlay', async () => {
-      const { browser, page } = await launchWithState(preConfigWithTransientSession());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
+      test('stop button terminates the session and closes overlay', async () => {
         // Open overlay
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await sharedPage.keyboard.press('Control+Shift+P');
+        await expect(sharedPage.getByTestId('command-bar-overlay')).toBeVisible();
 
         // Click the stop button
-        await page.getByTestId('command-bar-terminate-button').click();
-        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+        await sharedPage.getByTestId('command-bar-terminate-button').click();
+        await expect(sharedPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
 
         // No background indicator - session was killed
-        await expect(page.getByTestId('transient-session-indicator')).not.toBeVisible();
-      } finally {
-        await browser.close();
-      }
-    });
+        await expect(sharedPage.getByTestId('transient-session-indicator')).not.toBeVisible();
+      });
 
-    test('kebab menu renders with expected items', async () => {
-      const { browser, page } = await launchWithState(preConfigWithTransientSession());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
+      test('kebab menu renders with expected items', async () => {
         // Open overlay
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await sharedPage.keyboard.press('Control+Shift+P');
+        await expect(sharedPage.getByTestId('command-bar-overlay')).toBeVisible();
 
         // Click the kebab menu button
-        await page.locator('[title="Actions"]').click();
+        await sharedPage.locator('[title="Actions"]').click();
 
         // Verify menu items (use nth(1) for "Commands" to avoid matching the header pill)
-        await expect(page.locator('button:has-text("Open folder")')).toBeVisible();
-        await expect(page.getByRole('button', { name: 'Commands' }).nth(1)).toBeVisible();
-        await expect(page.getByTestId('command-bar-kebab-stop')).toBeVisible();
-      } finally {
-        await browser.close();
-      }
-    });
+        await expect(sharedPage.locator('button:has-text("Open folder")')).toBeVisible();
+        await expect(sharedPage.getByRole('button', { name: 'Commands' }).nth(1)).toBeVisible();
+        await expect(sharedPage.getByTestId('command-bar-kebab-stop')).toBeVisible();
+      });
 
-    test('content container has max-w-5xl when non-maximized and changes panel closed', async () => {
-      // The PR widened the content container from max-w-4xl to max-w-5xl so the
-      // ContextBar fits on one row. Assert the class is present (not max-w-4xl).
-      const { browser, page } = await launchWithState(preConfigWithTransientSession());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await page.keyboard.press('Control+Shift+P');
-        const overlay = page.getByTestId('command-bar-overlay');
+      test('content container has max-w-5xl when non-maximized and changes panel closed', async () => {
+        // The PR widened the content container from max-w-4xl to max-w-5xl so the
+        // ContextBar fits on one row. Assert the class is present (not max-w-4xl).
+        await sharedPage.keyboard.press('Control+Shift+P');
+        const overlay = sharedPage.getByTestId('command-bar-overlay');
         await expect(overlay).toBeVisible();
 
         // The content container is the direct child div of the overlay backdrop.
@@ -356,21 +376,14 @@ test.describe('Command Terminal', () => {
         const contentContainer = overlay.locator('> div').first();
         await expect(contentContainer).toHaveClass(/max-w-5xl/);
         await expect(contentContainer).not.toHaveClass(/max-w-4xl/);
-      } finally {
-        await browser.close();
-      }
-    });
+      });
 
-    test('maximize button and Ctrl+Shift+M/W hotkeys toggle and hide the overlay', async () => {
-      const { browser, page } = await launchWithState(preConfigWithTransientSession());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await page.keyboard.press('Control+Shift+P');
-        const overlay = page.getByTestId('command-bar-overlay');
+      test('maximize button and Ctrl+Shift+M/W hotkeys toggle and hide the overlay', async () => {
+        await sharedPage.keyboard.press('Control+Shift+P');
+        const overlay = sharedPage.getByTestId('command-bar-overlay');
         await expect(overlay).toBeVisible();
 
-        const maximizeButton = page.getByTestId('command-bar-maximize');
+        const maximizeButton = sharedPage.getByTestId('command-bar-maximize');
         await expect(maximizeButton).toBeVisible();
         await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
         await expect(overlay).toHaveClass(/inset-0/);
@@ -382,155 +395,151 @@ test.describe('Command Terminal', () => {
         await expect(overlay).toHaveClass(/bottom-9/);
 
         // Ctrl+Shift+M restores (terminal-safe combo).
-        await page.keyboard.press('Control+Shift+M');
+        await sharedPage.keyboard.press('Control+Shift+M');
         await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
         await expect(overlay).toHaveClass(/inset-0/);
 
         // Ctrl+Shift+W hides the overlay; the transient session stays alive.
-        await page.keyboard.press('Control+Shift+W');
+        await sharedPage.keyboard.press('Control+Shift+W');
         await expect(overlay).not.toBeVisible({ timeout: 5000 });
-        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
-      } finally {
-        await browser.close();
-      }
+        await expect(sharedPage.getByTestId('transient-session-indicator')).toBeVisible();
+      });
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // Cross-Project Transient Session Persistence - shared browser group.
+  // All four tests use twoProjectPreConfig() and get fresh state via beforeEach.
+  // The waitForTimeout(500) calls after project-switch clicks have been removed:
+  // Playwright's built-in assertion retry handles the settle wait.
+  // ---------------------------------------------------------------------------
   test.describe('Cross-Project Transient Session Persistence', () => {
+    let crossProjectBrowser: Browser;
+    let crossProjectPage: Page;
+
+    test.beforeAll(async () => {
+      ({ browser: crossProjectBrowser, page: crossProjectPage } = await launchSharedBrowser(
+        twoProjectPreConfig(),
+      ));
+    });
+
+    test.afterAll(async () => {
+      await crossProjectBrowser?.close();
+    });
+
+    test.beforeEach(async () => {
+      await crossProjectPage.goto(VITE_URL);
+      await crossProjectPage.waitForLoadState('load');
+      await crossProjectPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+      await crossProjectPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+    });
+
     test('transient session survives project switch and reattaches on return', async () => {
-      const { browser, page } = await launchWithState(twoProjectPreConfig());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      // Open command terminal in Project A and close overlay (session stays in background)
+      await crossProjectPage.keyboard.press('Control+Shift+P');
+      await expect(crossProjectPage.getByTestId('command-bar-overlay')).toBeVisible();
+      await crossProjectPage.keyboard.press('Control+Shift+P');
+      await expect(crossProjectPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
 
-        // Open command terminal in Project A and close overlay (session stays in background)
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+      // Background indicator should be visible for Project A's transient session
+      await expect(crossProjectPage.getByTestId('transient-session-indicator')).toBeVisible();
 
-        // Background indicator should be visible for Project A's transient session
-        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
+      // Switch to Project B - Playwright's retry handles the settle wait
+      await crossProjectPage.locator('[role="button"]:has-text("Project Beta")').click();
 
-        // Switch to Project B
-        await page.locator('[role="button"]:has-text("Project Beta")').click();
-        await page.waitForTimeout(500);
+      // No transient indicator for Project B (never opened command terminal there)
+      await expect(crossProjectPage.getByTestId('transient-session-indicator')).not.toBeVisible();
 
-        // No transient indicator for Project B (never opened command terminal there)
-        await expect(page.getByTestId('transient-session-indicator')).not.toBeVisible();
+      // Switch back to Project A - indicator should reappear (session was stashed, not killed)
+      await crossProjectPage.locator('[role="button"]:has-text("Project Alpha")').click();
 
-        // Switch back to Project A
-        await page.locator('[role="button"]:has-text("Project Alpha")').click();
-        await page.waitForTimeout(500);
+      // Background indicator should reappear
+      await expect(crossProjectPage.getByTestId('transient-session-indicator')).toBeVisible();
 
-        // Background indicator should reappear - session was stashed, not killed
-        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
-
-        // Opening the command bar should reattach to the existing session (no new spawn)
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
-      } finally {
-        await browser.close();
-      }
+      // Opening the command bar should reattach to the existing session (no new spawn)
+      await crossProjectPage.keyboard.press('Control+Shift+P');
+      await expect(crossProjectPage.getByTestId('command-bar-overlay')).toBeVisible();
     });
 
     test('command bar overlay closes automatically on project switch', async () => {
-      const { browser, page } = await launchWithState(twoProjectPreConfig());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      // Open command terminal in Project A
+      await crossProjectPage.keyboard.press('Control+Shift+P');
+      await expect(crossProjectPage.getByTestId('command-bar-overlay')).toBeVisible();
 
-        // Open command terminal in Project A
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+      // Trigger project switch programmatically (overlay backdrop blocks sidebar clicks)
+      await crossProjectPage.evaluate(async () => {
+        const store = (window as any).__zustandStores?.project;
+        if (store) {
+          await store.getState().openProject('proj-cmd-b');
+        }
+      });
 
-        // Trigger project switch programmatically (overlay backdrop blocks sidebar clicks)
-        await page.evaluate(async () => {
-          const store = (window as any).__zustandStores?.project;
-          if (store) {
-            await store.getState().openProject('proj-cmd-b');
-          }
-        });
-        await page.waitForTimeout(500);
-
-        // Overlay should close automatically via useCommandBar's currentProjectId effect
-        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
-      } finally {
-        await browser.close();
-      }
+      // Overlay should close automatically via useCommandBar's currentProjectId effect
+      await expect(crossProjectPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
     });
 
     test('each project gets its own independent transient session', async () => {
-      const { browser, page } = await launchWithState(twoProjectPreConfig());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      // Open and close command terminal in Project A
+      await crossProjectPage.keyboard.press('Control+Shift+P');
+      await expect(crossProjectPage.getByTestId('command-bar-overlay')).toBeVisible();
+      await crossProjectPage.keyboard.press('Control+Shift+P');
+      await expect(crossProjectPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+      await expect(crossProjectPage.getByTestId('transient-session-indicator')).toBeVisible();
 
-        // Open and close command terminal in Project A
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
-        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
+      // Switch to Project B - Playwright's retry handles the settle wait
+      await crossProjectPage.locator('[role="button"]:has-text("Project Beta")').click();
 
-        // Switch to Project B
-        await page.locator('[role="button"]:has-text("Project Beta")').click();
-        await page.waitForTimeout(500);
+      // No indicator yet for Project B
+      await expect(crossProjectPage.getByTestId('transient-session-indicator')).not.toBeVisible();
 
-        // No indicator yet for Project B
-        await expect(page.getByTestId('transient-session-indicator')).not.toBeVisible();
+      // Open and close command terminal in Project B (spawns a new session)
+      await crossProjectPage.keyboard.press('Control+Shift+P');
+      await expect(crossProjectPage.getByTestId('command-bar-overlay')).toBeVisible();
+      await crossProjectPage.keyboard.press('Control+Shift+P');
+      await expect(crossProjectPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+      await expect(crossProjectPage.getByTestId('transient-session-indicator')).toBeVisible();
 
-        // Open and close command terminal in Project B (spawns a new session)
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
-        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
+      // Switch back to Project A - its indicator should still be there
+      await crossProjectPage.locator('[role="button"]:has-text("Project Alpha")').click();
+      await expect(crossProjectPage.getByTestId('transient-session-indicator')).toBeVisible();
 
-        // Switch back to Project A - its indicator should still be there
-        await page.locator('[role="button"]:has-text("Project Alpha")').click();
-        await page.waitForTimeout(500);
-        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
-
-        // Switch to Project B - its indicator should also still be there
-        await page.locator('[role="button"]:has-text("Project Beta")').click();
-        await page.waitForTimeout(500);
-        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
-      } finally {
-        await browser.close();
-      }
+      // Switch to Project B - its indicator should also still be there
+      await crossProjectPage.locator('[role="button"]:has-text("Project Beta")').click();
+      await expect(crossProjectPage.getByTestId('transient-session-indicator')).toBeVisible();
     });
 
     test('deleting a project kills its transient session', async () => {
-      const { browser, page } = await launchWithState(twoProjectPreConfig());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      // Open and close command terminal in Project A (creates a background transient)
+      await crossProjectPage.keyboard.press('Control+Shift+P');
+      await expect(crossProjectPage.getByTestId('command-bar-overlay')).toBeVisible();
+      await crossProjectPage.keyboard.press('Control+Shift+P');
+      await expect(crossProjectPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+      await expect(crossProjectPage.getByTestId('transient-session-indicator')).toBeVisible();
 
-        // Open and close command terminal in Project A (creates a background transient)
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
-        await expect(page.getByTestId('transient-session-indicator')).toBeVisible();
+      // Switch to Project B - Playwright's retry handles the settle wait
+      await crossProjectPage.locator('[role="button"]:has-text("Project Beta")').click();
+      // Wait for the board to confirm we are on Project B (transient indicator should be gone)
+      await expect(crossProjectPage.getByTestId('transient-session-indicator')).not.toBeVisible();
 
-        // Switch to Project B
-        await page.locator('[role="button"]:has-text("Project Beta")').click();
-        await page.waitForTimeout(500);
+      // Delete Project A via context menu
+      await crossProjectPage.locator('[role="button"]:has-text("Project Alpha")').click({ button: 'right' });
+      await crossProjectPage.locator('button:has-text("Delete")').click();
 
-        // Delete Project A via context menu
-        await page.locator('[role="button"]:has-text("Project Alpha")').click({ button: 'right' });
-        await page.locator('button:has-text("Delete")').click();
+      // Confirm deletion
+      const confirmButton = crossProjectPage.locator('button:has-text("Delete"):not([disabled])');
+      await confirmButton.last().click();
 
-        // Confirm deletion
-        const confirmButton = page.locator('button:has-text("Delete"):not([disabled])');
-        await confirmButton.last().click();
-        await page.waitForTimeout(500);
-
-        // Project A should be gone from sidebar
-        await expect(page.locator('[role="button"]:has-text("Project Alpha")')).not.toBeVisible();
-      } finally {
-        await browser.close();
-      }
+      // Project A should be gone from sidebar
+      await expect(crossProjectPage.locator('[role="button"]:has-text("Project Alpha")')).not.toBeVisible();
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // ContextBar in overlay - each test has a unique spawnTransient override
+  // injected AFTER the init scripts run. These cannot share a browser context
+  // (addInitScript is fixed at context creation; per-test overrides are added
+  // inline in launchWithState). Each test uses its own browser instance.
+  // ---------------------------------------------------------------------------
   test.describe('ContextBar in overlay', () => {
     // These tests verify the two changes introduced by the branch:
     //
@@ -870,19 +879,10 @@ test.describe('Command Terminal', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // setFocused IPC contract
-  //
-  // These tests verify that useFocusedSessionsSync calls setFocused with the
-  // correct session ID set under different view/state combinations. The mock
-  // records every setFocused call in window.electronAPI.sessions.__setFocusedCalls
-  // so we can assert on it after triggering state changes.
-  //
-  // The critical regression: switching to Backlog view while a command bar
-  // transient session exists must still put the transient ID in the focused set.
-  // Before the fix, TerminalPanel was unmounted on Backlog, so the setFocused
-  // effect never ran and the transient PTY output was silently dropped.
+  // setFocused IPC contract - shared browser group.
+  // All three tests use preConfigWithOpenCommandBar() and get fresh state via
+  // beforeEach page navigation.
   // ---------------------------------------------------------------------------
-
   test.describe('setFocused IPC contract', () => {
     /**
      * Pre-configure with one running task session and one pre-existing transient
@@ -967,6 +967,26 @@ test.describe('Command Terminal', () => {
       `;
     }
 
+    let focusedBrowser: Browser;
+    let focusedPage: Page;
+
+    test.beforeAll(async () => {
+      ({ browser: focusedBrowser, page: focusedPage } = await launchSharedBrowser(
+        preConfigWithOpenCommandBar(),
+      ));
+    });
+
+    test.afterAll(async () => {
+      await focusedBrowser?.close();
+    });
+
+    test.beforeEach(async () => {
+      await focusedPage.goto(VITE_URL);
+      await focusedPage.waitForLoadState('load');
+      await focusedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+      await focusedPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+    });
+
     test('transient session enters focused set when command bar opens from Backlog view', async () => {
       // This is the regression test for the bug fixed in this branch.
       // Before the fix: TerminalPanel was unmounted on Backlog, so the
@@ -975,40 +995,34 @@ test.describe('Command Terminal', () => {
       //
       // After the fix: useFocusedSessionsSync lives in AppLayout (always
       // mounted), so it fires setFocused even when the Backlog view is active.
-      const { browser, page } = await launchWithState(preConfigWithOpenCommandBar());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
-        // Clear any calls that fired during initial mount so we start fresh.
-        await page.evaluate(() => {
-          window.electronAPI.sessions.__setFocusedCalls.length = 0;
-        });
+      // Clear any calls that fired during initial mount so we start fresh.
+      await focusedPage.evaluate(() => {
+        window.electronAPI.sessions.__setFocusedCalls.length = 0;
+      });
 
-        // Switch to Backlog view.
-        await page.locator('[data-testid="view-toggle-backlog"]').click();
-        await page.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 5000 });
+      // Switch to Backlog view.
+      await focusedPage.locator('[data-testid="view-toggle-backlog"]').click();
+      await focusedPage.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 5000 });
 
-        // Open the command bar overlay (Ctrl+Shift+P).
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+      // Open the command bar overlay (Ctrl+Shift+P).
+      await focusedPage.keyboard.press('Control+Shift+P');
+      await expect(focusedPage.getByTestId('command-bar-overlay')).toBeVisible();
 
-        // Poll until setFocused is called with the transient session ID included.
-        // useFocusedSessionsSync fires as a useEffect after each render, so there
-        // may be a short async gap between state update and the IPC call.
-        await expect.poll(
-          async () => {
-            const allCalls = await page.evaluate(
-              (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
-            );
-            return allCalls.some(
-              (callArgs) => callArgs.includes(TRANSIENT_SESSION_ID),
-            );
-          },
-          { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
-        ).toBe(true);
-      } finally {
-        await browser.close();
-      }
+      // Poll until setFocused is called with the transient session ID included.
+      // useFocusedSessionsSync fires as a useEffect after each render, so there
+      // may be a short async gap between state update and the IPC call.
+      await expect.poll(
+        async () => {
+          const allCalls = await focusedPage.evaluate(
+            (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
+          );
+          return allCalls.some(
+            (callArgs) => callArgs.includes(TRANSIENT_SESSION_ID),
+          );
+        },
+        { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
+      ).toBe(true);
     });
 
     test('panel session leaves focused set when switching to Backlog with no dialog', async () => {
@@ -1016,90 +1030,78 @@ test.describe('Command Terminal', () => {
       // session from the focused set (no terminal is visible on Backlog without
       // the command bar open). The session manager should stop forwarding PTY
       // data for that session to avoid wasting IPC budget.
-      const { browser, page } = await launchWithState(preConfigWithOpenCommandBar());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
-        // On Board view the panel session should be in the focused set.
-        await expect.poll(
-          async () => {
-            const allCalls = await page.evaluate(
-              (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
-            );
-            return allCalls.some(
-              (callArgs) => callArgs.includes(TASK_SESSION_ID),
-            );
-          },
-          { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
-        ).toBe(true);
+      // On Board view the panel session should be in the focused set.
+      await expect.poll(
+        async () => {
+          const allCalls = await focusedPage.evaluate(
+            (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
+          );
+          return allCalls.some(
+            (callArgs) => callArgs.includes(TASK_SESSION_ID),
+          );
+        },
+        { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
+      ).toBe(true);
 
-        // Clear the call log.
-        await page.evaluate(() => {
-          window.electronAPI.sessions.__setFocusedCalls.length = 0;
-        });
+      // Clear the call log.
+      await focusedPage.evaluate(() => {
+        window.electronAPI.sessions.__setFocusedCalls.length = 0;
+      });
 
-        // Switch to Backlog. No command bar, no dialog.
-        await page.locator('[data-testid="view-toggle-backlog"]').click();
-        await page.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 5000 });
+      // Switch to Backlog. No command bar, no dialog.
+      await focusedPage.locator('[data-testid="view-toggle-backlog"]').click();
+      await focusedPage.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 5000 });
 
-        // setFocused should be called without the panel session ID.
-        // Poll until at least one call arrives, then assert the task session
-        // was not included in the latest call.
-        await expect.poll(
-          async () => {
-            const allCalls = await page.evaluate(
-              (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
-            );
-            return allCalls.length > 0;
-          },
-          { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
-        ).toBe(true);
+      // setFocused should be called without the panel session ID.
+      // Poll until at least one call arrives, then assert the task session
+      // was not included in the latest call.
+      await expect.poll(
+        async () => {
+          const allCalls = await focusedPage.evaluate(
+            (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
+          );
+          return allCalls.length > 0;
+        },
+        { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
+      ).toBe(true);
 
-        const lastCall = await page.evaluate((): string[] => {
-          const allCalls = window.electronAPI.sessions.__setFocusedCalls;
-          return allCalls[allCalls.length - 1] ?? [];
-        });
-        expect(lastCall).not.toContain(TASK_SESSION_ID);
-      } finally {
-        await browser.close();
-      }
+      const lastCall = await focusedPage.evaluate((): string[] => {
+        const allCalls = window.electronAPI.sessions.__setFocusedCalls;
+        return allCalls[allCalls.length - 1] ?? [];
+      });
+      expect(lastCall).not.toContain(TASK_SESSION_ID);
     });
 
     test('panel session re-enters focused set when switching back to Board view', async () => {
       // Board -> Backlog -> Board round-trip: the panel session must be restored
       // to the focused set when the user returns to the Board view.
-      const { browser, page } = await launchWithState(preConfigWithOpenCommandBar());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
-        // Switch to Backlog.
-        await page.locator('[data-testid="view-toggle-backlog"]').click();
-        await page.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 5000 });
+      // Switch to Backlog.
+      await focusedPage.locator('[data-testid="view-toggle-backlog"]').click();
+      await focusedPage.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 5000 });
 
-        // Clear the log at the midpoint.
-        await page.evaluate(() => {
-          window.electronAPI.sessions.__setFocusedCalls.length = 0;
-        });
+      // Clear the log at the midpoint.
+      await focusedPage.evaluate(() => {
+        window.electronAPI.sessions.__setFocusedCalls.length = 0;
+      });
 
-        // Switch back to Board.
-        await page.locator('[data-testid="view-toggle-board"]').click();
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 5000 });
+      // Switch back to Board.
+      await focusedPage.locator('[data-testid="view-toggle-board"]').click();
+      await focusedPage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 5000 });
 
-        // Panel session must be back in the focused set.
-        await expect.poll(
-          async () => {
-            const allCalls = await page.evaluate(
-              (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
-            );
-            return allCalls.some(
-              (callArgs) => callArgs.includes(TASK_SESSION_ID),
-            );
-          },
-          { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
-        ).toBe(true);
-      } finally {
-        await browser.close();
-      }
+      // Panel session must be back in the focused set.
+      await expect.poll(
+        async () => {
+          const allCalls = await focusedPage.evaluate(
+            (): string[][] => window.electronAPI.sessions.__setFocusedCalls,
+          );
+          return allCalls.some(
+            (callArgs) => callArgs.includes(TASK_SESSION_ID),
+          );
+        },
+        { timeout: 5000, intervals: [100, 100, 200, 200, 500] },
+      ).toBe(true);
     });
   });
 });

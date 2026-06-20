@@ -4,8 +4,8 @@
  * spawning real children.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { BgShellWatcher, NAMED_SHELL_QUIESCENT_RECLAIM_CYCLES, type BgShellWatcherCallbacks, type OutputFileSample } from '../../src/main/pty/activity/background-shell/watcher';
-import type { ProcessInfo, ProcessTreeProbe } from '../../src/main/pty/activity/background-shell/process-tree';
+import { BgShellWatcher, NAMED_SHELL_QUIESCENT_RECLAIM_CYCLES, type BgShellWatcherCallbacks, type OutputFileSample } from '../../src/main/activity-engine/background-shell/watcher';
+import type { ProcessInfo, ProcessTreeProbe } from '../../src/main/activity-engine/background-shell/process-tree';
 
 class MockProcessTreeProbe implements ProcessTreeProbe {
   alive = new Set<number>();

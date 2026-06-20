@@ -20,31 +20,35 @@ vi.mock('node:util', () => ({
   promisify: (fn: unknown) => fn,
 }));
 
-vi.mock('node:fs', () => ({
-  default: {
-    existsSync: vi.fn(),
-    readdirSync: vi.fn(),
-    statSync: vi.fn(),
-    openSync: vi.fn(),
-    readSync: vi.fn(),
-    closeSync: vi.fn(),
-  },
-}));
+// The session-history walk now goes through the shared async primitives in
+// history-scan. Mock the I/O primitives (listing + head read) and keep
+// parseJsonlRecords real so the adapter's record-extraction logic is exercised;
+// the fs walk itself is covered by tests/unit/history-scan.test.ts.
+vi.mock('../../src/main/agent/shared/history-scan', async (importActual) => {
+  const actual = await importActual<typeof import('../../src/main/agent/shared/history-scan')>();
+  return {
+    ...actual,
+    listMostRecentDirs: vi.fn(),
+    listMostRecentFiles: vi.fn(),
+    readHeadBytes: vi.fn(),
+  };
+});
 
 import { execFile, exec } from 'node:child_process';
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { discoverQwenCapabilities } from '../../src/main/agent/adapters/qwen-code/capability-discovery';
+import {
+  listMostRecentDirs,
+  listMostRecentFiles,
+  readHeadBytes,
+} from '../../src/main/agent/shared/history-scan';
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
-const existsMock = fs.existsSync as unknown as ReturnType<typeof vi.fn>;
-const readdirMock = fs.readdirSync as unknown as ReturnType<typeof vi.fn>;
-const statMock = fs.statSync as unknown as ReturnType<typeof vi.fn>;
-const openMock = fs.openSync as unknown as ReturnType<typeof vi.fn>;
-const readMock = fs.readSync as unknown as ReturnType<typeof vi.fn>;
-const closeMock = fs.closeSync as unknown as ReturnType<typeof vi.fn>;
+const listDirsMock = listMostRecentDirs as unknown as ReturnType<typeof vi.fn>;
+const listFilesMock = listMostRecentFiles as unknown as ReturnType<typeof vi.fn>;
+const readHeadMock = readHeadBytes as unknown as ReturnType<typeof vi.fn>;
 
 const PROJECTS_ROOT = path.join(os.homedir(), '.qwen', 'projects');
 
@@ -54,77 +58,60 @@ function setHelpOutput(stdout: string): void {
   execFileMock.mockReturnValue(result);
 }
 
-/** Layout: `<root>/<project-hash>/chats/<sessionId>.jsonl` */
+/**
+ * Wire up the history-scan primitives for Qwen's session store.
+ * Layout: `<root>/<project-hash>/chats/<sessionId>.jsonl`
+ * listMostRecentDirs returns project dirs, listMostRecentFiles returns the
+ * .jsonl files inside each project's `chats/` dir, and readHeadBytes returns
+ * file contents. Setting the store to null makes ~/.qwen/projects appear
+ * missing (empty listings).
+ */
 type SessionTree = Record<string, Record<string, string>>;
 
 function setSessionStore(store: SessionTree | null): void {
-  existsMock.mockReset();
-  readdirMock.mockReset();
-  statMock.mockReset();
-  openMock.mockReset();
-  readMock.mockReset();
-  closeMock.mockReset();
+  listDirsMock.mockReset();
+  listFilesMock.mockReset();
+  readHeadMock.mockReset();
 
   if (store === null) {
-    existsMock.mockReturnValue(false);
+    listDirsMock.mockResolvedValue([]);
+    listFilesMock.mockResolvedValue([]);
+    readHeadMock.mockResolvedValue('');
     return;
   }
-  existsMock.mockReturnValue(true);
 
-  const fdContents = new Map<number, string>();
-  let nextFd = 100;
+  const projectNames = Object.keys(store);
 
-  readdirMock.mockImplementation((dirPath: string, options?: { withFileTypes?: boolean }) => {
-    const asDirents = (names: string[]): fs.Dirent[] =>
-      names.map((name) => ({ name, isDirectory: () => true })) as unknown as fs.Dirent[];
+  listDirsMock.mockImplementation(async (parent: string) => {
+    if (parent !== PROJECTS_ROOT) return [];
+    // Descending mtime so scan order is deterministic.
+    return projectNames.map((name, index) => ({
+      fullPath: path.join(PROJECTS_ROOT, name),
+      mtimeMs: projectNames.length - index,
+    }));
+  });
 
-    if (dirPath === PROJECTS_ROOT) {
-      const projects = Object.keys(store);
-      return options?.withFileTypes ? asDirents(projects) : projects;
-    }
-    for (const project of Object.keys(store)) {
-      const chatsPath = path.join(PROJECTS_ROOT, project, 'chats');
-      if (dirPath === chatsPath) {
-        return Object.keys(store[project]);
+  listFilesMock.mockImplementation(async (directory: string, predicate: (name: string) => boolean) => {
+    for (const projectName of projectNames) {
+      const chatsDir = path.join(PROJECTS_ROOT, projectName, 'chats');
+      if (directory === chatsDir) {
+        const fileNames = Object.keys(store[projectName]).filter(predicate);
+        return fileNames.map((fileName, index) => ({
+          fullPath: path.join(chatsDir, fileName),
+          mtimeMs: fileNames.length - index,
+        }));
       }
     }
-    throw new Error(`Unexpected readdir: ${dirPath}`);
+    return [];
   });
 
-  statMock.mockImplementation((targetPath: string) => {
-    for (const project of Object.keys(store)) {
-      const chatsPath = path.join(PROJECTS_ROOT, project, 'chats');
-      if (targetPath === chatsPath) {
-        return { mtimeMs: Date.now(), size: 0 } as fs.Stats;
+  readHeadMock.mockImplementation(async (filePath: string) => {
+    for (const [projectName, files] of Object.entries(store)) {
+      for (const [fileName, contents] of Object.entries(files)) {
+        if (filePath === path.join(PROJECTS_ROOT, projectName, 'chats', fileName)) return contents;
       }
     }
-    return { mtimeMs: Date.now(), size: 4096 } as fs.Stats;
-  });
-
-  openMock.mockImplementation((filePath: string) => {
-    for (const [project, files] of Object.entries(store)) {
-      for (const [file, contents] of Object.entries(files)) {
-        const full = path.join(PROJECTS_ROOT, project, 'chats', file);
-        if (filePath === full) {
-          const fd = nextFd++;
-          fdContents.set(fd, contents);
-          return fd;
-        }
-      }
-    }
-    throw new Error(`Unexpected open: ${filePath}`);
-  });
-
-  readMock.mockImplementation((fd: number, buffer: Buffer, _offset: number, length: number) => {
-    const text = fdContents.get(fd) ?? '';
-    const bytes = Buffer.from(text, 'utf-8');
-    const toCopy = Math.min(length, bytes.length);
-    bytes.copy(buffer, 0, 0, toCopy);
-    return toCopy;
-  });
-
-  closeMock.mockImplementation((fd: number) => {
-    fdContents.delete(fd);
+    return '';
   });
 }
 
@@ -196,7 +183,7 @@ describe('discoverQwenCapabilities', () => {
     it('extracts models from top-level `model` on assistant messages', async () => {
       setHelpOutput('  -m, --model Model\n');
       setSessionStore({
-        'c--users-tyler-documents-github-kangentic': {
+        'c--users-dev-documents-github-kangentic': {
           'sess-1.jsonl': `${userLine()}\n${assistantLine('claude-sonnet-4-6')}\n`,
         },
       });
@@ -208,7 +195,7 @@ describe('discoverQwenCapabilities', () => {
     it('extracts models from systemPayload.uiEvent.model on ui_telemetry events', async () => {
       setHelpOutput('  -m, --model Model\n');
       setSessionStore({
-        'c--users-tyler-documents-github-kangentic': {
+        'c--users-dev-documents-github-kangentic': {
           'sess-1.jsonl': uiTelemetryLine('qwen3-coder-plus') + '\n',
         },
       });
@@ -220,7 +207,7 @@ describe('discoverQwenCapabilities', () => {
     it('dedupes models that appear in both shapes', async () => {
       setHelpOutput('  -m, --model Model\n');
       setSessionStore({
-        'c--users-tyler-documents-github-kangentic': {
+        'c--users-dev-documents-github-kangentic': {
           'sess-1.jsonl': [
             uiTelemetryLine('claude-sonnet-4-6'),
             assistantLine('claude-sonnet-4-6'),
@@ -235,7 +222,7 @@ describe('discoverQwenCapabilities', () => {
     it('returns models=undefined when sessions exist but lack model fields', async () => {
       setHelpOutput('  -m, --model Model\n');
       setSessionStore({
-        'c--users-tyler-documents-github-kangentic': {
+        'c--users-dev-documents-github-kangentic': {
           'sess-1.jsonl': userLine() + '\n',
         },
       });

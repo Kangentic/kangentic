@@ -23,7 +23,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Task, Swimlane, SessionRecord } from '../../src/shared/types';
 
-vi.mock('../../src/main/engine/agent-resolver', () => ({
+vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(() => ({ agent: 'claude', isHandoff: false })),
 }));
 

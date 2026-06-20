@@ -93,19 +93,19 @@ vi.mock('../../src/main/ipc/handlers/backlog', () => ({
 vi.mock('../../src/main/ipc/handlers/git-stats-capture', () => ({
   captureGitStats: vi.fn(),
 }));
-vi.mock('../../src/main/engine/session-lifecycle', () => ({
+vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
   promoteRecord: vi.fn(),
   recoverStaleSessionId: vi.fn(),
 }));
-vi.mock('../../src/main/engine/agent-resolver', () => ({
+vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(),
 }));
-vi.mock('../../src/main/engine/injection-plan', () => ({
+vi.mock('../../src/main/transition-engine/injection-plan', () => ({
   prepareInjectionPlan: vi.fn(),
 }));
-vi.mock('../../src/main/engine/terminal-submit-scheduler', () => ({
+vi.mock('../../src/main/transition-engine/terminal-submit-scheduler', () => ({
   TerminalSubmitScheduler: class { cancelAll = vi.fn(); },
 }));
 vi.mock('../../src/main/agent/agent-registry', () => ({
@@ -142,7 +142,7 @@ import {
   getInFlightSpawnProgress,
   emitSpawnProgress,
   __resetSpawnProgressForTest,
-} from '../../src/main/engine/spawn-progress';
+} from '../../src/main/transition-engine/spawn-progress';
 import { IPC } from '../../src/shared/ipc-channels';
 
 // ---------------------------------------------------------------------------

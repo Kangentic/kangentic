@@ -1,7 +1,7 @@
 /**
- * PR resolver errors. Kept in a leaf module (no imports of pr-connectors or any
- * connector) so both the registry and individual connectors can import the error
- * class as a value without forming a circular dependency.
+ * PR resolver errors. Kept in a leaf module (no imports of the registry or any
+ * connector) so both the registry and individual provider adapters can import the
+ * error class as a value without forming a circular dependency.
  */
 
 /**

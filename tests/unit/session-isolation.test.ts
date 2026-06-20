@@ -3,7 +3,7 @@ import {
   resolveSessionTarget,
   resolveIsolatedSwimlaneId,
   resolveForceFresh,
-} from '../../src/main/engine/session-isolation';
+} from '../../src/main/transition-engine/session-isolation';
 import type { Swimlane } from '../../src/shared/types';
 
 /** Minimal swimlane stub - only the target/spawn fields matter here. */

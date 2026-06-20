@@ -13,9 +13,15 @@
 
 import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import {
+  listMostRecentDirs,
+  listMostRecentFiles,
+  readHeadBytes,
+  parseJsonlRecords,
+  SESSION_SCAN_HEAD_BYTES,
+} from '../../shared/history-scan';
 import type { AgentCapabilities } from '../../../../shared/types';
 
 const execAsync = promisify(exec);
@@ -68,95 +74,42 @@ async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
  * on `ui_telemetry` events under `systemPayload.uiEvent.model` (qwen-code's
  * observability stream). We probe both to be schema-drift resilient.
  */
-function scanQwenSessionHistory(): string[] {
+async function scanQwenSessionHistory(): Promise<string[]> {
   const modelSet = new Set<string>();
+  const projectsDir = path.join(os.homedir(), '.qwen', 'projects');
 
-  try {
-    const projectsDir = path.join(os.homedir(), '.qwen', 'projects');
-    if (!fs.existsSync(projectsDir)) {
-      return [];
-    }
+  // Rank project directories by their `chats/` subdirectory's mtime so
+  // test-artifact dirs (which never write to chats/) are skipped first. Cap at
+  // 50 to bound stat cost on heavy installs.
+  const dirs = await listMostRecentDirs(projectsDir, 50, {
+    mtimeSubpath: 'chats',
+    requireMtimeSubpath: true,
+  });
 
-    // Rank project directories by their `chats/` subdirectory's mtime so
-    // test-artifact dirs (which never write to chats/) are skipped first.
-    // Cap at 50 to bound stat cost on heavy installs.
-    const dirEntries = fs.readdirSync(projectsDir, { withFileTypes: true });
-    const dirs = dirEntries
-      .filter(e => e.isDirectory())
-      .map(e => {
-        const projectRoot = path.join(projectsDir, e.name);
-        const chatsPath = path.join(projectRoot, 'chats');
-        let chatsMtime = 0;
-        try {
-          chatsMtime = fs.statSync(chatsPath).mtimeMs;
-        } catch {
-          // No chats subdir - sort to the back.
+  for (const projectDir of dirs) {
+    const chatsDir = path.join(projectDir.fullPath, 'chats');
+    const files = await listMostRecentFiles(chatsDir, (name) => name.endsWith('.jsonl'), 3);
+    for (const { fullPath } of files) {
+      const text = await readHeadBytes(fullPath, SESSION_SCAN_HEAD_BYTES);
+      for (const record of parseJsonlRecords(text, false)) {
+        // Top-level: assistant messages carry `model`.
+        const topModel = record.model;
+        if (typeof topModel === 'string' && topModel.length > 0) {
+          modelSet.add(topModel);
         }
-        return { fullPath: projectRoot, chatsMtime };
-      })
-      .filter(e => e.chatsMtime > 0)
-      .sort((a, b) => b.chatsMtime - a.chatsMtime)
-      .slice(0, 50);
-
-    for (const projectDir of dirs) {
-      const chatsDir = path.join(projectDir.fullPath, 'chats');
-      let jsonlFiles: { fullPath: string; mtime: number }[] = [];
-      try {
-        jsonlFiles = fs.readdirSync(chatsDir)
-          .filter(f => f.endsWith('.jsonl'))
-          .map(f => {
-            const fullPath = path.join(chatsDir, f);
-            let mtime = 0;
-            try { mtime = fs.statSync(fullPath).mtimeMs; } catch { /* skip */ }
-            return { fullPath, mtime };
-          })
-          .sort((a, b) => b.mtime - a.mtime);
-      } catch {
-        continue;
-      }
-
-      // Read up to 3 most-recent session files per project
-      for (const { fullPath } of jsonlFiles.slice(0, 3)) {
-        try {
-          // Only read first 256KB to avoid huge files
-          const stats = fs.statSync(fullPath);
-          const size = Math.min(stats.size, 256 * 1024);
-          const buffer = Buffer.alloc(size);
-          const fd = fs.openSync(fullPath, 'r');
-          fs.readSync(fd, buffer, 0, size, null);
-          fs.closeSync(fd);
-
-          const content = buffer.toString('utf-8');
-          for (const line of content.split('\n')) {
-            if (!line.trim()) continue;
-            try {
-              const obj = JSON.parse(line);
-              // Top-level: assistant messages carry `model`.
-              if (typeof obj.model === 'string' && obj.model.length > 0) {
-                modelSet.add(obj.model);
-              }
-              // ui_telemetry events nest model under systemPayload.uiEvent.
-              const systemPayload = (obj as { systemPayload?: unknown }).systemPayload;
-              if (systemPayload && typeof systemPayload === 'object') {
-                const uiEvent = (systemPayload as { uiEvent?: unknown }).uiEvent;
-                if (uiEvent && typeof uiEvent === 'object') {
-                  const m = (uiEvent as { model?: unknown }).model;
-                  if (typeof m === 'string' && m.length > 0) {
-                    modelSet.add(m);
-                  }
-                }
-              }
-            } catch {
-              // Ignore unparseable lines
+        // ui_telemetry events nest model under systemPayload.uiEvent.
+        const systemPayload = record.systemPayload;
+        if (systemPayload && typeof systemPayload === 'object') {
+          const uiEvent = (systemPayload as { uiEvent?: unknown }).uiEvent;
+          if (uiEvent && typeof uiEvent === 'object') {
+            const model = (uiEvent as { model?: unknown }).model;
+            if (typeof model === 'string' && model.length > 0) {
+              modelSet.add(model);
             }
           }
-        } catch {
-          // Ignore file read errors
         }
       }
     }
-  } catch {
-    // Session history scan is best-effort
   }
 
   // Ascending alphabetical: groups by family naturally (shared prefix
@@ -185,7 +138,7 @@ export async function discoverQwenCapabilities(cliPath: string): Promise<AgentCa
   let discoveredModels: string[] = [];
   if (supportsModelOverride) {
     try {
-      discoveredModels = scanQwenSessionHistory();
+      discoveredModels = await scanQwenSessionHistory();
     } catch {
       // Session history scan failure - continue with empty list
     }

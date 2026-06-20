@@ -2,12 +2,12 @@ import { closeAll, getProjectDb } from './db/database';
 import { SessionRepository } from './db/repositories/session-repository';
 import { TaskRepository } from './db/repositories/task-repository';
 import { UsageHistoryRepository } from './db/repositories/usage-history-repository';
-import { markRecordSuspended, markRecordExited } from './engine/session-lifecycle';
+import { markRecordSuspended, markRecordExited } from './transition-engine/session-lifecycle';
 import { captureSessionMetrics } from './ipc/handlers/session-metrics';
 import type { SessionManager } from './pty/session-manager';
 import type { BoardConfigManager } from './config/board-config-manager';
 import type { DiffWatcher } from './git/diff-watcher';
-import type { TerminalSubmitScheduler } from './engine/terminal-submit-scheduler';
+import type { TerminalSubmitScheduler } from './transition-engine/terminal-submit-scheduler';
 
 interface ShutdownDependencies {
   getSessionManager: () => SessionManager;

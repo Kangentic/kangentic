@@ -146,7 +146,7 @@ When a suspended task moves to an active column:
 - The **first move OUT of Done** (the recovery / restore move, whatever the
   destination column) resumes the session WITHOUT injecting the destination
   column's `auto_command`. Restoring a Done task is usually to inspect the
-  session or ask a question, so the column automation (e.g. `/merge-back`)
+  session or ask a question, so the column automation (e.g. `/merge-pull-request`)
   sits idle until the next move. This is unconditional and matches crash
   recovery, which also resumes command-free. The drag-out-of-Done path
   (`TASK_UNARCHIVE` / `TASK_BULK_UNARCHIVE`) suppresses it directly; a
@@ -157,7 +157,7 @@ When a suspended task moves to an active column:
 
 ## Crash Recovery (Session Recovery)
 
-On project open (`src/main/engine/session-startup/`):
+On project open (`src/main/transition-engine/session-startup/`):
 
 1. **Prune orphaned worktrees** -- delete tasks whose worktree directories were removed externally
 2. **Mark crash recovery** -- leftover `running` DB records become `orphaned` (skip records with live PTYs to handle re-entrant calls)
@@ -172,7 +172,7 @@ On project open (`src/main/engine/session-startup/`):
 
 ## Isolated Sessions (Per-Column Session Model)
 
-A task can run on multiple parallel, independently-resumable sessions. Two orthogonal column fields (set on the Automation tab of the Board Manager) control the behavior; the pure rules live in `src/main/engine/session-isolation.ts`:
+A task can run on multiple parallel, independently-resumable sessions. Two orthogonal column fields (set on the Automation tab of the Board Manager) control the behavior; the pure rules live in `src/main/transition-engine/session-isolation.ts`:
 
 - **`session_target`** (`main` | `isolated`, default `main`) - which session track a task runs on. `main` is the task's shared main conversation (resumed as the task moves between normal columns); `isolated` is this column's own separate, context-isolated session, keyed by the swimlane id. Resolved by `resolveSessionTarget` / `resolveIsolatedSwimlaneId`; the discriminator is `sessions.isolated_swimlane_id` (`NULL` = main, swimlane id = isolated).
 - **`session_spawn_strategy`** (`create_or_resume` | `always_spawn_new`, default `create_or_resume`) - what to do with that track on entry. `create_or_resume` resumes the track's session if one exists, else spawns it; `always_spawn_new` always spawns fresh, retiring the prior session for that `(task, target)`. Resolved by `resolveForceFresh`, whose default is **context-aware**: an isolated column defaults to `always_spawn_new` (an independent pass each entry), a main column to `create_or_resume` (continuity), unless `session_spawn_strategy` is set explicitly.
