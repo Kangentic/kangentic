@@ -61,6 +61,18 @@ describe('spawn-progress queryable map', () => {
     expect(getInFlightSpawnProgress()['task-1']).toBe('Resolving deltas: 42%');
   });
 
+  it('createProgressCallback resolves the init-script phase to its user-facing label', () => {
+    // Regression guard for the new PHASE_LABELS entry added with the
+    // Post-Worktree Script feature. createWorktree calls onProgress('init-script')
+    // while runInitScript runs; the renderer displays the resolved label so the
+    // card shows "Running setup script..." during a long npm install.
+    const { window } = makeWindow();
+    const onProgress = createProgressCallback(window, 'task-1');
+
+    onProgress('init-script');
+    expect(getInFlightSpawnProgress()['task-1']).toBe('Running setup script...');
+  });
+
   it('emitSpawnWaiting pushes a dynamic "waiting" label with the jobs-ahead count', () => {
     const { window, send } = makeWindow();
     emitSpawnWaiting(window, 'task-1', 2);
