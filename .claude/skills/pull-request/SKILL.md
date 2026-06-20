@@ -19,6 +19,8 @@ Safely commit, rebase, create a PR, and admin-merge. Works from worktrees (creat
 
 All git commands below run from the **current working directory** -- never use `cd <path> && git ...` (triggers an unbypasable security prompt). The only exception is Step 7 which uses `git -C <projectRoot>` to target the main repo.
 
+**Speed:** the read-only pre-flight reads (branch, source branch, status) and the Step 0 typecheck are independent; issue them as parallel Bash calls in a single message rather than sequentially.
+
 1. **Detect mode:**
    - If CWD contains `.kangentic/worktrees/` -- **worktree mode** (PR workflow)
    - Otherwise -- **main repo mode** (direct push, same as `/merge-back`)
@@ -38,11 +40,13 @@ Report the mode, branch name, source branch, and working tree status before proc
 
 Run `npm run typecheck`. If it fails, report the type errors and stop -- do not proceed. Type errors must be fixed before creating a PR.
 
+**Typecheck is necessary but not sufficient.** Step 6 admin-merges past CI, so the checks you run here are the ONLY validation the change gets. For anything beyond a trivial change, run the relevant tests first (or recommend `/test` for the full tier) and tell the user the admin-merge will skip CI, so they opt in knowingly.
+
 ## Step 1 -- Commit Changes
 
 If there are uncommitted changes (non-empty `git status --porcelain` output):
 
-1. Show the user `git status` and `git diff --stat` for a summary of changes.
+1. Show the user `git status` and `git diff --stat` for a summary of changes. **Scope check (this run ends in an admin-merge to the source branch that bypasses CI, so everything staged lands unreviewed):** reconcile the working tree against the change this run is landing. If `git status` lists files you did NOT modify in this session (parallel edits from another window or tool, stale WIP), STOP and confirm with the user which changes belong in this PR before staging. Never blindly `git add -A` an unexpected working tree into the merge.
 2. **Determine the commit message:**
    - If `$ARGUMENTS` is non-empty:
      - Check if it already starts with a conventional commit prefix (`feat:`, `fix:`, `refactor:`, `chore:`, `docs:`, `test:`, `style:`, `perf:`, `ci:`, `build:`, or any of these with `!` before the colon).
@@ -138,7 +142,7 @@ After the PR is created (or an existing PR is found), link it to the Kangentic t
 
 1. Extract the PR URL from the `gh pr create` output (it prints the URL to stdout on success) or from `gh pr view` if the PR already existed.
 2. Parse the PR number from the URL (the numeric ID at the end of `/pull/<number>`).
-3. Find the current task using `kangentic_find_task` with the branch name from Step 0.
+3. Resolve the task with `kangentic_get_current_task`, passing BOTH the worktree `cwd` and the branch, so a branch renamed to a team convention still resolves via `tasks.worktree_path`. Fall back to `kangentic_find_task` by branch only if that returns nothing. (Resolving by `branch_name` alone misses tasks whose branch diverged from the stored slug.)
 4. If a task is found, call `kangentic_update_task` with the task ID, `prUrl`, and `prNumber`.
 
 If the task lookup or update fails, log the error but do not block - the PR was already created successfully. This step is best-effort alongside the automatic PR detection built into Kangentic.
@@ -150,7 +154,7 @@ Merge the PR immediately using admin privileges to bypass status check wait:
 Run: `gh pr merge <branchName> --rebase --admin --delete-branch`
 
 - `--rebase`: preserves individual commits on the source branch (no merge commits)
-- `--admin`: bypasses required status checks (safe because we already ran typecheck locally in Step 0)
+- `--admin`: bypasses required status checks. This skips CI entirely, so the local typecheck (Step 0) plus any tests you ran are the change's ONLY validation. For a non-trivial change, confirm the user accepts merging without the CI gate before running this.
 - `--delete-branch`: removes the remote worktree branch immediately after merge
 
 **If merge fails:**
