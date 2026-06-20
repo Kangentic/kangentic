@@ -18,6 +18,7 @@
 import { useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { useWindowStore } from '../store/window-store';
+import { clamp } from '../store/geometry';
 import type { ContainerSize, PixelRect } from '../store/geometry';
 import type { FractionalRect, TileNode } from '../store/types';
 import { resolveTileLayout } from '../tiling/resolve-layout';
@@ -45,10 +46,6 @@ interface FootprintDrag {
   seamNodes: Map<string, HTMLElement>;
   selfNode: HTMLElement;
   footprint: FractionalRect;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
 }
 
 function applyRect(node: HTMLElement, rect: PixelRect): void {

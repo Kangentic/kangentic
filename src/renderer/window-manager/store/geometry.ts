@@ -22,6 +22,12 @@ export interface ContainerSize {
   height: number;
 }
 
+/** Clamp a number to the inclusive [min, max] range. Shared by the drag, resize,
+ *  and footprint-resize gestures, which all bound a pixel value to a span. */
+export function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
 export function fractionalToPixels(geometry: FractionalRect, container: ContainerSize): PixelRect {
   return {
     left: geometry.x * container.width,

@@ -118,7 +118,17 @@ export function WindowLayer() {
   useEffect(() => {
     const overlay = overlayRef.current;
     if (!overlay) return;
-    const measure = () => setContainerSize({ width: overlay.clientWidth, height: overlay.clientHeight });
+    const measure = () => {
+      const width = overlay.clientWidth;
+      const height = overlay.clientHeight;
+      // Skip a no-delta resize callback: ResizeObserver can fire with identical
+      // dimensions, and a fresh {width,height} object would invalidate the
+      // treeBounds / tileLayout memos (ref-compared deps) and re-run the full
+      // tile-layout resolve for nothing.
+      setContainerSize((previous) =>
+        previous.width === width && previous.height === height ? previous : { width, height },
+      );
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(overlay);

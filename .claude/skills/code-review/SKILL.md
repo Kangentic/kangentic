@@ -135,7 +135,7 @@ Each domain below is owned by a dedicated **gated auditor finder** (see "## Find
 - Verify state transitions follow the legal state machine
 - Check `commandInjector.cancel()` is called before session state changes in handleTaskMove
 - Check generation counter / reference comparison guards are preserved
-- Check terminal ownership handoff: one xterm per session, `dialogSessionId` exclusion
+- Check terminal ownership handoff: one xterm per session, `dialogSessionIds` exclusion
 - Check `status` is not overwritten after suspend (exit handler must check current status)
 
 **Shell/agent/path files** (`shell-resolver.ts`, `command-builder.ts`, `worktree-manager.ts`, `paths.ts`, `useTerminal.ts`) -> `platform-guard`:

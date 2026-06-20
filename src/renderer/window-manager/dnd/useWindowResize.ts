@@ -15,7 +15,7 @@
 
 import { useRef } from 'react';
 import type { RefObject } from 'react';
-import { pixelsToFractional } from '../store/geometry';
+import { clamp, pixelsToFractional } from '../store/geometry';
 import type { PixelRect } from '../store/geometry';
 import { useWindowStore } from '../store/window-store';
 
@@ -60,10 +60,6 @@ interface UseWindowResizeArgs {
   windowId: string;
   frameRef: RefObject<HTMLDivElement | null>;
   overlayRef: RefObject<HTMLDivElement | null>;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
 }
 
 /** Resolve the new frame rect from the active handle and pointer delta, keeping

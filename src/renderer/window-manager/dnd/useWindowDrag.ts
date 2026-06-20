@@ -21,7 +21,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
-import { pixelsToFractional } from '../store/geometry';
+import { clamp, pixelsToFractional } from '../store/geometry';
 import type { PixelRect } from '../store/geometry';
 import { detectSnapEdge, snapEdgeToGeometry } from './snap';
 import { hideSnapPreview, showSnapPreview } from './snap-preview-controller';
@@ -107,10 +107,6 @@ interface UseWindowDragArgs {
   windowId: string;
   frameRef: RefObject<HTMLDivElement | null>;
   overlayRef: RefObject<HTMLDivElement | null>;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
 }
 
 /** Clamp a group-move pixel delta so the group's footprint stays inside the overlay. */

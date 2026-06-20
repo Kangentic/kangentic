@@ -373,7 +373,7 @@ export function TaskDetailWindow({
     handleToggleMaximized();
   }, [handleToggleMaximized]);
 
-  // -- Title bar (view header, or the edit-mode bar) --
+  // Title bar (view header, or the edit-mode bar)
 
   const viewTitleBar = (
     <TaskDetailHeader

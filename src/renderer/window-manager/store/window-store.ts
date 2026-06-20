@@ -30,6 +30,11 @@ import type { SerializedWorkspace } from '../../../shared/types';
 /** The whole overlay: the default tiling footprint (edge-snap pairs fill it). */
 const FULL_TILE_RECT: FractionalRect = { x: 0, y: 0, w: 1, h: 1 };
 
+/** Fraction of an axis within which a window counts as edge-flush / full-height
+ *  when deciding whether docking next to it should PAIR the two at 50/50. Lifted
+ *  to module scope so it sits with the other fractional thresholds. */
+const PARTNER_EDGE_TOLERANCE = 0.06;
+
 interface PreservedWindowState {
   windows: Record<string, ManagedWindow>;
   order: string[];
@@ -404,16 +409,15 @@ export const useWindowStore = create<WindowStoreState>((set, get) => ({
     // free-floating window (not full-height, not edge-flush) is NOT a partner, so
     // docking next to it leaves it independent. Only when no tree exists yet (3a
     // forms a fresh 2-up pair; nesting is 3b); falls back to a lone snap.
-    const EDGE_TOL = 0.06;
     const partner = current.tileTree
       ? undefined
       : Object.values(current.windows).find((candidate) => {
           if (candidate.id === id) return false;
           if (candidate.state !== 'snapped' && candidate.state !== 'floating') return false;
           const geometry = candidate.geometry;
-          const fullHeight = geometry.y < EDGE_TOL && geometry.y + geometry.h > 1 - EDGE_TOL;
+          const fullHeight = geometry.y < PARTNER_EDGE_TOLERANCE && geometry.y + geometry.h > 1 - PARTNER_EDGE_TOLERANCE;
           const flushToOppositeEdge =
-            edge === 'left' ? geometry.x + geometry.w > 1 - EDGE_TOL : geometry.x < EDGE_TOL;
+            edge === 'left' ? geometry.x + geometry.w > 1 - PARTNER_EDGE_TOLERANCE : geometry.x < PARTNER_EDGE_TOLERANCE;
           const isSidePane = geometry.w < 0.9;
           return fullHeight && flushToOppositeEdge && isSidePane;
         });

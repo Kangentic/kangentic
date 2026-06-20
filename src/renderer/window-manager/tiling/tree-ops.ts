@@ -31,7 +31,7 @@ export function clampTileRatio(ratio: number): number {
 }
 
 /** N equal sizes summing to 1. */
-function equalSizes(count: number): number[] {
+export function equalSizes(count: number): number[] {
   return Array.from({ length: count }, () => 1 / count);
 }
 

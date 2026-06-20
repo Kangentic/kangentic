@@ -16,6 +16,7 @@
  */
 
 import type { FractionalRect, TileNode } from '../store/types';
+import { equalSizes } from './tree-ops';
 
 export type TilePreset = 'left-half' | 'right-half' | 'top-half' | 'bottom-half' | 'columns' | 'grid';
 
@@ -51,11 +52,6 @@ export function isMultiWindowPreset(preset: TilePreset): boolean {
 export interface TileIdFactory {
   leaf: () => string;
   split: () => string;
-}
-
-/** `count` equal fractions that sum to 1. */
-function equalSizes(count: number): number[] {
-  return Array.from({ length: count }, () => 1 / count);
 }
 
 /** One leaf per window, accumulating the window-to-leaf mapping the caller needs
