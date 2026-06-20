@@ -16,8 +16,9 @@
  */
 
 import { useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, FolderPlus } from 'lucide-react';
 import { useBoardStore } from '../../renderer/stores/board-store';
+import { useProjectStore } from '../../renderer/stores/project-store';
 import { useToastStore } from '../../renderer/stores/toast-store';
 
 // Lorem source. Titles/descriptions are deliberately meaningless so that
@@ -104,6 +105,7 @@ function makeTestAttachments(): Array<{ filename: string; data: string; media_ty
 
 export function TestHarness() {
   const [creating, setCreating] = useState(false);
+  const [creatingProject, setCreatingProject] = useState(false);
 
   const handleCreateTask = async () => {
     const todoSwimlane = useBoardStore.getState().swimlanes.find((lane) => lane.role === 'todo');
@@ -132,6 +134,30 @@ export function TestHarness() {
     }
   };
 
+  // Dev-only: spawn another ephemeral project (and switch to it) so project-switch
+  // behavior can be exercised against the real app. Backed by the dev IPC; the
+  // `dev` API is absent in production builds.
+  const handleCreateProject = async () => {
+    setCreatingProject(true);
+    try {
+      const project = await window.electronAPI.dev?.createEphemeralProject();
+      if (!project) {
+        useToastStore.getState().addToast({ message: 'Ephemeral projects are dev-preview only', variant: 'warning' });
+        return;
+      }
+      await useProjectStore.getState().loadProjects();
+      await useProjectStore.getState().openProject(project.id);
+      useToastStore.getState().addToast({ message: `Created + opened ${project.name}`, variant: 'success' });
+    } catch (error) {
+      useToastStore.getState().addToast({
+        message: `Failed to create project: ${error instanceof Error ? error.message : 'unknown error'}`,
+        variant: 'error',
+      });
+    } finally {
+      setCreatingProject(false);
+    }
+  };
+
   return (
     <div
       className="fixed left-6 top-1/2 -translate-y-1/2 z-[2147483600] flex flex-col gap-1.5 rounded-lg border border-edge bg-surface-raised/95 p-1.5 shadow-2xl backdrop-blur"
@@ -147,6 +173,16 @@ export function TestHarness() {
       >
         <Plus size={16} />
         {creating ? 'Creating...' : 'Create Task'}
+      </button>
+      <button
+        type="button"
+        onClick={handleCreateProject}
+        disabled={creatingProject}
+        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
+        data-testid="dev-create-project"
+      >
+        <FolderPlus size={16} />
+        {creatingProject ? 'Creating...' : 'Create Project'}
       </button>
     </div>
   );

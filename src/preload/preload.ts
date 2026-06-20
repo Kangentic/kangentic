@@ -397,4 +397,10 @@ const api: ElectronAPI = {
   },
 };
 
+// Dev-only: expose the preview's ephemeral-project creator behind the same
+// __KANGENTIC_DEV__ guard as the inspection hooks above, so production drops it.
+if (__KANGENTIC_DEV__) {
+  api.dev = { createEphemeralProject: () => ipcRenderer.invoke(IPC.DEV_CREATE_EPHEMERAL_PROJECT) };
+}
+
 contextBridge.exposeInMainWorld('electronAPI', api);

@@ -2214,6 +2214,11 @@ export interface BoardConfig {
 // === Preload API (exposed to renderer via contextBridge) ===
 
 export interface ElectronAPI {
+  // Dev-only (preview): present only when __KANGENTIC_DEV__ (build-excluded in prod).
+  dev?: {
+    /** Create + return a synthetic ephemeral project for the preview. */
+    createEphemeralProject: () => Promise<Project>;
+  };
   // Projects
   projects: {
     list: () => Promise<Project[]>;
