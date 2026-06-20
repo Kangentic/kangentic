@@ -128,6 +128,22 @@ test.describe('Settings Panel', () => {
     await closeSettings();
   });
 
+  test('Terminal tab Cursor Style select includes None (hidden) option', async () => {
+    await openSettings();
+    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+
+    // Locate the Cursor Style select via its description text, then walk up to
+    // the SettingRow root and find the select within it.
+    const cursorDescription = page.getByText('Terminal cursor appearance');
+    await expect(cursorDescription).toBeVisible();
+    const cursorStyleRow = cursorDescription.locator('..').locator('..').locator('..');
+    const cursorStyleSelect = cursorStyleRow.locator('select');
+    const optionTexts = await cursorStyleSelect.locator('option').allTextContents();
+    expect(optionTexts).toEqual(['Block', 'Underline', 'Bar', 'None (hidden)']);
+
+    await closeSettings();
+  });
+
   test('shows Git tab with worktree and branch settings', async () => {
     await openSettings();
     await page.getByRole('button', { name: 'Git' }).click();
