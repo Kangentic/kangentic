@@ -305,6 +305,20 @@ export function TaskDetailDialog({ task, onClose, initialEdit }: TaskDetailDialo
     return () => clearTimeout(refitTimer);
   }, [isDialogMaximized, hasSessionContext]);
 
+  // After a maximize toggle the header maximize button holds DOM focus; return
+  // focus to the embedded agent terminal so the next keystroke lands there.
+  // Routed through a session-scoped event the nested TerminalTab listens for
+  // (the dialog does not own the terminal's focus()). NOT terminal-panel-resize:
+  // that also fires on sidebar/drag resizes, so it would steal focus then too.
+  const focusSessionId = sessionState.session?.id;
+  useEffect(() => {
+    if (!hasSessionContext || !focusSessionId) return;
+    const focusTimer = setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('terminal-focus-request', { detail: { sessionId: focusSessionId } }));
+    }, 120);
+    return () => clearTimeout(focusTimer);
+  }, [isDialogMaximized, hasSessionContext, focusSessionId]);
+
   // -- Render --
 
   if (actions.confirmSendToBacklog) {

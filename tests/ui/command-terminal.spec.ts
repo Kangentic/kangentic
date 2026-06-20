@@ -394,10 +394,18 @@ test.describe('Command Terminal', () => {
         await expect(overlay).toHaveClass(/top-10/);
         await expect(overlay).toHaveClass(/bottom-9/);
 
+        // Clicking the maximize button returns focus to the terminal (xterm
+        // keeps keyboard focus on a hidden helper textarea), not the button, so
+        // the next keystroke lands in the terminal. toBeFocused auto-retries,
+        // absorbing the requestAnimationFrame the refocus is scheduled on.
+        await expect(overlay.locator('.xterm-helper-textarea')).toBeFocused();
+
         // Ctrl+Shift+M restores (terminal-safe combo).
         await sharedPage.keyboard.press('Control+Shift+M');
         await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
         await expect(overlay).toHaveClass(/inset-0/);
+        // Restoring also returns focus to the terminal.
+        await expect(overlay.locator('.xterm-helper-textarea')).toBeFocused();
 
         // Ctrl+Shift+W hides the overlay; the transient session stays alive.
         await sharedPage.keyboard.press('Control+Shift+W');

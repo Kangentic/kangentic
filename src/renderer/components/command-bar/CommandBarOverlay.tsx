@@ -200,11 +200,17 @@ export function CommandBarOverlay({ onClose }: CommandBarOverlayProps) {
     }
   }, [phase, fit, focus]);
 
-  // Re-fit terminal when the changes panel toggles or the overlay maximizes
-  // (container dimensions change).
+  // Re-fit terminal when the changes panel toggles (container width changes).
   useEffect(() => {
     if (initialized.current) requestAnimationFrame(() => fit());
-  }, [changesOpen, isMaximized, fit]);
+  }, [changesOpen, fit]);
+
+  // Re-fit AND restore focus on maximize/restore. The toggle (button click,
+  // double-click header, or panel.maximize keybinding) moves DOM focus to the
+  // maximize button; return it to the terminal so the next keystroke lands there.
+  useEffect(() => {
+    if (initialized.current) requestAnimationFrame(() => { fit(); focus(); });
+  }, [isMaximized, fit, focus]);
 
   const defaultBranch = config.git.defaultBaseBranch || 'main';
 

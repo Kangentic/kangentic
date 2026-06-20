@@ -198,14 +198,25 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     const handlePanelResize = () => scheduleRefit(50);
     window.addEventListener('terminal-panel-resize', handlePanelResize);
 
+    // Restore focus to this terminal on request (e.g. after a dialog maximize
+    // toggle moved DOM focus to the maximize button). Session-scoped so an
+    // event meant for another terminal cannot steal focus here.
+    const handleFocusRequest = (event: Event) => {
+      const requestedSessionId = (event as CustomEvent<{ sessionId?: string }>).detail?.sessionId;
+      if (requestedSessionId && requestedSessionId !== sessionId) return;
+      if (initialized.current) requestAnimationFrame(() => focus());
+    };
+    window.addEventListener('terminal-focus-request', handleFocusRequest);
+
     return () => {
       cancelAnimationFrame(initRafId);
       clearTimeout(delayedFitId);
       if (resizeTimer) clearTimeout(resizeTimer);
       observer.disconnect();
       window.removeEventListener('terminal-panel-resize', handlePanelResize);
+      window.removeEventListener('terminal-focus-request', handleFocusRequest);
     };
-  }, [active, fit, focus, scrollbackPending, terminalRef]);
+  }, [active, fit, focus, scrollbackPending, terminalRef, sessionId]);
 
   const fileDrop = useTerminalFileDrop(sessionId, focus, sessionShell);
 
