@@ -138,7 +138,7 @@ test.describe('TaskDetailEditForm - Name from prompt button', () => {
     await openNewTaskDialog();
     await page.locator('input[placeholder="Task title"]').fill(cardTitle);
     await page.locator('.fixed textarea').first().fill('Real description for the existing task');
-    await page.locator('button:has-text("Create")').click();
+    await page.locator('button[type="submit"]:has-text("Create")').click();
     // Wait for the NewTaskDialog backdrop to fully unmount before clicking the
     // card. The card can appear in the DOM while the backdrop is still animating
     // out (150ms exit animation), and a click on the card during that window is

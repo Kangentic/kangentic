@@ -146,13 +146,17 @@ async function waitForSession(taskTitle: string, timeoutMs = 15000): Promise<voi
 
 /** Open the kebab menu in the task detail dialog and click an action */
 async function clickKebabAction(dialog: ReturnType<Page['locator']>, actionText: string) {
-  // Click the kebab (MoreHorizontal) button -- it's the icon-only button before the divider
+  // Click the kebab (MoreHorizontal) button scoped to the task-detail window.
   const kebabButton = dialog.locator('button[title="Actions"]');
   await kebabButton.waitFor({ state: 'visible', timeout: 3000 });
   await kebabButton.click();
 
-  // Click the action in the dropdown
-  const actionButton = dialog.locator('button', { hasText: new RegExp(`^${actionText}$`) });
+  // The KebabMenu renders its dropdown via a portal (OverlayPopover portal=true),
+  // which appends the popover to document.body OUTSIDE the task-detail-dialog
+  // subtree. Scope the action click to page-level, not dialog-level, so the
+  // portal element is reachable. Filter to exact text match only so "Archive"
+  // does not also match a hypothetical "Archive task" button.
+  const actionButton = page.locator('button', { hasText: new RegExp(`^${actionText}$`) });
   await actionButton.waitFor({ state: 'visible', timeout: 3000 });
   await actionButton.click();
 }
@@ -414,9 +418,14 @@ test.describe('Task Delete', () => {
     await dialog.waitFor({ state: 'visible', timeout: 3000 });
     await dialog.locator('button:has-text("Delete")').click();
 
-    // Confirm deletion
-    await page.locator('text=This action cannot be undone.').waitFor({ state: 'visible', timeout: 3000 });
-    await page.locator('button:has-text("Delete")').click();
+    // Confirm deletion. The window is modeless (stays in the DOM while the
+    // ConfirmDialog is open), so a bare 'button:has-text("Delete")' resolves to
+    // BOTH the window-footer Delete and the ConfirmDialog's Delete button -
+    // strict-mode violation. Scope to the ConfirmDialog's backdrop, which is the
+    // only element containing "This action cannot be undone.", to disambiguate.
+    const confirmBackdrop = page.locator('.fixed.inset-0').filter({ hasText: 'This action cannot be undone.' });
+    await confirmBackdrop.waitFor({ state: 'visible', timeout: 3000 });
+    await confirmBackdrop.locator('button:has-text("Delete")').click();
 
     // Verify app is still alive and task is gone from board
     await waitForBoard(page);

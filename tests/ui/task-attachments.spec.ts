@@ -216,8 +216,8 @@ test.describe('Image Attachments', () => {
 
     await page.waitForTimeout(500);
 
-    // Submit the form
-    const createButton = page.locator('button:has-text("Create")');
+    // Submit the form (type="submit" distinguishes from dev-only TestHarness buttons)
+    const createButton = page.locator('button[type="submit"]:has-text("Create")');
     await createButton.click();
     await page.waitForTimeout(300);
 
