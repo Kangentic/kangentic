@@ -48,7 +48,9 @@ export type { CompletionGate } from './completion-gate';
  * counts to report) can still lock the dialog into its danger styling.
  * `currentBranch` is the worktree's live HEAD branch (null on detached HEAD or
  * probe failure); the dialog prefers it over the stored slug, which agents
- * rename inside the worktree.
+ * rename inside the worktree. `autoCleanup` is captured at drop time so the
+ * dialog can state the branch's real fate: kept (recreatable) when off,
+ * force-deleted when on.
  */
 export type PendingDoneConfirm =
   | {
@@ -59,6 +61,7 @@ export type PendingDoneConfirm =
       uncommittedFileCount: number;
       unpushedCommitCount: number;
       currentBranch: string | null;
+      autoCleanup: boolean;
     }
   | {
       kind: 'direct';
@@ -68,6 +71,7 @@ export type PendingDoneConfirm =
       uncommittedFileCount: number;
       unpushedCommitCount: number;
       currentBranch: string | null;
+      autoCleanup: boolean;
     };
 
 /**

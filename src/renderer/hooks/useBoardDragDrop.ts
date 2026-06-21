@@ -23,6 +23,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { useBoardStore } from '../stores/board-store';
 import { useToastStore } from '../stores/toast-store';
 import { useProjectStore } from '../stores/project-store';
+import { useConfigStore } from '../stores/config-store';
 import { beginBoardDrag, endBoardDrag } from '../lib/session-update-coalescer';
 import type { Task, Swimlane as SwimlaneType } from '../../shared/types';
 
@@ -519,13 +520,23 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
       // the user confirms the dialog). The no-rect fallback can't animate, so it
       // awaits the probe before deciding, as before.
       const worktreePath = task.worktree_path;
+      // Captured at drop time (interaction-time correct): whether the Done move
+      // will force-delete the branch, plus the linked PR so the probe can tell
+      // merged-and-safe commits from genuinely at-risk ones.
+      const autoCleanup = useConfigStore.getState().config.git.autoCleanup;
       const probe = async () => {
         try {
-          return await window.electronAPI.git.checkPendingChanges({ checkPath: worktreePath });
+          const result = await window.electronAPI.git.checkPendingChanges({
+            checkPath: worktreePath,
+            autoCleanup,
+            prNumber: task.pr_number,
+            prState: task.pr_state,
+          });
+          return { ...result, autoCleanup };
         } catch {
           // Treat git failures as "potentially has changes" - safer to ask
           // than to silently destroy. Mirrors the To Do path in task-slice.ts.
-          return { uncommittedFileCount: 0, unpushedCommitCount: 0, hasPendingChanges: true, currentBranch: null };
+          return { uncommittedFileCount: 0, unpushedCommitCount: 0, hasPendingChanges: true, currentBranch: null, autoCleanup };
         }
       };
 

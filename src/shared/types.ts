@@ -933,11 +933,29 @@ export interface GitDiffFileEntry {
 export interface GitPendingChangesInput {
   /** Path to check - worktree path or project path */
   checkPath: string;
+  /**
+   * Whether the move that follows will force-delete the branch (git autoCleanup).
+   * Only-local commits are at risk of loss only when the branch is deleted; with
+   * the branch kept they stay reachable on its ref and must not warn. Defaults to
+   * true (conservative) when omitted.
+   */
+  autoCleanup?: boolean;
+  /** Linked PR number, used to detect a squash-merge that patch-id cannot see. */
+  prNumber?: number | null;
+  /** Last-known linked PR state; a stored 'merged' avoids a fresh `gh` lookup. */
+  prState?: PRState | null;
 }
 
 export interface GitPendingChangesResult {
   hasPendingChanges: boolean;
   uncommittedFileCount: number;
+  /**
+   * Commits that exist only on this local branch and nowhere recoverable (not
+   * pushed, not merged by content, not in a merged PR), AND that the pending
+   * move would actually destroy by force-deleting the branch. Zero when the
+   * branch will be kept, since the commits then survive on its ref. Despite the
+   * legacy name, this is "at-risk local-only commits," not merely "unpushed."
+   */
   unpushedCommitCount: number;
   /**
    * The worktree's live HEAD branch, or null on a detached HEAD or probe

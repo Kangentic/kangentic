@@ -41,7 +41,16 @@ function makePreConfig(options: {
   // Pass null to simulate a task that was created without a branch (edge case
   // tested by the null-displayBranch + unpushed-commits scenario).
   branchName?: string | null;
+  // When false, a project-config override turns git.autoCleanup off so the Done
+  // move keeps the branch. The dialog then states the branch is kept and never
+  // warns about only-local commits. Defaults to the mock global (true).
+  autoCleanup?: boolean;
 } = {}): string {
+  // Project-config override applied via projectConfigs so config.get() (which
+  // merges the current project's overrides) returns the desired autoCleanup.
+  const autoCleanupOverride = options.autoCleanup === false
+    ? `state.projectConfigs['/mock/done-confirm-test'] = { git: { autoCleanup: false } };`
+    : '';
   const pendingChanges = options.pendingChanges;
   const currentBranchLiteral = pendingChanges && pendingChanges.currentBranch !== undefined
     ? JSON.stringify(pendingChanges.currentBranch)
@@ -117,6 +126,7 @@ function makePreConfig(options: {
       });
 
       ${pendingChangesOverride}
+      ${autoCleanupOverride}
 
       return { currentProjectId: '${PROJECT_ID}' };
     });
@@ -189,17 +199,44 @@ test.describe('Move to Done - Delete Worktree Confirmation', () => {
       const dialog = page.locator('text=Move to Done?');
       await expect(dialog).toBeVisible({ timeout: 3000 });
 
-      // Dialog enumerates the trade-off as bullets: worktree deleted,
-      // branch unaffected (with concrete branch name shown), session kept.
-      // Plus a closing line about resume restoring both.
+      // Dialog enumerates the trade-off as bullets: worktree deleted, branch
+      // force-deleted (autoCleanup default on, with the branch name shown),
+      // session kept. The "recreated from the branch" line is absent because the
+      // branch is gone.
       await expect(page.locator('text=Local worktree will be deleted')).toBeVisible();
-      await expect(page.locator('text=will be unaffected')).toBeVisible();
+      await expect(page.locator('[data-testid="done-confirm-branch-fate"]')).toContainText('will be deleted');
       await expect(page.locator('text=ready-to-ship-abcd1234')).toBeVisible();
       await expect(page.locator('text=Session history will be kept')).toBeVisible();
-      await expect(page.locator("text=the worktree will be recreated from the branch's last commit")).toBeVisible();
+      await expect(page.locator("text=the worktree will be recreated from the branch's last commit")).toHaveCount(0);
 
       await expect(page.locator('button:has-text("Move")').first()).toBeVisible();
       await expect(page.locator('button:has-text("Cancel")')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('keeps the branch and omits the commit-loss warning when autoCleanup is off', async () => {
+    // With autoCleanup off the Done move keeps the branch, so only-local commits
+    // are recoverable and must not warn; the dialog states the branch is kept and
+    // offers worktree recreation. The dialog still opens for the uncommitted file.
+    const { browser, page } = await launchWithState(
+      makePreConfig({
+        autoCleanup: false,
+        pendingChanges: { uncommittedFileCount: 1, unpushedCommitCount: 0 },
+      }),
+    );
+
+    try {
+      await page.locator('[data-swimlane-name="Done"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      await dragTaskToColumn(page, 'Ready To Ship', 'Done');
+
+      await expect(page.locator('text=Move to Done?')).toBeVisible({ timeout: 3000 });
+      await expect(page.locator('[data-testid="done-confirm-branch-fate"]')).toContainText('will be kept');
+      await expect(page.locator("text=the worktree will be recreated from the branch's last commit")).toBeVisible();
+      // No commit-loss warning when the branch survives.
+      await expect(page.locator('[data-testid="done-confirm-unpushed"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -324,8 +361,12 @@ test.describe('Move to Done - Delete Worktree Confirmation', () => {
       await dragTaskToColumn(page, 'Ready To Ship', 'Done');
 
       await expect(page.locator('text=Move to Done?')).toBeVisible({ timeout: 3000 });
-      // Unpushed commits are kept (branch preserved), so the copy says "remain".
-      await expect(page.locator('text=2 commits remain only on the local branch')).toBeVisible();
+      // autoCleanup is on (mock default), so the branch is deleted and only-local
+      // commits are genuine loss. Use the testid because the branch name renders
+      // in a nested <code>, splitting the text node.
+      const unpushed = page.locator('[data-testid="done-confirm-unpushed"]');
+      await expect(unpushed).toContainText('2 commits exist only on');
+      await expect(unpushed).toContainText('will be lost when the branch is deleted');
     } finally {
       await browser.close();
     }
@@ -389,7 +430,7 @@ test.describe('Move to Done - Delete Worktree Confirmation', () => {
                 requestDoneConfirmDirect: (
                   task: { id: string; title: string; branch_name: string; worktree_path: string },
                   input: { taskId: string; targetSwimlaneId: string; targetPosition: number },
-                  pendingChanges: { hasPendingChanges: boolean; uncommittedFileCount: number; unpushedCommitCount: number; currentBranch: string | null },
+                  pendingChanges: { hasPendingChanges: boolean; uncommittedFileCount: number; unpushedCommitCount: number; currentBranch: string | null; autoCleanup: boolean },
                 ) => void;
               };
             };
@@ -407,15 +448,17 @@ test.describe('Move to Done - Delete Worktree Confirmation', () => {
             targetSwimlaneId: 'lane-done',
             targetPosition: 0,
           },
-          { hasPendingChanges: true, uncommittedFileCount: 2, unpushedCommitCount: 1, currentBranch: null },
+          { hasPendingChanges: true, uncommittedFileCount: 2, unpushedCommitCount: 1, currentBranch: null, autoCleanup: true },
         );
       });
 
       // The dialog should appear with the correct content.
       await expect(page.locator('text=Move to Done?')).toBeVisible({ timeout: 3000 });
       await expect(page.locator('text=2 uncommitted files will be lost')).toBeVisible();
-      // Singular "remains" for a single unpushed commit (kept on the branch).
-      await expect(page.locator('text=1 commit remains only on the local branch')).toBeVisible();
+      // Singular "exists" for a single at-risk commit (branch force-deleted).
+      const unpushed = page.locator('[data-testid="done-confirm-unpushed"]');
+      await expect(unpushed).toContainText('1 commit exists only on');
+      await expect(unpushed).toContainText('will be lost when the branch is deleted');
     } finally {
       await browser.close();
     }
@@ -553,9 +596,9 @@ test.describe('Move to Done - Delete Worktree Confirmation', () => {
     }
   });
 
-  test('styles uncommitted files as danger and unpushed commits as a warning', async () => {
-    // Red is reserved for genuinely destroyed data (uncommitted files). Unpushed
-    // commits are kept on the preserved branch, so they render amber, not red.
+  test('styles both uncommitted files and at-risk commits as danger', async () => {
+    // With autoCleanup on (mock default) the branch is force-deleted, so both
+    // uncommitted files and only-local commits are genuinely destroyed: both red.
     const { browser, page } = await launchWithState(
       makePreConfig({
         pendingChanges: { uncommittedFileCount: 2, unpushedCommitCount: 3 },
@@ -574,7 +617,7 @@ test.describe('Move to Done - Delete Worktree Confirmation', () => {
       await expect(uncommitted).toBeVisible();
       await expect(unpushed).toBeVisible();
       await expect(uncommitted).toHaveClass(/text-red-400/);
-      await expect(unpushed).toHaveClass(/text-yellow-400/);
+      await expect(unpushed).toHaveClass(/text-red-400/);
     } finally {
       await browser.close();
     }
@@ -584,10 +627,10 @@ test.describe('Move to Done - Delete Worktree Confirmation', () => {
   // Null displayBranch + unpushed commits: edge case in BoardDialogs.tsx
   //
   // When BOTH task.branch_name and currentBranch are null, displayBranch is null.
-  // The template branches on `branchCode && ...` (null -> falsy) so the unpushed
-  // bullet must omit the "(kept on branch X)" clause, and the "Branch ... will
-  // be unaffected" green bullet must be absent entirely. This guards the
-  // `{displayBranch && (...)}` conditional in BoardDialogs.tsx.
+  // The commit-loss bullet falls back to the generic "the local branch" wording,
+  // and the branch-fate bullet (kept/deleted) is absent entirely because there is
+  // no branch name to surface. This guards the `{displayBranch && (...)}` and
+  // `branchCode ? ... : 'the local branch'` conditionals in BoardDialogs.tsx.
   // ---------------------------------------------------------------------------
   test('null displayBranch with unpushed commits omits branch clauses', async () => {
     // Seed a task with no branch_name AND a probe that returns currentBranch: null
@@ -606,20 +649,15 @@ test.describe('Move to Done - Delete Worktree Confirmation', () => {
 
       await expect(page.locator('text=Move to Done?')).toBeVisible({ timeout: 3000 });
 
-      // The unpushed-commit bullet must be visible (this is a pending-changes dialog).
+      // The commit-loss bullet must be visible (this is a pending-changes dialog).
       const unpushedBullet = page.locator('[data-testid="done-confirm-unpushed"]');
       await expect(unpushedBullet).toBeVisible();
 
-      // The bullet text must say "remain only on the local branch" (the generic
-      // copy that does not mention a specific branch name).
-      await expect(unpushedBullet).toContainText('remain only on the local branch');
+      // The bullet uses the generic "the local branch" wording (no branch name).
+      await expect(unpushedBullet).toContainText('exist only on the local branch');
 
-      // The "(kept on branch X)" parenthetical must NOT appear anywhere.
-      await expect(page.locator('text=(kept on branch')).toHaveCount(0);
-
-      // The green "Branch ... will be unaffected" bullet must be absent because
-      // displayBranch is null (there is no branch name to surface).
-      await expect(page.locator('text=will be unaffected')).toHaveCount(0);
+      // No branch-fate bullet (kept/deleted) renders without a branch name.
+      await expect(page.locator('[data-testid="done-confirm-branch-fate"]')).toHaveCount(0);
     } finally {
       await browser.close();
     }

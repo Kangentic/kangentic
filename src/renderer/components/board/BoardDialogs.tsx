@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { Check } from 'lucide-react';
+import { Check, Trash2 } from 'lucide-react';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { BoardManagerDialog } from '../dialogs/BoardManagerDialog';
 import { useBoardStore } from '../../stores/board-store';
@@ -126,7 +126,7 @@ export function BoardDialogs() {
       )}
 
       {pendingDoneConfirm && (() => {
-        const { hasPendingChanges, uncommittedFileCount, unpushedCommitCount } = pendingDoneConfirm;
+        const { hasPendingChanges, uncommittedFileCount, unpushedCommitCount, autoCleanup } = pendingDoneConfirm;
         // Prefer the worktree's live HEAD branch over the stored slug: agents
         // rename branches inside the worktree, so the slug can be stale.
         const displayBranch = pendingDoneConfirm.currentBranch ?? pendingDoneConfirm.task.branch_name;
@@ -150,8 +150,8 @@ export function BoardDialogs() {
                   "{pendingDoneConfirm.task.title}"
                 </p>
                 {/* Red is reserved for data the move genuinely destroys:
-                    uncommitted files (and the probe-failure fallback, where the
-                    worktree is suspect). */}
+                    uncommitted files, at-risk local-only commits (below), and the
+                    probe-failure fallback where the worktree is suspect. */}
                 {uncommittedFileCount > 0 && (
                   <ul className="list-disc list-inside text-red-400 font-medium" data-testid="done-confirm-uncommitted">
                     <li>
@@ -167,13 +167,18 @@ export function BoardDialogs() {
                     Unable to verify pending changes. There may be unsaved work.
                   </p>
                 )}
-                {/* Unpushed commits are NOT lost on Done: the branch is
-                    preserved. Amber, not red, and worded to say so. */}
-                {unpushedCommitCount > 0 && (
-                  <ul className="list-disc list-inside text-yellow-400 font-medium" data-testid="done-confirm-unpushed">
+                {/* The count is non-zero only when the move force-deletes the
+                    branch (autoCleanup) AND the commits exist nowhere
+                    recoverable, so this is genuine loss: red, worded to say so.
+                    Merged or pushed commits are already excluded upstream. The
+                    `autoCleanup` guard is redundant with the probe (which zeroes
+                    the count when the branch is kept) but keeps the dialog
+                    self-consistent: no "will be lost when the branch is deleted"
+                    line while the branch is being kept. */}
+                {autoCleanup && unpushedCommitCount > 0 && (
+                  <ul className="list-disc list-inside text-red-400 font-medium" data-testid="done-confirm-unpushed">
                     <li>
-                      {unpushedCommitCount} commit{unpushedCommitCount !== 1 ? 's' : ''} remain{unpushedCommitCount !== 1 ? '' : 's'} only on the local branch
-                      {branchCode && <> (kept on branch {branchCode})</>}
+                      {unpushedCommitCount} commit{unpushedCommitCount !== 1 ? 's' : ''} exist{unpushedCommitCount !== 1 ? '' : 's'} only on {branchCode ? <>branch {branchCode}</> : 'the local branch'} and will be lost when the branch is deleted
                     </li>
                   </ul>
                 )}
@@ -183,21 +188,34 @@ export function BoardDialogs() {
                     <span>Local worktree will be deleted</span>
                   </li>
                   {displayBranch && (
-                    <li className="flex items-start gap-2">
-                      <Check size={14} className="text-emerald-500 mt-0.5 shrink-0" aria-hidden />
-                      <span>
-                        Branch {branchCode} will be unaffected
-                      </span>
-                    </li>
+                    autoCleanup ? (
+                      // Branch is force-deleted on this move; state it plainly
+                      // rather than the old (false) "will be unaffected".
+                      <li className="flex items-start gap-2" data-testid="done-confirm-branch-fate">
+                        <Trash2 size={14} className="text-fg-muted mt-0.5 shrink-0" aria-hidden />
+                        <span>
+                          Branch {branchCode} will be deleted
+                        </span>
+                      </li>
+                    ) : (
+                      <li className="flex items-start gap-2" data-testid="done-confirm-branch-fate">
+                        <Check size={14} className="text-emerald-500 mt-0.5 shrink-0" aria-hidden />
+                        <span>
+                          Branch {branchCode} will be kept
+                        </span>
+                      </li>
+                    )
                   )}
                   <li className="flex items-start gap-2">
                     <Check size={14} className="text-emerald-500 mt-0.5 shrink-0" aria-hidden />
                     <span>Session history will be kept</span>
                   </li>
                 </ul>
-                <p className="text-fg-muted">
-                  If this task is resumed, the worktree will be recreated from the branch's last commit.
-                </p>
+                {!autoCleanup && (
+                  <p className="text-fg-muted">
+                    If this task is resumed, the worktree will be recreated from the branch's last commit.
+                  </p>
+                )}
               </div>
             }
             onConfirm={() => void confirmPendingDone()}
