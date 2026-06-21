@@ -33,7 +33,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
   const setActiveSession = useSessionStore((s) => s.setActiveSession);
   const selectActiveSession = useSessionStore((s) => s.selectActiveSession);
   const setDetailTaskId = useSessionStore((s) => s.setDetailTaskId);
-  const dialogSessionId = useSessionStore((s) => s.dialogSessionId);
+  const dialogSessionIds = useSessionStore((s) => s.dialogSessionIds);
   const markSingleIdleSessionSeen = useSessionStore((s) => s.markSingleIdleSessionSeen);
 
   // Only show sessions that are actively running.
@@ -233,8 +233,8 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
             {activeSessions
               .filter((session) => {
                 const isActiveTab = effectiveActiveId === session.id;
-                const ownedByDialog = dialogSessionId === session.id;
-                return isActiveTab && !ownedByDialog;
+                const ownedByWindow = dialogSessionIds.includes(session.id);
+                return isActiveTab && !ownedByWindow;
               })
               .map((session) => (
                 <div
@@ -250,8 +250,8 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
               ))}
           </div>
 
-          {/* Context bar for individual session tabs (hidden when dialog owns the session) */}
-          {effectiveActiveId && effectiveActiveId !== ACTIVITY_TAB && effectiveActiveId !== dialogSessionId && (
+          {/* Context bar for individual session tabs (hidden when a window owns the session) */}
+          {effectiveActiveId && effectiveActiveId !== ACTIVITY_TAB && !dialogSessionIds.includes(effectiveActiveId) && (
             <ContextBar sessionId={effectiveActiveId} agentFallback={projectDefaultAgent} />
           )}
         </>

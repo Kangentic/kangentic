@@ -93,7 +93,7 @@ test.describe('Clipboard image compression', () => {
     await expect(page.locator('text=1 attachment')).toBeVisible({ timeout: 5000 });
 
     // Submit, then read the recorded attachment via the mock IPC.
-    await page.locator('button:has-text("Create")').click();
+    await page.locator('button[type="submit"]:has-text("Create")').click();
     await expect(page.locator('input[placeholder="Task title"]')).not.toBeVisible();
 
     const attachments = await findAttachmentsByTaskTitle(taskTitle);
@@ -132,7 +132,7 @@ test.describe('Clipboard image compression', () => {
 
     await expect(page.locator('text=1 attachment')).toBeVisible({ timeout: 5000 });
 
-    await page.locator('button:has-text("Create")').click();
+    await page.locator('button[type="submit"]:has-text("Create")').click();
     await expect(page.locator('input[placeholder="Task title"]')).not.toBeVisible();
 
     const attachments = await findAttachmentsByTaskTitle(taskTitle);

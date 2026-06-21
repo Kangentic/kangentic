@@ -98,7 +98,7 @@ function resetStores(options: { currentProjectId?: string } = {}): void {
     _sessionByTaskId: new Map(),
     activeSessionId: null,
     detailTaskId: null,
-    dialogSessionId: null,
+    dialogSessionIds: [],
     sessionUsage: {},
     sessionFirstOutput: {},
     sessionActivity: {},

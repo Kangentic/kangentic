@@ -16,18 +16,25 @@ export interface TerminalResizeState {
   handleTransitionEnd: () => void;
 }
 
-export function useTerminalResize(config: AppConfig): TerminalResizeState {
+export function useTerminalResize(config: AppConfig, forceCollapsed = false): TerminalResizeState {
   const [height, setHeight] = useState(config.terminal.panelHeight);
+  // User-toggled collapse (persisted). The EFFECTIVE collapse below folds in
+  // `forceCollapsed` (a task-detail window is open) without overwriting this, so
+  // the user's preference is restored when the last window closes.
   const [collapsed, setCollapsed] = useState(config.terminal.panelCollapsed ?? false);
   const [isResizing, setIsResizing] = useState(false);
-  const [showContent, setShowContent] = useState(!(config.terminal.panelCollapsed ?? false));
+  const [showContent, setShowContent] = useState(!((config.terminal.panelCollapsed ?? false) || forceCollapsed));
   const [ready, setReady] = useState(false);
+
+  // The panel collapses if the user collapsed it OR a task-detail window is open
+  // (the panel steps aside while windows own the terminals). Everything
+  // animated/returned keys off this; `collapsed` stays the user's preference.
+  const effectiveCollapsed = collapsed || forceCollapsed;
 
   const latestHeightRef = useRef(height);
   const terminalConfigRef = useRef(config.terminal);
   terminalConfigRef.current = config.terminal;
-  const collapsedRef = useRef(collapsed);
-  collapsedRef.current = collapsed;
+  const effectiveCollapsedRef = useRef(effectiveCollapsed);
   const availableHeightRef = useRef(0);
   const contentColRef = useRef<HTMLDivElement>(null);
   const contentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -52,6 +59,26 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
       if (contentTimerRef.current) clearTimeout(contentTimerRef.current);
     };
   }, []);
+
+  // Drive showContent on every effectiveCollapsed transition (whether the user
+  // toggled or a window opened/closed). Collapsing: hide content after the 200ms
+  // height animation. Expanding: handleTransitionEnd remounts it once the
+  // container reaches full height (so the terminal fits at the right size).
+  useEffect(() => {
+    const wasCollapsed = effectiveCollapsedRef.current;
+    effectiveCollapsedRef.current = effectiveCollapsed;
+    if (wasCollapsed === effectiveCollapsed) return;
+    if (contentTimerRef.current) {
+      clearTimeout(contentTimerRef.current);
+      contentTimerRef.current = null;
+    }
+    if (effectiveCollapsed) {
+      contentTimerRef.current = setTimeout(() => {
+        setShowContent(false);
+        contentTimerRef.current = null;
+      }, 200);
+    }
+  }, [effectiveCollapsed]);
 
   const getMaxHeight = useCallback(() => {
     return Math.floor(availableHeightRef.current / 2) - 4;
@@ -94,29 +121,13 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
   }, [clampHeight]);
 
   const onToggleCollapse = useCallback(() => {
-    if (contentTimerRef.current) {
-      clearTimeout(contentTimerRef.current);
-      contentTimerRef.current = null;
-    }
+    // Only the user's preference flips here; the showContent timing is driven by
+    // the effectiveCollapsed effect above (which also reacts to windows opening).
     setCollapsed((prev) => {
       const newCollapsed = !prev;
-
-      // Expanding: DON'T show content yet. Wait for transitionend so
-      // TerminalTab initializes at the final container height.
-      // handleTransitionEnd will set showContent(true).
-      if (newCollapsed) {
-        // Collapsing: delay hiding content until animation completes
-        contentTimerRef.current = setTimeout(() => {
-          setShowContent(false);
-          contentTimerRef.current = null;
-        }, 200);
-      }
-
-      // Persist collapsed state
       window.electronAPI.config.set({
         terminal: { ...terminalConfigRef.current, panelCollapsed: newCollapsed },
       });
-
       return newCollapsed;
     });
   }, []);
@@ -124,7 +135,7 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
   const handleTransitionEnd = useCallback(() => {
     // When expanding, mount content NOW (container has final height).
     // TerminalTab's init effect handles fit at the correct size.
-    if (!collapsedRef.current) {
+    if (!effectiveCollapsedRef.current) {
       setShowContent(true);
     }
   }, []);
@@ -163,5 +174,5 @@ export function useTerminalResize(config: AppConfig): TerminalResizeState {
     document.addEventListener('mouseup', onMouseUp);
   }, [height, config.terminal, clampHeight]);
 
-  return { height, collapsed, isResizing, showContent, ready, contentColRef, onToggleCollapse, onResizeStart, handleTransitionEnd };
+  return { height, collapsed: effectiveCollapsed, isResizing, showContent, ready, contentColRef, onToggleCollapse, onResizeStart, handleTransitionEnd };
 }

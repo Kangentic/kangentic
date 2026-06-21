@@ -1156,6 +1156,13 @@ export interface AppConfig {
     defaultUrl?: string;
   };
 
+  /** In-app window-manager layout, persisted per project so the open task windows +
+   *  their tiling survive a project switch and an app restart. taskId-anchored (so a
+   *  session respawn does not orphan a window) and fractional (so a viewport resize
+   *  re-projects cleanly). Restored AFTER sessions resolve. See
+   *  src/renderer/window-manager/persistence/. */
+  workspace?: SerializedWorkspace;
+
   /**
    * Developer / debug toggles. Global-only - the debug overlay is a
    * per-machine dev affordance, not something that varies per project.
@@ -1235,6 +1242,31 @@ export interface AppConfig {
    *  only (per-machine), like `developer.*`. See `src/shared/keybindings.ts`. */
   hotkeyOverrides: Record<string, string>;
 }
+
+/** A persisted in-app window-manager layout (`AppConfig.workspace`). taskId-anchored
+ *  and fractional, so it survives session respawns and viewport resizes. */
+export interface SerializedWorkspace {
+  windows: Array<{
+    taskId: string;
+    title: string;
+    geometry: { x: number; y: number; w: number; h: number };
+    restoreGeometry: { x: number; y: number; w: number; h: number } | null;
+    state: 'floating' | 'tiled' | 'snapped' | 'maximized';
+  }>;
+  /** N-ary tile tree with leaves anchored by taskId. Null when nothing is tiled. */
+  tileTree: SerializedTileNode | null;
+  tileTreeRect: { x: number; y: number; w: number; h: number };
+  focusedTaskId: string | null;
+}
+
+export type SerializedTileNode =
+  | { kind: 'leaf'; taskId: string }
+  | {
+      kind: 'split';
+      direction: 'horizontal' | 'vertical';
+      children: SerializedTileNode[];
+      sizes: number[];
+    };
 
 export const DEFAULT_CONFIG: AppConfig = {
   theme: 'dark',
@@ -2188,6 +2220,13 @@ export interface BoardConfig {
 // === Preload API (exposed to renderer via contextBridge) ===
 
 export interface ElectronAPI {
+  // Dev-only (preview): present only when __KANGENTIC_DEV__ (build-excluded in prod).
+  dev?: {
+    /** Create + return a synthetic ephemeral project for the preview. */
+    createEphemeralProject: () => Promise<Project>;
+    /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
+    isEphemeralPreview: boolean;
+  };
   // Projects
   projects: {
     list: () => Promise<Project[]>;

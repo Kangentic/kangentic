@@ -85,7 +85,7 @@ test.describe('task.create hotkey (Ctrl+N)', () => {
     // the To Do column - confirming the dialog targeted the todo lane.
     const uniqueTitle = `HotkeyCreated-${Date.now()}`;
     await titleInput.fill(uniqueTitle);
-    await page.locator('button:has-text("Create")').click();
+    await page.locator('button[type="submit"]:has-text("Create")').click();
     await expect(titleInput).toBeHidden({ timeout: 3000 });
 
     // The card should appear in the To Do swimlane.

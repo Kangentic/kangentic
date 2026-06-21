@@ -90,7 +90,7 @@ test.describe('NewTaskDialog Advanced section', () => {
     // Effort is still a plain select
     await page.locator('select[data-testid="task-effort-override"]').selectOption('high');
 
-    await page.locator('button:has-text("Create")').click();
+    await page.locator('button[type="submit"]:has-text("Create")').click();
     await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     const taskData = await page.evaluate(() => window.electronAPI.tasks.list());
@@ -107,7 +107,7 @@ test.describe('NewTaskDialog Advanced section', () => {
     await page.locator('[data-testid="task-advanced-toggle"]').click();
     // Don't change either select - keep "Use column default"
 
-    await page.locator('button:has-text("Create")').click();
+    await page.locator('button[type="submit"]:has-text("Create")').click();
     await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     const taskData = await page.evaluate(() => window.electronAPI.tasks.list());
@@ -152,7 +152,7 @@ test.describe('TaskDetailEditForm Advanced section (edit-mode overrides)', () =>
     await page.locator('input[data-testid="task-model-override"]').click();
     await page.locator('[data-model-option]:has-text("opus")').click();
     await page.locator('select[data-testid="task-effort-override"]').selectOption('high');
-    await page.locator('button:has-text("Create")').click();
+    await page.locator('button[type="submit"]:has-text("Create")').click();
     await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     // Re-open the freshly created task
@@ -191,7 +191,7 @@ test.describe('TaskDetailEditForm Advanced section (edit-mode overrides)', () =>
     await page.locator('[data-testid="task-advanced-toggle"]').click();
     await page.locator('input[data-testid="task-model-override"]').click();
     await page.locator('[data-model-option]:has-text("haiku")').click();
-    await page.locator('button:has-text("Create")').click();
+    await page.locator('button[type="submit"]:has-text("Create")').click();
     await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     // Re-open and clear via the combobox's X button (rendered when value is non-empty)
@@ -316,7 +316,7 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
     await multiPage.locator('input[data-testid="task-model-override"]').click();
     await multiPage.locator('[data-model-option]:has-text("gpt-5-mini")').click();
 
-    await multiPage.locator('button:has-text("Create")').click();
+    await multiPage.locator('button[type="submit"]:has-text("Create")').click();
     await multiPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     const taskData = await multiPage.evaluate(() => window.electronAPI.tasks.list());
@@ -332,7 +332,7 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
     await multiPage.locator('input[placeholder="Task title"]').fill('No Agent Override Task');
     // Don't touch the agent dropdown
 
-    await multiPage.locator('button:has-text("Create")').click();
+    await multiPage.locator('button[type="submit"]:has-text("Create")').click();
     await multiPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     const taskData = await multiPage.evaluate(() => window.electronAPI.tasks.list());
@@ -428,7 +428,7 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     await groupedPage.locator('[data-model-1m]').click();
     await expect(groupedPage.locator('input[data-testid="task-model-override"]')).toHaveValue('claude-opus-4-8[1m]');
 
-    await groupedPage.locator('button:has-text("Create")').click();
+    await groupedPage.locator('button[type="submit"]:has-text("Create")').click();
     await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     const taskData = await groupedPage.evaluate(() => window.electronAPI.tasks.list());
@@ -446,7 +446,7 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     await groupedPage.locator('[data-model-pinned-option]:has-text("claude-haiku-4-5-20251001")').click();
     await expect(groupedPage.locator('input[data-testid="task-model-override"]')).toHaveValue('claude-haiku-4-5-20251001');
 
-    await groupedPage.locator('button:has-text("Create")').click();
+    await groupedPage.locator('button[type="submit"]:has-text("Create")').click();
     await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     const taskData = await groupedPage.evaluate(() => window.electronAPI.tasks.list());

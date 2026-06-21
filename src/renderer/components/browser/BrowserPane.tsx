@@ -13,7 +13,7 @@ import type { BrowserPickedElement } from '../../../shared/types';
 import type { WebviewElement } from './webview-types';
 import { MIN_ZOOM, MAX_ZOOM, stepZoom } from '../../../shared/zoom-steps';
 
-// Side-pane in TaskDetailDialog that hosts an Electron <webview>, a
+// Side-pane in the task-detail window that hosts an Electron <webview>, a
 // free-draw annotation overlay, and a "Send to agent" button which composites
 // the capture, grabs DOM HTML + selected text, and injects a text prompt
 // (with @-mention to the saved PNG) into the task's running PTY.
@@ -366,9 +366,9 @@ function BrowserPaneActive({
   }, []);
 
   // Esc cancels Inspect mode. Kept as a hand-written CAPTURE-phase listener (not
-  // a registry binding) because it must run BEFORE the parent TaskDetailDialog's
-  // bubble-phase Esc-closes-dialog handler and call stopImmediatePropagation so
-  // the dialog does not also close on the same Esc. Escape is not rebindable.
+  // a registry binding) because it must run BEFORE the parent TaskDetailWindow's
+  // bubble-phase Esc-closes-window handler and call stopImmediatePropagation so
+  // the window does not also close on the same Esc. Escape is not rebindable.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape' && inspectActive) {

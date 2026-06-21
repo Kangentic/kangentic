@@ -129,9 +129,12 @@ test.describe('Task CRUD', () => {
     const backlog = page.locator('[data-swimlane-name="To Do"]');
     await backlog.locator('text=Add task').click();
 
-    await page.locator('input[placeholder="Task title"]').fill('Test Task Alpha');
-    await page.locator('.fixed textarea').fill('Description for alpha task');
-    await page.locator('button:has-text("Create")').click();
+    // Scope to the New Task BaseDialog modal (.fixed.inset-0) to avoid ambiguity
+    // with any open task-detail window, which lives in .fixed.top-10.bottom-9 (not inset-0).
+    const newTaskModal = page.locator('.fixed.inset-0');
+    await newTaskModal.locator('input[placeholder="Task title"]').fill('Test Task Alpha');
+    await newTaskModal.locator('textarea').fill('Description for alpha task');
+    await page.locator('button[type="submit"]:has-text("Create")').click();
 
     await expect(taskCard('Test Task Alpha')).toBeVisible({ timeout: 3000 });
   });
@@ -142,29 +145,36 @@ test.describe('Task CRUD', () => {
 
   test('can open task detail dialog', async () => {
     await taskCard('Test Task Alpha').click();
-    await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    // The task detail is now a window (not a modal). Scope to the task-detail-dialog
+    // test id to avoid any other fixed/input elements from the board.
+    const detailDialog = page.locator('[data-testid="task-detail-dialog"]');
+    await detailDialog.waitFor({ state: 'visible', timeout: 5000 });
 
     // To Do tasks open directly in edit mode -- title shows as input
-    const titleInput = page.locator('.fixed input[placeholder="Task title"]');
+    const titleInput = detailDialog.locator('input[placeholder="Task title"]');
     await expect(titleInput).toBeVisible();
     await expect(titleInput).toHaveValue('Test Task Alpha');
 
-    // Close dialog and confirm it's gone
+    // Close the window and confirm it's gone before the next test starts.
     await page.keyboard.press('Escape');
-    await expect(titleInput).not.toBeVisible({ timeout: 2000 });
+    await detailDialog.waitFor({ state: 'hidden', timeout: 3000 });
   });
 
   test('can edit task title and description', async () => {
     await taskCard('Test Task Alpha').click();
-    await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    // The task detail is now a window. Scope to data-testid="task-detail-dialog".
+    const detailDialog = page.locator('[data-testid="task-detail-dialog"]');
+    await detailDialog.waitFor({ state: 'visible', timeout: 5000 });
 
     // To Do tasks open directly in edit mode -- no need to click kebab -> Edit
-    const titleInput = page.locator('.fixed input[placeholder="Task title"]');
+    const titleInput = detailDialog.locator('input[placeholder="Task title"]');
     await titleInput.fill('Updated Task Alpha');
 
     await page.locator('button:has-text("Save")').click();
 
-    // Dialog closes after save (no session), verify the card shows the updated title
+    // For a task with no session, Save calls onClose() and the window closes.
+    // Wait for the window to fully disappear before the next test accesses the DOM.
+    await detailDialog.waitFor({ state: 'hidden', timeout: 5000 });
     await expect(taskCard('Updated Task Alpha')).toBeVisible({ timeout: 3000 });
   });
 
@@ -172,8 +182,11 @@ test.describe('Task CRUD', () => {
     const backlog = page.locator('[data-swimlane-name="To Do"]');
     await backlog.locator('text=Add task').click();
 
-    await page.locator('input[placeholder="Task title"]').fill('Test Task Beta');
-    await page.locator('button:has-text("Create")').click();
+    // Scope to the New Task BaseDialog modal (.fixed.inset-0) to avoid ambiguity
+    // with any open task-detail window input.
+    const newTaskModal = page.locator('.fixed.inset-0');
+    await newTaskModal.locator('input[placeholder="Task title"]').fill('Test Task Beta');
+    await page.locator('button[type="submit"]:has-text("Create")').click();
 
     await expect(taskCard('Test Task Beta')).toBeVisible({ timeout: 3000 });
   });
@@ -236,19 +249,24 @@ test.describe('Task CRUD', () => {
     // Create a temp task to delete
     const backlog = page.locator('[data-swimlane-name="To Do"]');
     await backlog.locator('text=Add task').click();
-    await page.locator('input[placeholder="Task title"]').fill('Task To Delete');
-    await page.locator('button:has-text("Create")').click();
+    // Scope to the New Task BaseDialog modal (.fixed.inset-0) to avoid ambiguity.
+    await page.locator('.fixed.inset-0 input[placeholder="Task title"]').fill('Task To Delete');
+    await page.locator('button[type="submit"]:has-text("Create")').click();
     await expect(taskCard('Task To Delete')).toBeVisible({ timeout: 3000 });
 
     // Open the task (backlog tasks open in edit mode with Delete in footer)
     await taskCard('Task To Delete').click();
-    await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    const detailDialog = page.locator('[data-testid="task-detail-dialog"]');
+    await detailDialog.waitFor({ state: 'visible', timeout: 5000 });
 
-    await page.locator('button:has-text("Delete")').click();
+    // Click Delete in the window footer (scoped to avoid confusion with
+    // the ConfirmDialog's Delete that appears next).
+    await detailDialog.locator('button:has-text("Delete")').click();
 
-    // Confirm deletion in the ConfirmDialog
-    await page.locator('text=This action cannot be undone.').waitFor({ state: 'visible', timeout: 3000 });
-    await page.locator('button:has-text("Delete")').click();
+    // Confirm deletion in the ConfirmDialog (.fixed.inset-0 modal overlay).
+    const confirmModal = page.locator('.fixed.inset-0');
+    await confirmModal.locator('text=This action cannot be undone.').waitFor({ state: 'visible', timeout: 3000 });
+    await confirmModal.locator('button:has-text("Delete")').click();
 
     // Verify the task is gone from To Do
     await expect(backlog.locator('text=Task To Delete')).not.toBeVisible({ timeout: 3000 });
@@ -258,32 +276,41 @@ test.describe('Task CRUD', () => {
     // Create a fresh task for this test
     const backlog = page.locator('[data-swimlane-name="To Do"]');
     await backlog.locator('text=Add task').click();
-    await page.locator('input[placeholder="Task title"]').fill('Test Task Gamma');
-    await page.locator('button:has-text("Create")').click();
+    // Scope to the New Task BaseDialog modal (.fixed.inset-0) to avoid ambiguity.
+    await page.locator('.fixed.inset-0 input[placeholder="Task title"]').fill('Test Task Gamma');
+    await page.locator('button[type="submit"]:has-text("Create")').click();
     await expect(taskCard('Test Task Gamma')).toBeVisible({ timeout: 3000 });
 
-    // Open the task detail dialog
+    // Open the task detail window
     await taskCard('Test Task Gamma').click();
-    await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    const detailDialog = page.locator('[data-testid="task-detail-dialog"]');
+    await detailDialog.waitFor({ state: 'visible', timeout: 5000 });
 
     // To Do tasks open in edit mode with Delete in footer
-    const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await expect(dialog.locator('button:has-text("Delete")')).toBeVisible();
-    await expect(dialog.locator('button:has-text("Save")')).toBeVisible();
-    await expect(dialog.locator('button:has-text("Cancel")')).toBeVisible();
+    await expect(detailDialog.locator('button:has-text("Delete")')).toBeVisible();
+    await expect(detailDialog.locator('button:has-text("Save")')).toBeVisible();
+    await expect(detailDialog.locator('button:has-text("Cancel")')).toBeVisible();
+
+    // Close the window so the next test ("can delete a non-archived task directly")
+    // starts from a clean state with no pre-existing open windows.
+    await page.keyboard.press('Escape');
+    await detailDialog.waitFor({ state: 'hidden', timeout: 3000 });
   });
 
   test('can delete a non-archived task directly', async () => {
     // "Test Task Gamma" was created above and is still in To Do
     await taskCard('Test Task Gamma').click();
-    await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    const detailDialog = page.locator('[data-testid="task-detail-dialog"]');
+    await detailDialog.waitFor({ state: 'visible', timeout: 5000 });
 
-    // To Do tasks open in edit mode -- Delete is in the footer
-    await page.locator('button:has-text("Delete")').click();
+    // Click Delete in the window footer (scoped to avoid confusion with
+    // the ConfirmDialog's Delete that appears next).
+    await detailDialog.locator('button:has-text("Delete")').click();
 
-    // Confirm deletion in the ConfirmDialog
-    await page.locator('text=This action cannot be undone.').waitFor({ state: 'visible', timeout: 3000 });
-    await page.locator('button:has-text("Delete")').click();
+    // Confirm deletion in the ConfirmDialog (.fixed.inset-0 modal overlay).
+    const confirmModal = page.locator('.fixed.inset-0');
+    await confirmModal.locator('text=This action cannot be undone.').waitFor({ state: 'visible', timeout: 3000 });
+    await confirmModal.locator('button:has-text("Delete")').click();
 
     // Verify the task is gone from the To Do column
     const backlog = page.locator('[data-swimlane-name="To Do"]');
@@ -330,14 +357,16 @@ test.describe('Session & Column Details', () => {
 
   test('task detail dialog shows no session state', async () => {
     await taskCard('Updated Task Alpha').click();
-    await page.locator('.fixed input[placeholder="Task title"], .fixed textarea').first().waitFor({ state: 'visible' });
+    // The task detail is now a window - scope to data-testid="task-detail-dialog".
+    const detailDialog = page.locator('[data-testid="task-detail-dialog"]');
+    await detailDialog.waitFor({ state: 'visible', timeout: 5000 });
 
     // To Do tasks open in edit mode -- the edit textarea is visible instead of "No active session"
-    const textarea = page.locator('.fixed textarea');
+    const textarea = detailDialog.locator('textarea');
     await expect(textarea).toBeVisible();
 
     await page.keyboard.press('Escape');
-    await page.locator('.fixed textarea').waitFor({ state: 'hidden', timeout: 2000 });
+    await detailDialog.waitFor({ state: 'hidden', timeout: 3000 });
   });
 
   test('session count starts at 0', async () => {
@@ -358,12 +387,14 @@ test.describe('Session & Column Details', () => {
 
   test('tasks in To Do have no branch info', async () => {
     await taskCard('Updated Task Alpha').click();
-    await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    // The task detail is now a window - scope to data-testid="task-detail-dialog".
+    const detailDialog = page.locator('[data-testid="task-detail-dialog"]');
+    await detailDialog.waitFor({ state: 'visible', timeout: 5000 });
 
     await expect(page.locator('text=Branch:')).not.toBeVisible();
 
     await page.keyboard.press('Escape');
-    await page.locator('.fixed input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+    await detailDialog.waitFor({ state: 'hidden', timeout: 3000 });
   });
 });
 

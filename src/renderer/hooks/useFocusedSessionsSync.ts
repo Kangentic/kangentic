@@ -30,7 +30,7 @@ export function useFocusedSessionsSync(): void {
   const activeView = useBoardStore((s) => s.activeView);
   const terminalPanelVisible = useConfigStore((s) => s.config.terminalPanelVisible);
   const currentProjectId = useProjectStore((s) => s.currentProject?.id ?? null);
-  const dialogSessionId = useSessionStore((s) => s.dialogSessionId);
+  const dialogSessionIds = useSessionStore((s) => s.dialogSessionIds);
   const commandBarVisible = useSessionStore((s) => s.commandBarVisible);
   const transientSessionId = useSessionStore((s) => s.transientSessionId);
 
@@ -53,11 +53,11 @@ export function useFocusedSessionsSync(): void {
       activeView,
       terminalPanelVisible,
       panelSessionId,
-      dialogSessionId,
+      dialogSessionIds,
       commandBarVisible,
       transientSessionId,
     });
 
     window.electronAPI.sessions.setFocused(focusedIds);
-  }, [activeView, terminalPanelVisible, panelSessionId, dialogSessionId, commandBarVisible, transientSessionId]);
+  }, [activeView, terminalPanelVisible, panelSessionId, dialogSessionIds, commandBarVisible, transientSessionId]);
 }

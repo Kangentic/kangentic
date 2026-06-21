@@ -77,6 +77,16 @@ const OTHER_LABELS: Record<string, string> = {
   Shift: 'Shift',
 };
 
+/** Display glyphs for named main keys (arrow keys, etc.) so combos render
+ *  cleanly in the settings panel and tooltips. The canonical token (e.g.
+ *  'ArrowLeft') is unchanged, so combo matching is unaffected. */
+const MAIN_KEY_LABELS: Record<string, string> = {
+  ArrowLeft: '←',
+  ArrowRight: '→',
+  ArrowUp: '↑',
+  ArrowDown: '↓',
+};
+
 /**
  * Split a canonical combo into display segments for rendering as `<kbd>`
  * elements. macOS uses glyphs (no separator on screen); other platforms use
@@ -91,7 +101,7 @@ export function formatComboSegments(combo: string): string[] {
     const canonical = modifier.charAt(0).toUpperCase() + modifier.slice(1).toLowerCase();
     return labels[canonical] ?? modifier;
   });
-  const mainSegment = mainKey.length === 1 ? mainKey.toUpperCase() : mainKey;
+  const mainSegment = MAIN_KEY_LABELS[mainKey] ?? (mainKey.length === 1 ? mainKey.toUpperCase() : mainKey);
   return [...modifierSegments, mainSegment];
 }
 

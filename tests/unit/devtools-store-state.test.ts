@@ -128,7 +128,7 @@ describe('sanitizeForSerialization', () => {
 describe('readStoreStateFrom', () => {
   const registry: Record<string, ReadableStore> = {
     board: { getState: () => ({ taskCount: 3, config: { columns: ['a', 'b'] } }) },
-    session: { getState: () => ({ dialogSessionId: 'sess-1' }) },
+    session: { getState: () => ({ dialogSessionIds: ['sess-1'] }) },
   };
 
   it('returns the whole sanitized state when no path is given', () => {

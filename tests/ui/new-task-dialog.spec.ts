@@ -165,7 +165,7 @@ test.describe('Worktree Toggle', () => {
     await toggle.click();
 
     // Create the task
-    await page.locator('button:has-text("Create")').click();
+    await page.locator('button[type="submit"]:has-text("Create")').click();
     await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     // Verify the task was created with use_worktree = 0
@@ -184,7 +184,7 @@ test.describe('Worktree Toggle', () => {
     await page.locator('input[placeholder="Task title"]').fill('Default Worktree Task');
 
     // Create the task
-    await page.locator('button:has-text("Create")').click();
+    await page.locator('button[type="submit"]:has-text("Create")').click();
     await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
 
     // Verify the task was created with use_worktree = null (follows global)
@@ -297,24 +297,31 @@ test.describe('To Do Edit Branch Config', () => {
 
     const taskCard = page.locator('[data-testid="swimlane"]').locator('text=Cancel Branch Task').first();
     await taskCard.click();
-    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+    const detailDialog = page.locator('[data-testid="task-detail-dialog"]');
+    await detailDialog.waitFor({ state: 'visible', timeout: 5000 });
 
     // Type a custom branch name
     const branchInput = page.locator('[data-testid="custom-branch-name-input"]');
     await branchInput.fill('feature/will-be-cancelled');
 
-    // Cancel
+    // Cancel closes the window (initialEdit=true + no session -> onClose() is called).
     await page.locator('button:has-text("Cancel")').click();
 
-    // Re-open the task
-    await taskCard.click();
-    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+    // Wait for the window to fully unmount before re-opening it. Without this,
+    // the closing-animation window's task-detail-dialog is still in DOM when the
+    // card click opens a new one, and the assertion resolves to the old stale input.
+    await detailDialog.waitFor({ state: 'hidden', timeout: 3000 });
 
-    // Branch input should be empty (reset to original null value)
+    // Re-open the task - the new window has fresh state from the stored task data.
+    await taskCard.click();
+    await detailDialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    // Branch input should be empty (reset to original null value, never saved)
     const branchInputAgain = page.locator('[data-testid="custom-branch-name-input"]');
     await expect(branchInputAgain).toHaveValue('');
 
     await page.keyboard.press('Escape');
+    await detailDialog.waitFor({ state: 'hidden', timeout: 3000 });
   });
 
   test('non-backlog task edit hides custom branch input', async () => {

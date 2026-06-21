@@ -4,7 +4,6 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Loader2, CirclePause, Mail, Paperclip, Trash2 } from 'lucide-react';
 import { formatRelativeTime } from '../../lib/datetime';
-import { TaskDetailDialog } from '../dialogs/TaskDetailDialog';
 import { TaskChangesDialog } from '../dialogs/TaskChangesDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { stripMarkdown } from '../../utils/strip-markdown';
@@ -36,13 +35,12 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   // Scaling: 100 cards × 6 subs each = 600 selector invocations per session-store
   // update; with one selector it drops to 100, and shallow equality still skips
   // re-renders when the projected object hasn't actually changed.
-  const { showDetail, sessionId, isHighlighted, isResuming, hasFirstOutput, hasActivityEntry, activityReason } = useSessionStore(
+  const { sessionId, isHighlighted, isResuming, hasFirstOutput, hasActivityEntry, activityReason } = useSessionStore(
     useShallow(
       useCallback(
         (s: ReturnType<typeof useSessionStore.getState>) => {
           const resolvedSessionId = s._sessionByTaskId.get(task.id)?.id;
           return {
-            showDetail: s.detailTaskId === task.id,
             sessionId: resolvedSessionId,
             isHighlighted: !!resolvedSessionId && resolvedSessionId === s.activeSessionId,
             isResuming: s._sessionByTaskId.get(task.id)?.resuming ?? false,
@@ -80,13 +78,14 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [confirmSendToBacklog, setConfirmSendToBacklog] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [forceEdit, setForceEdit] = useState(false);
   const [showChanges, setShowChanges] = useState(false);
 
   const handleClick = (e: React.MouseEvent) => {
     if (isDragOverlay) return;
     e.stopPropagation();
-    setDetailTaskId(task.id);
+    // To Do tasks with no session open straight into edit mode (the window then
+    // starts in the edit form). The window-manager bridge reads this intent.
+    setDetailTaskId(task.id, { initialEdit: displayState.kind === 'none' && !task.archived_at });
   };
 
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -201,16 +200,6 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
             </div>
           )}
         </div>
-
-        {/* Guard isDragOverlay: dnd-kit freezes the DragOverlay's children during
-            the drop animation, keeping this TaskCard mounted for up to 250ms after
-            the real card has landed. Without the guard, both the live card and the
-            frozen overlay card would mount a TaskDetailDialog when detailTaskId is
-            set during that window, causing a strict-mode violation (two elements
-            with [data-testid="task-detail-dialog"]). */}
-        {!isDragOverlay && showDetail && (
-          <TaskDetailDialog task={task} onClose={() => setDetailTaskId(null)} initialEdit={displayState.kind === 'none' && !task.archived_at} />
-        )}
 
         {contextMenu && task.archived_at && (
           <ArchivedTaskContextMenu
@@ -410,22 +399,12 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         })()}
       </div>
 
-      {/* Guard isDragOverlay: dnd-kit freezes the DragOverlay's children during
-          the drop animation, keeping this TaskCard mounted for up to 250ms after
-          the real card has landed. Without the guard, both the live card and the
-          frozen overlay card would mount a TaskDetailDialog when detailTaskId is
-          set during that window, causing a strict-mode violation (two elements
-          with [data-testid="task-detail-dialog"]). */}
-      {!isDragOverlay && showDetail && (
-        <TaskDetailDialog task={task} onClose={() => { setDetailTaskId(null); setForceEdit(false); }} initialEdit={forceEdit || (displayState.kind === 'none' && !task.archived_at)} />
-      )}
-
       {contextMenu && (
         <TaskContextMenu
           position={contextMenu}
           task={task}
           swimlanes={useBoardStore.getState().swimlanes}
-          onEdit={() => { setForceEdit(true); setDetailTaskId(task.id); }}
+          onEdit={() => setDetailTaskId(task.id, { initialEdit: true })}
           onShowChanges={() => setShowChanges(true)}
           onMoveTo={handleMoveTo}
           onSendToBacklog={() => {
