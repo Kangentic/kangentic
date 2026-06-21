@@ -8,6 +8,8 @@ import {
   scopesOverlap,
   detectConflicts,
   comboToAccelerator,
+  isMouseCombo,
+  mouseComboToButton,
 } from '../../src/shared/keybindings';
 
 // Enforces .claude/rules/keybindings-registry.md. The keybinding registry in
@@ -162,5 +164,37 @@ describe('comboToAccelerator', () => {
     expect(comboToAccelerator('Mod+=')).toBeNull();
     expect(comboToAccelerator('Mod+Enter')).toBeNull();
     expect(comboToAccelerator('Escape')).toBeNull();
+  });
+
+  it('returns null for a mouse combo (never an OS global shortcut)', () => {
+    expect(comboToAccelerator('Mouse:Middle')).toBeNull();
+    expect(comboToAccelerator('Mouse:Back')).toBeNull();
+  });
+});
+
+describe('mouse combos', () => {
+  it('isMouseCombo distinguishes mouse bindings from keyboard chords', () => {
+    expect(isMouseCombo('Mouse:Middle')).toBe(true);
+    expect(isMouseCombo('Mouse:Forward')).toBe(true);
+    expect(isMouseCombo('Mod+Shift+W')).toBe(false);
+    expect(isMouseCombo('F5')).toBe(false);
+  });
+
+  it('mouseComboToButton maps each mouse combo to its DOM button code', () => {
+    expect(mouseComboToButton('Mouse:Middle')).toBe(1);
+    expect(mouseComboToButton('Mouse:Back')).toBe(3);
+    expect(mouseComboToButton('Mouse:Forward')).toBe(4);
+    expect(mouseComboToButton('Mod+W')).toBeNull();
+  });
+
+  it('normalizeCombo passes a mouse combo through unchanged', () => {
+    expect(normalizeCombo('Mouse:Middle')).toBe('Mouse:Middle');
+    expect(normalizeCombo('Mouse:Back')).toBe('Mouse:Back');
+  });
+
+  it('the panel.closeViaHeaderClick default is a canonical mouse combo', () => {
+    const definition = getKeybinding('panel.closeViaHeaderClick');
+    expect(definition?.defaultCombo).toBe('Mouse:Middle');
+    expect(normalizeCombo(definition?.defaultCombo ?? '')).toBe('Mouse:Middle');
   });
 });

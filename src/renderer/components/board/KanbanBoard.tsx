@@ -354,11 +354,12 @@ export function KanbanBoard() {
   return (
     <div className="relative h-full overflow-x-auto overflow-y-hidden flex flex-col">
       <ConfigWarningBanner />
-      {/* `data-board-background`: the empty-board region the click-outside window
-          dismiss anchors on. Scoped to this scroll container (not the root) so the
-          board-level dialogs rendered after it (NewTaskDialog, BoardDialogs) are
-          siblings, not descendants, and never read as a background click. */}
-      <div className="flex-1 overflow-x-auto overflow-y-hidden p-4" data-board-background>
+      {/* `data-dismiss-surface`: dead space in the board columns light-dismisses an
+          open task window. Overlays (dialogs, palettes) render elsewhere, not inside
+          this element, so they are never treated as a dismiss surface. Any clickable
+          child added here must carry `cursor-pointer` or `data-no-dismiss`, or a
+          click on it will also dismiss a window. */}
+      <div className="flex-1 overflow-x-auto overflow-y-hidden p-4" data-dismiss-surface>
       <WelcomeOverlay />
       <DndContext
         key={hmrGeneration}

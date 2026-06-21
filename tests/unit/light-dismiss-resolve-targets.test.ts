@@ -41,9 +41,13 @@ describe('resolveLightDismissTargets', () => {
       expect(resolveLightDismissTargets('single', windowSet(['a', 'floating']), 'a')).toEqual(['a']);
     });
 
-    it('does not close a lone window that is docked (snapped/tiled/maximized)', () => {
+    it('closes a lone window in any docked state (snapped/tiled/maximized)', () => {
+      // A window left snapped after its dock partner closed must still dismiss
+      // under `single`: with one window there is nothing to reflow and a snapped
+      // half leaves real board to click. (A lone maximized window simply covers
+      // the board, so no board click lands on it; including it is a harmless no-op.)
       for (const state of ['snapped', 'tiled', 'maximized'] as WindowState[]) {
-        expect(resolveLightDismissTargets('single', windowSet(['a', state]), 'a')).toEqual([]);
+        expect(resolveLightDismissTargets('single', windowSet(['a', state]), 'a')).toEqual(['a']);
       }
     });
 

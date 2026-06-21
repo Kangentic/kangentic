@@ -122,19 +122,20 @@ async function openTaskWindow(page: Page, taskTitle: string): Promise<void> {
 }
 
 /**
- * Dispatch a clean board-background click via `dispatchEvent`. Targets the
- * board-background element directly so `event.target` is that element, not a
- * dnd-kit swimlane wrapper with `role="button"` that would cause
- * `isBoardBackgroundTarget` to return false.
+ * Dispatch a clean dead-board-area click via `dispatchEvent`. Targets a column
+ * body (`[data-swimlane-name]`) directly so `event.target` is that element: dead
+ * (non-action) space with a dnd-kit `role="button"` sortable-wrapper ancestor,
+ * which is exactly the real-world empty-board click that `isDismissibleDeadArea`
+ * must accept.
  *
  * See the corresponding UI-tier spec (window-click-outside-close.spec.ts) for a
  * full explanation of why `page.mouse` + viewport coordinates fails here.
  */
 async function clickEmptyBoard(page: Page): Promise<void> {
-  await page.locator('[data-board-background]').waitFor({ state: 'visible', timeout: 5000 });
+  await page.locator('[data-swimlane-name]').first().waitFor({ state: 'visible', timeout: 5000 });
   await page.evaluate(() => {
-    const boardBackground = document.querySelector('[data-board-background]');
-    if (!boardBackground) throw new Error('[data-board-background] not found');
+    const column = document.querySelector('[data-swimlane-name]');
+    if (!column) throw new Error('no [data-swimlane-name] column found');
     const init: PointerEventInit = {
       bubbles: true,
       cancelable: true,
@@ -144,8 +145,8 @@ async function clickEmptyBoard(page: Page): Promise<void> {
       clientX: 300,
       clientY: 600,
     };
-    boardBackground.dispatchEvent(new PointerEvent('pointerdown', init));
-    boardBackground.dispatchEvent(new PointerEvent('pointerup', { ...init, buttons: 0 }));
+    column.dispatchEvent(new PointerEvent('pointerdown', init));
+    column.dispatchEvent(new PointerEvent('pointerup', { ...init, buttons: 0 }));
   });
 }
 

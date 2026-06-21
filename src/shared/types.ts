@@ -851,6 +851,14 @@ export interface RateLimitWindow {
   usedPercentage: number;
   /** Unix epoch seconds. */
   resetsAt: number;
+  /**
+   * Total window length in seconds, when the provider's window has a fixed
+   * duration. With resetsAt this yields the window start
+   * (resetsAt - windowDurationSeconds), which drives the renderer's
+   * elapsed-time marker. Optional: an adapter whose window has no fixed length
+   * omits it, and the renderer simply draws no time marker for that window.
+   */
+  windowDurationSeconds?: number;
 }
 
 export interface SessionUsage {

@@ -10,10 +10,14 @@ import type { ManagedWindow } from '../store/types';
  * unit-tested function.
  *
  *  - `off`     never closes anything.
- *  - `single`  closes the window only when exactly one is open AND it is
- *              `floating` (the peek case). A lone docked window is left alone:
- *              there is no real "outside" to click, and closing it would still
- *              surprise.
+ *  - `single`  closes the lone window whenever exactly one is open, in ANY state
+ *              (the peek case). With a single window there are no siblings to
+ *              reflow, so the old floating-only gate was too strict: a window left
+ *              `snapped` after its dock partner closed (evictWindowFromTiling keeps
+ *              the lone survivor snapped, by design) still leaves empty board to
+ *              click, and a lone maximized window covers only the board while the
+ *              toolbar, sidebar, and status bar (all dismiss surfaces) stay exposed
+ *              beside it, so a click there still dismisses it as intended.
  *  - `focused` closes the focused window, regardless of how many are open and
  *              regardless of its state (the explicit aggressive choice).
  *  - `all`     closes every open window, regardless of state.
@@ -29,8 +33,7 @@ export function resolveLightDismissTargets(
       return [];
     case 'single': {
       const onlyId = ids[0];
-      const only = onlyId ? windows[onlyId] : undefined;
-      return ids.length === 1 && only?.state === 'floating' ? [only.id] : [];
+      return ids.length === 1 && onlyId ? [onlyId] : [];
     }
     case 'focused':
       return focusedWindowId && windows[focusedWindowId] ? [focusedWindowId] : [];

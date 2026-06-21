@@ -562,7 +562,7 @@ Token and cost values pulse briefly when they change. The selected period persis
 
 ## Keyboard Shortcuts
 
-Every shortcut is declared in a central registry and is **rebindable** under Settings > Hotkeys, which also flags conflicts and combos already claimed by the OS or another app. `Mod` below is Cmd on macOS and Ctrl on every other platform.
+Every shortcut is declared in a central registry and is **rebindable** under Settings > Hotkeys, where it can be bound to a key chord or a mouse button (middle or side buttons). Hotkeys also flags conflicts and combos already claimed by the OS or another app. `Mod` below is Cmd on macOS and Ctrl on every other platform.
 
 General:
 
@@ -582,6 +582,12 @@ Task detail (whichever panel is open):
 - **Mod+Shift+W** - Close the command terminal, the task detail dialog, or a create dialog (New Task / New Backlog Task). Escape also closes any modal.
 - **Mod+Shift+B** - Toggle the browser pane inside the task detail dialog
 - **Mod+Shift+G** - Toggle the changes (diff) panel inside the task detail dialog
+- **Middle-click the window header** - Close a modeless task-detail window (default `Mouse:Middle`; routes through the same unsaved-edits guard as the close button)
+
+Windows (modeless task-detail windows):
+
+- **Mod+Shift+Left** / **Mod+Shift+Right** - Snap the focused window to the left / right half of the board area
+- **Mod+Shift+Up** / **Mod+Shift+Down** - Snap the focused window to the top / bottom half
 
 Terminal:
 

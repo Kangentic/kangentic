@@ -285,8 +285,14 @@ test.describe('Task Detail: maximize / restore', () => {
     await expect(frame).not.toHaveClass(/rounded-none/);
 
     // Close the window to leave a clean state for the next test.
-    await page.keyboard.press('Escape');
-    await expect(dialog).not.toBeVisible();
+    // Use the dedicated panel.close hotkey (capture-phase, isFocused-gated) rather
+    // than Escape: after Ctrl+Shift+M restore, the keyboard focus on some Linux
+    // headless Chromium builds lands on an intermediate element whose Escape
+    // handler intercepts before the bubble-phase window listener fires, leaving
+    // the dialog stuck open (CI flake). Control+Shift+W is capture-phase and
+    // cannot be intercepted. Mirrors the cleanup in the other tests in this file.
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
   test('edit mode: discarding unsaved changes confirms, layered over the still-visible dialog', async () => {
@@ -391,9 +397,13 @@ test.describe('Task Detail: maximize / restore', () => {
     expect(backdropClass).toContain('inset-0');
     expect(backdropClass).not.toContain('top-10');
 
-    // Dismiss the confirm dialog, then the edit dialog.
+    // Dismiss the confirm dialog with Escape (ConfirmDialog is a BaseDialog modal,
+    // reliable Escape handling), then close the task-detail window with
+    // Control+Shift+W (capture-phase): after the ConfirmDialog closes, focus
+    // position is uncertain, so using the capture-phase hotkey avoids the
+    // bubble-phase Escape interception risk on CI Linux.
     await page.keyboard.press('Escape');
-    await page.keyboard.press('Escape');
-    await expect(editDialog).not.toBeVisible();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(editDialog).not.toBeVisible({ timeout: 8000 });
   });
 });

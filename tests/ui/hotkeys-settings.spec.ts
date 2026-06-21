@@ -53,6 +53,17 @@ test.describe('Hotkeys settings tab', () => {
     await closeSettings();
   });
 
+  test('lists the header-click close binding with its default mouse button', async () => {
+    await openHotkeys();
+    const row = page.getByTestId('hotkey-row-panel.closeViaHeaderClick');
+    await expect(row).toBeVisible();
+    // The default binding renders as a single readable mouse-button segment, and
+    // the row is rebindable (a capture input is present).
+    await expect(row.getByText('Middle Click')).toBeVisible();
+    await expect(row.getByTestId('key-capture-input')).toBeVisible();
+    await closeSettings();
+  });
+
   test('terminal (non-rebindable) rows are read-only with no capture input', async () => {
     await openHotkeys();
     const row = page.getByTestId('hotkey-row-terminal.copy');
