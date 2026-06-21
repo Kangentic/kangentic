@@ -159,6 +159,24 @@ vi.mock('node:fs', async (importOriginal) => {
   return { ...mocked, default: mocked };
 });
 
+// Mock WorktreeManager so the create_worktree action path can be exercised
+// without touching git. withLock just runs the job inline; ensureWorktree is a
+// shared spy whose third (options) argument carries the signal + onProgress we
+// assert the action path threads through.
+const worktreeManagerMock = vi.hoisted(() => ({
+  ensureWorktree: vi.fn(),
+}));
+
+vi.mock('../../src/main/git/worktree-manager', () => ({
+  WorktreeManager: class {
+    constructor(_projectPath: string) {}
+    async withLock<T>(job: () => Promise<T> | T): Promise<T> {
+      return job();
+    }
+    ensureWorktree = worktreeManagerMock.ensureWorktree;
+  },
+}));
+
 // ---------------------------------------------------------------------------
 // Engine factory
 // ---------------------------------------------------------------------------
@@ -365,5 +383,63 @@ describe('TransitionEngine - raw/sanitized description split', () => {
     const insertedId = (sessionRepo.insert.mock.calls[0][0] as { id: string }).id;
     const [appliedSessionId] = sessionRepo.updateAppliedSettings.mock.calls[0] as [string, unknown];
     expect(appliedSessionId).toBe(insertedId);
+  });
+});
+
+describe('TransitionEngine - create_worktree action threads signal + progress', () => {
+  type EnsureWorktreeOptions = { signal?: AbortSignal; onProgress?: (phase: string) => void };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    worktreeManagerMock.ensureWorktree.mockResolvedValue({
+      worktreePath: '/some/project/.kangentic/worktrees/fix-login-flow-task-abc',
+      branchName: 'kangentic/fix-login-flow',
+    });
+  });
+
+  it('forwards the abort signal and onProgress callback into ensureWorktree', async () => {
+    const task = makeTask({ worktree_path: null });
+    const action = makeAction({ type: 'create_worktree', config_json: JSON.stringify({}) });
+    const { engine, taskRepo } = makeEngine({ action });
+
+    const controller = new AbortController();
+    const onProgress = vi.fn();
+
+    await engine.executeTransition(
+      task as Parameters<typeof engine.executeTransition>[0],
+      'todo',
+      'doing',
+      undefined,
+      undefined,
+      controller.signal,
+      undefined,
+      undefined,
+      onProgress,
+    );
+
+    expect(worktreeManagerMock.ensureWorktree).toHaveBeenCalledTimes(1);
+    const [, , options] = worktreeManagerMock.ensureWorktree.mock.calls[0] as [unknown, unknown, EnsureWorktreeOptions];
+    expect(options.signal).toBe(controller.signal);
+    expect(options.onProgress).toBe(onProgress);
+
+    // Success path persists the new worktree path + branch back onto the task.
+    expect(taskRepo.update).toHaveBeenCalledWith({
+      id: task.id,
+      worktree_path: '/some/project/.kangentic/worktrees/fix-login-flow-task-abc',
+      branch_name: 'kangentic/fix-login-flow',
+    });
+  });
+
+  it('passes undefined signal/progress when the caller supplies none', async () => {
+    const task = makeTask({ worktree_path: null });
+    const action = makeAction({ type: 'create_worktree', config_json: JSON.stringify({}) });
+    const { engine } = makeEngine({ action });
+
+    await engine.executeTransition(task as Parameters<typeof engine.executeTransition>[0], 'todo', 'doing');
+
+    expect(worktreeManagerMock.ensureWorktree).toHaveBeenCalledTimes(1);
+    const [, , options] = worktreeManagerMock.ensureWorktree.mock.calls[0] as [unknown, unknown, EnsureWorktreeOptions];
+    expect(options.signal).toBeUndefined();
+    expect(options.onProgress).toBeUndefined();
   });
 });

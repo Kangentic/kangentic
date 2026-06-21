@@ -93,7 +93,7 @@ export class TransitionEngine {
     }, permissionOverride, resumePrompt, signal, agentOverride, handoffPromptPrefix, spawnOverrides);
   }
 
-  async executeTransition(task: Task, fromSwimlaneId: string, toSwimlaneId: string, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, signal?: AbortSignal, agentOverride?: string, spawnOverrides?: SpawnOverrides): Promise<void> {
+  async executeTransition(task: Task, fromSwimlaneId: string, toSwimlaneId: string, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, signal?: AbortSignal, agentOverride?: string, spawnOverrides?: SpawnOverrides, onProgress?: (phase: string) => void): Promise<void> {
     const transitions = this.actionRepo.getTransitionsFor(fromSwimlaneId, toSwimlaneId);
     if (transitions.length === 0) return;
 
@@ -102,11 +102,11 @@ export class TransitionEngine {
       const action = this.actionRepo.getById(transition.action_id);
       if (!action) continue;
 
-      await this.executeAction(action, task, permissionOverride, skipPromptTemplate, signal, agentOverride, spawnOverrides);
+      await this.executeAction(action, task, permissionOverride, skipPromptTemplate, signal, agentOverride, spawnOverrides, onProgress);
     }
   }
 
-  private async executeAction(action: Action, task: Task, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, signal?: AbortSignal, agentOverride?: string, spawnOverrides?: SpawnOverrides): Promise<void> {
+  private async executeAction(action: Action, task: Task, permissionOverride?: PermissionMode | null, skipPromptTemplate?: boolean, signal?: AbortSignal, agentOverride?: string, spawnOverrides?: SpawnOverrides, onProgress?: (phase: string) => void): Promise<void> {
     let config: ActionConfig;
     try {
       config = JSON.parse(action.config_json);
@@ -164,7 +164,7 @@ export class TransitionEngine {
         break;
 
       case 'create_worktree':
-        await this.executeCreateWorktree(config, task);
+        await this.executeCreateWorktree(config, task, signal, onProgress);
         break;
 
       case 'cleanup_worktree':
@@ -440,7 +440,7 @@ export class TransitionEngine {
     }
   }
 
-  private async executeCreateWorktree(config: ActionConfig, task: Task): Promise<void> {
+  private async executeCreateWorktree(config: ActionConfig, task: Task, signal?: AbortSignal, onProgress?: (phase: string) => void): Promise<void> {
     const appConfig = this.getConfig();
     if (!appConfig.projectPath) return;
 
@@ -451,8 +451,13 @@ export class TransitionEngine {
       copyFiles: config.copyFiles || appConfig.gitConfig.copyFiles,
     };
 
+    // Forward the abort signal and progress callback so this action path matches
+    // the normal task-move spawn path: an abort cancels an in-flight worktree
+    // create / init script, and the card shows the "Creating worktree..." /
+    // "Running setup script..." phases. The signal originates in executeAction;
+    // onProgress is supplied by the spawn caller that holds the renderer window.
     const result = await wm.withLock(
-      () => wm.ensureWorktree(task, gitConfig),
+      () => wm.ensureWorktree(task, gitConfig, { signal, onProgress }),
       { label: `transition-ensure:${task.id.slice(0, 8)}` },
     );
     if (!result) return;

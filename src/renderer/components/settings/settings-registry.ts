@@ -64,7 +64,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'git.autoCleanup', tabId: 'git', label: 'Auto-cleanup', description: 'Remove worktrees when tasks complete', scope: 'project', keywords: ['remove', 'delete'] },
   { id: 'git.defaultBaseBranch', tabId: 'git', label: 'Default Base Branch', description: 'Branch to create worktrees from', scope: 'project', keywords: ['main', 'master'] },
   { id: 'git.copyFiles', tabId: 'git', label: 'Copy Files', description: 'Additional files copied into each worktree', scope: 'project', keywords: ['env', 'dotfiles'] },
-  { id: 'git.initScript', tabId: 'git', label: 'Post-Worktree Script', description: 'Shell script to run after worktree creation', scope: 'project', keywords: ['install', 'setup', 'hook'] },
+  { id: 'git.initScript', tabId: 'git', label: 'Post-Worktree Script', description: 'Shell script to run after worktree creation. Runs through cmd.exe on Windows, so POSIX-only syntax will not carry over.', scope: 'project', keywords: ['install', 'setup', 'hook'] },
   { id: 'git.linkNodeModules', tabId: 'git', label: 'Link node_modules', description: 'Symlink the root node_modules into each worktree so agents skip a fresh install. Disable to let the Post-Worktree Script install dependencies in the worktree itself.', scope: 'project', keywords: ['symlink', 'junction', 'deps', 'install', 'node_modules'] },
   { id: 'git.prRefreshIntervalMinutes', tabId: 'git', label: 'Auto-refresh PRs', description: 'How often to refresh linked PR state in the background', scope: 'project', keywords: ['pull request', 'pr', 'refresh', 'poll', 'merged', 'sync', 'stale'] },
 
