@@ -25,6 +25,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ---------------------------------------------------------------------------
 
 const capturedHandlers = new Map<string, (...args: unknown[]) => unknown>();
+const capturedOnHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
 vi.mock('electron', () => ({
   app: { getVersion: vi.fn(() => '0.0.0'), getPath: vi.fn(() => '/tmp') },
@@ -32,7 +33,9 @@ vi.mock('electron', () => ({
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
       capturedHandlers.set(channel, handler);
     }),
-    on: vi.fn(),
+    on: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
+      capturedOnHandlers.set(channel, handler);
+    }),
   },
   Notification: { isSupported: vi.fn(() => false) },
   dialog: { showOpenDialog: vi.fn() },
@@ -162,6 +165,12 @@ function invokeHandler(channel: string, ...args: unknown[]): unknown {
   return handler(undefined, ...args);
 }
 
+function invokeOnHandler(channel: string, event: Record<string, unknown>, ...args: unknown[]): void {
+  const handler = capturedOnHandlers.get(channel);
+  if (!handler) throw new Error(`On-handler not registered for channel: ${channel}`);
+  handler(event, ...args);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -169,6 +178,7 @@ function invokeHandler(channel: string, ...args: unknown[]): unknown {
 describe('CONFIG_SET IPC handler - applyRuntimeConfig wiring', () => {
   beforeEach(() => {
     capturedHandlers.clear();
+    capturedOnHandlers.clear();
     applyRuntimeConfigSpy.mockClear();
   });
 
@@ -204,6 +214,7 @@ describe('CONFIG_SET IPC handler - applyRuntimeConfig wiring', () => {
 describe('CONFIG_SET_PROJECT IPC handler - applyRuntimeConfig wiring', () => {
   beforeEach(() => {
     capturedHandlers.clear();
+    capturedOnHandlers.clear();
     applyRuntimeConfigSpy.mockClear();
   });
 
@@ -233,6 +244,7 @@ describe('CONFIG_SET_PROJECT IPC handler - applyRuntimeConfig wiring', () => {
 describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - applyRuntimeConfig wiring', () => {
   beforeEach(() => {
     capturedHandlers.clear();
+    capturedOnHandlers.clear();
     applyRuntimeConfigSpy.mockClear();
   });
 
@@ -282,6 +294,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - applyRuntimeConfig wiring', (
 describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', () => {
   beforeEach(() => {
     capturedHandlers.clear();
+    capturedOnHandlers.clear();
     applyRuntimeConfigSpy.mockClear();
     startForProjectSpy.mockClear();
   });
@@ -344,6 +357,7 @@ describe('CONFIG_SET_PROJECT_BY_PATH IPC handler - prRefreshScheduler wiring', (
 describe('CONFIG_SYNC_DEFAULT_TO_PROJECTS IPC handler - applyRuntimeConfig wiring', () => {
   beforeEach(() => {
     capturedHandlers.clear();
+    capturedOnHandlers.clear();
     applyRuntimeConfigSpy.mockClear();
   });
 
@@ -387,5 +401,51 @@ describe('CONFIG_SYNC_DEFAULT_TO_PROJECTS IPC handler - applyRuntimeConfig wirin
     const result = invokeHandler('config:syncDefaultToProjects', { agent: { maxConcurrentSessions: 2 } });
 
     expect(result).toBe(3);
+  });
+});
+
+describe('CONFIG_SET_SYNC IPC handler - synchronous quit-flush wiring', () => {
+  // Regression guard for the intentionally-minimal design of the sync flush handler:
+  // it must persist the layout to disk AND set event.returnValue (so sendSync unblocks
+  // the renderer), but must NOT call applyRuntimeConfig (irrelevant during shutdown and
+  // would run synchronously at an unsafe time). If someone copies the CONFIG_SET body
+  // and adds applyRuntimeConfig here, this test catches it.
+  beforeEach(() => {
+    capturedHandlers.clear();
+    capturedOnHandlers.clear();
+    applyRuntimeConfigSpy.mockClear();
+  });
+
+  it('saves the config to disk synchronously and sets event.returnValue to true', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    const fakeEvent: Record<string, unknown> = {};
+    const payload = { workspaceByProject: { 'proj-a': { version: 1, windows: [], tileTree: null, tileTreeRect: { x: 0, y: 0, w: 1, h: 1 }, focusedTaskId: null } } };
+    invokeOnHandler('config:setSync', fakeEvent, payload);
+
+    expect(context.configManager.save).toHaveBeenCalledTimes(1);
+    expect(context.configManager.save).toHaveBeenCalledWith(payload);
+    expect(fakeEvent.returnValue).toBe(true);
+  });
+
+  it('does NOT call applyRuntimeConfig (intentionally minimal - shutdown path)', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    const fakeEvent: Record<string, unknown> = {};
+    invokeOnHandler('config:setSync', fakeEvent, { workspaceByProject: {} });
+
+    expect(applyRuntimeConfigSpy).not.toHaveBeenCalled();
+  });
+
+  it('is registered as a synchronous on-handler (not an async handle), so it is present in capturedOnHandlers', () => {
+    const context = makeContext();
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    // Confirm it is NOT in the async handler map (which sendSync cannot reach).
+    expect(capturedHandlers.has('config:setSync')).toBe(false);
+    // Confirm it IS in the sync on-handler map.
+    expect(capturedOnHandlers.has('config:setSync')).toBe(true);
   });
 });

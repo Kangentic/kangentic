@@ -70,7 +70,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `hasCompletedFirstRun` | boolean | `false` | Whether the user has completed first-run onboarding. Auto-set, not shown in UI. |
 | `windowBounds` | object \| null | `null` | Persisted window bounds `{x, y, width, height}`. Auto-saved, not shown in UI. |
 | `windowMaximized` | boolean | `false` | Whether the window was maximized at last close. Auto-saved, not shown in UI. |
-| `workspace` | object \| undefined | `undefined` | In-app window-manager layout: the open task-detail windows, their tiling tree, and fractional geometry. Persisted per-project (survives a project switch and an app restart), restored after sessions resolve, and taskId-anchored so a session respawn never orphans a window. Auto-saved, not shown in UI. |
+| `workspaceByProject` | Record\<string, object\> | `{}` | In-app window-manager layout keyed by project ID: each entry holds the open task-detail windows, their tiling tree, and fractional geometry. Persisted per-project (survives a project switch and an app restart), restored after sessions resolve, and taskId-anchored so a session respawn never orphans a window. Each entry carries a schema `version` and is clamped/validated on restore. Auto-saved, not shown in UI. |
 | `skipBoardConfigConfirm` | boolean | `false` | Auto-apply board config changes without confirmation dialog |
 | `statusBarPeriod` | UsageTimePeriod | `'live'` | Time period for status bar usage stats. Values: `live`, `today`, `week`, `month`, `all`. Global-only. |
 | `lastActiveTaskByProject` | Record\<string, string\> | `{}` | Per-project memory of the last user-clicked task tab in the terminal panel, keyed by project ID. Restored on project switch. Auto-saved, not shown in UI. |
@@ -347,6 +347,7 @@ Config files written by hand (without `id` fields on columns) are treated as add
 | `config:get` | Get effective config (global + project merged) |
 | `config:getGlobal` | Get global config only (no project overrides) |
 | `config:set` | Update global config (partial merge) |
+| `config:setSync` | Update global config synchronously (used on window close to persist the workspace layout) |
 | `config:getProject` | Get project-level overrides for current project |
 | `config:setProject` | Update project-level overrides for current project |
 | `config:getProjectByPath` | Get project-level overrides by project path |

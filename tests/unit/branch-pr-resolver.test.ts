@@ -325,6 +325,9 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
       pr({ number: 5, headRefName: 'renamed-real-branch' }),
     ]);
     // Done-task case: stored slug != real branch, but a single PR for the commit is unambiguous.
+    // This is intentional and must stay: the magnet bug (a fresh worktree linking the last-merged
+    // PR by commit) is prevented upstream by the linker's commits-ahead-of-base guard, which never
+    // reaches this resolver for a branchless worktree - not by rejecting a single non-matching PR here.
     expect((await gitHubPRConnector.resolveByCommit!('/r', 'sha', 'stale-slug'))?.number).toBe(5);
   });
 

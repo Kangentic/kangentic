@@ -220,6 +220,7 @@ const api: ElectronAPI = {
     get: () => ipcRenderer.invoke(IPC.CONFIG_GET),
     getGlobal: () => ipcRenderer.invoke(IPC.CONFIG_GET_GLOBAL),
     set: (config) => ipcRenderer.invoke(IPC.CONFIG_SET, config),
+    setSync: (config) => { ipcRenderer.sendSync(IPC.CONFIG_SET_SYNC, config); },
     getProjectOverrides: () => ipcRenderer.invoke(IPC.CONFIG_GET_PROJECT),
     setProjectOverrides: (overrides) => ipcRenderer.invoke(IPC.CONFIG_SET_PROJECT, overrides),
     getProjectOverridesByPath: (projectPath) => ipcRenderer.invoke(IPC.CONFIG_GET_PROJECT_BY_PATH, projectPath),
