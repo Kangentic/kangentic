@@ -3,7 +3,10 @@ import type { GitPendingChangesResult, Task, TaskMoveInput } from '../../../shar
 import { useProjectStore } from '../project-store';
 import type { BoardStore, CompletingTask, PendingDoneConfirm } from './types';
 
-export type PendingChangesInfo = Pick<GitPendingChangesResult, 'hasPendingChanges' | 'uncommittedFileCount' | 'unpushedCommitCount' | 'currentBranch'>;
+export type PendingChangesInfo = Pick<GitPendingChangesResult, 'hasPendingChanges' | 'uncommittedFileCount' | 'unpushedCommitCount' | 'currentBranch'> & {
+  /** Captured at drop time so the dialog can state whether the branch is kept or force-deleted. */
+  autoCleanup: boolean;
+};
 
 export interface DoneDropConfirmSlice {
   pendingDoneConfirm: PendingDoneConfirm | null;
@@ -48,6 +51,7 @@ export const createDoneDropConfirmSlice: StateCreator<BoardStore, [], [], DoneDr
         uncommittedFileCount: pendingChanges.uncommittedFileCount,
         unpushedCommitCount: pendingChanges.unpushedCommitCount,
         currentBranch: pendingChanges.currentBranch,
+        autoCleanup: pendingChanges.autoCleanup,
       });
     },
 
@@ -60,6 +64,7 @@ export const createDoneDropConfirmSlice: StateCreator<BoardStore, [], [], DoneDr
         uncommittedFileCount: pendingChanges.uncommittedFileCount,
         unpushedCommitCount: pendingChanges.unpushedCommitCount,
         currentBranch: pendingChanges.currentBranch,
+        autoCleanup: pendingChanges.autoCleanup,
       });
     },
 

@@ -4,8 +4,20 @@ import { IPC } from '../../../shared/ipc-channels';
 import { DiffService } from '../../git/diff-service';
 import { readWorktreeHead } from '../../git/worktree-head';
 import { fetchAllRemotesIfStale } from '../../git/fetch-throttle';
-import type { GitDiffFilesInput, GitFileContentInput, GitPendingChangesInput, GitPendingChangesResult } from '../../../shared/types';
+import { countLocalOnlyCommits } from '../../git/local-only-commits';
+import type { GitDiffFilesInput, GitFileContentInput, GitPendingChangesInput, GitPendingChangesResult, PRState } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+
+/**
+ * Policy inputs that shape what the Done move would actually destroy. `autoCleanup`
+ * decides whether the move force-deletes the branch (only then are only-local
+ * commits at risk); `prNumber` / `prState` let the count detect a squash-merge.
+ */
+export interface ProbeOptions {
+  autoCleanup?: boolean;
+  prNumber?: number | null;
+  prState?: PRState | null;
+}
 
 /**
  * Probe a worktree (or project) directory for work that the Done move would
@@ -13,18 +25,27 @@ import type { IpcContext } from '../ipc-context';
  * that exist on no remote. Also reports the live HEAD branch so the dialog can
  * name the branch the work actually lives on rather than a stale stored slug.
  *
- * The unpushed count is gated on the repo having at least one remote: with no
+ * The commit count is gated on the repo having at least one remote: with no
  * remotes, `rev-list --not --remotes` matches nothing and would count the
- * entire history, scaring the user with a number that is not unpushed work.
+ * entire history, scaring the user with a number that is not at-risk work.
  * When a remote exists we first refresh remote-tracking refs
  * (fetchAllRemotesIfStale) so the count reflects current remote state rather
  * than stale local refs, which previously made already-pushed commits look
  * local-only.
  *
+ * The count reports only commits the move would actually destroy:
+ * `countLocalOnlyCommits` excludes anything recoverable (pushed, merged by
+ * content, or in a merged PR), and the result counts only when `autoCleanup`
+ * will force-delete the branch - with the branch kept, even unmerged commits
+ * survive on its ref and are not at risk.
+ *
  * On any git failure it returns a safe default (`hasPendingChanges: true`) so
  * a corrupted or missing worktree still routes through the confirm dialog.
  */
-export async function probePendingChanges(checkPath: string): Promise<GitPendingChangesResult> {
+export async function probePendingChanges(checkPath: string, opts?: ProbeOptions): Promise<GitPendingChangesResult> {
+  // Default to true (conservative): a caller that omits it is treated as if the
+  // branch will be deleted, so only-local commits are surfaced rather than hidden.
+  const autoCleanup = opts?.autoCleanup ?? true;
   try {
     const git = simpleGit(checkPath);
     const status = await git.status();
@@ -34,7 +55,14 @@ export async function probePendingChanges(checkPath: string): Promise<GitPending
 
     let unpushedCommitCount = 0;
     const remotes = await git.getRemotes();
-    if (remotes.length > 0) {
+    // The count matters only when the move force-deletes the branch (autoCleanup):
+    // only then are only-local commits genuinely at risk. With the branch kept
+    // they stay reachable on its ref and the worktree is recreatable, so the count
+    // is 0 and the (potentially expensive: a remote fetch, git cherry, and a `gh`
+    // PR lookup) work below is skipped entirely rather than computed and discarded.
+    // The count is also gated on having a remote: with none, `rev-list --not
+    // --remotes` matches nothing and would count all of history.
+    if (remotes.length > 0 && autoCleanup) {
       // Refresh remote-tracking refs first: stale local refs make rev-list
       // report already-pushed commits as local-only. Never rejects; on failure
       // the count falls back to existing (possibly stale) refs, the pre-fix
@@ -42,10 +70,9 @@ export async function probePendingChanges(checkPath: string): Promise<GitPending
       // the outer catch (safe default) rather than yielding a false 0 count.
       await fetchAllRemotesIfStale(checkPath);
       try {
-        const countOutput = (await git.raw(['rev-list', 'HEAD', '--not', '--remotes', '--count'])).trim();
-        unpushedCommitCount = parseInt(countOutput, 10) || 0;
+        unpushedCommitCount = await countLocalOnlyCommits(checkPath, { prNumber: opts?.prNumber, prState: opts?.prState });
       } catch {
-        // Detached HEAD or unborn branch - treat as 0 unpushed.
+        // Detached HEAD or unborn branch - treat as 0.
       }
     }
 
@@ -96,7 +123,11 @@ export function registerGitDiffHandlers(context: IpcContext): void {
   });
 
   ipcMain.handle(IPC.GIT_CHECK_PENDING_CHANGES, (_, input: GitPendingChangesInput): Promise<GitPendingChangesResult> => {
-    return probePendingChanges(input.checkPath);
+    return probePendingChanges(input.checkPath, {
+      autoCleanup: input.autoCleanup,
+      prNumber: input.prNumber,
+      prState: input.prState,
+    });
   });
 
   ipcMain.on(IPC.GIT_DIFF_UNSUBSCRIBE, (_, worktreePath: string) => {

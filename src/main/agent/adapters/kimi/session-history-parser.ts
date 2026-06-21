@@ -1,7 +1,7 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { parseWireJsonl } from './wire-parser';
+import { kimiWorkDirHash, kimiSessionsRoot } from './work-dir-hash';
 import type { SessionHistoryParseResult } from '../../../../shared/types';
 
 /**
@@ -45,7 +45,7 @@ export class KimiSessionHistoryParser {
     cwd: string;
   }): Promise<string | null> {
     const { agentSessionId } = options;
-    const sessionsRoot = path.join(os.homedir(), '.kimi', 'sessions');
+    const sessionsRoot = kimiSessionsRoot();
     const maxAttempts = 10;
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -61,9 +61,16 @@ export class KimiSessionHistoryParser {
    * when the PTY output capture missed the welcome banner. Mirrors
    * Codex's filesystem fallback path.
    *
-   * Strategy: scan `~/.kimi/sessions/*` for session UUID directories
-   * created within ±30s of the spawn. Returns the most recently
-   * created match, or null if none.
+   * Strategy: scan ONLY this work_dir's session directory
+   * (`~/.kimi/sessions/<md5(cwd)>/`, plus its `<kaos>_<md5(cwd)>` variant)
+   * for session UUID directories created within ±30s of the spawn, and
+   * return the most recently created match, or null if none.
+   *
+   * Scoping to the spawn's own work_dir hash is load-bearing, not an
+   * optimization: a global newest-across-all-hashes scan attributes the wrong
+   * session whenever another Kimi session exists in the window under a
+   * different work_dir - a concurrent spawn in another project, or a `-w`-less
+   * probe's stray session - which would poison `--resume` with a foreign id.
    *
    * This is best-effort. The primary capture path is the PTY regex
    * scrape on the welcome banner ("Session: <uuid>"); this fallback
@@ -78,12 +85,15 @@ export class KimiSessionHistoryParser {
     const spawnedAtMs = options.spawnedAt.getTime();
     const floorMs = spawnedAtMs - 30_000;
     const ceilMs = spawnedAtMs + 30_000;
-    const sessionsRoot = path.join(os.homedir(), '.kimi', 'sessions');
+    const sessionsRoot = kimiSessionsRoot();
+    // Hash of the spawn's own work_dir; only sessions under this hash (and its
+    // non-local-kaos `<kaos>_<hash>` variant) belong to this spawn.
+    const workDirHash = kimiWorkDirHash(path.resolve(options.cwd));
     const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
     const maxAttempts = options.maxAttempts ?? 20;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const candidates = collectFreshSessionDirs(sessionsRoot, uuidPattern, floorMs, ceilMs);
+      const candidates = collectFreshSessionDirs(sessionsRoot, workDirHash, uuidPattern, floorMs, ceilMs);
       if (candidates.length > 0) {
         candidates.sort((a, b) => b.createdAtMs - a.createdAtMs);
         return candidates[0].uuid;
@@ -136,18 +146,20 @@ export function findSessionWireFile(sessionsRoot: string, sessionUuid: string): 
 }
 
 /**
- * Collect every session UUID directory under
- * `~/.kimi/sessions/*\/<uuid>/` whose directory mtime falls between
- * `floorMs` and `ceilMs`. Used as the filesystem fallback for session
- * ID capture when PTY scraping fails.
+ * Collect every session UUID directory under this work_dir's hash directory
+ * (`~/.kimi/sessions/<workDirHash>/<uuid>/`, plus any `<kaos>_<workDirHash>`
+ * variant) whose directory mtime falls between `floorMs` and `ceilMs`. Used as
+ * the filesystem fallback for session ID capture when PTY scraping fails.
  *
- * Two-level scan: first the hash directories, then the UUID
- * directories beneath each. Filters by uuidPattern so any
- * future non-UUID files Kimi might add to the sessions root are
- * ignored.
+ * Restricting to `workDirHash` is what keeps a concurrent session under a
+ * different work_dir (or a `-w`-less probe stray) from winning the recency
+ * sort. Two-level scan: the matching hash directories, then the UUID
+ * directories beneath each. Filters by uuidPattern so any future non-UUID
+ * files Kimi might add are ignored.
  */
 function collectFreshSessionDirs(
   sessionsRoot: string,
+  workDirHash: string,
   uuidPattern: RegExp,
   floorMs: number,
   ceilMs: number,
@@ -161,6 +173,9 @@ function collectFreshSessionDirs(
 
   const results: Array<{ uuid: string; createdAtMs: number }> = [];
   for (const hash of hashEntries) {
+    // Only this work_dir's hash dir (and its non-local-kaos `<kaos>_<hash>`
+    // variant); every other hash belongs to a different work_dir.
+    if (hash !== workDirHash && !hash.endsWith(`_${workDirHash}`)) continue;
     let sessionEntries: string[];
     try {
       sessionEntries = fs.readdirSync(path.join(sessionsRoot, hash));
