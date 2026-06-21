@@ -285,8 +285,14 @@ test.describe('Task Detail: maximize / restore', () => {
     await expect(frame).not.toHaveClass(/rounded-none/);
 
     // Close the window to leave a clean state for the next test.
-    await page.keyboard.press('Escape');
-    await expect(dialog).not.toBeVisible();
+    // Use the dedicated panel.close hotkey (capture-phase, isFocused-gated) rather
+    // than Escape: after Ctrl+Shift+M restore, the keyboard focus on some Linux
+    // headless Chromium builds lands on an intermediate element whose Escape
+    // handler intercepts before the bubble-phase window listener fires, leaving
+    // the dialog stuck open (CI flake). Control+Shift+W is capture-phase and
+    // cannot be intercepted. Mirrors the cleanup in the other tests in this file.
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
   test('edit mode: discarding unsaved changes confirms, layered over the still-visible dialog', async () => {
