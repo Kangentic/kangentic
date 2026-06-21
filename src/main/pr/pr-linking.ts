@@ -312,10 +312,15 @@ export async function linkPR(context: IpcContext, options: LinkPROptions): Promi
  * Fire-and-forget best-effort auto-resolve of a task's PR, gated on the task
  * being in a post-To Do lane (To Do resets the task, so there is no PR to link
  * there). Keeps platform logic in the connector; here we only gate on having a
- * branch/worktree and a non-To Do lane. Called AFTER `handleTaskMove` returns so
- * it runs outside the move's task lock.
+ * branch/worktree and a non-To Do lane.
+ *
+ * The shared auto-link entry point for every implicit trigger: a task-move
+ * (called AFTER `handleTaskMove` returns, outside the move's task lock), the
+ * plan-exit auto-move, and a session going idle (a PR was likely just created).
+ * All run NON-force, so the per-task 60s throttle in `linkPRForTask` coalesces
+ * them.
  */
-export function linkPRForMovedTask(context: IpcContext, taskId: string, projectId: string | null): void {
+export function autoLinkPRForTask(context: IpcContext, taskId: string, projectId: string | null): void {
   try {
     const { tasks, swimlanes } = getProjectRepos(context, projectId);
     const task = tasks.getById(taskId);

@@ -26,6 +26,9 @@ const conn = vi.hoisted(() => ({
   detect: null as unknown,
   canonical: null as unknown,
   calls: [] as string[],
+  // Args the last call to each resolver received, so a test can assert which
+  // branch/commit was queried (e.g. the live HEAD branch, not the stored slug).
+  lastArgs: {} as Record<string, unknown[]>,
 }));
 
 vi.mock('simple-git', () => ({
@@ -46,8 +49,9 @@ vi.mock('../../src/main/pr/pr-registry', () => {
   class PRResolverTransientError extends Error {
     constructor(message: string) { super(message); this.name = 'PRResolverTransientError'; }
   }
-  const make = (key: 'byNumber' | 'byBranch' | 'byCommit') => async () => {
+  const make = (key: 'byNumber' | 'byBranch' | 'byCommit') => async (...args: unknown[]) => {
     conn.calls.push(key);
+    conn.lastArgs[key] = args;
     const value = conn[key];
     if (value instanceof Error) throw value;
     return value ?? null;
@@ -92,7 +96,7 @@ function depsFor(task: Task, opts: { updateSpy?: ReturnType<typeof vi.fn>; force
 const resolved = (number: number, state = 'open') => ({ url: `u${number}`, number, state });
 
 beforeEach(() => {
-  conn.byNumber = null; conn.byBranch = null; conn.byCommit = null; conn.detect = null; conn.canonical = null; conn.calls = [];
+  conn.byNumber = null; conn.byBranch = null; conn.byCommit = null; conn.detect = null; conn.canonical = null; conn.calls = []; conn.lastArgs = {};
   git.branch = 'real-branch'; git.sha = 'sha-current'; git.aheadCount = '1';
 });
 
@@ -113,6 +117,21 @@ describe('linkPRForTask confidence ladder', () => {
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(result.task?.pr_number).toBe(20);
     expect(conn.calls).toEqual(['byBranch']);
+  });
+
+  it('tier 2: branch rename - resolves by the live HEAD branch, not the stored slug', async () => {
+    // The agent renamed the worktree branch after creation (team branch
+    // conventions): tasks.branch_name is the old slug, but the worktree's live
+    // HEAD is the renamed branch, and the PR exists only for the renamed branch.
+    // Tier 2 must query the live HEAD, never the stored slug.
+    git.branch = 'renamed-branch';
+    conn.byBranch = resolved(123, 'open');
+    const task = makeTask({ branch_name: 'old-slug', worktree_path: '/wt', pr_number: null });
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(result.task?.pr_number).toBe(123);
+    expect(conn.calls).toEqual(['byBranch']);
+    // The load-bearing assertion: the renamed branch was queried, not the slug.
+    expect(conn.lastArgs.byBranch?.[1]).toBe('renamed-branch');
   });
 
   it('tier 3: no worktree but head_sha set resolves by commit', async () => {

@@ -127,7 +127,7 @@ All six modes are available in both the global App Settings "Permissions" dropdo
 | `git.copyFiles` | string[] | `[]` | Files to copy from repo root into worktrees |
 | `git.initScript` | string \| null | `null` | Shell script run in each new worktree after creation (and after `node_modules` linking). Runs via the platform shell (cmd.exe on Windows, sh on POSIX). A non-zero exit, timeout (10 min cap), or cancellation fails worktree creation. |
 | `git.linkNodeModules` | boolean | `true` | Symlink the root `node_modules` into each worktree so agents skip a fresh install. Disable to let `git.initScript` install dependencies inside the worktree instead. |
-| `git.prRefreshIntervalMinutes` | number \| null | `5` | Minutes between background PR-state refresh sweeps while the project is open. `null` = off (the on-open sweep still runs) |
+| `git.prRefreshIntervalMinutes` | number \| null | `5` | Minutes between background PR sweeps while the project is open. Each sweep refreshes linked PRs' state and discovers/links a PR for an unlinked task with a live worktree. `null` = off (the on-open sweep still runs) |
 
 ### Shortcuts
 

@@ -6,7 +6,7 @@ import { UsageHistoryRepository } from '../../db/repositories/usage-history-repo
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides } from '../helpers';
-import { linkPR, linkPRForMovedTask } from '../../pr/pr-linking';
+import { linkPR, autoLinkPRForTask } from '../../pr/pr-linking';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
@@ -378,6 +378,27 @@ export function registerSessionHandlers(context: IpcContext): void {
         }
       }
       context.mainWindow.webContents.send(IPC.SESSION_ACTIVITY, sessionId, state, reason, projectId, taskId, taskTitle);
+
+      // A session going idle (the agent finished its turn) is the catch-all
+      // signal that a PR may have just been created mid-session - the move-time
+      // resolve fired before the PR existed, and the gh-command sniffer
+      // (`pr-candidate`) misses a PR opened any other way. Re-resolve now so the
+      // card links within seconds instead of waiting for the periodic sweep.
+      // NON-force via autoLinkPRForTask, so the 60s per-task throttle coalesces
+      // the repeated idles a long session emits. Skip transient (Command
+      // Terminal) sessions: their synthetic taskId is not a real task row.
+      //
+      // Deliberately the granular 'idle' state only (turn complete), NOT the
+      // idle-vs-active bucket: a 'permission' pause is mid-turn, so it did not
+      // just create a PR. Check the literal first so the per-event getSession
+      // registry lookup is skipped on the far-more-frequent 'thinking' events.
+      // activity-state-ok: granular turn-completion check, not an idle/active bucket.
+      if (state === 'idle' && taskId && projectId) {
+        const session = context.sessionManager.getSession(sessionId);
+        if (session && !session.transient) {
+          autoLinkPRForTask(context, taskId, projectId);
+        }
+      }
     }
   });
 
@@ -652,7 +673,7 @@ export function registerSessionHandlers(context: IpcContext): void {
       }
       console.log(`[plan-exit] Auto-moved "${task.title}" -> "${target.name}"`);
       // Resolve the PR for the new (non-To Do) lane - runs after the move's lock released.
-      linkPRForMovedTask(context, task.id, resolvedProjectId);
+      autoLinkPRForTask(context, task.id, resolvedProjectId);
     } catch (err) {
       console.error('[plan-exit] Auto-move failed:', err);
     }

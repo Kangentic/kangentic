@@ -1,8 +1,11 @@
 /**
- * Background PR-state refresh sweep. Re-resolves the PR state of every eligible
- * task in a project so a PR merged/closed externally on the host (off-app) is
- * reflected on the board. Runs fire-and-forget on project open/switch and on a
- * periodic timer (see pr-refresh-scheduler.ts).
+ * Background PR refresh-and-discover sweep. For each eligible task it re-resolves
+ * the PR via the `linkPR` backbone, which both refreshes an already-linked PR's
+ * state (so a PR merged/closed off-app is reflected on the board) AND discovers a
+ * PR for a still-unlinked task that has a live worktree (e.g. an agent created
+ * the PR mid-session on a renamed branch and no other trigger caught it). Runs
+ * fire-and-forget on project open/switch and on a periodic timer (see
+ * pr-refresh-scheduler.ts).
  *
  * Reuses the `linkPR` backbone unchanged and NON-FORCE on purpose: non-force
  * re-resolves open/draft/null PRs (so open -> merged is caught), skips terminal
@@ -16,15 +19,24 @@ import type { Task } from '../../shared/types';
 import type { IpcContext } from '../ipc/ipc-context';
 
 /**
- * A task is worth a background refresh when it has a non-terminal linked PR (or a
- * PR URL anchor in its description) - i.e. a state that can still change off-app.
- * Terminal merged/closed PRs never change, and tasks with no PR anchor have
- * nothing to resolve, so both are skipped to bound the `gh` load. (`tasks.list()`
- * already excludes archived tasks.)
+ * A task is worth a background sweep when its PR can still change or be found:
+ *   - a non-terminal linked PR (`pr_number`) - state can change off-app;
+ *   - a live worktree (`worktree_path`) - an actively-worked task whose PR may
+ *     have been created but not yet linked (the discovery case); the worktree's
+ *     live HEAD branch resolves the PR even after the agent renamed the branch.
+ *     Only active tasks have a worktree (To Do clears it, Done reclaims it), so
+ *     this stays a small bounded set, further bounded by the per-task 60s TTL and
+ *     the global `gh` concurrency cap;
+ *   - a PR URL anchor in the description.
+ * Terminal merged/closed PRs never change and are skipped first. A task with none
+ * of these has nothing to resolve. (`tasks.list()` already excludes archived
+ * tasks.) `head_sha` is deliberately NOT an anchor here: nearly every historical
+ * task carries one, so it would make the sweep unbounded.
  */
 function isEligibleForRefresh(task: Task): boolean {
   if (task.pr_state === 'merged' || task.pr_state === 'closed') return false;
   if (task.pr_number != null) return true;
+  if (task.worktree_path != null) return true;
   return detectCanonicalPR(task.description ?? '') != null;
 }
 

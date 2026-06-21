@@ -94,7 +94,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 }));
 vi.mock('../../src/main/pr/pr-linking', () => ({
   linkPR: vi.fn(async () => {}),
-  linkPRForMovedTask: vi.fn(),
+  autoLinkPRForTask: vi.fn(),
 }));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn(async () => {}) }));
 vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({

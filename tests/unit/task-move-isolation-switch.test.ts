@@ -114,7 +114,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   autoSpawnForTask: vi.fn(async () => {}),
 }));
 vi.mock('../../src/main/pr/pr-linking', () => ({
-  linkPRForMovedTask: vi.fn(),
+  autoLinkPRForTask: vi.fn(),
 }));
 
 import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';

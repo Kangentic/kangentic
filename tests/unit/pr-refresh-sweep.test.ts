@@ -1,7 +1,9 @@
 /**
  * Unit tests for the background PR-refresh sweep (refreshProjectPRs): which tasks
- * are eligible (non-terminal linked PR or a description PR anchor) and that the
- * backbone is invoked NON-FORCE exactly once per eligible task.
+ * are eligible (non-terminal linked PR, a live worktree, or a description PR
+ * anchor) and that the backbone is invoked NON-FORCE exactly once per eligible
+ * task. The live-worktree case is the discovery path - an unlinked task whose PR
+ * was created mid-session is found on the next sweep.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -53,7 +55,8 @@ describe('refreshProjectPRs eligibility', () => {
     const merged = makeTask({ id: 'merged', pr_number: 4, pr_state: 'merged' });
     const closed = makeTask({ id: 'closed', pr_number: 5, pr_state: 'closed' });
     const descAnchored = makeTask({ id: 'desc', pr_number: null, pr_state: null, description: 'see https://github.com/o/r/pull/7' });
-    const noAnchor = makeTask({ id: 'none', pr_number: null, pr_state: null, description: 'no pr here' });
+    // No pr_number, no description anchor, AND no worktree -> genuinely no anchor.
+    const noAnchor = makeTask({ id: 'none', pr_number: null, pr_state: null, description: 'no pr here', worktree_path: null });
     withTasks([open, draft, unknownState, merged, closed, descAnchored, noAnchor]);
 
     await refreshProjectPRs({} as never, 'proj-1');
@@ -76,14 +79,31 @@ describe('refreshProjectPRs eligibility', () => {
   });
 
   it('does nothing when no task is eligible', async () => {
+    // worktree_path: null keeps these out of the discovery path (the makeTask
+    // default sets a worktree, which would make the second task eligible).
     withTasks([
-      makeTask({ pr_number: 4, pr_state: 'merged' }),
-      makeTask({ pr_number: null, pr_state: null, description: '' }),
+      makeTask({ pr_number: 4, pr_state: 'merged', worktree_path: null }),
+      makeTask({ pr_number: null, pr_state: null, description: '', worktree_path: null }),
     ]);
 
     await refreshProjectPRs({} as never, 'proj-1');
 
     expect(linkPR).not.toHaveBeenCalled();
+  });
+
+  it('discovers an unlinked task with a live worktree (no pr_number, no description anchor)', async () => {
+    const wtOnly = makeTask({ id: 'wt-only', pr_number: null, pr_state: null, description: '', worktree_path: '/mock/worktrees/wt' });
+    const bare = makeTask({ id: 'bare', pr_number: null, pr_state: null, description: '', worktree_path: null, branch_name: null });
+    // Terminal guard runs before the worktree check: a merged PR is never swept,
+    // even with a live worktree.
+    const mergedWt = makeTask({ id: 'merged-wt', pr_number: 9, pr_state: 'merged', worktree_path: '/mock/worktrees/wt' });
+    withTasks([wtOnly, bare, mergedWt]);
+
+    await refreshProjectPRs({} as never, 'proj-1');
+
+    expect(linkedTaskIds()).toEqual(['wt-only']);
+    expect(linkedTaskIds()).not.toContain('bare');
+    expect(linkedTaskIds()).not.toContain('merged-wt');
   });
 
   it('swallows a per-task failure and continues the sweep', async () => {
