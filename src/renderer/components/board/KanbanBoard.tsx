@@ -354,7 +354,11 @@ export function KanbanBoard() {
   return (
     <div className="relative h-full overflow-x-auto overflow-y-hidden flex flex-col">
       <ConfigWarningBanner />
-      <div className="flex-1 overflow-x-auto overflow-y-hidden p-4">
+      {/* `data-board-background`: the empty-board region the click-outside window
+          dismiss anchors on. Scoped to this scroll container (not the root) so the
+          board-level dialogs rendered after it (NewTaskDialog, BoardDialogs) are
+          siblings, not descendants, and never read as a background click. */}
+      <div className="flex-1 overflow-x-auto overflow-y-hidden p-4" data-board-background>
       <WelcomeOverlay />
       <DndContext
         key={hmrGeneration}

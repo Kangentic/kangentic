@@ -111,6 +111,9 @@ function OverlayPopoverContent({
       style={{ transformOrigin, ...positionStyle }}
       className={`${className} ${contentClassName}`}
       onAnimationEnd={onAnimationEnd}
+      // Marks this as an open dismissable layer so the click-outside window
+      // dismiss yields to it: an outside click closes the popover, not a window.
+      data-dismissable-layer
       {...domProps}
     >
       {children}

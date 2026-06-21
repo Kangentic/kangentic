@@ -1087,6 +1087,11 @@ export interface NotificationConfig {
   cooldownSeconds: number;
 }
 
+/** Click-outside (light-dismiss) policy for modeless task-detail windows. `off`
+ *  disables it; `single` closes only a lone floating window (the peek case);
+ *  `focused` closes the focused window in any state; `all` closes every window. */
+export type WindowLightDismiss = 'off' | 'single' | 'focused' | 'all';
+
 export interface AppConfig {
   theme: ThemeMode;
   sidebarVisible: boolean;
@@ -1223,6 +1228,8 @@ export interface AppConfig {
   skipDeleteConfirm: boolean;
   skipBoardConfigConfirm: boolean;
   autoFocusIdleSession: boolean;
+  /** Click-outside dismiss policy for modeless task-detail windows. Default `single`. */
+  windowLightDismiss: WindowLightDismiss;
   /** Task IDs that have already been offered an auto-rename suggestion. Persisted so a
    *  dismissed suggestion does not reappear on the next app launch. Drained on task
    *  delete (TASK_DELETE / TASK_BULK_DELETE handlers in `task-crud.ts`) so the array
@@ -1376,6 +1383,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   skipDeleteConfirm: false,
   skipBoardConfigConfirm: false,
   autoFocusIdleSession: false,
+  windowLightDismiss: 'single',
   autoNameAskedTaskIds: [],
   autoNameRateLimitPerHour: 60,
   restoreWindowPosition: true,
