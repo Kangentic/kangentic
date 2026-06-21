@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import * as crypto from 'node:crypto';
+import { kimiWorkDirHash } from './work-dir-hash';
 import { replacePathPrefix } from '../../../../shared/paths';
 import {
   collectRelocationPairs,
@@ -46,11 +46,6 @@ interface WorkDirEntry {
 
 const kimiJsonPath = (): string => path.join(os.homedir(), '.kimi', 'kimi.json');
 const sessionsRoot = (): string => path.join(os.homedir(), '.kimi', 'sessions');
-
-/** md5 hex of the literal absolute path string (kimi-cli `metadata.py`). */
-function kimiWorkDirHash(literalPath: string): string {
-  return crypto.createHash('md5').update(literalPath, 'utf8').digest('hex');
-}
 
 function migrateKimiProjectDataSync(oldProjectPath: string, newProjectPath: string): void {
   const oldResolved = path.resolve(oldProjectPath);

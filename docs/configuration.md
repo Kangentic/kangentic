@@ -32,6 +32,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`
 - `terminal.panelHeight`, `terminal.showPreview`
 - `autoFocusIdleSession`
+- `windowLightDismiss`
 - `contextBar.*` (all context bar visibility toggles)
 - `notifications.*` (all notification settings)
 - `agent.idleTimeoutMinutes`
@@ -67,11 +68,12 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `diffViewMode` | `'split'` \| `'inline'` | `'split'` | Default layout for viewing file diffs (`split` = side-by-side, `inline` = unified). The in-diff toggle and the Layout settings tab write this same key, so the choice sticks. Global-only. |
 | `skipDeleteConfirm` | boolean | `false` | Skip confirmation dialog on task delete. Written by the delete dialog's "don't ask again" checkbox. No longer surfaced in the Settings panel. |
 | `autoFocusIdleSession` | boolean | `false` | Auto-switch to session tab when agent goes idle. Idle tabs are always highlighted regardless of this setting. |
+| `windowLightDismiss` | `'off'` \| `'single'` \| `'focused'` \| `'all'` | `'single'` | Click-outside (light-dismiss) policy for modeless task-detail windows. `off` disables; `single` closes a lone floating window; `focused` closes the focused window (any state); `all` closes every window. Closing a window does not kill its session. Global-only. |
 | `restoreWindowPosition` | boolean | `true` | Remember window size and position between launches. Global-only. |
 | `hasCompletedFirstRun` | boolean | `false` | Whether the user has completed first-run onboarding. Auto-set, not shown in UI. |
 | `windowBounds` | object \| null | `null` | Persisted window bounds `{x, y, width, height}`. Auto-saved, not shown in UI. |
 | `windowMaximized` | boolean | `false` | Whether the window was maximized at last close. Auto-saved, not shown in UI. |
-| `workspace` | object \| undefined | `undefined` | In-app window-manager layout: the open task-detail windows, their tiling tree, and fractional geometry. Persisted per-project (survives a project switch and an app restart), restored after sessions resolve, and taskId-anchored so a session respawn never orphans a window. Auto-saved, not shown in UI. |
+| `workspaceByProject` | Record\<string, object\> | `{}` | In-app window-manager layout keyed by project ID: each entry holds the open task-detail windows, their tiling tree, and fractional geometry. Persisted per-project (survives a project switch and an app restart), restored after sessions resolve, and taskId-anchored so a session respawn never orphans a window. Each entry carries a schema `version` and is clamped/validated on restore. Auto-saved, not shown in UI. |
 | `skipBoardConfigConfirm` | boolean | `false` | Auto-apply board config changes without confirmation dialog |
 | `statusBarPeriod` | UsageTimePeriod | `'live'` | Time period for status bar usage stats. Values: `live`, `today`, `week`, `month`, `all`. Global-only. |
 | `lastActiveTaskByProject` | Record\<string, string\> | `{}` | Per-project memory of the last user-clicked task tab in the terminal panel, keyed by project ID. Restored on project switch. Auto-saved, not shown in UI. |
@@ -348,6 +350,7 @@ Config files written by hand (without `id` fields on columns) are treated as add
 | `config:get` | Get effective config (global + project merged) |
 | `config:getGlobal` | Get global config only (no project overrides) |
 | `config:set` | Update global config (partial merge) |
+| `config:setSync` | Update global config synchronously (used on window close to persist the workspace layout) |
 | `config:getProject` | Get project-level overrides for current project |
 | `config:setProject` | Update project-level overrides for current project |
 | `config:getProjectByPath` | Get project-level overrides by project path |

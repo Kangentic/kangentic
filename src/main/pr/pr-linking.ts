@@ -1,6 +1,6 @@
 import { IPC } from '../../shared/ipc-channels';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
-import { readWorktreeHead, isMergeCommit } from '../git/worktree-head';
+import { readWorktreeHead, hasCommitsAheadOfBase } from '../git/worktree-head';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import {
   resolvePRForBranch,
@@ -38,6 +38,12 @@ export interface PRLinkDeps {
   tasks: TaskRepository;
   /** Repo root used as the resolver `cwd` when the task has no worktree of its own. */
   projectPath: string | null;
+  /**
+   * Project default base branch (from config), used to resolve the task's base
+   * for the Tier-3 commits-ahead-of-base guard when `task.base_branch` is unset.
+   * Falls back to 'main' when absent.
+   */
+  defaultBaseBranch?: string;
   /** Notify the renderer that the task changed (e.g. send TASK_UPDATED_BY_AGENT). */
   onLinked: (task: Task) => void;
   /** Optional raw PTY scrollback for the degradation fallback when the resolver is unavailable. */
@@ -73,9 +79,10 @@ async function resolvePRViaLadder(args: {
   projectPath: string | null;
   branch: string | null;
   effectiveSha: string | null;
+  baseBranch: string;
   descriptionPR: DetectedPR | null;
 }): Promise<LinkedPR | null> {
-  const { task, cwd, projectPath, branch, effectiveSha, descriptionPR } = args;
+  const { task, cwd, projectPath, branch, effectiveSha, baseBranch, descriptionPR } = args;
 
   // Tier 0: a single PR URL written into the task description is authoritative.
   // A code-review worktree is branched from the base branch with no commits of
@@ -98,12 +105,15 @@ async function resolvePRViaLadder(args: {
     const byBranch = await resolvePRForBranch(cwd, branch, task.base_branch ?? undefined);
     if (byBranch) return byBranch;
   }
-  if (effectiveSha && !(await isMergeCommit(projectPath ?? cwd, effectiveSha))) {
+  if (effectiveSha && (await hasCommitsAheadOfBase(projectPath ?? cwd, baseBranch, effectiveSha))) {
     // Run from the main repo (projectPath) so it works even when the worktree is
     // gone. Pass the known branch as a hint so a commit shared by several PRs
     // ties back to this task (ambiguous matches resolve to null, not a guess).
-    // Skip merge commits: a `Merge pull request #N` base-branch tip (which a
-    // freshly-branched worktree sits on) is never this task's own work.
+    // Only run when the commit has work of its own beyond base: a fresh worktree
+    // branched from base sits on base's tip (== the last-merged PR's commit), and
+    // that PR is never this task's work. This also catches the single-parent
+    // commits `gh pr merge --rebase`/`--squash` produce, which a parent-count
+    // merge check misses.
     const byCommit = await resolvePRByCommit(projectPath ?? cwd, effectiveSha, branch ?? undefined);
     if (byCommit) return byCommit;
   }
@@ -152,6 +162,7 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     }
     const branch = worktreeBranch ?? task.branch_name;
     const effectiveSha = freshSha ?? task.head_sha;
+    const baseBranch = task.base_branch ?? deps.defaultBaseBranch ?? 'main';
 
     // Nothing to resolve from at all. A PR URL in the description is itself an
     // anchor (Tier 0), so a task with no git state still resolves from it.
@@ -172,7 +183,7 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
     let degradeMessage: string | undefined;
 
     try {
-      const resolved = await resolvePRViaLadder({ task, cwd, projectPath: deps.projectPath, branch, effectiveSha, descriptionPR });
+      const resolved = await resolvePRViaLadder({ task, cwd, projectPath: deps.projectPath, branch, effectiveSha, baseBranch, descriptionPR });
       if (resolved) next = { url: resolved.url, number: resolved.number, state: resolved.state };
     } catch (error) {
       if (error instanceof PRResolverUnavailableError || error instanceof PRResolverTransientError) {
@@ -202,15 +213,30 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
       patch.pr_number = next.number;
       patch.pr_state = next.state;
     }
+    // Confident not-found: the resolver ran cleanly (no transient / unavailable
+    // degrade) and matched no PR, yet the task still carries a link. Clear it so
+    // a stale `merged` (or any orphaned link) never lingers - pr_number, pr_url,
+    // and pr_state always agree, written atomically in the same update below. A
+    // degraded resolve never clears (the link is preserved, as before).
+    const hadLink = task.pr_number != null || task.pr_url != null || task.pr_state != null;
+    const prCleared = next == null && !degradeStatus && hadLink;
+    if (prCleared) {
+      patch.pr_url = null;
+      patch.pr_number = null;
+      patch.pr_state = null;
+    }
     const shaChanged = freshSha != null && freshSha !== task.head_sha;
     if (shaChanged) patch.head_sha = freshSha;
 
     let updatedTask = task;
-    if (prChanged || shaChanged) {
+    if (prChanged || prCleared || shaChanged) {
       updatedTask = deps.tasks.update(patch);
     }
     if (prChanged && next) {
       console.log(`[pr-linking] Linked PR #${next.number} (${next.state ?? 'unknown'}) to "${task.title}": ${next.url}`);
+      deps.onLinked(updatedTask);
+    } else if (prCleared) {
+      console.log(`[pr-linking] Cleared stale PR link from "${task.title}" (no PR resolves for its branch)`);
       deps.onLinked(updatedTask);
     }
 
@@ -261,10 +287,17 @@ export async function linkPR(context: IpcContext, options: LinkPROptions): Promi
   if (!task) return { status: 'no-anchor', task: null };
 
   const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
+  let defaultBaseBranch: string | undefined;
+  try {
+    defaultBaseBranch = projectPath ? context.configManager.getEffectiveConfig(projectPath).git.defaultBaseBranch : undefined;
+  } catch {
+    defaultBaseBranch = undefined;
+  }
 
   return linkPRForTask(task.id, {
     tasks,
     projectPath,
+    defaultBaseBranch,
     force: options.force,
     getScrollback: options.scrollback != null ? () => options.scrollback : undefined,
     onLinked: (linked) => {

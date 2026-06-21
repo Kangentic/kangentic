@@ -276,6 +276,14 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     expect(result).toMatchObject({ number: 42, state: 'merged' });
   });
 
+  it('resolveByNumber keeps a fork (cross-repository) PR - an explicit number is unambiguous', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+      pr({ number: 31, state: 'OPEN', isCrossRepository: true }),
+    );
+    const result = await gitHubPRConnector.resolveByNumber!('/r', 31);
+    expect(result).toMatchObject({ number: 31, state: 'open' });
+  });
+
   it('resolveByCommit disambiguates the associated PRs', async () => {
     vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
       pr({ number: 1, state: 'MERGED', updatedAt: '2026-05-01T00:00:00Z' }),
@@ -325,6 +333,9 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
       pr({ number: 5, headRefName: 'renamed-real-branch' }),
     ]);
     // Done-task case: stored slug != real branch, but a single PR for the commit is unambiguous.
+    // This is intentional and must stay: the magnet bug (a fresh worktree linking the last-merged
+    // PR by commit) is prevented upstream by the linker's commits-ahead-of-base guard, which never
+    // reaches this resolver for a branchless worktree - not by rejecting a single non-matching PR here.
     expect((await gitHubPRConnector.resolveByCommit!('/r', 'sha', 'stale-slug'))?.number).toBe(5);
   });
 

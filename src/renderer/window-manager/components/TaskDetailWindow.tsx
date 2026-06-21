@@ -42,6 +42,7 @@ import {
   useTaskActions,
 } from '../../components/dialogs/task-detail';
 import { useWindowStore } from '../store/window-store';
+import { registerWindowCloser, unregisterWindowCloser } from '../store/window-close-registry';
 import { classifySnapZone, nextSnap } from '../dnd/snap-zones';
 import type { SnapDirection } from '../dnd/snap-zones';
 import type { Task, ShortcutConfig } from '../../../shared/types';
@@ -362,6 +363,15 @@ export function TaskDetailWindow({
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [isFocused, closeWithGuard]);
+
+  // Expose this window's guarded close to the central click-outside dismiss hook
+  // (`useClickOutsideToClose`), so a board-background click routes through the
+  // same unsaved-edits guard as Escape and the X. Keyed on `closeWithGuard` so a
+  // re-memo re-registers the fresh closure; mirrors the Escape effect lifecycle.
+  useEffect(() => {
+    registerWindowCloser(windowId, closeWithGuard);
+    return () => unregisterWindowCloser(windowId);
+  }, [windowId, closeWithGuard]);
 
   const onTitleBarPointerDown = useCallback((event: React.PointerEvent) => {
     if (isInteractiveTarget(event)) return;

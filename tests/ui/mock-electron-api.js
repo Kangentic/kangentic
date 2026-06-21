@@ -110,10 +110,12 @@
       labelColors: {},
     },
     hotkeyOverrides: {},
+    workspaceByProject: {},
     hasCompletedFirstRun: true,
     skipDeleteConfirm: false,
     skipBoardConfigConfirm: false,
     autoFocusIdleSession: false,
+    windowLightDismiss: 'single',
     autoNameAskedTaskIds: [],
     autoNameRateLimitPerHour: 60,
     restoreWindowPosition: true,
@@ -1450,6 +1452,23 @@
         // key-by-key, so mirror the replace semantics here.
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'hotkeyOverrides')) {
           config.hotkeyOverrides = Object.assign({}, partial.hotkeyOverrides);
+        }
+        // workspaceByProject is likewise a dictionary-style map (CONFIG_DICTIONARY_PATHS):
+        // the real save REPLACES the per-project map wholesale so a changed tile tree
+        // never deep-merges into the old one. Mirror the replace semantics here.
+        if (partial && Object.prototype.hasOwnProperty.call(partial, 'workspaceByProject')) {
+          config.workspaceByProject = Object.assign({}, partial.workspaceByProject);
+        }
+      },
+      // Synchronous sibling of set() for the quit/unload flush. Mirrors the real
+      // configManager.save dictionary-path replace semantics (hotkeyOverrides + workspaceByProject).
+      setSync: function (partial) {
+        config = deepMerge(config, partial);
+        if (partial && Object.prototype.hasOwnProperty.call(partial, 'hotkeyOverrides')) {
+          config.hotkeyOverrides = Object.assign({}, partial.hotkeyOverrides);
+        }
+        if (partial && Object.prototype.hasOwnProperty.call(partial, 'workspaceByProject')) {
+          config.workspaceByProject = Object.assign({}, partial.workspaceByProject);
         }
       },
       getProjectOverrides: async function () {

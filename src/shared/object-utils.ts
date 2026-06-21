@@ -110,10 +110,14 @@ function deepMergeInternal<T extends object>(target: T, source: Partial<T>, opti
 /** Typed deep-merge for config overlay (global + project overrides).
  *  Disables flat-map replacement so partial overrides preserve unmentioned keys. */
 export function deepMergeConfig<T extends object>(base: T, overrides: Partial<T> | Record<string, unknown>): T {
-  // `workspace` is a wholesale window-layout snapshot: REPLACE it (a changed tile
-  // tree must not deep-merge into the old one). Other keys still merge so partial
-  // overrides preserve unmentioned settings.
-  return deepMerge(base, overrides as Partial<T>, { replaceFlatMaps: false, dictionaryPaths: ['workspace'] });
+  // `workspaceByProject` holds wholesale per-project window-layout snapshots: REPLACE
+  // the map (a changed tile tree must not deep-merge into the old one). Other keys
+  // still merge so partial overrides preserve unmentioned settings. This is a
+  // deliberately NARROWER set than config-manager's CONFIG_DICTIONARY_PATHS: that list
+  // also wholesale-replaces labelColors/cliPaths/hotkeyOverrides on a partial SAVE so
+  // deletion works, but on this overlay/read path those must still merge so a project
+  // inherits global settings. Keep the two lists separate; do not unify them.
+  return deepMerge(base, overrides as Partial<T>, { replaceFlatMaps: false, dictionaryPaths: ['workspaceByProject'] });
 }
 
 /** Simple deep equality check for plain values, arrays, and objects. */

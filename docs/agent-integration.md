@@ -759,13 +759,13 @@ Two PTY regex anchors plus a filesystem fallback:
 
 1. **Welcome banner**: `Session: <uuid>` printed in the cyan startup box (interactive and `--print`).
 2. **Print-mode exit**: `To resume this session: kimi -r <uuid>` written to stderr at session end.
-3. **Filesystem fallback**: `runtime.sessionId.fromFilesystem` scans `~/.kimi/sessions/*\/<uuid>/` for directories whose mtime is within ±30s of the spawn time.
+3. **Filesystem fallback**: `runtime.sessionId.fromFilesystem` scans this spawn's own work_dir directory - `~/.kimi/sessions/<md5(cwd)>/` (and its `<kaos>_<md5(cwd)>` variant) - for UUID directories whose mtime is within ±30s of the spawn time, returning the newest. Scoping to the spawn's own work_dir hash (rather than globbing every hash dir) keeps a concurrent Kimi session in another work_dir, or a `-w`-less probe's stray session, from winning the recency race and poisoning the captured id.
 
 ### Session History
 
 `src/main/agent/adapters/kimi/session-history-parser.ts` + `wire-parser.ts`
 
-Kimi writes `wire.jsonl` to `~/.kimi/sessions/<work_dir_hash>/<sessionId>/` on every spawn (interactive or `--print`). The work_dir hash is opaque - the locator globs across all hash dirs and matches on session UUID.
+Kimi writes `wire.jsonl` to `~/.kimi/sessions/<work_dir_hash>/<sessionId>/` on every spawn (interactive or `--print`). The work_dir hash is `md5(absolute work_dir)`. The history locator (`locate()`, given a known session UUID) globs across all hash dirs and matches on the UUID, so it is robust to the same directory opened under different paths. This differs from the capture fallback above, which has no known UUID and so is scoped to the spawn's own work_dir hash to avoid mis-attributing another work_dir's session.
 
 The file is append-only (resume via `-r <uuid>` appends new `TurnBegin` / `TurnEnd` lines). Format:
 

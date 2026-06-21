@@ -225,5 +225,30 @@ describe('deepMerge', () => {
       expect(result.terminal.shell).toBe('powershell');
       expect(result.terminal.cursorStyle).toBe('block');
     });
+
+    it('deepMergeConfig replaces the workspaceByProject map wholesale, not entry-by-entry', () => {
+      // Regression guard for the workspace -> workspaceByProject rename: the layout
+      // map is a dictionaryPath, so a changed entry replaces wholesale (a shrunk
+      // window list / restructured tile tree never deep-merges into the old blob).
+      // If dictionaryPaths reverted to the old ['workspace'], this would deep-merge
+      // and the assertions below would fail.
+      const base = {
+        workspaceByProject: {
+          'proj-a': { version: 1, windows: [{ taskId: 't1' }, { taskId: 't2' }], tileTree: { kind: 'split' } },
+          'proj-b': { version: 1, windows: [{ taskId: 't9' }], tileTree: null },
+        },
+      };
+      const overrides = {
+        workspaceByProject: {
+          'proj-a': { version: 1, windows: [{ taskId: 't1' }], tileTree: null },
+        },
+      };
+      const result = deepMergeConfig(base, overrides);
+      // The whole map is the override's map: proj-a is the new value (no merge of the
+      // old windows array or the old non-null tileTree), and the absent proj-b is gone.
+      expect(result.workspaceByProject).toEqual({
+        'proj-a': { version: 1, windows: [{ taskId: 't1' }], tileTree: null },
+      });
+    });
   });
 });

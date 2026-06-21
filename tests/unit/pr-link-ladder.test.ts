@@ -14,9 +14,10 @@ import type { Task } from '../../src/shared/types';
 const git = vi.hoisted(() => ({
   branch: 'real-branch' as string | null,
   sha: 'sha-current' as string | null,
-  // `rev-list --parents -n 1` output: commit SHA + parent SHAs. Two tokens = a
-  // normal (single-parent) commit; isMergeCommit treats >2 tokens as a merge.
-  parents: 'commit-sha parent-sha',
+  // `rev-list --count <base>..<sha>` output: commits the head has of its own
+  // beyond base. '0' = a branchless worktree on base's tip (Tier 3 skipped);
+  // '1'+ = the task's own work (Tier 3 runs).
+  aheadCount: '1',
 }));
 const conn = vi.hoisted(() => ({
   byNumber: null as unknown,
@@ -30,7 +31,7 @@ const conn = vi.hoisted(() => ({
 vi.mock('simple-git', () => ({
   simpleGit: () => ({
     revparse: async (args: string[]) => (args.includes('--abbrev-ref') ? (git.branch ?? 'HEAD') : git.sha),
-    raw: async () => git.parents,
+    raw: async () => git.aheadCount,
   }),
 }));
 
@@ -92,7 +93,7 @@ const resolved = (number: number, state = 'open') => ({ url: `u${number}`, numbe
 
 beforeEach(() => {
   conn.byNumber = null; conn.byBranch = null; conn.byCommit = null; conn.detect = null; conn.canonical = null; conn.calls = [];
-  git.branch = 'real-branch'; git.sha = 'sha-current'; git.parents = 'commit-sha parent-sha';
+  git.branch = 'real-branch'; git.sha = 'sha-current'; git.aheadCount = '1';
 });
 
 describe('linkPRForTask confidence ladder', () => {
@@ -131,13 +132,43 @@ describe('linkPRForTask confidence ladder', () => {
     expect(conn.calls).toContain('byBranch');
   });
 
-  it('tier 3: skips the commit anchor when HEAD is a merge commit (base-branch tip)', async () => {
-    git.parents = 'merge-sha parent-1 parent-2'; // a `Merge pull request #N` commit has two parents
-    conn.byCommit = resolved(702, 'merged'); // the PR that merge commit closed - not this task's PR
-    const task = makeTask({ worktree_path: null, branch_name: null, head_sha: 'develop-tip-merge' });
+  it('tier 3: skips the commit anchor when the commit has no commits ahead of base', async () => {
+    // HEAD is base's tip - a branchless worktree, or a single-parent rebase/squash
+    // merge tip that a parent-count check would have missed. Not this task's work.
+    git.aheadCount = '0';
+    conn.byCommit = resolved(702, 'merged'); // the PR that owns base's tip - not this task's PR
+    const task = makeTask({ worktree_path: null, branch_name: null, head_sha: 'base-tip' });
     const result = await linkPRForTask(task.id, depsFor(task));
     expect(conn.calls).not.toContain('byCommit');
     expect(result.status).toBe('not-found');
+  });
+
+  it('regression: a fresh worktree on base tip does not link the just-merged PR (magnet bug)', async () => {
+    // A newly created task's worktree is branched from base with zero commits, so
+    // its HEAD == base's tip == the last-merged PR's rebased commit. With 0 commits
+    // ahead of base the commit anchor must not run and magnet onto that PR.
+    git.aheadCount = '0';
+    conn.byBranch = null; // no PR exists for this brand-new branch yet
+    conn.byCommit = resolved(36, 'merged'); // the last-merged PR the commit would magnet onto
+    const task = makeTask(); // worktree present, real HEAD branch, no pr_number
+    const result = await linkPRForTask(task.id, depsFor(task));
+    expect(conn.calls).not.toContain('byCommit');
+    expect(result.status).toBe('not-found');
+    expect(result.task?.pr_number).toBeNull();
+  });
+
+  it('clears a stale link when the resolver cleanly finds no PR (never leaves a stale merged)', async () => {
+    // The PR vanished (branch/PR deleted): every tier returns null with no degrade.
+    // The stale link - including a stale `merged` - must be cleared atomically.
+    conn.byNumber = null; // pr_number no longer resolves
+    const updateSpy = vi.fn((patch: Partial<Task>) => patch as Task);
+    const task = makeTask({ pr_number: 99, pr_url: 'u99', pr_state: 'merged', worktree_path: null, head_sha: null, branch_name: null });
+    const deps = depsFor(task, { updateSpy });
+    const result = await linkPRForTask(task.id, deps);
+    expect(result.status).toBe('not-found');
+    expect(updateSpy).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null, pr_url: null, pr_state: null }));
+    expect(deps.onLinked).toHaveBeenCalledWith(expect.objectContaining({ pr_number: null }));
+    expect(result.task?.pr_number).toBeNull();
   });
 
   it('write-only-on-change: returns unchanged and does not write when the PR is already current', async () => {

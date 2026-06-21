@@ -1,5 +1,5 @@
 /**
- * Serialize / restore the in-app window-manager layout to `AppConfig.workspace`.
+ * Serialize / restore the in-app window-manager layout to `AppConfig.workspaceByProject`.
  *
  * Persisted form is taskId-anchored (a session respawn changes the sessionId but
  * not the task, so the durable anchor is the task) and uses fractional geometry
@@ -7,12 +7,51 @@
  * sessionId from the taskId, regenerates window + tile-node ids, and drops anything
  * whose task no longer exists.
  *
+ * Restore is deliberately TOTAL: the layout is read back from an on-disk config the
+ * app must never trust blindly. A stamped schema `version` gates the whole blob, and
+ * each window's geometry is clamped into the overlay (with a minimum visible size) so
+ * a corrupt or off-overlay entry can never restore an invisible / off-screen window;
+ * a window with malformed geometry or an unknown state is dropped, never thrown on.
+ *
  * Pure module: the store actions supply the id generators + the taskId->session /
  * taskId-exists resolvers (which need live board + session state).
  */
 
-import type { ManagedWindow, TileNode, FractionalRect } from '../store/types';
+import type { ManagedWindow, TileNode, FractionalRect, WindowState } from '../store/types';
 import type { SerializedWorkspace, SerializedTileNode } from '../../../shared/types';
+
+/** Bump when the persisted shape changes; an older / unknown version is ignored on
+ *  restore rather than mis-applied. */
+export const WORKSPACE_SCHEMA_VERSION = 1;
+
+/** Minimum window width/height as a fraction of the overlay, so a clamped or corrupt
+ *  rect always restores to something the user can see and grab. */
+const MIN_WINDOW_FRACTION = 0.05;
+
+const VALID_WINDOW_STATES: ReadonlySet<WindowState> = new Set<WindowState>([
+  'floating',
+  'tiled',
+  'snapped',
+  'maximized',
+]);
+
+const FULL_RECT: FractionalRect = { x: 0, y: 0, w: 1, h: 1 };
+
+/** Clamp a persisted rect into the overlay and enforce a minimum visible size.
+ *  Returns null when the value is not a usable `{x,y,w,h}` of finite numbers, so the
+ *  caller can drop the offending window (geometry) or simply forget it (restoreGeometry). */
+function sanitizeRect(rect: FractionalRect | null | undefined): FractionalRect | null {
+  if (!rect || typeof rect !== 'object') return null;
+  const { x, y, w, h } = rect;
+  if (![x, y, w, h].every((value) => typeof value === 'number' && Number.isFinite(value))) {
+    return null;
+  }
+  const width = Math.min(1, Math.max(MIN_WINDOW_FRACTION, w));
+  const height = Math.min(1, Math.max(MIN_WINDOW_FRACTION, h));
+  const left = Math.min(1 - width, Math.max(0, x));
+  const top = Math.min(1 - height, Math.max(0, y));
+  return { x: left, y: top, w: width, h: height };
+}
 
 /** Snapshot the live window-manager state into the persisted form. */
 export function serializeWorkspace(
@@ -24,6 +63,7 @@ export function serializeWorkspace(
   const windowById = new Map(windows.map((window) => [window.id, window]));
   const focused = focusedWindowId ? windowById.get(focusedWindowId) : undefined;
   return {
+    version: WORKSPACE_SCHEMA_VERSION,
     windows: windows.map((window) => ({
       taskId: window.taskId,
       title: window.title,
@@ -77,7 +117,22 @@ export function deserializeWorkspace(
   serialized: SerializedWorkspace,
   context: RestoreContext,
 ): RestoredWorkspace | null {
-  const surviving = serialized.windows.filter((window) => context.isKnownTask(window.taskId));
+  // Version gate: an unknown / older-shaped blob (or a non-object) is ignored
+  // wholesale rather than partially mis-applied.
+  if (!serialized || serialized.version !== WORKSPACE_SCHEMA_VERSION) return null;
+  if (!Array.isArray(serialized.windows)) return null;
+
+  // Keep only windows whose task still exists AND whose geometry/state survive
+  // sanitization; a malformed entry is dropped, never thrown on. restoreGeometry is
+  // forgotten (set null) when invalid rather than dropping the window.
+  const surviving = serialized.windows
+    .filter((window) => context.isKnownTask(window.taskId))
+    .map((window) => {
+      const geometry = sanitizeRect(window.geometry);
+      if (!geometry || !VALID_WINDOW_STATES.has(window.state)) return null;
+      return { ...window, geometry, restoreGeometry: sanitizeRect(window.restoreGeometry) };
+    })
+    .filter((window): window is NonNullable<typeof window> => window !== null);
   if (surviving.length === 0) return null;
 
   const windowIdByTask = new Map<string, string>();
@@ -132,7 +187,9 @@ export function deserializeWorkspace(
     ? windowIdByTask.get(serialized.focusedTaskId) ?? null
     : null;
 
-  return { windows, order, tileTree, tileTreeRect: { ...serialized.tileTreeRect }, focusedWindowId };
+  const tileTreeRect = sanitizeRect(serialized.tileTreeRect) ?? { ...FULL_RECT };
+
+  return { windows, order, tileTree, tileTreeRect, focusedWindowId };
 }
 
 /** Rebuild a tile subtree with fresh ids; returns null if any leaf's task is gone
