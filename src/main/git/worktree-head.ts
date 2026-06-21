@@ -24,22 +24,27 @@ export async function readWorktreeHead(worktreePath: string): Promise<{ branch: 
 }
 
 /**
- * Whether `sha` is a merge commit (more than one parent). A merge commit is
- * never a task's own work - in particular a base-branch `Merge pull request #N`
- * tip, which a freshly-branched code-review worktree sits on - so the commit-SHA
- * PR anchor must not attribute that commit's originating PR to the task.
+ * Whether `sha` has any commits of its own beyond `baseBranch` - i.e. it is
+ * genuinely a task's work and not a base-branch tip a freshly-branched worktree
+ * sits on. A fresh worktree is branched from the base with zero commits, so its
+ * HEAD equals the base tip, which equals the last-merged PR's commit; the
+ * commit-SHA PR anchor must not run there or it attributes that PR to the task.
  *
- * `rev-list --parents -n 1 <sha>` prints the commit's SHA followed by its parent
- * SHAs on one line, so more than two tokens means two or more parents. The merge
- * commit survives in the object store after the worktree is reclaimed, so this
- * works from the main repo too. Best-effort: returns false on any git error so
- * resolution still proceeds.
+ * `rev-list --count <base>..<sha>` is the number of commits reachable from `sha`
+ * but not from `baseBranch`, which is 0 exactly when `sha` is already contained
+ * in `baseBranch`. Unlike a parent-count merge check this also catches the
+ * single-parent commits that `gh pr merge --rebase` / `--squash` produce (the
+ * team default). The commit survives in the object store after the worktree is
+ * reclaimed, so this works from the main repo too.
+ *
+ * Fails SAFE: on any git error (bad base ref, missing object) returns false so
+ * the caller skips the commit anchor rather than risking a mis-link.
  */
-export async function isMergeCommit(repoCwd: string, sha: string): Promise<boolean> {
+export async function hasCommitsAheadOfBase(repoCwd: string, baseBranch: string, sha: string): Promise<boolean> {
   try {
     const git = simpleGit(repoCwd);
-    const line = (await git.raw(['rev-list', '--parents', '-n', '1', sha])).trim();
-    return line.split(/\s+/).length > 2;
+    const commitCountOutput = (await git.raw(['rev-list', '--count', `${baseBranch}..${sha}`])).trim();
+    return Number.parseInt(commitCountOutput, 10) > 0;
   } catch {
     return false;
   }

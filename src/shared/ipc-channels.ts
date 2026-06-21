@@ -116,6 +116,7 @@ export const IPC = {
   CONFIG_GET: 'config:get',
   CONFIG_GET_GLOBAL: 'config:getGlobal',
   CONFIG_SET: 'config:set',
+  CONFIG_SET_SYNC: 'config:setSync',
   CONFIG_GET_PROJECT: 'config:getProject',
   CONFIG_SET_PROJECT: 'config:setProject',
   CONFIG_GET_PROJECT_BY_PATH: 'config:getProjectByPath',

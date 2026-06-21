@@ -197,12 +197,13 @@ All channels defined in `src/shared/ipc-channels.ts`. The preload bridge in `src
 | `session:injectSettings` | invoke | Inject a model/effort change into a live transient session's PTY via slash commands. Session-keyed (no task row, no DB persistence); backs the command-terminal context bar picker. |
 | `session:getPeriodStats` | invoke | Fetch aggregated usage stats (tokens, cost) for a given time period. Sources from the append-only `usage_history` table so totals survive task deletion, bulk-archive, and revert-to-backlog. |
 
-### Config (8 channels)
+### Config (9 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `config:get` | invoke | Fetch effective AppConfig (global merged with project overrides) |
 | `config:getGlobal` | invoke | Fetch global-only AppConfig (no project overrides) |
 | `config:set` | invoke | Update global config (partial merge) |
+| `config:setSync` | sendSync | Update global config synchronously (blocks the renderer until the fs write completes); used on window close to persist the workspace layout before the renderer tears down |
 | `config:getProject` | invoke | Fetch project-level config overrides |
 | `config:setProject` | invoke | Update project-level overrides |
 | `config:getProjectByPath` | invoke | Fetch project overrides by filesystem path |

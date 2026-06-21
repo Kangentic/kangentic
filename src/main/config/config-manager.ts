@@ -9,7 +9,7 @@ import { deepMerge, deepMergeConfig } from '../../shared/object-utils';
  *  These must be REPLACED on partial update so that key deletion works, while
  *  every other typed-struct field gets MERGE semantics. Update this list when
  *  adding a new dictionary-shaped field to AppConfig. */
-const CONFIG_DICTIONARY_PATHS = ['backlog.labelColors', 'agent.cliPaths', 'hotkeyOverrides'] as const;
+const CONFIG_DICTIONARY_PATHS = ['backlog.labelColors', 'agent.cliPaths', 'hotkeyOverrides', 'workspaceByProject'] as const;
 
 /** Drop keys whose value is undefined. Returns undefined when nothing is left,
  *  so callers can skip writing empty nested objects. */

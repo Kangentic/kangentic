@@ -1,37 +1,44 @@
 /**
  * Debounced save of the in-app window layout to the open project's config
- * (`AppConfig.workspace`). Subscribes to the window-store and, ~500ms after the
- * layout settles, serializes it and writes it through the project-override config
- * path. The debounce coalesces rapid changes (drag, focus, tile) into one write
- * and rides out a project-switch transition, so only the settled layout is saved.
+ * (`AppConfig.workspaceByProject`). Subscribes to the window-store and, ~500ms after
+ * the layout settles, serializes it and writes it (keyed by the active project id)
+ * through the global-config `config.set` path. The debounce coalesces rapid changes
+ * (drag, focus, tile) into one write; a `beforeunload` flush persists the current layout
+ * synchronously so the last arrangement made just before quitting is saved even if a
+ * debounced async write is still in flight.
  *
- * Mounted once by WindowLayer; no-ops when no project is open. Restore is the
- * inverse, wired into the project-switch effect (after sessions resolve).
+ * Gated on the ACTIVE project, not the Settings panel, so it persists during normal
+ * board use. Mounted once by WindowLayer; no-ops when no project is open. Restore is
+ * the inverse, wired into the project-switch effect (after sessions resolve). The
+ * debounce/gate/flush state machine itself lives in the pure `workspace-saver` module.
  */
 
 import { useEffect } from 'react';
 import { useWindowStore } from '../store/window-store';
 import { useConfigStore } from '../../stores/config-store';
-
-const WORKSPACE_SAVE_DEBOUNCE_MS = 500;
+import { useProjectStore } from '../../stores/project-store';
+import { createWorkspaceSaver } from '../persistence/workspace-saver';
 
 export function useWorkspacePersistence(): void {
-  const projectSettingsPath = useConfigStore((state) => state.projectSettingsPath);
-  const updateProjectOverride = useConfigStore((state) => state.updateProjectOverride);
+  const saveWorkspaceForProject = useConfigStore((state) => state.saveWorkspaceForProject);
+  const flushWorkspaceForProject = useConfigStore((state) => state.flushWorkspaceForProject);
 
   useEffect(() => {
-    if (!projectSettingsPath) return; // no project open: nothing to persist to
-    let saveTimer: ReturnType<typeof setTimeout> | null = null;
-    const unsubscribe = useWindowStore.subscribe(() => {
-      if (saveTimer) clearTimeout(saveTimer);
-      saveTimer = setTimeout(() => {
-        saveTimer = null;
-        updateProjectOverride({ workspace: useWindowStore.getState().serializeWorkspace() });
-      }, WORKSPACE_SAVE_DEBOUNCE_MS);
+    const saver = createWorkspaceSaver({
+      getProjectId: () => useProjectStore.getState().currentProject?.id ?? null,
+      getWorkspace: () => useWindowStore.getState().serializeWorkspace(),
+      save: saveWorkspaceForProject,
+      saveSync: flushWorkspaceForProject,
     });
+    const unsubscribe = useWindowStore.subscribe(saver.onChange);
+    // Persist synchronously before the renderer tears down, so the very last arrangement
+    // made before quitting reaches disk even if a debounced async save is still in flight.
+    const flushBeforeUnload = (): void => saver.flush();
+    window.addEventListener('beforeunload', flushBeforeUnload);
     return () => {
-      if (saveTimer) clearTimeout(saveTimer);
+      window.removeEventListener('beforeunload', flushBeforeUnload);
       unsubscribe();
+      saver.dispose();
     };
-  }, [projectSettingsPath, updateProjectOverride]);
+  }, [saveWorkspaceForProject, flushWorkspaceForProject]);
 }

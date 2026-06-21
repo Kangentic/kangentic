@@ -32,7 +32,6 @@ fs.mkdirSync(outDir, { recursive: true });
 const esbuildCandidates = [
   path.join(worktreeRoot, 'node_modules', '.bin', 'esbuild.cmd'),
   path.join(worktreeRoot, '..', '..', '..', 'node_modules', '.bin', 'esbuild.cmd'),
-  'C:/Users/tyler/Documents/GitHub/kangentic/node_modules/.bin/esbuild.cmd',
 ];
 const esbuildCli = esbuildCandidates.find((candidate) => fs.existsSync(candidate));
 if (!esbuildCli) {
