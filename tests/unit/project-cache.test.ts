@@ -60,6 +60,7 @@ function makeMinimalConfig(): AppConfig {
     terminalPanelVisible: true,
     animationsEnabled: true,
     statusBarVisible: true,
+    diffViewMode: 'split',
     terminal: { shell: null, fontFamily: 'mono', fontSize: 14, showPreview: false, panelHeight: 250, scrollbackLines: 5000, cursorStyle: 'block' },
     sidebar: { width: 224 },
     agent: { permissionMode: 'acceptEdits', cliPaths: {}, maxConcurrentSessions: 8, queueOverflow: 'queue', idleTimeoutMinutes: 0, autoResumeSessionsOnRestart: false },
