@@ -269,7 +269,7 @@ export function SettingRow({ label, description, children, searchId, trailing }:
   if (!visible) return null;
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1.5" data-testid={searchId ? `setting-row-${searchId}` : undefined}>
       <div>
         <div className="text-sm font-medium text-fg-secondary">{label}</div>
         <div className="flex items-center justify-between gap-2">

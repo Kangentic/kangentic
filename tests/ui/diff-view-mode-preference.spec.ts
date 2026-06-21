@@ -5,11 +5,16 @@
  * Two entry points read and write it:
  *   1. The in-diff toggle buttons (`data-testid="diff-view-split"` /
  *      `data-testid="diff-view-inline"`) inside DiffViewer.
- *   2. The "Diff View" select in the Layout settings tab.
+ *   2. The "Git Diff View" select in the Layout settings tab
+ *      (`data-testid="setting-row-diffViewMode"`).
  *
  * Both read from `useConfigStore(state => state.config.diffViewMode)` and write
  * via `updateConfig({ diffViewMode: ... })`. The mock's `config.set(partial)`
  * does a deep-merge, so `config.get()` after a write reflects the update.
+ *
+ * Each test is self-contained (no cross-test state dependency): test 2
+ * establishes its own value through the toggle entry point rather than relying
+ * on test 1.
  *
  * Tests:
  *   1. In-diff toggle persists across panel reopen (the "stick" behavior).
@@ -18,9 +23,9 @@
  *      - Close the Changes panel, reopen it: inline is still active (read path).
  *
  *   2. Layout settings tab reflects and drives the same global value.
- *      - After test 1 left the preference as `inline`, open Settings > Layout.
- *      - Assert the "Diff View" select shows `inline`.
- *      - Change it back to `split` via selectOption; assert config reflects the write.
+ *      - Set inline via the in-diff toggle, then open Settings > Layout.
+ *      - Assert the "Git Diff View" select shows `inline` (the shared key).
+ *      - Change it to `split` via selectOption; assert config reflects the write.
  *
  * Setup mirrors task-detail-changes-diffviewer-toolbar.spec.ts: seeds a project
  * + running session + task in "Code Review", sets `window.__mockGitDiff` so
@@ -199,6 +204,16 @@ async function closeDialogAndPanel(): Promise<void> {
   });
 }
 
+/** Read the persisted diffViewMode from the mock config: the single global key
+ *  that both the in-diff toggle and the Layout settings select read and write. */
+async function getDiffViewMode(): Promise<unknown> {
+  const config = await page.evaluate(() =>
+    (window as unknown as { electronAPI: { config: { get: () => Promise<Record<string, unknown>> } } })
+      .electronAPI.config.get(),
+  );
+  return config['diffViewMode'];
+}
+
 test.describe('diffViewMode: in-diff toggle persists across panel reopen', () => {
   test('default is split; switching to inline persists after panel reopen', async () => {
     await openChangesPanel();
@@ -215,19 +230,8 @@ test.describe('diffViewMode: in-diff toggle persists across panel reopen', () =>
     await expect(page.locator('[data-testid="diff-view-inline"]')).toHaveClass(/bg-surface-raised/, { timeout: 3000 });
     await expect(page.locator('[data-testid="diff-view-split"]')).not.toHaveClass(/bg-surface-raised/);
 
-    // Assert the write path: config.get() must reflect the change.
-    await expect
-      .poll(
-        async () => {
-          const cfg = await page.evaluate(() =>
-            (window as unknown as { electronAPI: { config: { get: () => Promise<Record<string, unknown>> } } })
-              .electronAPI.config.get(),
-          );
-          return cfg['diffViewMode'];
-        },
-        { timeout: 3000 },
-      )
-      .toBe('inline');
+    // Assert the write path: the shared config key must reflect the change.
+    await expect.poll(() => getDiffViewMode(), { timeout: 3000 }).toBe('inline');
 
     // Close the Changes panel by clicking the pill again.
     const changesPill = page.locator('[data-testid="changes-toggle"]');
@@ -265,10 +269,15 @@ test.describe('diffViewMode: in-diff toggle persists across panel reopen', () =>
 });
 
 test.describe('diffViewMode: Layout settings tab reflects and drives the same value', () => {
-  test('Layout tab Diff View select shows current value and can update config', async () => {
-    // This test relies on the previous test leaving diffViewMode as 'inline'
-    // in the mock config. We verify the select reflects that, then change it
-    // back to 'split' so later tests (and the toolbar spec) start from the default.
+  test('Layout tab Git Diff View select reflects the toggle and can update config', async () => {
+    // Self-contained: establish the value through the in-diff toggle (the OTHER
+    // entry point that writes the shared global key) so this test never depends
+    // on a previous test's state. Then confirm the Layout select reflects that
+    // same value and can drive it back.
+    await openChangesPanel();
+    await page.locator('[data-testid="diff-view-inline"]').click();
+    await expect.poll(() => getDiffViewMode(), { timeout: 3000 }).toBe('inline');
+    await closeDialogAndPanel();
 
     // Open Settings panel.
     await page.locator('[data-testid="settings-button"]').click();
@@ -277,43 +286,16 @@ test.describe('diffViewMode: Layout settings tab reflects and drives the same va
     // Navigate to the Layout tab.
     await page.getByRole('button', { name: 'Layout' }).click();
 
-    // The "Diff View" row must be visible.
-    await expect(page.getByText('Diff View')).toBeVisible({ timeout: 3000 });
+    // Target the row by its stable data-testid instead of walking the DOM.
+    const diffViewSelect = page.locator('[data-testid="setting-row-diffViewMode"] select');
+    await expect(diffViewSelect).toBeVisible({ timeout: 3000 });
 
-    // Find the select for the "Diff View" setting row. SettingRow renders:
-    //   div.space-y-1.5 (wrapper)
-    //     div (label block)
-    //       div.text-sm (label text)
-    //       div.flex (description row)
-    //         div.text-xs (description text)  <-- we match this
-    //     div.relative (Select wrapper)
-    //       select                             <-- we want this
-    //
-    // Walk up 3 levels from the description div to reach wrapper, then
-    // find the select anywhere inside the wrapper.
-    const diffViewDescription = page.getByText('Default layout for viewing file diffs');
-    const diffViewRow = diffViewDescription.locator('..').locator('..').locator('..');
-    const diffViewSelect = diffViewRow.locator('select');
-
-    // Assert the select reflects the 'inline' value set by the previous test.
+    // The select must reflect the inline value the toggle wrote (shared key).
     await expect(diffViewSelect).toHaveValue('inline', { timeout: 3000 });
 
-    // Change the select back to 'split'.
+    // Drive it back to split via the select; assert the write path.
     await diffViewSelect.selectOption('split');
-
-    // Assert the write path: config.get() must reflect 'split'.
-    await expect
-      .poll(
-        async () => {
-          const cfg = await page.evaluate(() =>
-            (window as unknown as { electronAPI: { config: { get: () => Promise<Record<string, unknown>> } } })
-              .electronAPI.config.get(),
-          );
-          return cfg['diffViewMode'];
-        },
-        { timeout: 3000 },
-      )
-      .toBe('split');
+    await expect.poll(() => getDiffViewMode(), { timeout: 3000 }).toBe('split');
 
     // Close the settings panel via Escape.
     await page.keyboard.press('Escape');
