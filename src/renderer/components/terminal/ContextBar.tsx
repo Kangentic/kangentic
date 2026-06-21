@@ -42,9 +42,9 @@ const RATE_LIMIT_ICON: Record<RateLimitWindow['iconKind'], LucideIcon> = {
 
 /**
  * One rate-limit window row: icon + usage track + percent. The colored fill is
- * driven by `usedPercentage` (budget spent); the thin vertical line overlaid on
- * the track marks how far through the time window we are (elapsed time, not
- * budget), creeping right as the reset time draws nearer.
+ * driven by `usedPercentage` (budget spent); a caret-topped vertical tick
+ * marks how far through the time window we are (elapsed time, not budget),
+ * creeping right as the reset time draws nearer.
  *
  * Isolated as a leaf with its own interval so the periodic re-render that advances
  * the time marker touches only this row, not the whole ContextBar (model picker,
@@ -62,39 +62,50 @@ function RateLimitBar({ limitWindow }: { limitWindow: RateLimitWindow }) {
   }, []);
 
   const Icon = RATE_LIMIT_ICON[limitWindow.iconKind];
-  const pctRow = Math.round(limitWindow.usedPercentage);
+  const roundedUsedPercentage = Math.round(limitWindow.usedPercentage);
   // windowDurationSeconds is optional: a window with no fixed duration draws no
   // time marker, so only compute the position when the adapter supplied one.
-  const markerPct = limitWindow.windowDurationSeconds === undefined
+  const markerPercentage = limitWindow.windowDurationSeconds === undefined
     ? null
     : windowElapsedPercentage(limitWindow.resetsAt, limitWindow.windowDurationSeconds, now);
 
   return (
     <span className="flex items-center gap-1.5 flex-1 min-w-0">
       <Icon size={11} className="text-fg-faint flex-shrink-0" aria-label={limitWindow.label} />
-      {/* No overflow-hidden: the marker line below extends a couple px past the
-          track so it stays visible where it overlaps the fill. The fill keeps
-          its own rounded-full, so the track still reads as a pill. */}
+      {/* No overflow-hidden so the caret atop the tick marker, which extends a
+          few px above the track, is not clipped. The fill is width-capped at
+          100%, so nothing overflows horizontally and the track still reads as a
+          pill. */}
       <span className="relative flex-1 min-w-[40px] h-1.5 bg-surface-hover rounded-full">
         <span
           className="block h-full rounded-full transition-[width,background-color] duration-300"
           style={{
-            width: `${Math.min(pctRow, 100)}%`,
-            minWidth: pctRow > 0 ? '2px' : undefined,
-            backgroundColor: getProgressColor(pctRow),
+            width: `${Math.min(roundedUsedPercentage, 100)}%`,
+            minWidth: roundedUsedPercentage > 0 ? '2px' : undefined,
+            backgroundColor: getProgressColor(roundedUsedPercentage),
           }}
         />
-        {markerPct !== null && (
+        {markerPercentage !== null && (
           <span
             data-testid="rate-limit-time-marker"
             aria-hidden="true"
-            className="absolute -inset-y-0.5 w-px bg-fg/70"
-            style={{ left: `${markerPct}%` }}
+            className="absolute inset-y-0 w-px -translate-x-1/2 bg-fg/70"
+            style={{ left: `${markerPercentage}%` }}
             title={formatResetTime(limitWindow.resetsAt)}
-          />
+          >
+            {/* Caret cap riding on the top edge of the tick, so the marker reads
+                as a deliberate playhead anchored to the bar rather than a bare
+                line. It extends upward only; the tick itself stays inside the
+                track height. */}
+            <span
+              aria-hidden="true"
+              className="absolute -top-1 left-1/2 -translate-x-1/2 w-1.5 h-1 bg-fg/70"
+              style={{ clipPath: 'polygon(50% 100%, 0 0, 100% 0)' }}
+            />
+          </span>
         )}
       </span>
-      <span className="flex-shrink-0">{pctRow}%</span>
+      <span className="flex-shrink-0">{roundedUsedPercentage}%</span>
     </span>
   );
 }

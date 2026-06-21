@@ -840,8 +840,8 @@ test.describe('Task Activity Indicators', () => {
           stores.session.setState({
             latestRateLimits: {
               rateLimits: [
-                { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 65, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
-                { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 30, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
+                { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 65, resetsAt: Math.floor(Date.now() / 1000) + 3600, windowDurationSeconds: 5 * 60 * 60 },
+                { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 30, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
               ],
               capturedAt: Date.now(),
               sourceSessionId: 'some-other-session',
@@ -887,8 +887,8 @@ test.describe('Task Activity Indicators', () => {
           stores.session.setState({
             latestRateLimits: {
               rateLimits: [
-                { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 50, resetsAt: Math.floor(Date.now() / 1000) + 3600 },
-                { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 20, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5 },
+                { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 50, resetsAt: Math.floor(Date.now() / 1000) + 3600, windowDurationSeconds: 5 * 60 * 60 },
+                { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 20, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
               ],
               capturedAt: Date.now(),
               // This session ID has no matching task in the board store, so
