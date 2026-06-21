@@ -632,4 +632,44 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
     await page.waitForTimeout(400);
     await pollWindowCount(page, 1);
   });
+
+  // -------------------------------------------------------------------------
+  // Middle-click on the window header closes it (independent of the policy)
+  // -------------------------------------------------------------------------
+
+  test('middle-click on the window header closes it, even with the policy off', async () => {
+    await closeAllWindows(page);
+    await setPolicy(page, 'off');
+    await openWindow(page, 'Task Alpha');
+    await pollWindowCount(page, 1);
+
+    // The middle mouse button on the title bar closes the window like the X button,
+    // independent of windowLightDismiss (here 'off', which disables click-outside).
+    await page.locator('[data-testid="task-detail-titlebar"]').first().click({ button: 'middle' });
+
+    await pollWindowCount(page, 0);
+    await setPolicy(page, 'single');
+  });
+
+  test('middle-click on the header of a dirty edit form shows the discard confirm', async () => {
+    await closeAllWindows(page);
+    await setPolicy(page, 'single');
+    await openWindow(page, 'Task Gamma');
+    await pollWindowCount(page, 1);
+
+    const titleInput = page.locator('input[placeholder="Task title"]');
+    await titleInput.waitFor({ state: 'visible', timeout: 3000 });
+    await titleInput.fill('Task Gamma (middle-click edit)');
+
+    // Middle-click routes through closeWithGuard, so a dirty edit form prompts to
+    // discard instead of silently closing - same guard as the X and Escape.
+    await page.locator('[data-testid="task-detail-titlebar"]').first().click({ button: 'middle' });
+
+    const confirmHeading = page.locator('h3:has-text("Discard unsaved changes?")');
+    await confirmHeading.waitFor({ state: 'visible', timeout: 3000 });
+    await pollWindowCount(page, 1);
+
+    await page.locator('button:has-text("Discard")').click();
+    await pollWindowCount(page, 0);
+  });
 });

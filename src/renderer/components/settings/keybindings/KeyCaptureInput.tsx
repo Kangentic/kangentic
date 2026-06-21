@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { comboFromEvent, formatCombo, IS_MAC, MODIFIER_KEY_NAMES } from '../../../utils/keybindings';
+import { comboFromEvent, comboFromPointerEvent, formatCombo, IS_MAC, MODIFIER_KEY_NAMES } from '../../../utils/keybindings';
 import { normalizeCombo } from '../../../../shared/keybindings';
 import { KeyCombo } from './KeyCombo';
 
@@ -116,20 +116,37 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
     onCommit(captured);
   };
 
+  // Capture a bindable mouse button (middle / side) pressed on the box. A left or
+  // right click yields no combo: left is the box's own focus click, right is
+  // ignored. Mouse buttons are never OS global shortcuts, so they commit without
+  // the availability probe the keyboard path runs.
+  const handlePointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const captured = comboFromPointerEvent(event.nativeEvent);
+    if (!captured) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setNoKeyHint(false);
+    setError(null);
+    if (!capturingRef.current) return;
+    stopCapturing();
+    onCommit(captured);
+  };
+
   if (capturing) {
     const hint = error
       ? error
       : noKeyHint
         ? 'No key detected. It may be reserved by your OS or another app.'
-        : 'Press a shortcut, or Esc to cancel.';
+        : 'Press a shortcut or click a mouse button (middle / side), or Esc to cancel.';
     return (
       <div className="flex flex-col items-end gap-1 max-w-[260px]">
         <button
           ref={boxRef}
           type="button"
           onKeyDown={handleKeyDown}
+          onPointerDown={handlePointerDown}
           data-testid="key-capture-box"
-          aria-label="Press the new shortcut. Escape to cancel."
+          aria-label="Press the new shortcut or mouse button. Escape to cancel."
           className="px-2.5 py-1 rounded border border-accent bg-surface text-xs text-fg-secondary ring-1 ring-accent focus:outline-none whitespace-nowrap"
         >
           {checking ? 'Checking...' : 'Press a shortcut'}

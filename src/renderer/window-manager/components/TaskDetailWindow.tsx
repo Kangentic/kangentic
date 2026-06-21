@@ -311,6 +311,10 @@ export function TaskDetailWindow({
     window.electronAPI.shell.exec(resolved, cwd);
   }, [task, projectPath]);
 
+  // This window's title bar, used to scope the middle-click close binding to a
+  // pointer event that lands on this window (not another open window's header).
+  const titleBarRef = useRef<HTMLDivElement>(null);
+
   // Auto-save and exit edit mode when a session appears.
   const hadSessionContext = useRef(hasSessionContext);
   const editingRef = useRef(isEditing);
@@ -342,6 +346,16 @@ export function TaskDetailWindow({
   // the focused window reacts when several are open.
   useKeybinding('panel.maximize', handleToggleMaximized, { capture: true, enabled: isFocused });
   useKeybinding('panel.close', closeWithGuard, { capture: true, enabled: isFocused });
+  // Close on a header click with the bound mouse button (default middle). Routed
+  // through `closeWithGuard` so an unsaved edit still prompts to discard. The
+  // `when` scopes the mouse path to THIS window's title bar; a keyboard rebind
+  // (no `button`) fires for the focused window regardless of pointer position.
+  useKeybinding('panel.closeViaHeaderClick', closeWithGuard, {
+    capture: true,
+    enabled: isFocused,
+    when: (event) =>
+      !('button' in event) || (titleBarRef.current?.contains(event.target as Node) ?? false),
+  });
   useKeybinding('taskDetail.toggleBrowser', handleToggleBrowser, { capture: true, enabled: isFocused && canShowBrowser });
   useKeybinding('taskDetail.toggleChanges', handleToggleChanges, { capture: true, enabled: isFocused && sessionState.canShowChanges });
   useKeybinding('window.snapLeft', () => handleSnapDirection('left'), { capture: true, enabled: isFocused });
@@ -374,7 +388,10 @@ export function TaskDetailWindow({
   }, [windowId, closeWithGuard]);
 
   const onTitleBarPointerDown = useCallback((event: React.PointerEvent) => {
-    if (isInteractiveTarget(event)) return;
+    // Only the primary button starts a window drag. Non-primary buttons (e.g. the
+    // middle-click close, bound via `panel.closeViaHeaderClick`) are handled by
+    // their keybinding's capture-phase listener, not here.
+    if (event.button !== 0 || isInteractiveTarget(event)) return;
     titleBarPointerDown(event);
   }, [titleBarPointerDown]);
 
@@ -465,7 +482,9 @@ export function TaskDetailWindow({
     <>
       <div className="flex h-full w-full flex-col overflow-hidden" data-testid="task-detail-dialog">
         <div
+          ref={titleBarRef}
           className="border-b border-edge flex-shrink-0 select-none"
+          data-testid="task-detail-titlebar"
           onPointerDown={onTitleBarPointerDown}
           onDoubleClick={onTitleBarDoubleClick}
         >
