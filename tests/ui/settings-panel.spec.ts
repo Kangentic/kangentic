@@ -79,6 +79,8 @@ test.describe('Settings Panel', () => {
     await expect(page.locator('text=When Max Sessions Reached')).toBeVisible();
     await expect(page.locator('text=Auto-Focus Idle Sessions')).toBeVisible();
     await expect(page.locator('text=Auto-Resume Agents on Restart')).toBeVisible();
+    // Task Windows section: close-on-outside-click policy (light-dismiss).
+    await expect(page.locator('text=Close on Outside Click')).toBeVisible();
     await closeSettings();
   });
 

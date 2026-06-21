@@ -1,9 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   serializeWorkspace,
   deserializeWorkspace,
+  WORKSPACE_SCHEMA_VERSION,
   type RestoreContext,
 } from '../../src/renderer/window-manager/persistence/workspace';
+import { createWorkspaceSaver } from '../../src/renderer/window-manager/persistence/workspace-saver';
+import type { SerializedWorkspace } from '../../src/shared/types';
 import type { ManagedWindow, TileNode, FractionalRect, WindowState } from '../../src/renderer/window-manager/store/types';
 
 function makeWindow(
@@ -136,5 +139,251 @@ describe('workspace serialize / deserialize', () => {
     const windows = [makeWindow('win-1', 'task-gone', 'floating', HALF_LEFT)];
     const serialized = serializeWorkspace(windows, null, FULL, null);
     expect(deserializeWorkspace(serialized, makeContext([]))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Restore hardening: a layout read back from an on-disk config is never trusted.
+// ---------------------------------------------------------------------------
+
+/** Build a raw serialized workspace whose window entries can hold deliberately
+ *  invalid values (out-of-range / malformed geometry, unknown state) so the
+ *  sanitizing restore path can be exercised. */
+function serializedWith(windows: Array<Record<string, unknown>>): SerializedWorkspace {
+  return {
+    version: WORKSPACE_SCHEMA_VERSION,
+    windows: windows as SerializedWorkspace['windows'],
+    tileTree: null,
+    tileTreeRect: { ...FULL },
+    focusedTaskId: null,
+  };
+}
+
+const VALID_PERSISTED = {
+  taskId: 'task-a',
+  title: 'Task task-a',
+  geometry: { x: 0.1, y: 0.1, w: 0.4, h: 0.5 },
+  restoreGeometry: null,
+  state: 'floating',
+};
+
+describe('deserializeWorkspace hardening', () => {
+  it('ignores a workspace stamped with an unknown schema version', () => {
+    const serialized = serializeWorkspace(
+      [makeWindow('win-1', 'task-a', 'floating', HALF_LEFT)],
+      null,
+      FULL,
+      null,
+    );
+    const fromFuture = { ...serialized, version: serialized.version + 1 };
+    expect(deserializeWorkspace(fromFuture, makeContext(['task-a']))).toBeNull();
+  });
+
+  it('clamps out-of-range geometry back into the overlay', () => {
+    const serialized = serializedWith([
+      { ...VALID_PERSISTED, geometry: { x: -0.5, y: 2, w: 5, h: 0.4 } },
+    ]);
+    const restored = deserializeWorkspace(serialized, makeContext(['task-a']))!;
+    const window = Object.values(restored.windows)[0];
+    // w clamped to 1, x pinned so the (now full-width) window stays on the overlay,
+    // y pinned so its bottom edge stays visible.
+    expect(window.geometry).toEqual({ x: 0, y: 0.6, w: 1, h: 0.4 });
+  });
+
+  it('raises a below-minimum window size to the minimum visible size', () => {
+    const serialized = serializedWith([
+      { ...VALID_PERSISTED, geometry: { x: 0.1, y: 0.1, w: 0.001, h: 0 } },
+    ]);
+    const restored = deserializeWorkspace(serialized, makeContext(['task-a']))!;
+    const window = Object.values(restored.windows)[0];
+    expect(window.geometry).toEqual({ x: 0.1, y: 0.1, w: 0.05, h: 0.05 });
+  });
+
+  it('drops a window with malformed geometry instead of throwing, keeping the valid ones', () => {
+    const serialized = serializedWith([
+      VALID_PERSISTED,
+      { taskId: 'task-bad', title: 'bad', geometry: { x: Number.NaN, y: 0, w: 0.4, h: 0.5 }, restoreGeometry: null, state: 'floating' },
+    ]);
+    const restored = deserializeWorkspace(serialized, makeContext(['task-a', 'task-bad']))!;
+    expect(Object.values(restored.windows).map((window) => window.taskId)).toEqual(['task-a']);
+  });
+
+  it('drops a window with an unknown state', () => {
+    const serialized = serializedWith([
+      VALID_PERSISTED,
+      { ...VALID_PERSISTED, taskId: 'task-weird', state: 'bogus' },
+    ]);
+    const restored = deserializeWorkspace(serialized, makeContext(['task-a', 'task-weird']))!;
+    expect(Object.values(restored.windows).map((window) => window.taskId)).toEqual(['task-a']);
+  });
+
+  it('returns null when windows is not an array', () => {
+    const hostile = {
+      version: WORKSPACE_SCHEMA_VERSION,
+      windows: null,
+      tileTree: null,
+      tileTreeRect: { ...FULL },
+      focusedTaskId: null,
+    };
+    expect(deserializeWorkspace(hostile as unknown as SerializedWorkspace, makeContext(['task-a']))).toBeNull();
+  });
+
+  it('returns null when the blob itself is null or undefined', () => {
+    expect(deserializeWorkspace(null as unknown as SerializedWorkspace, makeContext([]))).toBeNull();
+    expect(deserializeWorkspace(undefined as unknown as SerializedWorkspace, makeContext([]))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The save trigger: the regression guard for the bug. Pure debounce/gate/flush
+// state machine, exercised with fake timers (no jsdom, no stores).
+// ---------------------------------------------------------------------------
+
+const EMPTY_WORKSPACE = serializeWorkspace([], null, FULL, null);
+
+describe('createWorkspaceSaver', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('saves the active project\'s layout after the debounce while a project is open (Settings irrelevant)', () => {
+    const save = vi.fn();
+    const saver = createWorkspaceSaver({
+      getProjectId: () => 'proj-1',
+      getWorkspace: () => EMPTY_WORKSPACE,
+      save,
+      debounceMs: 500,
+    });
+    saver.onChange();
+    expect(save).not.toHaveBeenCalled(); // not yet: still settling
+    vi.advanceTimersByTime(500);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith('proj-1', EMPTY_WORKSPACE);
+  });
+
+  it('does not save when no project is open', () => {
+    const save = vi.fn();
+    const saver = createWorkspaceSaver({
+      getProjectId: () => null,
+      getWorkspace: () => EMPTY_WORKSPACE,
+      save,
+      debounceMs: 500,
+    });
+    saver.onChange();
+    vi.advanceTimersByTime(500);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('coalesces rapid changes into a single save', () => {
+    const save = vi.fn();
+    const saver = createWorkspaceSaver({
+      getProjectId: () => 'proj-1',
+      getWorkspace: () => EMPTY_WORKSPACE,
+      save,
+      debounceMs: 500,
+    });
+    saver.onChange();
+    vi.advanceTimersByTime(200);
+    saver.onChange();
+    vi.advanceTimersByTime(200);
+    saver.onChange();
+    vi.advanceTimersByTime(500);
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it('flush persists a pending layout immediately via saveSync, and does not double-save afterward', () => {
+    const save = vi.fn();
+    const saveSync = vi.fn();
+    const saver = createWorkspaceSaver({
+      getProjectId: () => 'proj-1',
+      getWorkspace: () => EMPTY_WORKSPACE,
+      save,
+      saveSync,
+      debounceMs: 500,
+    });
+    saver.onChange();
+    saver.flush();
+    expect(saveSync).toHaveBeenCalledTimes(1);
+    expect(saveSync).toHaveBeenCalledWith('proj-1', EMPTY_WORKSPACE);
+    expect(save).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(500);
+    expect(saveSync).toHaveBeenCalledTimes(1); // the pending timer was cleared
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('flush persists the current layout even when nothing is pending (covers an in-flight async save)', () => {
+    const save = vi.fn();
+    const saveSync = vi.fn();
+    const saver = createWorkspaceSaver({
+      getProjectId: () => 'proj-1',
+      getWorkspace: () => EMPTY_WORKSPACE,
+      save,
+      saveSync,
+    });
+    // A debounced async save fired and cleared its timer; before it lands the user quits.
+    saver.flush();
+    expect(saveSync).toHaveBeenCalledTimes(1);
+    expect(saveSync).toHaveBeenCalledWith('proj-1', EMPTY_WORKSPACE);
+  });
+
+  it('flush falls back to the async save when no saveSync is provided', () => {
+    const save = vi.fn();
+    const saver = createWorkspaceSaver({
+      getProjectId: () => 'proj-1',
+      getWorkspace: () => EMPTY_WORKSPACE,
+      save,
+    });
+    saver.flush();
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it('flush is a no-op when no project is open', () => {
+    const saveSync = vi.fn();
+    const saver = createWorkspaceSaver({
+      getProjectId: () => null,
+      getWorkspace: () => EMPTY_WORKSPACE,
+      save: vi.fn(),
+      saveSync,
+    });
+    saver.flush();
+    expect(saveSync).not.toHaveBeenCalled();
+  });
+
+  it('reads the project id and workspace together at persist time (consistent, never cross-contaminated)', () => {
+    const save = vi.fn();
+    let projectId: string | null = 'proj-a';
+    let workspace = EMPTY_WORKSPACE;
+    const otherWorkspace = serializeWorkspace([], null, HALF_LEFT, null);
+    const saver = createWorkspaceSaver({
+      getProjectId: () => projectId,
+      getWorkspace: () => workspace,
+      save,
+      debounceMs: 500,
+    });
+    saver.onChange();
+    // A project switch lands before the debounce fires: both reads must reflect the
+    // new project, so the save can never write one project's windows under another's id.
+    projectId = 'proj-b';
+    workspace = otherWorkspace;
+    vi.advanceTimersByTime(500);
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith('proj-b', otherWorkspace);
+  });
+
+  it('disposing cancels a pending save', () => {
+    const save = vi.fn();
+    const saver = createWorkspaceSaver({
+      getProjectId: () => 'proj-1',
+      getWorkspace: () => EMPTY_WORKSPACE,
+      save,
+      debounceMs: 500,
+    });
+    saver.onChange();
+    saver.dispose();
+    vi.advanceTimersByTime(500);
+    expect(save).not.toHaveBeenCalled();
   });
 });

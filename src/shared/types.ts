@@ -941,11 +941,29 @@ export interface GitDiffFileEntry {
 export interface GitPendingChangesInput {
   /** Path to check - worktree path or project path */
   checkPath: string;
+  /**
+   * Whether the move that follows will force-delete the branch (git autoCleanup).
+   * Only-local commits are at risk of loss only when the branch is deleted; with
+   * the branch kept they stay reachable on its ref and must not warn. Defaults to
+   * true (conservative) when omitted.
+   */
+  autoCleanup?: boolean;
+  /** Linked PR number, used to detect a squash-merge that patch-id cannot see. */
+  prNumber?: number | null;
+  /** Last-known linked PR state; a stored 'merged' avoids a fresh `gh` lookup. */
+  prState?: PRState | null;
 }
 
 export interface GitPendingChangesResult {
   hasPendingChanges: boolean;
   uncommittedFileCount: number;
+  /**
+   * Commits that exist only on this local branch and nowhere recoverable (not
+   * pushed, not merged by content, not in a merged PR), AND that the pending
+   * move would actually destroy by force-deleting the branch. Zero when the
+   * branch will be kept, since the commits then survive on its ref. Despite the
+   * legacy name, this is "at-risk local-only commits," not merely "unpushed."
+   */
   unpushedCommitCount: number;
   /**
    * The worktree's live HEAD branch, or null on a detached HEAD or probe
@@ -1077,6 +1095,11 @@ export interface NotificationConfig {
   cooldownSeconds: number;
 }
 
+/** Click-outside (light-dismiss) policy for modeless task-detail windows. `off`
+ *  disables it; `single` closes only a lone floating window (the peek case);
+ *  `focused` closes the focused window in any state; `all` closes every window. */
+export type WindowLightDismiss = 'off' | 'single' | 'focused' | 'all';
+
 export interface AppConfig {
   theme: ThemeMode;
   sidebarVisible: boolean;
@@ -1162,13 +1185,6 @@ export interface AppConfig {
     defaultUrl?: string;
   };
 
-  /** In-app window-manager layout, persisted per project so the open task windows +
-   *  their tiling survive a project switch and an app restart. taskId-anchored (so a
-   *  session respawn does not orphan a window) and fractional (so a viewport resize
-   *  re-projects cleanly). Restored AFTER sessions resolve. See
-   *  src/renderer/window-manager/persistence/. */
-  workspace?: SerializedWorkspace;
-
   /**
    * Developer / debug toggles. Global-only - the debug overlay is a
    * per-machine dev affordance, not something that varies per project.
@@ -1220,6 +1236,8 @@ export interface AppConfig {
   skipDeleteConfirm: boolean;
   skipBoardConfigConfirm: boolean;
   autoFocusIdleSession: boolean;
+  /** Click-outside dismiss policy for modeless task-detail windows. Default `single`. */
+  windowLightDismiss: WindowLightDismiss;
   /** Task IDs that have already been offered an auto-rename suggestion. Persisted so a
    *  dismissed suggestion does not reappear on the next app launch. Drained on task
    *  delete (TASK_DELETE / TASK_BULK_DELETE handlers in `task-crud.ts`) so the array
@@ -1235,6 +1253,12 @@ export interface AppConfig {
   /** Per-project memory of the last user-selected task tab in the terminal panel.
    *  Keyed by project ID, value is the task ID. Restored on project switch. */
   lastActiveTaskByProject: Record<string, string>;
+  /** Per-project in-app window-manager layout: the open task-detail windows + their
+   *  tiling, so the full arrangement survives a project switch and an app restart.
+   *  Keyed by project ID. Global (per-machine) state, written merge-safely via
+   *  `config.set` and restored AFTER sessions resolve. See
+   *  src/renderer/window-manager/persistence/. */
+  workspaceByProject: Record<string, SerializedWorkspace>;
   /** Persisted union of every model ID we've ever seen for each agent: the
    *  result of the static/JSONL `discoverCapabilities()` walk, plus any model
    *  that has appeared on a live session's usage stream (Claude reports model
@@ -1249,9 +1273,13 @@ export interface AppConfig {
   hotkeyOverrides: Record<string, string>;
 }
 
-/** A persisted in-app window-manager layout (`AppConfig.workspace`). taskId-anchored
- *  and fractional, so it survives session respawns and viewport resizes. */
+/** A persisted in-app window-manager layout (one entry per project in
+ *  `AppConfig.workspaceByProject`). taskId-anchored and fractional, so it survives
+ *  session respawns and viewport resizes. */
 export interface SerializedWorkspace {
+  /** Schema version of this persisted layout. Stamped on save and checked on
+   *  restore so an older / unknown-shaped blob is ignored rather than mis-applied. */
+  version: number;
   windows: Array<{
     taskId: string;
     title: string;
@@ -1363,6 +1391,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   skipDeleteConfirm: false,
   skipBoardConfigConfirm: false,
   autoFocusIdleSession: false,
+  windowLightDismiss: 'single',
   autoNameAskedTaskIds: [],
   autoNameRateLimitPerHour: 60,
   restoreWindowPosition: true,
@@ -1370,6 +1399,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   windowMaximized: false,
   statusBarPeriod: 'live',
   lastActiveTaskByProject: {},
+  workspaceByProject: {},
   discoveredModelsByAgent: {},
   hotkeyOverrides: {},
 };
@@ -2418,6 +2448,10 @@ export interface ElectronAPI {
     get: () => Promise<AppConfig>;
     getGlobal: () => Promise<AppConfig>;
     set: (config: DeepPartial<AppConfig>) => Promise<void>;
+    /** Synchronous, blocking persist of a config partial. Used only on the quit/unload
+     *  path so the final state reaches disk before the renderer tears down (an async
+     *  set() can be dropped mid-teardown). Same merge semantics as set(). */
+    setSync: (config: DeepPartial<AppConfig>) => void;
     getProjectOverrides: () => Promise<DeepPartial<AppConfig> | null>;
     setProjectOverrides: (overrides: DeepPartial<AppConfig>) => Promise<void>;
     getProjectOverridesByPath: (projectPath: string) => Promise<DeepPartial<AppConfig> | null>;

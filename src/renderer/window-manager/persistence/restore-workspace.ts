@@ -1,8 +1,9 @@
 /**
- * Restore the persisted window layout for the just-loaded project. Reads
- * `AppConfig.workspace` and rebuilds the windows via the window-store, re-resolving
- * each window's live session from its durable taskId and dropping windows whose
- * task is no longer on the board. A no-op when no layout was persisted.
+ * Restore the persisted window layout for the just-loaded project. Reads this
+ * project's entry from `AppConfig.workspaceByProject` and rebuilds the windows via the
+ * window-store, re-resolving each window's live session from its durable taskId and
+ * dropping windows whose task is no longer on the board. A no-op when no layout was
+ * persisted for the project.
  *
  * Called from useProjectSwitchEffect (warm + cold paths) AFTER the incoming
  * project's board, config, and sessions have resolved, so session re-binding and
@@ -21,8 +22,8 @@ import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useWindowStore } from '../store/window-store';
 
-export function restoreWorkspaceForProject(): void {
-  const workspace = useConfigStore.getState().config.workspace;
+export function restoreWorkspaceForProject(projectId: string): void {
+  const workspace = useConfigStore.getState().config.workspaceByProject?.[projectId];
   if (!workspace) return;
   useWindowStore.getState().applyWorkspace(
     workspace,

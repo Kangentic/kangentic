@@ -194,10 +194,15 @@ fails because someone else pushed to the branch, report it and stop - never bare
 1. **Determine PR title:** the first line of the most recent commit. If there are several commits
    since the source branch, combine them into one concise title.
 2. **Determine PR body:** write a rich, reviewer-facing body and save it to `.kangentic/PR_BODY.tmp`
-   with the Write tool (avoids shell escaping). Include:
-   - `## Summary` - what changed and why.
-   - `## Impact / behavior` - user-visible behavior, features, and bug fixes.
-   - `## Test plan` - how it is verified (the CI checks plus any tests added in Step 3.5).
+   with the Write tool (avoids shell escaping). Mirror the section order of
+   `.github/pull_request_template.md` so skill-created PRs match UI-created ones:
+   - `## What` - what changed and the affected components.
+   - `## Why` - the motivation or problem. Link any related issue with a closing keyword
+     (e.g. `Closes #123`).
+   - `## How` - the approach and any trade-offs worth a reviewer's attention.
+   - `## Breaking changes` - any API, config, or behavioral change that requires user action, with
+     migration notes; otherwise `None`.
+   - `## Tests` - how it is verified (the CI checks plus any tests added in Step 3.5).
    - Footer: `Generated with [Claude Code](https://claude.com/claude-code)`
 3. Run: `gh pr create --base <sourceBranch> --head <branch> --title "<title>" --body-file .kangentic/PR_BODY.tmp`
 

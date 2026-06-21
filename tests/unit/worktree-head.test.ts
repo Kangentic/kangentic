@@ -26,7 +26,7 @@ vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => mockGit),
 }));
 
-import { readWorktreeHead, isMergeCommit } from '../../src/main/git/worktree-head';
+import { readWorktreeHead, hasCommitsAheadOfBase } from '../../src/main/git/worktree-head';
 
 describe('readWorktreeHead', () => {
   beforeEach(() => {
@@ -120,45 +120,43 @@ describe('readWorktreeHead', () => {
 });
 
 /**
- * isMergeCommit is the merge-commit guard that keeps the PR confidence ladder
- * from attributing a base-branch `Merge pull request #N` tip (which a freshly
- * branched review worktree sits on) to the task. `rev-list --parents -n 1 <sha>`
- * prints the commit SHA followed by its parent SHAs on one line: 1 token = root
- * commit, 2 = a normal single-parent commit, >2 = a merge commit.
+ * hasCommitsAheadOfBase is the Tier-3 guard that keeps the PR confidence ladder
+ * from attributing a base-branch tip (which a freshly-branched worktree sits on)
+ * to the task. `rev-list --count <base>..<sha>` is the number of commits
+ * reachable from <sha> but not from <base>: 0 means the commit is already
+ * contained in base (a branchless worktree, or any rebase/squash/merge tip), so
+ * the commit anchor must be skipped; >0 means the commit is the task's own work.
  */
-describe('isMergeCommit', () => {
+describe('hasCommitsAheadOfBase', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('returns false for a single-parent commit (two tokens)', async () => {
-    mockGit.raw.mockResolvedValue('abc123 parent1');
-    expect(await isMergeCommit('/mock/repo', 'abc123')).toBe(false);
+  it('returns true when the commit has commits of its own ahead of base (count > 0)', async () => {
+    mockGit.raw.mockResolvedValue('3');
+    expect(await hasCommitsAheadOfBase('/mock/repo', 'main', 'abc123')).toBe(true);
   });
 
-  it('returns true for a merge commit (more than two tokens)', async () => {
-    mockGit.raw.mockResolvedValue('mergesha parent1 parent2');
-    expect(await isMergeCommit('/mock/repo', 'mergesha')).toBe(true);
-  });
-
-  it('returns false for a root commit with no parents (one token)', async () => {
-    mockGit.raw.mockResolvedValue('rootsha');
-    expect(await isMergeCommit('/mock/repo', 'rootsha')).toBe(false);
+  it('returns false when the commit is already contained in base (count 0)', async () => {
+    // A fresh worktree sits on base's tip: 0 commits ahead -> skip the anchor so
+    // the last-merged PR is never attributed to the task.
+    mockGit.raw.mockResolvedValue('0');
+    expect(await hasCommitsAheadOfBase('/mock/repo', 'main', 'base-tip')).toBe(false);
   });
 
   it('tolerates surrounding whitespace and a trailing newline', async () => {
-    mockGit.raw.mockResolvedValue('  mergesha parent1 parent2\n');
-    expect(await isMergeCommit('/mock/repo', 'mergesha')).toBe(true);
+    mockGit.raw.mockResolvedValue('  2\n');
+    expect(await hasCommitsAheadOfBase('/mock/repo', 'main', 'abc123')).toBe(true);
   });
 
-  it('returns false when git throws (best-effort degrade, never propagates)', async () => {
-    mockGit.raw.mockRejectedValue(new Error('fatal: bad object missing'));
-    expect(await isMergeCommit('/mock/repo', 'missing')).toBe(false);
+  it('returns false when git throws (fails safe -> skip the anchor, never fails open)', async () => {
+    mockGit.raw.mockRejectedValue(new Error('fatal: bad revision main..missing'));
+    expect(await hasCommitsAheadOfBase('/mock/repo', 'main', 'missing')).toBe(false);
   });
 
-  it('queries rev-list --parents for the given SHA', async () => {
-    mockGit.raw.mockResolvedValue('abc123 parent1');
-    await isMergeCommit('/mock/repo', 'abc123');
-    expect(mockGit.raw).toHaveBeenCalledWith(['rev-list', '--parents', '-n', '1', 'abc123']);
+  it('queries rev-list --count for <base>..<sha>', async () => {
+    mockGit.raw.mockResolvedValue('1');
+    await hasCommitsAheadOfBase('/mock/repo', 'develop', 'abc123');
+    expect(mockGit.raw).toHaveBeenCalledWith(['rev-list', '--count', 'develop..abc123']);
   });
 });

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useConfigStore } from '../stores/config-store';
-import { effectiveCombo, getKeybinding } from '../../shared/keybindings';
+import { effectiveCombo, getKeybinding, isMouseCombo } from '../../shared/keybindings';
 import { matchesCombo, formatCombo } from '../utils/keybindings';
 
 /**
@@ -31,20 +31,23 @@ interface UseKeybindingOptions {
   /** Call event.stopPropagation() on a match. Default true. */
   stopPropagation?: boolean;
   /** Extra predicate run before matching (e.g. skip when typing in an input, or
-   *  gate on a pane being hovered/focused). Return false to ignore the event. */
-  when?: (event: KeyboardEvent) => boolean;
+   *  gate on a pane being hovered/focused). Return false to ignore the event.
+   *  Receives a `PointerEvent` when the action is bound to a mouse button. */
+  when?: (event: KeyboardEvent | PointerEvent) => boolean;
 }
 
 /**
- * Register a keyboard shortcut by its registry action id. Reads the effective
- * combo (user override or registry default) live, so a rebind in settings takes
- * effect immediately. This is the single sanctioned way to bind an app shortcut;
- * see `src/shared/keybindings.ts` for the registry and `.claude/rules/
+ * Register a shortcut by its registry action id. Reads the effective combo (user
+ * override or registry default) live, so a rebind in settings takes effect
+ * immediately. The combo may be a keyboard chord (listened for on `keydown`) or a
+ * mouse button (`Mouse:Middle` etc., listened for on `pointerdown`), so any action
+ * can be rebound to either input. This is the single sanctioned way to bind an app
+ * shortcut; see `src/shared/keybindings.ts` for the registry and `.claude/rules/
  * keybindings-registry.md` for the convention.
  */
 export function useKeybinding(
   actionId: string,
-  handler: (event: KeyboardEvent) => void,
+  handler: (event: KeyboardEvent | PointerEvent) => void,
   options: UseKeybindingOptions = {},
 ): void {
   const override = useConfigStore((state) => state.globalConfig.hotkeyOverrides?.[actionId]);
@@ -72,16 +75,24 @@ export function useKeybinding(
   useEffect(() => {
     if (!enabled || !combo) return;
     const element: Window | Document = target === 'document' ? document : window;
-    const onKeyDown = (event: Event): void => {
-      const keyboardEvent = event as KeyboardEvent;
-      if (whenRef.current && !whenRef.current(keyboardEvent)) return;
-      const hit = matchesCombo(keyboardEvent, combo) || (!!altCombo && matchesCombo(keyboardEvent, altCombo));
+    const onEvent = (event: Event): void => {
+      const inputEvent = event as KeyboardEvent | PointerEvent;
+      if (whenRef.current && !whenRef.current(inputEvent)) return;
+      const hit = matchesCombo(inputEvent, combo) || (!!altCombo && matchesCombo(inputEvent, altCombo));
       if (!hit) return;
-      if (preventDefault) keyboardEvent.preventDefault();
-      if (stopPropagation) keyboardEvent.stopPropagation();
-      handlerRef.current(keyboardEvent);
+      if (preventDefault) inputEvent.preventDefault();
+      if (stopPropagation) inputEvent.stopPropagation();
+      handlerRef.current(inputEvent);
     };
-    element.addEventListener('keydown', onKeyDown, capture);
-    return () => element.removeEventListener('keydown', onKeyDown, capture);
+    // A keyboard combo is delivered by `keydown`, a mouse combo by `pointerdown`.
+    // The combo and its alt can be different input kinds, so listen for each kind
+    // either actually uses.
+    const eventTypes = new Set<'keydown' | 'pointerdown'>();
+    eventTypes.add(isMouseCombo(combo) ? 'pointerdown' : 'keydown');
+    if (altCombo) eventTypes.add(isMouseCombo(altCombo) ? 'pointerdown' : 'keydown');
+    for (const eventType of eventTypes) element.addEventListener(eventType, onEvent, capture);
+    return () => {
+      for (const eventType of eventTypes) element.removeEventListener(eventType, onEvent, capture);
+    };
   }, [combo, altCombo, enabled, capture, target, preventDefault, stopPropagation]);
 }

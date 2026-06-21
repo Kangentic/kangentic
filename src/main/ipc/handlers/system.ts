@@ -64,6 +64,16 @@ export function registerSystemHandlers(context: IpcContext): void {
     }
   });
 
+  // Synchronous sibling of CONFIG_SET for the renderer's quit/unload flush: an async
+  // invoke() can be dropped if the renderer tears down before the main process drains it,
+  // so the final window-layout write goes through sendSync, which blocks the renderer until
+  // configManager.save() (a synchronous fs write) has persisted it. Intentionally minimal:
+  // no runtime re-apply or detection invalidation, both irrelevant during shutdown.
+  ipcMain.on(IPC.CONFIG_SET_SYNC, (event, config) => {
+    context.configManager.save(config);
+    event.returnValue = true;
+  });
+
   ipcMain.handle(IPC.CONFIG_GET_PROJECT, () => {
     if (!context.currentProjectPath) return null;
     return context.configManager.loadProjectOverrides(context.currentProjectPath);
