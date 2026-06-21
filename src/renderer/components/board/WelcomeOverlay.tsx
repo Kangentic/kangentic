@@ -97,6 +97,10 @@ export function WelcomeOverlay() {
 
   return (
     <div
+      // `data-no-dismiss`: this first-run overlay sits absolute inset-0 inside the board
+      // dismiss surface; mark it so a click never light-dismisses a window (defensive -
+      // no task windows exist during first run anyway).
+      data-no-dismiss
       className={`absolute inset-0 z-50 flex items-center justify-center bg-surface/60 backdrop-blur-sm transition-opacity ${
         fading ? 'opacity-0' : 'opacity-100'
       }`}

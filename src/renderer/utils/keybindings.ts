@@ -2,9 +2,9 @@
  * Renderer-side keybinding helpers: platform-aware combo matching and display
  * formatting. The pure registry, types, and normalization live in
  * `src/shared/keybindings.ts`; this module is the part that touches
- * `KeyboardEvent` and the host platform.
+ * `KeyboardEvent` / `PointerEvent` and the host platform.
  */
-import { normalizeCombo } from '../../shared/keybindings';
+import { isMouseCombo, mouseComboToButton, normalizeCombo } from '../../shared/keybindings';
 
 /** True on macOS, where `Mod` resolves to Cmd (metaKey) instead of Ctrl.
  *  Guard `window` so this module is safe to import in the node/unit test
@@ -27,13 +27,25 @@ function keyMatches(event: KeyboardEvent, mainKey: string): boolean {
 }
 
 /**
- * Whether a keydown event satisfies a canonical combo.
+ * Whether an input event satisfies a canonical combo.
  *
- * Resolves `Mod` to Cmd on macOS / Ctrl elsewhere. Literal `Ctrl` requires the
- * control key without meta (the terminal SIGINT case). Requires an exact match
- * of the modifier set so, e.g., `F5` does not fire while Ctrl is held.
+ * A keyboard combo matches a `keydown`: resolves `Mod` to Cmd on macOS / Ctrl
+ * elsewhere, requires literal `Ctrl` without meta (the terminal SIGINT case), and
+ * requires an exact modifier set so, e.g., `F5` does not fire while Ctrl is held.
+ * A mouse combo (`Mouse:Middle` etc.) matches a `pointerdown` on the bound button.
+ * The two never cross: a mouse combo never matches a key event and vice versa.
  */
-export function matchesCombo(event: KeyboardEvent, combo: string): boolean {
+export function matchesCombo(event: KeyboardEvent | PointerEvent, combo: string): boolean {
+  // Discriminate by property presence rather than `instanceof` so this stays
+  // correct in the node unit-test environment, where the DOM event constructors
+  // (PointerEvent / KeyboardEvent) may be absent.
+  if (isMouseCombo(combo)) {
+    const wantButton = mouseComboToButton(combo);
+    return wantButton !== null && 'button' in event && event.button === wantButton;
+  }
+  // A keyboard combo never matches a pointer event.
+  if (!('key' in event)) return false;
+
   const parts = combo.split('+');
   const mainKey = parts[parts.length - 1];
   const modifiers = new Set(parts.slice(0, -1).map((modifier) => modifier.toLowerCase()));
@@ -87,12 +99,21 @@ const MAIN_KEY_LABELS: Record<string, string> = {
   ArrowDown: '↓',
 };
 
+/** Human-readable labels for the bindable mouse buttons. */
+const MOUSE_COMBO_LABELS: Record<string, string> = {
+  'Mouse:Middle': 'Middle Click',
+  'Mouse:Back': 'Back Click',
+  'Mouse:Forward': 'Forward Click',
+};
+
 /**
  * Split a canonical combo into display segments for rendering as `<kbd>`
  * elements. macOS uses glyphs (no separator on screen); other platforms use
- * word labels. Returns segments in canonical order, main key last.
+ * word labels. Returns segments in canonical order, main key last. A mouse combo
+ * renders as a single readable segment.
  */
 export function formatComboSegments(combo: string): string[] {
+  if (isMouseCombo(combo)) return [MOUSE_COMBO_LABELS[combo] ?? combo];
   const parts = combo.split('+');
   const mainKey = parts[parts.length - 1];
   const modifiers = parts.slice(0, -1);
@@ -137,4 +158,16 @@ export function comboFromEvent(event: KeyboardEvent): string | null {
   if (mainKey === '+') mainKey = '=';
 
   return normalizeCombo([...modifiers, mainKey].join('+'));
+}
+
+/** Canonical mouse combo for a captured pointerdown, or `null` for a button that
+ *  is not bindable (left = 0, right = 2). Used by the rebind capture widget. */
+const MOUSE_COMBO_BY_BUTTON: Record<number, string> = {
+  1: 'Mouse:Middle',
+  3: 'Mouse:Back',
+  4: 'Mouse:Forward',
+};
+
+export function comboFromPointerEvent(event: PointerEvent): string | null {
+  return MOUSE_COMBO_BY_BUTTON[event.button] ?? null;
 }

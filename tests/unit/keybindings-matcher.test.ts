@@ -231,6 +231,76 @@ describe('Non-Mac helpers (IS_MAC = false)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Mouse-button combos. A binding can be either a keyboard chord or a mouse
+// button; matchesCombo discriminates by event shape (property presence, not
+// instanceof, so it works in this node environment). Placed before the Mac
+// suite so the pristine (unstubbed) window keeps IS_MAC = false.
+// ---------------------------------------------------------------------------
+describe('Mouse-button combos', () => {
+  let matchesCombo: (event: KeyboardEvent | PointerEvent, combo: string) => boolean;
+  let comboFromPointerEvent: (event: PointerEvent) => string | null;
+  let formatCombo: (combo: string) => string;
+  let formatComboSegments: (combo: string) => string[];
+
+  beforeAll(async () => {
+    const module = await import('../../src/renderer/utils/keybindings');
+    matchesCombo = module.matchesCombo;
+    comboFromPointerEvent = module.comboFromPointerEvent;
+    formatCombo = module.formatCombo;
+    formatComboSegments = module.formatComboSegments;
+  });
+
+  // A minimal PointerEvent-shaped object: matchesCombo only reads `.button`.
+  const pointer = (button: number): PointerEvent => ({ button }) as unknown as PointerEvent;
+
+  describe('matchesCombo', () => {
+    it('a middle-button pointerdown matches Mouse:Middle', () => {
+      expect(matchesCombo(pointer(1), 'Mouse:Middle')).toBe(true);
+    });
+
+    it('the side buttons match Mouse:Back (3) and Mouse:Forward (4)', () => {
+      expect(matchesCombo(pointer(3), 'Mouse:Back')).toBe(true);
+      expect(matchesCombo(pointer(4), 'Mouse:Forward')).toBe(true);
+    });
+
+    it('the wrong button does NOT match', () => {
+      expect(matchesCombo(pointer(0), 'Mouse:Middle')).toBe(false);
+      expect(matchesCombo(pointer(4), 'Mouse:Middle')).toBe(false);
+    });
+
+    it('a keyboard event never matches a mouse combo', () => {
+      const keyEvent = makeEvent({ key: 'w', ctrlKey: true, shiftKey: true });
+      expect(matchesCombo(keyEvent, 'Mouse:Middle')).toBe(false);
+    });
+
+    it('a pointer event never matches a keyboard combo', () => {
+      expect(matchesCombo(pointer(1), 'Mod+Shift+W')).toBe(false);
+    });
+  });
+
+  describe('comboFromPointerEvent', () => {
+    it('maps the middle and side buttons to their combos', () => {
+      expect(comboFromPointerEvent(pointer(1))).toBe('Mouse:Middle');
+      expect(comboFromPointerEvent(pointer(3))).toBe('Mouse:Back');
+      expect(comboFromPointerEvent(pointer(4))).toBe('Mouse:Forward');
+    });
+
+    it('returns null for the left and right buttons', () => {
+      expect(comboFromPointerEvent(pointer(0))).toBeNull();
+      expect(comboFromPointerEvent(pointer(2))).toBeNull();
+    });
+  });
+
+  describe('formatting', () => {
+    it('renders a mouse combo as a single readable segment', () => {
+      expect(formatComboSegments('Mouse:Middle')).toEqual(['Middle Click']);
+      expect(formatCombo('Mouse:Back')).toBe('Back Click');
+      expect(formatCombo('Mouse:Forward')).toBe('Forward Click');
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Mac (IS_MAC = true) suite - stub window.electronAPI before import.
 // We use a fresh module import (vi.doMock + dynamic import) to get a module
 // instance where IS_MAC was evaluated as true.

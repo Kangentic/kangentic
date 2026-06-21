@@ -201,6 +201,15 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     rebindable: true,
   },
   {
+    id: 'panel.closeViaHeaderClick',
+    label: 'Close Window (Click Header)',
+    description: 'Close the focused task detail window by clicking its title bar with this button (default middle mouse button). Rebind to any keyboard chord or mouse button (middle / side).',
+    group: 'Task Detail',
+    scope: 'panel',
+    defaultCombo: 'Mouse:Middle',
+    rebindable: true,
+  },
+  {
     id: 'taskDetail.toggleBrowser',
     label: 'Toggle Browser Pane',
     description: 'Show or hide the browser pane inside the task detail dialog.',
@@ -412,12 +421,42 @@ function normalizeMainKey(key: string): string {
 }
 
 /**
+ * Mouse-button combos. A binding can be either a keyboard combo (`Mod+Shift+W`)
+ * or a single mouse button, written as `Mouse:<Button>`. Only the three buttons
+ * a user can reasonably bind without losing primary interaction are supported:
+ * the middle button and the two side buttons. Left (DOM button 0) and right
+ * (DOM button 2) are deliberately never bindable.
+ *
+ * The map values are DOM `MouseEvent.button` codes: middle = 1, back = 3,
+ * forward = 4.
+ */
+const MOUSE_BUTTON_BY_COMBO: Record<string, number> = {
+  'Mouse:Middle': 1,
+  'Mouse:Back': 3,
+  'Mouse:Forward': 4,
+};
+
+/** Whether a combo is a mouse-button binding (`Mouse:Middle` etc.) rather than a
+ *  keyboard chord. */
+export function isMouseCombo(combo: string): boolean {
+  return combo.startsWith('Mouse:');
+}
+
+/** The DOM `MouseEvent.button` code a mouse combo targets, or `null` if the combo
+ *  is not a recognized mouse binding. */
+export function mouseComboToButton(combo: string): number | null {
+  return MOUSE_BUTTON_BY_COMBO[combo] ?? null;
+}
+
+/**
  * Normalize a combo string to canonical form: modifiers sorted into
  * [Mod, Ctrl, Alt, Shift] order (case-insensitive, deduped), then the main key.
  * Two equivalent combos compare equal after normalization, which is what
  * conflict detection relies on.
  */
 export function normalizeCombo(combo: string): string {
+  // Mouse-button combos have no modifier grammar to canonicalize; pass through.
+  if (isMouseCombo(combo)) return combo;
   const parts = combo.split('+');
   const mainKey = parts[parts.length - 1];
   const modifiers = parts.slice(0, -1);
@@ -539,6 +578,8 @@ export function detectConflicts(
  * covers every rebindable global/dialog shortcut a user is likely to probe.
  */
 export function comboToAccelerator(combo: string): string | null {
+  // Mouse buttons are never OS global shortcuts; skip the accelerator probe.
+  if (isMouseCombo(combo)) return null;
   const parts = combo.split('+');
   const mainKey = parts[parts.length - 1];
   const modifiers = parts.slice(0, -1).map((modifier) => modifier.toLowerCase());

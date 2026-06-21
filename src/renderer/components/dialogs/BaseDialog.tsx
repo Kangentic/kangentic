@@ -212,6 +212,10 @@ export function BaseDialog({
   return (
     <div
       className={`fixed ${backdropPositionClass} bg-black/60 flex items-center justify-center ${zIndex} ${backdropAnimClass} ${backdropClassName || ''}`}
+      // Marks an open modal as a dismissable layer so a board click while a dialog
+      // is up dismisses the dialog, never a window underneath (BaseDialog renders
+      // inline, so a board-level / card confirm sits inside the board subtree).
+      data-dismissable-layer
       onMouseDown={(e) => { backdropMouseDown.current = e.target === e.currentTarget; }}
       onMouseUp={(e) => {
         if (e.target === e.currentTarget && backdropMouseDown.current) {

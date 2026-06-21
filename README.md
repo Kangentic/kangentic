@@ -108,6 +108,9 @@ Get started at [kangentic.com/getting-started](https://www.kangentic.com/getting
 
 ## Development
 
+Building from source requires Node.js 22+ (the npx floor above is for end users running the
+launcher).
+
 ```bash
 git clone https://github.com/Kangentic/kangentic.git
 cd kangentic
@@ -115,7 +118,7 @@ npm install
 npm start
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for project structure, testing, and code style.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for project structure, testing, and conventions.
 
 ## Contributing
 

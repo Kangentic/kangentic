@@ -129,8 +129,12 @@ export function StatusBar() {
     setPeriodPopoverOpen(false);
   }
 
+  // `data-dismiss-surface`: dead space in the status bar light-dismisses an open task
+  // window; its clickable stats are excluded as actions (pointer cursor / controls).
+  // A new clickable child must carry `cursor-pointer` or `data-no-dismiss`, or a
+  // click on it will also dismiss.
   return (
-    <div className="h-9 bg-surface border-t border-edge flex items-center px-3 text-xs text-fg-faint select-none flex-shrink-0">
+    <div className="h-9 bg-surface border-t border-edge flex items-center px-3 text-xs text-fg-faint select-none flex-shrink-0" data-dismiss-surface>
       {currentProject && (
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1.5" data-testid="session-count">

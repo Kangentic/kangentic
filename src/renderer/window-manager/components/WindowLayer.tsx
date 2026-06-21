@@ -25,6 +25,7 @@ import { useWindowSessionClaims } from '../bridge/useWindowSessionClaims';
 import { useWindowAutoCloseOnDone } from '../bridge/useWindowAutoCloseOnDone';
 import { useWindowFocusReconcile } from '../bridge/useWindowFocusReconcile';
 import { useWorkspacePersistence } from '../bridge/useWorkspacePersistence';
+import { useClickOutsideToClose } from '../bridge/useClickOutsideToClose';
 import type { ContainerSize } from '../store/geometry';
 import type { FractionalRect } from '../store/types';
 import { resolveTileLayout } from '../tiling/resolve-layout';
@@ -84,6 +85,9 @@ export function WindowLayer() {
   // Persist the layout (debounced) to the open project's config so it survives a
   // project switch + app restart. Restore is wired into the project-switch effect.
   useWorkspacePersistence();
+  // Light-dismiss: a clean click on the empty board closes open windows per the
+  // user's `windowLightDismiss` policy (off / single / focused / all).
+  useClickOutsideToClose();
 
   const [containerSize, setContainerSize] = useState<ContainerSize>({ width: 0, height: 0 });
   const windows = useWindowStore((state) => state.windows);

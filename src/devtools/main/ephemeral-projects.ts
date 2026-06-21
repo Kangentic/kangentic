@@ -47,9 +47,29 @@ function previewProjectsRoot(): string {
 }
 
 /**
+ * Check out the committed team board config (kangentic.json) into the clone's working
+ * tree right after the --no-checkout clone, BEFORE the DB is seeded and the board opens.
+ * Without it, the default-seed columns (random uuids) exist before the team config is on
+ * disk, so the deferred fillPreviewClone applies the config too late and ghosts the
+ * config-id columns that already accumulated tasks. Checking out HEAD (not copying the
+ * possibly-dirty worktree file) keeps the content identical to what fillPreviewClone later
+ * restores, so the post-fill file-watch event is a no-op. Best-effort: a repo with no
+ * committed kangentic.json just falls back to prior behavior.
+ */
+export async function checkoutTeamConfig(cloneDir: string): Promise<void> {
+  try {
+    await execFileAsync('git', ['-C', cloneDir, 'checkout', 'HEAD', '--', 'kangentic.json']);
+  } catch (checkoutError) {
+    console.warn(`[DEV] Preview team-config checkout failed for ${cloneDir}:`, checkoutError);
+  }
+}
+
+/**
  * Clone the worktree into an isolated preview project ("Project N") and register
  * it. FAST: `--no-checkout` copies only the hardlinked .git (~instant), so the
- * working tree is empty until fillPreviewClone() runs. Does NOT open/switch to it.
+ * working tree is empty until fillPreviewClone() runs - except kangentic.json, which
+ * is checked out eagerly so the board reconciles to the committed config at open. Does
+ * NOT open/switch to it.
  */
 export async function createPreviewClone(context: IpcContext, worktreePath: string): Promise<Project> {
   previewProjectIndex += 1;
@@ -65,6 +85,11 @@ export async function createPreviewClone(context: IpcContext, worktreePath: stri
   if (!fs.existsSync(path.join(cloneDir, '.git'))) {
     await execFileAsync('git', ['clone', '--no-checkout', '--local', worktreePath, cloneDir]);
   }
+  // Put the committed team board config on disk BEFORE seeding the DB / opening the board,
+  // so the default-seed columns get cleanly reconciled (deleted/adopted by config id) at
+  // open instead of being ghosted by the late, post-task reconciliation. Runs on the adopt
+  // path too (the pre-clone is also --no-checkout). The slow full-tree checkout stays deferred.
+  await checkoutTeamConfig(cloneDir);
   const project = context.projectRepo.create({ name: projectName, path: cloneDir, default_agent: DEFAULT_AGENT });
   // Initialize the project DB (tables + default swimlanes) so it shows a real board.
   getProjectDb(project.id);

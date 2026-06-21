@@ -157,8 +157,11 @@ test.describe('Task Detail Changes panel: expand / collapse', () => {
     await expect(page.locator('[data-testid="changes-collapse"]')).not.toBeVisible();
 
     // Close the panel and dialog so state does not leak to other tests.
+    // Use Control+Shift+W (capture-phase) rather than Escape: the task-detail
+    // window has a running session, so Escape via the bubble-phase listener can
+    // be intercepted on CI Linux after panel interactions move focus.
     await changesPill.click();
-    await page.keyboard.press('Escape');
-    await expect(dialog).not.toBeVisible();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 });

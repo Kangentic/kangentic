@@ -191,8 +191,8 @@ describe('ClaudeStatusParser', () => {
       const usage = ClaudeStatusParser.parseStatus(raw);
       expect(usage).not.toBeNull();
       expect(usage!.rateLimits).toEqual([
-        { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsAt: 1775883600 },
-        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 4, resetsAt: 1776452400 },
+        { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsAt: 1775883600, windowDurationSeconds: 5 * 60 * 60 },
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 4, resetsAt: 1776452400, windowDurationSeconds: 7 * 24 * 60 * 60 },
       ]);
     });
 
@@ -220,8 +220,8 @@ describe('ClaudeStatusParser', () => {
       const usage = ClaudeStatusParser.parseStatus(raw);
       expect(usage).not.toBeNull();
       expect(usage!.rateLimits).toEqual([
-        { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 0, resetsAt: 0 },
-        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 0, resetsAt: 0 },
+        { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 0, resetsAt: 0, windowDurationSeconds: 5 * 60 * 60 },
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 0, resetsAt: 0, windowDurationSeconds: 7 * 24 * 60 * 60 },
       ]);
     });
 

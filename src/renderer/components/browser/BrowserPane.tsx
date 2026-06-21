@@ -387,11 +387,11 @@ function BrowserPaneActive({
   // form field is focused so typing `i`/`d` in the note input doesn't trigger
   // them. Zoom additionally requires the pane to be active (mouse over it OR
   // focus inside) so e.g. Ctrl+0 from elsewhere doesn't reset browser zoom.
-  const notFormField = (event: KeyboardEvent): boolean => {
+  const notFormField = (event: KeyboardEvent | PointerEvent): boolean => {
     const target = event.target as HTMLElement | null;
     return !(!!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA'));
   };
-  const paneActive = (event: KeyboardEvent): boolean => {
+  const paneActive = (event: KeyboardEvent | PointerEvent): boolean => {
     if (!notFormField(event)) return false;
     const pane = paneRef.current;
     const focusInside = !!pane && pane.contains(document.activeElement);

@@ -276,6 +276,14 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     expect(result).toMatchObject({ number: 42, state: 'merged' });
   });
 
+  it('resolveByNumber keeps a fork (cross-repository) PR - an explicit number is unambiguous', async () => {
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByNumber').mockResolvedValue(
+      pr({ number: 31, state: 'OPEN', isCrossRepository: true }),
+    );
+    const result = await gitHubPRConnector.resolveByNumber!('/r', 31);
+    expect(result).toMatchObject({ number: 31, state: 'open' });
+  });
+
   it('resolveByCommit disambiguates the associated PRs', async () => {
     vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
       pr({ number: 1, state: 'MERGED', updatedAt: '2026-05-01T00:00:00Z' }),
