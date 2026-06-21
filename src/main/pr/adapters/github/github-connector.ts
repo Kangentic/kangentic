@@ -70,9 +70,11 @@ function toResolvedPR(item: GhPrListItem): ResolvedPR {
 }
 
 /**
- * Pick the best PR from a candidate list, guarding against mislinks:
- *   - drop fork (cross-repository) PRs - they can share a branch name or contain
- *     the same commit but are never this task's PR,
+ * Pick the best PR from a candidate list for inferred (branch- or commit-based)
+ * resolution, guarding against mislinks:
+ *   - drop fork (cross-repository) PRs - an inferred match on a shared branch name
+ *     or commit is never reliably this task's PR (resolveByNumber bypasses this
+ *     guard, since an explicit number is unambiguous),
  *   - when a `branchHint` is given, restrict to PRs whose head ref matches it;
  *     if none match and the list is ambiguous (>1), return null rather than guess,
  *   - then prefer open/draft over merged/closed, then a matching base branch,
@@ -183,8 +185,11 @@ export const gitHubPRConnector: PRConnector = {
   async resolveByNumber(repoCwd: string, prNumber: number): Promise<ResolvedPR | null> {
     return viaGh(async () => {
       const item = await ghImporter.resolvePRByNumber(repoCwd, prNumber);
-      // Explicit number lookup: trust it, but never link a fork PR.
-      return item && !item.isCrossRepository ? toResolvedPR(item) : null;
+      // Explicit number lookup is unambiguous: a PR number is unique within the repo,
+      // so there is no cross-repo collision risk. Unlike resolveForBranch/resolveByCommit
+      // (which drop fork PRs because a fork can share a branch name or commit), trusting a
+      // fork PR here is safe - the caller already named the exact PR.
+      return item ? toResolvedPR(item) : null;
     });
   },
 
