@@ -1154,13 +1154,6 @@ export interface AppConfig {
     defaultUrl?: string;
   };
 
-  /** In-app window-manager layout, persisted per project so the open task windows +
-   *  their tiling survive a project switch and an app restart. taskId-anchored (so a
-   *  session respawn does not orphan a window) and fractional (so a viewport resize
-   *  re-projects cleanly). Restored AFTER sessions resolve. See
-   *  src/renderer/window-manager/persistence/. */
-  workspace?: SerializedWorkspace;
-
   /**
    * Developer / debug toggles. Global-only - the debug overlay is a
    * per-machine dev affordance, not something that varies per project.
@@ -1227,6 +1220,12 @@ export interface AppConfig {
   /** Per-project memory of the last user-selected task tab in the terminal panel.
    *  Keyed by project ID, value is the task ID. Restored on project switch. */
   lastActiveTaskByProject: Record<string, string>;
+  /** Per-project in-app window-manager layout: the open task-detail windows + their
+   *  tiling, so the full arrangement survives a project switch and an app restart.
+   *  Keyed by project ID. Global (per-machine) state, written merge-safely via
+   *  `config.set` and restored AFTER sessions resolve. See
+   *  src/renderer/window-manager/persistence/. */
+  workspaceByProject: Record<string, SerializedWorkspace>;
   /** Persisted union of every model ID we've ever seen for each agent: the
    *  result of the static/JSONL `discoverCapabilities()` walk, plus any model
    *  that has appeared on a live session's usage stream (Claude reports model
@@ -1241,9 +1240,13 @@ export interface AppConfig {
   hotkeyOverrides: Record<string, string>;
 }
 
-/** A persisted in-app window-manager layout (`AppConfig.workspace`). taskId-anchored
- *  and fractional, so it survives session respawns and viewport resizes. */
+/** A persisted in-app window-manager layout (one entry per project in
+ *  `AppConfig.workspaceByProject`). taskId-anchored and fractional, so it survives
+ *  session respawns and viewport resizes. */
 export interface SerializedWorkspace {
+  /** Schema version of this persisted layout. Stamped on save and checked on
+   *  restore so an older / unknown-shaped blob is ignored rather than mis-applied. */
+  version: number;
   windows: Array<{
     taskId: string;
     title: string;
@@ -1362,6 +1365,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   windowMaximized: false,
   statusBarPeriod: 'live',
   lastActiveTaskByProject: {},
+  workspaceByProject: {},
   discoveredModelsByAgent: {},
   hotkeyOverrides: {},
 };
@@ -2410,6 +2414,10 @@ export interface ElectronAPI {
     get: () => Promise<AppConfig>;
     getGlobal: () => Promise<AppConfig>;
     set: (config: DeepPartial<AppConfig>) => Promise<void>;
+    /** Synchronous, blocking persist of a config partial. Used only on the quit/unload
+     *  path so the final state reaches disk before the renderer tears down (an async
+     *  set() can be dropped mid-teardown). Same merge semantics as set(). */
+    setSync: (config: DeepPartial<AppConfig>) => void;
     getProjectOverrides: () => Promise<DeepPartial<AppConfig> | null>;
     setProjectOverrides: (overrides: DeepPartial<AppConfig>) => Promise<void>;
     getProjectOverridesByPath: (projectPath: string) => Promise<DeepPartial<AppConfig> | null>;

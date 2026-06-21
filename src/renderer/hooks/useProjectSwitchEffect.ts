@@ -160,7 +160,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         // Restore the persisted window layout. Warm switches keep sessions live,
         // so this resolves synchronously; a cheap setState lets the restored
         // windows appear with the board (no flash) without blocking the swap.
-        restoreWorkspaceForProject();
+        restoreWorkspaceForProject(currentProject.id);
       } else {
         // Cold path: fire the IPC fan-out and reset stale per-project
         // view state. After loads resolve, mark the project as seen so
@@ -236,7 +236,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           // superseded this one mid-load.
           void coldLoads.then(() => {
             if (previousProjectIdRef.current !== currentProject.id) return;
-            restoreWorkspaceForProject();
+            restoreWorkspaceForProject(currentProject.id);
           });
         });
       }

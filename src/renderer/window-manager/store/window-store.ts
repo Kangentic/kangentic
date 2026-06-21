@@ -4,8 +4,9 @@
  * Owns the set of managed windows, their floating z-order, the focused window,
  * and (from P2) the tiling tree. Renderer-only state: there is no IPC truth to
  * re-sync, so this uses HMR Pattern A (preserve the snapshot across Vite Fast
- * Refresh via `import.meta.hot.data`), NOT Pattern B. Persistence to
- * `AppConfig.workspace` lands in P4.
+ * Refresh via `import.meta.hot.data`), NOT Pattern B. The settled layout is
+ * persisted per project to `AppConfig.workspaceByProject` (see
+ * `bridge/useWorkspacePersistence` + `persistence/`).
  */
 
 import { create } from 'zustand';

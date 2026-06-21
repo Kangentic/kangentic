@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { AppConfig, DeepPartial, AgentDetectionInfo } from '../../shared/types';
+import type { AppConfig, DeepPartial, AgentDetectionInfo, SerializedWorkspace } from '../../shared/types';
 import { DEFAULT_CONFIG } from '../../shared/types';
 import { deepMergeConfig } from '../../shared/object-utils';
 import { invalidateAllProjects } from './project-cache';
@@ -30,6 +30,19 @@ interface ConfigStore {
   loading: boolean;
   loadConfig: () => Promise<void>;
   updateConfig: (partial: DeepPartial<AppConfig>) => Promise<void>;
+  /** Persist the in-app window layout for a project into global config, keyed by
+   *  project id and merged in via `config.set` (so it never clobbers other config).
+   *  Decoupled from the Settings panel: the window-manager calls this during normal
+   *  board use. Mirrors `selectActiveSession`'s `lastActiveTaskByProject` write. */
+  saveWorkspaceForProject: (projectId: string, workspace: SerializedWorkspace) => void;
+  /** Synchronous sibling of saveWorkspaceForProject for the quit/unload flush: persists via
+   *  the blocking `config.setSync` so the final layout reaches disk before the renderer tears
+   *  down (an async set() can be dropped mid-teardown). */
+  flushWorkspaceForProject: (projectId: string, workspace: SerializedWorkspace) => void;
+  /** Internal: whether workspaceByProject has been seeded from disk yet. After the first
+   *  config fetch the renderer owns the layout map, so later fetches preserve it instead of
+   *  letting a stale disk read clobber an in-flight save. Resets with the store on HMR. */
+  workspaceSeeded: boolean;
 
   // -- App version --
   appVersion: string | null;
@@ -83,159 +96,210 @@ async function refreshConfigs(): Promise<{ config: AppConfig; globalConfig: AppC
   return { config, globalConfig };
 }
 
-export const useConfigStore = create<ConfigStore>((set, get) => ({
-  config: DEFAULT_CONFIG,
-  globalConfig: DEFAULT_CONFIG,
-  appVersion: null,
-  agentList: [],
-  agentInfo: null,
-  agentVersionNumber: null,
-  gitInfo: null,
-  loading: true,
-  settingsOpen: false,
-  lastSettingsTab: lastSettingsTabHmr,
-  projectSettingsPath: null,
-  projectSettingsProjectName: null,
-  projectSettingsInitialTab: null,
-  projectOverrides: null,
-  loadConfig: async () => {
-    set({ loading: true });
-    const configs = await refreshConfigs();
-    set({ ...configs, loading: false });
-  },
-
-  updateConfig: async (partial) => {
-    await window.electronAPI.config.set(partial);
-    const configs = await refreshConfigs();
-    set(configs);
-    // Global settings can change every project's effective config, so
-    // any cached warm-switch snapshot is now stale. The active project's
-    // live config was just updated above; cached non-current projects
-    // need to be invalidated so a future switch refetches.
-    invalidateAllProjects();
-    // Re-detect agents when CLI path settings change so the UI
-    // updates immediately instead of requiring an app restart.
-    if (partial.agent) {
-      get().detectAgent();
+export const useConfigStore = create<ConfigStore>((set, get) => {
+  /** Overlay freshly-fetched configs, preserving the renderer-authoritative workspaceByProject
+   *  after the first (seeding) fetch so a stale disk read can never revert the live layout. The
+   *  renderer is the SOLE writer of workspaceByProject (saveWorkspaceForProject updates it
+   *  optimistically + persists async, the quit flush persists it synchronously), so once seeded
+   *  from disk its in-memory map is always at least as fresh as disk for every project. The
+   *  `workspaceSeeded` flag lives in store state so it resets with the store on HMR, where the
+   *  post-HMR loadConfig (Pattern B) re-seeds from disk. */
+  const withSeededWorkspace = (
+    fetched: { config: AppConfig; globalConfig: AppConfig },
+  ): { config: AppConfig; globalConfig: AppConfig; workspaceSeeded?: boolean } => {
+    if (!get().workspaceSeeded) {
+      return { ...fetched, workspaceSeeded: true };
     }
-  },
+    const workspaceByProject = get().globalConfig.workspaceByProject ?? {};
+    return {
+      config: { ...fetched.config, workspaceByProject },
+      globalConfig: { ...fetched.globalConfig, workspaceByProject },
+    };
+  };
 
-  loadAppVersion: async () => {
-    const appVersion = await window.electronAPI.app.getVersion();
-    set({ appVersion });
-  },
+  /** Apply an optimistic workspace update to both effective + global config and return the
+   *  merged map, so the IPC write persists exactly what the store now shows. */
+  const applyWorkspaceOptimistic = (
+    projectId: string,
+    workspace: SerializedWorkspace,
+  ): Record<string, SerializedWorkspace> => {
+    const existing = get().globalConfig.workspaceByProject ?? {};
+    const updated = { ...existing, [projectId]: workspace };
+    set((state) => ({
+      config: { ...state.config, workspaceByProject: updated },
+      globalConfig: { ...state.globalConfig, workspaceByProject: updated },
+    }));
+    return updated;
+  };
 
-  detectAgent: async () => {
-    const agentInfo = await window.electronAPI.agent.detect();
-    const version = parseAgentVersion(agentInfo?.version ?? null);
-    set({
-      agentInfo,
-      agentVersionNumber: version,
-    });
-  },
+  return {
+    config: DEFAULT_CONFIG,
+    globalConfig: DEFAULT_CONFIG,
+    appVersion: null,
+    agentList: [],
+    agentInfo: null,
+    agentVersionNumber: null,
+    gitInfo: null,
+    loading: true,
+    workspaceSeeded: false,
+    settingsOpen: false,
+    lastSettingsTab: lastSettingsTabHmr,
+    projectSettingsPath: null,
+    projectSettingsProjectName: null,
+    projectSettingsInitialTab: null,
+    projectOverrides: null,
+    loadConfig: async () => {
+      set({ loading: true });
+      const configs = await refreshConfigs();
+      set({ ...withSeededWorkspace(configs), loading: false });
+    },
 
-  detectGit: async () => {
-    const gitInfo = await window.electronAPI.git.detect();
-    set({ gitInfo });
-  },
-
-  loadAgentList: async (forceRefresh?: boolean) => {
-    const agentList = await window.electronAPI.agents.list(forceRefresh);
-    set({ agentList });
-
-    // Seed the discovered-models cache from `capabilities.models` so every
-    // launch starts with at least the JSONL-walk result merged in. Only writes
-    // when there's actually new material - avoids a config round-trip on every
-    // detection refresh.
-    const current = get().config.discoveredModelsByAgent ?? {};
-    const updates: Record<string, string[]> = {};
-    for (const info of agentList) {
-      const fresh = info.capabilities?.models;
-      if (!fresh || fresh.length === 0) continue;
-      const existing = current[info.name] ?? [];
-      const union = new Set<string>([...existing, ...fresh]);
-      if (union.size > existing.length) {
-        updates[info.name] = Array.from(union).sort((a, b) => a.localeCompare(b));
+    updateConfig: async (partial) => {
+      await window.electronAPI.config.set(partial);
+      const configs = await refreshConfigs();
+      set(withSeededWorkspace(configs));
+      // Global settings can change every project's effective config, so
+      // any cached warm-switch snapshot is now stale. The active project's
+      // live config was just updated above; cached non-current projects
+      // need to be invalidated so a future switch refetches.
+      invalidateAllProjects();
+      // Re-detect agents when CLI path settings change so the UI
+      // updates immediately instead of requiring an app restart.
+      if (partial.agent) {
+        get().detectAgent();
       }
-    }
-    if (Object.keys(updates).length > 0) {
-      get().updateConfig({
-        discoveredModelsByAgent: { ...current, ...updates },
-      });
-    }
-  },
+    },
 
-  rememberDiscoveredModel: (agent, model) => {
-    if (!agent || !model) return;
-    const current = get().config.discoveredModelsByAgent ?? {};
-    const existing = current[agent] ?? [];
-    if (existing.includes(model)) return;
-    const next = [...existing, model].sort((a, b) => a.localeCompare(b));
-    // Fire-and-forget: this is a cache write, not a user-driven setting. If the
-    // persist fails the in-memory effective config will still pick up the new
-    // value via deepMergeConfig on the next refresh.
-    get().updateConfig({
-      discoveredModelsByAgent: { ...current, [agent]: next },
-    }).catch(() => undefined);
-  },
+    saveWorkspaceForProject: (projectId, workspace) => {
+      // Optimistically update the local config (both effective + global) so back-to-back
+      // saves and a follow-on project-switch restore read the value just written rather
+      // than a pre-IPC stale snapshot, then persist async.
+      window.electronAPI.config.set({ workspaceByProject: applyWorkspaceOptimistic(projectId, workspace) });
+    },
 
-  setSettingsOpen: (open) => {
-    if (open) {
-      set({ settingsOpen: true });
-    } else {
+    flushWorkspaceForProject: (projectId, workspace) => {
+      // Quit/unload path: same optimistic update as the async save, but persisted
+      // synchronously so the final layout reaches disk before the renderer tears down.
+      window.electronAPI.config.setSync({ workspaceByProject: applyWorkspaceOptimistic(projectId, workspace) });
+    },
+
+    loadAppVersion: async () => {
+      const appVersion = await window.electronAPI.app.getVersion();
+      set({ appVersion });
+    },
+
+    detectAgent: async () => {
+      const agentInfo = await window.electronAPI.agent.detect();
+      const version = parseAgentVersion(agentInfo?.version ?? null);
       set({
-        settingsOpen: false,
-        projectSettingsPath: null,
-        projectSettingsProjectName: null,
-        projectSettingsInitialTab: null,
-        projectOverrides: null,
+        agentInfo,
+        agentVersionNumber: version,
       });
-      refreshConfigs().then((configs) => set(configs));
-    }
-  },
+    },
 
-  setLastSettingsTab: (tabId) => {
-    lastSettingsTabHmr = tabId;
-    set({ lastSettingsTab: tabId });
-  },
+    detectGit: async () => {
+      const gitInfo = await window.electronAPI.git.detect();
+      set({ gitInfo });
+    },
 
-  // -- Project settings --
-  openProjectSettings: (projectPath, projectName, initialTab) => {
-    const currentPath = get().projectSettingsPath;
-    set({
-      settingsOpen: true,
-      projectSettingsPath: projectPath,
-      projectSettingsProjectName: projectName,
-      projectSettingsInitialTab: initialTab || null,
-      ...(currentPath !== projectPath ? { projectOverrides: null } : {}),
-    });
-    window.electronAPI.config.getProjectOverridesByPath(projectPath).then((overrides) => {
+    loadAgentList: async (forceRefresh?: boolean) => {
+      const agentList = await window.electronAPI.agents.list(forceRefresh);
+      set({ agentList });
+
+      // Seed the discovered-models cache from `capabilities.models` so every
+      // launch starts with at least the JSONL-walk result merged in. Only writes
+      // when there's actually new material - avoids a config round-trip on every
+      // detection refresh.
+      const current = get().config.discoveredModelsByAgent ?? {};
+      const updates: Record<string, string[]> = {};
+      for (const info of agentList) {
+        const fresh = info.capabilities?.models;
+        if (!fresh || fresh.length === 0) continue;
+        const existing = current[info.name] ?? [];
+        const union = new Set<string>([...existing, ...fresh]);
+        if (union.size > existing.length) {
+          updates[info.name] = Array.from(union).sort((a, b) => a.localeCompare(b));
+        }
+      }
+      if (Object.keys(updates).length > 0) {
+        get().updateConfig({
+          discoveredModelsByAgent: { ...current, ...updates },
+        });
+      }
+    },
+
+    rememberDiscoveredModel: (agent, model) => {
+      if (!agent || !model) return;
+      const current = get().config.discoveredModelsByAgent ?? {};
+      const existing = current[agent] ?? [];
+      if (existing.includes(model)) return;
+      const next = [...existing, model].sort((a, b) => a.localeCompare(b));
+      // Fire-and-forget: this is a cache write, not a user-driven setting. If the
+      // persist fails the in-memory effective config will still pick up the new
+      // value via deepMergeConfig on the next refresh.
+      get().updateConfig({
+        discoveredModelsByAgent: { ...current, [agent]: next },
+      }).catch(() => undefined);
+    },
+
+    setSettingsOpen: (open) => {
+      if (open) {
+        set({ settingsOpen: true });
+      } else {
+        set({
+          settingsOpen: false,
+          projectSettingsPath: null,
+          projectSettingsProjectName: null,
+          projectSettingsInitialTab: null,
+          projectOverrides: null,
+        });
+        refreshConfigs().then((configs) => set(withSeededWorkspace(configs)));
+      }
+    },
+
+    setLastSettingsTab: (tabId) => {
+      lastSettingsTabHmr = tabId;
+      set({ lastSettingsTab: tabId });
+    },
+
+    // -- Project settings --
+    openProjectSettings: (projectPath, projectName, initialTab) => {
+      const currentPath = get().projectSettingsPath;
+      set({
+        settingsOpen: true,
+        projectSettingsPath: projectPath,
+        projectSettingsProjectName: projectName,
+        projectSettingsInitialTab: initialTab || null,
+        ...(currentPath !== projectPath ? { projectOverrides: null } : {}),
+      });
+      window.electronAPI.config.getProjectOverridesByPath(projectPath).then((overrides) => {
+        if (get().projectSettingsPath === projectPath) {
+          set({ projectOverrides: overrides });
+        }
+      });
+    },
+
+    loadProjectOverrides: async () => {
+      const projectPath = get().projectSettingsPath;
+      if (!projectPath) return;
+      const overrides = await window.electronAPI.config.getProjectOverridesByPath(projectPath);
       if (get().projectSettingsPath === projectPath) {
         set({ projectOverrides: overrides });
       }
-    });
-  },
+    },
 
-  loadProjectOverrides: async () => {
-    const projectPath = get().projectSettingsPath;
-    if (!projectPath) return;
-    const overrides = await window.electronAPI.config.getProjectOverridesByPath(projectPath);
-    if (get().projectSettingsPath === projectPath) {
-      set({ projectOverrides: overrides });
-    }
-  },
+    updateProjectOverride: async (partial) => {
+      const projectPath = get().projectSettingsPath;
+      if (!projectPath) return;
+      const current = get().projectOverrides || {};
+      const merged = deepMergeConfig(current, partial) as DeepPartial<AppConfig>;
+      await window.electronAPI.config.setProjectOverridesByPath(projectPath, merged);
+      const effective = deepMergeConfig(get().globalConfig, merged);
+      set({ projectOverrides: merged, config: effective });
+    },
 
-  updateProjectOverride: async (partial) => {
-    const projectPath = get().projectSettingsPath;
-    if (!projectPath) return;
-    const current = get().projectOverrides || {};
-    const merged = deepMergeConfig(current, partial) as DeepPartial<AppConfig>;
-    await window.electronAPI.config.setProjectOverridesByPath(projectPath, merged);
-    const effective = deepMergeConfig(get().globalConfig, merged);
-    set({ projectOverrides: merged, config: effective });
-  },
-
-}));
+  };
+});
 
 // Sync resolved theme -> localStorage + <html> class whenever it changes.
 // Runs outside React render so the DOM is always in sync, including for
