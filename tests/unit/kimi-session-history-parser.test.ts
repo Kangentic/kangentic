@@ -16,6 +16,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
+import { kimiWorkDirHash } from '../../src/main/agent/adapters/kimi/work-dir-hash';
 
 // ── Mutable mock state ────────────────────────────────────────────────────────
 
@@ -182,6 +183,14 @@ describe('KimiSessionHistoryParser.locate()', () => {
 // ── captureSessionIdFromFilesystem() ─────────────────────────────────────────
 
 describe('KimiSessionHistoryParser.captureSessionIdFromFilesystem()', () => {
+  // The capture is scoped to the spawn's OWN work_dir hash, so the mocked
+  // sessions live under md5(resolve(cwd)) - the same digest the real Kimi CLI
+  // (and mock-kimi) writes under. A session under any other hash belongs to a
+  // different work_dir and must be ignored.
+  const CWD = '/projects/foo';
+  const WORK_DIR_HASH = kimiWorkDirHash(path.resolve(CWD));
+  const FOREIGN_HASH = kimiWorkDirHash(path.resolve('/projects/other'));
+
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -195,15 +204,15 @@ describe('KimiSessionHistoryParser.captureSessionIdFromFilesystem()', () => {
     const inWindowMtime = spawnedAt.getTime(); // exactly at spawn time - always in window
 
     mockReaddirSync = (filePath: string) => {
-      if (filePath === SESSIONS_ROOT) return ['hash00000001'];
-      if (filePath.includes('hash00000001')) return [SESSION_UUID];
+      if (filePath === SESSIONS_ROOT) return [WORK_DIR_HASH];
+      if (filePath.includes(WORK_DIR_HASH)) return [SESSION_UUID];
       return [];
     };
     mockStatSync = () => ({ mtimeMs: inWindowMtime });
 
     const resultPromise = KimiSessionHistoryParser.captureSessionIdFromFilesystem({
       spawnedAt,
-      cwd: '/projects/foo',
+      cwd: CWD,
       maxAttempts: 5,
     });
     await vi.runAllTimersAsync();
@@ -217,7 +226,7 @@ describe('KimiSessionHistoryParser.captureSessionIdFromFilesystem()', () => {
 
     const resultPromise = KimiSessionHistoryParser.captureSessionIdFromFilesystem({
       spawnedAt: new Date(),
-      cwd: '/projects/foo',
+      cwd: CWD,
       maxAttempts: 3,
     });
     await vi.runAllTimersAsync();
@@ -236,16 +245,16 @@ describe('KimiSessionHistoryParser.captureSessionIdFromFilesystem()', () => {
       if (filePath === SESSIONS_ROOT) {
         pollCount++;
         // Dir only exists starting from poll 3.
-        return pollCount >= 3 ? ['hashAppears'] : [];
+        return pollCount >= 3 ? [WORK_DIR_HASH] : [];
       }
-      if (filePath.includes('hashAppears')) return [SESSION_UUID];
+      if (filePath.includes(WORK_DIR_HASH)) return [SESSION_UUID];
       return [];
     };
     mockStatSync = () => ({ mtimeMs: inWindowMtime });
 
     const resultPromise = KimiSessionHistoryParser.captureSessionIdFromFilesystem({
       spawnedAt,
-      cwd: '/projects/foo',
+      cwd: CWD,
       maxAttempts: 10,
     });
     await vi.runAllTimersAsync();
@@ -263,15 +272,15 @@ describe('KimiSessionHistoryParser.captureSessionIdFromFilesystem()', () => {
     const staleUuid = '51a1e000-0000-0000-0000-000000000000';
 
     mockReaddirSync = (filePath: string) => {
-      if (filePath === SESSIONS_ROOT) return ['hashStale'];
-      if (filePath.includes('hashStale')) return [staleUuid];
+      if (filePath === SESSIONS_ROOT) return [WORK_DIR_HASH];
+      if (filePath.includes(WORK_DIR_HASH)) return [staleUuid];
       return [];
     };
     mockStatSync = () => ({ mtimeMs: staleMs });
 
     const resultPromise = KimiSessionHistoryParser.captureSessionIdFromFilesystem({
       spawnedAt,
-      cwd: '/projects/foo',
+      cwd: CWD,
       maxAttempts: 2,
     });
     await vi.runAllTimersAsync();
@@ -289,15 +298,15 @@ describe('KimiSessionHistoryParser.captureSessionIdFromFilesystem()', () => {
     const futureUuid = 'f00001ee-0000-0000-0000-000000000000';
 
     mockReaddirSync = (filePath: string) => {
-      if (filePath === SESSIONS_ROOT) return ['hashFuture'];
-      if (filePath.includes('hashFuture')) return [futureUuid];
+      if (filePath === SESSIONS_ROOT) return [WORK_DIR_HASH];
+      if (filePath.includes(WORK_DIR_HASH)) return [futureUuid];
       return [];
     };
     mockStatSync = () => ({ mtimeMs: futureMs });
 
     const resultPromise = KimiSessionHistoryParser.captureSessionIdFromFilesystem({
       spawnedAt,
-      cwd: '/projects/foo',
+      cwd: CWD,
       maxAttempts: 2,
     });
     await vi.runAllTimersAsync();
@@ -314,15 +323,15 @@ describe('KimiSessionHistoryParser.captureSessionIdFromFilesystem()', () => {
     const targetUuid = 'aa110000-0000-0000-0000-000000000001';
 
     mockReaddirSync = (filePath: string) => {
-      if (filePath === SESSIONS_ROOT) return ['hashTarget'];
-      if (filePath.includes('hashTarget')) return [targetUuid];
+      if (filePath === SESSIONS_ROOT) return [WORK_DIR_HASH];
+      if (filePath.includes(WORK_DIR_HASH)) return [targetUuid];
       return [];
     };
     mockStatSync = () => ({ mtimeMs: inWindowMtime });
 
     const resultPromise = KimiSessionHistoryParser.captureSessionIdFromFilesystem({
       spawnedAt,
-      cwd: '/projects/foo',
+      cwd: CWD,
       maxAttempts: 2,
     });
     await vi.runAllTimersAsync();
@@ -342,8 +351,8 @@ describe('KimiSessionHistoryParser.captureSessionIdFromFilesystem()', () => {
     const newerMtime = spawnedAt.getTime() + 20_000;
 
     mockReaddirSync = (filePath: string) => {
-      if (filePath === SESSIONS_ROOT) return ['hashBoth'];
-      if (filePath.includes('hashBoth')) return [olderUuid, newerUuid];
+      if (filePath === SESSIONS_ROOT) return [WORK_DIR_HASH];
+      if (filePath.includes(WORK_DIR_HASH)) return [olderUuid, newerUuid];
       return [];
     };
     mockStatSync = (filePath: string) => ({
@@ -352,7 +361,7 @@ describe('KimiSessionHistoryParser.captureSessionIdFromFilesystem()', () => {
 
     const resultPromise = KimiSessionHistoryParser.captureSessionIdFromFilesystem({
       spawnedAt,
-      cwd: '/projects/foo',
+      cwd: CWD,
       maxAttempts: 2,
     });
     await vi.runAllTimersAsync();
@@ -370,8 +379,8 @@ describe('KimiSessionHistoryParser.captureSessionIdFromFilesystem()', () => {
     const goodUuid = 'cccccccc-1234-5678-abcd-ffffffffffff';
 
     mockReaddirSync = (filePath: string) => {
-      if (filePath === SESSIONS_ROOT) return ['hashMixed'];
-      if (filePath.includes('hashMixed')) return ['metadata.json', goodUuid, '.DS_Store'];
+      if (filePath === SESSIONS_ROOT) return [WORK_DIR_HASH];
+      if (filePath.includes(WORK_DIR_HASH)) return ['metadata.json', goodUuid, '.DS_Store'];
       return [];
     };
 
@@ -379,12 +388,12 @@ describe('KimiSessionHistoryParser.captureSessionIdFromFilesystem()', () => {
     // are filtered BEFORE statSync is called (cheaper than statting every
     // entry just to throw it away). This produces clearer failure messages
     // than a defensive throw inside the mock.
-    const statSyncSpy = vi.fn((filePath: string) => ({ mtimeMs: inWindowMtime }));
+    const statSyncSpy = vi.fn((_filePath: string) => ({ mtimeMs: inWindowMtime }));
     mockStatSync = statSyncSpy;
 
     const resultPromise = KimiSessionHistoryParser.captureSessionIdFromFilesystem({
       spawnedAt,
-      cwd: '/projects/foo',
+      cwd: CWD,
       maxAttempts: 2,
     });
     await vi.runAllTimersAsync();
@@ -399,5 +408,87 @@ describe('KimiSessionHistoryParser.captureSessionIdFromFilesystem()', () => {
     // Negative assertions: non-UUID entries were filtered out before statSync.
     expect(calledPaths.some((filePath) => filePath.includes('metadata.json'))).toBe(false);
     expect(calledPaths.some((filePath) => filePath.includes('.DS_Store'))).toBe(false);
+  });
+
+  // --- work_dir scoping (the stray-session race regression guard) ------------
+
+  it('ignores a newer in-window session under a different work_dir hash', async () => {
+    // The exact contamination this fix prevents: a concurrent Kimi spawn (or a
+    // -w-less probe) plants a NEWER session under a DIFFERENT work_dir hash.
+    // A global newest-across-all-hashes scan would return the foreign UUID and
+    // poison --resume. The scoped scan must return only this work_dir's session.
+    const spawnedAt = new Date(7_000_000_000_000);
+
+    const ownUuid = '0117c0de-0000-0000-0000-000000000001';
+    const foreignUuid = 'f04e1011-0000-0000-0000-000000000002';
+
+    const ownMtime = spawnedAt.getTime() + 2_000;
+    const foreignMtime = spawnedAt.getTime() + 20_000; // newer, also in window
+
+    mockReaddirSync = (filePath: string) => {
+      if (filePath === SESSIONS_ROOT) return [WORK_DIR_HASH, FOREIGN_HASH];
+      if (filePath.includes(WORK_DIR_HASH)) return [ownUuid];
+      if (filePath.includes(FOREIGN_HASH)) return [foreignUuid];
+      return [];
+    };
+    mockStatSync = (filePath: string) => ({
+      mtimeMs: filePath.includes(foreignUuid) ? foreignMtime : ownMtime,
+    });
+
+    const resultPromise = KimiSessionHistoryParser.captureSessionIdFromFilesystem({
+      spawnedAt,
+      cwd: CWD,
+      maxAttempts: 2,
+    });
+    await vi.runAllTimersAsync();
+
+    const result = await resultPromise;
+    expect(result).toBe(ownUuid);
+    expect(result).not.toBe(foreignUuid);
+  });
+
+  it('returns null when only a different work_dir hash has a fresh session', async () => {
+    const spawnedAt = new Date(8_000_000_000_000);
+    const foreignUuid = 'f04e1011-0000-0000-0000-000000000003';
+
+    mockReaddirSync = (filePath: string) => {
+      if (filePath === SESSIONS_ROOT) return [FOREIGN_HASH];
+      if (filePath.includes(FOREIGN_HASH)) return [foreignUuid];
+      return [];
+    };
+    mockStatSync = () => ({ mtimeMs: spawnedAt.getTime() });
+
+    const resultPromise = KimiSessionHistoryParser.captureSessionIdFromFilesystem({
+      spawnedAt,
+      cwd: CWD,
+      maxAttempts: 2,
+    });
+    await vi.runAllTimersAsync();
+
+    const result = await resultPromise;
+    expect(result).toBeNull();
+  });
+
+  it('matches the non-local-kaos <kaos>_<hash> variant directory', async () => {
+    const spawnedAt = new Date(9_000_000_000_000);
+    const kaosUuid = 'aa05aa05-0000-0000-0000-000000000004';
+    const kaosHashDir = `kaos_${WORK_DIR_HASH}`;
+
+    mockReaddirSync = (filePath: string) => {
+      if (filePath === SESSIONS_ROOT) return [kaosHashDir];
+      if (filePath.includes(kaosHashDir)) return [kaosUuid];
+      return [];
+    };
+    mockStatSync = () => ({ mtimeMs: spawnedAt.getTime() });
+
+    const resultPromise = KimiSessionHistoryParser.captureSessionIdFromFilesystem({
+      spawnedAt,
+      cwd: CWD,
+      maxAttempts: 2,
+    });
+    await vi.runAllTimersAsync();
+
+    const result = await resultPromise;
+    expect(result).toBe(kaosUuid);
   });
 });
