@@ -97,6 +97,7 @@ const PRE_CONFIG = `
 
     state.tasks.push({
       id: '${TASK_A_ID}',
+      projectId: '${PROJECT_A_ID}',
       title: 'Alpha Task',
       description: '',
       swimlane_id: 'lane-warm-0',
@@ -114,6 +115,7 @@ const PRE_CONFIG = `
     });
     state.tasks.push({
       id: '${TASK_B_ID}',
+      projectId: '${PROJECT_B_ID}',
       title: 'Beta Task',
       description: '',
       swimlane_id: 'lane-warm-0',

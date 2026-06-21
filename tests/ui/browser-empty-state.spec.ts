@@ -106,12 +106,17 @@ async function openBrowserPane(page: Page): Promise<void> {
   await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
   // The browserOpen flag is sticky per-task across dialog opens (Zustand
-  // store keyed on task.id), so clicking the pill blindly can TOGGLE it
-  // OFF when a previous test left it on. Only click when the pane isn't
-  // already showing.
+  // store keyed on task.id), so toggling blindly can flip it OFF when a
+  // previous test left it on. Only toggle when the pane isn't already showing.
   const emptyState = page.locator('[data-testid="browser-empty-state"]');
   if (!(await emptyState.isVisible().catch(() => false))) {
-    await page.locator('[data-testid="browser-toggle"]').click();
+    // The browser-toggle pill can overflow the modeless window's header, so open
+    // the browser pane via its keyboard shortcut instead (the window has focus
+    // right after it opens, and the shortcut does not depend on the pill being
+    // un-overflowed). The keybinding resolves Mod from the MOCKED platform, so
+    // the darwin block must press Meta and the win32 block Control.
+    const isMac = await page.evaluate(() => window.__mockPlatform === 'darwin');
+    await page.keyboard.press(isMac ? 'Meta+Shift+B' : 'Control+Shift+B');
   }
   await emptyState.waitFor({ state: 'visible', timeout: 5000 });
 }

@@ -93,6 +93,7 @@ describe('HMR store re-sync', () => {
   // require the literal token for each unprotected `let` to appear there.
   it('top-level mutable module state has HMR preservation or opt-out', () => {
     const UTILS_DIR = path.resolve(__dirname, '../../src/renderer/utils');
+    const WINDOW_MANAGER_DIR = path.resolve(__dirname, '../../src/renderer/window-manager');
     const sourceFiles: string[] = [];
     const collect = (dir: string) => {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -103,6 +104,7 @@ describe('HMR store re-sync', () => {
     };
     collect(STORES_DIR);
     collect(UTILS_DIR);
+    collect(WINDOW_MANAGER_DIR);
 
     // Match any top-level `let` declaration (column-0 = module scope, since
     // intra-function locals are indented). The dispose-block check and the

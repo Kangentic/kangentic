@@ -40,6 +40,7 @@ export type KeyScope =
 export type KeyGroup =
   | 'General'
   | 'Task Detail'
+  | 'Windows'
   | 'Browser'
   | 'Terminal'
   | 'Developer';
@@ -48,6 +49,7 @@ export type KeyGroup =
 export const KEY_GROUP_ORDER: readonly KeyGroup[] = [
   'General',
   'Task Detail',
+  'Windows',
   'Browser',
   'Terminal',
   'Developer',
@@ -214,6 +216,49 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     group: 'Task Detail',
     scope: 'task-dialog',
     defaultCombo: 'Mod+Shift+G',
+    rebindable: true,
+  },
+
+  // ── Windows ──
+  // Win11-style STATEFUL snap: each arrow's result depends on the window's current
+  // zone (half / corner / maximized / floating), so half + up/down builds corners.
+  // Bound capture-phase in TaskDetailWindow, gated on the focused window, so they
+  // beat the embedded terminal and only the focused window reacts. Scope 'panel' (a
+  // task window is a panel, beside panel.maximize / panel.close). Logic: snap-zones.ts.
+  {
+    id: 'window.snapLeft',
+    label: 'Snap Window Left',
+    description: 'Snap left: to the left half, or from a right corner to the matching left corner (Win11 stateful snap).',
+    group: 'Windows',
+    scope: 'panel',
+    defaultCombo: 'Mod+Shift+ArrowLeft',
+    rebindable: true,
+  },
+  {
+    id: 'window.snapRight',
+    label: 'Snap Window Right',
+    description: 'Snap right: to the right half, or from a left corner to the matching right corner (Win11 stateful snap).',
+    group: 'Windows',
+    scope: 'panel',
+    defaultCombo: 'Mod+Shift+ArrowRight',
+    rebindable: true,
+  },
+  {
+    id: 'window.snapUp',
+    label: 'Snap Window Up',
+    description: 'Snap up: maximize when floating, or move a half-snapped window to its top corner (Win11 stateful snap).',
+    group: 'Windows',
+    scope: 'panel',
+    defaultCombo: 'Mod+Shift+ArrowUp',
+    rebindable: true,
+  },
+  {
+    id: 'window.snapDown',
+    label: 'Snap Window Down',
+    description: 'Snap down: restore when maximized, or move a half-snapped window to its bottom corner (Win11 stateful snap).',
+    group: 'Windows',
+    scope: 'panel',
+    defaultCombo: 'Mod+Shift+ArrowDown',
     rebindable: true,
   },
 

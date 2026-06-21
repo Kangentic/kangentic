@@ -41,6 +41,41 @@ let viteServer = null;
 let electronProc = null;
 
 async function start() {
+  // Ephemeral preview: prepare the data dir and START pre-cloning Project 1 NOW so
+  // the (slow) git clone overlaps the Vite/esbuild build below. The main process then
+  // ADOPTS the existing clone instead of cloning on launch, so the board appears at
+  // build-speed rather than after a post-launch clone.
+  const positionalArgs = process.argv.slice(2).filter(a => !a.startsWith('--'));
+  const targetDir = positionalArgs[0] || (fresh ? null : projectDir);
+  const resolvedTarget = targetDir ? path.resolve(targetDir) : projectDir;
+  const ephemeralDataDir = ephemeral ? path.join(resolvedTarget, '.kangentic', 'data') : null;
+  let previewClonePromise = Promise.resolve();
+  if (ephemeral && !fresh && ephemeralDataDir) {
+    // Fresh data dir every boot so a previous (possibly crashed) preview's clones
+    // never persist. The node_modules junction lives OUTSIDE .kangentic/ and clones
+    // are source-only (no junctions), so this rm is safe.
+    // force suppresses ENOENT but not EBUSY/EPERM from a still-locked handle a
+    // previous (crashed) preview left behind; retry briefly, then degrade to a
+    // warning rather than crashing the dev server before the build starts.
+    try {
+      fs.rmSync(ephemeralDataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch (rmError) {
+      console.warn('[dev] could not fully clear the ephemeral data dir (a previous preview may still hold a lock):', rmError);
+    }
+    fs.mkdirSync(ephemeralDataDir, { recursive: true });
+    fs.writeFileSync(path.join(ephemeralDataDir, 'config.json'), JSON.stringify({ hasCompletedFirstRun: true }, null, 2));
+    const preClone = (cloneDir) => new Promise((resolve) => {
+      const cloneProc = spawn('git', ['clone', '--no-checkout', '--local', resolvedTarget, cloneDir], { stdio: 'inherit', windowsHide: true });
+      cloneProc.on('close', () => resolve());
+      cloneProc.on('error', (cloneErr) => { console.warn('[dev] preview pre-clone failed:', cloneErr); resolve(); });
+    });
+    // Pre-clone Project 1 + Project 2 in parallel; both overlap the build below.
+    previewClonePromise = Promise.all([
+      preClone(path.join(ephemeralDataDir, 'preview-projects', 'project-1')),
+      preClone(path.join(ephemeralDataDir, 'preview-projects', 'project-2')),
+    ]);
+  }
+
   // 1. Start Vite dev server using JS API
   console.time('[dev] vite createServer');
   const { createServer } = await import('vite');
@@ -134,9 +169,9 @@ async function start() {
   await viteServer.transformRequest('/src/renderer/index.tsx');
   console.timeEnd('[dev] warmup');
 
-  // 3. Launch Electron
-  const positionalArgs = process.argv.slice(2).filter(a => !a.startsWith('--'));
-  const targetDir = positionalArgs[0] || (fresh ? null : projectDir);
+  // 3. Launch Electron. targetDir / resolvedTarget / ephemeralDataDir were computed
+  //    at the top of start(), where the ephemeral data dir was prepared and the
+  //    Project 1 pre-clone was kicked off to overlap the build above.
   const electronArgs = [projectDir];
   if (targetDir) {
     electronArgs.push(`--cwd=${path.resolve(targetDir)}`);
@@ -148,23 +183,15 @@ async function start() {
   // .kangentic/ which is already cleaned up on ephemeral exit.
   let spawnEnv = process.env;
   if (ephemeral) {
-    const resolvedTarget = targetDir ? path.resolve(targetDir) : projectDir;
     const userDataDir = path.join(resolvedTarget, '.kangentic', 'electron-data');
     electronArgs.push(`--user-data-dir=${userDataDir}`);
     electronArgs.push('--ephemeral');
-    const dataDir = path.join(resolvedTarget, '.kangentic', 'data');
-    spawnEnv = { ...process.env, KANGENTIC_DATA_DIR: dataDir };
-
-    // Pre-seed config so ephemeral previews skip the first-run welcome overlay.
-    // --fresh explicitly wants the welcome screen, so only seed when not fresh.
-    if (!fresh) {
-      fs.mkdirSync(dataDir, { recursive: true });
-      const configFile = path.join(dataDir, 'config.json');
-      if (!fs.existsSync(configFile)) {
-        fs.writeFileSync(configFile, JSON.stringify({ hasCompletedFirstRun: true }, null, 2));
-      }
-    }
+    spawnEnv = { ...process.env, KANGENTIC_DATA_DIR: ephemeralDataDir };
   }
+
+  // Ensure the Project 1 pre-clone (started before the build) is on disk before
+  // Electron launches, so the main process adopts it instead of cloning on boot.
+  await previewClonePromise;
 
   electronProc = spawn(electronExe, electronArgs, {
     cwd: projectDir,

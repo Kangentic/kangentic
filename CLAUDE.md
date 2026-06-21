@@ -157,7 +157,7 @@ validation is CI's job (the PR checks), or the `/test` command for a manual loca
 
 ### Performance
 
-Terminal ownership handoff (one xterm per session, enforced via `dialogSessionId`), the
+Terminal ownership handoff (one xterm per session, enforced via `dialogSessionIds`), the
 activity-log event pipeline (hook -> event-bridge.js -> JSONL -> store, replacing an aggregate
 terminal), WebGL rendering with automatic canvas fallback, and 200ms PTY resize debouncing.
 Details: [docs/session-lifecycle.md](docs/session-lifecycle.md) and

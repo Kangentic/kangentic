@@ -28,7 +28,16 @@ export interface CoreSessionSlice {
   _sessionByTaskId: Map<string, Session>;
   activeSessionId: string | null;
   detailTaskId: string | null;
-  dialogSessionId: string | null;
+  /** Whether the next task-detail window opened from `detailTaskId` should start
+   *  in edit mode. Set alongside `detailTaskId` by `setDetailTaskId`; read once
+   *  by the window-manager bridge when it opens the window. */
+  detailTaskInitialEdit: boolean;
+  /** Sessions currently owned by an open task-detail window. Each window claims
+   *  its own session; the bottom panel renders no terminal while this is
+   *  non-empty (the panel and the windows are mutually exclusive terminal
+   *  owners). Was a single scalar (`dialogSessionId`) when only one modal could
+   *  be open; an array now that windows are modeless and stack. */
+  dialogSessionIds: string[];
   /** When set, the Activity Log scrolls to the event with this `${sessionId}-${ts}` key
    *  on next mount/render, then the field is cleared. Set by the global session
    *  search palette when a hit is selected. */
@@ -68,7 +77,7 @@ export interface CoreSessionSlice {
 
   syncSessions: () => Promise<boolean>;
   setPendingOpenTaskId: (id: string | null) => void;
-  setDetailTaskId: (id: string | null) => void;
+  setDetailTaskId: (id: string | null, options?: { initialEdit?: boolean }) => void;
   spawnSession: (input: SpawnSessionInput) => Promise<Session>;
   killSession: (id: string) => Promise<void>;
   resetSession: (taskId: string) => Promise<void>;
@@ -93,7 +102,11 @@ export interface CoreSessionSlice {
    *  in TerminalPanel uses setActiveSession directly so default picks don't
    *  overwrite the remembered value. */
   selectActiveSession: (id: string | null) => void;
-  setDialogSessionId: (id: string | null) => void;
+  /** A task-detail window claims its session (one xterm per PTY: the panel drops
+   *  it while a window owns it). Idempotent. */
+  claimDialogSession: (sessionId: string) => void;
+  /** A task-detail window releases its session on close/unmount. */
+  releaseDialogSession: (sessionId: string) => void;
   setScrollToEventKey: (key: string | null) => void;
   upsertSession: (session: Session) => void;
   updateSessionStatus: (id: string, updates: Partial<Session>) => void;

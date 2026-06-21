@@ -5,6 +5,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
+// Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
+import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
 import { createRequestResolver } from './agent/mcp-project-context';
@@ -56,13 +58,15 @@ function safeReadDeveloperFlag(
     const stored = manager.load().developer?.[key];
     if (stored !== undefined) return stored === true;
     // Default values when the user has never touched the toggle. The
-    // inspection bridge defaults ON in dev builds because anyone running
-    // `npm start` is by definition a kangentic dev session and almost
-    // certainly wants the bridge available to their agent. Every other
-    // toggle (overlay, log mirror, IPC recorder, eval) defaults OFF
-    // because they have non-zero cost (UI overlay on screen, disk I/O,
-    // arbitrary-code surface) and the user should opt in deliberately.
-    if (key === 'previewInspectionServer') return __KANGENTIC_DEV__;
+    // inspection bridge AND its eval/unsafe gate default ON in dev builds:
+    // anyone running `npm start` / `/preview` is by definition a kangentic dev
+    // session and almost certainly wants the agent-driven inspection bridge
+    // (including eval, inject-event, raw-PTY) available without flipping a
+    // toggle each launch. Both are localhost-only and dropped from production
+    // builds via `__KANGENTIC_DEV__`. The other toggles (overlay, log mirror,
+    // IPC recorder) still default OFF because they have a visible/disk cost the
+    // user should opt into deliberately. An explicit stored value always wins.
+    if (key === 'previewInspectionServer' || key === 'previewEvalEnabled') return __KANGENTIC_DEV__;
     return false;
   } catch {
     return false;
@@ -86,9 +90,14 @@ if (__KANGENTIC_DEV__) {
   installDevtools({
     app,
     getMainWindow: () => mainWindow,
-    getProjectRoot: () => getOptionalIpcContext()?.currentProjectPath ?? null,
+    // The preview lockfile is the per dev-session (per-worktree) instance identity,
+    // so it must anchor to the worktree (getCwdArg), NOT the current project - which
+    // in /preview is now a clone under .kangentic/data. Otherwise the lockfile drifts
+    // onto the clone and the devtools bridge/MCP (keyed by worktree path) can't find
+    // it. Falls back to the current project when no --cwd is set (e.g. npm start).
+    getProjectRoot: () => getCwdArg() ?? getOptionalIpcContext()?.currentProjectPath ?? null,
     getProjectId: () => getOptionalIpcContext()?.currentProjectId ?? null,
-    getWorktreePath: () => getOptionalIpcContext()?.currentProjectPath ?? null,
+    getWorktreePath: () => getCwdArg() ?? getOptionalIpcContext()?.currentProjectPath ?? null,
     getSessionManager: () => getOptionalIpcContext()?.sessionManager ?? null,
     getIpcContext: () => getOptionalIpcContext() ?? null,
     getInspectionServerEnabled: () => safeReadDeveloperFlag('previewInspectionServer'),
@@ -306,9 +315,13 @@ const createWindow = () => {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      // Enable <webview> for the embedded browser side-pane in
-      // TaskDetailDialog. Hardened via the will-attach-webview hook below.
+      // Enable <webview> for the embedded browser side-pane in the task-detail
+      // window. Hardened via the will-attach-webview hook below.
       webviewTag: true,
+      // Surface the ephemeral-preview flag to the renderer (read in preload via
+      // process.argv). Set ONLY in dev-preview mode (`--ephemeral`), so the dev
+      // TestHarness stays out of the regular `npm start` dogfood.
+      additionalArguments: __KANGENTIC_DEV__ && isEphemeral ? ['--kangentic-ephemeral'] : [],
     },
   });
 
@@ -494,31 +507,59 @@ const createWindow = () => {
   // and Electron queues any webContents.send() calls until the renderer is ready.
   const cwd = getCwdArg();
   const projectPath = cwd || getLastOpenedProject()?.path || null;
-  const preloadPromise = projectPath
-    ? (async () => {
+  const preloadPromise = (async () => {
+    // Dev-only ephemeral: open isolated CLONES of the worktree, never the worktree
+    // itself, so nothing the preview does (agents, edits, commits) can reach the
+    // repo it runs from. The worktree is the app under test (Vite/HMR), not a board
+    // project. Dropped from production by __KANGENTIC_DEV__ dead-code elimination.
+    if (__KANGENTIC_DEV__ && isEphemeral && cwd) {
+      const ephemeralContext = getOptionalIpcContext();
+      if (ephemeralContext) {
         try {
-          phase('openProjectByPath');
-          const project = await openProjectByPath(projectPath);
-          endPhase('openProjectByPath');
+          registerEphemeralProjectDevIpc(getOptionalIpcContext, cwd);
+          // Adopt the two clones the /preview script pre-cloned (overlapping the
+          // build); add more on demand via the TestHarness "Create Project" button.
+          const project1 = await createPreviewClone(ephemeralContext, cwd); // adopts "Project 1"
+          const project2 = await createPreviewClone(ephemeralContext, cwd); // adopts "Project 2"
+          const opened = await openProjectByPath(project1.path);
           mark('project_opened');
-          return project;
-        } catch (err) {
-          endPhase('openProjectByPath');
-          // The last-opened project's folder vanished (moved or renamed on
-          // disk). Surface it to the renderer so the "Project Folder Not
-          // Found" dialog offers "Locate Folder..." instead of a dead board.
-          // Electron queues the send until the renderer is ready.
-          if (err instanceof Error && err.message.includes(PROJECT_PATH_MISSING_PREFIX) && mainWindow && !mainWindow.isDestroyed()) {
-            const lastOpened = getLastOpenedProject();
-            if (lastOpened && path.resolve(lastOpened.path) === path.resolve(projectPath)) {
-              mainWindow.webContents.send(IPC.PROJECT_PATH_MISSING, lastOpened);
-            }
-          }
-          console.error('[APP] Failed to preload project:', err);
-          return null;
+          // Fill the working trees AFTER the board is open (Project 1 first - it is
+          // current) so the slow checkout never contends with the open or delays the
+          // board appearing.
+          void fillPreviewClone(project1.path)
+            .then(() => fillPreviewClone(project2.path))
+            .catch(() => {});
+          return opened;
+        } catch (cloneError) {
+          console.error('[DEV] Preview clone seeding failed; falling back to the worktree:', cloneError);
+          // fall through to the normal open below
         }
-      })()
-    : Promise.resolve(null);
+      }
+    }
+
+    if (!projectPath) return null;
+    try {
+      phase('openProjectByPath');
+      const project = await openProjectByPath(projectPath);
+      endPhase('openProjectByPath');
+      mark('project_opened');
+      return project;
+    } catch (err) {
+      endPhase('openProjectByPath');
+      // The last-opened project's folder vanished (moved or renamed on
+      // disk). Surface it to the renderer so the "Project Folder Not
+      // Found" dialog offers "Locate Folder..." instead of a dead board.
+      // Electron queues the send until the renderer is ready.
+      if (err instanceof Error && err.message.includes(PROJECT_PATH_MISSING_PREFIX) && mainWindow && !mainWindow.isDestroyed()) {
+        const lastOpened = getLastOpenedProject();
+        if (lastOpened && path.resolve(lastOpened.path) === path.resolve(projectPath)) {
+          mainWindow.webContents.send(IPC.PROJECT_PATH_MISSING, lastOpened);
+        }
+      }
+      console.error('[APP] Failed to preload project:', err);
+      return null;
+    }
+  })();
 
   mainWindow.webContents.on('did-finish-load', async () => {
     mark('did_finish_load');

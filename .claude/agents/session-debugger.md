@@ -42,7 +42,7 @@ Then read the key implementation files:
 - `src/main/ipc/handlers/tasks.ts` -- `handleTaskMove` priority cascade
 - `src/renderer/stores/session-store.ts` -- renderer-side session state
 - `src/renderer/components/terminal/TerminalPanel.tsx` -- terminal ownership, xterm lifecycle
-- `src/renderer/components/dialogs/TaskDetailDialog.tsx` -- dialog session claim via `dialogSessionId`
+- `src/renderer/window-manager/components/TaskDetailWindow.tsx` (+ `dialogs/task-detail/useTaskSessionState.ts`) -- window session claim via `dialogSessionIds`
 
 ## State Machine Reference
 
@@ -76,10 +76,10 @@ For the reported symptom:
    - Suspend callbacks don't fire after a new spawn has started
 
 4. **Check terminal ownership handoff.** Only one xterm instance should exist per session at any time:
-   - `dialogSessionId` in the session store controls which view owns the terminal
-   - When dialog opens: it claims the session, panel unmounts its xterm
-   - When dialog closes: `dialogSessionId` clears, panel recreates xterm from scrollback
-   - Check for races between dialog close and panel mount
+   - `dialogSessionIds` (a string array) in the session store lists which sessions open task-detail windows own; the panel renders no xterm for those
+   - When a window claims a session (`claimDialogSession`): panel unmounts that session's xterm
+   - When a window releases a session (`releaseDialogSession` on close/unmount): panel recreates xterm from scrollback
+   - Check for races between window release and panel mount
 
 5. **Check handleTaskMove priority cascade.** When a task moves between columns:
    - `commandInjector.cancel()` must be called before state changes

@@ -16,7 +16,9 @@ import { ProjectPathMissingDialog } from '../dialogs/ProjectPathMissingDialog';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useBoardStore } from '../../stores/board-store';
+import { useSessionStore } from '../../stores/session-store';
 import { ToastContainer } from './ToastContainer';
+import { WindowLayer } from '../../window-manager';
 import { useSidebarResize, COLLAPSED_STRIP_WIDTH } from '../../hooks/useSidebarResize';
 import { useTerminalResize, COLLAPSED_HEIGHT } from '../../hooks/useTerminalResize';
 import { useCommandBar } from '../../hooks/useCommandBar';
@@ -37,7 +39,10 @@ export function AppLayout() {
   const requestBoardSearchFocus = useBoardStore((s) => s.requestBoardSearchFocus);
 
   const sidebar = useSidebarResize(config);
-  const terminal = useTerminalResize(config);
+  // The bottom panel steps aside (collapses) while any task-detail window is open;
+  // the two are mutually exclusive terminal surfaces.
+  const detailWindowsOpen = useSessionStore((s) => s.dialogSessionIds.length > 0);
+  const terminal = useTerminalResize(config, detailWindowsOpen);
   const commandBar = useCommandBar();
   // Plain Ctrl+F focuses the board search on the board view; otherwise it falls
   // back to the global search palette (resolved inside useSearchPalette).
@@ -181,6 +186,7 @@ export function AppLayout() {
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}
       <ProjectPathMissingDialog />
       <ToastContainer />
+      <WindowLayer />
     </div>
   );
 }

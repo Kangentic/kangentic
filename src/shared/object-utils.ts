@@ -110,7 +110,10 @@ function deepMergeInternal<T extends object>(target: T, source: Partial<T>, opti
 /** Typed deep-merge for config overlay (global + project overrides).
  *  Disables flat-map replacement so partial overrides preserve unmentioned keys. */
 export function deepMergeConfig<T extends object>(base: T, overrides: Partial<T> | Record<string, unknown>): T {
-  return deepMerge(base, overrides as Partial<T>, { replaceFlatMaps: false });
+  // `workspace` is a wholesale window-layout snapshot: REPLACE it (a changed tile
+  // tree must not deep-merge into the old one). Other keys still merge so partial
+  // overrides preserve unmentioned settings.
+  return deepMerge(base, overrides as Partial<T>, { replaceFlatMaps: false, dictionaryPaths: ['workspace'] });
 }
 
 /** Simple deep equality check for plain values, arrays, and objects. */

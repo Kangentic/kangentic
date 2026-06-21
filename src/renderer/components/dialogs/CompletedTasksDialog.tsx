@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Search, ClipboardList } from 'lucide-react';
 import { BaseDialog } from './BaseDialog';
-import { TaskDetailDialog } from './TaskDetailDialog';
 import { TaskChangesDialog } from './TaskChangesDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DataTable } from '../DataTable';
@@ -9,6 +8,7 @@ import { ArchivedTaskContextMenu } from '../board/ArchivedTaskContextMenu';
 import { formatCost } from '../../utils/format-session';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { useBoardStore } from '../../stores/board-store';
+import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import type { Task, SessionSummary } from '../../../shared/types';
 import { BulkToolbar } from './completed-tasks/BulkToolbar';
@@ -31,7 +31,6 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
 
   const [summaries, setSummaries] = useState<Record<string, SessionSummary>>({});
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [restorePopoverId, setRestorePopoverId] = useState<string | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -150,10 +149,15 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
     setRestorePopoverId(null);
   }, []);
 
+  // Open the archived task's detail as a managed window. The window renders
+  // below this modal (z-40 < z-50), so close the list to reveal it; the user
+  // reopens Completed Tasks to return to it.
   const handleViewDetail = useCallback((taskId: string) => {
     const task = archivedTasks.find((archivedTask) => archivedTask.id === taskId);
-    if (task) setSelectedTask(task);
-  }, [archivedTasks]);
+    if (!task) return;
+    useSessionStore.getState().setDetailTaskId(taskId);
+    onClose();
+  }, [archivedTasks, onClose]);
 
   // --- Columns ---
 
@@ -297,14 +301,6 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
           )}
         </div>
       </BaseDialog>
-
-      {selectedTask && (
-        <TaskDetailDialog
-          task={selectedTask}
-          onClose={() => setSelectedTask(null)}
-          initialEdit={false}
-        />
-      )}
 
       {changesTask && (
         <TaskChangesDialog task={changesTask} onClose={() => setChangesTask(null)} />

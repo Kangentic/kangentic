@@ -465,7 +465,7 @@ export function registerDevtoolsPreviewTools(server: McpServer): void {
     'kangentic_devtools_store_state',
     {
       description:
-        'Read a single renderer Zustand store by name, optionally drilling into a dot/bracket `path` (e.g. "dialogSessionId", "boardConfig.columns[0]", "sessionActivity[\'<id>\']"). Returns the sanitized state (Map -> object, Set -> array, large arrays + deep nesting truncated). Unlike kangentic_devtools_renderer_state (a fixed summary), this reads the FULL source-of-truth state for any registered store. Registered stores: backlog, board, config, project, session, toast. Unknown store names return an error plus the available list. Dev-only.',
+        'Read a single renderer Zustand store by name, optionally drilling into a dot/bracket `path` (e.g. "dialogSessionIds[0]", "boardConfig.columns[0]", "sessionActivity[\'<id>\']"). Returns the sanitized state (Map -> object, Set -> array, large arrays + deep nesting truncated). Unlike kangentic_devtools_renderer_state (a fixed summary), this reads the FULL source-of-truth state for any registered store. Registered stores: backlog, board, config, project, session, toast. Unknown store names return an error plus the available list. Dev-only.',
       inputSchema: z.object({
         store: z
           .string()

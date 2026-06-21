@@ -563,7 +563,14 @@
 
     tasks: {
       list: async function () {
-        return withAttachmentCounts(tasks);
+        // Fixture tasks tagged with a projectId are scoped to the current project
+        // (mirrors the real per-project DBs, where switching projects swaps the
+        // whole task set). Untagged tasks are returned for every project, so the
+        // many single-project specs that never set a projectId are unaffected.
+        var visible = tasks.filter(function (t) {
+          return !t.projectId || t.projectId === currentProjectId;
+        });
+        return withAttachmentCounts(visible);
       },
       create: async function (input) {
         // Test hook: count create IPC calls so specs can verify a double-submit

@@ -61,9 +61,9 @@ All DB status transitions flow through `src/main/transition-engine/session-lifec
 Each PTY session spawns exactly one Claude Code CLI process. Two UI locations can display terminal output -- the bottom panel (`TerminalPanel.tsx`) and the task detail dialog -- but never simultaneously.
 
 **Mechanism:**
-- `dialogSessionId` in the session store marks which session the dialog currently owns
-- When dialog opens: sets `dialogSessionId`, panel's `TerminalTab` unmounts its xterm instance (line 172 of `TerminalPanel.tsx`)
-- When dialog closes: clears `dialogSessionId`, panel recreates xterm from PTY scrollback buffer
+- `dialogSessionIds` (a string array) in the session store lists every session owned by an open task-detail window. It replaced the scalar `dialogSessionId` once task detail became modeless and multiple windows can stack.
+- When a window claims a session (`claimDialogSession`): the panel's `TerminalTab` unmounts that session's xterm instance
+- When a window releases a session (`releaseDialogSession` on close/unmount): the panel recreates the xterm from the PTY scrollback buffer
 - One xterm instance at a time per session prevents duplicate resize calls (different container widths garble TUI output)
 
 **Source:** `src/renderer/components/terminal/TerminalPanel.tsx`

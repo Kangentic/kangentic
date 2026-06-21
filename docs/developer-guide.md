@@ -125,6 +125,7 @@ src/
       dialogs/             # Settings, task detail, project management
       layout/              # App shell, sidebar, title bar, status bar
       terminal/            # xterm integration, activity log
+      window-manager/      # Modeless task-detail windows: tiling, snap, drag/resize, persistence
       CountBadge.tsx       # Reusable circular badge (muted, accent, solid variants)
       DescriptionEditor.tsx # Markdown editor with preview toggle
       FilterPopover.tsx    # Reusable filter dropdown popover

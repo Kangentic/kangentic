@@ -124,15 +124,22 @@ export async function createTask(
   const addButton = backlog.locator('text=Add task');
   await addButton.click();
 
-  const titleInput = page.locator('input[placeholder="Task title"]');
+  // Scope to the New Task BaseDialog (fixed inset-0 backdrop) to avoid ambiguity
+  // with the task-detail window, which renders its own Task title input inside the
+  // WindowLayer overlay (fixed top-10 bottom-9 - does NOT have class inset-0).
+  const newTaskDialog = page.locator('.fixed.inset-0');
+  const titleInput = newTaskDialog.locator('input[placeholder="Task title"]');
   await titleInput.fill(title);
 
   if (description) {
-    const descInput = page.locator('textarea').first();
+    const descInput = newTaskDialog.locator('textarea').first();
     await descInput.fill(description);
   }
 
-  const createButton = page.locator('button:has-text("Create")');
+  // Use type="submit" to distinguish the New Task dialog's Create button from the
+  // dev-only TestHarness buttons ("Create Task" / "Create Project", type="button").
+  const createButton = newTaskDialog.locator('button[type="submit"]:has-text("Create")');
   await createButton.click();
-  await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
+  // Wait for the new task dialog to unmount (the modal backdrop disappears).
+  await newTaskDialog.waitFor({ state: 'hidden', timeout: 3000 });
 }
