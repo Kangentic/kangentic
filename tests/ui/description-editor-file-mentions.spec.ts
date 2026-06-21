@@ -119,6 +119,11 @@ test.describe('DescriptionEditor file mentions', () => {
     await page.keyboard.press('Enter');
     await expect(textarea).toHaveValue('@docs/worktree-strategy.md ');
 
-    await page.keyboard.press('Escape');
+    // Close via Cancel (description-only edits via Playwright fill() do not
+    // trigger the dirty guard, so Cancel closes directly without a confirm).
+    // Using Cancel rather than Escape avoids the bubble-phase interception risk
+    // on CI Linux where focus is in the textarea after Enter.
+    await page.locator('button:has-text("Cancel")').click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 5000 });
   });
 });

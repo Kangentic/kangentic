@@ -145,7 +145,10 @@ test.describe('PR link: state badge and clickable affordance', () => {
     await expect(prPill).toHaveAttribute('title', 'Open PR #287 in browser');
 
     // Close the dialog so state does not leak to other tests.
-    await page.keyboard.press('Escape');
-    await expect(dialog).not.toBeVisible({ timeout: 5000 });
+    // Use Control+Shift+W (capture-phase) rather than Escape: the task-detail
+    // window has a running session, so Escape via the bubble-phase listener can
+    // be intercepted on CI Linux (bubble-phase Escape is not capture-safe).
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 });

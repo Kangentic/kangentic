@@ -397,9 +397,13 @@ test.describe('Task Detail: maximize / restore', () => {
     expect(backdropClass).toContain('inset-0');
     expect(backdropClass).not.toContain('top-10');
 
-    // Dismiss the confirm dialog, then the edit dialog.
+    // Dismiss the confirm dialog with Escape (ConfirmDialog is a BaseDialog modal,
+    // reliable Escape handling), then close the task-detail window with
+    // Control+Shift+W (capture-phase): after the ConfirmDialog closes, focus
+    // position is uncertain, so using the capture-phase hotkey avoids the
+    // bubble-phase Escape interception risk on CI Linux.
     await page.keyboard.press('Escape');
-    await page.keyboard.press('Escape');
-    await expect(editDialog).not.toBeVisible();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(editDialog).not.toBeVisible({ timeout: 8000 });
   });
 });

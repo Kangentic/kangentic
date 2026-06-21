@@ -394,8 +394,11 @@ test.describe('Task Activity Indicators', () => {
       const resumeBtn = page.locator('text=Resume session');
       await expect(resumeBtn).not.toBeVisible();
 
-      await page.keyboard.press('Escape');
-      await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 2000 });
+      // Use Control+Shift+W (capture-phase) rather than Escape: the task-detail
+      // window has a suspended session, so the bubble-phase Escape listener can
+      // be intercepted on CI Linux after clicking the card moves focus.
+      await page.keyboard.press('Control+Shift+W');
+      await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 8000 });
     });
   });
 

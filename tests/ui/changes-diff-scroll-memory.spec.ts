@@ -176,6 +176,10 @@ test.describe('Changes view: diff scroll memory', () => {
     await expect(topLine.first()).toBeVisible({ timeout: 10000 });
     await expect(midLine).toHaveCount(0);
 
-    await page.keyboard.press('Escape');
+    // Use Control+Shift+W (capture-phase) rather than Escape: Monaco captured
+    // focus via the click+Ctrl+Home sequence, so the bubble-phase Escape listener
+    // on the task-detail window can be intercepted by Monaco on CI Linux.
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 });
