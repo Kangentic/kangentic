@@ -32,6 +32,7 @@ import {
   getProjectSnapshot,
 } from '../stores/project-cache';
 import { restoreWorkspaceForProject } from '../window-manager/persistence/restore-workspace';
+import { useWindowStore } from '../window-manager/store/window-store';
 
 export function useProjectSwitchEffect(currentProject: Project | null): void {
   // Tracks the project we last rendered so we can snapshot its store
@@ -62,6 +63,19 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
     // stores. Skip self-switches (same id) and the initial cold mount
     // (no previous project to snapshot).
     if (previousProjectId && previousProjectId !== (currentProject?.id ?? null)) {
+      // Persist the OUTGOING project's window layout FIRST, before snapshotting its
+      // config and before the incoming restore mutates the window store. The
+      // per-window debounced save (useWorkspacePersistence) may not have fired yet -
+      // e.g. a window closed in the last 500ms - so without this, switching away and
+      // back would restore a stale, pre-close layout. Reading the live window store
+      // here, keyed by the explicit outgoing id, keeps the two consistent (never a
+      // cross-project write); doing it before the snapshot means the warm-switch
+      // restore (which sets config from the snapshot) carries the corrected layout.
+      useConfigStore.getState().saveWorkspaceForProject(
+        previousProjectId,
+        useWindowStore.getState().serializeWorkspace(),
+      );
+
       const boardState = useBoardStore.getState();
       const backlogState = useBacklogStore.getState();
       const configState = useConfigStore.getState();
