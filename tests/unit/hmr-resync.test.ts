@@ -238,4 +238,38 @@ describe('HMR store re-sync', () => {
       violations.map((v) => `  - ${v}`).join('\n'),
     ).toHaveLength(0);
   });
+
+  // Pattern E (single-instance store boundary). A Zustand store whose only
+  // runtime export is the non-component hook is not a React Fast Refresh
+  // boundary: a re-eval (a slice edit, or an edit to a store it imports) can
+  // construct a SECOND store instance while a mounted view stays subscribed to
+  // the first. That is the agent/MCP-created-task split-brain (the card lands in
+  // the store but the board never re-renders until a full reload). Each such
+  // store must pin its instance - read it from import.meta.hot.data, write it
+  // back, and self-accept so editing the store's own code forces a clean reload
+  // instead of running stale closures. See .claude/rules/hmr-patterns.md.
+  it('instance-pinned stores read, write, and self-accept across HMR (Pattern E)', () => {
+    const PATTERN_E_STORES = ['board-store.ts', 'backlog-store.ts', 'project-store.ts'];
+    const violations: string[] = [];
+    for (const fileName of PATTERN_E_STORES) {
+      const source = fs.readFileSync(path.join(STORES_DIR, fileName), 'utf-8');
+      const readsPreserved = /import\.meta\.hot\?\.data\?\.\w+/.test(source);
+      const writesPreserved = /import\.meta\.hot\.data\.\w+\s*=/.test(source);
+      const selfAccepts = /import\.meta\.hot\.accept\s*\(/.test(source);
+      if (!readsPreserved || !writesPreserved || !selfAccepts) {
+        violations.push(
+          `${fileName} -> reads:${readsPreserved} writes:${writesPreserved} accepts:${selfAccepts}`,
+        );
+      }
+    }
+
+    expect(
+      violations,
+      `Pattern E stores must pin their Zustand instance across HMR.\n` +
+      `Each must read import.meta.hot?.data?.<key>, assign import.meta.hot.data.<key> = useXStore,\n` +
+      `and call import.meta.hot.accept(() => import.meta.hot.invalidate()).\n` +
+      `See .claude/rules/hmr-patterns.md (Pattern E):\n` +
+      violations.map((v) => `  - ${v}`).join('\n'),
+    ).toHaveLength(0);
+  });
 });

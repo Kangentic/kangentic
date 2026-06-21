@@ -567,3 +567,55 @@ test.describe('Cross-project shortcuts isolation via warm cache', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Test: a current-project agent create renders the new card in its lane
+//
+// Regression guard for the HMR board-store split-brain (bug #277/#278): an
+// agent/MCP-created task lands in the board store, but the mounted KanbanBoard
+// must actually re-render to show the card. This exercises the full
+// agent-create -> useAgentDrivenInvalidation -> scheduleBoardReload ->
+// loadBoard -> lane render path (the tests above only assert the cache/IPC side
+// effects, not that the card renders). Pattern E instance pinning of the board
+// store keeps a single store instance across HMR so this re-render lands on the
+// mounted board.
+// ---------------------------------------------------------------------------
+
+test.describe('useAgentDrivenInvalidation - current project create renders the card', () => {
+  test('tasks.onCreatedByAgent for the current project renders the new card in its lane', async () => {
+    const { browser, page } = await launch();
+
+    try {
+      // Alpha is current; wait for its board (To Do lane = inv-lane-0).
+      const todoLane = page.locator('[data-swimlane-name="To Do"]');
+      await todoLane.waitFor({ state: 'visible', timeout: 15000 });
+
+      const NEW_TASK_TITLE = 'Agent Created To Do Card';
+
+      // The card must not exist before the agent create.
+      await expect(todoLane.getByText(NEW_TASK_TITLE)).toHaveCount(0);
+
+      // Simulate the backend create (the main process wrote it to the DB), then
+      // the TASK_CREATED_BY_AGENT push the renderer reacts to. The debounced
+      // loadBoard re-fetches tasks.list, which now includes the seeded task.
+      const newTaskId = await page.evaluate(async (currentProjectId) => {
+        const created = await window.electronAPI.tasks.create({
+          title: 'Agent Created To Do Card',
+          description: '',
+          swimlane_id: 'inv-lane-0',
+        });
+        (window as unknown as {
+          __mockFireTaskCreatedByAgent: (taskId: string, title: string, column: string, projectId: string) => void;
+        }).__mockFireTaskCreatedByAgent(created.id, created.title, 'To Do', currentProjectId);
+        return created.id;
+      }, PROJECT_A_ID);
+
+      // toBeVisible polls until the debounced reload (250ms) lands the card; no
+      // fixed wait, so this is stable across Windows/CI timing.
+      await expect(todoLane.getByText(NEW_TASK_TITLE)).toBeVisible({ timeout: 5000 });
+      await expect(todoLane.locator(`[data-task-id="${newTaskId}"]`)).toBeVisible({ timeout: 5000 });
+    } finally {
+      await browser.close();
+    }
+  });
+});

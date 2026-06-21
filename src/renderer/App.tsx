@@ -600,9 +600,12 @@ export function App() {
 }
 
 // Dev-only: re-sync all IPC-backed Zustand stores after Vite HMR updates.
-// When HMR replaces a store module, its Zustand store reverts to defaults (e.g.
-// config resets to DEFAULT_CONFIG, projects list empties). Re-fetching from the
-// main process restores the correct state.
+// Most store modules revert to defaults when HMR replaces them (e.g. config
+// resets to DEFAULT_CONFIG); re-fetching from the main process restores them.
+// The board/backlog/project stores are instance-pinned across HMR (Pattern E in
+// .claude/rules/hmr-patterns.md), so for them this re-sync RECONCILES the pinned
+// instance with main-process truth rather than restoring it from scratch. Keep
+// the calls either way; the unit test below enforces them.
 //
 // IMPORTANT: If you add a new IPC-backed store, add its load/sync call here.
 // The unit test "hmr-resync.test.ts" will fail if you forget.

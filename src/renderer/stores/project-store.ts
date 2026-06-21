@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
 import type { Project, ProjectCreateInput, ProjectGroup, ProjectGroupCreateInput, ProjectRelocateOptions, ProjectRelocateResult } from '../../shared/types';
 import { PROJECT_PATH_MISSING_PREFIX } from '../../shared/ipc-channels';
 import { useSessionStore } from './session-store';
@@ -7,8 +7,9 @@ import { dropProject as dropProjectCache } from './project-cache';
 
 // Hydration gate: tracks whether both loadProjects() and loadCurrent() have
 // resolved at least once. Module-scoped so they don't pollute the store
-// interface. On HMR, the module re-evaluates and both reset to false, but the
-// vite:afterUpdate handler in App.tsx immediately re-calls both methods.
+// interface. The store instance is pinned across HMR (Pattern E, below), and the
+// vite:afterUpdate handler in App.tsx re-calls both methods after every reload,
+// so these gates stay correct for the pinned instance's closures.
 let projectsReady = false;
 let currentReady = false;
 
@@ -42,7 +43,7 @@ interface ProjectStore {
   toggleGroupCollapsed: (id: string) => Promise<void>;
 }
 
-export const useProjectStore = create<ProjectStore>((set, get) => ({
+const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
   projects: [],
   groups: [],
   currentProject: null,
@@ -272,4 +273,26 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       await get().loadGroups();
     }
   },
-}));
+});
+
+const createProjectStore = () => create<ProjectStore>(projectStoreInitializer);
+
+// HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this
+// module's only runtime export is the non-component `useProjectStore`, so it is
+// not a React Fast Refresh boundary. Pin the instance in `import.meta.hot.data`
+// so a Fast Refresh that re-evaluates this module cannot strand a second store
+// instance while the mounted sidebar stays subscribed to the first.
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+const preservedProjectStore: ReturnType<typeof createProjectStore> | undefined = import.meta.hot?.data?.projectStore;
+
+export const useProjectStore = preservedProjectStore ?? createProjectStore();
+
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+if (import.meta.hot) {
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.data.projectStore = useProjectStore;
+  // Editing this module's OWN code would leave the pinned instance running stale
+  // closures; force a clean full reload instead (rare; prod drops this block).
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.accept(() => import.meta.hot.invalidate());
+}

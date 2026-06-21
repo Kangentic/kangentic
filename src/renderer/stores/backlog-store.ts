@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create, type StateCreator } from 'zustand';
 import type {
   BacklogTask,
   BacklogTaskCreateInput,
@@ -69,7 +69,7 @@ interface BacklogState {
   setScrollToBacklogId: (id: string | null) => void;
 }
 
-export const useBacklogStore = create<BacklogState>((set, get) => ({
+const backlogStoreInitializer: StateCreator<BacklogState> = (set, get) => ({
   items: [],
   loading: false,
   hydrated: false,
@@ -249,4 +249,26 @@ export const useBacklogStore = create<BacklogState>((set, get) => ({
   setPendingBulkDelete: (pending) => set({ pendingBulkDelete: pending }),
   setImportSource: (source) => set({ importSource: source }),
   setScrollToBacklogId: (id) => set({ scrollToBacklogId: id }),
-}));
+});
+
+const createBacklogStore = () => create<BacklogState>(backlogStoreInitializer);
+
+// HMR instance pinning (Pattern E, see .claude/rules/hmr-patterns.md): this
+// module's only runtime export is the non-component `useBacklogStore`, so it is
+// not a React Fast Refresh boundary. Pin the instance in `import.meta.hot.data`
+// so a Fast Refresh that re-evaluates this module cannot strand a second store
+// instance while the mounted backlog view stays subscribed to the first.
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+const preservedBacklogStore: ReturnType<typeof createBacklogStore> | undefined = import.meta.hot?.data?.backlogStore;
+
+export const useBacklogStore = preservedBacklogStore ?? createBacklogStore();
+
+// @ts-expect-error -- Vite handles import.meta.hot; tsc's "module": "commonjs" doesn't support it
+if (import.meta.hot) {
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.data.backlogStore = useBacklogStore;
+  // Editing this module's OWN code would leave the pinned instance running stale
+  // closures; force a clean full reload instead (rare; prod drops this block).
+  // @ts-expect-error -- Vite handles import.meta.hot
+  import.meta.hot.accept(() => import.meta.hot.invalidate());
+}
