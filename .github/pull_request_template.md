@@ -15,6 +15,11 @@ See CONTRIBUTING.md for conventions, the CI gate, and what to expect.
 
 <!-- The approach. Call out anything reviewers should look at closely or any trade-offs. -->
 
+## Breaking changes
+
+<!-- Any API, config, or behavioral changes that require user action? If yes, use a `!` in your
+commit type (e.g. feat!:) and describe the migration. If none, write "None". -->
+
 ## Tests
 
 <!-- How you verified this: tests added/updated and what you ran locally. Screenshot or clip for UI changes. -->
