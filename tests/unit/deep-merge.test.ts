@@ -76,6 +76,7 @@ describe('deepMerge', () => {
           defaultBaseBranch: 'main',
           copyFiles: [] as string[],
           initScript: null as string | null,
+          linkNodeModules: true,
         },
       };
       const source = { git: { defaultBaseBranch: 'develop' } };
@@ -86,6 +87,7 @@ describe('deepMerge', () => {
       expect(result.git.worktreesEnabled).toBe(true);
       expect(result.git.autoCleanup).toBe(true);
       expect(result.git.initScript).toBeNull();
+      expect(result.git.linkNodeModules).toBe(true);
     });
 
     it('preserves target array values when source subset is all primitives', () => {

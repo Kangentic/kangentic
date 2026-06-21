@@ -65,6 +65,7 @@
       defaultBaseBranch: 'main',
       copyFiles: [],
       initScript: null,
+      linkNodeModules: true,
       prRefreshIntervalMinutes: 5,
     },
     mcpServer: {
@@ -211,6 +212,7 @@
       defaultBaseBranch: git.defaultBaseBranch,
       copyFiles: git.copyFiles ? git.copyFiles.slice() : undefined,
       initScript: git.initScript,
+      linkNodeModules: git.linkNodeModules,
       prRefreshIntervalMinutes: git.prRefreshIntervalMinutes,
     });
     if (pickedGit) result.git = pickedGit;

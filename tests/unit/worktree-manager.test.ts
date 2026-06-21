@@ -44,13 +44,36 @@ vi.mock('node:fs', () => ({
 const { mockSpawn, recordedSpawnCalls, spawnOverrides } = vi.hoisted(() => {
   const recordedSpawnCalls: Array<{ command: string; args: readonly string[] }> = [];
   const spawnOverrides: Array<{
-    match: (args: readonly string[]) => boolean;
-    behavior: { exitCode?: number; stderr?: string; stdout?: string };
+    match: (args: readonly string[], command: string) => boolean;
+    behavior: {
+      exitCode?: number;
+      stderr?: string;
+      stdout?: string;
+      /** Never emit 'close' - let external abort or signal drive the outcome. */
+      hang?: boolean;
+    };
   }> = [];
 
-  const mockSpawn = vi.fn((command: string, args: readonly string[]) => {
-    recordedSpawnCalls.push({ command, args });
-    const override = spawnOverrides.find((entry) => entry.match(args));
+  // spawn is called with two different signatures in this file:
+  //
+  //   runGitWithTimeout: spawn('git', [...args], { signal, ... })  -- 3 positional args
+  //   runInitScript:     spawn(script,            { signal, ... })  -- 2 positional args
+  //                                                (options lands in the 'args' slot)
+  //
+  // The mock uses the `args` parameter for both cases: for git calls it is a real
+  // readonly string[], for init-script calls it is the options object. We read
+  // `signal` defensively from both: (a) if 3-arg form, it's in the 3rd positional
+  // (not captured here); (b) if 2-arg form, it's in args as an object field.
+  // To keep existing tests unchanged the 3-arg git form's options are ignored
+  // (git spawns in this file have no signal). Only the 2-arg init-script form
+  // has a live signal that should drive abort simulation.
+  const mockSpawn = vi.fn((
+    command: string,
+    args: readonly string[] | { signal?: AbortSignal; [key: string]: unknown },
+  ) => {
+    recordedSpawnCalls.push({ command, args: args as readonly string[] });
+    const argsArray = Array.isArray(args) ? args : [];
+    const override = spawnOverrides.find((entry) => entry.match(argsArray, command));
     const behavior = override?.behavior ?? { exitCode: 0 };
 
     const EventEmitter = require('node:events').EventEmitter;
@@ -60,13 +83,30 @@ const { mockSpawn, recordedSpawnCalls, spawnOverrides } = vi.hoisted(() => {
       kill: vi.fn(),
     });
 
-    // queueMicrotask (not setImmediate/setTimeout) so the mock still works
-    // when vi.useFakeTimers() is active - fake timers don't affect microtasks.
-    queueMicrotask(() => {
-      if (behavior.stdout) child.stdout.emit('data', Buffer.from(behavior.stdout, 'utf8'));
-      if (behavior.stderr) child.stderr.emit('data', Buffer.from(behavior.stderr, 'utf8'));
-      child.emit('close', behavior.exitCode ?? 0, null);
-    });
+    // Read signal from the options object when args is the options (2-arg form).
+    // For the 3-arg form, signal lives in the third positional which is not
+    // captured here; existing git spawn tests have no signal anyway.
+    const optionsSignal = !Array.isArray(args)
+      ? (args as { signal?: AbortSignal }).signal
+      : undefined;
+
+    if (optionsSignal) {
+      optionsSignal.addEventListener('abort', () => {
+        const abortError = new Error('The operation was aborted');
+        abortError.name = 'AbortError';
+        child.emit('error', abortError);
+      }, { once: true });
+    }
+
+    if (!behavior.hang) {
+      // queueMicrotask (not setImmediate/setTimeout) so the mock still works
+      // when vi.useFakeTimers() is active - fake timers don't affect microtasks.
+      queueMicrotask(() => {
+        if (behavior.stdout) child.stdout.emit('data', Buffer.from(behavior.stdout, 'utf8'));
+        if (behavior.stderr) child.stderr.emit('data', Buffer.from(behavior.stderr, 'utf8'));
+        child.emit('close', behavior.exitCode ?? 0, null);
+      });
+    }
 
     return child;
   });
@@ -79,10 +119,19 @@ vi.mock('node:child_process', () => ({
   spawn: mockSpawn,
 }));
 
+// Stub node_modules linking so we can assert WHETHER it runs (the git.linkNodeModules
+// gate) without touching original-fs. removeNodeModulesPath is stubbed to a no-op
+// resolve; the removeWorktree tests below only assert the git remove spawn.
+vi.mock('../../src/main/git/node-modules-link', () => ({
+  linkNodeModules: vi.fn(() => Promise.resolve()),
+  removeNodeModulesPath: vi.fn(() => Promise.resolve()),
+}));
+
 import fs from 'node:fs';
 import { WorktreeManager, GitQueuePriority } from '../../src/main/git/worktree-manager';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree } from '../../src/main/git/git-checks';
 import { clearFetchCache } from '../../src/main/git/fetch-throttle';
+import { linkNodeModules } from '../../src/main/git/node-modules-link';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -203,6 +252,127 @@ describe('WorktreeManager -- sparse-checkout', () => {
       (c) => String(c[0]).includes('.claude'),
     );
     expect(rmCalls).toHaveLength(0);
+  });
+});
+
+// ── initScript + linkNodeModules ──────────────────────────────────────────
+
+describe('WorktreeManager -- initScript and node_modules linking', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearFetchCache();
+    recordedSpawnCalls.length = 0;
+    spawnOverrides.length = 0;
+    setupCreateWorktreeMocks();
+  });
+
+  it('runs the initScript in the new worktree after creation', async () => {
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, {
+      initScript: 'echo setup',
+    });
+
+    const initCall = recordedSpawnCalls.find((call) => call.command === 'echo setup');
+    expect(initCall).toBeDefined();
+  });
+
+  it('fails worktree creation when the initScript exits non-zero (fatal)', async () => {
+    spawnOverrides.push({
+      match: (_args, command) => command === 'failing-script',
+      behavior: { exitCode: 1, stderr: 'boom' },
+    });
+
+    const mgr = new WorktreeManager('/project');
+    await expect(
+      mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, { initScript: 'failing-script' }),
+    ).rejects.toThrow(/boom/);
+  });
+
+  it('skips the initScript when it is empty or whitespace', async () => {
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, { initScript: '   ' });
+
+    // Only git spawns (fetch); no shell command spawned for the blank script.
+    const nonGitSpawns = recordedSpawnCalls.filter((call) => call.command !== 'git');
+    expect(nonGitSpawns).toHaveLength(0);
+  });
+
+  it('links node_modules by default (option omitted)', async () => {
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree('abcd1234-0000', 'Test task');
+
+    expect(vi.mocked(linkNodeModules)).toHaveBeenCalledTimes(1);
+  });
+
+  it('links node_modules when linkNodeModules is true', async () => {
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, { linkNodeModules: true });
+
+    expect(vi.mocked(linkNodeModules)).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT link node_modules when linkNodeModules is false', async () => {
+    const mgr = new WorktreeManager('/project');
+    await mgr.createWorktree('abcd1234-0000', 'Test task', 'main', [], null, { linkNodeModules: false });
+
+    expect(vi.mocked(linkNodeModules)).not.toHaveBeenCalled();
+  });
+
+  it('propagates an external abort signal through createWorktree to runInitScript, rejecting creation', async () => {
+    // Gap: an AbortSignal passed to createWorktree (via options.signal) must
+    // propagate all the way through to runInitScript so a superseding task move
+    // or app shutdown can cancel a long-running init script (e.g. npm install).
+    //
+    // The mock's signal detection reads from whichever positional argument holds
+    // the options object. For runInitScript's spawn call that is the 2nd argument
+    // (no args array); for runGitWithTimeout's spawn call it is the 3rd. The
+    // updated mockSpawn checks Array.isArray(args) to distinguish them and wires
+    // the signal listener only for the 2-arg (init-script) form.
+    //
+    // Timing note: createWorktree does several async git operations (fetch, rev-
+    // parse, git.raw) before reaching runInitScript. All those operations are
+    // mocked as queueMicrotask. We wait for an init-script spawn to appear in
+    // recordedSpawnCalls (proof createWorktree has reached that phase) before
+    // aborting, ensuring the abort flows through the init-script path and not an
+    // earlier throwIfAborted() guard.
+    spawnOverrides.push({
+      // Match the init-script command; git calls are matched by 'git' command string.
+      match: (_args, command) => command === 'hang-script',
+      behavior: { hang: true },
+    });
+
+    const controller = new AbortController();
+    const mgr = new WorktreeManager('/project');
+
+    const creationPromise = mgr.createWorktree(
+      'abcd1234-0000',
+      'Test task',
+      'main',
+      [],
+      null,
+      { initScript: 'hang-script', signal: controller.signal },
+    );
+
+    // Drain all queued microtasks until the init-script spawn is visible.
+    // Each await flushes one layer of microtasks / resolved promise continuations.
+    // The git phases (fetch, rev-parse, raw) each have one async step, so a handful
+    // of yields is sufficient to advance createWorktree to the init-script await.
+    for (let flushCount = 0; flushCount < 20; flushCount++) {
+      const initScriptSpawned = recordedSpawnCalls.some((call) => call.command === 'hang-script');
+      if (initScriptSpawned) break;
+      await Promise.resolve();
+    }
+
+    // The init-script spawn must be visible before we abort (proving we reached
+    // that phase, not an earlier throwIfAborted guard).
+    expect(recordedSpawnCalls.some((call) => call.command === 'hang-script')).toBe(true);
+
+    controller.abort();
+
+    // The abort propagates through runInitScript's externalAbortHandler, which
+    // aborts the internal controller, which triggers the child's AbortError event,
+    // which makes runInitScript reject with "external abort".
+    await expect(creationPromise).rejects.toThrow(/external abort/);
   });
 });
 

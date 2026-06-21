@@ -77,6 +77,7 @@ describe('pickOverridableSubset', () => {
         defaultBaseBranch: 'main',
         copyFiles: ['.env'],
         initScript: null,
+        linkNodeModules: false,
         prRefreshIntervalMinutes: 10,
       },
     } as unknown as Parameters<typeof pickOverridableSubset>[0];
@@ -97,6 +98,7 @@ describe('pickOverridableSubset', () => {
         defaultBaseBranch: 'main',
         copyFiles: ['.env'],
         initScript: null,
+        linkNodeModules: false,
         prRefreshIntervalMinutes: 10,
       },
     });

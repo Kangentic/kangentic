@@ -16,7 +16,7 @@ import { isAbortError } from '../../../shared/abort-utils';
 import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
 import { isResumeEligible } from '../../transition-engine/spawn-intent';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
-import { emitSpawnProgress } from '../../transition-engine/spawn-progress';
+import { emitSpawnProgress, createProgressCallback } from '../../transition-engine/spawn-progress';
 import { ensureTaskWorktree, ensureTaskBranchCheckout } from './task-git';
 import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
@@ -293,6 +293,10 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     await engine.executeTransition(
       task, fromSwimlaneId, toLane.id, toLane.permission_mode, skipPromptTemplate, signal, targetAgent,
       resolveSpawnOverrides(task, toLane),
+      // A create_worktree action runs inside the transition; give it the same
+      // progress labels as the default task-move worktree path so its
+      // "Creating worktree..." / "Running setup script..." phases reach the card.
+      createProgressCallback(context.mainWindow, task.id),
     );
   } catch (error) {
     if (isAbortError(error)) throw error;

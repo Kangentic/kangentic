@@ -46,7 +46,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 - `theme`
 - `terminal.shell`, `terminal.fontSize`, `terminal.fontFamily`, `terminal.scrollbackLines`, `terminal.cursorStyle`
 - `agent.permissionMode`
-- `git.worktreesEnabled`, `git.autoCleanup`, `git.defaultBaseBranch`, `git.copyFiles`, `git.initScript`, `git.prRefreshIntervalMinutes`
+- `git.worktreesEnabled`, `git.autoCleanup`, `git.defaultBaseBranch`, `git.copyFiles`, `git.initScript`, `git.linkNodeModules`, `git.prRefreshIntervalMinutes`
 - `browser.enabled`, `browser.defaultUrl`
 
 > **Seeded vs. stored.** All settings above are stored per-project in `.kangentic/config.json` and editable in Project Settings. When a *new* project is created it is seeded with only `theme`, `terminal.*`, `agent.permissionMode`, and `git.*` (via `pickOverridableSubset` in `config-manager.ts`). `browser.*`, and non-setting project data such as `importSources`, are kept per-project and never cloned, so one project's dev-server URL or import sources cannot leak into another.
@@ -125,7 +125,8 @@ All six modes are available in both the global App Settings "Permissions" dropdo
 | `git.autoCleanup` | boolean | `true` | Delete branches when worktrees are removed |
 | `git.defaultBaseBranch` | string | `'main'` | Default base branch for worktrees |
 | `git.copyFiles` | string[] | `[]` | Files to copy from repo root into worktrees |
-| `git.initScript` | string \| null | `null` | Shell script to run after worktree creation |
+| `git.initScript` | string \| null | `null` | Shell script run in each new worktree after creation (and after `node_modules` linking). Runs via the platform shell (cmd.exe on Windows, sh on POSIX). A non-zero exit, timeout (10 min cap), or cancellation fails worktree creation. |
+| `git.linkNodeModules` | boolean | `true` | Symlink the root `node_modules` into each worktree so agents skip a fresh install. Disable to let `git.initScript` install dependencies inside the worktree instead. |
 | `git.prRefreshIntervalMinutes` | number \| null | `5` | Minutes between background PR-state refresh sweeps while the project is open. `null` = off (the on-open sweep still runs) |
 
 ### Shortcuts

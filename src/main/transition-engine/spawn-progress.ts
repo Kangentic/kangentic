@@ -9,7 +9,7 @@ import { IPC } from '../../shared/ipc-channels';
 // the latest label per task and displays it.
 //
 // Phase flow (contextual per task):
-//   Worktree task:      fetching → creating-worktree → starting-agent
+//   Worktree task:      fetching → creating-worktree → [init-script] → starting-agent
 //   Custom branch task: fetching → switching-branch  → starting-agent
 //   Base branch task:   starting-agent
 //   Has worktree:       starting-agent
@@ -85,6 +85,7 @@ export function __resetSpawnProgressForTest(): void {
 export type SpawnPhase =
   | 'fetching'
   | 'creating-worktree'
+  | 'init-script'
   | 'switching-branch'
   | 'starting-agent'
   | 'packaging-handoff'
@@ -94,6 +95,7 @@ export type SpawnPhase =
 const PHASE_LABELS: Record<SpawnPhase, string> = {
   'fetching': 'Fetching latest...',
   'creating-worktree': 'Creating worktree...',
+  'init-script': 'Running setup script...',
   'switching-branch': 'Switching branch...',
   'starting-agent': 'Starting agent...',
   'packaging-handoff': 'Packaging handoff context...',

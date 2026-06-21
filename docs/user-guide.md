@@ -385,7 +385,8 @@ All permission modes are available in both the global App Settings dropdown and 
 | Auto Cleanup | Delete branches when worktrees are removed |
 | Default Base Branch | Branch to create worktrees from (default: main) |
 | Copy Files | Files to copy from repo root into worktrees |
-| Init Script | Shell script to run after worktree creation |
+| Post-Worktree Script | Shell script run in each new worktree after creation (e.g. `npm install`). A non-zero exit or timeout fails worktree creation |
+| Link node_modules | Symlink the root `node_modules` into each worktree to skip a fresh install (on by default). Turn off to let the Post-Worktree Script install the worktree's own dependencies |
 
 ### Shortcuts
 
