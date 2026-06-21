@@ -6,7 +6,9 @@ export interface DeriveFocusedSessionIdsInput {
   activeView: string;
   terminalPanelVisible: boolean | undefined;
   panelSessionId: string | null;
-  dialogSessionId: string | null;
+  /** Sessions owned by open task-detail windows. When non-empty, the bottom
+   *  panel renders no terminal, so the panel session is NOT focused. */
+  dialogSessionIds: string[];
   commandBarVisible: boolean;
   transientSessionId: string | null;
 }
@@ -21,19 +23,22 @@ export interface DeriveFocusedSessionIdsInput {
  * unit-tested independently of React hooks and store subscriptions.
  *
  * Rules (in priority order):
- * 1. Dialog open - only the dialog session is focused (dialog takes over the
- *    panel and the panel xterm is unmounted).
- * 2. Board view with panel visible - the current panel session is focused.
- * 3. Backlog view / panel hidden / no dialog - no panel session is focused.
- * 4. Command bar visible - the transient session is appended (unless it is
- *    already in the set, which happens when the dialog and transient IDs
- *    happen to be the same - effectively impossible, but guarded anyway).
+ * 1. Task-detail window(s) open - every window-owned session is focused, and
+ *    the panel session is NOT (the panel renders no terminal while a window is
+ *    open; the two are mutually exclusive terminal owners).
+ * 2. Board view with panel visible and no window open - the panel session is
+ *    focused.
+ * 3. Backlog view / panel hidden / no window - no panel session is focused.
+ * 4. Command bar visible - the transient session is appended (unless already in
+ *    the set).
  */
 export function deriveFocusedSessionIds(input: DeriveFocusedSessionIdsInput): string[] {
   const focusedIds: string[] = [];
 
-  if (input.dialogSessionId) {
-    focusedIds.push(input.dialogSessionId);
+  if (input.dialogSessionIds.length > 0) {
+    for (const sessionId of input.dialogSessionIds) {
+      if (!focusedIds.includes(sessionId)) focusedIds.push(sessionId);
+    }
   } else if (
     input.activeView === 'board' &&
     input.terminalPanelVisible !== false &&

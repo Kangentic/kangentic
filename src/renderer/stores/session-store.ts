@@ -210,7 +210,8 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   _sessionByTaskId: new Map(),
   activeSessionId: null,
   detailTaskId: null,
-  dialogSessionId: null,
+  detailTaskInitialEdit: false,
+  dialogSessionIds: [],
   scrollToEventKey: null,
   sessionUsage: {},
   latestRateLimits: null,
@@ -536,8 +537,16 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
     window.electronAPI.config.set({ lastActiveTaskByProject: updated });
   },
 
-  setDetailTaskId: (id) => set({ detailTaskId: id }),
-  setDialogSessionId: (id) => set({ dialogSessionId: id }),
+  setDetailTaskId: (id, options) =>
+    set({ detailTaskId: id, detailTaskInitialEdit: id ? !!options?.initialEdit : false }),
+  claimDialogSession: (sessionId) =>
+    set((state) =>
+      state.dialogSessionIds.includes(sessionId)
+        ? state
+        : { dialogSessionIds: [...state.dialogSessionIds, sessionId] },
+    ),
+  releaseDialogSession: (sessionId) =>
+    set((state) => ({ dialogSessionIds: state.dialogSessionIds.filter((id) => id !== sessionId) })),
   setScrollToEventKey: (key) => set({ scrollToEventKey: key }),
 
   upsertSession: (session) => {

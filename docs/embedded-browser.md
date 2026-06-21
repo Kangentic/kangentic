@@ -1,6 +1,6 @@
 # Embedded Browser Pane
 
-A side-pane in `TaskDetailDialog` that hosts an Electron `<webview>`, captures the rendered frame plus user annotations + DOM context, and submits it to the active agent as a multi-modal prompt.
+A side-pane in the modeless task-detail window (`TaskDetailWindow`) that hosts an Electron `<webview>`, captures the rendered frame plus user annotations + DOM context, and submits it to the active agent as a multi-modal prompt.
 
 ## User-facing flow
 
@@ -146,8 +146,9 @@ src/renderer/components/browser/
   inspectScript.ts                          element-picker + persistent overlay
   webview-types.ts                          structural types for <webview>
 
+src/renderer/window-manager/components/
+  TaskDetailWindow.tsx                      browser/changes mutually exclusive (task detail is now a modeless window)
 src/renderer/components/dialogs/
-  TaskDetailDialog.tsx                      browser/changes mutually exclusive
   task-detail/TaskDetailBody.tsx            2-col layout when Browser is on
   task-detail/TaskDetailHeader.tsx          Browser pill
 

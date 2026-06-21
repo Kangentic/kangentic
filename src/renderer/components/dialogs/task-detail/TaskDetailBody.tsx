@@ -219,6 +219,9 @@ export function TaskDetailBody({
                   taskId={task.id}
                   active={true}
                   releaseEscapeWhenPointerOutside={true}
+                  // The task-detail surface is window-hosted: refit immediately on
+                  // the window's resize/snap/maximize/divider dispatch (no 50ms lag).
+                  immediatePanelResize={true}
                 />
               </div>
             </div>

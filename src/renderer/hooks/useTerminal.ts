@@ -29,7 +29,10 @@ if (import.meta.hot) {
 const TERMINAL_THEME = {
   background: '#18181b',
   foreground: '#e4e4e7',
-  cursor: '#18181b',
+  // Light cursor. It was the background color (#18181b) - i.e. invisible - which is
+  // why no cursor ever showed. cursorAccent is the dark background so the character
+  // under a block cursor stays readable (dark glyph on the light block).
+  cursor: '#e4e4e7',
   cursorAccent: '#18181b',
   selectionBackground: 'rgba(58, 130, 246, 0.35)',
   black: '#18181b',
@@ -106,8 +109,13 @@ export function useTerminal(options: UseTerminalOptions) {
       fontSize: options.fontSize || 14,
       theme: xtermTheme,
       scrollback: options.scrollbackLines || 5000,
-      cursorBlink: false,
+      cursorBlink: true,
       cursorStyle: options.cursorStyle || 'block',
+      // HIDE the cursor when this terminal is BLURRED. Only the focused pane (where
+      // you are typing) shows a cursor - a solid blinking block - so the cursor is a
+      // clean "you are here" cue. The window's accent outline + pulsing line carry
+      // the "which window is selected" cue for the unfocused panes.
+      cursorInactiveStyle: 'none',
       allowProposedApi: true,
     });
 
@@ -342,14 +350,23 @@ export function useTerminal(options: UseTerminalOptions) {
 
   // Re-fetch scrollback from the PTY and write it to xterm. Called when
   // the loading overlay lifts so that suppressed TUI output is recovered.
-  const reloadScrollback = useCallback(() => {
+  //
+  // `skipResize` re-renders the buffer at the CURRENT (already-synced) width
+  // without sending any SIGWINCH. Used by the window manager to clean up a
+  // full-screen TUI's accumulated resize redraws AFTER resizing has settled:
+  // the PTY is already the right size, so a resize here would only trigger more
+  // TUI redraws (re-polluting the buffer with duplicated frames).
+  const reloadScrollback = useCallback((reloadOptions?: { skipResize?: boolean }) => {
     if (!options.sessionId || !xtermRef.current || !fitAddonRef.current) return;
+    const skipResize = reloadOptions?.skipResize ?? false;
     scrollbackPendingRef.current = true;
     const scrollbackGeneration = ++scrollbackGenerationRef.current;
     xtermRef.current.reset();
 
     // Resize-first: fit to container, then sync PTY dimensions before
-    // fetching scrollback (clears stale buffer if cols changed).
+    // fetching scrollback (clears stale buffer if cols changed). When
+    // skipResize, the PTY is already synced; fit() is a no-op at the stable
+    // width and we send no SIGWINCH.
     fitAddonRef.current.fit();
     const { cols, rows } = xtermRef.current;
     const sessionId = options.sessionId;
@@ -358,7 +375,9 @@ export function useTerminal(options: UseTerminalOptions) {
     // forwards SIGWINCH on main; getScrollback is an in-memory read. See the
     // initTerminal comment for the SIGWINCH-frame staleness caveat - the
     // post-write force-resize compensates here too.
-    const resizePromise = window.electronAPI.sessions.resize(sessionId, cols, rows);
+    const resizePromise = skipResize
+      ? Promise.resolve(undefined)
+      : window.electronAPI.sessions.resize(sessionId, cols, rows);
     const scrollbackPromise = window.electronAPI.sessions.getScrollback(sessionId);
 
     Promise.all([resizePromise, scrollbackPromise])
@@ -377,7 +396,9 @@ export function useTerminal(options: UseTerminalOptions) {
           }
           scrollbackPendingRef.current = false;
           requestAnimationFrame(() => {
-            if (xtermRef.current && options.sessionId) {
+            // Skip the force-resize for a skipResize replay: a SIGWINCH here
+            // would make the TUI redraw and re-pollute the just-cleaned buffer.
+            if (!skipResize && xtermRef.current && options.sessionId) {
               const { cols, rows } = xtermRef.current;
               window.electronAPI.sessions.resize(options.sessionId, cols, rows);
             }

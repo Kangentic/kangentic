@@ -16,6 +16,9 @@ export const IPC = {
   PROJECT_MOVE_PROGRESS: 'project:moveProgress',
   PROJECT_PATH_MISSING: 'project:pathMissing',
 
+  // Dev-only (preview): build-excluded from production via __KANGENTIC_DEV__.
+  DEV_CREATE_EPHEMERAL_PROJECT: 'dev:createEphemeralProject',
+
   // Project Groups
   PROJECT_GROUP_LIST: 'projectGroup:list',
   PROJECT_GROUP_CREATE: 'projectGroup:create',

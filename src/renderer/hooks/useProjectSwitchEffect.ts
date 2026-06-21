@@ -31,6 +31,7 @@ import {
   snapshotProject,
   getProjectSnapshot,
 } from '../stores/project-cache';
+import { restoreWorkspaceForProject } from '../window-manager/persistence/restore-workspace';
 
 export function useProjectSwitchEffect(currentProject: Project | null): void {
   // Tracks the project we last rendered so we can snapshot its store
@@ -41,6 +42,21 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
 
   useEffect(() => {
     const previousProjectId = previousProjectIdRef.current;
+
+    // HMR parity: a Vite Fast Refresh runs App.tsx's `vite:afterUpdate` handler,
+    // which calls `loadCurrent()` / `loadProjects()` and replaces `currentProject`
+    // with a NEW object that has the SAME id. That reference change re-fires this
+    // effect even though no project switch happened. Running the switch logic then
+    // wrongly resets per-project view state - notably `dialogSessionIds: []`, which
+    // wipes the claims of HMR-preserved detail windows. Those windows do not
+    // re-claim (their claim effect is keyed on `session?.id`, unchanged across
+    // HMR), so the bottom-panel focus set collapses and every non-active window's
+    // PTY output is suppressed (a frozen, unresizable terminal). A same-id re-fire
+    // is never a real switch, and `vite:afterUpdate` already re-syncs board /
+    // config / sessions on its own, so this effect must be inert here.
+    if (previousProjectId !== null && previousProjectId === (currentProject?.id ?? null)) {
+      return;
+    }
 
     // Capture the outgoing project's slice state before we mutate the
     // stores. Skip self-switches (same id) and the initial cold mount
@@ -108,10 +124,10 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           // and may have written the previous project's session id here;
           // clearing it lets the lastActiveTaskByProject lookup land.
           activeSessionId: null,
-          // dialogSessionId is derived elsewhere from detailTaskId, so it
-          // does not need a separate restore. It will re-resolve when the
-          // dialog re-renders against the live session list.
-          dialogSessionId: null,
+          // Window-owned session claims are per-window and re-claimed when a
+          // detail window re-renders against the live session list, so they
+          // need no separate restore - clear them on switch.
+          dialogSessionIds: [],
         });
 
         // Re-derive the active tab from config rather than the live
@@ -140,11 +156,16 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           useSessionStore.getState().setPendingOpenTaskId(null);
           useSessionStore.getState().setDetailTaskId(pendingTaskId);
         }
+
+        // Restore the persisted window layout. Warm switches keep sessions live,
+        // so this resolves synchronously; a cheap setState lets the restored
+        // windows appear with the board (no flash) without blocking the swap.
+        restoreWorkspaceForProject();
       } else {
         // Cold path: fire the IPC fan-out and reset stale per-project
         // view state. After loads resolve, mark the project as seen so
         // the next switch to it takes the warm path.
-        void Promise.all([
+        const coldLoads = Promise.all([
           useBoardStore.getState().loadBoard(),
           useBacklogStore.getState().loadBacklog(),
           useConfigStore.getState().loadConfig(),
@@ -170,7 +191,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         }
         useSessionStore.setState({
           activeSessionId: null,
-          dialogSessionId: null,
+          dialogSessionIds: [],
           detailTaskId: null,
           sessionEvents: preservedEvents,
         });
@@ -207,6 +228,16 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           }
 
           markProjectSeen(currentProject.id);
+
+          // Restore the persisted window layout once the board + config loads AND
+          // sessions have all resolved, so windows re-bind to live sessions and the
+          // task-existence check sees the real board. Deferred off the switch's
+          // critical path (the board paints first); skipped if a newer switch has
+          // superseded this one mid-load.
+          void coldLoads.then(() => {
+            if (previousProjectIdRef.current !== currentProject.id) return;
+            restoreWorkspaceForProject();
+          });
         });
       }
 
@@ -220,7 +251,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
       useBoardStore.setState({ tasks: [], swimlanes: [], archivedTasks: [] });
       useSessionStore.setState({
         activeSessionId: null,
-        dialogSessionId: null,
+        dialogSessionIds: [],
         detailTaskId: null,
       });
       // Reset effective config to global defaults (no project overrides)

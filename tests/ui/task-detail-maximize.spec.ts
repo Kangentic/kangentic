@@ -2,13 +2,23 @@
  * UI tests for the Task Detail maximize / restore toggle.
  *
  * Covers:
- * - Maximize button toggle: content fills screen, backdrop insets to app chrome
+ * - Maximize button toggle: window frame transitions between floating (rounded-lg)
+ *   and maximized (rounded-none, fills the window-overlay area between app chrome)
  * - Ctrl/Cmd+Shift+M keyboard toggle (maximize/restore)
- * - Ctrl/Cmd+Shift+W closes the dialog
+ * - Ctrl/Cmd+Shift+W closes the window
  * - Ctrl/Cmd+Shift+B toggles the Browser pane when canShowBrowser is true
  * - Edit mode: maximize button is present and the hotkey maximizes/restores
  * - Create dialog (New Task): maximize button + hotkey toggle the layout
  * - BaseDialog default-prop non-regression: plain consumers keep inset-0 / rounded-lg
+ *
+ * Window model notes: the task-detail surface is now a MODELESS window rendered
+ * inside WindowFrame on a WindowLayer portal overlay. There is no modal backdrop.
+ * The dialog content div (`data-testid="task-detail-dialog"`) is always
+ * `flex h-full w-full flex-col` regardless of maximized state; sizing is expressed
+ * on the FRAME (`data-testid="window-frame-<id>"`) via inline absolute positioning
+ * and corner-radius classes: `rounded-lg` = floating/restored, `rounded-none` =
+ * maximized (or tiled). The overlay itself is always `top-10 bottom-9` (constrained
+ * to the space between the title bar and status bar) - the frame fills it when maximized.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -145,45 +155,50 @@ test.describe('Task Detail: maximize / restore', () => {
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
+    // The window frame is the direct parent of task-detail-dialog. It carries
+    // rounded-lg (floating) or rounded-none (maximized/tiled) so tests can assert
+    // the window's maximize state without inspecting pixel geometry.
+    const frame = page.locator('[data-testid^="window-frame-"]').filter({
+      has: page.locator('[data-testid="task-detail-dialog"]'),
+    });
+
     const maximizeButton = page.locator('[data-testid="task-detail-maximize"]');
     await expect(maximizeButton).toBeVisible();
 
-    // Starts windowed (running session -> large mode), action is "Maximize".
+    // Starts windowed (running session -> floating state): action is "Maximize",
+    // frame has rounded corners. The dialog content is always w-full h-full inside
+    // the frame - sizing is expressed on the frame, not the content div.
     await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
-    await expect(dialog).toHaveClass(/w-\[90vw\]/);
-    await expect(dialog).toHaveClass(/rounded-lg/);
-    const backdropBefore = await dialog.evaluate((el) => el.parentElement?.className ?? '');
-    expect(backdropBefore).toContain('inset-0');
-    expect(backdropBefore).not.toContain('top-10');
+    await expect(frame).toHaveClass(/rounded-lg/);
+    await expect(frame).not.toHaveClass(/rounded-none/);
 
-    // Maximize -> content fills the screen, backdrop insets to clear the chrome.
+    // Maximize -> frame fills the window-overlay area (between title bar and status
+    // bar), corners squared so the border meets the overlay edges flush.
     await maximizeButton.click();
     await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
-    await expect(dialog).toHaveClass(/w-full/);
-    await expect(dialog).toHaveClass(/h-full/);
-    // Corners squared so the border meets the screen edges flush.
-    await expect(dialog).toHaveClass(/rounded-none/);
-    const backdropMaximized = await dialog.evaluate((el) => el.parentElement?.className ?? '');
-    expect(backdropMaximized).toContain('top-10');
-    expect(backdropMaximized).toContain('bottom-9');
+    await expect(frame).toHaveClass(/rounded-none/);
+    await expect(frame).not.toHaveClass(/rounded-lg/);
+    // The window overlay is always top-10 bottom-9 (between app chrome) in the
+    // window model - that's the boundary the maximized frame fills.
+    const overlay = page.locator('[data-testid="window-overlay"]');
+    await expect(overlay).toHaveClass(/top-10/);
+    await expect(overlay).toHaveClass(/bottom-9/);
 
-    // Restore -> back to the windowed large size, backdrop covers the window.
+    // Restore -> frame back to floating with rounded corners.
     await maximizeButton.click();
     await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
-    await expect(dialog).toHaveClass(/w-\[90vw\]/);
-    const backdropRestored = await dialog.evaluate((el) => el.parentElement?.className ?? '');
-    expect(backdropRestored).toContain('inset-0');
-    expect(backdropRestored).not.toContain('top-10');
+    await expect(frame).toHaveClass(/rounded-lg/);
+    await expect(frame).not.toHaveClass(/rounded-none/);
 
     // Hotkey: Ctrl/Cmd+Shift+M toggles maximize (terminal-safe combo).
     await page.keyboard.press('Control+Shift+M');
     await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
-    await expect(dialog).toHaveClass(/w-full/);
+    await expect(frame).toHaveClass(/rounded-none/);
     await page.keyboard.press('Control+Shift+M');
     await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
-    await expect(dialog).toHaveClass(/w-\[90vw\]/);
+    await expect(frame).toHaveClass(/rounded-lg/);
 
-    // Hotkey: Ctrl/Cmd+Shift+W closes the dialog (terminal-safe combo).
+    // Hotkey: Ctrl/Cmd+Shift+W closes the window (terminal-safe combo).
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible();
   });
@@ -244,29 +259,32 @@ test.describe('Task Detail: maximize / restore', () => {
     // To Do tasks open in edit mode - a title input is visible.
     await expect(page.locator('input[placeholder="Task title"]')).toBeVisible();
 
+    // The window frame is the direct parent of task-detail-dialog.
+    const frame = page.locator('[data-testid^="window-frame-"]').filter({
+      has: page.locator('[data-testid="task-detail-dialog"]'),
+    });
+
     // The maximize button is surfaced in the edit header.
     const maximizeButton = page.locator('[data-testid="task-detail-maximize"]');
     await expect(maximizeButton).toBeVisible();
     await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
-    await expect(dialog).not.toHaveClass(/w-full/);
+    // Starts floating: frame has rounded corners.
+    await expect(frame).toHaveClass(/rounded-lg/);
+    await expect(frame).not.toHaveClass(/rounded-none/);
 
-    // Ctrl+Shift+M maximizes: content fills the screen, backdrop insets.
+    // Ctrl+Shift+M maximizes: frame fills the overlay area, corners squared.
     await page.keyboard.press('Control+Shift+M');
     await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
-    await expect(dialog).toHaveClass(/w-full/);
-    await expect(dialog).toHaveClass(/h-full/);
-    await expect(dialog).toHaveClass(/rounded-none/);
-    const backdropMaximized = await dialog.evaluate((el) => el.parentElement?.className ?? '');
-    expect(backdropMaximized).toContain('top-10');
-    expect(backdropMaximized).toContain('bottom-9');
+    await expect(frame).toHaveClass(/rounded-none/);
+    await expect(frame).not.toHaveClass(/rounded-lg/);
 
-    // Restore via the hotkey so maximizedTasks state does not leak into the next
-    // test (the flag persists across dialog open/close, keyed by task id).
+    // Restore via the hotkey so the window state does not leak into the next test.
     await page.keyboard.press('Control+Shift+M');
     await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
-    await expect(dialog).not.toHaveClass(/w-full/);
+    await expect(frame).toHaveClass(/rounded-lg/);
+    await expect(frame).not.toHaveClass(/rounded-none/);
 
-    // Close the dialog to leave a clean state for the next test.
+    // Close the window to leave a clean state for the next test.
     await page.keyboard.press('Escape');
     await expect(dialog).not.toBeVisible();
   });

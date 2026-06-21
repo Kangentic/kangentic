@@ -16,13 +16,21 @@ export function KebabMenu({ children }: KebabMenuProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const { style } = usePopoverPosition(containerRef, popoverRef, open, { mode: 'dropdown' });
+  // Fixed positioning + a body portal so the menu (and its flyout submenus) escape
+  // a clipping ancestor - a window frame's `overflow-hidden` was cropping the
+  // "Move to" / "Commands" flyouts when the task detail became a window.
+  const { style } = usePopoverPosition(containerRef, popoverRef, open, { mode: 'dropdown', strategy: 'fixed' });
 
-  // Close on click outside
+  // Close on click outside. The popover is portaled OUT of `containerRef`, so a
+  // click inside it must also count as "inside" (else selecting an item, or
+  // opening a flyout, would dismiss the menu).
   useEffect(() => {
     if (!open) return;
     const handleClick = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const insideTrigger = containerRef.current?.contains(target);
+      const insidePopover = popoverRef.current?.contains(target);
+      if (!insideTrigger && !insidePopover) {
         setOpen(false);
       }
     };
@@ -45,7 +53,8 @@ export function KebabMenu({ children }: KebabMenuProps) {
         open={open}
         popoverRef={popoverRef}
         style={style}
-        className="absolute min-w-[170px] bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 py-1"
+        portal
+        className="fixed min-w-[170px] bg-surface-raised border border-edge-input rounded-md shadow-xl z-[2147483646] py-1"
       >
         {children(close)}
       </OverlayPopover>

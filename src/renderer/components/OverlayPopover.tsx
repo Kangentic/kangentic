@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useOverlayPhase } from '../hooks/useOverlayPhase';
 
 /**
@@ -29,6 +30,13 @@ interface OverlayPopoverProps {
    * menus, or a coordinate for a context menu at the cursor.
    */
   transformOrigin?: string;
+  /**
+   * Render into a `document.body` portal so the popover escapes a clipping
+   * ancestor (a window frame's `overflow-hidden`). Use with a fixed positioning
+   * strategy (`usePopoverPosition({ strategy: 'fixed' })`), since the default
+   * trigger-relative offsets are meaningless once detached from the trigger.
+   */
+  portal?: boolean;
   onMouseDown?: React.MouseEventHandler<HTMLDivElement>;
   onMouseUp?: React.MouseEventHandler<HTMLDivElement>;
   onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
@@ -77,6 +85,7 @@ function OverlayPopoverContent({
   className = '',
   style,
   transformOrigin = 'top center',
+  portal = false,
   children,
   ...domProps
 }: OverlayPopoverContentProps) {
@@ -96,7 +105,7 @@ function OverlayPopoverContent({
   const positionStyle: React.CSSProperties = { ...style };
   delete positionStyle.visibility;
 
-  return (
+  const element = (
     <div
       ref={popoverRef}
       style={{ transformOrigin, ...positionStyle }}
@@ -107,4 +116,8 @@ function OverlayPopoverContent({
       {children}
     </div>
   );
+
+  // Portaled popovers escape any ancestor `overflow: hidden` (e.g. a window
+  // frame); they must be positioned with `position: fixed` (the caller's hook).
+  return portal ? createPortal(element, document.body) : element;
 }
