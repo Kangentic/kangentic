@@ -315,9 +315,13 @@ const createWindow = () => {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      // Enable <webview> for the embedded browser side-pane in
-      // TaskDetailDialog. Hardened via the will-attach-webview hook below.
+      // Enable <webview> for the embedded browser side-pane in the task-detail
+      // window. Hardened via the will-attach-webview hook below.
       webviewTag: true,
+      // Surface the ephemeral-preview flag to the renderer (read in preload via
+      // process.argv). Set ONLY in dev-preview mode (`--ephemeral`), so the dev
+      // TestHarness stays out of the regular `npm start` dogfood.
+      additionalArguments: __KANGENTIC_DEV__ && isEphemeral ? ['--kangentic-ephemeral'] : [],
     },
   });
 

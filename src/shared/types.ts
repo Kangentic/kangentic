@@ -2221,6 +2221,8 @@ export interface ElectronAPI {
   dev?: {
     /** Create + return a synthetic ephemeral project for the preview. */
     createEphemeralProject: () => Promise<Project>;
+    /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
+    isEphemeralPreview: boolean;
   };
   // Projects
   projects: {

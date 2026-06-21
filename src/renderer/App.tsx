@@ -590,10 +590,11 @@ export function App() {
       */}
       {__KANGENTIC_DEV__ && <DevtoolsBootstrap />}
       {/*
-        Dev-only preview test harness (floating "Create Task" toolbar). Same
-        dead-code-elimination guard as DevtoolsBootstrap; never ships to prod.
+        Dev-only preview test harness (floating "Create Task" toolbar). Built out
+        of prod by the `__KANGENTIC_DEV__` dead-code guard, AND gated at runtime on
+        `isEphemeralPreview` so it shows only in `/preview`, not the `npm start` dogfood.
       */}
-      {__KANGENTIC_DEV__ && <TestHarness />}
+      {__KANGENTIC_DEV__ && window.electronAPI.dev?.isEphemeralPreview && <TestHarness />}
     </>
   );
 }
