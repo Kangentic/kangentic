@@ -28,7 +28,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── Layout ──
   { id: 'cardDensity', tabId: 'layout', label: 'Card Density', description: 'Amount of detail shown on task cards', scope: 'global', keywords: ['compact', 'comfortable', 'minimal', 'detailed'] },
   { id: 'columnWidth', tabId: 'layout', label: 'Column Width', description: 'Width of board columns', scope: 'global', keywords: ['narrow', 'wide', 'size'] },
-  { id: 'diffViewMode', tabId: 'layout', label: 'Diff View', description: 'Default layout for viewing file diffs', scope: 'global', keywords: ['split', 'inline', 'side by side', 'unified', 'diff', 'changes'] },
+  { id: 'diffViewMode', tabId: 'layout', label: 'Git Diff View', description: 'Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified).', scope: 'global', keywords: ['split', 'inline', 'side by side', 'side-by-side', 'unified', 'diff', 'changes', 'git', 'review', 'compare'] },
   { id: 'terminalPanelVisible', tabId: 'layout', label: 'Terminal Panel', description: 'Show the terminal panel below the board', scope: 'global', keywords: ['bottom', 'panel', 'hide', 'terminal', 'visible'] },
   { id: 'statusBarVisible', tabId: 'layout', label: 'Status Bar', description: 'Show the status bar at the bottom of the window', scope: 'global', keywords: ['bottom', 'bar', 'hide', 'visible'] },
   { id: 'restoreWindowPosition', tabId: 'layout', label: 'Restore Window Position', description: 'Remember window size and position between launches', scope: 'global', keywords: ['size', 'bounds', 'remember'] },
