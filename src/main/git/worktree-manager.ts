@@ -396,7 +396,13 @@ export class WorktreeManager {
 
     const defaultBaseBranch = gitConfig.defaultBaseBranch || 'main';
     const baseBranch = task.base_branch || defaultBaseBranch;
-    return this.createWorktree(task.id, task.title, baseBranch, gitConfig.copyFiles, task.branch_name, { onProgress: options?.onProgress, signal: options?.signal, defaultBaseBranch, initScript: gitConfig.initScript, linkNodeModules: gitConfig.linkNodeModules });
+    return this.createWorktree(task.id, task.title, baseBranch, gitConfig.copyFiles, task.branch_name, {
+      onProgress: options?.onProgress,
+      signal: options?.signal,
+      defaultBaseBranch,
+      initScript: gitConfig.initScript,
+      linkNodeModules: gitConfig.linkNodeModules,
+    });
   }
 
   /**
@@ -605,7 +611,7 @@ export class WorktreeManager {
 
     // Link node_modules from root so worktree agents can run typecheck/test
     // without a slow npm install. Non-fatal if it fails. Linking is the default
-    // (undefined/true link); only an explicit `false` skips it -- e.g. so an
+    // (undefined/true link); only an explicit `false` skips it, e.g. so an
     // initScript install can own the worktree's deps instead of sharing root's.
     const shouldLinkNodeModules = options?.linkNodeModules ?? true;
     if (shouldLinkNodeModules) {

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawnWithAbort, type SpawnWithAbortOptions } from './spawn-with-abort';
 
 /**
  * Generous wall-clock cap for a Post-Worktree init script (e.g. `npm install`).
@@ -9,23 +9,21 @@ export const INIT_SCRIPT_TIMEOUT_MS = 600_000;
 
 /**
  * Run a user-provided init script (the `git.initScript` "Post-Worktree
- * Script") in a freshly created worktree. Modeled on runGitWithTimeout: a
- * child_process.spawn with kill-on-timeout and optional external cancellation,
- * with stdout/stderr drained so Windows conpty buffers can't block the child.
+ * Script") in a freshly created worktree.
  *
  * Cross-platform shell handling: the script is passed as a single command
- * STRING with `shell: true` and NO args array. Node then runs it through the
- * platform's shell -- `process.env.ComSpec` (cmd.exe) on Windows, `/bin/sh`
- * on POSIX -- so the user's script is parsed by the native shell on every OS
- * without us hardcoding a shell path or path separator. Omitting an args array
- * avoids the Node DEP0190 deprecation that fires when an args array is combined
- * with `shell: true` (the same reasoning documented in agent/shared/exec-version.ts).
- * `windowsHide: true` prevents a console window from flashing on Windows.
+ * STRING with `shell: true` and NO args array (spawnWithAbort omits the args
+ * array when `args` is undefined). Node then runs it through the platform's
+ * shell (`process.env.ComSpec` / cmd.exe on Windows, `/bin/sh` on POSIX), so
+ * the user's script is parsed by the native shell on every OS without us
+ * hardcoding a shell path or path separator. Omitting an args array avoids the
+ * Node DEP0190 deprecation that fires when an args array is combined with
+ * `shell: true` (the same reasoning documented in agent/shared/exec-version.ts).
  *
- * The internal AbortController fires on the wall-clock deadline. An external
- * `signal` (superseding move, app shutdown) is forwarded to the same controller
- * and the forwarder is removed on settle so the external signal isn't held
- * referenced after the call resolves.
+ * The shared spawnWithAbort lifecycle handles the wall-clock timeout, external
+ * cancellation (a superseding move or app shutdown), drained stdio, and
+ * single-settle. The signal-kill message does not assert a timeout cause, since
+ * an external or OS signal is not necessarily a timeout.
  *
  * Rejects on non-zero exit, kill-by-signal, or timeout/abort so the caller can
  * treat a failed init script as fatal.
@@ -35,66 +33,13 @@ export function runInitScript(
   cwd: string,
   options: { timeoutMs: number; signal?: AbortSignal },
 ): Promise<{ stdout: string; stderr: string }> {
-  const { timeoutMs, signal: externalSignal } = options;
-  return new Promise((resolve, reject) => {
-    const controller = new AbortController();
-    const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
-
-    let externalAbortHandler: (() => void) | null = null;
-    if (externalSignal) {
-      if (externalSignal.aborted) {
-        clearTimeout(timeoutHandle);
-        reject(new Error('init script aborted before spawn'));
-        return;
-      }
-      externalAbortHandler = () => controller.abort();
-      externalSignal.addEventListener('abort', externalAbortHandler, { once: true });
-    }
-
-    const cleanup = () => {
-      clearTimeout(timeoutHandle);
-      if (externalSignal && externalAbortHandler) {
-        externalSignal.removeEventListener('abort', externalAbortHandler);
-      }
-    };
-
-    const child = spawn(script, {
+  return spawnWithAbort(
+    {
+      command: script,
       cwd,
-      shell: true,
-      windowsHide: true,
-      signal: controller.signal,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8'); });
-    child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
-
-    child.on('error', (error: NodeJS.ErrnoException) => {
-      cleanup();
-      if (error.name === 'AbortError' || error.code === 'ABORT_ERR') {
-        const reason = externalSignal?.aborted ? 'external abort' : `timeout after ${timeoutMs}ms`;
-        reject(new Error(`init script aborted (${reason}) (child process killed)`));
-        return;
-      }
-      reject(error);
-    });
-
-    child.on('close', (code, signalName) => {
-      cleanup();
-      if (signalName) {
-        // The error handler above already reports the abort/timeout case with the
-        // correct reason; this branch covers a child killed by an external signal
-        // (e.g. the OS), so it states the signal without asserting a timeout cause.
-        reject(new Error(`init script killed by signal ${signalName}`));
-        return;
-      }
-      if (code !== 0) {
-        reject(new Error(`init script exited with code ${code}: ${stderr.trim() || stdout.trim()}`));
-        return;
-      }
-      resolve({ stdout, stderr });
-    });
-  });
+      label: 'init script',
+      signalKillAssertsTimeout: false,
+    },
+    options satisfies SpawnWithAbortOptions,
+  );
 }
