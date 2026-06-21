@@ -46,6 +46,9 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen }: Title
   };
 
   return (
+    // The title bar is intentionally NOT a `data-dismiss-surface`: it is the OS
+    // window-drag region (`-webkit-app-region: drag`), so the OS swallows clicks here
+    // to move the window before the renderer ever sees them. A click cannot dismiss.
     <div className={`relative h-10 bg-surface border-b border-edge flex items-center select-none flex-shrink-0 ${isMac ? 'pl-20 pr-3' : 'px-3'}`}
          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
       {/* Branding -- logo + app name */}

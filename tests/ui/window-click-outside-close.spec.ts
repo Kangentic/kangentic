@@ -3,16 +3,18 @@
  * task-detail windows.
  *
  * The feature (`useClickOutsideToClose`, mounted once in `WindowLayer`) listens
- * for a "clean click" on the empty board background - a pointerdown + pointerup
- * pair whose target satisfies `[data-board-background]`, with no > 4px pointer
- * travel, no card ancestry, no window/popover ancestry, and no dismissable-layer
- * open at pointerdown - and then closes windows per the `windowLightDismiss`
- * policy. Closing routes through each window's unsaved-edits guard
- * (`closeWithGuard`) without touching the underlying PTY/session.
+ * for a "clean click" on dead (non-action) space anywhere in the app shell - a
+ * pointerdown + pointerup pair, < 4px travel, whose target is not a card, a
+ * window/popover, a control or `[data-no-dismiss]` element (e.g. a column header),
+ * or an element showing a pointer cursor (the terminal panel is excluded by being
+ * unmarked, not by `[data-no-dismiss]`), and with no dismissable-layer open at
+ * pointerdown - and then closes windows per the `windowLightDismiss` policy.
+ * Closing routes through each window's unsaved-edits guard (`closeWithGuard`)
+ * without touching the underlying PTY/session.
  *
  * Policy values:
  *  - `off`      never dismisses
- *  - `single`   dismisses the sole window only when it is `floating` (default)
+ *  - `single`   dismisses the sole window in any state (default)
  *  - `focused`  dismisses the focused window regardless of how many are open
  *  - `all`      dismisses every open window
  *
@@ -229,12 +231,12 @@ async function setPolicy(
  * clicking "empty board" almost always lands on a column body, NOT the thin padding.
  *
  * The column wrapper carries dnd-kit's injected `role="button"` (useSortable
- * `{...attributes}`). `isBoardBackgroundTarget` must still treat a column body as
- * background: it sits inside `[data-board-background]`, is not a card
- * (`[data-task-id]`) or window (`#window-layer-root`), and is NOT a real `<button>`.
- * The hook's board selector deliberately omits `role="button"` precisely so this
- * common click dismisses - targeting the column here locks that in (re-adding
- * `role="button"` to the selector turns every occurrence test red).
+ * `{...attributes}`). `isDismissibleDeadArea` must still treat a column body as
+ * dead space: it is not a card (`[data-task-id]`) or window (`#window-layer-root`),
+ * is NOT a real `<button>`, and shows no pointer cursor. The hook deliberately omits
+ * `role="button"` precisely so this common click dismisses - targeting the column
+ * here locks that in (re-adding `role="button"` to the selector turns every
+ * occurrence test red).
  *
  * Dispatching on the element (rather than `page.mouse` at viewport coordinates)
  * makes `event.target` deterministic - no dependence on viewport width, column
@@ -243,12 +245,12 @@ async function setPolicy(
  * identical clientX/Y (0px travel < the 4px clean-click radius).
  */
 async function clickEmptyBoard(page: Page): Promise<void> {
-  await page.locator('[data-board-background] [data-swimlane-name]').first().waitFor({ state: 'visible', timeout: 3000 });
+  await page.locator('[data-swimlane-name]').first().waitFor({ state: 'visible', timeout: 3000 });
   await page.evaluate(() => {
-    // First column body inside the board background. It has a `role="button"`
-    // sortable-wrapper ancestor (dnd-kit), which is exactly the real-world case.
-    const column = document.querySelector('[data-board-background] [data-swimlane-name]');
-    if (!column) throw new Error('no [data-swimlane-name] column found inside [data-board-background]');
+    // First column body: dead space (no pointer cursor) with a dnd-kit `role="button"`
+    // sortable-wrapper ancestor, which is exactly the real-world empty-board click.
+    const column = document.querySelector('[data-swimlane-name]');
+    if (!column) throw new Error('no [data-swimlane-name] column found');
     const init: PointerEventInit = {
       bubbles: true,
       cancelable: true,
@@ -272,6 +274,29 @@ async function pollWindowCount(page: Page, expected: number, timeoutMs = 3000): 
       { timeout: timeoutMs, intervals: [100, 150, 200, 300] },
     )
     .toBe(expected);
+}
+
+/** Dispatch a clean (0px-travel) pointerdown + pointerup pair on the first element
+ *  matching `selector`, to exercise a click on a specific board element (a column
+ *  header, the toolbar) rather than the empty columns. Same dispatch-on-element
+ *  rationale as `clickEmptyBoard`. */
+async function dispatchCleanClickOn(page: Page, selector: string): Promise<void> {
+  await page.locator(selector).first().waitFor({ state: 'visible', timeout: 3000 });
+  await page.evaluate((selectorArg) => {
+    const element = document.querySelector(selectorArg);
+    if (!element) throw new Error(`no element for selector: ${selectorArg}`);
+    const init: PointerEventInit = {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+      clientX: 200,
+      clientY: 120,
+    };
+    element.dispatchEvent(new PointerEvent('pointerdown', init));
+    element.dispatchEvent(new PointerEvent('pointerup', { ...init, buttons: 0 }));
+  }, selector);
 }
 
 // ---------------------------------------------------------------------------
@@ -397,7 +422,7 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
     await pollWindowCount(page, 1);
 
     // Now click Task Beta's card. The click target is [data-task-id], which the
-    // hook's `isBoardBackgroundTarget` guard rejects - so it is never a dismiss.
+    // hook's `isDismissibleDeadArea` guard rejects - so it is never a dismiss.
     const betaCard = page.locator('[data-swimlane-name="Code Review"]').locator('text=Task Beta').first();
     await betaCard.click();
 
@@ -430,10 +455,10 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
     // The context menu self-closes via its own capture-phase `mousedown` listener
     // (see TaskContextMenu.tsx - it listens for `mousedown`, not `pointerdown`).
     // We dispatch pointerdown (caught by the light-dismiss hook) AND mousedown
-    // (caught by the context-menu close handler) on the board-background element.
+    // (caught by the context-menu close handler) on a dead board area (a column body).
     await page.evaluate(() => {
-      const boardBackground = document.querySelector('[data-board-background]');
-      if (!boardBackground) throw new Error('[data-board-background] not found');
+      const deadArea = document.querySelector('[data-swimlane-name]');
+      if (!deadArea) throw new Error('[data-swimlane-name] not found');
       const pointerInit: PointerEventInit = {
         bubbles: true, cancelable: true, button: 0, buttons: 1,
         pointerId: 1, clientX: 200, clientY: 700,
@@ -443,11 +468,11 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
         clientX: 200, clientY: 700,
       };
       // pointerdown is captured by the light-dismiss hook.
-      boardBackground.dispatchEvent(new PointerEvent('pointerdown', pointerInit));
+      deadArea.dispatchEvent(new PointerEvent('pointerdown', pointerInit));
       // mousedown is captured by TaskContextMenu's outside-click handler (capture=true).
-      boardBackground.dispatchEvent(new MouseEvent('mousedown', mouseInit));
+      deadArea.dispatchEvent(new MouseEvent('mousedown', mouseInit));
       // pointerup completes the pointer pair for the hook.
-      boardBackground.dispatchEvent(new PointerEvent('pointerup', { ...pointerInit, buttons: 0 }));
+      deadArea.dispatchEvent(new PointerEvent('pointerup', { ...pointerInit, buttons: 0 }));
     });
 
     // The context menu should be gone (self-closed by mousedown outside it).
@@ -470,14 +495,12 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
     await openWindow(page, 'Task Alpha');
     await pollWindowCount(page, 1);
 
-    // Simulate a drag that starts and ends on the empty board background.
-    // Dispatch directly on board-background (same reason as clickEmptyBoard) so
-    // `event.target` is board-background itself, bypassing the dnd-kit role="button"
-    // wrapper on swimlane columns. Pointerdown at (200, 700), pointerup at (210, 700)
-    // = 10px travel, which exceeds CLEAN_CLICK_MAX_PX (4) and must be ignored.
+    // Simulate a drag that starts and ends on a dead board area (a column body).
+    // Pointerdown at (200, 700), pointerup at (210, 700) = 10px travel, which exceeds
+    // CLEAN_CLICK_MAX_PX (4) and must be ignored.
     await page.evaluate(() => {
-      const boardBackground = document.querySelector('[data-board-background]');
-      if (!boardBackground) throw new Error('[data-board-background] not found');
+      const deadArea = document.querySelector('[data-swimlane-name]');
+      if (!deadArea) throw new Error('[data-swimlane-name] not found');
       const downInit: PointerEventInit = {
         bubbles: true, cancelable: true, button: 0, buttons: 1,
         pointerId: 1, clientX: 200, clientY: 700,
@@ -486,8 +509,8 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
         bubbles: true, cancelable: true, button: 0, buttons: 0,
         pointerId: 1, clientX: 210, clientY: 700,
       };
-      boardBackground.dispatchEvent(new PointerEvent('pointerdown', downInit));
-      boardBackground.dispatchEvent(new PointerEvent('pointerup', upInit));
+      deadArea.dispatchEvent(new PointerEvent('pointerdown', downInit));
+      deadArea.dispatchEvent(new PointerEvent('pointerup', upInit));
     });
 
     // Intentional fixed wait - cannot poll for non-occurrence.
@@ -535,5 +558,78 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
     await confirmHeading.waitFor({ state: 'visible', timeout: 2000 });
     await page.locator('button:has-text("Discard")').click();
     await pollWindowCount(page, 0);
+  });
+
+  // -------------------------------------------------------------------------
+  // Detection: action controls never dismiss; the board toolbar dead space does
+  // -------------------------------------------------------------------------
+
+  test('clicking a column header (an action) does NOT dismiss the window', async () => {
+    await closeAllWindows(page);
+    await setPolicy(page, 'single');
+    await openWindow(page, 'Task Alpha');
+    await pollWindowCount(page, 1);
+
+    // A swimlane column header is a <div onClick> that opens the board manager. It
+    // carries `data-no-dismiss`, so a clean click on it must NOT close the window.
+    await dispatchCleanClickOn(page, '[data-swimlane-name] [data-no-dismiss]');
+
+    // Intentional fixed wait - cannot poll for non-occurrence.
+    await page.waitForTimeout(400);
+    await pollWindowCount(page, 1);
+  });
+
+  test('clicking the board toolbar dead space DOES dismiss the lone window', async () => {
+    await closeAllWindows(page);
+    await setPolicy(page, 'single');
+    await openWindow(page, 'Task Alpha');
+    await pollWindowCount(page, 1);
+
+    // The board toolbar (view-toggle) is dead space (no pointer cursor, not a
+    // control), so a clean click on the strip itself (between the action buttons)
+    // dismisses the lone window just like a click on the empty columns.
+    await dispatchCleanClickOn(page, '[data-testid="view-toggle"]');
+
+    await pollWindowCount(page, 0);
+  });
+
+  test('clicking a project sidebar row (cursor-pointer, no marker) does NOT dismiss', async () => {
+    await closeAllWindows(page);
+    await setPolicy(page, 'single');
+    await openWindow(page, 'Task Alpha');
+    await pollWindowCount(page, 1);
+
+    // A sidebar project row is a <div role="button"> with `cursor: pointer` and NO
+    // [data-no-dismiss] marker, so it must be excluded purely by the pointer-cursor
+    // heuristic (proving clickable <div>s across the app shell never dismiss).
+    await dispatchCleanClickOn(page, '[data-testid^="project-row-"]');
+
+    // Intentional fixed wait - cannot poll for non-occurrence.
+    await page.waitForTimeout(400);
+    await pollWindowCount(page, 1);
+  });
+
+  test('clicking outside every marked surface (an overlay/backdrop region) does NOT dismiss', async () => {
+    await closeAllWindows(page);
+    await setPolicy(page, 'single');
+    await openWindow(page, 'Task Alpha');
+    await pollWindowCount(page, 1);
+
+    // `document.body` has no `[data-dismiss-surface]` ancestor - it stands in for any
+    // element OUTSIDE the five shell surfaces, e.g. the settings panel / command-bar /
+    // search-palette backdrops, which render as AppLayout-root siblings. A click there
+    // must never dismiss the window beneath (the whole point of the allowlist).
+    await page.evaluate(() => {
+      const init: PointerEventInit = {
+        bubbles: true, cancelable: true, button: 0, buttons: 1,
+        pointerId: 1, clientX: 200, clientY: 400,
+      };
+      document.body.dispatchEvent(new PointerEvent('pointerdown', init));
+      document.body.dispatchEvent(new PointerEvent('pointerup', { ...init, buttons: 0 }));
+    });
+
+    // Intentional fixed wait - cannot poll for non-occurrence.
+    await page.waitForTimeout(400);
+    await pollWindowCount(page, 1);
   });
 });

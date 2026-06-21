@@ -55,10 +55,15 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
         style={{ backgroundColor: swimlane.color }}
       />
 
-      {/* Column header */}
+      {/* Column header. `data-no-dismiss`: the whole strip opens the board manager
+          on click, so it is an action, not dead board space. The header itself has
+          `cursor-pointer` (already excluded by the cursor check), but the marker is
+          load-bearing for its drag-handle child, whose `cursor-grab` would otherwise
+          slip past that check and let a click light-dismiss a window. */}
       <div
         className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left hover:bg-surface-hover/30 transition-colors cursor-pointer"
         onClick={() => openBoardManager(swimlane.id)}
+        data-no-dismiss
       >
         {/* Drag handle for custom columns */}
         {isDraggable && (
