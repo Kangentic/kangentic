@@ -160,22 +160,28 @@ Allowed types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `buil
   **Type check (tsc)**, **Unit tests (Vitest)**, **Build (production bundle)**, **UI tests
   (Playwright)**, and **E2E tests (Electron)**. The lint check runs with `--max-warnings 0`, so any
   warning fails it.
+- If a check fails, push a fix and CI re-runs automatically. Contributors cannot re-run checks
+  directly (that requires write access), so to re-trigger a run for a failure unrelated to your
+  change (for example a flaky test), push a new commit (an empty `git commit --allow-empty` is fine)
+  or close and reopen the PR. You can also ask a maintainer to re-run it.
 - A maintainer may push follow-up commits to your branch for design polish or hardening before
   merging. This is normal and not a reflection on your work; it is how we keep the bar consistent.
 - Small, focused PRs are easier to review and merge faster.
 
 ### Approvals and merging
 
-The general flow is that a maintainer approves the PR and **you merge it in**. An approval is your
-cue to do a final review of anything that was applied (the maintainer may have left comments or
-pushed changes to your branch), then merge.
+A maintainer reviews your PR and, once it is approved and green, **merges it**. Contributors do not
+need write access to the repository and are not expected to merge their own PRs; opening the PR from
+your fork is all that is required from you.
 
-A maintainer may instead merge an approved PR directly rather than wait for you, for example to land
-it in the next release. That is expected and not a slight; you do not need to do anything when it
-happens.
+An approval means the PR is accepted. The maintainer handles the final merge, and may push small
+follow-up commits or wait to batch it into a release first. If anything was applied to your branch,
+the approval is a good moment to skim it. If you want to hold the merge (more changes are coming, or
+you want a different squash), just say so in the PR thread.
 
-Either way, an approval means the PR is accepted. If you are not sure whether to merge or wait, ask
-in the PR thread.
+Repeat contributors may be granted write access over time. If you have it, the flow shifts to the
+common team convention: a maintainer approves and you merge your own PR once it is green. Until then,
+the maintainer lands it for you.
 
 ### UI contributions
 
