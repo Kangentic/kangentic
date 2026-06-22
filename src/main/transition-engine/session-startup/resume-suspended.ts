@@ -334,6 +334,13 @@ export async function resumeSuspendedSessions(
         agentName: input.adapter.name,
         agentSessionId: input.agentSessionId,
         isolatedSwimlaneId: input.record.isolated_swimlane_id,
+        // Recovery spawns carry no initial prompt (prompt: undefined in
+        // prepare-spawn), so the agent comes up waiting for the user: a resume
+        // sits at a quiet prompt, a fresh spawn at a blank one. Mark resuming so
+        // the activity engine seeds idle, not 'thinking' (the documented
+        // orphan-recovery contract). The command is already built, so this flag
+        // does not alter it - it only drives the seed and the resume overlay.
+        resuming: true,
         exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
       });
       return { input, newSession };

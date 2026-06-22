@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { useSessionStore } from '../../../stores/session-store';
 import { useTaskProgress } from '../../../utils/task-progress';
+import { isActive, requiresUserInteraction } from '../../../../shared/activity-state';
 import type { Task, Session } from '../../../../shared/types';
 
 interface TaskSessionState {
@@ -10,6 +11,10 @@ interface TaskSessionState {
   isSessionActive: boolean;
   isQueued: boolean;
   isSuspended: boolean;
+  /** Running and the agent is working on its own (`ActivityState` `'thinking'`). */
+  isThinking: boolean;
+  /** Running and the agent needs the user (`ActivityState` `'idle'`/`'permission'`). */
+  isIdle: boolean;
   /**
    * Whether the task has a non-terminal session state (running/queued/
    * initializing/preparing/suspended). Does NOT factor in a pending
@@ -64,6 +69,11 @@ export function useTaskSessionState(input: {
     || displayState.kind === 'preparing';
   const isQueued = displayState.kind === 'queued';
   const isSuspended = displayState.kind === 'suspended';
+  // Activity-while-running, classified the same way the board card does
+  // (TaskCard). Gated on the running kind so initializing/preparing/queued/
+  // suspended fall through to the lifecycle icons in the header.
+  const isThinking = displayState.kind === 'running' && isActive(displayState.activity);
+  const isIdle = displayState.kind === 'running' && requiresUserInteraction(displayState.activity);
   const isInDone = input.currentSwimlaneRole === 'done';
 
   // Base session-context flag - excludes the "during-toggle transition"
@@ -137,6 +147,8 @@ export function useTaskSessionState(input: {
     isSessionActive,
     isQueued,
     isSuspended,
+    isThinking,
+    isIdle,
     hasSessionContext,
     isInDone,
     canShowChanges,

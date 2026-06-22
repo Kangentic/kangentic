@@ -3,7 +3,7 @@ import { Loader2, Play, RotateCcw } from 'lucide-react';
 import { TerminalTab } from '../../terminal/TerminalTab';
 import { ContextBar } from '../../terminal/ContextBar';
 import { PreSpawnContextBar } from '../../terminal/PreSpawnContextBar';
-import { ShimmerOverlay } from '../../ShimmerOverlay';
+import { LaunchOverlay } from '../../LaunchOverlay';
 import { SessionSummaryPanel } from '../SessionSummaryPanel';
 import { BrowserPane } from '../../browser/BrowserPane';
 import { PriorityBadge } from '../../backlog/PriorityBadge';
@@ -75,6 +75,9 @@ export function TaskDetailBody({
   const projectDefaultAgent = useProjectStore((state) => state.currentProject?.default_agent ?? null);
   const changesViewMode = useSessionStore((state) => state.changesViewMode[task.id] ?? 'split');
   const setChangesViewMode = useSessionStore((state) => state.setChangesViewMode);
+  // Spawn-progress label ("Creating worktree...", etc.) for the pre-session
+  // launch overlay. Present whenever displayKind is 'preparing'.
+  const spawnLabel = useSessionStore((state) => state.spawnProgress[task.id] ?? null);
   // Draggable terminal / right-panel split. One shared ratio per task across
   // both the Browser and Changes views, so switching tabs never moves it.
   const splitContainerRef = useRef<HTMLDivElement>(null);
@@ -262,6 +265,22 @@ export function TaskDetailBody({
     return <QueuedPlaceholder sessionId={sessionId} />;
   }
 
+  // Launching (preparing): worktree creation / CLI boot before the session
+  // exists. The terminal area is otherwise blank here, so mirror the board
+  // card's launch treatment - a centered muted spinner + the spawn status
+  // label - and keep PreSpawnContextBar pinned at the bottom.
+  if (displayKind === 'preparing') {
+    return (
+      <>
+        {descriptionBar}
+        <div className="flex-1 min-h-0 relative">
+          <LaunchOverlay label={spawnLabel ?? 'Starting agent...'} />
+        </div>
+        <PreSpawnContextBar taskId={task.id} />
+      </>
+    );
+  }
+
   // Suspended or toggling
   if ((isSuspended || toggling) && !isArchived && !isInTodo) {
     if (pendingCommandLabel) {
@@ -270,9 +289,7 @@ export function TaskDetailBody({
           <div className="flex-1 min-h-0 flex">
             {!changesExpanded && (
               <div className={`${changesPresent ? 'w-1/2' : 'flex-1'} min-h-0 relative`}>
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface">
-                  <ShimmerOverlay label={pendingCommandLabel} />
-                </div>
+                <LaunchOverlay label={pendingCommandLabel} />
               </div>
             )}
             {changesPanelElement}

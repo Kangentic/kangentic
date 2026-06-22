@@ -1223,4 +1223,150 @@ test.describe('Task Activity Indicators', () => {
       }
     });
   });
+
+  // Group: task-detail header activity indicator
+  //
+  // Maximizing the task-detail view hides the board card, so the idle-vs-active
+  // signal is folded into the header's pause/resume button. The pause action
+  // stays centered and visible at all times; activity is encoded by the
+  // surrounding ring: a spinning emerald ring (Loader2) for thinking, a static
+  // amber ring (Circle) for idle/permission. The button's icon never changes on
+  // hover. It is gated on canToggle (false in To Do), so these tasks live in the
+  // Executing lane.
+  test.describe('task-detail header activity indicator', () => {
+    // Place the running task in a non-todo, non-done lane so the header's
+    // pause/resume button renders (canToggle is false in To Do).
+    function inExecutingLane(activity: string): string {
+      return makePreConfig({ sessionStatus: 'running', activity, withUsage: true })
+        + `
+        window.__mockPreConfigure(function (state) {
+          var execLane = state.swimlanes.find(function (s) { return s.name === 'Executing'; });
+          var task = state.tasks.find(function (t) { return t.id === '${TASK_ID}'; });
+          if (execLane && task) task.swimlane_id = execLane.id;
+        });
+        `;
+    }
+
+    test('thinking session shows a spinning ring with a centered pause on the header button', async () => {
+      const { browser, page } = await launchWithState(inExecutingLane('thinking'));
+      try {
+        await page.locator('text=Test Initializing Task').first().waitFor({ state: 'visible', timeout: 15000 });
+        await page.locator('text=Test Initializing Task').first().click();
+        const dialog = page.locator('[data-testid="task-detail-dialog"]');
+        await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+        const pauseButton = dialog.locator('button[title="Pause session"]');
+        await expect(pauseButton).toBeVisible({ timeout: 10000 });
+        // Active: a spinning ring (animate-spin) + the centered pause.
+        await expect(pauseButton.locator('.lucide-circle.animate-spin')).toBeVisible();
+        await expect(pauseButton.locator('[data-testid="pause-bars"]')).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('idle session shows a static amber ring with a centered pause on the header button', async () => {
+      const { browser, page } = await launchWithState(inExecutingLane('idle'));
+      try {
+        await page.locator('text=Test Initializing Task').first().waitFor({ state: 'visible', timeout: 15000 });
+        await page.locator('text=Test Initializing Task').first().click();
+        const dialog = page.locator('[data-testid="task-detail-dialog"]');
+        await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+        const pauseButton = dialog.locator('button[title="Pause session"]');
+        await expect(pauseButton).toBeVisible({ timeout: 10000 });
+        // Idle: a static amber ring + the centered pause; the ring does not spin.
+        await expect(pauseButton.locator('.lucide-circle')).toBeVisible();
+        await expect(pauseButton.locator('[data-testid="pause-bars"]')).toBeVisible();
+        await expect(pauseButton.locator('.lucide-circle.animate-spin')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('permission -> thinking swaps the static idle ring for the spinning ring', async () => {
+      const { browser, page } = await launchWithState(inExecutingLane('permission'));
+      try {
+        await page.locator('text=Test Initializing Task').first().waitFor({ state: 'visible', timeout: 15000 });
+        await page.locator('text=Test Initializing Task').first().click();
+        const dialog = page.locator('[data-testid="task-detail-dialog"]');
+        await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+        const pauseButton = dialog.locator('button[title="Pause session"]');
+        await expect(pauseButton).toBeVisible({ timeout: 10000 });
+        // Permission maps to idle: a static amber ring, never the spinner.
+        await expect(pauseButton.locator('.lucide-circle')).toBeVisible();
+        await expect(pauseButton.locator('.lucide-circle.animate-spin')).toHaveCount(0);
+
+        // Drive permission -> thinking; the static ring becomes the spinning ring.
+        await page.evaluate((sessionId) => {
+          const stores = (window as unknown as {
+            __zustandStores: { session: { getState: () => { updateActivity: (id: string, state: string) => void } } };
+          }).__zustandStores;
+          stores.session.getState().updateActivity(sessionId, 'thinking');
+        }, SESSION_ID);
+
+        await expect(pauseButton.locator('.lucide-circle.animate-spin')).toBeVisible({ timeout: 5000 });
+        // The pause stays centered through the transition.
+        await expect(pauseButton.locator('[data-testid="pause-bars"]')).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('preparing (launching) shows a muted launch overlay and a pause-less header spinner', async () => {
+      // A task in the Executing lane with NO session yet; injecting a spawn label
+      // derives displayKind='preparing' (worktree creation, before the session).
+      const preConfig = `
+        window.__mockPreConfigure(function (state) {
+          var ts = new Date().toISOString();
+          state.projects.push({
+            id: '${PROJECT_ID}', name: 'Activity Test', path: '/mock/activity-test',
+            github_url: null, default_agent: 'claude', last_opened: ts, created_at: ts,
+          });
+          state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+            state.swimlanes.push({
+              id: i === 0 ? '${SWIMLANE_ID}' : state.uuid(),
+              name: s.name, role: s.role, color: s.color, icon: s.icon,
+              is_archived: s.is_archived, permission_strategy: s.permission_strategy ?? null,
+              auto_spawn: s.auto_spawn ?? false, position: i, created_at: ts,
+            });
+          });
+          var execLane = state.swimlanes.find(function (s) { return s.name === 'Executing'; });
+          state.tasks.push({
+            id: '${TASK_ID}', title: 'Test Initializing Task', description: 'Launching task.',
+            swimlane_id: execLane.id, position: 0, agent: null, session_id: null,
+            worktree_path: null, branch_name: null, pr_number: null, pr_url: null,
+            base_branch: null, archived_at: null, created_at: ts, updated_at: ts,
+          });
+          return { currentProjectId: '${PROJECT_ID}' };
+        });
+      `;
+      const { browser, page } = await launchWithState(preConfig);
+      try {
+        await page.locator('text=Test Initializing Task').first().waitFor({ state: 'visible', timeout: 15000 });
+        await page.evaluate((taskId) => {
+          (window as unknown as {
+            __zustandStores: { session: { setState: (patch: Record<string, unknown>) => void } };
+          }).__zustandStores.session.setState({ spawnProgress: { [taskId]: 'Creating worktree...' } });
+        }, TASK_ID);
+
+        await page.locator('text=Test Initializing Task').first().click();
+        const dialog = page.locator('[data-testid="task-detail-dialog"]');
+        await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+        // Body: the muted launch overlay surfaces the spawn status.
+        await expect(dialog.getByText('Creating worktree...').first()).toBeVisible({ timeout: 10000 });
+
+        // Header: a muted (grey) launch spinner - a Loader2, NOT the green active
+        // ring - with no pause bars yet (the agent has not started).
+        const pauseButton = dialog.locator('button[title="Pause session"]');
+        await expect(pauseButton.locator('.lucide-loader-circle')).toBeVisible();
+        await expect(pauseButton.locator('[data-testid="pause-bars"]')).toHaveCount(0);
+        await expect(pauseButton.locator('.lucide-circle')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+  });
 });

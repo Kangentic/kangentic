@@ -411,6 +411,8 @@ export function TaskDetailWindow({
       canToggle={sessionState.canToggle}
       isSessionActive={sessionState.isSessionActive}
       isQueued={sessionState.isQueued}
+      isThinking={sessionState.isThinking}
+      isIdle={sessionState.isIdle}
       isArchived={isArchived}
       isIsolated={currentSwimlane?.session_target === 'isolated'}
       toggling={actions.toggling}

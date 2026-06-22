@@ -352,7 +352,7 @@
    Compositor-only: the box-shadow ring is static on the ::before, and only
    transform + opacity animate. Animating box-shadow directly (the previous
    approach) repaints the whole card every frame for as long as the agent stays
-   paused. Mirrors the .terminal-overlay-glow pattern below. */
+   paused. */
 .animate-pulse-subtle {
   position: relative;
 }
@@ -474,30 +474,6 @@
 
 .no-motion .dialog-maximize-anim {
   transition-duration: 0s;
-}
-
-/* ── Terminal loading overlay ── */
-
-/* Compositor-friendly glow: static box-shadow on ::before, animate opacity only.
-   Avoids paint-per-frame from animating box-shadow directly. */
-.terminal-overlay-glow {
-  position: relative;
-}
-
-.terminal-overlay-glow::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  box-shadow: 0 0 10px 1px color-mix(in srgb, var(--kng-accent) 50%, transparent);
-  border: 1px solid color-mix(in srgb, var(--kng-accent) 35%, transparent);
-  pointer-events: none;
-  animation: pill-glow-opacity 2s ease-in-out infinite;
-}
-
-@keyframes pill-glow-opacity {
-  0%, 100% { opacity: 0.4; }
-  50%      { opacity: 1; }
 }
 
 /* Disable all CSS keyframe animations when user opts out via Appearance settings.

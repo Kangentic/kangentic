@@ -128,6 +128,59 @@ describe('ActivityEngine', () => {
       expect(transitions[0].reason.kind).toBe('idle');
     });
 
+    it('seeds an initial thinking transition for a fresh spawn (initialTurnActive)', () => {
+      // A fresh agent spawn is already processing its initial prompt, so the
+      // first emitted state is thinking - no idle flash during the boot window.
+      engine.initSession(SESSION_ID, true);
+      expect(transitions).toHaveLength(1);
+      expect(transitions[0].sessionId).toBe(SESSION_ID);
+      expect(transitions[0].activity).toBe('thinking');
+      expect(transitions[0].reason.kind).toBe('turn-active');
+    });
+
+    it('watchdog is armed on a seeded-thinking spawn (stale-thinking reclaims it when no hook follows)', () => {
+      // The fix: initSession calls scheduleTimer after seeding thinking so the
+      // stale-thinking watchdog fires when the agent never emits a hook event.
+      // Without the scheduleTimer call, the seeded session stays 'thinking'
+      // forever because no event processing ever arms the timer.
+      //
+      // Red-green: remove the this.scheduleTimer(sessionId, state) line from
+      // initSession and this test goes red (activity stays 'thinking' after the
+      // timeout; staleThinking counter stays 0).
+      engine.initSession(SESSION_ID, true);
+      expect(transitions).toHaveLength(1);
+      expect(transitions[0].activity).toBe('thinking');
+      transitions.length = 0;
+      syntheticEvents.length = 0;
+
+      // Advance past the stale-thinking threshold. The watchdog must reclaim
+      // the session to idle and emit a synthetic Idle/Timeout event.
+      vi.advanceTimersByTime(TEST_STALE_TIMEOUT_MS + 100);
+
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(transitions).toHaveLength(1);
+      expect(transitions[0].activity).toBe('idle');
+      const snapshot = engine.getStatsSnapshot(SESSION_ID)!;
+      expect(snapshot.compensationCounters.staleThinking).toBe(1);
+      // Synthetic Idle/Timeout event must have been emitted.
+      expect(syntheticEvents).toHaveLength(1);
+      expect(syntheticEvents[0].event.type).toBe(EventType.Idle);
+      expect(syntheticEvents[0].event.detail).toBe(IdleReason.Timeout);
+    });
+
+    it('idleTimestamp invariant: thinking seed leaves it null, idle seed stamps it', () => {
+      // The code comment in initSession says: "A seeded 'thinking' turn leaves
+      // idleTimestamp null, preserving the invariant that idleTimestamp is
+      // non-null iff activity is 'idle'." Verify both branches.
+      engine.initSession(SESSION_ID, true);
+      expect(engine.getState(SESSION_ID)?.idleTimestamp).toBeNull();
+      engine.deleteSession(SESSION_ID);
+
+      // Idle seed (default / resuming / transient) must stamp idleTimestamp.
+      engine.initSession(SESSION_ID, false);
+      expect(engine.getState(SESSION_ID)?.idleTimestamp).not.toBeNull();
+    });
+
     it('deleteSession drops all per-session state', () => {
       engine.initSession(SESSION_ID);
       engine.deleteSession(SESSION_ID);

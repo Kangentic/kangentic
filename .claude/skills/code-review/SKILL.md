@@ -1,5 +1,5 @@
 ---
-description: Review git changes for quality and conventions via parallel reviewer subagents synthesized in the main agent (auto-fixes findings by default)
+description: Review git changes for quality and conventions via parallel reviewer subagents synthesized in the main agent (auto-fixes findings and fills red-green test-coverage holes by default)
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*), Agent
 argument-hint: [base-ref] [review-only]
 ---
@@ -47,7 +47,7 @@ The skill is a thin driver that runs in the main loop. All commands below run fr
    If the committed diff, the uncommitted diff, **and** the untracked list are all empty, emit "No changes to review." and stop. Otherwise `diffText` = committed diff + uncommitted diff + the synthetic untracked blocks, and `changedFiles` = the deduped union of file paths across the committed `--stat`, the uncommitted `--stat`, and the untracked list. Also compute the compact **signature delta** from the diff alone (the integration finder consumes it; see "## Finders").
 5. **Fan out reviewer subagents (the `Agent` tool, ALL in ONE message so they run concurrently).** Every finder is a **read-only** subagent in its own fresh context window; only the driver (main loop) mutates the working tree, in the Apply Phase. Give each finder the diff (or, when it is very large, the Step 4 gather commands so it reproduces the diff itself) plus the changed-file list, and instruct it to read the full changed files for surrounding context. See "## Finders" for the exact set, the gates, the per-finder criteria, and the required return shape. The universal dimension finders always run; the domain auditors run only when their changed-file glob matches.
 6. **Synthesize + verify (main agent).** Collect every finder's findings. For each, **verify it against the actual code** - read the cited `file:line`, confirm the issue is real, and refute (drop) anything the code does not substantiate or that cannot be stated falsifiably (judge the code, not assumed intent). Dedup findings the same issue surfaced from multiple dimensions (e.g. an `any` flagged by both correctness and conventions), keeping the highest severity and clearest recommendation. Fold in the pre-flight signals: Step 1 type errors as Critical rows; a Step 2 vitest failure as a Critical row with the assertion message verbatim. Sort by severity. If a finder returned nothing usable (it errored or came back empty), note the dropped dimension in the Summary.
-7. **Apply Phase + Re-typecheck** (skip both in `review-only` mode). Apply every safely-fixable finding with `Edit`/`Write` (each fix is its own atomic unit - skip-with-reason on failure, keep the others), then re-run `npm run typecheck` (and the Step 2 vitest if an HMR fix landed). If a fix introduces a new type error, revert that specific edit and move the finding to `Skipped` with reason `"Fix introduced type error: <message>"`; do not roll back unrelated fixes. See "## Apply Phase".
+7. **Apply Phase + Re-typecheck** (skip both in `review-only` mode). Apply every safely-fixable finding with `Edit`/`Write` (each fix is its own atomic unit - skip-with-reason on failure, keep the others), then re-run `npm run typecheck` (and the Step 2 vitest if an HMR fix landed). If a fix introduces a new type error, revert that specific edit and move the finding to `Skipped` with reason `"Fix introduced type error: <message>"`; do not roll back unrelated fixes. The Apply Phase also **fills coverage holes**: for each red-green hole the coverage finder reports on diff-introduced behavior, delegate to the `test-builder` agent to author the test (unit/UI written and run scoped to green; E2E flagged, not written inline). See "## Apply Phase".
 8. Emit the **Output Format** below.
 
 ## Finders
@@ -58,6 +58,7 @@ The driver spawns all finders as **read-only** `Agent` subagents **in a single m
 |---|---|---|---|
 | Correctness / Performance / Maintainability / Best-Practices+Conventions | `general-purpose` (seed with the matching Review Criteria slice, incl. the "no agent-specific code outside `adapters/`" rule, `any`, shorthand, external-parser fixture) | ALWAYS (one finder per dimension) | - |
 | Cross-file integration (signatures only) | `general-purpose` (special prompt below) | ALWAYS when `changedFiles > 1` | - |
+| Test coverage (red-green) | `general-purpose` (seed with the red-green coverage criteria below) | ALWAYS when the diff changes behavioral source under `src/` (self-skips docs-only / test-only / pure-styling diffs) | - |
 | IPC consistency | `ipc-auditor` | GATED | `ipc-channels.ts`, `types.ts`, `preload.ts`, `src/main/ipc/handlers/**`, `tests/ui/mock-electron-api.js`, `src/renderer/stores/*-store.ts` |
 | HMR parity | `hmr-parity` | GATED | `src/renderer/stores/**`, `src/renderer/utils/**`, `src/renderer/App.tsx`, or any hunk with `<DndContext`/`import.meta.hot`/a new top-level renderer `let` |
 | Cross-platform | `platform-guard` | GATED | `src/main/pty/**`, `src/main/agent/**`, `src/main/git/**`, `shell-resolver.ts`, `command-builder.ts`, `worktree-manager.ts`, `paths.ts`, `useTerminal.ts`, or any hunk using `path.join`/`fs.rmSync`/`child_process`/an em-dash |
@@ -77,6 +78,12 @@ The driver spawns all finders as **read-only** `Agent` subagents **in a single m
 It answers questions the per-file finders structurally cannot: a new IPC channel constant with no handler/preload/mock layer touched (7-layer drift); `Task` gained a required field but no migration changed; an export's signature changed but a caller in another changed file still passes the old shape. Input is O(signatures) - a few hundred tokens regardless of diff size - so this pass is roughly constant cost and does not reintroduce long-context degradation.
 
 **Removed / renamed surface (correctness + integration finders).** When the diff **deletes or renames** an exported symbol, a string constant, a wire-format token, an enum member, or a config key, a repo-wide search is the only way to catch survivors: the type checker cannot see string-keyed contracts, references in non-typechecked `.js`, or test files that reconstruct the old form as string literals. So for each removed/renamed identifier in the signature delta, the correctness and integration finders must `Grep` the **whole repo (including `tests/`, `docs/`, and `.js`)** and flag any surviving reference outside the diff as a finding. (This class produced the only blocking findings in a recent review - two test files outside the diff still emitted a removed directive format that `tsc` happily passed.)
+
+**Test coverage - the red-green pass.** A dedicated coverage finder runs in the same parallel fan-out whenever the diff changes behavioral source under `src/` (it self-skips docs-only, test-only, and pure-styling diffs). It is **read-only** like every other finder; the tests it identifies are written in the Apply Phase by the `test-builder` agent (see "## Apply Phase"). Its single falsifiable question, asked per behaviorally-significant change in the diff:
+
+> Is there a test that would **fail if this change were reverted**?
+
+If not, it reports a **coverage hole**: the `location`, the specific behavior left unverified, why the existing tests miss it (commonly: the line is executed but its effect is never asserted - the exact gap that let an activity-engine seed ship untested), and a **suggested tier** (unit / UI / E2E) as a hint only. It does NOT re-derive the tier rules or write anything: the authoritative tier classification and the authoring belong to `test-builder` in the Apply Phase, so there is one source of truth for tiering. Scope holes to behavior the diff **introduced or changed** - pre-existing untested code is a separate `/test write` task. Pure refactors with no behavior change, styling, and docs produce no holes.
 
 If a finder errors or returns nothing usable, the review proceeds on the surviving dimensions; note any dropped dimension in the Summary.
 
@@ -184,7 +191,7 @@ Local, mechanical, single-file or tightly-scoped edits:
 ### What gets skipped (with reason)
 
 - **Architectural refactors** spanning multiple modules or changing public APIs
-- **Missing test coverage** -> reason: `"Missing coverage; run /test write to add"`
+- **Missing test coverage on pre-existing code the diff did not touch** -> reason: `"Outside diff scope; run /test write to add"`. Coverage holes on behavior **this diff introduced** are NOT skipped - they are auto-written via `test-builder` (see "Auto-adding missing tests" below).
 - **Deletion of code the human just added** -> ask first
 - **Conflicting findings** -> reason: `"Conflicts with finding #N; pick one and re-run"`
 - **Ambiguous renames at >5 call sites** -> reason: `"Ambiguous rename; suggest manual review"`
@@ -194,6 +201,18 @@ Local, mechanical, single-file or tightly-scoped edits:
 - **Any fix that introduces a new type error** (auto-reverted by the re-typecheck step)
 
 For every skip, the report includes: finding number, `file:line`, reason, and a concrete next step (run `/test write`, manual review, defer to follow-up task, etc.).
+
+### Auto-adding missing tests (coverage holes)
+
+When the coverage finder reports a red-green hole on behavior **this diff** introduced, the Apply Phase fills it. This is **advisory, never a hard gate**: it writes what it safely can and flags the rest; the board human still drives the column move, and `/pull-request` remains the hard CI gate behind it.
+
+1. **Delegate to `test-builder`** (the `Agent` tool, `subagent_type: "test-builder"`) - one call per hole, or one batched call for several holes in the same area. Pass the hole's `location`, the behavior to pin, and the red-green rationale. `test-builder` owns the authoritative tier choice and the Windows/CI flake discipline, so do not pre-bake the tier - hand it the behavior and let it classify.
+2. **Unit and UI tiers are written inline.** `test-builder` authors the test and runs ONLY that new file scoped (`npx vitest run <file>` or `npx playwright test <spec>`) to confirm green. Never run the full suite - that is `/pull-request`'s job on CI.
+3. **E2E holes are flagged, not written inline** (a real PTY/app run is slow and flake-prone in this pass). Report them under Skipped with `"E2E coverage hole; add via /test write"`.
+4. **Red-green standard.** The test must assert the post-fix behavior such that reverting the change fails it. Where the change is localized, `test-builder` may briefly toggle the fix to confirm the test goes red, then restore it.
+5. If `test-builder` cannot produce a green test (ambiguous behavior, missing fixture), move the hole to Skipped with its reason. Never leave a red or `.skip` test behind.
+
+Tests land in the working tree only - never commit.
 
 ## Output Format
 
@@ -231,24 +250,33 @@ After the findings table, run the Apply Phase and then emit:
 
 Re-typecheck: PASS
 
+### Tests Added (K)
+
+| # | Test file | Tier | Behavior pinned (red-green) |
+|---|-----------|------|------------------------------|
+| 1 | tests/unit/activity-engine.test.ts | unit | seeded 'thinking' spawn is reclaimed to idle by the stale-thinking watchdog |
+
+Scoped run: PASS
+
 ### Skipped (M)
 
 | # | File:Line | Why | Next step |
 |---|-----------|-----|-----------|
 | 5 | src/main/baz.ts:88 | Architectural refactor - splits handler across 3 files | Design review |
-| 7 | src/renderer/Qux.tsx | Missing test coverage | Run `/test write` |
+| 7 | tests/e2e/Qux.spec.ts | E2E coverage hole (real PTY) - not written inline | Run `/test write` |
 
 ### Summary
 - Files reviewed: N
 - Findings: A critical, B high, C medium, D low
 - Auto-fixed: N
+- Tests added: K (plus E E2E coverage holes flagged)
 - Skipped: M
 - Verdict: **Clean** (or **Needs revision** - M skipped findings require human judgment)
 ```
 
 Edge cases the footer must handle cleanly:
 - No diff at all (committed-vs-base, uncommitted, and untracked all empty) -> short-circuit at the diff-gather step (Step 4) with `"No changes to review."`
-- Diff exists, zero findings -> `"No findings, nothing to fix."` and skip the Apply Phase
+- Diff exists, zero quality findings -> skip the fix step, but STILL run the coverage pass; if it reports holes on diff-introduced behavior, write them (Tests Added) and report. Only when there are also no coverage holes, emit `"No findings, nothing to fix."`
 - Re-typecheck FAILS -> show the error block, list which fix was reverted, mark Verdict as **Needs revision**
 - Step 2 hmr-resync vitest FAILS -> the failure output is itself a Critical finding. Include the failing assertion's message verbatim in the findings table, attempt the auto-fix in the Apply Phase (e.g. add the missing store re-sync call to `App.tsx`, add the missing `key={hmrGeneration}` to the new `<DndContext>`, add a `// hmr-safe:` directive or `dispose` block to the new module-scope state), then re-run the vitest in addition to typecheck during the Re-typecheck step. If the test still fails after the fix attempt, mark Verdict as **Needs revision**.
 

@@ -76,13 +76,42 @@ export class ActivityEngine {
 
   // ==== Lifecycle ====
 
-  initSession(sessionId: string): void {
+  /**
+   * Initialize a session's engine state and emit its first activity transition.
+   *
+   * `initialTurnActive` seeds the turn as active for a FRESH agent spawn: a
+   * just-spawned agent is already processing its initial prompt, so without this
+   * the indicator flashes idle for the boot window (until the first hook event
+   * flips `turnActive`). Resumes / command terminals / orphan recovery pass
+   * false and start idle (waiting for the user). Orphaned sessions never reach
+   * this path, so the renderer's idle default still backstops them.
+   */
+  initSession(sessionId: string, initialTurnActive = false): void {
     if (this.disposed) return;
     this.clearTimer(sessionId);
     const state = createSessionEngineState();
-    state.idleTimestamp = this.now();
+    const nowMs = this.now();
+    if (initialTurnActive) {
+      state.turnActive = true;
+      // Anchor the liveness signal so the stale-thinking watchdog measures the
+      // seeded turn from spawn, not from null.
+      state.lastSignalAt = nowMs;
+    } else {
+      // Idle seed: stamp the idle clock so the idle-timeout sweep measures from
+      // spawn. A seeded 'thinking' turn leaves idleTimestamp null, preserving
+      // the invariant that idleTimestamp is non-null iff activity is 'idle'.
+      state.idleTimestamp = nowMs;
+    }
+    const { activity, reason } = deriveActivityAndReason(state);
+    state.activity = activity;
     this.states.set(sessionId, state);
-    this.callbacks.onActivityChange(sessionId, 'idle', deriveReason(state));
+    this.callbacks.onActivityChange(sessionId, activity, reason);
+    // Arm the watchdog so a seeded 'thinking' turn that never emits a hook event
+    // is still reclaimed to idle at the stale-thinking threshold. Every other
+    // thinking-transition path schedules via commitTransition; the seed path must
+    // too, or the stale-thinking hold it anchored above is never armed (a no-op
+    // for an idle seed, where scheduleTimer returns without arming).
+    this.scheduleTimer(sessionId, state);
   }
 
   deleteSession(sessionId: string): void {

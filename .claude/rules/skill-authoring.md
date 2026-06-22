@@ -30,7 +30,10 @@ session. Choosing it (or its alternatives) wrong makes skills slow, lossy, or un
   `code-review` to its dimension auditors (`ipc-auditor`, `hmr-parity`, `platform-guard`,
   `session-debugger`, `migration-safety`) fanned out as parallel in-session subagents (the
   `Agent` tool) and synthesized in the main loop. `test` delegates to `test-builder` for coverage
-  audits and test writing in a single in-session pass.
+  audits and test writing in a single in-session pass; `code-review` likewise delegates
+  coverage-hole test-writing to `test-builder` in its Apply Phase (a read-only coverage finder in
+  the fan-out identifies the red-green holes, then `test-builder` writes them), so `test-builder`
+  stays the single source of truth for tier classification.
 - **Never route a fixing or mutating skill to `agent: Explore` or `agent: Plan`** - those
   built-in agents are read-only and skip CLAUDE.md, so they would drop our conventions
   (single-command Bash, no em-dashes, no `any`). The default general-purpose fork loads CLAUDE.md

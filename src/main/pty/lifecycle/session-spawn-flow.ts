@@ -198,7 +198,10 @@ export async function performSpawn(
     sessionId: id,
     statusOutputPath: input.statusOutputPath || null,
   });
-  context.telemetry.initSession(id, input.agentParser);
+  // Seed a fresh task spawn as thinking - it is already processing its initial
+  // prompt - so the indicator does not flash idle during boot. Resumes and
+  // transient command terminals start idle: they wait for the user.
+  context.telemetry.initSession(id, input.agentParser, !input.resuming && !input.transient);
 
   // Dev-only trace recorder: register the session directory so passive
   // PTY-chunk and status-delta recording can target the right files.

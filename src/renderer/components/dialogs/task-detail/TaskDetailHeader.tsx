@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, PanelLeft, PanelRight, PanelTop, PanelBottom, Columns2, LayoutGrid } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, Circle, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, PanelLeft, PanelRight, PanelTop, PanelBottom, Columns2, LayoutGrid } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
@@ -99,6 +99,86 @@ function WindowLayoutMenu({
   );
 }
 
+/**
+ * The centered pause: two short, thin upright bars overlaid on the ring.
+ * Drawn as solid `bg-*` bars (not the stroked lucide `Pause`, which renders
+ * ragged at this size) and sized to match the CirclePause proportions, so the
+ * bars stay crisp and the icon reads cleanly at ~20px. `colorClass` is a
+ * `bg-*` utility matching the ring (amber for idle, emerald for active).
+ */
+function PauseBars({ colorClass }: { colorClass: string }): ReactNode {
+  return (
+    <span data-testid="pause-bars" className="col-start-1 row-start-1 flex items-center gap-[2px]">
+      <span className={`w-[2px] h-[8px] rounded-full ${colorClass}`} />
+      <span className={`w-[2px] h-[8px] rounded-full ${colorClass}`} />
+    </span>
+  );
+}
+
+/**
+ * The pause/resume button glyph. The pause stays centered and visible for a
+ * running session; activity is encoded by the surrounding ring (the button
+ * itself never changes its icon on hover). Branches in evaluation order:
+ *   - toggling: a muted grey spinner (brief, sub-5s).
+ *   - active (thinking): a spinning emerald ring around the pause.
+ *   - idle/permission:   a static amber ring around the pause.
+ *   - queued: the clock.
+ *   - launching (preparing/initializing): a muted grey spinner (matching the
+ *     board card) - the agent has not started yet, so it is NOT green; it flips
+ *     to the emerald active ring once the session is running.
+ *   - suspended: the resume control.
+ */
+function PauseButtonIcon({
+  toggling,
+  isQueued,
+  isThinking,
+  isIdle,
+  isSessionActive,
+}: {
+  toggling: boolean;
+  isQueued: boolean;
+  isThinking: boolean;
+  isIdle: boolean;
+  isSessionActive: boolean;
+}): ReactNode {
+  if (toggling) return <Loader2 size={18} className="animate-spin" />;
+
+  // Active: the SAME Circle as idle (identical radius/size - lucide's Loader2 is
+  // radius 9 vs Circle's 10, which rendered ~10% smaller) but emerald, spinning,
+  // and dashed so the spin reads as a loading arc. The pause shares the grid cell
+  // (place-items-center) so it sits dead-center in the 20px ring.
+  if (isThinking) {
+    return (
+      <span className="grid place-items-center">
+        <Circle size={20} className="col-start-1 row-start-1 text-emerald-400 animate-spin [stroke-dasharray:47_16]" />
+        <PauseBars colorClass="bg-emerald-400" />
+      </span>
+    );
+  }
+
+  // Idle/permission: the same ring + pause as active, but an amber static ring
+  // (a full circle, no spin) so the two states share one visual language and
+  // differ only by color and motion.
+  if (isIdle) {
+    return (
+      <span className="grid place-items-center">
+        <Circle size={20} className="col-start-1 row-start-1 text-amber-400" />
+        <PauseBars colorClass="bg-amber-400" />
+      </span>
+    );
+  }
+
+  if (isQueued) return <Clock size={18} />;
+  // Launching (preparing/initializing): a muted grey spinner matching the board
+  // card's loading indicator. The agent has not started yet, so it is NOT green;
+  // once the session is running the engine seeds 'thinking' and this flips to the
+  // emerald active ring. Suspended -> the resume control.
+  if (isSessionActive) {
+    return <Loader2 size={18} className="animate-spin text-fg-muted" />;
+  }
+  return <CirclePlay size={18} />;
+}
+
 interface TaskDetailHeaderProps {
   task: Task;
   onClose: () => void;
@@ -107,6 +187,10 @@ interface TaskDetailHeaderProps {
   canToggle: boolean;
   isSessionActive: boolean;
   isQueued: boolean;
+  /** Running and the agent is working on its own - emerald spinner rest face. */
+  isThinking: boolean;
+  /** Running and the agent needs the user - amber envelope rest face. */
+  isIdle: boolean;
   isArchived: boolean;
   isIsolated: boolean;
   toggling: boolean;
@@ -147,6 +231,8 @@ export function TaskDetailHeader({
   canToggle,
   isSessionActive,
   isQueued,
+  isThinking,
+  isIdle,
   isArchived,
   isIsolated,
   toggling,
@@ -232,40 +318,38 @@ export function TaskDetailHeader({
         <button
           onClick={onToggle}
           disabled={toggling}
-          className={`p-1 rounded-full transition-colors flex-shrink-0 disabled:cursor-not-allowed ${
+          className={`inline-flex items-center justify-center p-1 rounded-full transition-colors flex-shrink-0 disabled:cursor-not-allowed ${
             toggling
               ? 'text-fg-muted'
               : isQueued
                 ? 'text-fg-muted hover:bg-surface-hover'
                 : isSessionActive
-                  ? 'text-green-400 hover:bg-green-400/10'
+                  ? 'text-green-400 hover:bg-surface-hover'
                   : 'text-fg-faint hover:bg-surface-hover hover:text-fg-tertiary'
           }`}
           title={toggling ? 'Working...' : isQueued ? 'Queued (click to pause)' : isSessionActive ? 'Pause session' : 'Resume session'}
         >
-          {toggling ? (
-            <Loader2 size={18} className="animate-spin" />
-          ) : isQueued ? (
-            <Clock size={18} />
-          ) : isSessionActive ? (
-            <CirclePause size={18} />
-          ) : (
-            <CirclePlay size={18} />
-          )}
+          <PauseButtonIcon
+            toggling={toggling}
+            isQueued={isQueued}
+            isThinking={isThinking}
+            isIdle={isIdle}
+            isSessionActive={isSessionActive}
+          />
         </button>
       )}
 
       {/* Display ID - clickable to copy */}
       <button
         type="button"
-        className="flex items-center gap-1 text-sm font-mono text-fg-muted hover:text-fg-secondary transition-colors flex-shrink-0"
+        className="group/copyid flex items-center gap-1 text-sm font-mono text-fg-muted hover:text-fg-secondary transition-colors flex-shrink-0"
         title={`Click to copy: ${task.display_id}`}
         data-testid="task-display-id"
         onClick={copyDisplayId}
       >
         {displayIdCopied
           ? <Check size={12} className="text-green-400" />
-          : <Copy size={12} className="text-fg-disabled" />
+          : <Copy size={12} className="text-fg-disabled group-hover/copyid:text-fg-secondary transition-colors" />
         }
         #{task.display_id}
       </button>

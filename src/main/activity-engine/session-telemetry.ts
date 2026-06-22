@@ -408,14 +408,16 @@ export class SessionTelemetry {
   // ==== Lifecycle ====
 
   /**
-   * Initialize tracking state for a new session. Sets default activity
-   * to 'idle' and resets all per-session state.
+   * Initialize tracking state for a new session and reset all per-session state.
+   * `initialTurnActive` seeds the activity as thinking for a fresh agent spawn
+   * (already processing its initial prompt); resumes / command terminals / orphan
+   * recovery pass false and start idle.
    */
-  initSession(sessionId: string, agentParser?: AgentParser): void {
+  initSession(sessionId: string, agentParser?: AgentParser, initialTurnActive = false): void {
     if (agentParser) {
       this.sessionParsers.set(sessionId, agentParser);
     }
-    this.activityEngine.initSession(sessionId);
+    this.activityEngine.initSession(sessionId, initialTurnActive);
     this.ptyTracker.clearSession(sessionId);
     this.notifySessionSpawned(sessionId);
   }

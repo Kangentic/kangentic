@@ -499,6 +499,51 @@ describe('resumeSuspendedSessions: spawn carries correct isolated_swimlane_id', 
     const spawnArg = (sessionManager.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(spawnArg.isolatedSwimlaneId).toBe('lane-review');
   });
+
+  it('recovery spawn passes resuming: true so the activity engine seeds idle, not thinking', async () => {
+    // The activity-indicator feature seeds a FRESH task spawn as 'thinking'
+    // (performSpawn: !input.resuming && !input.transient). A recovered session
+    // carries no prompt (prepare-spawn: prompt undefined), so it must come up
+    // idle - the recovery spawn input sets resuming: true to suppress the
+    // thinking seed. Without it, every restart shows a false green "active"
+    // indicator on recovered tasks.
+    const mainRecord = makeRecord({
+      id: 'record-main',
+      isolated_swimlane_id: null,
+      status: 'suspended',
+      agent_session_id: 'agent-uuid-main',
+    });
+
+    sessionRepoGetResumable.mockReturnValue([mainRecord]);
+    taskRepoList.mockReturnValue([makeTask({ swimlane_id: 'lane-main' })]);
+
+    vi.mocked(prepareAgentSpawn).mockResolvedValue({
+      ok: true,
+      data: {
+        adapter: { name: 'claude', sessionType: 'claude_agent', getExitSequence: () => ['\x03'] } as never,
+        agent: 'claude',
+        command: 'claude --resume agent-uuid-main',
+        cwd: '/project/cwd',
+        sessionRecordId: 'new-record-id',
+        agentSessionId: 'agent-uuid-main',
+        permissionMode: 'default',
+        statusOutputPath: '/project/.kangentic/sessions/new-record-id/status.json',
+        eventsOutputPath: '/project/.kangentic/sessions/new-record-id/events.jsonl',
+        extraEnv: null,
+      },
+    });
+
+    const sessionManager = makeSessionManager();
+    const configManager = makeConfigManager(true);
+
+    // Act
+    await resumeSuspendedSessions('proj-1', '/project', sessionManager as never, configManager as never);
+
+    // Assert: the recovery spawn input carries resuming: true (seeds idle).
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+    const spawnArg = (sessionManager.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(spawnArg.resuming).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

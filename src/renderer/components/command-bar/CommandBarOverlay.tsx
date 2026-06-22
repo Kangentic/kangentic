@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CircleStop, FolderOpen, GitCompare, Loader2, Maximize2, Minimize2, SquareChevronRight, X, Zap } from 'lucide-react';
 import { BranchPicker } from '../dialogs/BranchPicker';
-import { ShimmerOverlay } from '../ShimmerOverlay';
+import { LaunchOverlay } from '../LaunchOverlay';
 import { Pill } from '../Pill';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopover';
@@ -454,7 +454,7 @@ export function CommandBarOverlay({ onClose }: CommandBarOverlayProps) {
           <div className={`relative flex ${isMaximized ? 'flex-1' : 'h-[60vh]'}`}>
             {/* Terminal */}
             <div className={`${changesOpen ? 'w-1/2' : 'flex-1'} relative`} style={{ backgroundColor: '#18181b' }}>
-              {!terminalReady && <ShimmerOverlay label="Starting Command Terminal..." />}
+              {!terminalReady && <LaunchOverlay label="Starting Command Terminal..." />}
               <FileDropOverlay {...fileDrop} />
               <div
                 ref={terminalRef}

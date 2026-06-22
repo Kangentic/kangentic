@@ -4,7 +4,7 @@ import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from './FileDropOverlay';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
-import { ShimmerOverlay } from '../ShimmerOverlay';
+import { LaunchOverlay } from '../LaunchOverlay';
 import { getIsHmrReload } from '../../utils/hmr-flag';
 import { useTerminalOverlay } from '../../utils/task-progress';
 
@@ -262,7 +262,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
       {/* Placeholder overlay while Claude CLI is loading (before first usage report).
           Stays visible until scrollback replay + clear are both done.
           z-10 ensures it paints above xterm's WebGL canvas layers. */}
-      {!terminalReady && <ShimmerOverlay label={overlayLabel} />}
+      {!terminalReady && <LaunchOverlay label={overlayLabel} />}
     </div>
   );
 }
