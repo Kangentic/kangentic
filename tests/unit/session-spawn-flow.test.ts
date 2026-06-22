@@ -433,3 +433,65 @@ describe('performSpawn - caller-owned session ID wiring', () => {
     expect(warnMessage).toContain(input.id!.slice(0, 8));
   });
 });
+
+describe('performSpawn - activity engine initialTurnActive seed (thinking vs idle)', () => {
+  // The activity-indicator feature added a third argument to
+  // telemetry.initSession: `initialTurnActive`. performSpawn derives it as
+  // `!input.resuming && !input.transient`. This suite pins that derivation so
+  // a future change to the expression (e.g. hardcoding true/false or dropping
+  // the transient guard) is caught immediately.
+  //
+  // Red-green: change `!input.resuming && !input.transient` in
+  // session-spawn-flow.ts to `false` and the fresh-spawn test goes red
+  // (initSession receives false instead of true). Change it to `true` and the
+  // resuming / transient tests go red (initSession receives true instead of
+  // false).
+  //
+  // Tier: Unit - pure mock collaborators, no PTY, no OS, no IPC.
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('fresh spawn (not resuming, not transient) passes initialTurnActive=true to telemetry', async () => {
+    // A brand-new task spawn is already processing its initial prompt, so the
+    // activity engine must seed 'thinking' immediately - no idle flash during boot.
+    const context = makeContext();
+    const input = makeInput({ resuming: false, transient: false });
+
+    await performSpawn(input, context);
+
+    expect(context.telemetry.initSession).toHaveBeenCalledOnce();
+    const initArgs = (context.telemetry.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
+    // initSession(sessionId, agentParser, initialTurnActive)
+    // Third argument must be true for a fresh task spawn.
+    expect(initArgs[2]).toBe(true);
+  });
+
+  it('resuming spawn passes initialTurnActive=false to telemetry (seeds idle)', async () => {
+    // A resumed session comes up waiting for the user at a quiet prompt - it is
+    // NOT processing a new prompt. The engine must seed 'idle', not 'thinking'.
+    const context = makeContext();
+    const input = makeInput({ resuming: true, transient: false });
+
+    await performSpawn(input, context);
+
+    expect(context.telemetry.initSession).toHaveBeenCalledOnce();
+    const initArgs = (context.telemetry.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(initArgs[2]).toBe(false);
+  });
+
+  it('transient command-terminal spawn passes initialTurnActive=false to telemetry (seeds idle)', async () => {
+    // A transient (command-terminal) spawn awaits the user's first command, so it
+    // starts idle too. The expression !resuming && !transient must cover both
+    // the resuming and the transient flag independently.
+    const context = makeContext();
+    const input = makeInput({ resuming: false, transient: true });
+
+    await performSpawn(input, context);
+
+    expect(context.telemetry.initSession).toHaveBeenCalledOnce();
+    const initArgs = (context.telemetry.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(initArgs[2]).toBe(false);
+  });
+});
