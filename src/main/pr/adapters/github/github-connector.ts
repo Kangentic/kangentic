@@ -196,9 +196,19 @@ export const gitHubPRConnector: PRConnector = {
   async resolveByCommit(repoCwd: string, commitSha: string, branchHint?: string): Promise<ResolvedPR | null> {
     return viaGh(async () => {
       const items = await ghImporter.resolvePRByCommit(repoCwd, commitSha);
-      // The commit can belong to several PRs (shared/squashed commits); the
+      // Drop any PR whose merge product IS the commit we resolved from. A fresh
+      // worktree branched from base sits on base's tip, which is the last-merged
+      // PR's merge/squash/rebase commit - that commit is shared base history, not
+      // this task's work, and `gh api commits/{sha}/pulls` would otherwise magnet
+      // the task onto a sibling's merged PR. (An open PR's `merge_commit_sha` is a
+      // synthetic test-merge that can never equal a real authored commit, so a
+      // task's own PR is never dropped here.) This backstops the linker's
+      // commits-ahead-of-base guard, which misfires when the task's base branch is
+      // wrong or unknown.
+      const candidates = items.filter((item) => item.mergeCommitOid !== commitSha);
+      // The commit can still belong to several PRs (shared/squashed commits); the
       // branch hint ties it back to this task and ambiguous matches return null.
-      const best = disambiguate(items, { branchHint });
+      const best = disambiguate(candidates, { branchHint });
       return best ? toResolvedPR(best) : null;
     });
   },

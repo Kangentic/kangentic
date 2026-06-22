@@ -223,7 +223,7 @@ describe('GitHubImporter.resolvePRByCommit (REST normalization)', () => {
   it('queries the commits/{sha}/pulls endpoint and normalizes REST -> GhPrListItem', async () => {
     const sameRepo = { full_name: 'owner/repo' };
     state.ghStdout = JSON.stringify([
-      { number: 1, html_url: 'u-merged', state: 'closed', draft: false, merged_at: '2026-02-01T00:00:00Z', head: { ref: 'feat', repo: sameRepo }, base: { ref: 'main', repo: sameRepo }, updated_at: '2026-02-01T00:00:00Z' },
+      { number: 1, html_url: 'u-merged', state: 'closed', draft: false, merged_at: '2026-02-01T00:00:00Z', merge_commit_sha: 'merge-sha-1', head: { ref: 'feat', repo: sameRepo }, base: { ref: 'main', repo: sameRepo }, updated_at: '2026-02-01T00:00:00Z' },
       { number: 2, html_url: 'u-open', state: 'open', draft: false, merged_at: null, head: { ref: 'feat', repo: sameRepo }, base: { ref: 'main', repo: sameRepo }, updated_at: '2026-01-01T00:00:00Z' },
       { number: 3, html_url: 'u-closed', state: 'closed', draft: false, merged_at: null, head: { ref: 'feat', repo: sameRepo }, base: { ref: 'main', repo: sameRepo }, updated_at: '2026-01-01T00:00:00Z' },
       { number: 4, html_url: 'u-draft', state: 'open', draft: true, merged_at: null, head: { ref: 'feat', repo: sameRepo }, base: { ref: 'main', repo: sameRepo }, updated_at: '2026-01-01T00:00:00Z' },
@@ -240,6 +240,8 @@ describe('GitHubImporter.resolvePRByCommit (REST normalization)', () => {
     ]);
     expect(result[0].url).toBe('u-merged');
     expect(result[0].headRefName).toBe('feat');
+    expect(result[0].mergeCommitOid).toBe('merge-sha-1');     // merge_commit_sha -> mergeCommitOid
+    expect(result[1].mergeCommitOid).toBeUndefined();         // absent in raw -> undefined
     expect(result.every((item) => item.isCrossRepository === false)).toBe(true);
   });
 
@@ -337,6 +339,42 @@ describe('connector resolveByNumber / resolveByCommit + error translation', () =
     // PR by commit) is prevented upstream by the linker's commits-ahead-of-base guard, which never
     // reaches this resolver for a branchless worktree - not by rejecting a single non-matching PR here.
     expect((await gitHubPRConnector.resolveByCommit!('/r', 'sha', 'stale-slug'))?.number).toBe(5);
+  });
+
+  it('resolveByCommit drops a candidate whose merge commit IS the resolved-from commit (base-tip magnet)', async () => {
+    // The #77 magnet: a fresh worktree branched from develop sits on develop's tip,
+    // which is the merge commit of the last-merged PR (716). resolveByCommit must not
+    // link that sibling PR even though it is the only candidate, because the commit is
+    // shared base history, not this task's own work.
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
+      pr({ number: 716, headRefName: 'chore/715-claude-rules-and-hooks', mergeCommitOid: '5d503751' }),
+    ]);
+    expect(await gitHubPRConnector.resolveByCommit!('/r', '5d503751', 'ci-release-tickets-s-a66f2e5c')).toBeNull();
+  });
+
+  it('resolveByCommit keeps a candidate whose merge commit differs from the resolved-from commit (own work)', async () => {
+    // A task's authored HEAD is never its own PR's merge product, so a real
+    // commit-based discovery still resolves.
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
+      pr({ number: 500, headRefName: 'feat', mergeCommitOid: 'other-sha' }),
+    ]);
+    expect((await gitHubPRConnector.resolveByCommit!('/r', 'head-sha', 'feat'))?.number).toBe(500);
+  });
+
+  it('resolveByCommit - multi-candidate: drops base-tip magnet that would win by recency, keeps the real PR', async () => {
+    // Multi-candidate, no branchHint - the "base branch wrong or unknown" path.
+    // Candidate #716 is the base-tip magnet: its mergeCommitOid equals the commit
+    // being resolved from AND it is the more-recently-updated MERGED PR, so without
+    // the filter disambiguate would return it by recency. The filter drops it and
+    // #500 (the task's own PR, older updatedAt) survives.
+    const resolvedFromSha = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
+    const ownPrMergeCommitSha = '0000111122223333444455556666777788889999';
+    vi.spyOn(GitHubImporter.prototype, 'resolvePRByCommit').mockResolvedValue([
+      pr({ number: 716, state: 'MERGED', updatedAt: '2026-05-01T00:00:00Z', headRefName: 'chore/last-merged', mergeCommitOid: resolvedFromSha }),
+      pr({ number: 500, state: 'MERGED', updatedAt: '2026-01-01T00:00:00Z', headRefName: 'feat', mergeCommitOid: ownPrMergeCommitSha }),
+    ]);
+    const result = await gitHubPRConnector.resolveByCommit!('/r', resolvedFromSha);
+    expect(result?.number).toBe(500);
   });
 
   it('registry resolvePRByNumber / resolvePRByCommit delegate to the connector', async () => {

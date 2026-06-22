@@ -64,6 +64,14 @@ export interface GhPrListItem {
   baseRefName: string;
   updatedAt: string;
   isCrossRepository?: boolean;
+  /**
+   * The commit the PR landed on its base branch: the merge commit (merge), the
+   * squashed commit (squash), or the new base tip (rebase). Used by commit-based
+   * resolution to reject a PR whose merge product IS the commit being resolved
+   * from - that commit is shared base history, never the task's own work.
+   * Populated from the REST `merge_commit_sha` on the commit-pulls path only.
+   */
+  mergeCommitOid?: string;
 }
 
 /** JSON field set requested from `gh pr list` / `gh pr view`. */
@@ -132,6 +140,7 @@ interface GhCommitPullRaw {
   state: string;          // 'open' | 'closed' (REST does not surface 'merged' here)
   draft?: boolean;
   merged_at?: string | null;
+  merge_commit_sha?: string | null;
   head?: { ref?: string; repo?: { full_name?: string } | null };
   base?: { ref?: string; repo?: { full_name?: string } | null };
   updated_at?: string;
@@ -154,6 +163,7 @@ function normalizeCommitPull(raw: GhCommitPullRaw): GhPrListItem {
     baseRefName: raw.base?.ref ?? '',
     updatedAt: raw.updated_at ?? '',
     isCrossRepository,
+    mergeCommitOid: raw.merge_commit_sha ?? undefined,
   };
 }
 
