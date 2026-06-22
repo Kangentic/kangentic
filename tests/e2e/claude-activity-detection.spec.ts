@@ -353,21 +353,22 @@ test.describe('Claude Agent -- Activity State via IPC', () => {
     await ensureBoard();
   });
 
-  test('new session defaults to idle state', async () => {
+  test('a fresh session seeds thinking state', async () => {
     const title = `Default State ${runId}`;
-    await createTask(page, title, 'Check default idle state');
+    await createTask(page, title, 'Check fresh-spawn thinking seed');
 
     await dragTaskToColumn(title, 'Code Review');
     await waitForTerminalOutput('MOCK_CLAUDE_SESSION:');
 
-    // Check activity cache has 'idle' for the session (safe default -
-    // 'thinking' is only set when hooks explicitly fire)
+    // A fresh spawn is already processing its initial prompt, so the activity
+    // engine seeds 'thinking' (resumes and recovery spawns start idle instead).
+    // The mock CLI fires no idle hook, so the seeded state persists here.
     const activity = await page.evaluate(async () => {
       return window.electronAPI.sessions.getActivity();
     });
 
     const states = Object.values(activity) as string[];
-    expect(states).toContain('idle');
+    expect(states).toContain('thinking');
   });
 
   test('writing events JSONL transitions state to thinking', async () => {
