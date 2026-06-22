@@ -273,10 +273,13 @@ export function TaskDetailHeader({
   const browserCombo = useFormattedCombo('taskDetail.toggleBrowser');
   const changesCombo = useFormattedCombo('taskDetail.toggleChanges');
 
-  // Quick-access pills, highest priority collapses LAST. The user-chosen order is
-  // Browser -> Changes -> Project -> Commands (Browser drops first). Header
-  // shortcuts stay longest (the user put them in the header deliberately) and, if
-  // one does collapse and is not already a menu shortcut, it folds into the kebab.
+  // Quick-access pills, highest priority collapses LAST. The title wins the space
+  // fight first (useHeaderPillOverflow reserves its full width); these compete for
+  // whatever is left. Among the built-in defaults the order is Browser -> PR ->
+  // Changes -> Project -> Commands (Browser drops first). Custom header shortcuts
+  // rank LOWEST (priority 10), so they fold BEFORE any built-in default - an
+  // unbounded number of shortcuts can never bury the defaults. A folded header
+  // shortcut that is not already a menu shortcut folds into the kebab.
   const pillSpecs = useMemo<HeaderPillSpec[]>(() => {
     const specs: HeaderPillSpec[] = [];
     if (!isEditing) specs.push({ id: 'commands', priority: 50 });
@@ -285,7 +288,7 @@ export function TaskDetailHeader({
     if (task.pr_url) specs.push({ id: 'pr', priority: 25 });
     if (canShowBrowser) specs.push({ id: 'browser', priority: 20 });
     for (const action of headerShortcuts) {
-      specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 60 });
+      specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
     }
     return specs;
   }, [isEditing, task.worktree_path, task.pr_url, projectPath, canShowChanges, canShowBrowser, headerShortcuts]);
@@ -367,7 +370,7 @@ export function TaskDetailHeader({
         className="text-base font-semibold text-fg truncate flex-1 min-w-[64px] flex items-center gap-2"
         title={task.title}
       >
-        <span ref={titleSpanRef} className="truncate">{task.title}</span>
+        <span ref={titleSpanRef} className="truncate" data-testid="task-title-text">{task.title}</span>
         {isArchived && (
           <span
             className="flex-shrink-0 inline-flex items-center gap-1 text-[11px] text-fg-disabled bg-surface-hover/60 border border-edge/40 rounded px-1.5 py-0.5"
