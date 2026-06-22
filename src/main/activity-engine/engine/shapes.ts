@@ -75,6 +75,33 @@ export const DEFAULT_BG_SHELL_ONLY_GRACE_MS = 30_000;
 export const DEFAULT_STALE_THINKING_TIMEOUT_MS = 180_000;
 
 /**
+ * Shortened threshold for the `stuck-subagent` and `stuck-pending-tools` holds
+ * while an `idle_hint` ("Claude is waiting for your input") is pending. When the
+ * agent has reported it is back at the top-level prompt but a counter is still
+ * stuck > 0 (the aborted/errored-turn signature: a named `subagent_stop` or
+ * `tool_end` was lost), those holds reclaim on THIS budget instead of the 5-min
+ * `bgShellEscapeHatchMs` cap.
+ *
+ * Defaulted to the SAME validated budget as the stale-thinking watchdog
+ * (`DEFAULT_STALE_THINKING_TIMEOUT_MS`, 180s), not a smaller invented number:
+ * the idle_hint is what justifies dropping the 5-min cap, but it is NOT proof
+ * the turn ended (the notification can fire mid-subagent - task #237 /
+ * session-018, confirmed by code.claude.com/docs/en/hooks), so we recover on the
+ * same "this turn has been silent long enough to be stale" budget the engine
+ * already trusts for a lone `turnActive`, rather than going below any validated
+ * threshold. The anchor is unchanged (`signal-or-pty-output`): a genuinely-live
+ * subagent streams PTY output (task #246 streamed continuously for 211s), which
+ * defers this timer; only a truly silent (aborted) turn lets it fire. Override
+ * for tests. This is the EMPIRICALLY-VALIDATED recovery for the captured #277
+ * incident, where the turn ended with a normal `Stop` (swallowed by the stuck
+ * counter) plus an `idle_hint` - NO `StopFailure` was emitted. The structured
+ * `turn_failed` path is the complement for the distinct hard-abort mode (an API
+ * error that ends the turn via `StopFailure` INSTEAD of `Stop`), which is not
+ * what #277 captured.
+ */
+export const DEFAULT_STALE_AFTER_IDLE_HINT_MS = 180_000;
+
+/**
  * Default idle stability window. After computing a Stop-driven idle
  * (or a watcher-driven natural-exit idle), wait this long before
  * emitting. If a thinking signal arrives during the window, suppress
@@ -127,6 +154,8 @@ export interface ActivityEngineOptions {
   bgShellOnlyGraceMs?: number;
   /** Stale-thinking watchdog when only turnActive is holding thinking. */
   staleThinkingTimeoutMs?: number;
+  /** Shortened stuck-subagent / stuck-pending-tools grace while an idle_hint is pending. */
+  staleAfterIdleHintMs?: number;
   /** Stability window before emitting Stop-driven idle. Set to 0 to disable. */
   idleStabilityWindowMs?: number;
   /** Time source - injectable for tests. */
@@ -320,6 +349,21 @@ export interface SessionEngineState {
    */
   bgShellHoldSince: number | null;
   /**
+   * True between an `idle_hint` ("waiting for your input") notification and the
+   * next genuine turn-initiating event. While set, the `stuck-subagent` and
+   * `stuck-pending-tools` watchdog holds use the `staleAfterIdleHintMs` budget
+   * (the validated stale-thinking 180s) instead of the 5-min
+   * `bgShellEscapeHatchMs` cap, so a counter left stuck by an aborted/errored
+   * turn is reclaimed on the established stale budget instead of the 5-min cap.
+   *
+   * NOT proof the turn ended: Claude's idle notification can fire while a
+   * subagent is genuinely live (task #237), so this only SHORTENS the watchdog -
+   * the `signal-or-pty-output` anchor still defers it while live work streams
+   * output. Set on `IdleHint`; cleared by any turn-initiating event, the
+   * Interrupted/TurnFailed bypass, and force-thinking / force-idle.
+   */
+  idleHintPending: boolean;
+  /**
    * Ring buffer of recent transitions for the debug overlay. Mutated
    * only by `recordTransition`; external observers via `getState` /
    * `forEachState` see this through `Readonly<SessionEngineState>`,
@@ -385,8 +429,9 @@ export interface TransitionRecord {
  * this method is dev-tools-only.
  *
  * Keep the scalar fields in sync with the parallel `ActivityStatsSnapshot`
- * in `src/shared/types.ts` (the IPC payload copy). There is no mechanical
- * parity check yet, so a one-sided field add will not fail typecheck.
+ * in `src/shared/types.ts` (the IPC payload copy).
+ * `tests/unit/activity-stats-snapshot-parity.test.ts` fails if the two copies'
+ * top-level fields drift (typecheck alone does not catch a one-sided field add).
  */
 export interface ActivityStatsSnapshot {
   sessionId: string;
@@ -409,6 +454,10 @@ export interface ActivityStatsSnapshot {
   /** ms since the most recent PTY output chunk, or null when no chunk yet. */
   msSincePtyOutput: number | null;
   pendingIdleArmed: boolean;
+  /** True while an `idle_hint` is pending (see `SessionEngineState.idleHintPending`):
+   *  the stuck-subagent / stuck-pending-tools watchdogs are on their short grace,
+   *  not the 5-min cap. Lets the debug overlay explain a fast watchdog fire. */
+  idleHintPending: boolean;
   recentTransitions: ReadonlyArray<TransitionRecord>;
   compensationCounters: CompensationCounters;
   recentPtyChunks: ReadonlyArray<PtyChunkTick>;
@@ -495,4 +544,8 @@ export const TURN_INITIATING_EVENTS = new Set<EventType>([
 export const TURN_ENDING_EVENTS = new Set<EventType>([
   EventType.Idle,
   EventType.Interrupted,
+  // A service/API error aborted the turn (Claude's StopFailure hook). Like
+  // Interrupted, this clears turnActive regardless of subagentDepth - the whole
+  // turn died - and routes through the Interrupted bypass (see processEvent).
+  EventType.TurnFailed,
 ]);

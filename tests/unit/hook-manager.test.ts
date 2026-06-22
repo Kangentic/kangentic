@@ -32,7 +32,7 @@ afterEach(() => {
 
 describe('hook-manager', () => {
   describe('buildHooks', () => {
-    it('produces correct hook entries for all 17 event types', () => {
+    it('produces correct hook entries for all 18 event types', () => {
       const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {});
 
       // PreToolUse: tool_start only (blank matcher)
@@ -86,6 +86,12 @@ describe('hook-manager', () => {
       expect(hooks.Stop).toHaveLength(1);
       expect(hooks.Stop[0].hooks[0].command).toContain('idle');
 
+      // StopFailure: turn_failed (fires INSTEAD of Stop on an API-error abort),
+      // carrying the error type so the activity engine can reset stale counters.
+      expect(hooks.StopFailure).toHaveLength(1);
+      expect(hooks.StopFailure[0].hooks[0].command).toContain('turn_failed');
+      expect(hooks.StopFailure[0].hooks[0].command).toContain(extractDetail(['error', 'error_details']));
+
       // PermissionRequest: idle
       expect(hooks.PermissionRequest).toHaveLength(1);
       expect(hooks.PermissionRequest[0].hooks[0].command).toContain('idle');
@@ -138,8 +144,8 @@ describe('hook-manager', () => {
       expect(hooks.WorktreeRemove).toHaveLength(1);
       expect(hooks.WorktreeRemove[0].hooks[0].command).toContain('worktree_remove');
 
-      // Total: 17 hook event keys
-      expect(Object.keys(hooks)).toHaveLength(17);
+      // Total: 18 hook event keys
+      expect(Object.keys(hooks)).toHaveLength(18);
     });
 
     it('preserves existing user hooks', () => {

@@ -402,6 +402,9 @@ export const EVENT_RENDERERS: Partial<Record<EventType, EventRenderer>> = {
   [EventType.Interrupted]: (common, event) => (
     <BadgeLine {...common} badge={`${event.tool || 'Tool'} interrupted`} detail={event.detail} variant="warn" />
   ),
+  [EventType.TurnFailed]: (common, event) => (
+    <BadgeLine {...common} badge="Service error" detail={event.detail} variant="warn" />
+  ),
   [EventType.Idle]: (common, event) => (
     <DimLine {...common} text={event.detail === IdleReason.Timeout ? 'Idle (no activity detected)' : 'Idle (waiting for input)'} />
   ),

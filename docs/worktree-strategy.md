@@ -107,9 +107,9 @@ All in `src/main/agent/`:
 | Script | Output File | Hook Points | Data |
 |--------|-------------|-------------|------|
 | `status-bridge.js` | `status.json` | statusLine | Token usage, cost, model, context % |
-| `event-bridge.js` | `events.jsonl` | 17 hook event types (see below) | Tool calls, prompts, interrupts, activity state (JSONL) |
+| `event-bridge.js` | `events.jsonl` | 18 hook event types (see below) | Tool calls, prompts, interrupts, activity state (JSONL) |
 
-The event bridge injects into all 17 Claude Code hook events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `PermissionRequest`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `Notification`, `PreCompact`, `TeammateIdle`, `TaskCompleted`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`. See [Agent Integration](agent-integration.md#hook-injection) for the full mapping.
+The event bridge injects into all 18 Claude Code hook events: `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`, `Stop`, `StopFailure`, `PermissionRequest`, `SessionStart`, `SessionEnd`, `SubagentStart`, `SubagentStop`, `Notification`, `PreCompact`, `TeammateIdle`, `TaskCompleted`, `ConfigChange`, `WorktreeCreate`, `WorktreeRemove`. See [Agent Integration](agent-integration.md#hook-injection) for the full mapping.
 
 Each bridge reads JSON from stdin (piped by Claude Code), writes to its output file, and exits. All writes are try/catch wrapped for non-fatal failures.
 

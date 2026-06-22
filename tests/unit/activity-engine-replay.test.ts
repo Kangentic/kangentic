@@ -812,6 +812,44 @@ describe('ActivityEngine replay tests', () => {
     });
   });
 
+  describe('session-019-service-error-stuck-subagent', () => {
+    // Condensed from the real task #277 stream (session 27582968): a
+    // `test-builder` subagent's NAMED terminal stop is lost (only ignored empty
+    // inner stops arrive), so subagentDepth is stuck at 1 across a later turn;
+    // two Task-tool calls abort before spawning a subagent; the parent Stop
+    // (gated by depth > 0) and a top-level idle_hint are both swallowed. The
+    // turn was aborted by a service error, so Claude fires StopFailure, which
+    // the adapter maps to `turn_failed` - the structured root-cause signal that
+    // (with the fix) clears the stale counters and idles at once.
+    const FIXTURE = 'session-019-service-error-stuck-subagent.jsonl';
+
+    it('idles via the structured turn_failed signal, resetting the stuck subagentDepth', () => {
+      const result = replay(loadFixture(FIXTURE));
+      expect(result.finalActivity).toBe('idle');
+      expect(result.finalState.subagentDepth).toBe(0);
+      expect(result.finalState.pendingToolCount).toBe(0);
+      expect(result.finalState.turnActive).toBe(false);
+      // The last thinking->idle was driven by the service-error signal, with the
+      // error type preserved for outage diagnosis (distinct from user-Esc).
+      expect(result.lastThinkingToIdleTrigger).toBe('event:turn_failed:overloaded');
+      // The three empty inner subagent stops were correctly ignored (task #237).
+      expect(result.ignoredInnerSubagentStopCompensations).toBe(3);
+      // No watchdog was needed: the structured signal recovered it directly.
+      expect(result.staleThinkingCompensations).toBe(0);
+    });
+
+    it('without the turn_failed signal the stream ends stuck thinking (the bug it fixes)', () => {
+      // Drop the final turn_failed: this is exactly the captured #277 shape, and
+      // it reproduces the defect - subagentDepth stuck at 1 holds the session
+      // thinking with no event-driven recovery (only the 5-min watchdog, which
+      // replay does not advance, would eventually fire).
+      const events = loadFixture(FIXTURE).filter((e) => e.type !== EventType.TurnFailed);
+      const result = replay(events);
+      expect(result.finalActivity).toBe('thinking');
+      expect(result.finalState.subagentDepth).toBe(1);
+    });
+  });
+
   describe('cross-fixture invariants', () => {
     it('all fixtures produce a deterministic outcome (no flakiness)', () => {
       const fixtures = [
@@ -830,6 +868,7 @@ describe('ActivityEngine replay tests', () => {
         'session-014-named-shell-output-liveness.jsonl',
         'session-017-false-idle-during-live-subagent.jsonl',
         'session-018-parallel-subagent-false-idle.jsonl',
+        'session-019-service-error-stuck-subagent.jsonl',
       ];
       for (const name of fixtures) {
         const events = loadFixture(name);

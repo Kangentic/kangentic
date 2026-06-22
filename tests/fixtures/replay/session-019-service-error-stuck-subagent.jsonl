@@ -1,0 +1,14 @@
+{"ts":1782087858000,"type":"session_start"}
+{"ts":1782087858500,"type":"prompt"}
+{"ts":1782087859000,"type":"tool_start","tool":"Agent","detail":"Write red-green tests"}
+{"ts":1782087860617,"type":"subagent_start","detail":"test-builder"}
+{"ts":1782087860700,"type":"tool_end","tool":"Agent"}
+{"ts":1782087879868,"type":"subagent_stop","detail":""}
+{"ts":1782087894227,"type":"subagent_stop","detail":""}
+{"ts":1782088217714,"type":"prompt"}
+{"ts":1782088476499,"type":"tool_start","tool":"Agent","detail":"Add recovery-seeds-idle E2E test"}
+{"ts":1782088512260,"type":"tool_start","tool":"Agent","detail":"Add recovery-seeds-idle E2E test"}
+{"ts":1782088559392,"type":"idle"}
+{"ts":1782088562363,"type":"subagent_stop","detail":""}
+{"ts":1782088619557,"type":"idle_hint","detail":"Claude is waiting for your input"}
+{"ts":1782088620000,"type":"turn_failed","detail":"overloaded"}

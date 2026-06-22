@@ -4,6 +4,7 @@ import {
   DEFAULT_BG_SHELL_ESCAPE_HATCH_MS,
   DEFAULT_BG_SHELL_ONLY_GRACE_MS,
   DEFAULT_STALE_THINKING_TIMEOUT_MS,
+  DEFAULT_STALE_AFTER_IDLE_HINT_MS,
   DEFAULT_IDLE_STABILITY_WINDOW_MS,
   RECENT_TRANSITIONS_RING_SIZE,
   PTY_CHUNK_BUCKET_MS,
@@ -71,6 +72,7 @@ export class ActivityEngine {
       bgShellEscapeHatchMs: options.bgShellEscapeHatchMs ?? DEFAULT_BG_SHELL_ESCAPE_HATCH_MS,
       bgShellOnlyGraceMs: this.bgShellOnlyGraceMs,
       staleThinkingTimeoutMs: options.staleThinkingTimeoutMs ?? DEFAULT_STALE_THINKING_TIMEOUT_MS,
+      staleAfterIdleHintMs: options.staleAfterIdleHintMs ?? DEFAULT_STALE_AFTER_IDLE_HINT_MS,
     });
   }
 
@@ -198,6 +200,7 @@ export class ActivityEngine {
       lastPtyOutputAt,
       msSincePtyOutput: lastPtyOutputAt === null ? null : this.now() - lastPtyOutputAt,
       pendingIdleArmed: state.pendingIdleAt !== null,
+      idleHintPending: state.idleHintPending,
       recentTransitions: state.recentTransitions.slice(),
       compensationCounters: { ...state.compensationCounters },
       recentPtyChunks: state.recentPtyChunks.slice(),
@@ -230,6 +233,9 @@ export class ActivityEngine {
       state.turnActive = true;
       // A fresh thinking signal cancels any pending stability-window idle.
       state.pendingIdleAt = null;
+      // Genuine new work invalidates any earlier "waiting for input" hint, so
+      // the stuck-counter watchdogs return to their full 5-min cap.
+      state.idleHintPending = false;
     } else if (TURN_ENDING_EVENTS.has(event.type)) {
       // A subagent's inner-loop Stop arrives as `Idle` while the parent is
       // still blocked on the live subagent (subagentDepth > 0): it must NOT end
@@ -241,17 +247,33 @@ export class ActivityEngine {
       // regardless of depth: applyInterruptedBypass below resets the counters
       // and commits idle immediately but does NOT touch turnActive, so this is
       // the only path that clears it for an interrupt (without it, an interrupt
-      // at subagentDepth > 0 would leave turnActive stuck true).
-      if (event.type === EventType.Interrupted || state.subagentDepth === 0) {
+      // at subagentDepth > 0 would leave turnActive stuck true). `TurnFailed`
+      // (a service-error abort) is the same: the whole turn died, so clear
+      // turnActive regardless of depth and let the bypass reset the counters.
+      if (
+        event.type === EventType.Interrupted
+        || event.type === EventType.TurnFailed
+        || state.subagentDepth === 0
+      ) {
         state.turnActive = false;
       }
-    } else if (event.type === EventType.IdleHint && idleHintEndsTurn(state)) {
-      // The agent signaled it is waiting for input and nothing else is
-      // holding the turn (no pending tools, subagents, bg shells, or
-      // permission). Clear turnActive so the predicate flips to idle through
-      // the normal stability window - instead of waiting out the 180s
-      // stale-thinking watchdog because the Stop/Idle hook was dropped.
-      state.turnActive = false;
+    } else if (event.type === EventType.IdleHint) {
+      // The agent reported it is waiting for input. Record it so the
+      // stuck-subagent / stuck-pending-tools watchdogs use their short grace:
+      // a counter still stuck > 0 here means a named subagent_stop / tool_end
+      // was lost in an aborted/errored turn. This is NOT proof the turn ended
+      // (the notification can fire mid-subagent, task #237), so it only
+      // shortens the watchdog; the signal-or-pty-output anchor still defers it
+      // while live work streams output. Cleared by the next turn-initiating
+      // event (above) or a reset (bypass / force-*).
+      state.idleHintPending = true;
+      if (idleHintEndsTurn(state)) {
+        // Nothing else holds the turn (no pending tools, subagents, bg shells,
+        // or permission): clear turnActive so the predicate flips to idle
+        // through the normal stability window - instead of waiting out the 180s
+        // stale-thinking watchdog because the Stop/Idle hook was dropped.
+        state.turnActive = false;
+      }
     }
 
     // A permission pause just resolved: its depth-0 wake signal cleared
@@ -270,8 +292,8 @@ export class ActivityEngine {
       state.pendingIdleAt = null;
     }
 
-    if (event.type === EventType.Interrupted) {
-      this.applyInterruptedBypass(sessionId, state, before);
+    if (event.type === EventType.Interrupted || event.type === EventType.TurnFailed) {
+      this.applyInterruptedBypass(sessionId, state, before, event);
       return;
     }
 
@@ -283,16 +305,19 @@ export class ActivityEngine {
   }
 
   /**
-   * Interrupted forces immediate idle, bypassing the stability window.
-   * User pressed Esc (or our renderer's Ctrl+C synthesizer fired) - reset
-   * all counters and clear pending state. Matches forceIdle semantics:
-   * a hard abort that should leave the session in a clean idle state
-   * regardless of mid-flight tools or detached background work.
+   * Interrupted (user Esc / Ctrl+C synthesizer) and TurnFailed (a Claude
+   * service-error abort) both force immediate idle, bypassing the stability
+   * window - reset all counters and clear pending state. Matches forceIdle
+   * semantics: a hard turn-end that should leave the session in a clean idle
+   * state regardless of mid-flight tools, a stuck subagent, or detached
+   * background work. The trigger label distinguishes the two causes in the
+   * audit log (`interrupted` vs `event:turn_failed:<error>`).
    */
   private applyInterruptedBypass(
     sessionId: string,
     state: SessionEngineState,
     before: ReturnType<typeof snapshotCounters>,
+    event: SessionEvent,
   ): void {
     state.pendingIdleAt = null;
     state.pendingToolCount = 0;
@@ -301,11 +326,15 @@ export class ActivityEngine {
     state.activeBackgroundShellIds.clear();
     state.anonymousBackgroundShellCount = 0;
     state.currentTool = null;
+    state.idleHintPending = false;
     // permissionPending and permissionAwaitedToolId are already cleared by
-    // updatePermissionFlag, which processEvent runs before this bypass
-    // (Interrupted is a permission-clearing signal).
+    // updatePermissionFlag, which processEvent runs before this bypass (both
+    // Interrupted and TurnFailed are permission-clearing signals).
+    const trigger: TransitionTrigger = event.type === EventType.TurnFailed
+      ? (event.detail ? `event:turn_failed:${event.detail}` : 'event:turn_failed')
+      : 'interrupted';
     const delta = formatCounterDelta(before, snapshotCounters(state));
-    this.commitTransition(sessionId, state, 'idle', 'interrupted', delta);
+    this.commitTransition(sessionId, state, 'idle', trigger, delta);
   }
 
   // ==== External force paths (PTY tracker, heartbeat recovery) ====
@@ -325,6 +354,7 @@ export class ActivityEngine {
     state.permissionPending = false;
     state.permissionAwaitedToolId = null;
     state.pendingIdleAt = null;
+    state.idleHintPending = false;
     state.compensationCounters.forceThinking += 1;
     const delta = formatCounterDelta(before, snapshotCounters(state));
     this.commitTransition(sessionId, state, 'thinking', 'force-thinking', delta);
@@ -351,6 +381,7 @@ export class ActivityEngine {
     state.anonymousBackgroundShellCount = 0;
     state.currentTool = null;
     state.pendingIdleAt = null;
+    state.idleHintPending = false;
     state.compensationCounters.forceIdle += 1;
     const delta = formatCounterDelta(before, snapshotCounters(state));
     this.commitTransition(sessionId, state, 'idle', 'force-idle', delta);
@@ -678,6 +709,24 @@ export class ActivityEngine {
     }
   }
 
+  /**
+   * The threshold a watchdog hold fires at, given the current state. Normally
+   * `hold.thresholdMs`, but a hold that opts in (`idleHintThresholdMs`, set on
+   * stuck-subagent / stuck-pending-tools) uses its SHORT grace while an
+   * `idle_hint` is pending: the agent reported it is waiting for input, so a
+   * counter still stuck > 0 is the aborted/errored-turn signature and should be
+   * reclaimed fast rather than at the 5-min cap. The anchor is unchanged, so a
+   * genuinely-live holder that keeps streaming PTY output still defers the
+   * (shorter) deadline. Shared by arming (`scheduleTimer`) and firing
+   * (`onTick`) so the two cannot drift.
+   */
+  private effectiveThreshold(hold: WatchdogHold, state: SessionEngineState): number {
+    if (state.idleHintPending && hold.idleHintThresholdMs !== undefined) {
+      return hold.idleHintThresholdMs;
+    }
+    return hold.thresholdMs;
+  }
+
   private scheduleTimer(sessionId: string, state: SessionEngineState): void {
     this.clearTimer(sessionId);
     if (this.disposed) return;
@@ -712,7 +761,7 @@ export class ActivityEngine {
     if (state.activity !== 'thinking' || !hold) return;
 
     const baseTime = this.watchdogBaseTime(state, hold, this.now());
-    const delay = Math.max(50, hold.thresholdMs - (this.now() - baseTime));
+    const delay = Math.max(50, this.effectiveThreshold(hold, state) - (this.now() - baseTime));
     this.armTimer(sessionId, delay);
   }
 
@@ -755,7 +804,7 @@ export class ActivityEngine {
     const baseTime = hold ? this.watchdogBaseTime(state, hold, 0) : 0;
     const sinceSignal = this.now() - baseTime;
 
-    if (hold && sinceSignal >= hold.thresholdMs) {
+    if (hold && sinceSignal >= this.effectiveThreshold(hold, state)) {
       const before = snapshotCounters(state);
       this.emitSyntheticIdleTimeout(sessionId);
       hold.reset(state);

@@ -113,7 +113,7 @@ Priority ladder: `permission > tool > subagent > background-shell > turn-active 
 
 ## EventType reference
 
-The 22 `EventType` values written to `events.jsonl` by `event-bridge.js`, defined in `src/shared/types.ts`. The activity column shows how each event maps to `ActivityState` via the `EventTypeActivity` table, also in `src/shared/types.ts`.
+The 23 `EventType` values written to `events.jsonl` by `event-bridge.js`, defined in `src/shared/types.ts`. The activity column shows how each event maps to `ActivityState` via the `EventTypeActivity` table, also in `src/shared/types.ts`.
 
 | EventType key | JSONL value | Activity mapping | Notes |
 |---------------|-------------|------------------|-------|
@@ -122,6 +122,7 @@ The 22 `EventType` values written to `events.jsonl` by `event-bridge.js`, define
 | `ToolEnd` | `tool_end` | log-only | Tool returned; counters update and `lastSignalAt` refreshes (a `PostToolUse` hook proves the agent is alive, so `tool_end` is NOT in the engine's `LOG_ONLY_EVENTS` set), but the activity state does not change |
 | `Idle` | `idle` | `idle` | Agent finished its turn (Stop hook, prompt-regex, or silence timer) |
 | `Interrupted` | `interrupted` | `idle` | User pressed Esc / Ctrl+C; clears counters and commits idle |
+| `TurnFailed` | `turn_failed` | `idle` | Turn aborted by a service/API error (Claude's `StopFailure` hook, which fires instead of `Stop`); `detail` carries the error type (e.g. `rate_limit`). Routed through the Interrupted bypass: clears counters and commits idle immediately (see "Aborted-turn recovery") |
 | `SessionStart` | `session_start` | log-only | Session began; carries adapter session metadata |
 | `SessionEnd` | `session_end` | log-only | Session ended (CLI process exited) |
 | `SubagentStart` | `subagent_start` | `thinking` | Main agent spawned a child agent |
@@ -148,7 +149,7 @@ Some turns end without a `Stop`/`Idle` hook ever reaching the main agent - most 
 
 `idle_hint` closes that gap. The classification happens **at the source, not in the engine**: the Claude adapter's `Notification` hook carries a generic `setTypeWhenDetailContains('waiting for your input', EventType.IdleHint)` directive (the only Claude-specific string), so `event-bridge.js` rewrites the matching notification's `type` to `idle_hint`. The match runs on the already-extracted `detail` text (empirically "Claude is waiting for your input"), so it does not depend on which payload field carried the message. The engine never string-matches notification text and never branches on agent name.
 
-The engine treats `idle_hint` as **conditionally** turn-ending (`idleHintEndsTurn` in `predicate.ts`): it clears `turnActive` only when `turnActive && pendingToolCount === 0 && subagentDepth === 0 && bgShellCount === 0 && !permissionPending`. When the guard passes, the predicate flips to idle through the normal 400ms stability window (near-instant for the user). When it fails - tools, subagents, or background shells still outstanding, or a permission pending - `idle_hint` is a pure no-op, so a notification that fires mid-turn never short-circuits genuine work, and the 180s stale-thinking watchdog remains the ultimate backstop. `idle_hint` is in `LOG_ONLY_EVENTS`, so it never resets `lastSignalAt` (a failed guard leaves the genuine work's watchdog anchor untouched).
+The engine treats `idle_hint` as **conditionally** turn-ending (`idleHintEndsTurn` in `predicate.ts`): it clears `turnActive` only when `turnActive && pendingToolCount === 0 && subagentDepth === 0 && bgShellCount === 0 && !permissionPending`. When the guard passes, the predicate flips to idle through the normal 400ms stability window (near-instant for the user). When it fails - tools, subagents, or background shells still outstanding, or a permission pending - `idle_hint` does NOT clear `turnActive` (a notification that fires mid-turn never short-circuits genuine work), but it is no longer a complete no-op: it sets `idleHintPending`, which shortens the stuck-subagent and stuck-pending-tools watchdogs (see "Aborted-turn recovery" below). `idle_hint` is in `LOG_ONLY_EVENTS`, so it never resets `lastSignalAt` (a failed guard leaves the genuine work's watchdog anchor untouched).
 
 **Why the substring is deliberately narrow.** A scan of 221 real Claude sessions surfaced exactly four distinct notification texts: "Claude is waiting for your input" (794x), "Claude Code needs your approval for the plan" (109x), "Claude Code needs your attention" (43x), and "Claude needs your permission[ to use X]" (51x). Only the first fires for a pure turn-end whose `Stop` hook can be dropped. The other three each fire ~6s AFTER a `PermissionRequest` (tool permission, ExitPlanMode plan approval, or AskUserQuestion) has already driven the engine to the `permission` state, so they are correctly left log-only - reclassifying any of them would conflate `permission` with `idle`. The negative cases are pinned with the real strings in `tests/unit/event-bridge-remap.test.ts`.
 
@@ -159,6 +160,16 @@ To extend it to another hook-based agent, capture a real session that exhibits t
 - **Gemini / Qwen Code** share the same hook shape (`AfterAgent` -> `idle` stop-equivalent, `Notification` -> `notification`), so they could be susceptible. But they wire no `SubagentStart`/`SubagentStop` hooks, so the subagent-delegation failure mode is not modeled, and we have no captured session to confirm their notification text. Wire only after capturing evidence.
 - **Kimi** does not need this: its wire protocol emits an explicit `TurnEnd -> Idle`, and none of its `Notification`-mapped messages mean "waiting for input."
 - **Codex / Copilot / OpenCode** wire no Notification hook, so the pattern cannot apply.
+
+### Aborted-turn recovery (service errors)
+
+When a service/API error (rate limit, overload, server error) disrupts a turn, a subagent's NAMED terminal `subagent_stop` or a tool's `tool_end` can be lost, so `subagentDepth` or `pendingToolCount` stays > 0 and the board shows the task `thinking` while the agent is actually parked at the prompt. There are two distinct failure modes, and a layer for each.
+
+**Layer A - the idle-hint-shortened watchdog (the validated fix for #277).** In the captured #277 incident the stuck counter came from a subagent whose named stop was dropped, while the **parent turn kept running normally** - each later turn ended with a real `Stop` (an `idle` event, swallowed by the stuck counter) plus an `idle_hint`, and **no `StopFailure` was ever emitted** (the `idle` events confirm the turns ended via `Stop`, not an abort). To recover this, an `idle_hint` ("waiting for your input") arriving while a counter is still stuck > 0 sets `idleHintPending`, which drops the `stuck-subagent` and `stuck-pending-tools` holds from the 5-min `bgShellEscapeHatchMs` cap to the validated stale-thinking budget (`staleAfterIdleHintMs`, default 180s). The hold **anchor is unchanged** (`signal-or-pty-output`): a top-level `idle_hint` can fire while a subagent is genuinely live (the notification fires outside the main agentic loop - task #237 / session-018), so this only shortens the timer; a live subagent keeps streaming PTY output, which defers it, and its named stops arrive while it works. `idleHintPending` is cleared by the next turn-initiating event and by any reset (bypass / force-*), and is surfaced on `ActivityStatsSnapshot` for the debug overlay.
+
+**Layer B - the structured `StopFailure` signal (complement for the hard-abort mode).** A *different* mode is a turn that an API error terminates outright: Claude Code then fires a `StopFailure` hook *instead of* `Stop` (`code.claude.com/docs/en/hooks`, added in CLI 2.1.78), so that turn's closing hooks never run. The Claude adapter's hook-manager wires `StopFailure` to emit `turn_failed`, carrying the error type (Claude's `error` / `error_details` fields) in `detail`. The engine treats `turn_failed` like `Interrupted` (it is in `TURN_ENDING_EVENTS` and routes through `applyInterruptedBypass`): all counters reset and the session commits idle immediately, with the error type preserved in the transition trigger (`event:turn_failed:<error>`) - distinct from a user-`Esc` `interrupted`. It fires only on a genuine API error, so it never affects a healthy turn. NOTE: this path is currently **unverified against a captured session** - we were not subscribed to `StopFailure` when #277 happened, and #277 itself did not exhibit this mode. It is kept because it is the structurally-correct, zero-risk fix for the hard-abort mode and surfaces the error type for diagnosis; capture a real `StopFailure` session to validate it.
+
+Empirical basis: task #277 (session `27582968`) held `thinking` for ~560s after the agent was idle; the condensed stream is pinned in `tests/fixtures/replay/session-019-service-error-stuck-subagent.jsonl` (its "without turn_failed" assertion reproduces the real stuck-thinking bug), and the timer-driven recovery (which the replay harness cannot advance) is covered in `tests/unit/activity-engine.test.ts` ("aborted/errored-turn recovery").
 
 ## ActivityDetectionStrategy variants
 
@@ -385,9 +396,10 @@ Each entry in `recentTransitions` (the ring of 50 returned by `getStatsSnapshot`
 | `timer:stability` | The 400ms idle stability window expired and committed a pending idle. |
 | `timer:bg-shell-hatch` | A bg-shell sole-holder hold fired (named 5-min cap or anonymous 30s grace; same label, different threshold). |
 | `timer:stale-thinking` | The 180s stale-thinking watchdog fired (`turnActive` held alone, matching Idle never arrived). |
-| `timer:stuck-pending-tools` | The 5-min stuck-pending-tools hatch fired (orphaned `tool_start`, lost `PostToolUse`). |
-| `timer:stuck-subagent` | The 5-min stuck-subagent hatch fired (`subagentDepth` held > 0, a named `subagent_stop` was dropped after its empty-detail inner stop was ignored). |
+| `timer:stuck-pending-tools` | The stuck-pending-tools hatch fired (orphaned `tool_start`, lost `PostToolUse`); 5-min cap, or the 180s `staleAfterIdleHintMs` budget when an `idle_hint` was pending. |
+| `timer:stuck-subagent` | The stuck-subagent hatch fired (`subagentDepth` held > 0, a named `subagent_stop` was dropped after its empty-detail inner stop was ignored); 5-min cap, or the 180s `staleAfterIdleHintMs` budget when an `idle_hint` was pending. |
 | `interrupted` | An Interrupted event (Esc / Ctrl+C, real or synthesized) reset all counters. |
+| `event:turn_failed:<error>` | A `turn_failed` event (Claude `StopFailure`, a service/API error) reset all counters and committed idle; `<error>` is the error type (e.g. `rate_limit`). |
 
 Each transition also carries an optional counter-delta string (`formatCounterDelta` in `engine/counter-snapshot.ts`) summarizing what shifted across the mutation: `"tools +1"`, `"subagent +1"`, `"bg -1, turn no"`, `"perm yes"`. Numeric counters render as a signed delta; booleans (`turnActive`, `permissionPending`) render as the new value (`yes` / `no`); the string is `undefined` when nothing observable changed.
 

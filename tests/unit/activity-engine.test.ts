@@ -53,6 +53,10 @@ interface SyntheticEvent {
 const TEST_BG_SHELL_HATCH_MS = 5_000;
 const TEST_STALE_TIMEOUT_MS = 1_000;
 const TEST_STABILITY_WINDOW_MS = 100;
+// Idle-hint-shortened stuck-counter grace. Deliberately below the 5s hatch so
+// the stuck-subagent / stuck-pending-tools tests can prove the SHORT path fires
+// well before the long cap would.
+const TEST_STALE_AFTER_IDLE_HINT_MS = 1_500;
 
 function makeEngine(options: Partial<ActivityEngineOptions> = {}): {
   engine: ActivityEngine;
@@ -77,6 +81,7 @@ function makeEngine(options: Partial<ActivityEngineOptions> = {}): {
       // same advanceTimersByTime they always used.
       bgShellOnlyGraceMs: TEST_BG_SHELL_HATCH_MS,
       staleThinkingTimeoutMs: TEST_STALE_TIMEOUT_MS,
+      staleAfterIdleHintMs: TEST_STALE_AFTER_IDLE_HINT_MS,
       idleStabilityWindowMs: TEST_STABILITY_WINDOW_MS,
       ...options,
     },
@@ -1151,6 +1156,156 @@ describe('ActivityEngine', () => {
       // does not match, and the stuck-pending predicate (depth === 0) does
       // not match either; no recovery fires while both holders co-exist.
       expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+    });
+  });
+
+  describe('aborted/errored-turn recovery (StopFailure + idle-hint)', () => {
+    beforeEach(() => {
+      engine.initSession(SESSION_ID);
+      transitions.length = 0;
+      syntheticEvents.length = 0;
+    });
+
+    // ---- Layer A: StopFailure -> turn_failed -> hard reset, immediate idle ----
+
+    it('turn_failed resets a stuck subagentDepth and idles immediately (service-error abort)', () => {
+      // A subagent started but its NAMED terminal stop was lost (only the
+      // ignored empty inner stop arrived), so depth is stuck > 0.
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'test-builder' }));
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStop, { detail: '' }));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(engine.getState(SESSION_ID)?.subagentDepth).toBe(1);
+      transitions.length = 0;
+
+      // Claude's StopFailure hook fires (turn aborted by an API error), mapped
+      // to turn_failed: a hard turn-end that resets counters and idles NOW, not
+      // 5 minutes from now via the watchdog.
+      engine.processEvent(SESSION_ID, event(EventType.TurnFailed, { detail: 'rate_limit' }));
+
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.activity).toBe('idle');
+      expect(state.subagentDepth).toBe(0);
+      expect(state.turnActive).toBe(false);
+      expect(transitions.at(-1)?.activity).toBe('idle');
+      // The error type is preserved in the trigger for outage diagnosis, and is
+      // distinct from a user-Esc 'interrupted'.
+      expect(state.recentTransitions.at(-1)?.trigger).toBe('event:turn_failed:rate_limit');
+    });
+
+    it('turn_failed clears stuck pending tools too (lost tool_end in an aborted turn)', () => {
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Agent', toolId: 't1' }));
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Agent', toolId: 't2' }));
+      expect(engine.getState(SESSION_ID)?.pendingToolCount).toBe(2);
+
+      engine.processEvent(SESSION_ID, event(EventType.TurnFailed, { detail: 'overloaded' }));
+
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.activity).toBe('idle');
+      expect(state.pendingToolCount).toBe(0);
+      expect(state.turnActive).toBe(false);
+    });
+
+    it('turn_failed with no detail still idles (trigger carries no error suffix)', () => {
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.TurnFailed));
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.activity).toBe('idle');
+      expect(state.recentTransitions.at(-1)?.trigger).toBe('event:turn_failed');
+    });
+
+    // ---- Layer B: idle-hint shortens the stuck-counter watchdogs ----
+
+    it('reclaims a subagentDepth stuck by an idle_hint on the SHORT grace, not the 5-min cap (#277)', () => {
+      // Condensed task #277: a subagent's named stop is lost (depth stuck = 1),
+      // the parent Stop fires (gated by depth > 0, so turnActive stays true),
+      // then the agent reports it is waiting for input.
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'test-builder' }));
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStop, { detail: '' }));
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      engine.processEvent(SESSION_ID, event(EventType.IdleHint, { detail: 'Claude is waiting for your input' }));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(engine.getState(SESSION_ID)?.subagentDepth).toBe(1);
+      expect(engine.getStatsSnapshot(SESSION_ID)?.idleHintPending).toBe(true);
+      transitions.length = 0;
+
+      // The SHORT grace (1.5s) fires well before the 5-min cap (5s in tests).
+      vi.advanceTimersByTime(TEST_STALE_AFTER_IDLE_HINT_MS + TEST_STABILITY_WINDOW_MS + 50);
+
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getState(SESSION_ID)?.subagentDepth).toBe(0);
+      expect(engine.getState(SESSION_ID)?.turnActive).toBe(false);
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.stuckSubagent).toBe(1);
+    });
+
+    it('still holds thinking BEFORE the short grace elapses (the cap was not simply removed)', () => {
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'test-builder' }));
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStop, { detail: '' }));
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      engine.processEvent(SESSION_ID, event(EventType.IdleHint, { detail: 'Claude is waiting for your input' }));
+      // Just under the short grace: not reclaimed yet.
+      vi.advanceTimersByTime(TEST_STALE_AFTER_IDLE_HINT_MS - 100);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.stuckSubagent).toBe(0);
+    });
+
+    it('reclaims stuck pending tools on the short grace after an idle_hint', () => {
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Bash', toolId: 't1' }));
+      // The Stop hook's Idle zeros pending tools, so to model a LOST tool_end
+      // with no intervening Stop we go straight to the idle_hint.
+      engine.processEvent(SESSION_ID, event(EventType.IdleHint, { detail: 'Claude is waiting for your input' }));
+      expect(engine.getState(SESSION_ID)?.pendingToolCount).toBe(1);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+
+      vi.advanceTimersByTime(TEST_STALE_AFTER_IDLE_HINT_MS + TEST_STABILITY_WINDOW_MS + 50);
+
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getState(SESSION_ID)?.pendingToolCount).toBe(0);
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.stuckPendingTools).toBe(1);
+    });
+
+    it('does NOT reclaim a genuinely-live subagent after an idle_hint while PTY keeps streaming (#237 guard)', () => {
+      // Claude's idle notification can fire WHILE a subagent is genuinely live
+      // (task #237 / session-018). idle_hint only shortens the watchdog; the
+      // signal-or-pty-output anchor still defers it while the live subagent
+      // streams output, so no false idle.
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'Explore' }));
+      // A sibling subagent's inner Stop arrives as Idle, gated by depth > 0.
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      engine.processEvent(SESSION_ID, event(EventType.IdleHint, { detail: 'Claude is waiting for your input' }));
+      expect(engine.getState(SESSION_ID)?.idleHintPending).toBe(true);
+
+      // Stream PTY output more often than the short grace: the deadline slides
+      // forward each chunk, so the watchdog never fires while work is live.
+      for (let i = 0; i < 4; i++) {
+        vi.advanceTimersByTime(TEST_STALE_AFTER_IDLE_HINT_MS - 500);
+        engine.markPtyOutput(SESSION_ID);
+      }
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(engine.getState(SESSION_ID)?.subagentDepth).toBe(1);
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.stuckSubagent).toBe(0);
+
+      // The named terminal stop finally arrives -> depth drains; the parent's
+      // own Stop then ends the turn cleanly (no watchdog involved).
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStop, { detail: 'Explore' }));
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      vi.advanceTimersByTime(TEST_STABILITY_WINDOW_MS + 50);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.stuckSubagent).toBe(0);
+    });
+
+    it('a genuine new turn-initiating event clears the idle_hint short grace', () => {
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'Explore' }));
+      engine.processEvent(SESSION_ID, event(EventType.IdleHint, { detail: 'Claude is waiting for your input' }));
+      expect(engine.getState(SESSION_ID)?.idleHintPending).toBe(true);
+      // The agent resumed real work: a fresh tool_start invalidates the hint, so
+      // the stuck-counter watchdog returns to its full 5-min cap.
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Read' }));
+      engine.processEvent(SESSION_ID, event(EventType.ToolEnd, { tool: 'Read' }));
+      expect(engine.getState(SESSION_ID)?.idleHintPending).toBe(false);
+      // Past the short grace but well under the cap: still thinking.
+      vi.advanceTimersByTime(TEST_STALE_AFTER_IDLE_HINT_MS + 200);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.stuckSubagent).toBe(0);
     });
   });
 

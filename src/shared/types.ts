@@ -527,8 +527,8 @@ export type ActivityReason =
  *
  * Keep the scalar fields in sync with the parallel `ActivityStatsSnapshot`
  * in `src/main/activity-engine/engine/shapes.ts` (the engine-internal copy).
- * There is no mechanical parity check yet, so a one-sided field add will
- * not fail typecheck.
+ * `tests/unit/activity-stats-snapshot-parity.test.ts` fails if the two copies'
+ * top-level fields drift (typecheck alone does not catch a one-sided field add).
  */
 export interface ActivityStatsSnapshot {
   sessionId: string;
@@ -553,6 +553,15 @@ export interface ActivityStatsSnapshot {
   /** ms since the most recent PTY output chunk, or null when no chunk yet. */
   msSincePtyOutput: number | null;
   pendingIdleArmed: boolean;
+  /**
+   * True between an `idle_hint` ("waiting for your input") notification and the
+   * next genuine turn-initiating event. While set, the stuck-subagent and
+   * stuck-pending-tools watchdogs use a SHORT grace instead of the 5-min cap, so
+   * a counter left stuck by an aborted/errored turn is reclaimed fast. Surfaced
+   * so the debug overlay can explain a fast watchdog fire. False in the common
+   * case.
+   */
+  idleHintPending: boolean;
   recentTransitions: ReadonlyArray<{
     ts: number;
     from: ActivityState;
@@ -615,6 +624,18 @@ export const EventType = {
   ToolEnd: 'tool_end',
   Idle: 'idle',
   Interrupted: 'interrupted',
+  /**
+   * The turn ended because of a Claude Code service / API error (rate limit,
+   * overload, server error, ...) rather than a normal completion. Sourced from
+   * Claude Code's `StopFailure` hook, which fires INSTEAD of the regular `Stop`
+   * on an aborted turn (see the claude adapter's hook-manager). Treated like
+   * `Interrupted` by the engine - a hard turn-end that resets the in-flight
+   * counters and commits idle immediately - so a lost subagent/tool stop in the
+   * aborted turn cannot leave the session falsely "thinking" until a watchdog.
+   * Kept DISTINCT from `Interrupted` (user Esc) so the activity log reads
+   * "service error", with the error type carried in `detail` (e.g. "rate_limit").
+   */
+  TurnFailed: 'turn_failed',
   SessionStart: 'session_start',
   SessionEnd: 'session_end',
   SubagentStart: 'subagent_start',
@@ -695,6 +716,7 @@ export const EventTypeActivity: Record<EventType, ActivityState | null> = {
   // → idle (agent waiting)
   [EventType.Idle]: 'idle',
   [EventType.Interrupted]: 'idle',
+  [EventType.TurnFailed]: 'idle',
   // → null (no state change, log-only)
   [EventType.Notification]: null,
   // idle_hint is conditional: the engine ends the turn only when no other

@@ -31,6 +31,7 @@ export const ClaudeHookEvent = {
   SessionEnd: 'SessionEnd',
   // Agent stop
   Stop: 'Stop',
+  StopFailure: 'StopFailure',
   SubagentStart: 'SubagentStart',
   SubagentStop: 'SubagentStop',
   // User interaction
@@ -207,6 +208,21 @@ export function buildHooks(
     [H.Stop]: [
       ...(existingHooks[H.Stop] || []),
       { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.Idle) }] },
+    ],
+    // StopFailure fires INSTEAD of Stop when a turn concludes due to an API
+    // error (rate limit, overload, server error, auth, ...). Without it, an
+    // errored turn that aborted mid-subagent/mid-tool drops its closing hooks:
+    // the lost named subagent_stop / tool_end leaves subagentDepth or
+    // pendingToolCount stuck > 0, and the board stays falsely "thinking" until
+    // the 5-min watchdog. We emit `turn_failed`, which the activity engine
+    // treats as a hard turn-end (counter reset + immediate idle, via the
+    // Interrupted bypass), with the error type carried in `detail` (Claude's
+    // payload fields are `error` then `error_details`). See
+    // docs.claude.com/docs/en/hooks (StopFailure, changelog 2.1.78).
+    [H.StopFailure]: [
+      ...(existingHooks[H.StopFailure] || []),
+      { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.TurnFailed,
+        extractDetail(['error', 'error_details'])) }] },
     ],
     [H.PermissionRequest]: [
       ...(existingHooks[H.PermissionRequest] || []),

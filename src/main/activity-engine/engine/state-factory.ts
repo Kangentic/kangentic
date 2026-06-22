@@ -22,6 +22,7 @@ export function createSessionEngineState(): SessionEngineState {
     idleTimestamp: null,
     pendingIdleAt: null,
     bgShellHoldSince: null,
+    idleHintPending: false,
     recentTransitions: [],
     compensationCounters: {
       staleThinking: 0,

@@ -49,6 +49,15 @@ export interface WatchdogHold {
   predicate(state: SessionEngineState): boolean;
   /** ms of silence before the hold counts as stuck. */
   thresholdMs: number;
+  /**
+   * Optional shortened threshold used INSTEAD of `thresholdMs` while
+   * `state.idleHintPending` is set (the agent reported "waiting for your input"
+   * but a counter is still stuck > 0 - the aborted/errored-turn signature). Only
+   * the `stuck-subagent` and `stuck-pending-tools` holds set this; the anchor is
+   * unchanged, so live work that keeps streaming PTY output still defers the
+   * (now shorter) deadline. Undefined holds always use `thresholdMs`.
+   */
+  idleHintThresholdMs?: number;
   /** Audit-log label written to the transition record. */
   trigger: TransitionTrigger;
   /**
@@ -93,6 +102,14 @@ export interface WatchdogConfig {
   bgShellOnlyGraceMs: number;
   /** ms threshold for the stale-thinking hatch. */
   staleThinkingTimeoutMs: number;
+  /**
+   * Shortened threshold for the `stuck-subagent` and `stuck-pending-tools` holds
+   * while `state.idleHintPending` is set. The agent signaled it is back at the
+   * prompt, so a still-stuck counter is reclaimed on this short grace instead of
+   * the 5-min `bgShellEscapeHatchMs` cap. The `signal-or-pty-output` anchor is
+   * unchanged, so a genuinely-live subagent's streaming output still defers it.
+   */
+  staleAfterIdleHintMs: number;
 }
 
 /**
@@ -172,6 +189,11 @@ export function buildWatchdogHolds(config: WatchdogConfig): readonly WatchdogHol
         && (state.activeBackgroundShellIds.size + state.anonymousBackgroundShellCount) === 0
         && !state.permissionPending,
       thresholdMs: config.bgShellEscapeHatchMs,
+      // When the agent reported it is waiting for input but a tool is still
+      // pending, its PostToolUse was lost in an aborted/errored turn - reclaim
+      // on the short grace rather than the 5-min cap. Streaming PTY output from
+      // a genuinely-running tool still defers it (anchor unchanged).
+      idleHintThresholdMs: config.staleAfterIdleHintMs,
       trigger: 'timer:stuck-pending-tools',
       anchor: 'signal-or-pty-output',
       reset: (state) => {
@@ -233,6 +255,13 @@ export function buildWatchdogHolds(config: WatchdogConfig): readonly WatchdogHol
         && (state.activeBackgroundShellIds.size + state.anonymousBackgroundShellCount) === 0
         && !state.permissionPending,
       thresholdMs: config.bgShellEscapeHatchMs,
+      // When the agent reported it is waiting for input but subagentDepth is
+      // still > 0, the named terminal subagent_stop was lost in an
+      // aborted/errored turn - reclaim on the short grace rather than the 5-min
+      // cap. A genuinely-live subagent keeps streaming output and emits its
+      // named stops within tens of seconds, both of which defer this (anchor
+      // unchanged), so #237's parallel-subagent false-idle is not reintroduced.
+      idleHintThresholdMs: config.staleAfterIdleHintMs,
       trigger: 'timer:stuck-subagent',
       anchor: 'signal-or-pty-output',
       reset: (state) => {

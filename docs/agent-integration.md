@@ -312,7 +312,7 @@ All Kangentic artifacts stay in `.kangentic/` - nothing is written to `.claude/s
 
 ### Hook Injection
 
-Kangentic subscribes to 17 Claude Code hook points via the event bridge (18 entries: `UserPromptSubmit` registers two, for two distinct event types):
+Kangentic subscribes to 18 Claude Code hook points via the event bridge (19 entries: `UserPromptSubmit` registers two, for two distinct event types):
 
 | Hook Event | Event Type | Purpose |
 |------------|-----------|---------|
@@ -322,6 +322,7 @@ Kangentic subscribes to 17 Claude Code hook points via the event bridge (18 entr
 | `UserPromptSubmit` | `prompt` | User submitted a prompt |
 | `UserPromptSubmit` | `background_shell_end` | A `<task-notification>` terminal status (`completed`/`failed`/`killed`/`cancelled`/`aborted`) drains the named bg shell; suppressed for all other prompts via `emitOnlyWhenDetailMatches` (fail-closed) |
 | `Stop` | `idle` | Agent stopped naturally |
+| `StopFailure` | `turn_failed` | Turn aborted by a service/API error (fires instead of `Stop`); carries the error type in `detail`, routed through the Interrupted bypass to reset stale counters and idle at once |
 | `PermissionRequest` | `idle` | Agent hit a permission wall |
 | `SessionStart` | `session_start` | Session began |
 | `SessionEnd` | `session_end` | Session ended |
@@ -992,7 +993,7 @@ Two standalone Node.js scripts in `src/main/agent/`:
 - **Output:** `events.jsonl` (append-only, one JSON line per event)
 - **Data:** Timestamps, event types, tool names, file paths
 - **Watched by:** SessionManager with 50ms debounce, incremental byte-offset reads
-- **Supported by:** Claude Code (17 hook points), Codex CLI (via config.toml hooks), Gemini CLI (via .gemini/settings.json hooks)
+- **Supported by:** Claude Code (18 hook points), Codex CLI (via config.toml hooks), Gemini CLI (via .gemini/settings.json hooks)
 
 Both scripts are stateless (no persistent process), read JSON from stdin, write to their output file, and exit. All writes are try/catch wrapped for non-fatal failures.
 

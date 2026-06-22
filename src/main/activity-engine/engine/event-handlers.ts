@@ -267,6 +267,7 @@ export function updatePermissionFlag(state: SessionEngineState, event: SessionEv
     awaitedToolResolved
     || event.type === EventType.Prompt
     || event.type === EventType.Interrupted
+    || event.type === EventType.TurnFailed
     || event.type === EventType.SubagentStart
     || (event.type === EventType.Idle && event.detail !== IdleReason.Permission)
     || ((event.type === EventType.ToolStart || event.type === EventType.ToolEnd)
