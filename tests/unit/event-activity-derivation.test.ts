@@ -148,6 +148,11 @@ describe('Event-derived activity state (part 1)', () => {
     await new Promise((r) => setTimeout(r, 20));
   });
 
+  // Spawn as a resume so the session starts from a known IDLE baseline. A fresh
+  // spawn now seeds the activity engine as 'thinking' (the agent is already
+  // processing its initial prompt); that seed is covered by the engine and
+  // spawn-flow unit tests. These tests exercise the EVENT -> activity pipeline,
+  // which needs an idle starting point to observe idle->thinking transitions.
   async function spawnWithEvents(taskId = 'task-1') {
     const eventsPath = path.join(tmpDir, `${taskId}-events.jsonl`);
     const mock = createMockPty();
@@ -159,13 +164,14 @@ describe('Event-derived activity state (part 1)', () => {
       cwd: tmpDir,
       eventsOutputPath: eventsPath,
       agentParser: claudeAdapter,
+      resuming: true,
     });
 
     spawnedSessionId = session.id;
     return { session, eventsPath, ...mock };
   }
 
-  it('default activity is idle on spawn', async () => {
+  it('default activity is idle on a resumed spawn', async () => {
     const states: ActivityState[] = [];
     manager.on('activity', (_id: string, state: ActivityState) => {
       states.push(state);
@@ -173,7 +179,9 @@ describe('Event-derived activity state (part 1)', () => {
 
     await spawnWithEvents();
 
-    // SessionManager emits idle immediately on spawn (default state)
+    // A resume carries no fresh prompt, so SessionManager emits idle immediately
+    // on spawn (a FRESH spawn seeds thinking instead - covered by the engine and
+    // spawn-flow unit tests).
     expect(states).toContain('idle');
 
     const cache = manager.getActivityCache();

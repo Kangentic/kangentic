@@ -148,6 +148,9 @@ describe('Event-derived activity state (part 2)', () => {
     await new Promise((r) => setTimeout(r, 20));
   });
 
+  // Spawn as a resume so the session starts from a known IDLE baseline (a fresh
+  // spawn now seeds the engine 'thinking'; that seed is covered by the engine and
+  // spawn-flow unit tests). These tests exercise the EVENT -> activity pipeline.
   async function spawnWithEvents(taskId = 'task-1') {
     const eventsPath = path.join(tmpDir, `${taskId}-events.jsonl`);
     const mock = createMockPty();
@@ -159,6 +162,7 @@ describe('Event-derived activity state (part 2)', () => {
       cwd: tmpDir,
       eventsOutputPath: eventsPath,
       agentParser: claudeAdapter,
+      resuming: true,
     });
 
     spawnedSessionId = session.id;

@@ -116,10 +116,16 @@ afterEach(() => {
 async function spawnSessionWithMock(manager: SessionManager, taskId: string) {
   const mock = createMockPty();
   vi.mocked(nodePty.spawn).mockReturnValue(mock.mockPty as unknown as nodePty.IPty);
+  // Spawn as a resume so the session starts idle. A fresh spawn now seeds the
+  // activity engine 'thinking', which arms the stale-thinking watchdog timer;
+  // that recurring timer re-schedules itself under vi.runAllTimers() and aborts
+  // with "infinite loop" (the same reason this file disables the BgShellWatcher
+  // above). These tests exercise the write queue only, not activity.
   const session = await manager.spawn({
     taskId,
     command: '',
     cwd: tmpDir,
+    resuming: true,
   });
   return { session, ...mock };
 }
