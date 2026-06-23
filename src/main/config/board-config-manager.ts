@@ -406,25 +406,17 @@ export class BoardConfigManager {
     // --- Team file (kangentic.json) ---
     const filePath = path.join(this.activeProjectPath, TEAM_FILE);
 
-    // Content hash: fast path for no-change (watcher echo)
+    // Content hash: fast path for no-change (watcher echo). Together with the
+    // isWritingBack window above, this fully suppresses the app's own write-backs.
+    // Anything that gets past both filters is a genuine external edit - a teammate's
+    // commit OR our own commit pulled back on this same machine - and must reconcile
+    // live, so always send BOARD_CONFIG_CHANGED. The renderer's apply path re-reads
+    // the file, and loadBoard() also reloads shortcuts, so the team-file shortcuts
+    // case is covered here too.
     const currentHash = hashFilePath(filePath);
     if (currentHash === null) return;
     if (currentHash === this.lastTeamContentHash) return;
     this.lastTeamContentHash = currentHash;
-
-    // Fingerprint check: did WE write this file?
-    try {
-      const raw = fs.readFileSync(filePath, 'utf-8');
-      const config = JSON.parse(raw);
-      if (config._modifiedBy === this.fingerprint) {
-        // We wrote it. Silently reload shortcuts (in case they changed)
-        // but do NOT show the reconciliation dialog.
-        this.sendShortcutsChangedEvent(projectId);
-        return;
-      }
-    } catch {
-      // Parse failure: treat as external change
-    }
 
     this.sendChangedEvent(projectId);
   }

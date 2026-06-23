@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -87,11 +87,12 @@ describe('board-config/atomic-write', () => {
       expect(hash).toBe(hashString(written));
     });
 
-    it('appends a trailing OS newline', () => {
+    it('appends a trailing LF newline (never CRLF, for cross-platform hash stability)', () => {
       const filePath = path.join(tempDir, 'config.json');
       atomicWriteJson(filePath, { version: 1 });
       const written = fs.readFileSync(filePath, 'utf-8');
-      expect(written.endsWith(os.EOL)).toBe(true);
+      expect(written.endsWith('\n')).toBe(true);
+      expect(written.endsWith('\r\n')).toBe(false);
     });
 
     it('overwrites an existing file atomically', () => {
@@ -109,6 +110,18 @@ describe('board-config/atomic-write', () => {
       const second = computeFingerprint();
       expect(first).toBe(second);
       expect(first).toMatch(/^[0-9a-f]{12}$/);
+    });
+
+    it('falls back without throwing when os.userInfo() fails (minimal containers)', () => {
+      const userInfoSpy = vi.spyOn(os, 'userInfo').mockImplementation(() => {
+        throw new Error('uid has no passwd entry');
+      });
+      try {
+        expect(() => computeFingerprint()).not.toThrow();
+        expect(computeFingerprint()).toMatch(/^[0-9a-f]{12}$/);
+      } finally {
+        userInfoSpy.mockRestore();
+      }
     });
   });
 });

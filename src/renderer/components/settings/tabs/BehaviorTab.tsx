@@ -38,6 +38,11 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
         checked={globalConfig.agent.autoResumeSessionsOnRestart}
         onChange={(value) => updateGlobal({ agent: { autoResumeSessionsOnRestart: value } })}
       />
+      <SettingToggleRow
+        {...settingProps('skipBoardConfigConfirm')}
+        checked={globalConfig.skipBoardConfigConfirm}
+        onChange={(value) => updateGlobal({ skipBoardConfigConfirm: value })}
+      />
 
       <SectionHeader label="Task Windows" searchIds={['windowLightDismiss']} />
       <SettingRow {...settingProps('windowLightDismiss')}>

@@ -52,8 +52,11 @@ export function contentMatchesFile(
 
 /**
  * Atomic JSON write: serialize `value` to a `<filePath>.tmp.<pid>`
- * alongside the target and rename over the original. Trailing OS-native
- * newline matches most editors' "newline at EOF" settings.
+ * alongside the target and rename over the original. The trailing newline
+ * is always LF (never the OS-native CRLF on Windows): the written content
+ * is hashed for watcher-echo suppression, so a byte-for-byte stable format
+ * keeps that hash consistent across platforms and git line-ending
+ * normalization.
  *
  * Returns the SHA-256 of the written content so callers can update
  * their watcher-echo cache.
@@ -62,7 +65,7 @@ export function contentMatchesFile(
  * or propagate.
  */
 export function atomicWriteJson(filePath: string, value: unknown): string {
-  const content = JSON.stringify(value, null, 2) + os.EOL;
+  const content = JSON.stringify(value, null, 2) + '\n';
   const tmpPath = filePath + '.tmp.' + process.pid;
   fs.writeFileSync(tmpPath, content);
   fs.renameSync(tmpPath, filePath);
@@ -70,16 +73,29 @@ export function atomicWriteJson(filePath: string, value: unknown): string {
 }
 
 /**
- * Stable per-machine fingerprint used to stamp `_modifiedBy` on writes
- * so the file watcher can distinguish "we wrote this" from "a teammate
- * wrote this" when the config file changes.
+ * Stable per-machine fingerprint stamped into `_modifiedBy` on writes as
+ * last-writer provenance (which device last wrote the file). It is NOT
+ * consulted by the file watcher: the app's own writes are already suppressed
+ * by the isWritingBack window and the content-hash echo check in
+ * board-config-manager, so a pulled change always reconciles live (see
+ * onFileChanged). The persisted value can equal a teammate's only on a
+ * hostname+username collision, which is harmless now that nothing reads it.
  *
  * Derived from hostname + username so it's stable across restarts on
  * one machine but unique per developer.
  */
 export function computeFingerprint(): string {
+  let username: string;
+  try {
+    username = os.userInfo().username;
+  } catch {
+    // os.userInfo() throws when the current uid has no passwd entry (e.g.
+    // minimal containers). The fingerprint is last-writer provenance only,
+    // so a stable fallback is sufficient and must not block construction.
+    username = process.env.USERNAME ?? process.env.USER ?? 'unknown';
+  }
   return crypto.createHash('sha256')
-    .update(os.hostname() + '\0' + os.userInfo().username)
+    .update(os.hostname() + '\0' + username)
     .digest('hex')
     .slice(0, 12);
 }

@@ -414,6 +414,7 @@ These are global-only settings that apply to the entire app.
 | When Max Sessions Reached | How new agent requests are handled when all slots are in use (Queue or Reject) |
 | Auto-Focus Idle Sessions | Automatically switch the bottom panel to idle sessions. Idle tabs are always highlighted regardless of this setting. |
 | Auto-Resume Agents on Restart | When a project opens, resume any agent sessions that were running at last close. When off, those sessions stay paused until you click Resume on each task. Turn off if resuming many agents at once slows your machine. |
+| Auto-Apply Board Config Changes | When a kangentic.json board change is detected (from a teammate or a pulled-back commit), apply it immediately instead of showing the confirmation dialog. |
 
 ### MCP Server
 

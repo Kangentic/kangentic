@@ -8,9 +8,9 @@ import { CURRENT_VERSION } from './config-helpers';
  * Build a BoardConfig object from the current SQLite state for a project.
  *
  * Used by the write-back path (DB -> kangentic.json). The resulting
- * BoardConfig is stamped with `_modifiedBy = fingerprint` so the file
- * watcher can recognize this process's own writes and suppress the
- * "board config changed" reconciliation dialog.
+ * BoardConfig is stamped with `_modifiedBy = fingerprint` as last-writer
+ * provenance (which device last wrote the file); it is not used to suppress
+ * the reconciliation dialog (see computeFingerprint and onFileChanged).
  *
  * `existingTeamConfig` lets the caller pass in the currently-on-disk
  * kangentic.json so fields that are NOT stored in the DB (shortcuts,

@@ -32,6 +32,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`
 - `terminal.panelHeight`, `terminal.showPreview`
 - `autoFocusIdleSession`
+- `skipBoardConfigConfirm`
 - `windowLightDismiss`
 - `contextBar.*` (all context bar visibility toggles)
 - `notifications.*` (all notification settings)
@@ -75,7 +76,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `windowMaximized` | boolean | `false` | Whether the window was maximized at last close. Auto-saved, not shown in UI. |
 | `workspaceByProject` | Record\<string, object\> | `{}` | In-app window-manager layout keyed by project ID: each entry holds the open task-detail windows, their tiling tree, and fractional geometry. Persisted per-project (survives a project switch and an app restart), restored after sessions resolve, and taskId-anchored so a session respawn never orphans a window. Each entry carries a schema `version` and is clamped/validated on restore. Auto-saved, not shown in UI. |
 | `commandTerminalWorkspace` | object \| null | `null` | GLOBAL layout for the Command Terminal window layer (Ctrl+Shift+P): the open command terminal window(s) and their tiling, shared across ALL projects (one blob, not keyed by project). Slot-anchored and fractional; the session stays per-project and ephemeral, so only the geometry/arrangement persists. Same schema shape as a `workspaceByProject` entry. Auto-saved, not shown in UI. |
-| `skipBoardConfigConfirm` | boolean | `false` | Auto-apply board config changes without confirmation dialog |
+| `skipBoardConfigConfirm` | boolean | `false` | When a `kangentic.json` board change is detected (from a teammate or your own pulled-back commit), apply it immediately instead of showing the confirmation dialog. Global-only. |
 | `statusBarPeriod` | UsageTimePeriod | `'live'` | Time period for status bar usage stats. Values: `live`, `today`, `week`, `month`, `all`. Global-only. |
 | `lastActiveTaskByProject` | Record\<string, string\> | `{}` | Per-project memory of the last user-clicked task tab in the terminal panel, keyed by project ID. Restored on project switch. Auto-saved, not shown in UI. |
 | `autoNameAskedTaskIds` | string[] | `[]` | Task IDs that have already been offered an auto-rename suggestion. Persisted so a dismissed suggestion does not reappear next launch. Drained on task delete (single + bulk delete handlers in `task-crud.ts`). Auto-saved, not shown in UI. |
@@ -334,7 +335,7 @@ Ghost columns are invisible on the board but still exist in the database. Once a
 
 The `defaultBaseBranch` field sets the team-shared default base branch for worktree creation. When present, it takes precedence over the per-user `git.defaultBaseBranch` in `AppConfig`. Individual users can override it via `kangentic.local.json`.
 
-The `_modifiedBy` field is auto-set by Kangentic to identify which device last wrote the file. It is used internally for change detection and should not be edited manually.
+The `_modifiedBy` field is auto-set by Kangentic to record which device last wrote the file (last-writer provenance) and should not be edited manually.
 
 ### Hand-Written Configs
 
