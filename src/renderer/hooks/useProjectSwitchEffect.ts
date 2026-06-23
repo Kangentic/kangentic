@@ -105,6 +105,20 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
       // cold switch. Cheap; safe to run on warm switches too.
       cancelSync();
 
+      // Arm the bottom terminal panel to render collapsed from the first frame if this project
+      // will restore detail windows. `dialogSessionIds` is cleared synchronously just below and
+      // only repopulated asynchronously by the (cold-path: doubly-deferred) workspace restore, so
+      // without this the panel would flash expanded for that gap. `workspaceByProject` is
+      // renderer-authoritative and preserved across config reloads, so it is readable
+      // synchronously even on a cold switch. Arming to null for a no-window destination also
+      // disarms any prior arm, so it can never leak into a switch to an expanded project. The arm
+      // is cleared once the restore for this project completes (warm + cold below).
+      const destinationHasPersistedWindows =
+        (useConfigStore.getState().config.workspaceByProject?.[currentProject.id]?.windows?.length ?? 0) > 0;
+      useSessionStore.getState().setPendingDetailWindowsProjectId(
+        destinationHasPersistedWindows ? currentProject.id : null,
+      );
+
       const warmCacheHit = isWarmProject(currentProject.id);
 
       if (warmCacheHit) {
@@ -175,6 +189,12 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         // so this resolves synchronously; a cheap setState lets the restored
         // windows appear with the board (no flash) without blocking the swap.
         restoreWorkspaceForProject(currentProject.id);
+
+        // The destination's windows are now in the window store, so the live
+        // `dialogSessionIds` (reconciled next frame by useWindowSessionClaims) takes over the
+        // collapse decision. Disarm the pending signal. On the warm path this whole effect is
+        // synchronous, so this is effectively a no-op (warm never flashed); kept for symmetry.
+        useSessionStore.getState().setPendingDetailWindowsProjectId(null);
       } else {
         // Cold path: fire the IPC fan-out and reset stale per-project
         // view state. After loads resolve, mark the project as seen so
@@ -248,10 +268,24 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           // task-existence check sees the real board. Deferred off the switch's
           // critical path (the board paints first); skipped if a newer switch has
           // superseded this one mid-load.
-          void coldLoads.then(() => {
-            if (previousProjectIdRef.current !== currentProject.id) return;
-            restoreWorkspaceForProject(currentProject.id);
-          });
+          void coldLoads.then(
+            () => {
+              if (previousProjectIdRef.current !== currentProject.id) return;
+              restoreWorkspaceForProject(currentProject.id);
+              // Restore for this project is complete (its detail windows, if any, are now in the
+              // window store). Disarm the pending collapse signal; the live `dialogSessionIds`
+              // (reconciled by useWindowSessionClaims) drives the panel from here. Guarded above
+              // so a superseding switch keeps its own newer arm.
+              useSessionStore.getState().setPendingDetailWindowsProjectId(null);
+            },
+            () => {
+              // A board / backlog / config load rejected: no workspace will restore, so disarm
+              // rather than leave the panel stuck collapsed. Skip if a newer switch superseded
+              // this one (it owns the signal now).
+              if (previousProjectIdRef.current !== currentProject.id) return;
+              useSessionStore.getState().setPendingDetailWindowsProjectId(null);
+            },
+          );
         });
       }
 
@@ -267,6 +301,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         activeSessionId: null,
         dialogSessionIds: [],
         detailTaskId: null,
+        pendingDetailWindowsProjectId: null,
       });
       // Reset effective config to global defaults (no project overrides)
       useConfigStore.getState().loadConfig();

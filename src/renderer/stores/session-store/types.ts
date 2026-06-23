@@ -38,6 +38,15 @@ export interface CoreSessionSlice {
    *  owners). Was a single scalar (`dialogSessionId`) when only one modal could
    *  be open; an array now that windows are modeless and stack. */
   dialogSessionIds: string[];
+  /** Destination project id captured at the FIRST frame of a project switch when that
+   *  project has persisted detail windows (read synchronously from
+   *  `config.workspaceByProject` before the deferred cold-path workspace restore runs). The
+   *  bottom terminal panel ORs this into its `forceCollapsed` so it renders collapsed from
+   *  frame one instead of flashing expanded-then-collapsed while the destination's detail
+   *  windows are still mid-restore. Cleared once that restore completes. Project-scoped so a
+   *  stale arm for a project we have already left is ignored, and a missed clear self-heals on
+   *  the next switch. See `src/renderer/utils/terminal-force-collapse.ts`. */
+  pendingDetailWindowsProjectId: string | null;
   /** When set, the Activity Log scrolls to the event with this `${sessionId}-${ts}` key
    *  on next mount/render, then the field is cleared. Set by the global session
    *  search palette when a hit is selected. */
@@ -107,6 +116,10 @@ export interface CoreSessionSlice {
   claimDialogSession: (sessionId: string) => void;
   /** A task-detail window releases its session on close/unmount. */
   releaseDialogSession: (sessionId: string) => void;
+  /** Arm/disarm the "destination has detail windows pending restore" signal at a project
+   *  switch. Pass the destination project id when it has persisted detail windows, or null to
+   *  disarm. See `pendingDetailWindowsProjectId`. */
+  setPendingDetailWindowsProjectId: (projectId: string | null) => void;
   setScrollToEventKey: (key: string | null) => void;
   upsertSession: (session: Session) => void;
   updateSessionStatus: (id: string, updates: Partial<Session>) => void;

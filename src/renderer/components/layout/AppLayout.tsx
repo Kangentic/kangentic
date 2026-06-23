@@ -21,6 +21,7 @@ import { ToastContainer } from './ToastContainer';
 import { WindowLayer } from '../../window-manager';
 import { useSidebarResize, COLLAPSED_STRIP_WIDTH } from '../../hooks/useSidebarResize';
 import { useTerminalResize, COLLAPSED_HEIGHT } from '../../hooks/useTerminalResize';
+import { shouldForceCollapseTerminal } from '../../utils/terminal-force-collapse';
 import { useCommandBar } from '../../hooks/useCommandBar';
 import { useSearchPalette } from '../../hooks/useSearchPalette';
 import { useViewToggle } from '../../hooks/useViewToggle';
@@ -40,9 +41,18 @@ export function AppLayout() {
 
   const sidebar = useSidebarResize(config);
   // The bottom panel steps aside (collapses) while any task-detail window is open;
-  // the two are mutually exclusive terminal surfaces.
-  const detailWindowsOpen = useSessionStore((s) => s.dialogSessionIds.length > 0);
-  const terminal = useTerminalResize(config, detailWindowsOpen);
+  // the two are mutually exclusive terminal surfaces. `pendingDetailWindowsProjectId` keeps it
+  // collapsed from the first frame of a project switch when the destination project will restore
+  // detail windows, so it never flashes expanded while `dialogSessionIds` is transiently empty
+  // during the async workspace restore (see utils/terminal-force-collapse.ts).
+  const dialogSessionIds = useSessionStore((s) => s.dialogSessionIds);
+  const pendingDetailWindowsProjectId = useSessionStore((s) => s.pendingDetailWindowsProjectId);
+  const detailWindowsOpen = shouldForceCollapseTerminal({
+    dialogSessionIds,
+    pendingDetailWindowsProjectId,
+    currentProjectId: currentProject?.id ?? null,
+  });
+  const terminal = useTerminalResize(config, detailWindowsOpen, currentProject?.id ?? null);
   const commandBar = useCommandBar();
   // Plain Ctrl+F focuses the board search on the board view; otherwise it falls
   // back to the global search palette (resolved inside useSearchPalette).
@@ -138,9 +148,13 @@ export function AppLayout() {
 
                       {/* Terminal panel */}
                       <div
+                        data-testid="terminal-panel-container"
+                        data-collapsed={terminal.collapsed ? 'true' : 'false'}
                         style={{ height: terminal.collapsed ? COLLAPSED_HEIGHT : terminal.height }}
                         className={`flex-shrink-0 overflow-hidden ${
-                          terminal.ready && !terminal.isResizing ? 'transition-[height] duration-200 ease-in-out' : ''
+                          terminal.ready && !terminal.isResizing && !terminal.suppressTransition
+                            ? 'transition-[height] duration-200 ease-in-out'
+                            : ''
                         } ${terminal.isResizing || sidebar.isResizing ? 'pointer-events-none' : ''}`}
                         onTransitionEnd={(event) => {
                           if (event.target === event.currentTarget && event.propertyName === 'height') {
