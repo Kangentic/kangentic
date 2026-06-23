@@ -280,10 +280,11 @@ test.describe('SettingToggleRow filter detach', () => {
 
 test.describe('BehaviorTab SettingToggleRow persistence', () => {
   test.afterEach(async () => {
-    // Restore both toggles to their mock defaults.
+    // Restore all three toggles to their mock defaults.
     await setGlobalConfigAndSync({
       autoFocusIdleSession: false,
       agent: { autoResumeSessionsOnRestart: false },
+      skipBoardConfigConfirm: false,
     });
   });
 
@@ -332,6 +333,36 @@ test.describe('BehaviorTab SettingToggleRow persistence', () => {
       const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
       return (globalConfig as { agent: { autoResumeSessionsOnRestart: boolean } }).agent.autoResumeSessionsOnRestart;
     }, { timeout: 3000 }).toBe(true);
+
+    await closeSettings();
+  });
+
+  test('clicking Auto-Apply Board Config Changes persists skipBoardConfigConfirm to global config', async () => {
+    // skipBoardConfigConfirm starts false (mock default).
+    await setGlobalConfigAndSync({ skipBoardConfigConfirm: false });
+
+    await openTab('Behavior');
+
+    const card = page.getByRole('switch', { name: 'Auto-Apply Board Config Changes' });
+    await expect(card).toHaveAttribute('aria-checked', 'false');
+
+    // Toggle on - must persist true.
+    await card.click();
+    await expect(card).toHaveAttribute('aria-checked', 'true');
+
+    await expect.poll(async () => {
+      const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
+      return (globalConfig as { skipBoardConfigConfirm: boolean }).skipBoardConfigConfirm;
+    }, { timeout: 3000 }).toBe(true);
+
+    // Toggle off - must persist false.
+    await card.click();
+    await expect(card).toHaveAttribute('aria-checked', 'false');
+
+    await expect.poll(async () => {
+      const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
+      return (globalConfig as { skipBoardConfigConfirm: boolean }).skipBoardConfigConfirm;
+    }, { timeout: 3000 }).toBe(false);
 
     await closeSettings();
   });
