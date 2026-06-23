@@ -7,6 +7,7 @@ import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoard
 import { installDiagnostics } from './diagnostics/install';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
+import { registerSeedGitChangesDevIpc } from '../devtools/main/seed-git-changes';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
 import { createRequestResolver } from './agent/mcp-project-context';
@@ -517,6 +518,10 @@ const createWindow = () => {
       if (ephemeralContext) {
         try {
           registerEphemeralProjectDevIpc(getOptionalIpcContext, cwd);
+          // Seed-changes dev IPC for the TestHarness "Seed Changes" button. Only
+          // registered in ephemeral preview, the one place its safety guard
+          // (preview-projects root) has clones to operate on.
+          registerSeedGitChangesDevIpc();
           // Adopt the two clones the /preview script pre-cloned (overlapping the
           // build); add more on demand via the TestHarness "Create Project" button.
           const project1 = await createPreviewClone(ephemeralContext, cwd); // adopts "Project 1"

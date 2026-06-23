@@ -29,6 +29,16 @@
   let browserUrls = {};
   let browserCaptureCalls = [];
 
+  // Resolve the git diff fixture for a request. A test can seed a single fixture
+  // via window.__mockGitDiff, or per-scope fixtures via window.__mockGitDiffByScope
+  // = { working: {...}, staged: {...}, branch: {...} }.
+  function resolveGitDiffFixture(request) {
+    var scope = (request && request.scope) || 'branch';
+    var byScope = (typeof window !== 'undefined' && window.__mockGitDiffByScope) || null;
+    if (byScope && byScope[scope]) return byScope[scope];
+    return (typeof window !== 'undefined' && window.__mockGitDiff) || null;
+  }
+
   let config = Object.assign({
     theme: 'dark',
     sidebarVisible: true,
@@ -39,6 +49,9 @@
     animationsEnabled: true,
     statusBarVisible: true,
     diffViewMode: 'split',
+    diffDefaultScope: 'working',
+    diffIgnoreWhitespace: false,
+    diffCollapseUnchanged: false,
     terminal: {
       shell: null,
       fontFamily: 'Consolas, "Courier New", monospace',
@@ -1712,6 +1725,14 @@
       openExternal: async function () {
         return;
       },
+      showItemInFolder: async function () {
+        // Test hook: record reveal-in-OS calls so a test can assert the path.
+        if (typeof window !== 'undefined') {
+          window.__mockShowItemInFolderCalls = window.__mockShowItemInFolderCalls || [];
+          window.__mockShowItemInFolderCalls.push(arguments[0]);
+        }
+        return;
+      },
       exec: async function (/* command, cwd */) {
         return { pid: 12345 };
       },
@@ -1724,11 +1745,13 @@
       listBranches: async function () {
         return ['main', 'develop', 'feature/auth', 'feature/dashboard', 'fix/login-bug'];
       },
-      diffFiles: async function () {
+      diffFiles: async function (request) {
         // Test hook: seed a diff fixture via window.__mockGitDiff = { files: [...] }
         // where each file is { path, status, binary?, insertions?, deletions?,
-        // original, modified, language? }. Default stays empty.
-        var fixture = (typeof window !== 'undefined' && window.__mockGitDiff) || null;
+        // original, modified, language? }, or per-scope via
+        // window.__mockGitDiffByScope = { working: {...}, staged: {...}, branch: {...} }.
+        // Default stays empty.
+        var fixture = resolveGitDiffFixture(request);
         if (fixture && Array.isArray(fixture.files)) {
           var totalInsertions = 0;
           var totalDeletions = 0;
@@ -1749,7 +1772,7 @@
         return { files: [], totalInsertions: 0, totalDeletions: 0 };
       },
       fileContent: async function (request) {
-        var fixture = (typeof window !== 'undefined' && window.__mockGitDiff) || null;
+        var fixture = resolveGitDiffFixture(request);
         if (fixture && Array.isArray(fixture.files)) {
           var match = fixture.files.find(function (entry) { return entry.path === (request && request.filePath); });
           if (match) {
@@ -1776,6 +1799,13 @@
           return window.__mockPendingChangesResult;
         }
         return { hasPendingChanges: false, uncommittedFileCount: 0, unpushedCommitCount: 0, currentBranch: null };
+      },
+      branchSummary: async function () {
+        // Test hook: override the header context (branch name, ahead/behind, last commit).
+        if (typeof window !== 'undefined' && window.__mockBranchSummary) {
+          return window.__mockBranchSummary;
+        }
+        return { currentBranch: null, ahead: 0, behind: 0, lastCommit: null };
       },
     },
 

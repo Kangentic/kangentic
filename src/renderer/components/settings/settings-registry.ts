@@ -28,11 +28,16 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── Layout ──
   { id: 'cardDensity', tabId: 'layout', label: 'Card Density', description: 'Amount of detail shown on task cards', scope: 'global', keywords: ['compact', 'comfortable', 'minimal', 'detailed'] },
   { id: 'columnWidth', tabId: 'layout', label: 'Column Width', description: 'Width of board columns', scope: 'global', keywords: ['narrow', 'wide', 'size'] },
-  { id: 'diffViewMode', tabId: 'layout', label: 'Git Diff View', description: 'Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified).', scope: 'global', keywords: ['split', 'inline', 'side by side', 'side-by-side', 'unified', 'diff', 'changes', 'git', 'review', 'compare'] },
   { id: 'terminalPanelVisible', tabId: 'layout', label: 'Terminal Panel', description: 'Show the terminal panel below the board', scope: 'global', keywords: ['bottom', 'panel', 'hide', 'terminal', 'visible'] },
   { id: 'statusBarVisible', tabId: 'layout', label: 'Status Bar', description: 'Show the status bar at the bottom of the window', scope: 'global', keywords: ['bottom', 'bar', 'hide', 'visible'] },
   { id: 'restoreWindowPosition', tabId: 'layout', label: 'Restore Window Position', description: 'Remember window size and position between launches', scope: 'global', keywords: ['size', 'bounds', 'remember'] },
   { id: 'animationsEnabled', tabId: 'layout', label: 'Animations', description: 'Enable transition and motion effects', scope: 'global', keywords: ['motion', 'reduce', 'transition', 'disable', 'accessibility'] },
+
+  // ── Layout > Diff ──
+  { id: 'diffViewMode', tabId: 'layout', label: 'Git Diff View', description: 'Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified).', scope: 'global', section: 'Diff', keywords: ['split', 'inline', 'side by side', 'side-by-side', 'unified', 'diff', 'changes', 'git', 'review', 'compare'] },
+  { id: 'diffDefaultScope', tabId: 'layout', label: 'Default Diff Scope', description: 'Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base.', scope: 'global', section: 'Diff', keywords: ['scope', 'working', 'staged', 'branch', 'uncommitted', 'index', 'diff', 'changes', 'git', 'review'] },
+  { id: 'diffIgnoreWhitespace', tabId: 'layout', label: 'Ignore Whitespace', description: 'Hide whitespace-only changes in the diff to filter reformatting noise.', scope: 'global', section: 'Diff', keywords: ['whitespace', 'trim', 'indent', 'reformat', 'diff', 'changes'] },
+  { id: 'diffCollapseUnchanged', tabId: 'layout', label: 'Collapse Unchanged Regions', description: 'Fold away large unchanged spans so a big file shows only the changed hunks with a little context.', scope: 'global', section: 'Diff', keywords: ['collapse', 'fold', 'hide', 'unchanged', 'context', 'hunks', 'diff'] },
 
   // ── Terminal ──
   { id: 'terminal.shell', tabId: 'terminal', label: 'Shell', description: 'Terminal shell used for agent sessions', scope: 'project', keywords: ['bash', 'powershell', 'zsh', 'fish'] },

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
 import type { DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
-import { Loader2, Columns2, Rows2, FileCode } from 'lucide-react';
+import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Pilcrow, FoldVertical } from 'lucide-react';
 import { useConfigStore } from '../../../../stores/config-store';
 import { NAMED_THEMES } from '../../../../../shared/types';
 import type { GitDiffStatus } from '../../../../../shared/types';
@@ -51,6 +51,17 @@ interface TrackedScroll {
   scrollLeft: number;
 }
 
+/** Shared styling for the diff toolbar buttons: a clear hover background (matching
+ *  the rest of the app) and a brief press effect so a click visibly registers.
+ *  `active` renders the pressed/selected state for toggles and the current view mode. */
+function toolbarButtonClass(active: boolean): string {
+  return `p-1.5 rounded transition active:scale-90 ${
+    active
+      ? 'bg-surface-raised text-fg'
+      : 'text-fg-muted hover:text-fg hover:bg-surface-hover'
+  }`;
+}
+
 export function DiffViewer({
   original,
   modified,
@@ -69,8 +80,92 @@ export function DiffViewer({
   const monacoTheme = themeBase === 'dark' ? 'vs-dark' : 'vs';
   const statusConfig = STATUS_LABELS[status];
 
+  // Diff-rendering preferences are single global config keys (the toolbar
+  // toggles and the Layout settings tab read and write the same keys), so the
+  // choices stick across every diff, all mount points, and restarts - exactly
+  // like the split/inline view mode.
+  const ignoreWhitespace = useConfigStore((state) => state.config.diffIgnoreWhitespace);
+  const collapseUnchanged = useConfigStore((state) => state.config.diffCollapseUnchanged);
+  const updateConfig = useConfigStore((state) => state.updateConfig);
+
   const diffEditorRef = useRef<MonacoDiffEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
+
+  // Live diff-rendering options derived from the global config. ignoreTrimWhitespace
+  // is a diff-COMPUTATION option, so it applies when the diff loads. The diff
+  // algorithm is fixed to 'advanced' (Monaco's modern word-level diff, always on -
+  // there is no meaningful on/off toggle for it). hideUnchangedRegions is a
+  // VIEW-fold option handled separately (see applyCollapseFold): Monaco only folds
+  // on a false->true transition, so passing it as a construction option that
+  // @monaco-editor/react re-applies on every render never folds a diff that loads
+  // while collapse is already on.
+  const diffRenderOptions = {
+    ignoreTrimWhitespace: ignoreWhitespace,
+    diffAlgorithm: 'advanced' as const,
+  };
+
+  const collapseUnchangedRef = useRef(collapseUnchanged);
+  collapseUnchangedRef.current = collapseUnchanged;
+
+  // Apply (or clear) the unchanged-region fold on the live editor. Monaco folds
+  // only on a false->true transition of hideUnchangedRegions, so a diff that
+  // (re)loads while collapse is already enabled is NOT folded by simply having
+  // the option on. Force the transition: disable now, then re-enable on a LATER
+  // task (setTimeout, not the same frame) so the editor fully processes the
+  // disable before the enable - empirically a same-frame toggle does not fold.
+  const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const applyCollapseFold = useCallback(() => {
+    const diffEditor = diffEditorRef.current;
+    if (diffEditor === null) return;
+    if (collapseTimerRef.current !== null) clearTimeout(collapseTimerRef.current);
+    // Collapse off: ensure regions are shown.
+    if (!collapseUnchangedRef.current) {
+      diffEditor.updateOptions({ hideUnchangedRegions: { enabled: false } });
+      return;
+    }
+    // Collapse on. If the diff is ALREADY folded (e.g. a recompute from toggling
+    // whitespace preserved the fold), do nothing: re-running the disable->enable
+    // transition would visibly unfold then refold the regions - the flash. Only
+    // force the transition when NOT folded (a fresh file loaded with the option
+    // already on, which Monaco does not fold on its own).
+    const modifiedDom = diffEditor.getModifiedEditor().getDomNode();
+    const diffRoot = modifiedDom ? modifiedDom.closest('.monaco-diff-editor') : null;
+    const alreadyFolded = (diffRoot ?? document).querySelectorAll('.diff-hidden-lines').length > 0;
+    if (alreadyFolded) return;
+    diffEditor.updateOptions({ hideUnchangedRegions: { enabled: false } });
+    collapseTimerRef.current = setTimeout(() => {
+      collapseTimerRef.current = null;
+      if (collapseUnchangedRef.current) {
+        diffEditorRef.current?.updateOptions({ hideUnchangedRegions: { enabled: true } });
+      }
+    }, 0);
+  }, []);
+
+  // Index of the change region the next/prev navigation last revealed, reset on
+  // file change so navigation restarts from the top of each new file.
+  const changeIndexRef = useRef(-1);
+
+  // Reveal the next or previous changed region using the diff's line changes.
+  // Wraps around at the ends; a no-op when the diff has no changes yet.
+  const navigateChange = useCallback((direction: 'next' | 'prev') => {
+    const diffEditor = diffEditorRef.current;
+    if (diffEditor === null) return;
+    const lineChanges = diffEditor.getLineChanges();
+    if (!lineChanges || lineChanges.length === 0) return;
+    const lastIndex = lineChanges.length - 1;
+    let nextIndex = changeIndexRef.current;
+    if (direction === 'next') {
+      nextIndex = nextIndex >= lastIndex ? 0 : nextIndex + 1;
+    } else {
+      nextIndex = nextIndex <= 0 ? lastIndex : nextIndex - 1;
+    }
+    changeIndexRef.current = nextIndex;
+    // Pure-deletion hunks have modifiedStartLineNumber 0; clamp to line 1.
+    const targetLine = Math.max(1, lineChanges[nextIndex].modifiedStartLineNumber);
+    const modifiedEditor = diffEditor.getModifiedEditor();
+    modifiedEditor.revealLineInCenter(targetLine, monacoRef.current?.editor.ScrollType.Smooth);
+    modifiedEditor.setPosition({ lineNumber: targetLine, column: 1 });
+  }, []);
 
   // Refs assigned during render so the once-subscribed Monaco event handlers
   // always read the current file's values, even for scroll events the child
@@ -145,16 +240,24 @@ export function DiffViewer({
     // recompute window can consume a reveal against the previous content's line
     // changes (the diff API offers no way to attribute a result to a content
     // version). It self-corrects on revisit.
-    diffEditor.onDidUpdateDiff(() => consumePendingReveal(true));
+    diffEditor.onDidUpdateDiff(() => {
+      consumePendingReveal(true);
+      // Re-apply the fold for the freshly computed diff (a file switch keeps the
+      // editor mounted, so the option never transitions on its own).
+      applyCollapseFold();
+    });
     // The diff may have finished before onMount attached these listeners.
     consumePendingReveal(true);
-  }, [consumePendingReveal]);
+    applyCollapseFold();
+  }, [consumePendingReveal, applyCollapseFold]);
 
   // Arm on entering a file; on leaving, commit the tracked scroll under the
   // outgoing key. One cleanup path covers file switch, panel close, dialog
   // close, and ChangesPanel remount (expand/collapse).
   useEffect(() => {
     pendingRevealRef.current = scrollMemoryKey;
+    // Restart next/prev-change navigation from the top of each new file.
+    changeIndexRef.current = -1;
     return () => {
       const lastScroll = lastScrollRef.current;
       // Commit only a position tracked for this exact key and only after it was
@@ -191,6 +294,23 @@ export function DiffViewer({
     }
   }, [binary]);
 
+  // Apply whitespace changes to the live editor so a toolbar or settings toggle
+  // takes effect immediately, not just on the next file open.
+  useEffect(() => {
+    diffEditorRef.current?.updateOptions({ ignoreTrimWhitespace: ignoreWhitespace });
+  }, [ignoreWhitespace]);
+
+  // Re-apply the fold whenever collapse is toggled. The diff is already loaded
+  // here, so applyCollapseFold's disable -> enable is the transition Monaco honors.
+  useEffect(() => {
+    applyCollapseFold();
+  }, [collapseUnchanged, applyCollapseFold]);
+
+  // Clear any pending fold re-apply on unmount so it never touches a disposed editor.
+  useEffect(() => () => {
+    if (collapseTimerRef.current !== null) clearTimeout(collapseTimerRef.current);
+  }, []);
+
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
@@ -200,11 +320,51 @@ export function DiffViewer({
         <span className={`text-xs ${statusConfig.colorClass} flex-shrink-0`}>{statusConfig.label}</span>
 
         <div className="ml-auto flex items-center gap-1">
+          {/* Next / previous change navigation */}
+          <button
+            onClick={() => navigateChange('prev')}
+            className={toolbarButtonClass(false)}
+            title="Previous change"
+            data-testid="diff-prev-change"
+          >
+            <ChevronUp size={16} />
+          </button>
+          <button
+            onClick={() => navigateChange('next')}
+            className={toolbarButtonClass(false)}
+            title="Next change"
+            data-testid="diff-next-change"
+          >
+            <ChevronDown size={16} />
+          </button>
+
+          <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
+
+          {/* Diff-rendering toggles (persisted as global Layout settings) */}
+          <button
+            onClick={() => updateConfig({ diffIgnoreWhitespace: !ignoreWhitespace })}
+            className={toolbarButtonClass(ignoreWhitespace)}
+            title="Ignore whitespace"
+            aria-pressed={ignoreWhitespace}
+            data-testid="diff-ignore-whitespace"
+          >
+            <Pilcrow size={16} />
+          </button>
+          <button
+            onClick={() => updateConfig({ diffCollapseUnchanged: !collapseUnchanged })}
+            className={toolbarButtonClass(collapseUnchanged)}
+            title="Collapse unchanged regions"
+            aria-pressed={collapseUnchanged}
+            data-testid="diff-collapse-unchanged"
+          >
+            <FoldVertical size={16} />
+          </button>
+
+          <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
+
           <button
             onClick={() => onViewModeChange('split')}
-            className={`p-1.5 rounded transition-colors ${
-              viewMode === 'split' ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:text-fg'
-            }`}
+            className={toolbarButtonClass(viewMode === 'split')}
             title="Side by side"
             data-testid="diff-view-split"
           >
@@ -212,9 +372,7 @@ export function DiffViewer({
           </button>
           <button
             onClick={() => onViewModeChange('inline')}
-            className={`p-1.5 rounded transition-colors ${
-              viewMode === 'inline' ? 'bg-surface-raised text-fg' : 'text-fg-muted hover:text-fg'
-            }`}
+            className={toolbarButtonClass(viewMode === 'inline')}
             title="Inline"
             data-testid="diff-view-inline"
           >
@@ -275,6 +433,7 @@ export function DiffViewer({
               renderWhitespace: 'boundary',
               fontSize: 12,
               lineHeight: 18,
+              ...diffRenderOptions,
             }}
             loading={
               <div className="flex items-center justify-center h-full">

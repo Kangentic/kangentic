@@ -1,4 +1,5 @@
 import { type StateCreator } from 'zustand';
+import type { GitDiffScope } from '../../../shared/types';
 import type { SessionStore } from './types';
 
 export interface TaskChangesPanelSlice {
@@ -6,6 +7,19 @@ export interface TaskChangesPanelSlice {
   changesOpenTasks: Set<string>;
   /** Last selected file in the Changes panel, keyed by task ID. */
   changesSelectedFile: Record<string, string>;
+  /**
+   * Live diff scope (working / staged / branch) for the Changes panel, keyed by
+   * task ID. Absent means "use the global `diffDefaultScope` default". This is
+   * panel state, not config: only the default is persisted in config.
+   */
+  changesScope: Record<string, GitDiffScope>;
+  /**
+   * Manually-set Changes panel file-tree width (px), keyed by task ID. Absent
+   * means the panel auto-fits to the branch name / commit on open. Per-task so a
+   * task with a long branch name can keep its own width (persists across dialog
+   * open/close, like {@link dividerRatio}).
+   */
+  changesFileTreeWidth: Record<string, number>;
   /** View mode for the task-detail Changes panel, keyed by task ID (default 'split'). */
   changesViewMode: Record<string, 'split' | 'expanded'>;
   /**
@@ -27,6 +41,8 @@ export interface TaskChangesPanelSlice {
   maximizedTasks: Set<string>;
   toggleChangesOpen: (taskId: string) => void;
   setChangesSelectedFile: (taskId: string, filePath: string | null) => void;
+  setChangesScope: (taskId: string, scope: GitDiffScope) => void;
+  setChangesFileTreeWidth: (taskId: string, width: number) => void;
   setChangesViewMode: (taskId: string, mode: 'split' | 'expanded') => void;
   setDividerRatio: (taskId: string, ratio: number) => void;
   toggleBrowserOpen: (taskId: string) => void;
@@ -43,6 +59,8 @@ export interface TaskChangesPanelSlice {
 export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], TaskChangesPanelSlice> = (set, get) => ({
   changesOpenTasks: new Set<string>(),
   changesSelectedFile: {},
+  changesScope: {},
+  changesFileTreeWidth: {},
   changesViewMode: {},
   dividerRatio: {},
   browserOpenTasks: new Set<string>(),
@@ -87,6 +105,14 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
 
   setDividerRatio: (taskId, ratio) => {
     set({ dividerRatio: { ...get().dividerRatio, [taskId]: ratio } });
+  },
+
+  setChangesScope: (taskId, scope) => {
+    set({ changesScope: { ...get().changesScope, [taskId]: scope } });
+  },
+
+  setChangesFileTreeWidth: (taskId, width) => {
+    set({ changesFileTreeWidth: { ...get().changesFileTreeWidth, [taskId]: width } });
   },
 
   setChangesSelectedFile: (taskId, filePath) => {

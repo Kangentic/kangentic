@@ -1,7 +1,7 @@
 import simpleGit from 'simple-git';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { GitDiffFilesInput, GitDiffFilesResult, GitDiffFileEntry, GitDiffStatus, GitFileContentInput, GitFileContentResult } from '../../shared/types';
+import type { GitDiffFilesInput, GitDiffFilesResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileContentInput, GitFileContentResult } from '../../shared/types';
 
 const EXTENSION_LANGUAGE_MAP: Record<string, string> = {
   '.ts': 'typescript', '.tsx': 'typescript', '.mts': 'typescript', '.cts': 'typescript',
@@ -120,22 +120,43 @@ export class DiffService {
     return 'HEAD';
   }
 
+  /**
+   * Resolve the `git diff` arguments + untracked policy for a scope.
+   * - `working`: working tree vs index (`git diff`); include untracked new files.
+   * - `staged`: index vs HEAD (`git diff --cached`); exclude untracked (not staged).
+   * - `branch`: working tree vs the merge-base of base..HEAD; include untracked.
+   *   When on the base branch itself the merge-base resolves to HEAD, so this
+   *   shows only uncommitted working-tree changes.
+   */
+  private async resolveScopeDiffArgs(
+    git: ReturnType<typeof simpleGit>,
+    scope: GitDiffScope,
+    baseBranch: string,
+  ): Promise<{ summaryArgs: string[]; nameStatusArgs: string[]; includeUntracked: boolean }> {
+    if (scope === 'working') {
+      return { summaryArgs: [], nameStatusArgs: ['--name-status'], includeUntracked: true };
+    }
+    if (scope === 'staged') {
+      return { summaryArgs: ['--cached'], nameStatusArgs: ['--cached', '--name-status'], includeUntracked: false };
+    }
+    const mergeBase = await this.getMergeBase(git, baseBranch);
+    return { summaryArgs: [mergeBase], nameStatusArgs: ['--name-status', mergeBase], includeUntracked: true };
+  }
+
   async getDiffFiles(input: GitDiffFilesInput): Promise<GitDiffFilesResult> {
     const git = simpleGit(this.gitDirectory);
     const { baseBranch } = input;
+    const scope = input.scope ?? 'branch';
 
-    // Always diff working tree against the merge-base (fork point).
-    // This shows changes made on this branch including uncommitted edits.
-    // When on the base branch itself (e.g. main), merge-base resolves to HEAD,
-    // so only uncommitted working tree changes are shown.
-    const diffRef = await this.getMergeBase(git, baseBranch);
+    const { summaryArgs, nameStatusArgs, includeUntracked } = await this.resolveScopeDiffArgs(git, scope, baseBranch);
 
     // Run git commands in parallel for faster initial load.
-    // git.status() fetches untracked files that git diff ignores.
+    // git.status() fetches untracked files that git diff ignores - only needed
+    // for the working/branch scopes (staged excludes untracked by definition).
     const [summary, nameStatusOutput, gitStatus] = await Promise.all([
-      git.diffSummary([diffRef]),
-      git.diff(['--name-status', diffRef]),
-      git.status(),
+      git.diffSummary(summaryArgs),
+      git.diff(nameStatusArgs),
+      includeUntracked ? git.status() : Promise.resolve(null),
     ]);
     const statusMap = parseNameStatus(nameStatusOutput);
 
@@ -167,8 +188,12 @@ export class DiffService {
 
     // Merge untracked (new) files from git status. git diff only covers
     // tracked files, so newly created files need to come from status.not_added.
+    // Skipped for the staged scope (gitStatus is null there - untracked files
+    // are not in the index).
     const trackedPaths = new Set(files.map((file) => file.path));
-    const untrackedPaths = gitStatus.not_added.filter((filePath) => !trackedPaths.has(filePath));
+    const untrackedPaths = gitStatus
+      ? gitStatus.not_added.filter((filePath) => !trackedPaths.has(filePath))
+      : [];
 
     const untrackedEntries = await Promise.all(
       untrackedPaths.map(async (filePath): Promise<GitDiffFileEntry> => {
@@ -211,21 +236,36 @@ export class DiffService {
   async getFileContent(input: GitFileContentInput): Promise<GitFileContentResult> {
     const git = simpleGit(this.gitDirectory);
     const { baseBranch, filePath, status, oldPath } = input;
+    const scope = input.scope ?? 'branch';
     const language = inferLanguage(filePath);
 
     const needsOriginal = status !== 'A' && status !== 'U';
     const needsModified = status !== 'D';
+    const showPath = oldPath ?? filePath;
 
-    // Fetch original (from git) and modified (from disk) in parallel.
-    // These are independent I/O operations - overlapping them cuts latency
-    // for modified files (the most common case) by ~30-50%.
+    // Resolve the "original" (left) side per scope. The revision is joined with
+    // `:path`: '' yields ":path" (the staged/index blob), 'HEAD' yields
+    // "HEAD:path", and the merge-base yields "<base>:path".
+    //   working -> index   (vs working tree on disk)
+    //   staged  -> HEAD    (vs the index blob)
+    //   branch  -> base    (vs working tree on disk)
+    const resolveOriginalRevision = async (): Promise<string> => {
+      if (scope === 'working') return '';
+      if (scope === 'staged') return 'HEAD';
+      return this.getMergeBase(git, baseBranch);
+    };
+    // The "modified" (right) side reads from disk for working/branch, but from
+    // the staged index blob for the staged scope.
+    const modifiedFromIndex = scope === 'staged';
+
+    // Fetch original and modified in parallel - independent I/O whose overlap
+    // cuts latency for modified files (the common case) by ~30-50%.
     const [original, modified] = await Promise.all([
       needsOriginal
         ? (async () => {
             try {
-              const showPath = oldPath ?? filePath;
-              const mergeBase = await this.getMergeBase(git, baseBranch);
-              return await git.show([`${mergeBase}:${showPath}`]);
+              const revision = await resolveOriginalRevision();
+              return await git.show([`${revision}:${showPath}`]);
             } catch {
               return '';
             }
@@ -233,9 +273,12 @@ export class DiffService {
         : '',
       needsModified
         ? (async () => {
-            const workingDirectory = input.worktreePath ?? input.projectPath;
-            const absolutePath = path.join(workingDirectory, filePath);
             try {
+              if (modifiedFromIndex) {
+                return await git.show([`:${filePath}`]);
+              }
+              const workingDirectory = input.worktreePath ?? input.projectPath;
+              const absolutePath = path.join(workingDirectory, filePath);
               return await fs.promises.readFile(absolutePath, 'utf-8');
             } catch {
               return '';

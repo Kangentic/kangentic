@@ -1,6 +1,9 @@
-import { useMemo, useState, useRef, useCallback, useEffect, memo } from 'react';
-import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion } from 'lucide-react';
-import type { GitDiffFileEntry, GitDiffStatus } from '../../../../../shared/types';
+import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
+import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, RefreshCw, FolderOpen, ExternalLink } from 'lucide-react';
+import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus } from '../../../../../shared/types';
+import { formatRelativeTime } from '../../../../lib/datetime';
+import { Select } from '../../../settings/shared';
+import { useToastStore } from '../../../../stores/toast-store';
 
 interface FileTreePanelProps {
   files: GitDiffFileEntry[];
@@ -8,6 +11,18 @@ interface FileTreePanelProps {
   onSelect: (filePath: string) => void;
   totalInsertions: number;
   totalDeletions: number;
+  /** Live branch context (name, ahead/behind, last commit) shown in the header. */
+  branchSummary?: GitBranchSummaryResult | null;
+  /** Manual refresh: re-fetch the file list, selected diff, and branch summary. */
+  onRefresh?: () => void;
+  /** Current diff scope (working / staged / branch). */
+  scope?: GitDiffScope;
+  /** Change the diff scope. */
+  onScopeChange?: (scope: GitDiffScope) => void;
+  /** Worktree directory, used to resolve a file's absolute path for OS actions. */
+  worktreePath?: string;
+  /** Project directory, the fallback base when there is no worktree. */
+  projectPath?: string;
 }
 
 const STATUS_CONFIG: Record<GitDiffStatus, { icon: typeof Plus; colorClass: string; label: string }> = {
@@ -166,10 +181,12 @@ const FileRowView = memo(function FileRowView({
   row,
   isSelected,
   onSelect,
+  onContextMenu,
 }: {
   row: FlatFileRow;
   isSelected: boolean;
   onSelect: (filePath: string) => void;
+  onContextMenu: (file: GitDiffFileEntry, event: ReactMouseEvent) => void;
 }) {
   const statusConfig = STATUS_CONFIG[row.file.status];
   const StatusIcon = statusConfig.icon;
@@ -178,6 +195,7 @@ const FileRowView = memo(function FileRowView({
   return (
     <button
       onClick={() => onSelect(row.file.path)}
+      onContextMenu={(event) => onContextMenu(row.file, event)}
       className={`flex items-center gap-1.5 w-full px-2 text-xs transition-colors ${
         isSelected ? 'bg-accent/15 text-fg' : 'text-fg-secondary hover:bg-surface-raised/50'
       }`}
@@ -204,11 +222,13 @@ function VirtualizedFileTree({
   files,
   selectedFile,
   onSelect,
+  onContextMenu,
   defaultExpanded,
 }: {
   files: GitDiffFileEntry[];
   selectedFile: string | null;
   onSelect: (filePath: string) => void;
+  onContextMenu: (file: GitDiffFileEntry, event: ReactMouseEvent) => void;
   defaultExpanded: boolean;
 }) {
   const tree = useMemo(() => buildDirectoryTree(files), [files]);
@@ -314,11 +334,173 @@ function VirtualizedFileTree({
                 row={row}
                 isSelected={selectedFile === row.file.path}
                 onSelect={onSelect}
+                onContextMenu={onContextMenu}
               />
             ),
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// File context menu
+// ---------------------------------------------------------------------------
+
+interface FileContextMenuState {
+  file: GitDiffFileEntry;
+  x: number;
+  y: number;
+}
+
+/** Right-click menu for a changed file: open in the OS default app, reveal in
+ *  the file manager, or copy the repo-relative path. Positioned at the cursor,
+ *  clamped to the viewport; closes on outside click or Escape. */
+function FileContextMenu({
+  state,
+  worktreePath,
+  projectPath,
+  onClose,
+}: {
+  state: FileContextMenuState;
+  worktreePath?: string;
+  projectPath?: string;
+  onClose: () => void;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const { file } = state;
+
+  useEffect(() => {
+    const handleClick = (event: globalThis.MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) onClose();
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('mousedown', handleClick, true);
+    document.addEventListener('keydown', handleEscape, true);
+    return () => {
+      document.removeEventListener('mousedown', handleClick, true);
+      document.removeEventListener('keydown', handleEscape, true);
+    };
+  }, [onClose]);
+
+  // git paths use '/'; the main process normalizes separators for the OS.
+  const base = worktreePath ?? projectPath;
+  const absolutePath = base ? `${base}/${file.path}` : file.path;
+  // A deleted file no longer exists on disk, so open / reveal are unavailable.
+  const existsOnDisk = base !== undefined && file.status !== 'D';
+
+  const menuStyle: CSSProperties = {
+    left: Math.min(state.x, window.innerWidth - 220),
+    top: Math.min(state.y, window.innerHeight - 160),
+  };
+
+  return (
+    <div
+      ref={menuRef}
+      className="fixed z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 min-w-[200px] overlay-popover-in"
+      style={{ ...menuStyle, transformOrigin: 'top left' }}
+      data-dismissable-layer
+      data-testid="changes-file-context-menu"
+    >
+      <button
+        type="button"
+        disabled={!existsOnDisk}
+        onClick={() => { window.electronAPI.shell.openPath(absolutePath); onClose(); }}
+        className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 disabled:opacity-40 disabled:hover:bg-transparent flex items-center gap-2"
+        data-testid="context-open-file"
+      >
+        <ExternalLink size={14} className="text-fg-faint" />
+        Open in editor
+      </button>
+      <button
+        type="button"
+        disabled={!existsOnDisk}
+        onClick={() => { window.electronAPI.shell.showItemInFolder(absolutePath); onClose(); }}
+        className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 disabled:opacity-40 disabled:hover:bg-transparent flex items-center gap-2"
+        data-testid="context-reveal-file"
+      >
+        <FolderOpen size={14} className="text-fg-faint" />
+        Reveal in file manager
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          navigator.clipboard.writeText(file.path);
+          useToastStore.getState().addToast({ message: 'Copied file path' });
+          onClose();
+        }}
+        className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
+        data-testid="context-copy-path"
+      >
+        <Copy size={14} className="text-fg-faint" />
+        Copy path
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Branch header
+// ---------------------------------------------------------------------------
+
+/** Current branch, ahead/behind vs base, the tip commit, and a manual refresh. */
+function BranchHeader({ branchSummary, onRefresh }: { branchSummary?: GitBranchSummaryResult | null; onRefresh?: () => void }) {
+  const branch = branchSummary?.currentBranch;
+  const ahead = branchSummary?.ahead ?? 0;
+  const behind = branchSummary?.behind ?? 0;
+  const lastCommit = branchSummary?.lastCommit ?? null;
+
+  // Nothing useful to show and no refresh affordance to host - render nothing.
+  if (!branch && !lastCommit && !onRefresh) return null;
+
+  return (
+    <div className="border-b border-edge flex-shrink-0">
+      <div className="flex items-center gap-1.5 px-3 py-2 text-xs">
+        <GitBranch size={12} className="text-fg-muted flex-shrink-0" />
+        <span className="text-fg-secondary font-medium truncate" title={branch ?? undefined} data-testid="changes-branch-name">
+          {branch ?? 'Detached HEAD'}
+        </span>
+        {(ahead > 0 || behind > 0) && (
+          <span className="flex items-center gap-1.5 text-fg-muted flex-shrink-0" title={`${ahead} ahead, ${behind} behind base branch`}>
+            {ahead > 0 && (
+              <span className="flex items-center gap-0.5 tabular-nums">
+                <ArrowUp size={11} className="text-green-400" />
+                {ahead}
+              </span>
+            )}
+            {behind > 0 && (
+              <span className="flex items-center gap-0.5 tabular-nums">
+                <ArrowDown size={11} className="text-red-400" />
+                {behind}
+              </span>
+            )}
+          </span>
+        )}
+        {onRefresh && (
+          <button
+            onClick={onRefresh}
+            title="Refresh changes"
+            className="ml-auto p-1 -mr-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors flex-shrink-0"
+            data-testid="changes-refresh"
+          >
+            <RefreshCw size={12} />
+          </button>
+        )}
+      </div>
+      {lastCommit && (
+        <div
+          className="px-3 pb-2 -mt-1 text-[11px] text-fg-muted truncate"
+          title={`${lastCommit.hash} ${lastCommit.subject}`}
+          data-testid="changes-last-commit"
+        >
+          <span className="font-mono text-fg-faint">{lastCommit.hash}</span>{' '}
+          {lastCommit.subject}
+          {lastCommit.timestamp && <span className="text-fg-faint"> {'·'} {formatRelativeTime(lastCommit.timestamp)}</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -333,8 +515,15 @@ export function FileTreePanel({
   onSelect,
   totalInsertions,
   totalDeletions,
+  branchSummary,
+  onRefresh,
+  scope,
+  onScopeChange,
+  worktreePath,
+  projectPath,
 }: FileTreePanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
 
   const filteredFiles = useMemo(() => {
     if (!searchQuery) return files;
@@ -342,8 +531,35 @@ export function FileTreePanel({
     return files.filter((file) => file.path.toLowerCase().includes(query));
   }, [files, searchQuery]);
 
+  const handleFileContextMenu = useCallback((file: GitDiffFileEntry, event: ReactMouseEvent) => {
+    event.preventDefault();
+    setContextMenu({ file, x: event.clientX, y: event.clientY });
+  }, []);
+
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full" data-testid="changes-file-tree">
+      {/* Branch context + refresh */}
+      <BranchHeader branchSummary={branchSummary} onRefresh={onRefresh} />
+
+      {/* Diff scope: working changes / staged / full branch */}
+      {scope && onScopeChange && (
+        <div className="px-2 py-1.5 border-b border-edge flex-shrink-0">
+          <Select
+            value={scope}
+            onChange={(event) => onScopeChange(event.target.value as GitDiffScope)}
+            chevronSize={14}
+            chevronClassName="right-2"
+            className="appearance-none bg-surface-hover border border-edge-input rounded pl-2 pr-7 py-1 text-xs text-fg w-full focus:outline-none focus:border-accent"
+            data-testid="changes-scope-select"
+            aria-label="Diff scope"
+          >
+            <option value="working">Working</option>
+            <option value="staged">Staged</option>
+            <option value="branch">Branch</option>
+          </Select>
+        </div>
+      )}
+
       {/* Stats bar */}
       <div className="flex items-center gap-2 px-3 py-2 border-b border-edge text-xs text-fg-muted flex-shrink-0">
         <span>{files.length} file{files.length !== 1 ? 's' : ''}</span>
@@ -375,7 +591,17 @@ export function FileTreePanel({
           files={filteredFiles}
           selectedFile={selectedFile}
           onSelect={onSelect}
+          onContextMenu={handleFileContextMenu}
           defaultExpanded
+        />
+      )}
+
+      {contextMenu && (
+        <FileContextMenu
+          state={contextMenu}
+          worktreePath={worktreePath}
+          projectPath={projectPath}
+          onClose={() => setContextMenu(null)}
         />
       )}
     </div>

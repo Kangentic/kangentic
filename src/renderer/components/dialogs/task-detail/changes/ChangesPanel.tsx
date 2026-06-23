@@ -1,11 +1,11 @@
 import '../../../../monacoConfig';
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { RefreshCw, ChevronsLeftRight, ChevronsRightLeft } from 'lucide-react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
+import { RefreshCw, ChevronsLeftRight, ChevronsRightLeft, Loader2 } from 'lucide-react';
 import { FileTreePanel } from './FileTreePanel';
 import { DiffViewer } from './DiffViewer';
 import { useSessionStore } from '../../../../stores/session-store';
 import { useConfigStore } from '../../../../stores/config-store';
-import type { GitDiffFileEntry, GitDiffFilesResult, GitFileContentResult } from '../../../../../shared/types';
+import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileContentResult } from '../../../../../shared/types';
 
 // Scoped error boundary prevents Monaco failures from crashing the entire app.
 class DiffErrorBoundary extends React.Component<
@@ -125,11 +125,21 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
   const [fileContent, setFileContent] = useState<DisplayedFileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [branchSummary, setBranchSummary] = useState<GitBranchSummaryResult | null>(null);
   // Split-vs-inline diff rendering is a single global preference: the in-diff
   // toggle and the Layout settings tab read and write the same config key, so
   // the choice sticks across every diff, all mount points, and restarts.
   const viewMode = useConfigStore((state) => state.config.diffViewMode);
   const updateConfig = useConfigStore((state) => state.updateConfig);
+  // Diff scope (working / staged / branch). Live selection is per-task panel
+  // state; config holds only the default a freshly opened panel starts from.
+  const diffDefaultScope = useConfigStore((state) => state.config.diffDefaultScope);
+  const scopeForTask = useSessionStore((state) => state.changesScope[entityId]);
+  const setChangesScope = useSessionStore((state) => state.setChangesScope);
+  const scope = scopeForTask ?? diffDefaultScope;
+  const handleScopeChange = useCallback((nextScope: GitDiffScope) => {
+    setChangesScope(entityId, nextScope);
+  }, [entityId, setChangesScope]);
 
   // Refs for values needed inside callbacks to avoid stale closures
   // and subscription churn on every file selection or re-render.
@@ -158,6 +168,7 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
         worktreePath,
         projectPath,
         baseBranch,
+        scope,
       });
       setFiles(result.files);
       setTotalInsertions(result.totalInsertions);
@@ -171,10 +182,13 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
         setError(fetchError instanceof Error ? fetchError.message : 'Failed to load diff');
       }
     }
-  }, [worktreePath, projectPath, baseBranch]);
+  }, [worktreePath, projectPath, baseBranch, scope]);
 
   const fetchFileContent = useCallback(async (filePath: string) => {
-    const cached = contentCacheRef.current.get(filePath);
+    // Key the cache by scope so a file's working/staged/branch diffs never
+    // bleed into one another when the user switches scope.
+    const cacheKey = `${scope}:${filePath}`;
+    const cached = contentCacheRef.current.get(cacheKey);
     if (cached) {
       // Always serve cached content immediately (stale-while-revalidate)
       setFileContent({ result: cached.result, filePath });
@@ -191,8 +205,9 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
         filePath,
         status: fileEntry?.status ?? 'M',
         oldPath: fileEntry?.oldPath,
+        scope,
       }).then((freshResult) => {
-        contentCacheRef.current.set(filePath, { result: freshResult, generation: currentGeneration });
+        contentCacheRef.current.set(cacheKey, { result: freshResult, generation: currentGeneration });
         // Only update UI if this file is still selected and content actually changed
         if (selectedFileRef.current === filePath &&
             (freshResult.original !== cached.result.original || freshResult.modified !== cached.result.modified)) {
@@ -216,8 +231,9 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
         filePath,
         status: file.status,
         oldPath: file.oldPath,
+        scope,
       });
-      contentCacheRef.current.set(filePath, { result, generation: cacheGenerationRef.current });
+      contentCacheRef.current.set(cacheKey, { result, generation: cacheGenerationRef.current });
       // Guard against a slow fetch resolving after the user switched away: only
       // display this result if its file is still selected, mirroring the
       // background-refetch path above.
@@ -229,6 +245,18 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
         setFileContent({ result: { original: '', modified: '', language: 'plaintext' }, filePath });
       }
     }
+  }, [worktreePath, projectPath, baseBranch, scope]);
+
+  // Lightweight, local-only branch context for the header (name, ahead/behind,
+  // last commit). Cheap enough to re-run on every fs.watch fire and manual
+  // refresh, unlike the Done-dialog pending-changes probe.
+  const fetchBranchSummary = useCallback(async () => {
+    try {
+      const summary = await window.electronAPI.git.branchSummary({ worktreePath, projectPath, baseBranch });
+      setBranchSummary(summary);
+    } catch {
+      // Best-effort context: leave the previous summary in place on failure.
+    }
   }, [worktreePath, projectPath, baseBranch]);
 
   // Stable refs for fetch callbacks - used in the subscription effect and
@@ -237,11 +265,15 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
   fetchFilesRef.current = fetchFiles;
   const fetchFileContentRef = useRef(fetchFileContent);
   fetchFileContentRef.current = fetchFileContent;
+  const fetchBranchSummaryRef = useRef(fetchBranchSummary);
+  fetchBranchSummaryRef.current = fetchBranchSummary;
 
-  // Fetch file list on mount
+  // Fetch file list + branch context on mount, and re-fetch the list whenever
+  // the scope changes (working / staged / branch show different file sets).
   useEffect(() => {
     fetchFilesRef.current();
-  }, [worktreePath, projectPath, baseBranch]);
+    fetchBranchSummaryRef.current();
+  }, [worktreePath, projectPath, baseBranch, scope]);
 
   // Restore content for the persisted selected file after files load.
   // `files` is in the dependency array so this re-evaluates after the initial
@@ -264,6 +296,17 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
     }
   }, [files, selectedFile, setSelectedFile]);
 
+  // On a scope change, allow the restore effect to re-run so it re-selects the
+  // current file (if it still exists in the new scope) or the first file, and
+  // mark the content cache stale so any same-key entry refetches.
+  const previousScopeRef = useRef(scope);
+  useEffect(() => {
+    if (previousScopeRef.current === scope) return;
+    previousScopeRef.current = scope;
+    restoredRef.current = false;
+    cacheGenerationRef.current += 1;
+  }, [scope]);
+
   // Subscribe to live updates via fs.watch.
   // Uses refs for selectedFile/files/fetchers to avoid re-subscribing.
   useEffect(() => {
@@ -276,6 +319,7 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
       // Entries are not deleted - they're served immediately as stale-while-revalidate.
       cacheGenerationRef.current += 1;
       fetchFilesRef.current();
+      fetchBranchSummaryRef.current();
       const currentFile = selectedFileRef.current;
       if (currentFile) {
         fetchFileContentRef.current(currentFile);
@@ -292,6 +336,97 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
     setSelectedFile(filePath);
     fetchFileContentRef.current(filePath);
   }, [setSelectedFile]);
+
+  // Manual refresh: invalidate the content cache (stale-while-revalidate) and
+  // re-fetch the file list, the selected file's diff, and the branch context.
+  // fs.watch already auto-refreshes, but a button gives an explicit affordance
+  // and recovers from a missed event.
+  const handleRefresh = useCallback(() => {
+    cacheGenerationRef.current += 1;
+    fetchFilesRef.current();
+    fetchBranchSummaryRef.current();
+    const currentFile = selectedFileRef.current;
+    if (currentFile) {
+      fetchFileContentRef.current(currentFile);
+    }
+  }, []);
+
+  // File-tree width is PER-TASK (session store, keyed by entityId), like the
+  // terminal split's dividerRatio: an undefined stored width means auto-fit to the
+  // branch name / last commit on open; a drag sets that task's own width. Local
+  // state drives live drag feedback.
+  const storedFileTreeWidth = useSessionStore((state) => state.changesFileTreeWidth[entityId]);
+  const setChangesFileTreeWidth = useSessionStore((state) => state.setChangesFileTreeWidth);
+  const [fileTreeWidth, setFileTreeWidth] = useState<number>(storedFileTreeWidth ?? 220);
+  const fileTreeWidthRef = useRef<number>(storedFileTreeWidth ?? 220);
+  const [isResizingTree, setIsResizingTree] = useState(false);
+  const panelRowRef = useRef<HTMLDivElement>(null);
+  const autoFittedRef = useRef(false);
+  // In auto-fit mode the two-pane is held at opacity 0 (behind a spinner) until
+  // the width is measured, so it reveals already at the correct width rather than
+  // painting at the default and snapping/animating. Manual width is ready at once.
+  const [autoFitReady, setAutoFitReady] = useState<boolean>(storedFileTreeWidth !== undefined);
+
+  // Apply the stored (manual) width. Fires only when the stored value itself
+  // changes - NOT on isResizingTree - so the release does not momentarily re-apply
+  // a stale width and snap the panel (the janky double-move). A live drag is
+  // local-only and untouched.
+  useEffect(() => {
+    if (storedFileTreeWidth === undefined) return; // auto-fit mode owns the width
+    setFileTreeWidth(storedFileTreeWidth);
+    fileTreeWidthRef.current = storedFileTreeWidth;
+  }, [storedFileTreeWidth]);
+
+  // Auto-fit once when the branch summary first arrives and this task has no
+  // manual width: measure the natural (un-truncated) width of the branch name +
+  // last-commit line (scrollWidth survives truncation, and works at opacity 0) and
+  // size the tree to fit, clamped so it never crowds the diff. Reveal once
+  // measured, so the panel appears already at its final width.
+  useLayoutEffect(() => {
+    if (storedFileTreeWidth !== undefined || autoFittedRef.current || !branchSummary) return;
+    const container = panelRowRef.current;
+    if (!container) return;
+    autoFittedRef.current = true;
+    const branchEl = container.querySelector('[data-testid="changes-branch-name"]');
+    const commitEl = container.querySelector('[data-testid="changes-last-commit"]');
+    const branchNeeded = branchEl ? branchEl.scrollWidth + 100 : 0;
+    const commitNeeded = commitEl ? commitEl.scrollWidth + 28 : 0;
+    const needed = Math.max(branchNeeded, commitNeeded);
+    if (needed > 0) {
+      const fit = Math.round(Math.max(220, Math.min(420, container.getBoundingClientRect().width - 280, needed)));
+      setFileTreeWidth(fit);
+      fileTreeWidthRef.current = fit;
+    }
+    setAutoFitReady(true);
+  }, [branchSummary, storedFileTreeWidth]);
+
+  const handleTreeResizeStart = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    const container = panelRowRef.current;
+    if (!container) return;
+    setIsResizingTree(true);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const rect = container.getBoundingClientRect();
+      if (rect.width === 0) return;
+      // Keep at least 160px for the tree and 240px for the diff pane.
+      const next = Math.max(160, Math.min(rect.width - 240, moveEvent.clientX - rect.left));
+      setFileTreeWidth(next);
+      fileTreeWidthRef.current = next;
+    };
+    const onMouseUp = () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      setIsResizingTree(false);
+      setChangesFileTreeWidth(entityId, fileTreeWidthRef.current);
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [setChangesFileTreeWidth, entityId]);
 
   const selectedFileEntry = files.find((file) => file.path === selectedFile);
 
@@ -321,18 +456,35 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-1 min-h-0 flex">
-        {/* File tree - left panel */}
-        <div className="w-[220px] flex-shrink-0 border-r border-edge overflow-hidden">
+    <div className="flex flex-col h-full relative">
+      {/* Hold the panel hidden (behind the spinner) until the auto-fit width is
+          measured, so it reveals already at the correct width - no snap, no animate. */}
+      <div ref={panelRowRef} className="flex-1 min-h-0 flex" style={{ opacity: autoFitReady ? 1 : 0 }}>
+        {/* File tree - left panel (drag-resizable) */}
+        <div className="flex-shrink-0 overflow-hidden" style={{ width: fileTreeWidth }}>
           <FileTreePanel
             files={files}
             selectedFile={selectedFile}
             onSelect={handleSelectFile}
             totalInsertions={totalInsertions}
             totalDeletions={totalDeletions}
+            branchSummary={branchSummary}
+            onRefresh={handleRefresh}
+            scope={scope}
+            onScopeChange={handleScopeChange}
+            worktreePath={worktreePath}
+            projectPath={projectPath}
           />
         </div>
+
+        {/* Drag handle: widen the file tree to see long branch names / file paths. */}
+        <div
+          onMouseDown={handleTreeResizeStart}
+          className={`w-1 flex-shrink-0 cursor-col-resize transition-colors ${isResizingTree ? 'bg-accent' : 'bg-edge hover:bg-accent/50'}`}
+          role="separator"
+          aria-orientation="vertical"
+          data-testid="changes-tree-resize"
+        />
 
         {/* Diff viewer - right panel */}
         <div className="flex-1 min-h-0">
@@ -362,6 +514,14 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
           )}
         </div>
       </div>
+
+      {/* Brief spinner shown over the opacity-0 panel until the auto-fit width is
+          measured, so the panel never paints at the wrong width first. */}
+      {!autoFitReady && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <Loader2 size={20} className="animate-spin text-fg-muted" />
+        </div>
+      )}
     </div>
   );
 }

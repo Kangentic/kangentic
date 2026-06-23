@@ -97,6 +97,65 @@ describe('toggleBrowserOpen', () => {
 });
 
 // ---------------------------------------------------------------------------
+// setChangesScope
+// ---------------------------------------------------------------------------
+
+describe('setChangesScope', () => {
+  it('starts with an empty changesScope map (panel falls back to the config default)', () => {
+    const { getState } = createTestStore();
+    expect(getState().changesScope).toEqual({});
+  });
+
+  it('records the live scope per task id', () => {
+    const { actions, getState } = createTestStore();
+    actions.setChangesScope('task-1', 'working');
+    expect(getState().changesScope['task-1']).toBe('working');
+  });
+
+  it('overwrites the scope on a subsequent change', () => {
+    const { actions, getState } = createTestStore();
+    actions.setChangesScope('task-1', 'working');
+    actions.setChangesScope('task-1', 'staged');
+    expect(getState().changesScope['task-1']).toBe('staged');
+  });
+
+  it('keys scope independently per task id', () => {
+    const { actions, getState } = createTestStore();
+    actions.setChangesScope('task-1', 'working');
+    actions.setChangesScope('task-2', 'branch');
+    expect(getState().changesScope['task-1']).toBe('working');
+    expect(getState().changesScope['task-2']).toBe('branch');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setChangesFileTreeWidth
+// ---------------------------------------------------------------------------
+
+describe('setChangesFileTreeWidth', () => {
+  it('starts empty (panel auto-fits when a task has no stored width)', () => {
+    const { getState } = createTestStore();
+    expect(getState().changesFileTreeWidth).toEqual({});
+  });
+
+  it('records and updates a per-task width', () => {
+    const { actions, getState } = createTestStore();
+    actions.setChangesFileTreeWidth('task-1', 280);
+    expect(getState().changesFileTreeWidth['task-1']).toBe(280);
+    actions.setChangesFileTreeWidth('task-1', 320);
+    expect(getState().changesFileTreeWidth['task-1']).toBe(320);
+  });
+
+  it('keys width independently per task id', () => {
+    const { actions, getState } = createTestStore();
+    actions.setChangesFileTreeWidth('task-1', 260);
+    actions.setChangesFileTreeWidth('task-2', 360);
+    expect(getState().changesFileTreeWidth['task-1']).toBe(260);
+    expect(getState().changesFileTreeWidth['task-2']).toBe(360);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // toggleMaximized
 // ---------------------------------------------------------------------------
 

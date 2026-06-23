@@ -569,4 +569,94 @@ describe('DiffService', () => {
       expect(makeResult.language).toBe('makefile');
     });
   });
+
+  describe('scope', () => {
+    describe('getDiffFiles', () => {
+      it('working scope: diffs working tree vs index, includes untracked, no merge-base', async () => {
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([{ file: 'src/a.ts', insertions: 1, deletions: 0 }]));
+        mockGit.diff.mockResolvedValue('M\tsrc/a.ts\n');
+        mockGit.status.mockResolvedValue({ not_added: [] });
+
+        await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main', scope: 'working' });
+
+        // No `:path` ref - plain `git diff` (working vs index).
+        expect(mockGit.diffSummary).toHaveBeenCalledWith([]);
+        expect(mockGit.diff).toHaveBeenCalledWith(['--name-status']);
+        // No merge-base lookup for the working scope.
+        expect(mockGit.raw).not.toHaveBeenCalled();
+        // Untracked files are part of working changes, so status is consulted.
+        expect(mockGit.status).toHaveBeenCalled();
+      });
+
+      it('staged scope: diffs index vs HEAD and excludes untracked (no git status)', async () => {
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([{ file: 'src/a.ts', insertions: 1, deletions: 0 }]));
+        mockGit.diff.mockResolvedValue('A\tsrc/a.ts\n');
+
+        await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main', scope: 'staged' });
+
+        expect(mockGit.diffSummary).toHaveBeenCalledWith(['--cached']);
+        expect(mockGit.diff).toHaveBeenCalledWith(['--cached', '--name-status']);
+        expect(mockGit.raw).not.toHaveBeenCalled();
+        // Untracked files are not staged, so status is not consulted.
+        expect(mockGit.status).not.toHaveBeenCalled();
+      });
+
+      it('branch scope is the default and uses the merge-base', async () => {
+        mockGit.raw.mockResolvedValue('abc123\n');
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
+        mockGit.diff.mockResolvedValue('');
+
+        await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main', scope: 'branch' });
+
+        expect(mockGit.raw).toHaveBeenCalledWith(['merge-base', 'origin/main', 'HEAD']);
+        expect(mockGit.diffSummary).toHaveBeenCalledWith(['abc123']);
+      });
+    });
+
+    describe('getFileContent', () => {
+      it('working scope: original from the index blob, modified from disk', async () => {
+        mockGit.show.mockResolvedValue('index content');
+        vi.mocked(fs.promises.readFile).mockResolvedValue('working tree content');
+
+        const result = await service.getFileContent({
+          projectPath: '/project',
+          worktreePath: '/project/wt',
+          baseBranch: 'main',
+          filePath: 'src/a.ts',
+          status: 'M',
+          scope: 'working',
+        });
+
+        expect(mockGit.show).toHaveBeenCalledWith([':src/a.ts']);
+        expect(mockGit.raw).not.toHaveBeenCalled();
+        expect(result.original).toBe('index content');
+        expect(result.modified).toBe('working tree content');
+      });
+
+      it('staged scope: original from HEAD, modified from the index blob (not disk)', async () => {
+        mockGit.show.mockImplementation(async (args: string[]) => {
+          const ref = args[0];
+          if (ref.startsWith('HEAD:')) return 'head content';
+          if (ref.startsWith(':')) return 'index content';
+          return 'other';
+        });
+
+        const result = await service.getFileContent({
+          projectPath: '/project',
+          worktreePath: '/project/wt',
+          baseBranch: 'main',
+          filePath: 'src/a.ts',
+          status: 'M',
+          scope: 'staged',
+        });
+
+        expect(mockGit.show).toHaveBeenCalledWith(['HEAD:src/a.ts']);
+        expect(mockGit.show).toHaveBeenCalledWith([':src/a.ts']);
+        // Staged modified content comes from the index, never the working tree.
+        expect(fs.promises.readFile).not.toHaveBeenCalled();
+        expect(result.original).toBe('head content');
+        expect(result.modified).toBe('index content');
+      });
+    });
+  });
 });

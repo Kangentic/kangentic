@@ -995,10 +995,56 @@ export interface GitPendingChangesResult {
   currentBranch: string | null;
 }
 
+/**
+ * Lightweight, local-only branch context for the Changes panel header. Distinct
+ * from the expensive {@link GitPendingChangesInput} probe (which fetches all
+ * remotes and does a `gh` PR lookup); this stays cheap so it can run on every
+ * panel open, fs.watch fire, and manual refresh.
+ */
+export interface GitBranchSummaryInput {
+  worktreePath?: string;
+  projectPath: string;
+  baseBranch: string;
+}
+
+/** Tip commit of the worktree's HEAD, for the header's last-commit line. */
+export interface GitLastCommit {
+  /** Abbreviated commit hash (`git log --format=%h`). */
+  hash: string;
+  /** Commit subject (first line of the message). */
+  subject: string;
+  /** Committer date as a strict ISO 8601 string; the renderer formats it. */
+  timestamp: string;
+}
+
+export interface GitBranchSummaryResult {
+  /** Live HEAD branch, or null on a detached HEAD or probe failure. */
+  currentBranch: string | null;
+  /** Commits reachable from HEAD but not the base branch (this branch's work). */
+  ahead: number;
+  /** Commits reachable from the base branch but not HEAD (this branch is behind). */
+  behind: number;
+  /** The HEAD tip commit, or null on an unborn branch / probe failure. */
+  lastCommit: GitLastCommit | null;
+}
+
+/**
+ * Which set of changes the Changes panel diffs:
+ * - `working`: uncommitted working-tree edits (`git diff`, working vs index) -
+ *   the small active subset you are editing right now.
+ * - `staged`: changes added to the index (`git diff --staged`, index vs HEAD).
+ * - `branch`: everything this branch accumulated vs its base (working tree vs the
+ *   merge-base of base..HEAD) - the full PR. The original review behavior; the
+ *   live default the panel opens with is the global `diffDefaultScope` setting.
+ */
+export type GitDiffScope = 'working' | 'staged' | 'branch';
+
 export interface GitDiffFilesInput {
   worktreePath?: string;
   projectPath: string;
   baseBranch: string;
+  /** Defaults to 'branch' (the full branch-vs-base diff) when omitted. */
+  scope?: GitDiffScope;
 }
 
 export interface GitDiffFilesResult {
@@ -1014,6 +1060,8 @@ export interface GitFileContentInput {
   filePath: string;
   status: GitDiffStatus;
   oldPath?: string;
+  /** Must match the scope the file list was fetched with. Defaults to 'branch'. */
+  scope?: GitDiffScope;
 }
 
 export interface GitFileContentResult {
@@ -1132,6 +1180,9 @@ export interface AppConfig {
   animationsEnabled: boolean;
   statusBarVisible: boolean;
   diffViewMode: 'split' | 'inline'; // split = side-by-side, inline = unified
+  diffDefaultScope: GitDiffScope; // default scope a freshly opened Changes panel uses
+  diffIgnoreWhitespace: boolean; // hide whitespace-only changes in the diff
+  diffCollapseUnchanged: boolean; // fold away large unchanged regions, showing only changed hunks
 
   terminal: {
     shell: string | null; // null = auto-detect
@@ -1345,6 +1396,9 @@ export const DEFAULT_CONFIG: AppConfig = {
   animationsEnabled: true,
   statusBarVisible: true,
   diffViewMode: 'split',
+  diffDefaultScope: 'working',
+  diffIgnoreWhitespace: false,
+  diffCollapseUnchanged: false,
   terminal: {
     shell: null,
     fontFamily: 'Menlo, Consolas, "Courier New", monospace',
@@ -2290,11 +2344,32 @@ export interface BoardConfig {
 
 // === Preload API (exposed to renderer via contextBridge) ===
 
+/** Summary of a dev test-harness git-change seed (see DEV_SEED_GIT_CHANGES). */
+export interface DevSeedGitChangesResult {
+  /** Number of repos (active worktrees + project) that were seeded. */
+  repos: number;
+  /** The seed directory created in each repo (e.g. 'seed-3'). */
+  dir: string;
+  /** Files added in the baseline commit (ahead of base), per repo. */
+  committed: number;
+  /** Files staged in the index (M/A/D/R), per repo. */
+  staged: number;
+  /** Files changed in the working tree only (M/D/U), per repo. */
+  working: number;
+}
+
 export interface ElectronAPI {
   // Dev-only (preview): present only when __KANGENTIC_DEV__ (build-excluded in prod).
   dev?: {
     /** Create + return a synthetic ephemeral project for the preview. */
     createEphemeralProject: () => Promise<Project>;
+    /**
+     * Seed a realistic all-scopes/all-statuses git changeset into each given
+     * ephemeral preview repo (active task worktrees + the project) so the Changes
+     * tab has something to review. Silently skips any path outside the
+     * preview-projects root.
+     */
+    seedGitChanges: (targetPaths: string[]) => Promise<DevSeedGitChangesResult>;
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;
   };
@@ -2529,6 +2604,7 @@ export interface ElectronAPI {
     getDefault: () => Promise<string>;
     openPath: (dirPath: string) => Promise<string>;
     openExternal: (url: string) => Promise<void>;
+    showItemInFolder: (fullPath: string) => Promise<void>;
     exec: (command: string, cwd: string) => Promise<{ pid: number | undefined }>;
   };
 
@@ -2542,6 +2618,7 @@ export interface ElectronAPI {
     unsubscribeDiff: (worktreePath: string) => void;
     onDiffChanged: (callback: () => void) => () => void;
     checkPendingChanges: (input: GitPendingChangesInput) => Promise<GitPendingChangesResult>;
+    branchSummary: (input: GitBranchSummaryInput) => Promise<GitBranchSummaryResult>;
   };
 
   // Dialog

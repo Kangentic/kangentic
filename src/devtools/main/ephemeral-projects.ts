@@ -40,7 +40,7 @@ const execFileAsync = promisify(execFile);
 // Module state; resets to 0 when the main process restarts (fresh preview boot).
 let previewProjectIndex = 0;
 
-function previewProjectsRoot(): string {
+export function previewProjectsRoot(): string {
   // KANGENTIC_DATA_DIR is <worktree>/.kangentic/data in ephemeral mode (gitignored
   // + removed on boot and on close); fall back to the OS temp dir otherwise.
   return path.join(process.env.KANGENTIC_DATA_DIR ?? os.tmpdir(), 'preview-projects');

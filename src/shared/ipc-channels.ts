@@ -18,6 +18,7 @@ export const IPC = {
 
   // Dev-only (preview): build-excluded from production via __KANGENTIC_DEV__.
   DEV_CREATE_EPHEMERAL_PROJECT: 'dev:createEphemeralProject',
+  DEV_SEED_GIT_CHANGES: 'dev:seedGitChanges',
 
   // Project Groups
   PROJECT_GROUP_LIST: 'projectGroup:list',
@@ -144,6 +145,7 @@ export const IPC = {
   // Shell utilities
   SHELL_OPEN_PATH: 'shell:openPath',
   SHELL_OPEN_EXTERNAL: 'shell:openExternal',
+  SHELL_SHOW_ITEM_IN_FOLDER: 'shell:showItemInFolder',
   SHELL_EXEC: 'shell:exec',
 
   // Git
@@ -155,6 +157,7 @@ export const IPC = {
   GIT_DIFF_UNSUBSCRIBE: 'git:diffUnsubscribe',
   GIT_DIFF_CHANGED: 'git:diffChanged',
   GIT_CHECK_PENDING_CHANGES: 'git:checkPendingChanges',
+  GIT_BRANCH_SUMMARY: 'git:branchSummary',
 
   // Dialog
   DIALOG_SELECT_FOLDER: 'dialog:selectFolder',

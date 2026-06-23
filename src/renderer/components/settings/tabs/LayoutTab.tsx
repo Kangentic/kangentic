@@ -1,5 +1,5 @@
 import type { AppConfig } from '../../../../shared/types';
-import { SettingRow, SettingToggleRow, Select, useScopedUpdate } from '../shared';
+import { SectionHeader, SettingRow, SettingToggleRow, Select, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
 export function LayoutTab({ globalConfig }: { globalConfig: AppConfig }) {
@@ -26,15 +26,6 @@ export function LayoutTab({ globalConfig }: { globalConfig: AppConfig }) {
           <option value="wide">Wide</option>
         </Select>
       </SettingRow>
-      <SettingRow {...settingProps('diffViewMode')}>
-        <Select
-          value={globalConfig.diffViewMode}
-          onChange={(event) => updateGlobal({ diffViewMode: event.target.value as AppConfig['diffViewMode'] })}
-        >
-          <option value="split">Side by side</option>
-          <option value="inline">Inline</option>
-        </Select>
-      </SettingRow>
       <SettingToggleRow
         {...settingProps('terminalPanelVisible')}
         checked={globalConfig.terminalPanelVisible !== false}
@@ -54,6 +45,37 @@ export function LayoutTab({ globalConfig }: { globalConfig: AppConfig }) {
         {...settingProps('animationsEnabled')}
         checked={globalConfig.animationsEnabled}
         onChange={(value) => updateGlobal({ animationsEnabled: value })}
+      />
+
+      <SectionHeader label="Diff" searchIds={['diffViewMode', 'diffDefaultScope', 'diffIgnoreWhitespace', 'diffCollapseUnchanged']} />
+      <SettingRow {...settingProps('diffViewMode')}>
+        <Select
+          value={globalConfig.diffViewMode}
+          onChange={(event) => updateGlobal({ diffViewMode: event.target.value as AppConfig['diffViewMode'] })}
+        >
+          <option value="split">Side by side</option>
+          <option value="inline">Inline</option>
+        </Select>
+      </SettingRow>
+      <SettingRow {...settingProps('diffDefaultScope')}>
+        <Select
+          value={globalConfig.diffDefaultScope}
+          onChange={(event) => updateGlobal({ diffDefaultScope: event.target.value as AppConfig['diffDefaultScope'] })}
+        >
+          <option value="working">Working</option>
+          <option value="staged">Staged</option>
+          <option value="branch">Branch</option>
+        </Select>
+      </SettingRow>
+      <SettingToggleRow
+        {...settingProps('diffIgnoreWhitespace')}
+        checked={globalConfig.diffIgnoreWhitespace}
+        onChange={(value) => updateGlobal({ diffIgnoreWhitespace: value })}
+      />
+      <SettingToggleRow
+        {...settingProps('diffCollapseUnchanged')}
+        checked={globalConfig.diffCollapseUnchanged}
+        onChange={(value) => updateGlobal({ diffCollapseUnchanged: value })}
       />
     </>
   );

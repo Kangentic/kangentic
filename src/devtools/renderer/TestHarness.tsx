@@ -16,7 +16,7 @@
  */
 
 import { useState } from 'react';
-import { Plus, FolderPlus } from 'lucide-react';
+import { Plus, FolderPlus, FileDiff } from 'lucide-react';
 import { useBoardStore } from '../../renderer/stores/board-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useToastStore } from '../../renderer/stores/toast-store';
@@ -106,6 +106,7 @@ function makeTestAttachments(): Array<{ filename: string; data: string; media_ty
 export function TestHarness() {
   const [creating, setCreating] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
+  const [seeding, setSeeding] = useState(false);
 
   const handleCreateTask = async () => {
     const todoSwimlane = useBoardStore.getState().swimlanes.find((lane) => lane.role === 'todo');
@@ -158,6 +159,45 @@ export function TestHarness() {
     }
   };
 
+  // Dev-only: seed a realistic all-scopes/all-statuses git changeset so the
+  // Changes tab has something to review. The panel's fs.watch picks it up live.
+  // Backed by dev IPC, guarded main-side to the preview-projects root so it can
+  // never dirty a real repo.
+  //
+  // Seed EVERY active task's worktree (an executing task diffs its worktree, not
+  // the project root) plus the project repo (which a no-worktree task diffs), so
+  // wherever you look there is a fixture - no need to pick the right task.
+  const handleSeedChanges = async () => {
+    const project = useProjectStore.getState().currentProject;
+    if (!project) {
+      useToastStore.getState().addToast({ message: 'Open a project first to seed changes', variant: 'warning' });
+      return;
+    }
+    const worktreePaths = useBoardStore.getState().tasks
+      .map((task) => task.worktree_path)
+      .filter((worktreePath): worktreePath is string => Boolean(worktreePath));
+    const targets = Array.from(new Set([project.path, ...worktreePaths]));
+    setSeeding(true);
+    try {
+      const result = await window.electronAPI.dev?.seedGitChanges(targets);
+      if (!result) {
+        useToastStore.getState().addToast({ message: 'Seeding changes is dev-preview only', variant: 'warning' });
+        return;
+      }
+      useToastStore.getState().addToast({
+        message: `Seeded ${result.dir} into ${result.repos} repo${result.repos === 1 ? '' : 's'}: ${result.staged} staged, ${result.working} working, +1 commit`,
+        variant: 'success',
+      });
+    } catch (error) {
+      useToastStore.getState().addToast({
+        message: `Failed to seed changes: ${error instanceof Error ? error.message : 'unknown error'}`,
+        variant: 'error',
+      });
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   return (
     <div
       className="fixed left-6 top-1/2 -translate-y-1/2 z-[2147483600] flex flex-col gap-1.5 rounded-lg border border-edge bg-surface-raised/95 p-1.5 shadow-2xl backdrop-blur"
@@ -183,6 +223,17 @@ export function TestHarness() {
       >
         <FolderPlus size={16} />
         {creatingProject ? 'Creating...' : 'Create Project'}
+      </button>
+      <button
+        type="button"
+        onClick={handleSeedChanges}
+        disabled={seeding}
+        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
+        data-testid="dev-seed-changes"
+        title="Seed the active project repo with working + staged + committed changes to test the Changes tab"
+      >
+        <FileDiff size={16} />
+        {seeding ? 'Seeding...' : 'Seed Changes'}
       </button>
     </div>
   );

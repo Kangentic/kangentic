@@ -3,9 +3,10 @@ import simpleGit from 'simple-git';
 import { IPC } from '../../../shared/ipc-channels';
 import { DiffService } from '../../git/diff-service';
 import { readWorktreeHead } from '../../git/worktree-head';
+import { getBranchSummary } from '../../git/branch-summary';
 import { fetchAllRemotesIfStale } from '../../git/fetch-throttle';
 import { countLocalOnlyCommits } from '../../git/local-only-commits';
-import type { GitDiffFilesInput, GitFileContentInput, GitPendingChangesInput, GitPendingChangesResult, PRState } from '../../../shared/types';
+import type { GitBranchSummaryInput, GitDiffFilesInput, GitFileContentInput, GitPendingChangesInput, GitPendingChangesResult, PRState } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
 /**
@@ -128,6 +129,10 @@ export function registerGitDiffHandlers(context: IpcContext): void {
       prNumber: input.prNumber,
       prState: input.prState,
     });
+  });
+
+  ipcMain.handle(IPC.GIT_BRANCH_SUMMARY, (_, input: GitBranchSummaryInput) => {
+    return getBranchSummary(input);
   });
 
   ipcMain.on(IPC.GIT_DIFF_UNSUBSCRIBE, (_, worktreePath: string) => {

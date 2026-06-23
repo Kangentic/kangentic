@@ -202,4 +202,67 @@ test.describe('DiffViewer toolbar: trailingControls rendered when a file is sele
     await page.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
+
+  test('diff-rendering toggles and next/prev-change buttons render and flip state', async () => {
+    await page.evaluate(() => {
+      (window as unknown as { __mockGitDiff: unknown }).__mockGitDiff = {
+        files: [
+          {
+            path: 'src/renderer/components/Bar.tsx',
+            status: 'M',
+            insertions: 5,
+            deletions: 2,
+            binary: false,
+            original: 'const a = 1;\n',
+            modified: 'const a = 2;\n',
+            language: 'typescript',
+          },
+        ],
+      };
+    });
+
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=DiffViewer Toolbar Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    const changesPill = page.locator('[data-testid="changes-toggle"]');
+    await changesPill.click();
+
+    // Wait for the toolbar (mounts synchronously once a file is selected).
+    await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible({ timeout: 8000 });
+
+    // Navigation buttons are present.
+    await expect(page.locator('[data-testid="diff-prev-change"]')).toBeVisible();
+    await expect(page.locator('[data-testid="diff-next-change"]')).toBeVisible();
+
+    // Whitespace toggle starts off (config default false) and flips on click.
+    const whitespace = page.locator('[data-testid="diff-ignore-whitespace"]');
+    await expect(whitespace).toHaveAttribute('aria-pressed', 'false');
+    await whitespace.click();
+    await expect(whitespace).toHaveAttribute('aria-pressed', 'true');
+    // Restore so the global config does not bleed into other specs.
+    await whitespace.click();
+    await expect(whitespace).toHaveAttribute('aria-pressed', 'false');
+
+    // Collapse-unchanged starts off and flips on.
+    const collapse = page.locator('[data-testid="diff-collapse-unchanged"]');
+    await expect(collapse).toHaveAttribute('aria-pressed', 'false');
+    await collapse.click();
+    await expect(collapse).toHaveAttribute('aria-pressed', 'true');
+    await collapse.click();
+    await expect(collapse).toHaveAttribute('aria-pressed', 'false');
+
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitDiff = null;
+    });
+
+    await changesPill.click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
 });

@@ -251,6 +251,7 @@ const api: ElectronAPI = {
     getDefault: () => ipcRenderer.invoke(IPC.SHELL_GET_DEFAULT),
     openPath: (dirPath: string) => ipcRenderer.invoke(IPC.SHELL_OPEN_PATH, dirPath),
     openExternal: (url: string) => ipcRenderer.invoke(IPC.SHELL_OPEN_EXTERNAL, url),
+    showItemInFolder: (fullPath: string) => ipcRenderer.invoke(IPC.SHELL_SHOW_ITEM_IN_FOLDER, fullPath),
     exec: (command: string, cwd: string) => ipcRenderer.invoke(IPC.SHELL_EXEC, command, cwd),
   },
 
@@ -262,6 +263,7 @@ const api: ElectronAPI = {
     subscribeDiff: (worktreePath) => ipcRenderer.send(IPC.GIT_DIFF_SUBSCRIBE, worktreePath),
     unsubscribeDiff: (worktreePath) => ipcRenderer.send(IPC.GIT_DIFF_UNSUBSCRIBE, worktreePath),
     checkPendingChanges: (input) => ipcRenderer.invoke(IPC.GIT_CHECK_PENDING_CHANGES, input),
+    branchSummary: (input) => ipcRenderer.invoke(IPC.GIT_BRANCH_SUMMARY, input),
     onDiffChanged: (callback) => {
       const handler = () => callback();
       ipcRenderer.on(IPC.GIT_DIFF_CHANGED, handler);
@@ -407,6 +409,7 @@ if (__KANGENTIC_DEV__) {
   const isEphemeralPreview = process.argv.includes('--kangentic-ephemeral');
   api.dev = {
     createEphemeralProject: () => ipcRenderer.invoke(IPC.DEV_CREATE_EPHEMERAL_PROJECT),
+    seedGitChanges: (targetPaths: string[]) => ipcRenderer.invoke(IPC.DEV_SEED_GIT_CHANGES, targetPaths),
     isEphemeralPreview,
   };
 }
