@@ -129,25 +129,30 @@ test.describe('Changes panel: diff scope selector', () => {
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
     await page.locator('[data-testid="changes-toggle"]').click();
 
-    const scopeSelect = page.locator('[data-testid="changes-scope-select"]');
-    await expect(scopeSelect).toBeVisible({ timeout: 5000 });
+    const scopeGroup = page.locator('[data-testid="changes-scope-select"]');
+    await expect(scopeGroup).toBeVisible({ timeout: 5000 });
+    const workingTab = page.locator('[data-testid="changes-scope-working"]');
+    const stagedTab = page.locator('[data-testid="changes-scope-staged"]');
+    const branchTab = page.locator('[data-testid="changes-scope-branch"]');
 
     // Scope assertions are confined to the file tree so they do not match the
     // selected file's path echoed in the diff viewer toolbar.
     const fileTree = page.locator('[data-testid="changes-file-tree"]');
 
     // Default scope is 'working' (the global default) - only the active edit shows.
-    await expect(scopeSelect).toHaveValue('working');
+    await expect(workingTab).toHaveAttribute('aria-checked', 'true');
     await expect(fileTree.locator('text=shared.ts')).toBeVisible();
     await expect(fileTree.locator('text=branch-only.ts')).toBeHidden();
 
     // Switch to full branch: both PR files are listed.
-    await scopeSelect.selectOption('branch');
+    await branchTab.click();
+    await expect(branchTab).toHaveAttribute('aria-checked', 'true');
     await expect(fileTree.locator('text=branch-only.ts')).toBeVisible();
     await expect(fileTree.locator('text=shared.ts')).toBeVisible();
 
     // Switch to staged: a different single file is listed.
-    await scopeSelect.selectOption('staged');
+    await stagedTab.click();
+    await expect(stagedTab).toHaveAttribute('aria-checked', 'true');
     await expect(fileTree.locator('text=staged-only.ts')).toBeVisible();
     await expect(fileTree.locator('text=shared.ts')).toBeHidden();
 

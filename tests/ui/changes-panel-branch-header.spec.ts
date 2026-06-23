@@ -2,9 +2,9 @@
  * UI test for the Changes panel branch header (PR 1).
  *
  * Verifies that the header surfaces the live branch context returned by
- * git.branchSummary: the current branch name, ahead/behind counts, the
- * last-commit line, and a manual refresh button. Uses the headless mock
- * (window.__mockBranchSummary) so no real git repo is needed.
+ * git.branchSummary: the current branch name, ahead/behind counts, and the
+ * last-commit line. Uses the headless mock (window.__mockBranchSummary) so no
+ * real git repo is needed.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -118,7 +118,7 @@ test.afterAll(async () => {
 });
 
 test.describe('Changes panel: branch header', () => {
-  test('shows branch name, ahead/behind, last commit, and a refresh button', async () => {
+  test('shows branch name, ahead/behind, and last commit', async () => {
     const card = page
       .locator('[data-swimlane-name="Code Review"]')
       .locator('text=Branch Header Task')
@@ -139,12 +139,6 @@ test.describe('Changes panel: branch header', () => {
     await expect(lastCommit).toBeVisible();
     await expect(lastCommit).toContainText('abc1234');
     await expect(lastCommit).toContainText('wire branch summary into header');
-
-    // Refresh button is present and clickable (re-fetches without error).
-    const refresh = page.locator('[data-testid="changes-refresh"]');
-    await expect(refresh).toBeVisible();
-    await refresh.click();
-    await expect(lastCommit).toBeVisible();
 
     // Auto-fit: with a branch name + commit and no manual width (config null), the
     // tree sizes itself wider than the 220px floor so the header is readable.

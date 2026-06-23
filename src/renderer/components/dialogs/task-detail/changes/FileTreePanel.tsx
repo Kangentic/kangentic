@@ -1,9 +1,15 @@
 import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
-import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, RefreshCw, FolderOpen, ExternalLink } from 'lucide-react';
+import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, FolderOpen, ExternalLink } from 'lucide-react';
 import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus } from '../../../../../shared/types';
 import { formatRelativeTime } from '../../../../lib/datetime';
-import { Select } from '../../../settings/shared';
 import { useToastStore } from '../../../../stores/toast-store';
+
+/** Diff scope options for the segmented control (single-select among 3 fixed values). */
+const SCOPE_OPTIONS: { value: GitDiffScope; label: string }[] = [
+  { value: 'working', label: 'Working' },
+  { value: 'staged', label: 'Staged' },
+  { value: 'branch', label: 'Branch' },
+];
 
 interface FileTreePanelProps {
   files: GitDiffFileEntry[];
@@ -13,8 +19,6 @@ interface FileTreePanelProps {
   totalDeletions: number;
   /** Live branch context (name, ahead/behind, last commit) shown in the header. */
   branchSummary?: GitBranchSummaryResult | null;
-  /** Manual refresh: re-fetch the file list, selected diff, and branch summary. */
-  onRefresh?: () => void;
   /** Current diff scope (working / staged / branch). */
   scope?: GitDiffScope;
   /** Change the diff scope. */
@@ -446,15 +450,18 @@ function FileContextMenu({
 // Branch header
 // ---------------------------------------------------------------------------
 
-/** Current branch, ahead/behind vs base, the tip commit, and a manual refresh. */
-function BranchHeader({ branchSummary, onRefresh }: { branchSummary?: GitBranchSummaryResult | null; onRefresh?: () => void }) {
+/**
+ * Current branch, ahead/behind vs base, and the tip commit. The panel refreshes
+ * automatically (working-tree + git-metadata watch), so there is no manual button.
+ */
+function BranchHeader({ branchSummary }: { branchSummary?: GitBranchSummaryResult | null }) {
   const branch = branchSummary?.currentBranch;
   const ahead = branchSummary?.ahead ?? 0;
   const behind = branchSummary?.behind ?? 0;
   const lastCommit = branchSummary?.lastCommit ?? null;
 
-  // Nothing useful to show and no refresh affordance to host - render nothing.
-  if (!branch && !lastCommit && !onRefresh) return null;
+  // Nothing useful to show - render nothing.
+  if (!branch && !lastCommit) return null;
 
   return (
     <div className="border-b border-edge flex-shrink-0">
@@ -478,16 +485,6 @@ function BranchHeader({ branchSummary, onRefresh }: { branchSummary?: GitBranchS
               </span>
             )}
           </span>
-        )}
-        {onRefresh && (
-          <button
-            onClick={onRefresh}
-            title="Refresh changes"
-            className="ml-auto p-1 -mr-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors flex-shrink-0"
-            data-testid="changes-refresh"
-          >
-            <RefreshCw size={12} />
-          </button>
         )}
       </div>
       {lastCommit && (
@@ -516,7 +513,6 @@ export function FileTreePanel({
   totalInsertions,
   totalDeletions,
   branchSummary,
-  onRefresh,
   scope,
   onScopeChange,
   worktreePath,
@@ -539,24 +535,39 @@ export function FileTreePanel({
   return (
     <div className="flex flex-col h-full" data-testid="changes-file-tree">
       {/* Branch context + refresh */}
-      <BranchHeader branchSummary={branchSummary} onRefresh={onRefresh} />
+      <BranchHeader branchSummary={branchSummary} />
 
-      {/* Diff scope: working changes / staged / full branch */}
+      {/* Diff scope: working changes / staged / full branch. A segmented control
+          (single-select among 3 fixed options) rather than a dropdown. */}
       {scope && onScopeChange && (
         <div className="px-2 py-1.5 border-b border-edge flex-shrink-0">
-          <Select
-            value={scope}
-            onChange={(event) => onScopeChange(event.target.value as GitDiffScope)}
-            chevronSize={14}
-            chevronClassName="right-2"
-            className="appearance-none bg-surface-hover border border-edge-input rounded pl-2 pr-7 py-1 text-xs text-fg w-full focus:outline-none focus:border-accent"
-            data-testid="changes-scope-select"
+          <div
+            role="radiogroup"
             aria-label="Diff scope"
+            data-testid="changes-scope-select"
+            className="flex gap-0.5 rounded border border-edge-input bg-surface-hover p-0.5"
           >
-            <option value="working">Working</option>
-            <option value="staged">Staged</option>
-            <option value="branch">Branch</option>
-          </Select>
+            {SCOPE_OPTIONS.map((option) => {
+              const active = scope === option.value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => onScopeChange(option.value)}
+                  data-testid={`changes-scope-${option.value}`}
+                  className={`flex-1 rounded px-2 py-1 text-xs transition-colors ${
+                    active
+                      ? 'bg-accent-emphasis text-accent-on font-medium'
+                      : 'text-fg-muted hover:text-fg hover:bg-surface-raised/60'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       )}
 

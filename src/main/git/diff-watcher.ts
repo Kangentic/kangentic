@@ -1,18 +1,34 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import simpleGit from 'simple-git';
 import { replacePathPrefix } from '../../shared/paths';
 
 const DEBOUNCE_MS = 500;
 const IGNORED_SEGMENTS = new Set(['.git', 'node_modules', '.kangentic']);
 
+/**
+ * Git-directory files whose change means the diff or branch summary may have
+ * moved without touching a working-tree file: a commit / checkout / reset (HEAD,
+ * ORIG_HEAD, logs/HEAD), staging (index), a merge in progress (MERGE_HEAD), or a
+ * packed-ref update. Watched so the panel auto-updates without a manual refresh.
+ */
+const GIT_META_FILES = new Set(['index', 'HEAD', 'ORIG_HEAD', 'MERGE_HEAD', 'packed-refs']);
+
 interface WatcherEntry {
-  watcher: fs.FSWatcher;
+  watchers: fs.FSWatcher[];
   debounceTimer: ReturnType<typeof setTimeout> | null;
 }
 
 /**
  * Manages file system watchers for worktree directories.
  * Emits debounced change notifications when files are modified.
+ *
+ * Two kinds of watch per subscription, both feeding the same debounced callback:
+ *  1. the working tree (recursive), ignoring .git/node_modules/.kangentic, and
+ *  2. the git directory's metadata (index + logs/HEAD), watched NON-recursively
+ *     so we never descend into the huge, churning objects/ store (which would
+ *     also exhaust inotify watches on Linux). This makes commits, staging, and
+ *     checkouts refresh the panel automatically, replacing the manual button.
  */
 export class DiffWatcher {
   private readonly watchers = new Map<string, WatcherEntry>();
@@ -21,31 +37,80 @@ export class DiffWatcher {
     // Already watching this path
     if (this.watchers.has(worktreePath)) return;
 
+    const entry: WatcherEntry = { watchers: [], debounceTimer: null };
+    this.watchers.set(worktreePath, entry);
+
+    // Debounce: reset the shared timer on each change from any watcher.
+    const fire = () => {
+      const current = this.watchers.get(worktreePath);
+      if (current !== entry) return; // unsubscribed/replaced while debouncing
+      if (entry.debounceTimer !== null) clearTimeout(entry.debounceTimer);
+      entry.debounceTimer = setTimeout(() => {
+        entry.debounceTimer = null;
+        callback();
+      }, DEBOUNCE_MS);
+    };
+
+    // 1. Working tree (recursive), ignoring .git/, node_modules/, .kangentic/.
     try {
-      const watcher = fs.watch(worktreePath, { recursive: true }, (_eventType, filename) => {
+      const treeWatcher = fs.watch(worktreePath, { recursive: true }, (_eventType, filename) => {
         if (!filename) return;
-
-        // Ignore changes in .git/, node_modules/, .kangentic/
-        const segments = filename.split(path.sep);
+        const segments = filename.toString().split(path.sep);
         if (segments.some((segment) => IGNORED_SEGMENTS.has(segment))) return;
-
-        // Debounce: reset timer on each change
-        const entry = this.watchers.get(worktreePath);
-        if (!entry) return;
-
-        if (entry.debounceTimer !== null) {
-          clearTimeout(entry.debounceTimer);
-        }
-        entry.debounceTimer = setTimeout(() => {
-          entry.debounceTimer = null;
-          callback();
-        }, DEBOUNCE_MS);
+        fire();
       });
-
-      this.watchers.set(worktreePath, { watcher, debounceTimer: null });
+      entry.watchers.push(treeWatcher);
     } catch {
       // fs.watch may fail on some platforms or if path doesn't exist
     }
+
+    // 2. Git metadata (index, HEAD, logs/HEAD, ...). Resolved async because it
+    //    needs the absolute git dir (a worktree's lives under the main repo's
+    //    .git/worktrees/<name>, not <worktree>/.git).
+    this.watchGitMetadata(worktreePath, entry, fire);
+  }
+
+  /**
+   * Watch the git directory's metadata files non-recursively so commits,
+   * staging, and checkouts refresh the panel. Best-effort: a failure to resolve
+   * or watch the git dir leaves the working-tree watch (1) fully functional.
+   */
+  private watchGitMetadata(worktreePath: string, entry: WatcherEntry, fire: () => void): void {
+    simpleGit(worktreePath)
+      .raw(['rev-parse', '--absolute-git-dir'])
+      .then((output) => {
+        const gitDir = output.trim();
+        // The subscription may have been torn down while git resolved.
+        if (!gitDir || this.watchers.get(worktreePath) !== entry) return;
+
+        // Top-level git dir: index (staging), HEAD, ORIG_HEAD, MERGE_HEAD,
+        // packed-refs. Non-recursive, so objects/ is never descended.
+        try {
+          const metaWatcher = fs.watch(gitDir, { recursive: false }, (_eventType, filename) => {
+            if (filename && GIT_META_FILES.has(path.basename(filename.toString()))) fire();
+          });
+          entry.watchers.push(metaWatcher);
+        } catch {
+          // ignore: a single missing watch must not break the rest
+        }
+
+        // logs/HEAD moves on every commit / checkout / reset. It lives one level
+        // down, so watch the logs/ directory itself (non-recursive).
+        const logsDir = path.join(gitDir, 'logs');
+        if (fs.existsSync(logsDir)) {
+          try {
+            const logsWatcher = fs.watch(logsDir, { recursive: false }, (_eventType, filename) => {
+              if (filename && path.basename(filename.toString()) === 'HEAD') fire();
+            });
+            entry.watchers.push(logsWatcher);
+          } catch {
+            // ignore
+          }
+        }
+      })
+      .catch(() => {
+        // Not a git repo, or git unavailable: the working-tree watch still applies.
+      });
   }
 
   unsubscribe(worktreePath: string): void {
@@ -55,7 +120,13 @@ export class DiffWatcher {
     if (entry.debounceTimer !== null) {
       clearTimeout(entry.debounceTimer);
     }
-    entry.watcher.close();
+    for (const watcher of entry.watchers) {
+      try {
+        watcher.close();
+      } catch {
+        // ignore: closing an already-dead watcher is harmless
+      }
+    }
     this.watchers.delete(worktreePath);
   }
 

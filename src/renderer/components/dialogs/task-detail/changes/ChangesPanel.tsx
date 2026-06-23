@@ -337,20 +337,6 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
     fetchFileContentRef.current(filePath);
   }, [setSelectedFile]);
 
-  // Manual refresh: invalidate the content cache (stale-while-revalidate) and
-  // re-fetch the file list, the selected file's diff, and the branch context.
-  // fs.watch already auto-refreshes, but a button gives an explicit affordance
-  // and recovers from a missed event.
-  const handleRefresh = useCallback(() => {
-    cacheGenerationRef.current += 1;
-    fetchFilesRef.current();
-    fetchBranchSummaryRef.current();
-    const currentFile = selectedFileRef.current;
-    if (currentFile) {
-      fetchFileContentRef.current(currentFile);
-    }
-  }, []);
-
   // File-tree width is PER-TASK (session store, keyed by entityId), like the
   // terminal split's dividerRatio: an undefined stored width means auto-fit to the
   // branch name / last commit on open; a drag sets that task's own width. Local
@@ -469,7 +455,6 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
             totalInsertions={totalInsertions}
             totalDeletions={totalDeletions}
             branchSummary={branchSummary}
-            onRefresh={handleRefresh}
             scope={scope}
             onScopeChange={handleScopeChange}
             worktreePath={worktreePath}
