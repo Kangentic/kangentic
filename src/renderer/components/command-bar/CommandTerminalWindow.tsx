@@ -281,6 +281,19 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     if (initialized.current) requestAnimationFrame(() => fit());
   }, [changesOpen, fit]);
 
+  // Restore terminal focus after a maximize/restore toggle (the button, Ctrl+Shift+M,
+  // and the header double-click all flip `isMaximized`), so the next keystroke lands
+  // in the terminal instead of the maximize button. The command terminal OWNS the
+  // xterm focus, so call `focus()` directly. Mirrors TaskDetailWindow's re-homing of
+  // the PR #33 fix; keys on the maximize toggle (not `terminal-panel-resize`, which
+  // also fires on drag/resize) and skips the initial mount.
+  const wasMaximizedRef = useRef(isMaximized);
+  useEffect(() => {
+    if (wasMaximizedRef.current === isMaximized) return;
+    wasMaximizedRef.current = isMaximized;
+    if (initialized.current) focus();
+  }, [isMaximized, focus]);
+
   // Restore keyboard focus to the terminal after a maximize/restore toggle, so the
   // next keystroke lands in the terminal instead of the maximize button (the button
   // takes DOM focus when clicked; the panel.maximize keybinding and the header

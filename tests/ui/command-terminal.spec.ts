@@ -388,6 +388,31 @@ test.describe('Command Terminal', () => {
         await expect(windowContent).not.toBeVisible({ timeout: 5000 });
         await expect(sharedPage.getByTestId('transient-session-indicator')).toBeVisible();
       });
+
+      test('a clean backdrop click hides the layer without killing the session', async () => {
+        // The CommandBackdrop (data-testid="command-window-backdrop") uses a
+        // press-then-release guard: onMouseDown records pressedOnSelf=true only when
+        // both events target the backdrop directly (not a child). A clean click on
+        // the empty region beside the window satisfies this and fires onHide().
+        //
+        // Mirrors the X-button and Ctrl+Shift+W behavior: the PTY stays alive and
+        // the background indicator remains visible after the layer closes.
+        await sharedPage.keyboard.press('Control+Shift+P');
+        await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
+
+        // Click the backdrop directly (not on the window frame). The backdrop is a
+        // fixed full-screen div below the window frame; a top-left-corner point is
+        // safely outside the window content (which is centered or near the center).
+        const backdrop = sharedPage.getByTestId('command-window-backdrop');
+        await expect(backdrop).toBeVisible();
+        await backdrop.click({ position: { x: 5, y: 5 } });
+
+        // Layer must hide (the window content is no longer visible)
+        await expect(sharedPage.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
+
+        // Session stays alive: background indicator remains
+        await expect(sharedPage.getByTestId('transient-session-indicator')).toBeVisible();
+      });
     });
   });
 
@@ -990,6 +1015,274 @@ test.describe('Command Terminal', () => {
         // toBeFocused() retries internally, absorbing the effect tick.
         const xtermTextarea = page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first();
         await expect(xtermTextarea).toBeFocused({ timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Stop activity ring - the Stop button in CommandTerminalWindow carries the
+  // same ring affordance as the task-detail pause button, but with a stop square
+  // instead of pause bars. Three ring states:
+  //   thinking (isActive)          -> spinning emerald Circle + emerald stop-square
+  //   idle/permission (requiresUI) -> static amber Circle + amber stop-square
+  //   no session / not running     -> plain CircleStop, no stop-square
+  //
+  // Each test uses a deterministic spawnTransient override (known session id) so
+  // page.evaluate can call updateActivity + markFirstOutput on that exact id
+  // without racing against a randomly-generated uuid from the default mock.
+  // ---------------------------------------------------------------------------
+  test.describe('Stop activity ring', () => {
+    const RING_PROJECT_ID = 'proj-ring-test';
+    const RING_SESSION_ID = 'sess-ring-test-1';
+
+    /** Base preconfig: one project, no pre-existing sessions (the overlay will spawn one). */
+    function ringBasePreConfig(): string {
+      return `
+        window.__mockPreConfigure(function (state) {
+          var ts = new Date().toISOString();
+          state.projects.push({
+            id: '${RING_PROJECT_ID}',
+            name: 'Ring Test Project',
+            path: '/mock/ring-test',
+            github_url: null,
+            default_agent: 'claude',
+            last_opened: ts,
+            created_at: ts,
+          });
+          state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+            state.swimlanes.push(Object.assign({}, s, {
+              id: 'lane-ring-' + i,
+              position: i,
+              created_at: ts,
+            }));
+          });
+          return { currentProjectId: '${RING_PROJECT_ID}' };
+        });
+      `;
+    }
+
+    /** Override spawnTransient to return a deterministic session id so we can
+     *  push activity state into the store for that exact id. */
+    const deterministicSpawn = `
+      window.electronAPI.sessions.spawnTransient = async function (input) {
+        return {
+          session: {
+            id: '${RING_SESSION_ID}',
+            taskId: '${RING_SESSION_ID}',
+            projectId: input.projectId,
+            pid: null,
+            status: 'running',
+            shell: '/bin/bash',
+            cwd: '/mock/ring-test',
+            startedAt: new Date().toISOString(),
+            exitCode: null,
+            resuming: false,
+            transient: true,
+          },
+          branch: 'main',
+        };
+      };
+    `;
+
+    /**
+     * Open the command bar and flip terminalReady by calling markFirstOutput so
+     * sessionRunning=true. Without this, isThinking and isIdle are always false
+     * (the ring only shows for a live session), and the ring tests would pass
+     * trivially against the wrong state.
+     */
+    async function openOverlayAndMarkSessionReady(page: Page): Promise<void> {
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toBeVisible();
+
+      // markFirstOutput flips sessionFirstOutput[id] -> true, which sets
+      // hasSessionStarted=true -> terminalReady=true via a useEffect.
+      // This mirrors the pattern used by write-batcher-integration.spec.ts and
+      // terminal-ctrl-c-interrupt.spec.ts for xterm tests.
+      await page.evaluate((sessionId) => {
+        const stores = (window as unknown as {
+          __zustandStores?: {
+            session?: { getState: () => { markFirstOutput: (id: string) => void } };
+          };
+        }).__zustandStores;
+        stores?.session?.getState().markFirstOutput(sessionId);
+      }, RING_SESSION_ID);
+
+      // Poll until terminalReady is reflected: the stop button must lose its
+      // lucide-circle-stop class (the default rest-state icon) once the session
+      // starts, confirming the sessionRunning gate is now true.
+      // We assert the activity-specific state in each individual test instead.
+    }
+
+    test('thinking activity shows spinning emerald ring and emerald stop-square', async () => {
+      // Derives expected behavior from the contract in CommandTerminalWindow.tsx:
+      //   isThinking = sessionRunning && isActive(activity)
+      //   -> spinning Circle with text-emerald-400 animate-spin, plus StopSquare bg-emerald-400
+      const { browser, page } = await launchWithState(
+        ringBasePreConfig() + deterministicSpawn
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await openOverlayAndMarkSessionReady(page);
+
+        // Push 'thinking' activity into the store for the known session id.
+        await page.evaluate((sessionId) => {
+          const stores = (window as unknown as {
+            __zustandStores?: {
+              session?: { getState: () => { updateActivity: (id: string, state: string) => void } };
+            };
+          }).__zustandStores;
+          stores?.session?.getState().updateActivity(sessionId, 'thinking');
+        }, RING_SESSION_ID);
+
+        const stopButton = page.getByTestId('command-bar-terminate-button');
+
+        // stop-square must be present (the StopSquare inner span inside the ring)
+        await expect(stopButton.getByTestId('stop-square')).toBeVisible({ timeout: 3000 });
+
+        // The stop-square inner span carries bg-emerald-400 for thinking
+        const squareInner = stopButton.getByTestId('stop-square').locator('span');
+        await expect(squareInner).toHaveClass(/bg-emerald-400/);
+
+        // The animated emerald ring (Circle svg) must also be present
+        // lucide-circle is the CSS class Lucide attaches to the Circle component
+        await expect(stopButton.locator('.lucide-circle')).toBeVisible();
+        const ringCircle = stopButton.locator('.lucide-circle');
+        await expect(ringCircle).toHaveClass(/text-emerald-400/);
+        await expect(ringCircle).toHaveClass(/animate-spin/);
+
+        // The plain rest-state icon (CircleStop) must NOT be present when thinking
+        await expect(stopButton.locator('.lucide-circle-stop')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('idle activity shows static amber ring and amber stop-square', async () => {
+      // Derives expected behavior from the contract in CommandTerminalWindow.tsx:
+      //   isIdle = sessionRunning && requiresUserInteraction(activity)
+      //   requiresUserInteraction('idle') = true (ACTIVITY_DISPOSITION idle -> 'idle')
+      //   -> static Circle with text-amber-400 (no animate-spin), plus StopSquare bg-amber-400
+      const { browser, page } = await launchWithState(
+        ringBasePreConfig() + deterministicSpawn
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await openOverlayAndMarkSessionReady(page);
+
+        // Push 'idle' activity (requiresUserInteraction = true, isActive = false)
+        await page.evaluate((sessionId) => {
+          const stores = (window as unknown as {
+            __zustandStores?: {
+              session?: { getState: () => { updateActivity: (id: string, state: string) => void } };
+            };
+          }).__zustandStores;
+          stores?.session?.getState().updateActivity(sessionId, 'idle');
+        }, RING_SESSION_ID);
+
+        const stopButton = page.getByTestId('command-bar-terminate-button');
+
+        // stop-square must be present for idle state
+        await expect(stopButton.getByTestId('stop-square')).toBeVisible({ timeout: 3000 });
+
+        // The stop-square inner span carries bg-amber-400 for idle
+        const squareInner = stopButton.getByTestId('stop-square').locator('span');
+        await expect(squareInner).toHaveClass(/bg-amber-400/);
+
+        // The static amber ring (Circle svg) must be present and NOT spinning
+        await expect(stopButton.locator('.lucide-circle')).toBeVisible();
+        const ringCircle = stopButton.locator('.lucide-circle');
+        await expect(ringCircle).toHaveClass(/text-amber-400/);
+        // Idle ring is static: no animate-spin class
+        const ringClass = await ringCircle.getAttribute('class');
+        expect(ringClass).not.toContain('animate-spin');
+
+        // The plain rest-state icon (CircleStop) must NOT be present when idle
+        await expect(stopButton.locator('.lucide-circle-stop')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('permission activity shows static amber ring (same as idle)', async () => {
+      // requiresUserInteraction('permission') = true (ACTIVITY_DISPOSITION maps
+      // 'permission' -> 'idle'). The ring is identical to the idle ring.
+      // This pins the activity-state-classification contract in the UI layer:
+      // 'permission' must be treated as "needs user" (amber) not "working" (emerald).
+      const { browser, page } = await launchWithState(
+        ringBasePreConfig() + deterministicSpawn
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await openOverlayAndMarkSessionReady(page);
+
+        // Push 'permission' activity
+        await page.evaluate((sessionId) => {
+          const stores = (window as unknown as {
+            __zustandStores?: {
+              session?: { getState: () => { updateActivity: (id: string, state: string) => void } };
+            };
+          }).__zustandStores;
+          stores?.session?.getState().updateActivity(sessionId, 'permission');
+        }, RING_SESSION_ID);
+
+        const stopButton = page.getByTestId('command-bar-terminate-button');
+
+        // stop-square must be present for permission state
+        await expect(stopButton.getByTestId('stop-square')).toBeVisible({ timeout: 3000 });
+
+        // The stop-square inner span carries bg-amber-400 for permission (same as idle)
+        const squareInner = stopButton.getByTestId('stop-square').locator('span');
+        await expect(squareInner).toHaveClass(/bg-amber-400/);
+
+        // Static amber ring (no spin) - permission maps to idle disposition
+        await expect(stopButton.locator('.lucide-circle')).toBeVisible();
+        const ringClass = await stopButton.locator('.lucide-circle').getAttribute('class');
+        expect(ringClass).toContain('text-amber-400');
+        expect(ringClass).not.toContain('animate-spin');
+
+        // No plain CircleStop for permission state
+        await expect(stopButton.locator('.lucide-circle-stop')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('no active session shows plain CircleStop (no stop-square, no ring)', async () => {
+      // When the session has not yet started (terminalReady=false, so sessionRunning=false),
+      // or activity is undefined, StopButtonIcon renders the rest-state <CircleStop>.
+      // This test opens the overlay WITHOUT calling markFirstOutput, so terminalReady
+      // stays false and the ring must not render.
+      //
+      // Intent: confirm the ring only appears for a live session. If the rest-state
+      // icon were absent, every close-up would look like the ring was working even
+      // when there is nothing to show.
+      const { browser, page } = await launchWithState(
+        ringBasePreConfig() + deterministicSpawn
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
+
+        // Do NOT call markFirstOutput -> terminalReady stays false -> sessionRunning=false
+        // -> isThinking=false, isIdle=false -> StopButtonIcon returns <CircleStop>
+
+        const stopButton = page.getByTestId('command-bar-terminate-button');
+
+        // Plain rest-state icon must be present
+        await expect(stopButton.locator('.lucide-circle-stop')).toBeVisible({ timeout: 3000 });
+
+        // No ring (no stop-square, no spinning/static Circle ring)
+        // Intentional fixed wait: we cannot poll for non-occurrence.
+        // 800ms is enough for any pending microtask queue to flush.
+        await page.waitForTimeout(800);
+        await expect(stopButton.getByTestId('stop-square')).toHaveCount(0);
       } finally {
         await browser.close();
       }
