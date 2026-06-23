@@ -128,10 +128,12 @@ test.describe('Task Detail Changes panel: expand / collapse', () => {
     // The colliding panel-local close X is gone: closing is owned by the pill.
     await expect(page.locator('[data-testid="changes-close"]')).toHaveCount(0);
 
-    // Open Changes -> defaults to split view: expand control appears
+    // Open Changes -> defaults to split view: expand control appears.
+    // On CI Linux the React re-render after the pill click can take >5s; give
+    // the state update a full 10s budget before failing.
     await changesPill.click();
-    await expect(page.locator('[data-testid="changes-expand"]')).toBeVisible();
-    await expect(page.locator('[data-testid="changes-collapse"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="changes-expand"]')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('[data-testid="changes-collapse"]')).not.toBeVisible({ timeout: 10000 });
     // No panel-local close even while the panel is open.
     await expect(page.locator('[data-testid="changes-close"]')).toHaveCount(0);
 

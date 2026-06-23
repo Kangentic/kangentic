@@ -544,18 +544,22 @@ test.describe('window light-dismiss (click-outside-to-close)', () => {
 
     // The "Discard unsaved changes?" confirm dialog must appear.
     const confirmHeading = page.locator('h3:has-text("Discard unsaved changes?")');
-    await confirmHeading.waitFor({ state: 'visible', timeout: 3000 });
+    await confirmHeading.waitFor({ state: 'visible', timeout: 5000 });
 
     // The task-detail window is still mounted behind the confirm dialog.
     await pollWindowCount(page, 1);
 
     // Dismiss the confirm so we leave a clean state.
     await page.locator('button:has-text("Keep editing")').click();
-    await confirmHeading.waitFor({ state: 'hidden', timeout: 2000 });
+    // Use a generous timeout here: on CI Linux the confirm dialog animates out
+    // under load, and 2000ms was too tight and caused the next assertion to race.
+    await confirmHeading.waitFor({ state: 'hidden', timeout: 5000 });
 
-    // Close via Ctrl+Shift+W (this will trigger confirm again), then Discard.
+    // Close via Escape (routes through closeWithGuard again). Give the confirm
+    // dialog time to appear - the keystroke must be processed and React must
+    // re-render before the dialog is visible. 2000ms was too tight for CI Linux.
     await page.keyboard.press('Escape');
-    await confirmHeading.waitFor({ state: 'visible', timeout: 2000 });
+    await confirmHeading.waitFor({ state: 'visible', timeout: 5000 });
     await page.locator('button:has-text("Discard")').click();
     await pollWindowCount(page, 0);
   });
