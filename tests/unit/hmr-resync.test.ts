@@ -263,6 +263,29 @@ describe('HMR store re-sync', () => {
       }
     }
 
+    // window-store.ts (under window-manager/store/, not the Zustand stores/ dir) is
+    // also a Pattern E boundary: it builds two layer instances and pins BOTH
+    // (boardWindowManager + commandWindowManager) in import.meta.hot.data, then
+    // self-accepts. Guard it here so a later edit that drops a pin is caught
+    // mechanically, not only at runtime (a split-brain second store makes the
+    // command-terminal / board windows vanish on every save while dogfooding). It
+    // reads via `const HMR_DATA = import.meta.hot?.data`, so the read check is
+    // looser than the stores/ ones above.
+    const WINDOW_MANAGER_STORE = path.resolve(
+      __dirname,
+      '../../src/renderer/window-manager/store/window-store.ts',
+    );
+    const windowStoreSource = fs.readFileSync(WINDOW_MANAGER_STORE, 'utf-8');
+    const windowStoreReads = /import\.meta\.hot\?\.data/.test(windowStoreSource);
+    const windowStoreWritesBoard = /import\.meta\.hot\.data\.boardWindowManager\s*=/.test(windowStoreSource);
+    const windowStoreWritesCommand = /import\.meta\.hot\.data\.commandWindowManager\s*=/.test(windowStoreSource);
+    const windowStoreAccepts = /import\.meta\.hot\.accept\s*\(/.test(windowStoreSource);
+    if (!windowStoreReads || !windowStoreWritesBoard || !windowStoreWritesCommand || !windowStoreAccepts) {
+      violations.push(
+        `window-manager/store/window-store.ts -> reads:${windowStoreReads} writesBoard:${windowStoreWritesBoard} writesCommand:${windowStoreWritesCommand} accepts:${windowStoreAccepts}`,
+      );
+    }
+
     expect(
       violations,
       `Pattern E stores must pin their Zustand instance across HMR.\n` +

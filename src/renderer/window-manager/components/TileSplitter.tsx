@@ -14,7 +14,7 @@
 
 import { useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import { useWindowStore } from '../store/window-store';
+import { useLayerStore } from '../context';
 import type { ContainerSize } from '../store/geometry';
 import type { TileNode } from '../store/types';
 import { resolveTileLayout } from '../tiling/resolve-layout';
@@ -58,7 +58,7 @@ function seamKey(seam: Pick<TileSeam, 'splitId' | 'index'>): string {
 }
 
 export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seamPx, overlayRef }: TileSplitterProps) {
-  const commitSeamRatio = useWindowStore((state) => state.setSeamRatio);
+  const commitSeamRatio = useLayerStore()((state) => state.setSeamRatio);
   const dragRef = useRef<SeamDrag | null>(null);
   // Keeps the accent line lit through the whole drag (CSS :hover drops out when
   // the captured pointer travels off the thin overlay).

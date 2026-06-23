@@ -97,7 +97,7 @@ async function launchWithState(extraScript: string): Promise<{ browser: Browser;
  */
 async function openCommandBarWithTerminal(page: Page): Promise<void> {
   await page.keyboard.press('Control+Shift+P');
-  await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+  await expect(page.getByTestId('command-terminal-window')).toBeVisible();
 
   // Inject sessionFirstOutput so terminalReady flips immediately.
   await page.evaluate((sessionId) => {
@@ -111,11 +111,11 @@ async function openCommandBarWithTerminal(page: Page): Promise<void> {
 
   // Wait for the xterm textarea to mount (signals xterm.open() completed).
   await expect(
-    page.getByTestId('command-bar-overlay').locator('.xterm-helper-textarea').first()
+    page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first()
   ).toBeAttached({ timeout: 8000 });
 
   // Focus the terminal so keyboard events route to xterm's handler.
-  await page.getByTestId('command-bar-overlay').locator('.xterm-helper-textarea').focus();
+  await page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').focus();
 }
 
 test.describe('terminal-clipboard: Ctrl+C with no selection notifies user interrupt', () => {
@@ -141,7 +141,7 @@ test.describe('terminal-clipboard: Ctrl+C with no selection notifies user interr
       // flag is set and no selection exists. page.keyboard.press also works
       // but evaluate gives us direct control and avoids OS-level focus races.
       await page.evaluate(() => {
-        const overlay = document.querySelector('[data-testid="command-bar-overlay"]');
+        const overlay = document.querySelector('[data-testid="command-terminal-window"]');
         const textarea = overlay?.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
         if (!textarea) throw new Error('xterm textarea not found');
 
@@ -202,7 +202,7 @@ test.describe('terminal-clipboard: Ctrl+C with no selection notifies user interr
       // This test verifies that Ctrl+Shift+C does NOT trigger the interrupt path
       // (the interrupt branch requires Ctrl+C with no shift).
       await page.evaluate(() => {
-        const overlay = document.querySelector('[data-testid="command-bar-overlay"]');
+        const overlay = document.querySelector('[data-testid="command-terminal-window"]');
         const textarea = overlay?.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
         if (!textarea) throw new Error('xterm textarea not found');
 
@@ -260,7 +260,7 @@ test.describe('terminal-clipboard: Ctrl+C with no selection notifies user interr
 
       // Open overlay - spawn hangs, xterm never mounts.
       await page.keyboard.press('Control+Shift+P');
-      await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+      await expect(page.getByTestId('command-terminal-window')).toBeVisible();
 
       // Intentional fixed wait - cannot poll for non-occurrence.
       await page.waitForTimeout(800);

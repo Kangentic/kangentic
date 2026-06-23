@@ -41,7 +41,7 @@ import {
   useTaskSessionState,
   useTaskActions,
 } from '../../components/dialogs/task-detail';
-import { useWindowStore } from '../store/window-store';
+import { useLayerStore } from '../context';
 import { registerWindowCloser, unregisterWindowCloser } from '../store/window-close-registry';
 import { classifySnapZone, nextSnap } from '../dnd/snap-zones';
 import type { SnapDirection } from '../dnd/snap-zones';
@@ -100,16 +100,17 @@ export function TaskDetailWindow({
   const updateConfig = useConfigStore((s) => s.updateConfig);
   const browserEnabledConfig = useConfigStore((s) => s.config.browser?.enabled);
 
-  const toggleMaximizeWindow = useWindowStore((s) => s.toggleMaximizeWindow);
-  const dockWindow = useWindowStore((s) => s.dockWindow);
-  const applyTilePreset = useWindowStore((s) => s.applyTilePreset);
-  const windowCount = useWindowStore((s) => Object.keys(s.windows).length);
-  const maximizeWindow = useWindowStore((s) => s.maximizeWindow);
-  const restoreWindow = useWindowStore((s) => s.restoreWindow);
-  const setGeometry = useWindowStore((s) => s.setGeometry);
-  const snapWindow = useWindowStore((s) => s.snapWindow);
-  const untileWindow = useWindowStore((s) => s.untileWindow);
-  const isTiled = useWindowStore((s) => s.windows[windowId]?.state === 'tiled');
+  const useStore = useLayerStore();
+  const toggleMaximizeWindow = useStore((s) => s.toggleMaximizeWindow);
+  const dockWindow = useStore((s) => s.dockWindow);
+  const applyTilePreset = useStore((s) => s.applyTilePreset);
+  const windowCount = useStore((s) => Object.keys(s.windows).length);
+  const maximizeWindow = useStore((s) => s.maximizeWindow);
+  const restoreWindow = useStore((s) => s.restoreWindow);
+  const setGeometry = useStore((s) => s.setGeometry);
+  const snapWindow = useStore((s) => s.snapWindow);
+  const untileWindow = useStore((s) => s.untileWindow);
+  const isTiled = useStore((s) => s.windows[windowId]?.state === 'tiled');
 
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description);
@@ -223,19 +224,19 @@ export function TaskDetailWindow({
   // Pop the window back to floating from whatever docked state it is in
   // (maximized / snapped / tiled) - the "down" restore step.
   const popToFloat = useCallback(() => {
-    const target = useWindowStore.getState().windows[windowId];
+    const target = useStore.getState().windows[windowId];
     if (!target) return;
     if (target.state === 'maximized') restoreWindow(windowId);
     else if (target.state === 'snapped') setGeometry(windowId, target.restoreGeometry ?? target.geometry);
     else if (target.state === 'tiled') untileWindow(windowId);
-  }, [windowId, restoreWindow, setGeometry, untileWindow]);
+  }, [windowId, restoreWindow, setGeometry, untileWindow, useStore]);
 
   // Win11-style stateful snap: the result depends on the window's current zone,
   // read from its RENDERED rect (a tiled pane's stored geometry is its pre-tile
   // float, not where it renders). Halves dock (pair); corners are lone snaps; a
   // tiled pane cannot slide within its pair horizontally. See snap-zones.ts.
   const handleSnapDirection = useCallback((direction: SnapDirection) => {
-    const target = useWindowStore.getState().windows[windowId];
+    const target = useStore.getState().windows[windowId];
     if (!target) return;
     const frameElement = document.querySelector(`[data-testid="window-frame-${windowId}"]`);
     const overlayElement = document.querySelector('[data-testid="window-overlay"]');
@@ -261,7 +262,7 @@ export function TaskDetailWindow({
       if (target.state === 'tiled') untileWindow(windowId);
       snapWindow(windowId, action.geometry);
     }
-  }, [windowId, maximizeWindow, dockWindow, snapWindow, untileWindow, popToFloat]);
+  }, [windowId, maximizeWindow, dockWindow, snapWindow, untileWindow, popToFloat, useStore]);
 
   const handleToggleBrowser = useCallback(() => {
     if (!browserOpen && changesOpen) toggleChangesOpen(task.id);
@@ -386,6 +387,23 @@ export function TaskDetailWindow({
     registerWindowCloser(windowId, closeWithGuard);
     return () => unregisterWindowCloser(windowId);
   }, [windowId, closeWithGuard]);
+
+  // Restore keyboard focus to this window's terminal after a maximize/restore
+  // toggle, so the next keystroke lands in the terminal instead of the maximize
+  // button (the button takes DOM focus when clicked; the panel.maximize keybinding
+  // and the header double-click also flip `isMaximized`). The task-detail surface
+  // does not own the xterm's focus(), so focus the frame's textarea directly - the
+  // same idiom WindowFrame and useWindowFocusReconcile use. Skips the initial mount
+  // (acts only on an actual toggle) so it never pulls focus from the edit form or a
+  // freshly opened window; a no-op when there is no terminal (edit mode / To Do).
+  const wasMaximizedRef = useRef(isMaximized);
+  useEffect(() => {
+    if (wasMaximizedRef.current === isMaximized) return;
+    wasMaximizedRef.current = isMaximized;
+    const frame = document.querySelector(`[data-testid="window-frame-${windowId}"]`);
+    const textarea = frame?.querySelector('.xterm-helper-textarea');
+    if (textarea instanceof HTMLElement) textarea.focus();
+  }, [isMaximized, windowId]);
 
   const onTitleBarPointerDown = useCallback((event: React.PointerEvent) => {
     // Only the primary button starts a window drag. Non-primary buttons (e.g. the

@@ -6,10 +6,12 @@
  * beside the existing `.drop-highlight` clear.
  */
 
-import { hideSnapPreview } from './dnd/snap-preview-controller';
-
 export function clearSnapPreviewDom(): void {
-  hideSnapPreview();
+  // Both layers' snap-preview elements carry `.snap-zone-active`; hide every one
+  // directly (each layer's controller is per-instance and not reachable here).
+  document.querySelectorAll<HTMLElement>('.snap-zone-active').forEach((preview) => {
+    preview.style.display = 'none';
+  });
   document.querySelectorAll<HTMLElement>('[data-testid^="window-frame-"]').forEach((frame) => {
     frame.style.transform = '';
   });

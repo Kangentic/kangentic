@@ -17,20 +17,22 @@ import { useRef } from 'react';
 import type { RefObject } from 'react';
 import { clamp, pixelsToFractional } from '../store/geometry';
 import type { PixelRect } from '../store/geometry';
-import { useWindowStore } from '../store/window-store';
+import { useWindowManager } from '../context';
 
 export type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 
-// Floor for a MANUALLY resized window: the comfortable minimum where the
+// Default floor for a MANUALLY resized window: the comfortable minimum where the
 // task-detail header shows a typical full title plus the trailing controls
 // (overflow / expand / close), with the quick-access pills folded into the
 // overflow. Set from a user-picked reference width (Task #1 at ~633px). Tiling
 // presets may still drive a pane narrower than this on a small screen - the header
-// degrades gracefully there (title truncates toward its smaller CSS min).
-const MIN_WIDTH_PX = 650;
-// Floor for height: enough for the header + a usable slice of the task body /
-// terminal below it, so a manually resized window never collapses to a sliver.
-const MIN_HEIGHT_PX = 400;
+// degrades gracefully there (title truncates toward its smaller CSS min). Each
+// layer passes its own floor through `layer.minSize` (see `WindowManagerLayer`);
+// these are the shared defaults both layers use today.
+export const DEFAULT_MIN_WIDTH_PX = 650;
+// Default floor for height: enough for the header + a usable slice of the task body
+// / terminal below it, so a manually resized window never collapses to a sliver.
+export const DEFAULT_MIN_HEIGHT_PX = 400;
 
 interface OverlayBounds {
   left: number;
@@ -64,7 +66,13 @@ interface UseWindowResizeArgs {
 
 /** Resolve the new frame rect from the active handle and pointer delta, keeping
  *  the anchored (opposite) edge fixed and enforcing the minimum size. */
-function resolveRect(resize: ResizeSession, deltaX: number, deltaY: number): PixelRect {
+function resolveRect(
+  resize: ResizeSession,
+  deltaX: number,
+  deltaY: number,
+  minWidth: number,
+  minHeight: number,
+): PixelRect {
   const start = resize.startRect;
   const direction = resize.direction;
   let left = start.left;
@@ -83,18 +91,22 @@ function resolveRect(resize: ResizeSession, deltaX: number, deltaY: number): Pix
     top = start.top + deltaY;
   }
 
-  if (width < MIN_WIDTH_PX) {
-    if (direction.includes('w')) left = start.left + (start.width - MIN_WIDTH_PX);
-    width = MIN_WIDTH_PX;
+  if (width < minWidth) {
+    if (direction.includes('w')) left = start.left + (start.width - minWidth);
+    width = minWidth;
   }
-  if (height < MIN_HEIGHT_PX) {
-    if (direction.includes('n')) top = start.top + (start.height - MIN_HEIGHT_PX);
-    height = MIN_HEIGHT_PX;
+  if (height < minHeight) {
+    if (direction.includes('n')) top = start.top + (start.height - minHeight);
+    height = minHeight;
   }
   return { left, top, width, height };
 }
 
 export function useWindowResize({ windowId, frameRef, overlayRef }: UseWindowResizeArgs) {
+  const { manager, layer } = useWindowManager();
+  const store = manager.store;
+  const minWidth = layer.minSize.width;
+  const minHeight = layer.minSize.height;
   const resizeRef = useRef<ResizeSession | null>(null);
 
   const handlePointerDown = (direction: ResizeDirection) => (event: React.PointerEvent) => {
@@ -151,7 +163,7 @@ export function useWindowResize({ windowId, frameRef, overlayRef }: UseWindowRes
     // pointerup/cancel coords (which can be a bogus (0,0) on a captured release).
     resize.lastClientX = event.clientX;
     resize.lastClientY = event.clientY;
-    const rect = resolveRect(resize, event.clientX - resize.startClientX, event.clientY - resize.startClientY);
+    const rect = resolveRect(resize, event.clientX - resize.startClientX, event.clientY - resize.startClientY, minWidth, minHeight);
     frame.style.left = `${rect.left}px`;
     frame.style.top = `${rect.top}px`;
     frame.style.width = `${rect.width}px`;
@@ -169,13 +181,13 @@ export function useWindowResize({ windowId, frameRef, overlayRef }: UseWindowRes
     // Commit from the LAST tracked move position, never the end event's coords: a
     // captured-pointer pointerup/cancel can report (0,0), and that bogus delta is
     // what collapsed the window to its minimum on release.
-    const rect = resolveRect(resize, resize.lastClientX - resize.startClientX, resize.lastClientY - resize.startClientY);
+    const rect = resolveRect(resize, resize.lastClientX - resize.startClientX, resize.lastClientY - resize.startClientY, minWidth, minHeight);
     // Clamp into the overlay on commit (the live drag was free).
-    const width = clamp(rect.width, MIN_WIDTH_PX, resize.overlay.width);
-    const height = clamp(rect.height, MIN_HEIGHT_PX, resize.overlay.height);
+    const width = clamp(rect.width, minWidth, resize.overlay.width);
+    const height = clamp(rect.height, minHeight, resize.overlay.height);
     const left = clamp(rect.left, 0, resize.overlay.width - width);
     const top = clamp(rect.top, 0, resize.overlay.height - height);
-    useWindowStore.getState().setGeometry(
+    store.getState().setGeometry(
       windowId,
       pixelsToFractional({ left, top, width, height }, { width: resize.overlay.width, height: resize.overlay.height }),
     );

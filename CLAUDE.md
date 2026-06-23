@@ -83,12 +83,18 @@ won't be found.
   must be visually and behaviourally indistinguishable from a production boot. Patterns A
   through D and their enforcement: `.claude/rules/hmr-patterns.md`.
 - **Command Terminal** - Ctrl+Shift+P opens an ephemeral "transient" session with no DB
-  persistence. The `transientSessions` map in `session-store.ts` tracks per-project transient
-  sessions (keyed by project ID). Unlike task-bound sessions, transient sessions are NOT
+  persistence. It is hosted in a SECOND window-manager layer (`CommandTerminalLayer` +
+  `CommandTerminalWindow` in `components/command-bar/`), separate from the board task-detail
+  layer: the same engine (`src/renderer/window-manager/`) instantiated twice via
+  `createWindowManagerStore` and distributed through `WindowManagerProvider` context. So the
+  Command Terminal is a movable / resizable / maximizable / snappable WINDOW (top-layered over a
+  slight backdrop blur), and its arrangement persists GLOBALLY (one blob, `AppConfig.commandTerminalWorkspace`,
+  shared across all projects). The `transientSessions` map in `session-store.ts` tracks per-project
+  transient sessions (keyed by project ID). Unlike task-bound sessions, transient sessions are NOT
   restored by `syncSessions()`; they rely entirely on the in-memory map. The map is preserved
-  across HMR via `import.meta.hot.data`. Closing the overlay keeps the PTY alive in the
-  background; reopening reattaches to the existing session. Project switching stashes/restores
-  transient session pointers.
+  across HMR via `import.meta.hot.data`. Hiding the layer (Ctrl+Shift+P / Ctrl+Shift+W / the header
+  X / backdrop click) keeps the PTY alive in the background; reopening reattaches. The window's Stop
+  control destroys the session. Project switching stashes/restores transient session pointers.
 - **Settings tab separator** - In `AppSettingsPanel`, tabs above the `separator: true` marker
   are per-project settings (saved to `.kangentic/config.json`). Tabs below the separator
   (Behavior, Notifications, Privacy) are shared settings that apply across all projects (saved

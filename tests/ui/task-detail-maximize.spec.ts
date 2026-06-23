@@ -407,3 +407,89 @@ test.describe('Task Detail: maximize / restore', () => {
     await expect(editDialog).not.toBeVisible({ timeout: 8000 });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Maximize focus restore - pins the fix from PR #33 (Surface 2):
+// toggling maximize on a task-detail WINDOW must restore keyboard focus to the
+// window's embedded xterm terminal (before the fix, the maximize button kept
+// DOM focus, so the next keystroke hit the button instead of the terminal).
+//
+// This test requires the xterm terminal to actually mount inside the window,
+// which means the session must be running AND sessionFirstOutput must be set
+// (so terminalReady flips to true in TerminalTab). Each step:
+//   1. Launch a fresh browser with the standard preConfig (running session).
+//   2. Open the task-detail window by clicking the task card.
+//   3. Inject markFirstOutput so the LaunchOverlay lifts and xterm.open() runs.
+//   4. Wait for .xterm-helper-textarea to be attached inside the window frame.
+//   5. Click the maximize button (button takes DOM focus - the pre-fix broken state).
+//   6. Assert .xterm-helper-textarea is focused afterward.
+//      toBeFocused() has built-in retry, absorbing the useEffect tick.
+// ---------------------------------------------------------------------------
+test.describe('Task Detail: maximize focus restore', () => {
+  test('maximize then restore via button returns keyboard focus to the xterm textarea', async () => {
+    // This test pins the behavior fixed in PR #33 Surface 2: the useEffect in
+    // TaskDetailWindow.tsx that calls textarea.focus() whenever isMaximized
+    // changes after mount (wasMaximizedRef skips the initial-mount no-op).
+    //
+    // Red-green: removing the useEffect([isMaximized, windowId]) focus block from
+    // TaskDetailWindow.tsx makes the maximize button keep DOM focus, so the
+    // xtermTextarea toBeFocused() assertion fails.
+    const { browser, page } = await launchWithState(preConfig);
+    try {
+      await page.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Open the task-detail window for the running session task.
+      const card = page
+        .locator('[data-swimlane-name="Code Review"]')
+        .locator('text=Maximize Task')
+        .first();
+      await card.click();
+
+      const dialog = page.locator('[data-testid="task-detail-dialog"]');
+      await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+      // The window frame wraps the task-detail-dialog content.
+      const frame = page.locator('[data-testid^="window-frame-"]').filter({
+        has: page.locator('[data-testid="task-detail-dialog"]'),
+      });
+
+      // Inject sessionFirstOutput so TerminalTab's terminalReady flips to true
+      // immediately, lifting the LaunchOverlay shimmer and triggering xterm.open().
+      await page.evaluate((sessionId) => {
+        const stores = (window as unknown as {
+          __zustandStores?: {
+            session?: { getState: () => { markFirstOutput: (id: string) => void } };
+          };
+        }).__zustandStores;
+        stores?.session?.getState().markFirstOutput(sessionId);
+      }, SESSION_ID);
+
+      // Wait for xterm to open: .xterm-helper-textarea is the focusable element
+      // xterm attaches immediately after terminal.open() completes.
+      const xtermTextarea = frame.locator('.xterm-helper-textarea').first();
+      await xtermTextarea.waitFor({ state: 'attached', timeout: 8000 });
+
+      // The maximize button is surfaced in the TaskDetailHeader for running sessions.
+      const maximizeButton = page.locator('[data-testid="task-detail-maximize"]');
+      await expect(maximizeButton).toBeVisible();
+      await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+
+      // Click maximize - the button takes DOM focus (this is the pre-fix broken
+      // state: without the useEffect the xterm textarea would stay unfocused).
+      await maximizeButton.click();
+      await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
+
+      // The fix: the useEffect([isMaximized, windowId]) in TaskDetailWindow calls
+      // textarea.focus() on every toggle after mount. toBeFocused() retries
+      // internally, absorbing the React useEffect + rAF scheduling.
+      await expect(xtermTextarea).toBeFocused({ timeout: 3000 });
+
+      // Restore via button - focus must also return to xterm after the downward toggle.
+      await maximizeButton.click();
+      await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+      await expect(xtermTextarea).toBeFocused({ timeout: 3000 });
+    } finally {
+      await browser.close();
+    }
+  });
+});

@@ -97,7 +97,7 @@ describe('window-store actions', () => {
   });
 
   it('opens, focuses, and returns the new window id', () => {
-    const id = useWindowStore.getState().openWindow({ taskId: 'task-a', sessionId: 'sess-a', title: 'A' });
+    const id = useWindowStore.getState().openWindow({ anchor: 'task-a', sessionId: 'sess-a', title: 'A' });
     const state = useWindowStore.getState();
     expect(state.windows[id]).toBeTruthy();
     expect(state.windows[id].sessionStatus).toBe('live');
@@ -106,15 +106,15 @@ describe('window-store actions', () => {
   });
 
   it('focuses the existing window when re-opening the same task (one window per task)', () => {
-    const first = useWindowStore.getState().openWindow({ taskId: 'task-a', sessionId: 'sess-a', title: 'A' });
-    const second = useWindowStore.getState().openWindow({ taskId: 'task-a', sessionId: 'sess-a', title: 'A again' });
+    const first = useWindowStore.getState().openWindow({ anchor: 'task-a', sessionId: 'sess-a', title: 'A' });
+    const second = useWindowStore.getState().openWindow({ anchor: 'task-a', sessionId: 'sess-a', title: 'A again' });
     expect(second).toBe(first);
     expect(Object.keys(useWindowStore.getState().windows)).toHaveLength(1);
   });
 
   it('raises zIndex and moves a window to the front of the order on focus', () => {
-    const first = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
-    const second = useWindowStore.getState().openWindow({ taskId: 'b', sessionId: 's2', title: 'B' });
+    const first = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    const second = useWindowStore.getState().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
     useWindowStore.getState().focusWindow(first);
     const state = useWindowStore.getState();
     expect(state.focusedWindowId).toBe(first);
@@ -123,7 +123,7 @@ describe('window-store actions', () => {
   });
 
   it('maximizes then restores to the prior geometry', () => {
-    const id = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
+    const id = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
     const original = useWindowStore.getState().windows[id].geometry;
     useWindowStore.getState().maximizeWindow(id);
     expect(useWindowStore.getState().windows[id].state).toBe('maximized');
@@ -134,7 +134,7 @@ describe('window-store actions', () => {
   });
 
   it('snaps to a half and remembers the pre-snap geometry for restore', () => {
-    const id = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
+    const id = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
     const original = useWindowStore.getState().windows[id].geometry;
     useWindowStore.getState().snapWindow(id, { x: 0, y: 0, w: 0.5, h: 1 });
     const snapped = useWindowStore.getState().windows[id];
@@ -144,7 +144,7 @@ describe('window-store actions', () => {
   });
 
   it('preserves the original restore point when snapping a second time', () => {
-    const id = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
+    const id = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
     const original = useWindowStore.getState().windows[id].geometry;
     useWindowStore.getState().snapWindow(id, { x: 0, y: 0, w: 0.5, h: 1 });
     useWindowStore.getState().snapWindow(id, { x: 0.5, y: 0, w: 0.5, h: 1 });
@@ -153,7 +153,7 @@ describe('window-store actions', () => {
   });
 
   it('clamps committed geometry and marks the window floating', () => {
-    const id = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
+    const id = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
     useWindowStore.getState().maximizeWindow(id);
     useWindowStore.getState().setGeometry(id, { x: 0.9, y: 0.9, w: 0.4, h: 0.4 });
     const target = useWindowStore.getState().windows[id];
@@ -162,8 +162,8 @@ describe('window-store actions', () => {
   });
 
   it('removes a window and refocuses the next front-most on close', () => {
-    const first = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
-    const second = useWindowStore.getState().openWindow({ taskId: 'b', sessionId: 's2', title: 'B' });
+    const first = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    const second = useWindowStore.getState().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
     useWindowStore.getState().closeWindow(second);
     const state = useWindowStore.getState();
     expect(state.windows[second]).toBeUndefined();
@@ -178,9 +178,9 @@ describe('window-store tiling', () => {
 
   /** Open A snapped to the left half + B docked right -> a tiled pair. */
   function makeTiledPair(): { a: string; b: string } {
-    const a = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
+    const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
     useWindowStore.getState().snapWindow(a, { x: 0, y: 0, w: 0.5, h: 1 });
-    const b = useWindowStore.getState().openWindow({ taskId: 'b', sessionId: 's2', title: 'B' });
+    const b = useWindowStore.getState().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
     useWindowStore.getState().dockWindow(b, 'right');
     return { a, b };
   }
@@ -195,8 +195,8 @@ describe('window-store tiling', () => {
   });
 
   it('does NOT auto-tile when docking next to a merely floating window', () => {
-    const a = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
-    const b = useWindowStore.getState().openWindow({ taskId: 'b', sessionId: 's2', title: 'B' });
+    const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    const b = useWindowStore.getState().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
     // B stays floating (default geometry); docking A left must leave B untouched.
     useWindowStore.getState().dockWindow(a, 'left');
     const state = useWindowStore.getState();
@@ -206,8 +206,8 @@ describe('window-store tiling', () => {
   });
 
   it('auto-tiles 50/50 when docking next to a full-height window flush to the opposite edge (docked then resized)', () => {
-    const a = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
-    const b = useWindowStore.getState().openWindow({ taskId: 'b', sessionId: 's2', title: 'B' });
+    const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    const b = useWindowStore.getState().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
     // B was docked then resized wider: full-height, flush to the right edge, non-half width.
     useWindowStore.getState().setGeometry(b, { x: 0.35, y: 0, w: 0.65, h: 1 });
     useWindowStore.getState().dockWindow(a, 'left');
@@ -231,7 +231,7 @@ describe('window-store tiling', () => {
   });
 
   it('dockWindow falls back to a lone snap when no opposite-half window exists', () => {
-    const id = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
+    const id = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
     useWindowStore.getState().dockWindow(id, 'left');
     const state = useWindowStore.getState();
     expect(state.windows[id].state).toBe('snapped');
@@ -274,14 +274,14 @@ describe('window-store tiling', () => {
   /** A | B (via dockWindow), then C dropped onto B's right edge -> a three-leaf tree. */
   function makeThreeTiled(): { a: string; b: string; c: string } {
     const { a, b } = makeTiledPair();
-    const c = useWindowStore.getState().openWindow({ taskId: 'c', sessionId: 's3', title: 'C' });
+    const c = useWindowStore.getState().openWindow({ anchor: 'c', sessionId: 's3', title: 'C' });
     useWindowStore.getState().dockIntoWindow(c, b, 'right');
     return { a, b, c };
   }
 
   it('dockIntoWindow seeds a fresh split between two floating windows (side sets direction + order)', () => {
-    const a = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
-    const b = useWindowStore.getState().openWindow({ taskId: 'b', sessionId: 's2', title: 'B' });
+    const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    const b = useWindowStore.getState().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
     // Drop A onto B's TOP edge -> a vertical (stacked) split with A above B.
     useWindowStore.getState().dockIntoWindow(a, b, 'top');
     const state = useWindowStore.getState();
@@ -334,9 +334,9 @@ describe('window-store tiling', () => {
   });
 
   it('docking onto a half-snapped window confines the tile group to that footprint (not full width)', () => {
-    const a = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
+    const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
     useWindowStore.getState().snapWindow(a, { x: 0, y: 0, w: 0.5, h: 1 }); // left half
-    const b = useWindowStore.getState().openWindow({ taskId: 'b', sessionId: 's2', title: 'B' });
+    const b = useWindowStore.getState().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
     // Drop B onto A's bottom edge -> a vertical split CONFINED to the left half.
     useWindowStore.getState().dockIntoWindow(b, a, 'bottom');
     const state = useWindowStore.getState();
@@ -353,7 +353,7 @@ describe('window-store tiling', () => {
 
   it('dockWindow joins an existing tree as a new root pane (cohesive full-overlay tiling)', () => {
     const { a, b } = makeTiledPair(); // A | B, full overlay
-    const c = useWindowStore.getState().openWindow({ taskId: 'c', sessionId: 's3', title: 'C' });
+    const c = useWindowStore.getState().openWindow({ anchor: 'c', sessionId: 's3', title: 'C' });
     // Edge-snap C to the right while a tree exists -> it JOINS the tree (not a lone snap).
     useWindowStore.getState().dockWindow(c, 'right');
     const state = useWindowStore.getState();
@@ -364,17 +364,17 @@ describe('window-store tiling', () => {
 
   it('dockIntoWindow merges a lone snapped window (outside the tree) into the single tree', () => {
     // A tree confined to the right half.
-    const a = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
+    const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
     useWindowStore.getState().snapWindow(a, { x: 0.5, y: 0, w: 0.5, h: 1 });
-    const b = useWindowStore.getState().openWindow({ taskId: 'b', sessionId: 's2', title: 'B' });
+    const b = useWindowStore.getState().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
     useWindowStore.getState().dockIntoWindow(b, a, 'bottom'); // seed pair in the right half
     expect(useWindowStore.getState().tileTreeRect).toEqual({ x: 0.5, y: 0, w: 0.5, h: 1 });
     // A lone snapped window parked on the LEFT, outside the tree (the orphan case).
-    const c = useWindowStore.getState().openWindow({ taskId: 'c', sessionId: 's3', title: 'C' });
+    const c = useWindowStore.getState().openWindow({ anchor: 'c', sessionId: 's3', title: 'C' });
     useWindowStore.getState().snapWindow(c, { x: 0, y: 0, w: 0.5, h: 1 });
     expect(useWindowStore.getState().windows[c].state).toBe('snapped');
     // Drag a 4th window onto the orphan -> merges the orphan + dragged into the ONE tree.
-    const d = useWindowStore.getState().openWindow({ taskId: 'd', sessionId: 's4', title: 'D' });
+    const d = useWindowStore.getState().openWindow({ anchor: 'd', sessionId: 's4', title: 'D' });
     useWindowStore.getState().dockIntoWindow(d, c, 'bottom');
     const state = useWindowStore.getState();
     expect(state.windows[c].state).toBe('tiled');
@@ -384,9 +384,9 @@ describe('window-store tiling', () => {
   });
 
   it('collapsing a footprint-confined group resets the footprint to the full overlay', () => {
-    const a = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
+    const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
     useWindowStore.getState().snapWindow(a, { x: 0, y: 0, w: 0.5, h: 1 });
-    const b = useWindowStore.getState().openWindow({ taskId: 'b', sessionId: 's2', title: 'B' });
+    const b = useWindowStore.getState().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
     useWindowStore.getState().dockIntoWindow(b, a, 'bottom');
     expect(useWindowStore.getState().tileTreeRect).toEqual({ x: 0, y: 0, w: 0.5, h: 1 });
     useWindowStore.getState().untileWindow(b); // 2-up -> collapse -> footprint resets
@@ -395,11 +395,11 @@ describe('window-store tiling', () => {
 
   it('evicting a top-level pane keeps the surviving group in its region (no full-width expansion)', () => {
     // Root = [ left window | right column of two ], filling the overlay.
-    const a = useWindowStore.getState().openWindow({ taskId: 'a', sessionId: 's1', title: 'A' });
+    const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
     useWindowStore.getState().snapWindow(a, { x: 0, y: 0, w: 0.5, h: 1 });
-    const b = useWindowStore.getState().openWindow({ taskId: 'b', sessionId: 's2', title: 'B' });
+    const b = useWindowStore.getState().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
     useWindowStore.getState().dockWindow(b, 'right'); // A | B across the overlay
-    const c = useWindowStore.getState().openWindow({ taskId: 'c', sessionId: 's3', title: 'C' });
+    const c = useWindowStore.getState().openWindow({ anchor: 'c', sessionId: 's3', title: 'C' });
     useWindowStore.getState().dockIntoWindow(c, b, 'bottom'); // B's cell -> column(B, C)
     expect(useWindowStore.getState().tileTreeRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
     // Pull the LEFT pane out: the right column must KEEP its right-half width
@@ -430,3 +430,70 @@ function collectLeafWindowIds(tree: ReturnType<typeof useWindowStore.getState>['
   if (tree.kind === 'leaf') return [tree.windowId];
   return tree.children.flatMap((child) => collectLeafWindowIds(child));
 }
+
+// ---------------------------------------------------------------------------
+// Factory isolation: createWindowManagerStore builds fully independent instances.
+// ---------------------------------------------------------------------------
+import { createWindowManagerStore } from '../../src/renderer/window-manager/store/window-store';
+
+describe('createWindowManagerStore - two-instance isolation, id namespacing, and kind-gated dedup', () => {
+  it('opening a window in instance A does NOT appear in instance B (windows maps are fully disjoint)', () => {
+    const instanceA = createWindowManagerStore({ idPrefix: 'board', kind: 'task-detail' });
+    const instanceB = createWindowManagerStore({ idPrefix: 'cmd', kind: 'command-terminal' });
+
+    instanceA.store.getState().openWindow({ anchor: 'task-a', sessionId: 'sess-a', title: 'A' });
+
+    // Instance B's windows map must remain empty.
+    expect(Object.keys(instanceB.store.getState().windows)).toHaveLength(0);
+    // Instance A must have exactly one window.
+    expect(Object.keys(instanceA.store.getState().windows)).toHaveLength(1);
+  });
+
+  it('generated window ids carry the instance idPrefix so two layers never collide', () => {
+    const instanceA = createWindowManagerStore({ idPrefix: 'board', kind: 'task-detail' });
+    const instanceB = createWindowManagerStore({ idPrefix: 'cmd', kind: 'command-terminal' });
+
+    const idFromA = instanceA.store.getState().openWindow({ anchor: 'task-a', sessionId: 'sess-a', title: 'A' });
+    const idFromB = instanceB.store.getState().openWindow({ anchor: 'slot-1', sessionId: null, title: 'Cmd' });
+
+    // Each id must start with its layer's prefix.
+    expect(idFromA).toMatch(/^board-/);
+    expect(idFromB).toMatch(/^cmd-/);
+    // They must not be equal (no cross-layer collision).
+    expect(idFromA).not.toBe(idFromB);
+  });
+
+  it('openWindow dedups by (kind, anchor): same anchor + same kind returns the existing window', () => {
+    const instance = createWindowManagerStore({ idPrefix: 'board', kind: 'task-detail' });
+
+    const firstId = instance.store.getState().openWindow({ anchor: 'task-a', sessionId: 'sess-a', title: 'A' });
+    const secondId = instance.store.getState().openWindow({ anchor: 'task-a', sessionId: 'sess-a', title: 'A again' });
+
+    // Re-opening the same anchor+kind must return the same id (one window only).
+    expect(secondId).toBe(firstId);
+    expect(Object.keys(instance.store.getState().windows)).toHaveLength(1);
+  });
+
+  it('openWindow kind-gated dedup: same anchor with a DIFFERENT kind creates a second window', () => {
+    // One store configured as task-detail; opening a command-terminal kind for the
+    // same anchor value must NOT collide with the task-detail window.
+    const instance = createWindowManagerStore({ idPrefix: 'board', kind: 'task-detail' });
+
+    const taskDetailId = instance.store.getState().openWindow({
+      kind: 'task-detail',
+      anchor: 'shared-anchor',
+      sessionId: 'sess-a',
+      title: 'Task window',
+    });
+    const commandId = instance.store.getState().openWindow({
+      kind: 'command-terminal',
+      anchor: 'shared-anchor',
+      sessionId: null,
+      title: 'Command window',
+    });
+
+    // Different kind -> two distinct windows, not a dedup.
+    expect(commandId).not.toBe(taskDetailId);
+    expect(Object.keys(instance.store.getState().windows)).toHaveLength(2);
+  });
+});

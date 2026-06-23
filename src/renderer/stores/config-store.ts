@@ -39,6 +39,12 @@ interface ConfigStore {
    *  the blocking `config.setSync` so the final layout reaches disk before the renderer tears
    *  down (an async set() can be dropped mid-teardown). */
   flushWorkspaceForProject: (projectId: string, workspace: SerializedWorkspace) => void;
+  /** Persist the GLOBAL command-terminal window layout (one blob shared across all
+   *  projects) into global config via `config.set`, like saveWorkspaceForProject but
+   *  not keyed by project. The renderer owns this blob once seeded. */
+  saveCommandTerminalWorkspace: (workspace: SerializedWorkspace) => void;
+  /** Synchronous sibling of saveCommandTerminalWorkspace for the quit/unload flush. */
+  flushCommandTerminalWorkspace: (workspace: SerializedWorkspace) => void;
   /** Internal: whether workspaceByProject has been seeded from disk yet. After the first
    *  config fetch the renderer owns the layout map, so later fetches preserve it instead of
    *  letting a stale disk read clobber an in-flight save. Resets with the store on HMR. */
@@ -110,10 +116,13 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
     if (!get().workspaceSeeded) {
       return { ...fetched, workspaceSeeded: true };
     }
+    // Renderer-authoritative blobs: once seeded from disk, the live store is always
+    // at least as fresh as a later disk read, so preserve them across a refetch.
     const workspaceByProject = get().globalConfig.workspaceByProject ?? {};
+    const commandTerminalWorkspace = get().globalConfig.commandTerminalWorkspace ?? null;
     return {
-      config: { ...fetched.config, workspaceByProject },
-      globalConfig: { ...fetched.globalConfig, workspaceByProject },
+      config: { ...fetched.config, workspaceByProject, commandTerminalWorkspace },
+      globalConfig: { ...fetched.globalConfig, workspaceByProject, commandTerminalWorkspace },
     };
   };
 
@@ -130,6 +139,17 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       globalConfig: { ...state.globalConfig, workspaceByProject: updated },
     }));
     return updated;
+  };
+
+  /** Optimistically apply the global command-terminal layout to both effective +
+   *  global config so a follow-on read sees the value just written, and return it
+   *  so the IPC write persists exactly what the store now shows. */
+  const applyCommandWorkspaceOptimistic = (workspace: SerializedWorkspace): SerializedWorkspace => {
+    set((state) => ({
+      config: { ...state.config, commandTerminalWorkspace: workspace },
+      globalConfig: { ...state.globalConfig, commandTerminalWorkspace: workspace },
+    }));
+    return workspace;
   };
 
   return {
@@ -181,6 +201,14 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       // Quit/unload path: same optimistic update as the async save, but persisted
       // synchronously so the final layout reaches disk before the renderer tears down.
       window.electronAPI.config.setSync({ workspaceByProject: applyWorkspaceOptimistic(projectId, workspace) });
+    },
+
+    saveCommandTerminalWorkspace: (workspace) => {
+      window.electronAPI.config.set({ commandTerminalWorkspace: applyCommandWorkspaceOptimistic(workspace) });
+    },
+
+    flushCommandTerminalWorkspace: (workspace) => {
+      window.electronAPI.config.setSync({ commandTerminalWorkspace: applyCommandWorkspaceOptimistic(workspace) });
     },
 
     loadAppVersion: async () => {

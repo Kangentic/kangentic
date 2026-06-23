@@ -17,7 +17,7 @@
 
 import { useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import { useWindowStore } from '../store/window-store';
+import { useLayerStore } from '../context';
 import { clamp } from '../store/geometry';
 import type { ContainerSize, PixelRect } from '../store/geometry';
 import type { FractionalRect, TileNode } from '../store/types';
@@ -71,7 +71,7 @@ function stripRect(edge: FootprintEdge, origin: { left: number; top: number }, s
 }
 
 export function FootprintResizer({ edge, tileTree, tileTreeRect, containerSize, gapPx, seamPx, overlayRef }: FootprintResizerProps) {
-  const setTileTreeRect = useWindowStore((state) => state.setTileTreeRect);
+  const setTileTreeRect = useLayerStore()((state) => state.setTileTreeRect);
   const dragRef = useRef<FootprintDrag | null>(null);
   const [dragging, setDragging] = useState(false);
 

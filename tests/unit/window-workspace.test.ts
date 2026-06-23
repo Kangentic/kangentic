@@ -18,7 +18,8 @@ function makeWindow(
 ): ManagedWindow {
   return {
     id,
-    taskId,
+    kind: 'task-detail',
+    anchor: taskId,
     sessionId: `sess-${taskId}`,
     geometry,
     state,
@@ -34,8 +35,9 @@ function makeContext(knownTasks: string[]): RestoreContext {
   let windowCounter = 0;
   let tileCounter = 0;
   return {
-    resolveSessionId: (taskId) => (knownTasks.includes(taskId) ? `live-${taskId}` : null),
-    isKnownTask: (taskId) => knownTasks.includes(taskId),
+    kind: 'task-detail',
+    resolveSessionId: (anchor) => (knownTasks.includes(anchor) ? `live-${anchor}` : null),
+    isKnownAnchor: (anchor) => knownTasks.includes(anchor),
     makeWindowId: () => `w${(windowCounter += 1)}`,
     makeTileId: (kind) => `${kind}-${(tileCounter += 1)}`,
   };
@@ -60,7 +62,7 @@ describe('workspace serialize / deserialize', () => {
     expect(serialized.focusedTaskId).toBe('task-a');
 
     const restored = deserializeWorkspace(serialized, makeContext(['task-a', 'task-b']))!;
-    const byTask = Object.fromEntries(Object.values(restored.windows).map((window) => [window.taskId, window]));
+    const byTask = Object.fromEntries(Object.values(restored.windows).map((window) => [window.anchor, window]));
     expect(byTask['task-a'].state).toBe('floating');
     expect(byTask['task-a'].geometry).toEqual({ x: 0.1, y: 0.1, w: 0.4, h: 0.5 });
     expect(byTask['task-a'].sessionId).toBe('live-task-a'); // re-resolved, not the stale serialized one
@@ -108,7 +110,7 @@ describe('workspace serialize / deserialize', () => {
     ];
     const serialized = serializeWorkspace(windows, null, FULL, null);
     const restored = deserializeWorkspace(serialized, makeContext(['task-a']))!;
-    expect(Object.values(restored.windows).map((window) => window.taskId)).toEqual(['task-a']);
+    expect(Object.values(restored.windows).map((window) => window.anchor)).toEqual(['task-a']);
   });
 
   it('drops the tile tree and floats the survivor when a tiled task is gone', () => {
@@ -130,7 +132,7 @@ describe('workspace serialize / deserialize', () => {
     const restored = deserializeWorkspace(serialized, makeContext(['task-a']))!;
     expect(restored.tileTree).toBeNull();
     const restoredSurvivor = Object.values(restored.windows)[0];
-    expect(restoredSurvivor.taskId).toBe('task-a');
+    expect(restoredSurvivor.anchor).toBe('task-a');
     expect(restoredSurvivor.state).toBe('floating');
     expect(restoredSurvivor.geometry).toEqual({ x: 0.15, y: 0.15, w: 0.4, h: 0.5 }); // its pre-tile float
   });
@@ -205,7 +207,7 @@ describe('deserializeWorkspace hardening', () => {
       { taskId: 'task-bad', title: 'bad', geometry: { x: Number.NaN, y: 0, w: 0.4, h: 0.5 }, restoreGeometry: null, state: 'floating' },
     ]);
     const restored = deserializeWorkspace(serialized, makeContext(['task-a', 'task-bad']))!;
-    expect(Object.values(restored.windows).map((window) => window.taskId)).toEqual(['task-a']);
+    expect(Object.values(restored.windows).map((window) => window.anchor)).toEqual(['task-a']);
   });
 
   it('drops a window with an unknown state', () => {
@@ -214,7 +216,7 @@ describe('deserializeWorkspace hardening', () => {
       { ...VALID_PERSISTED, taskId: 'task-weird', state: 'bogus' },
     ]);
     const restored = deserializeWorkspace(serialized, makeContext(['task-a', 'task-weird']))!;
-    expect(Object.values(restored.windows).map((window) => window.taskId)).toEqual(['task-a']);
+    expect(Object.values(restored.windows).map((window) => window.anchor)).toEqual(['task-a']);
   });
 
   it('returns null when windows is not an array', () => {
@@ -231,6 +233,61 @@ describe('deserializeWorkspace hardening', () => {
   it('returns null when the blob itself is null or undefined', () => {
     expect(deserializeWorkspace(null as unknown as SerializedWorkspace, makeContext([]))).toBeNull();
     expect(deserializeWorkspace(undefined as unknown as SerializedWorkspace, makeContext([]))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Command-terminal restore path: kind stamping + always-true isKnownAnchor.
+// ---------------------------------------------------------------------------
+
+function makeCommandContext(): RestoreContext {
+  let windowCounter = 0;
+  let tileCounter = 0;
+  return {
+    kind: 'command-terminal',
+    // The command layer has no live PTY sessions at restore time; resolveSessionId
+    // always returns null (the slot is the anchor, not a session id).
+    resolveSessionId: () => null,
+    // Slot anchors are synthetic and always survive the restore filter.
+    isKnownAnchor: () => true,
+    makeWindowId: () => `cw${(windowCounter += 1)}`,
+    makeTileId: (kind) => `c${kind}-${(tileCounter += 1)}`,
+  };
+}
+
+describe('command-terminal restore path', () => {
+  it('stamps every restored window with kind=command-terminal from the restore context', () => {
+    // Serialize a workspace as if it came from the task-detail layer (makeWindow uses kind: 'task-detail'
+    // internally), then restore with the command-terminal context and verify the kind is overridden.
+    const windows = [makeWindow('win-1', 'slot-1', 'floating', { x: 0.1, y: 0.1, w: 0.4, h: 0.5 })];
+    const serialized = serializeWorkspace(windows, null, FULL, 'win-1');
+
+    const restored = deserializeWorkspace(serialized, makeCommandContext())!;
+    const restoredWindow = Object.values(restored.windows)[0];
+
+    // The kind must come from context.kind, not from the serialized form (which has no kind field).
+    expect(restoredWindow.kind).toBe('command-terminal');
+    // The anchor round-trips correctly via the taskId field.
+    expect(restoredWindow.anchor).toBe('slot-1');
+  });
+
+  it('isKnownAnchor: () => true keeps anchors that the task-detail filter would drop', () => {
+    // 'slot-never-a-real-task' would be dropped by makeContext([]) since it has no known tasks,
+    // but the command-terminal filter always returns true.
+    const windows = [
+      makeWindow('win-1', 'slot-never-a-real-task', 'floating', HALF_LEFT),
+    ];
+    const serialized = serializeWorkspace(windows, null, FULL, null);
+
+    // The task-detail context with an empty known-task list would return null (nothing survives).
+    expect(deserializeWorkspace(serialized, makeContext([]))).toBeNull();
+
+    // The command-terminal context keeps the slot unconditionally.
+    const restored = deserializeWorkspace(serialized, makeCommandContext())!;
+    expect(restored).not.toBeNull();
+    const restoredWindow = Object.values(restored.windows)[0];
+    expect(restoredWindow.anchor).toBe('slot-never-a-real-task');
+    expect(restoredWindow.kind).toBe('command-terminal');
   });
 });
 

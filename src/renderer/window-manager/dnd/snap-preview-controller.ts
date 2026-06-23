@@ -1,35 +1,47 @@
 /**
- * Imperative controller for the single snap-preview rectangle. Mirrors the
- * board's `updateDropHighlight` pattern (useBoardDragDrop): the preview is
- * driven by direct DOM mutation during a drag, with NO React re-render, so a
- * 60fps drag never re-renders the window tree or reflows a live xterm.
+ * Imperative controller for a layer's single snap-preview rectangle. Mirrors the
+ * board's `updateDropHighlight` pattern (useBoardDragDrop): the preview is driven
+ * by direct DOM mutation during a drag, with NO React re-render, so a 60fps drag
+ * never re-renders the window tree or reflows a live xterm.
  *
- * `SnapPreview.tsx` registers its element on mount; `useWindowDrag` calls
- * show/hide from inside the pointermove loop.
+ * One controller per window-manager instance (created by `WindowManagerLayer`,
+ * shared through context): each layer has its own preview element, so a board drag
+ * never paints into the command-terminal overlay (or vice versa). `SnapPreview.tsx`
+ * registers its element on mount; `useWindowDrag` calls show/hide from inside the
+ * pointermove loop, reading the controller from context.
  */
 
 import type { PixelRect } from '../store/geometry';
 
-// hmr-safe: re-registered by SnapPreview on mount; a null reset across HMR is
-// harmless (the next mount re-registers before any drag can use it).
-let previewElement: HTMLDivElement | null = null;
-
-export function registerSnapPreviewElement(element: HTMLDivElement | null): void {
-  previewElement = element;
+export interface SnapPreviewController {
+  /** SnapPreview registers (or clears, on unmount) its DOM element here. */
+  register: (element: HTMLDivElement | null) => void;
+  /** Position + show the preview rectangle (drag pointermove). */
+  show: (rect: PixelRect) => void;
+  /** Hide the preview rectangle (no armed zone, or drop). */
+  hide: () => void;
 }
 
-export function showSnapPreview(rect: PixelRect): void {
-  const element = previewElement;
-  if (!element) return;
-  element.style.left = `${rect.left}px`;
-  element.style.top = `${rect.top}px`;
-  element.style.width = `${rect.width}px`;
-  element.style.height = `${rect.height}px`;
-  element.style.display = 'block';
-}
-
-export function hideSnapPreview(): void {
-  const element = previewElement;
-  if (!element) return;
-  element.style.display = 'none';
+/** Build a fresh, isolated snap-preview controller for one layer. */
+export function createSnapPreviewController(): SnapPreviewController {
+  let previewElement: HTMLDivElement | null = null;
+  return {
+    register: (element) => {
+      previewElement = element;
+    },
+    show: (rect) => {
+      const element = previewElement;
+      if (!element) return;
+      element.style.left = `${rect.left}px`;
+      element.style.top = `${rect.top}px`;
+      element.style.width = `${rect.width}px`;
+      element.style.height = `${rect.height}px`;
+      element.style.display = 'block';
+    },
+    hide: () => {
+      const element = previewElement;
+      if (!element) return;
+      element.style.display = 'none';
+    },
+  };
 }

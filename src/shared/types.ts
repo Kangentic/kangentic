@@ -1284,6 +1284,14 @@ export interface AppConfig {
    *  `config.set` and restored AFTER sessions resolve. See
    *  src/renderer/window-manager/persistence/. */
   workspaceByProject: Record<string, SerializedWorkspace>;
+  /** GLOBAL in-app layout for the Command Terminal window layer: the open command
+   *  terminal window(s) + their tiling, shared across ALL projects (one blob, not
+   *  keyed by project) so the arrangement is consistent everywhere. The sessions
+   *  themselves stay per-project and ephemeral; only the geometry/arrangement
+   *  persists. Anchored by slot id (the on-disk `taskId` field carries the slot).
+   *  Null until a layout is first saved. See
+   *  src/renderer/components/command-bar/ + window-manager/persistence/. */
+  commandTerminalWorkspace: SerializedWorkspace | null;
   /** Persisted union of every model ID we've ever seen for each agent: the
    *  result of the static/JSONL `discoverCapabilities()` walk, plus any model
    *  that has appeared on a live session's usage stream (Claude reports model
@@ -1427,6 +1435,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   statusBarPeriod: 'live',
   lastActiveTaskByProject: {},
   workspaceByProject: {},
+  commandTerminalWorkspace: null,
   discoveredModelsByAgent: {},
   hotkeyOverrides: {},
 };

@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { registerSnapPreviewElement } from '../dnd/snap-preview-controller';
+import { useWindowManager } from '../context';
 
 // Above any window's zIndex (which grows from 1 per focus) so the snap outline
 // is visible even over a large/maximized window being dragged.
@@ -25,12 +25,13 @@ const SNAP_PREVIEW_Z = 2147483000;
 const SNAP_PREVIEW_TRANSITION = 'left 120ms ease-out, top 120ms ease-out, width 120ms ease-out, height 120ms ease-out';
 
 export function SnapPreview() {
+  const { snap } = useWindowManager();
   const elementRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    registerSnapPreviewElement(elementRef.current);
-    return () => registerSnapPreviewElement(null);
-  }, []);
+    snap.register(elementRef.current);
+    return () => snap.register(null);
+  }, [snap]);
 
   return (
     <div

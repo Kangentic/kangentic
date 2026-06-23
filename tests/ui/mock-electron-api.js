@@ -112,6 +112,7 @@
     },
     hotkeyOverrides: {},
     workspaceByProject: {},
+    commandTerminalWorkspace: null,
     hasCompletedFirstRun: true,
     skipDeleteConfirm: false,
     skipBoardConfigConfirm: false,
@@ -1461,9 +1462,14 @@
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'workspaceByProject')) {
           config.workspaceByProject = Object.assign({}, partial.workspaceByProject);
         }
+        // commandTerminalWorkspace is a renderer-authoritative blob (CONFIG_DICTIONARY_PATHS):
+        // the real save REPLACES it wholesale so a removed window / null reset takes effect.
+        if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalWorkspace')) {
+          config.commandTerminalWorkspace = partial.commandTerminalWorkspace;
+        }
       },
       // Synchronous sibling of set() for the quit/unload flush. Mirrors the real
-      // configManager.save dictionary-path replace semantics (hotkeyOverrides + workspaceByProject).
+      // configManager.save dictionary-path replace semantics (hotkeyOverrides + workspaceByProject + commandTerminalWorkspace).
       setSync: function (partial) {
         config = deepMerge(config, partial);
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'hotkeyOverrides')) {
@@ -1471,6 +1477,9 @@
         }
         if (partial && Object.prototype.hasOwnProperty.call(partial, 'workspaceByProject')) {
           config.workspaceByProject = Object.assign({}, partial.workspaceByProject);
+        }
+        if (partial && Object.prototype.hasOwnProperty.call(partial, 'commandTerminalWorkspace')) {
+          config.commandTerminalWorkspace = partial.commandTerminalWorkspace;
         }
       },
       getProjectOverrides: async function () {

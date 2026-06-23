@@ -108,7 +108,7 @@ describe('applyTilePreset (store)', () => {
   function openWindows(count: number): string[] {
     const ids: string[] = [];
     for (let index = 0; index < count; index += 1) {
-      ids.push(useWindowStore.getState().openWindow({ taskId: `task-${index}`, sessionId: `sess-${index}`, title: `W${index}` }));
+      ids.push(useWindowStore.getState().openWindow({ anchor: `task-${index}`, sessionId: `sess-${index}`, title: `W${index}` }));
     }
     return ids;
   }

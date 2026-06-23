@@ -191,3 +191,79 @@ describe('Config Manager -- claude.* to agent.* namespace migration', () => {
     expect(config.agent.maxConcurrentSessions).toBe(4);
   });
 });
+
+describe('Config Manager -- commandTerminalWorkspace replace semantics', () => {
+  it('set({ commandTerminalWorkspace: null }) REPLACES the previous blob, not deep-merges it', async () => {
+    // A realistic minimal serialized-workspace blob (shape mirrors SerializedWorkspace).
+    const initialWorkspace = {
+      version: 1,
+      windows: [
+        {
+          taskId: 'slot-1',
+          title: 'Command Terminal',
+          geometry: { x: 0.1, y: 0.1, w: 0.5, h: 0.5 },
+          restoreGeometry: null,
+          state: 'floating',
+        },
+      ],
+      tileTree: null,
+      tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+      focusedTaskId: 'slot-1',
+    };
+
+    const cm = await createConfigManager();
+    // Write the initial non-null blob.
+    cm.save({ commandTerminalWorkspace: initialWorkspace as Parameters<typeof cm.save>[0]['commandTerminalWorkspace'] });
+    const afterFirstWrite = cm.load();
+    expect(afterFirstWrite.commandTerminalWorkspace).not.toBeNull();
+    expect(afterFirstWrite.commandTerminalWorkspace?.windows).toHaveLength(1);
+
+    // Now null it out. With deep-merge semantics (no replace), a null-overlay would be
+    // merged INTO the object, leaving the prior blob intact. With replace semantics the
+    // field is set to null wholesale.
+    cm.save({ commandTerminalWorkspace: null });
+    const afterNullWrite = cm.load();
+    expect(afterNullWrite.commandTerminalWorkspace).toBeNull();
+
+    // Verify the on-disk file also reflects null, not the previous blob.
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.commandTerminalWorkspace).toBeNull();
+  });
+
+  it('writing a new commandTerminalWorkspace blob REPLACES stale sub-fields rather than merging them in', async () => {
+    // Write a blob that has an EXTRA sub-key not present in the second write.
+    // With deep-merge semantics (no replace), the stale key leaks into the merged
+    // result. With replace semantics the whole blob is swapped out and only the new
+    // keys survive.
+    const firstBlob = {
+      version: 1,
+      windows: [],
+      tileTree: null,
+      tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+      focusedTaskId: 'slot-old',
+      // Extra key not in SerializedWorkspace - simulates a field that will be absent
+      // from the next write.
+      _staleKey: 'should-be-gone',
+    };
+    const secondBlob = {
+      version: 1,
+      windows: [],
+      tileTree: null,
+      tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+      focusedTaskId: 'slot-new',
+      // _staleKey intentionally absent - in merge semantics it would survive from
+      // the first blob; in replace semantics it is gone.
+    };
+
+    const cm = await createConfigManager();
+    // Use a cast to bypass TypeScript's strict-shape check for the test-extra key.
+    cm.save({ commandTerminalWorkspace: firstBlob as Parameters<typeof cm.save>[0]['commandTerminalWorkspace'] });
+    cm.save({ commandTerminalWorkspace: secondBlob as Parameters<typeof cm.save>[0]['commandTerminalWorkspace'] });
+
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    // Replace semantics: the stale key from the first blob must not survive.
+    expect(raw.commandTerminalWorkspace._staleKey).toBeUndefined();
+    // The new focusedTaskId must reflect the second write.
+    expect(raw.commandTerminalWorkspace.focusedTaskId).toBe('slot-new');
+  });
+});

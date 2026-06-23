@@ -39,7 +39,7 @@ export function useTaskDetailWindowBridge(): void {
     const windowStore = useWindowStore.getState();
 
     // Focus an existing window for this task instead of opening a duplicate.
-    const existing = Object.values(windowStore.windows).find((candidate) => candidate.taskId === detailTaskId);
+    const existing = Object.values(windowStore.windows).find((candidate) => candidate.anchor === detailTaskId);
     if (existing) {
       windowStore.focusWindow(existing.id);
       detailWindowIdRef.current = existing.id;
@@ -59,7 +59,8 @@ export function useTaskDetailWindowBridge(): void {
       task.archived_at !== null
       || board.swimlanes.find((lane) => lane.id === task.swimlane_id)?.role === 'done';
     detailWindowIdRef.current = windowStore.openWindow({
-      taskId: detailTaskId,
+      kind: 'task-detail',
+      anchor: detailTaskId,
       sessionId: session._sessionByTaskId.get(detailTaskId)?.id ?? null,
       title: task.title,
       initialEdit: session.detailTaskInitialEdit,

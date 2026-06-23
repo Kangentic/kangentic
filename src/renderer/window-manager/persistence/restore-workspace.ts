@@ -12,9 +12,9 @@
  * same as the user opening those windows by hand, and is React-scheduled rather
  * than run inline, so it does not block the project switch.
  *
- * Deliberately NOT wired into App.tsx's `vite:afterUpdate`: the window-store is
- * HMR-preserved (Pattern A), so a Fast Refresh keeps the live windows; re-applying
- * from config would reset them.
+ * Deliberately NOT wired into App.tsx's `vite:afterUpdate`: the window-store
+ * instance is HMR-preserved (pinned via `import.meta.hot.data`, Pattern E), so a
+ * Fast Refresh keeps the live windows; re-applying from config would reset them.
  */
 
 import { useConfigStore } from '../../stores/config-store';

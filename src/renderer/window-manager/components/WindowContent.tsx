@@ -1,22 +1,26 @@
 /**
- * Window body host. Resolves the window's task from the board store and renders
- * the full task-detail surface (`TaskDetailWindow`), which owns its own title
- * bar (the window drag handle) plus the terminal / changes / browser / edit
- * form. The window's drag handle and animated close are forwarded from
- * `WindowFrame`; the content reads its maximize state from the window store
- * directly via its `windowId`.
+ * Window body host. Routes on the window's `kind` to the right content surface:
+ *  - `command-terminal` -> `CommandTerminalWindow` (lazy, to avoid a static engine
+ *    -> command-bar import cycle), hosting the transient terminal + its controls;
+ *  - `task-detail` -> `TaskDetailWindow`, resolved from the board store by anchor
+ *    (the taskId). A task can be on the board (`tasks`) or archived
+ *    (`archivedTasks`); when neither has it (a just-deleted task during the frame's
+ *    exit animation, or a stale window), a quiet placeholder is shown.
  *
- * A task can be on the board (`tasks`) or archived (`archivedTasks`, opened from
- * the Completed Tasks list). When neither has it (a just-deleted task during the
- * frame's exit animation, or a stale window), there is nothing to show: the
- * frame is closing, so we render a quiet placeholder rather than the modal's old
- * "No live session" terminal shell.
+ * The window's drag handle and animated close are forwarded from `WindowFrame`;
+ * the content reads its maximize state from the window store via its `windowId`.
  */
 
+import { Suspense, lazy } from 'react';
+import { Loader2 } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { WindowTitleBar } from './WindowTitleBar';
 import { TaskDetailWindow } from './TaskDetailWindow';
 import type { ManagedWindow } from '../store/types';
+
+const CommandTerminalWindow = lazy(() =>
+  import('../../components/command-bar/CommandTerminalWindow').then((module) => ({ default: module.CommandTerminalWindow })),
+);
 
 interface WindowContentProps {
   managedWindow: ManagedWindow;
@@ -35,9 +39,44 @@ export function WindowContent({
   titleBarPointerDown,
   requestClose,
 }: WindowContentProps) {
+  if (managedWindow.kind === 'command-terminal') {
+    return (
+      <Suspense
+        fallback={
+          <div className="flex h-full w-full items-center justify-center">
+            <Loader2 size={20} className="animate-spin text-fg-muted" />
+          </div>
+        }
+      >
+        <CommandTerminalWindow
+          managedWindow={managedWindow}
+          isMaximized={isMaximized}
+          titleBarPointerDown={titleBarPointerDown}
+        />
+      </Suspense>
+    );
+  }
+
+  return <TaskDetailContent
+    managedWindow={managedWindow}
+    isFocused={isFocused}
+    isMaximized={isMaximized}
+    titleBarPointerDown={titleBarPointerDown}
+    requestClose={requestClose}
+  />;
+}
+
+/** Task-detail content: resolve the task from the board store by anchor. */
+function TaskDetailContent({
+  managedWindow,
+  isFocused,
+  isMaximized,
+  titleBarPointerDown,
+  requestClose,
+}: WindowContentProps) {
   const task = useBoardStore((state) =>
-    state.tasks.find((candidate) => candidate.id === managedWindow.taskId)
-    ?? state.archivedTasks.find((candidate) => candidate.id === managedWindow.taskId)
+    state.tasks.find((candidate) => candidate.id === managedWindow.anchor)
+    ?? state.archivedTasks.find((candidate) => candidate.id === managedWindow.anchor)
     ?? null,
   );
 

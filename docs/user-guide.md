@@ -530,13 +530,14 @@ The Command Terminal provides quick, ephemeral access to Claude Code without cre
 
 **Behavior:**
 - Spawns Claude Code at the project root on the configured default base branch
+- It opens as a **window** over a slight backdrop blur: drag it by the header, resize it from any edge or corner, maximize / restore it (double-click the header or use the maximize button), and snap it to a screen half or full screen (Windows-style). The layout (size, position, maximized state) **persists globally** across all projects and app restarts.
 - The **branch picker** in the header lets you switch branches - selecting a new branch kills the current session and respawns on the selected branch
 - A shimmer overlay shows while Claude Code initializes, then lifts to reveal the clean TUI
 - Transient sessions are fully independent of task sessions - they don't appear in the terminal panel tabs, don't count toward session limits, and produce no toasts on exit
 - The command terminal session is **preserved across project switches**. If you open the command terminal, switch to another project, and switch back, the session is still running. This allows you to keep a command terminal open for ad-hoc work while navigating between projects.
 - If git checkout fails when switching branches (e.g., uncommitted changes), a warning toast explains the issue and the session stays on the current branch
 
-**Closing:** Press `Ctrl+Shift+P` again, or click the backdrop outside the overlay. The PTY is killed and the session directory is cleaned up. Transient sessions are non-resumable by design.
+**Hiding vs stopping:** Press `Ctrl+Shift+P` again, `Ctrl+Shift+W`, click the header **X**, or click the blurred backdrop to **hide** the layer - the PTY stays alive in the background and reopening reattaches to it (so the layout and running session are right where you left them). The header's **Stop** button (and the kebab's "Stop terminal") **destroys** the session: it kills the PTY and cleans up the session directory. Transient sessions are non-resumable by design.
 
 ## Status Bar
 
@@ -571,7 +572,7 @@ General:
 - **Mod+Shift+B** - Switch between Board and Backlog view
 - **Mod+Shift+E** - Toggle the project sidebar
 - **Mod+Shift+J** - Toggle the bottom terminal panel
-- **Mod+Shift+P** - Toggle the Command Terminal overlay
+- **Mod+Shift+P** - Toggle the Command Terminal window
 - **Mod+Shift+F** - Open Quick Find (cross-project search palette)
 - **Mod+F** - Find on Board (focuses board search; opens Quick Find when not on the board)
 - **Mod+N** - New Task on the board

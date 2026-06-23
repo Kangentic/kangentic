@@ -14,7 +14,7 @@ import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import type { ContainerSize, PixelRect } from '../store/geometry';
 import { fractionalToPixels } from '../store/geometry';
 import type { ManagedWindow } from '../store/types';
-import { useWindowStore } from '../store/window-store';
+import { useLayerStore } from '../context';
 import { useWindowDrag } from '../dnd/useWindowDrag';
 import { useWindowResize } from '../dnd/useWindowResize';
 import { scheduleWindowTerminalResize } from '../terminal/resize-coalescer';
@@ -34,9 +34,10 @@ const MAXIMIZED_GEOMETRY = { x: 0, y: 0, w: 1, h: 1 };
 
 export function WindowFrame({ managedWindow, containerSize, overlayRef, tiledRect }: WindowFrameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
-  const focusWindow = useWindowStore((state) => state.focusWindow);
-  const closeWindow = useWindowStore((state) => state.closeWindow);
-  const isFocused = useWindowStore((state) => state.focusedWindowId === managedWindow.id);
+  const useStore = useLayerStore();
+  const focusWindow = useStore((state) => state.focusWindow);
+  const closeWindow = useStore((state) => state.closeWindow);
+  const isFocused = useStore((state) => state.focusedWindowId === managedWindow.id);
 
   const { requestClose, contentClassName, onAnimationEnd, isExiting } = useOverlayPhase(
     () => closeWindow(managedWindow.id),

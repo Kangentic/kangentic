@@ -5,11 +5,19 @@ import type { AppConfig, DeepPartial, PermissionMode } from '../../shared/types'
 import { DEFAULT_CONFIG } from '../../shared/types';
 import { deepMerge, deepMergeConfig } from '../../shared/object-utils';
 
-/** Dotted paths in AppConfig that are true `Record<string, ...>` dictionaries.
- *  These must be REPLACED on partial update so that key deletion works, while
- *  every other typed-struct field gets MERGE semantics. Update this list when
- *  adding a new dictionary-shaped field to AppConfig. */
-const CONFIG_DICTIONARY_PATHS = ['backlog.labelColors', 'agent.cliPaths', 'hotkeyOverrides', 'workspaceByProject'] as const;
+/** Dotted paths in AppConfig that must be REPLACED wholesale on a partial update
+ *  (not deep-merged), so key/window deletion and a full-blob reset both work. This
+ *  covers true `Record<string, ...>` dictionaries (where merge would leak deleted
+ *  keys) AND renderer-authoritative layout blobs (`commandTerminalWorkspace`) the
+ *  renderer always writes in full. Every other typed-struct field gets MERGE
+ *  semantics. Update this list when adding such a field to AppConfig. */
+const CONFIG_DICTIONARY_PATHS = [
+  'backlog.labelColors',
+  'agent.cliPaths',
+  'hotkeyOverrides',
+  'workspaceByProject',
+  'commandTerminalWorkspace',
+] as const;
 
 /** Drop keys whose value is undefined. Returns undefined when nothing is left,
  *  so callers can skip writing empty nested objects. */

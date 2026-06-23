@@ -278,24 +278,24 @@ test.describe('Command Terminal', () => {
     test.describe('Hotkey', () => {
       test('Ctrl+Shift+P opens the command bar overlay', async () => {
         // Command bar should not be visible initially
-        await expect(sharedPage.getByTestId('command-bar-overlay')).not.toBeVisible();
+        await expect(sharedPage.getByTestId('command-terminal-window')).not.toBeVisible();
 
         // Press Ctrl+Shift+P
         await sharedPage.keyboard.press('Control+Shift+P');
 
         // Command bar should appear
-        await expect(sharedPage.getByTestId('command-bar-overlay')).toBeVisible();
+        await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
         await expect(sharedPage.getByText('Command Terminal', { exact: true })).toBeVisible();
       });
 
       test('Ctrl+Shift+P toggles the command bar closed', async () => {
         // Open
         await sharedPage.keyboard.press('Control+Shift+P');
-        await expect(sharedPage.getByTestId('command-bar-overlay')).toBeVisible();
+        await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
 
         // Close
         await sharedPage.keyboard.press('Control+Shift+P');
-        await expect(sharedPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+        await expect(sharedPage.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
       });
     });
 
@@ -312,11 +312,11 @@ test.describe('Command Terminal', () => {
         // Use a pre-configured approach: inject transientSessionId via mock state
         // The mock spawnTransient sets transientSessionId when called, so open and close the overlay
         await sharedPage.keyboard.press('Control+Shift+P');
-        await expect(sharedPage.getByTestId('command-bar-overlay')).toBeVisible();
+        await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
 
         // Close overlay - session should remain in background
         await sharedPage.keyboard.press('Control+Shift+P');
-        await expect(sharedPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+        await expect(sharedPage.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
 
         // The pulsing indicator should appear on the TitleBar button
         await expect(sharedPage.getByTestId('transient-session-indicator')).toBeVisible();
@@ -324,27 +324,28 @@ test.describe('Command Terminal', () => {
     });
 
     test.describe('Overlay Header Controls', () => {
-      test('close button (X) hides the overlay without killing session', async () => {
-        // Open overlay
+      test('the X button hides the layer without killing the session', async () => {
+        // Open the layer.
         await sharedPage.keyboard.press('Control+Shift+P');
-        await expect(sharedPage.getByTestId('command-bar-overlay')).toBeVisible();
+        await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
 
-        // Click the X close button
-        await sharedPage.locator('[aria-label="Hide terminal"]').click();
-        await expect(sharedPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+        // The header X hides the layer (keeps the PTY alive), like Ctrl+Shift+W and
+        // the backdrop click. Only Stop destroys the session.
+        await sharedPage.getByTestId('command-bar-hide').click();
+        await expect(sharedPage.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
 
-        // Indicator should show - session still alive in background
+        // Indicator should show - session still alive in background.
         await expect(sharedPage.getByTestId('transient-session-indicator')).toBeVisible();
       });
 
       test('stop button terminates the session and closes overlay', async () => {
         // Open overlay
         await sharedPage.keyboard.press('Control+Shift+P');
-        await expect(sharedPage.getByTestId('command-bar-overlay')).toBeVisible();
+        await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
 
         // Click the stop button
         await sharedPage.getByTestId('command-bar-terminate-button').click();
-        await expect(sharedPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+        await expect(sharedPage.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
 
         // No background indicator - session was killed
         await expect(sharedPage.getByTestId('transient-session-indicator')).not.toBeVisible();
@@ -353,7 +354,7 @@ test.describe('Command Terminal', () => {
       test('kebab menu renders with expected items', async () => {
         // Open overlay
         await sharedPage.keyboard.press('Control+Shift+P');
-        await expect(sharedPage.getByTestId('command-bar-overlay')).toBeVisible();
+        await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
 
         // Click the kebab menu button
         await sharedPage.locator('[title="Actions"]').click();
@@ -364,44 +365,27 @@ test.describe('Command Terminal', () => {
         await expect(sharedPage.getByTestId('command-bar-kebab-stop')).toBeVisible();
       });
 
-      test('content container has max-w-5xl when non-maximized and changes panel closed', async () => {
-        // The PR widened the content container from max-w-4xl to max-w-5xl so the
-        // ContextBar fits on one row. Assert the class is present (not max-w-4xl).
+      test('maximize button and Ctrl+Shift+M/W hotkeys toggle and hide the window', async () => {
         await sharedPage.keyboard.press('Control+Shift+P');
-        const overlay = sharedPage.getByTestId('command-bar-overlay');
-        await expect(overlay).toBeVisible();
+        const windowContent = sharedPage.getByTestId('command-terminal-window');
+        await expect(windowContent).toBeVisible();
 
-        // The content container is the direct child div of the overlay backdrop.
-        // When non-maximized and changes panel closed, it carries max-w-5xl.
-        const contentContainer = overlay.locator('> div').first();
-        await expect(contentContainer).toHaveClass(/max-w-5xl/);
-        await expect(contentContainer).not.toHaveClass(/max-w-4xl/);
-      });
-
-      test('maximize button and Ctrl+Shift+M/W hotkeys toggle and hide the overlay', async () => {
-        await sharedPage.keyboard.press('Control+Shift+P');
-        const overlay = sharedPage.getByTestId('command-bar-overlay');
-        await expect(overlay).toBeVisible();
-
+        // The window-manager engine owns geometry now; maximize is a window-store
+        // toggle reflected by the button's title (Maximize <-> Restore).
         const maximizeButton = sharedPage.getByTestId('command-bar-maximize');
         await expect(maximizeButton).toBeVisible();
         await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
-        await expect(overlay).toHaveClass(/inset-0/);
 
-        // Button maximizes -> backdrop insets to clear the app chrome.
         await maximizeButton.click();
         await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
-        await expect(overlay).toHaveClass(/top-10/);
-        await expect(overlay).toHaveClass(/bottom-9/);
 
         // Ctrl+Shift+M restores (terminal-safe combo).
         await sharedPage.keyboard.press('Control+Shift+M');
         await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
-        await expect(overlay).toHaveClass(/inset-0/);
 
-        // Ctrl+Shift+W hides the overlay; the transient session stays alive.
+        // Ctrl+Shift+W hides the layer; the transient session stays alive.
         await sharedPage.keyboard.press('Control+Shift+W');
-        await expect(overlay).not.toBeVisible({ timeout: 5000 });
+        await expect(windowContent).not.toBeVisible({ timeout: 5000 });
         await expect(sharedPage.getByTestId('transient-session-indicator')).toBeVisible();
       });
     });
@@ -437,9 +421,9 @@ test.describe('Command Terminal', () => {
     test('transient session survives project switch and reattaches on return', async () => {
       // Open command terminal in Project A and close overlay (session stays in background)
       await crossProjectPage.keyboard.press('Control+Shift+P');
-      await expect(crossProjectPage.getByTestId('command-bar-overlay')).toBeVisible();
+      await expect(crossProjectPage.getByTestId('command-terminal-window')).toBeVisible();
       await crossProjectPage.keyboard.press('Control+Shift+P');
-      await expect(crossProjectPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+      await expect(crossProjectPage.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
 
       // Background indicator should be visible for Project A's transient session
       await expect(crossProjectPage.getByTestId('transient-session-indicator')).toBeVisible();
@@ -458,13 +442,13 @@ test.describe('Command Terminal', () => {
 
       // Opening the command bar should reattach to the existing session (no new spawn)
       await crossProjectPage.keyboard.press('Control+Shift+P');
-      await expect(crossProjectPage.getByTestId('command-bar-overlay')).toBeVisible();
+      await expect(crossProjectPage.getByTestId('command-terminal-window')).toBeVisible();
     });
 
     test('command bar overlay closes automatically on project switch', async () => {
       // Open command terminal in Project A
       await crossProjectPage.keyboard.press('Control+Shift+P');
-      await expect(crossProjectPage.getByTestId('command-bar-overlay')).toBeVisible();
+      await expect(crossProjectPage.getByTestId('command-terminal-window')).toBeVisible();
 
       // Trigger project switch programmatically (overlay backdrop blocks sidebar clicks)
       await crossProjectPage.evaluate(async () => {
@@ -475,15 +459,15 @@ test.describe('Command Terminal', () => {
       });
 
       // Overlay should close automatically via useCommandBar's currentProjectId effect
-      await expect(crossProjectPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+      await expect(crossProjectPage.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
     });
 
     test('each project gets its own independent transient session', async () => {
       // Open and close command terminal in Project A
       await crossProjectPage.keyboard.press('Control+Shift+P');
-      await expect(crossProjectPage.getByTestId('command-bar-overlay')).toBeVisible();
+      await expect(crossProjectPage.getByTestId('command-terminal-window')).toBeVisible();
       await crossProjectPage.keyboard.press('Control+Shift+P');
-      await expect(crossProjectPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+      await expect(crossProjectPage.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
       await expect(crossProjectPage.getByTestId('transient-session-indicator')).toBeVisible();
 
       // Switch to Project B - Playwright's retry handles the settle wait
@@ -494,9 +478,9 @@ test.describe('Command Terminal', () => {
 
       // Open and close command terminal in Project B (spawns a new session)
       await crossProjectPage.keyboard.press('Control+Shift+P');
-      await expect(crossProjectPage.getByTestId('command-bar-overlay')).toBeVisible();
+      await expect(crossProjectPage.getByTestId('command-terminal-window')).toBeVisible();
       await crossProjectPage.keyboard.press('Control+Shift+P');
-      await expect(crossProjectPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+      await expect(crossProjectPage.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
       await expect(crossProjectPage.getByTestId('transient-session-indicator')).toBeVisible();
 
       // Switch back to Project A - its indicator should still be there
@@ -511,9 +495,9 @@ test.describe('Command Terminal', () => {
     test('deleting a project kills its transient session', async () => {
       // Open and close command terminal in Project A (creates a background transient)
       await crossProjectPage.keyboard.press('Control+Shift+P');
-      await expect(crossProjectPage.getByTestId('command-bar-overlay')).toBeVisible();
+      await expect(crossProjectPage.getByTestId('command-terminal-window')).toBeVisible();
       await crossProjectPage.keyboard.press('Control+Shift+P');
-      await expect(crossProjectPage.getByTestId('command-bar-overlay')).not.toBeVisible({ timeout: 5000 });
+      await expect(crossProjectPage.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
       await expect(crossProjectPage.getByTestId('transient-session-indicator')).toBeVisible();
 
       // Switch to Project B - Playwright's retry handles the settle wait
@@ -543,10 +527,10 @@ test.describe('Command Terminal', () => {
   test.describe('ContextBar in overlay', () => {
     // These tests verify the two changes introduced by the branch:
     //
-    // 1. CommandBarOverlay renders <ContextBar sessionId={sessionId} agentFallback={projectAgent} />
+    // 1. CommandTerminalWindow renders <ContextBar sessionId={sessionId} agentFallback={projectAgent} />
     //    only AFTER sessionId is set (i.e. after spawnTransient resolves).
     //    Before the session is spawned, no [data-testid="usage-bar"] should appear
-    //    inside the overlay.
+    //    inside the window.
     //
     // 2. ContextBar receives agentFallback=projectAgent. Transient sessions have no
     //    task row in the board store, so the board-store lookup for session_id yields
@@ -574,14 +558,14 @@ test.describe('Command Terminal', () => {
 
         // Open the overlay
         await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
 
         // ContextBar should NOT be present - sessionId is still null.
         // Intentional fixed wait: we cannot poll for non-occurrence.
         // 800ms is enough for the microtask queue to flush if the spawn had resolved.
         await page.waitForTimeout(800);
         await expect(
-          page.getByTestId('command-bar-overlay').locator('[data-testid="usage-bar"]')
+          page.getByTestId('command-terminal-window').locator('[data-testid="usage-bar"]')
         ).not.toBeVisible();
       } finally {
         await browser.close();
@@ -622,10 +606,10 @@ test.describe('Command Terminal', () => {
 
         // Open the overlay - spawnTransient fires immediately with our deterministic ID.
         await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
 
         // ContextBar mounts (showing the spinner pill) once sessionId is set.
-        const overlayContextBar = page.getByTestId('command-bar-overlay').locator('[data-testid="usage-bar"]');
+        const overlayContextBar = page.getByTestId('command-terminal-window').locator('[data-testid="usage-bar"]');
         await expect(overlayContextBar).toBeVisible({ timeout: 5000 });
 
         // Push usage directly into the session store using the known session ID.
@@ -696,9 +680,9 @@ test.describe('Command Terminal', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
         await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
 
-        const overlayContextBar = page.getByTestId('command-bar-overlay').locator('[data-testid="usage-bar"]');
+        const overlayContextBar = page.getByTestId('command-terminal-window').locator('[data-testid="usage-bar"]');
         await expect(overlayContextBar).toBeVisible({ timeout: 5000 });
 
         // Push usage so the version pill renders (it only shows when resolvedModelName is set).
@@ -764,9 +748,9 @@ test.describe('Command Terminal', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
         await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
 
-        const overlayContextBar = page.getByTestId('command-bar-overlay').locator('[data-testid="usage-bar"]');
+        const overlayContextBar = page.getByTestId('command-terminal-window').locator('[data-testid="usage-bar"]');
         await expect(overlayContextBar).toBeVisible({ timeout: 5000 });
 
         // Push usage so the version pill renders.
@@ -829,9 +813,9 @@ test.describe('Command Terminal', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
         await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
 
-        const overlay = page.getByTestId('command-bar-overlay');
+        const overlay = page.getByTestId('command-terminal-window');
         await expect(overlay.locator('[data-testid="usage-bar"]')).toBeVisible({ timeout: 5000 });
 
         // Push usage with a model + effort so both pills resolve to interactive triggers.
@@ -872,6 +856,140 @@ test.describe('Command Terminal', () => {
           (window as unknown as { __mockSetRuntimeOverrideCalls?: unknown[] }).__mockSetRuntimeOverrideCalls,
         );
         expect(overrideCalls ?? []).toEqual([]);
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Maximize focus restore - tests the effect that restores keyboard focus to
+  // the xterm terminal after a maximize/restore toggle (PR #33 bug fix).
+  // Uses a per-test browser with a deterministic spawn so xterm actually mounts.
+  // ---------------------------------------------------------------------------
+  test.describe('Maximize focus restore', () => {
+    // These tests require the terminal to be fully mounted (xterm.open() called).
+    // We use the same deterministic-spawn + markFirstOutput pattern as
+    // write-batcher-integration.spec.ts and terminal-ctrl-c-interrupt.spec.ts.
+
+    const FOCUS_PROJECT_ID = 'proj-maximize-focus-test';
+    const FOCUS_TRANSIENT_SESSION_ID = 'sess-maximize-focus-1';
+
+    function basePreConfigForFocusTest(): string {
+      return `
+        window.__mockPreConfigure(function (state) {
+          var ts = new Date().toISOString();
+          state.projects.push({
+            id: '${FOCUS_PROJECT_ID}',
+            name: 'Maximize Focus Test Project',
+            path: '/mock/maximize-focus-test',
+            github_url: null,
+            default_agent: 'claude',
+            last_opened: ts,
+            created_at: ts,
+          });
+          state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+            state.swimlanes.push(Object.assign({}, s, {
+              id: 'lane-mf-' + i,
+              position: i,
+              created_at: ts,
+            }));
+          });
+          return { currentProjectId: '${FOCUS_PROJECT_ID}' };
+        });
+      `;
+    }
+
+    const deterministicSpawnForFocusTest = `
+      window.electronAPI.sessions.spawnTransient = async function (input) {
+        return {
+          session: {
+            id: '${FOCUS_TRANSIENT_SESSION_ID}',
+            taskId: '${FOCUS_TRANSIENT_SESSION_ID}',
+            projectId: input.projectId,
+            pid: null,
+            status: 'running',
+            shell: '/bin/bash',
+            cwd: '/mock/maximize-focus-test',
+            startedAt: new Date().toISOString(),
+            exitCode: null,
+            resuming: false,
+            transient: true,
+          },
+          branch: 'main',
+        };
+      };
+    `;
+
+    /**
+     * Open the command bar overlay and wait for xterm to mount.
+     * Mirrors the openCommandBarWithTerminal helper used by
+     * write-batcher-integration.spec.ts and terminal-ctrl-c-interrupt.spec.ts.
+     */
+    async function openCommandBarWithMountedTerminal(page: Page): Promise<void> {
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toBeVisible();
+
+      // Inject sessionFirstOutput so terminalReady flips to true immediately,
+      // lifting the shimmer overlay and allowing xterm.open() to run.
+      await page.evaluate((sessionId) => {
+        const stores = (window as unknown as {
+          __zustandStores?: {
+            session?: { getState: () => { markFirstOutput: (id: string) => void } };
+          };
+        }).__zustandStores;
+        stores?.session?.getState().markFirstOutput(sessionId);
+      }, FOCUS_TRANSIENT_SESSION_ID);
+
+      // Wait for xterm to open: .xterm-helper-textarea is the focusable element
+      // xterm attaches immediately after terminal.open() completes.
+      await expect(
+        page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first()
+      ).toBeAttached({ timeout: 8000 });
+    }
+
+    test('maximize then Ctrl+Shift+M restores focus to the xterm textarea', async () => {
+      // This test pins the behavior fixed in PR #33: toggling maximize left DOM
+      // focus on the maximize button, so the next keystroke hit the button instead
+      // of the terminal. The fix is the useEffect in CommandTerminalWindow that
+      // calls focus() whenever isMaximized changes (after initialization).
+      //
+      // Steps:
+      //   1. Open the overlay and mount xterm.
+      //   2. Click the maximize button (button takes DOM focus, leaving xterm unfocused).
+      //   3. Use Ctrl+Shift+M (panel.maximize keybinding) to restore.
+      //   4. Assert that .xterm-helper-textarea is focused.
+      //
+      // toBeFocused() has built-in retry via Playwright's actionability assertions,
+      // which absorbs the requestAnimationFrame and useEffect timing.
+      const { browser, page } = await launchWithState(
+        basePreConfigForFocusTest() + deterministicSpawnForFocusTest
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        await openCommandBarWithMountedTerminal(page);
+
+        const maximizeButton = page.getByTestId('command-bar-maximize');
+        await expect(maximizeButton).toBeVisible();
+        await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+
+        // Click maximize - button takes DOM focus (this is the pre-fix broken state:
+        // without the effect the textarea would remain unfocused after this).
+        await maximizeButton.click();
+        await expect(maximizeButton).toHaveAttribute('title', /^Restore/);
+
+        // Use Ctrl+Shift+M (panel.maximize keybinding) to restore. This exercises
+        // the keybinding path (not just another button click) so the next toggle
+        // does not land focus on the button at all.
+        await page.keyboard.press('Control+Shift+M');
+        await expect(maximizeButton).toHaveAttribute('title', /^Maximize/);
+
+        // The fix: the useEffect([isMaximized, focus]) must have called focus(),
+        // returning DOM focus to the xterm textarea.
+        // toBeFocused() retries internally, absorbing the effect tick.
+        const xtermTextarea = page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first();
+        await expect(xtermTextarea).toBeFocused({ timeout: 3000 });
       } finally {
         await browser.close();
       }
@@ -1007,7 +1125,7 @@ test.describe('Command Terminal', () => {
 
       // Open the command bar overlay (Ctrl+Shift+P).
       await focusedPage.keyboard.press('Control+Shift+P');
-      await expect(focusedPage.getByTestId('command-bar-overlay')).toBeVisible();
+      await expect(focusedPage.getByTestId('command-terminal-window')).toBeVisible();
 
       // Poll until setFocused is called with the transient session ID included.
       // useFocusedSessionsSync fires as a useEffect after each render, so there

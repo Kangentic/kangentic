@@ -28,7 +28,7 @@ export function useWindowAutoCloseOnDone(): void {
     for (const managedWindow of Object.values(windows)) {
       // Opened on an already-done/archived task -> leave it (Completed-Tasks review).
       if (managedWindow.openedDone) continue;
-      const task = tasks.find((candidate) => candidate.id === managedWindow.taskId);
+      const task = tasks.find((candidate) => candidate.id === managedWindow.anchor);
       // Close on the EARLIEST off-board signal so the window never lingers:
       //  - a drag onto Done arms `completingTaskIds` synchronously (before the fly
       //    and the archive), so the window closes the instant you drop;
@@ -36,7 +36,7 @@ export function useWindowAutoCloseOnDone(): void {
       //    backlogged) - close before `archivedTasks` reloads and the placeholder
       //    can show;
       //  - a non-archiving Done column keeps it in `tasks` at a done-role lane.
-      const completing = completingTaskIds.has(managedWindow.taskId);
+      const completing = completingTaskIds.has(managedWindow.anchor);
       const goneFromBoard = !task;
       const inDoneLane = !!task && swimlanes.find((lane) => lane.id === task.swimlane_id)?.role === 'done';
       if (completing || goneFromBoard || inDoneLane) {

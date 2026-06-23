@@ -127,7 +127,7 @@ async function launchWithState(extraScript: string): Promise<{ browser: Browser;
 async function openCommandBarWithTerminal(page: Page): Promise<void> {
   // Open the overlay - spawnTransient fires immediately with our deterministic ID.
   await page.keyboard.press('Control+Shift+P');
-  await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+  await expect(page.getByTestId('command-terminal-window')).toBeVisible();
 
   // Inject sessionFirstOutput so terminalReady flips to true.
   // This simulates the 'onFirstOutput' IPC event from the real main process.
@@ -144,13 +144,13 @@ async function openCommandBarWithTerminal(page: Page): Promise<void> {
   // .xterm-helper-textarea is the focusable textarea element xterm renders;
   // it is present as soon as terminal.open() completes.
   await expect(
-    page.getByTestId('command-bar-overlay').locator('.xterm-helper-textarea').first()
+    page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').first()
   ).toBeAttached({ timeout: 8000 });
 
   // Focus the terminal so keyboard input is routed to xterm's onData handler.
   // xterm's own focus() call happens inside initTerminal's requestAnimationFrame;
   // we force focus here to be deterministic and avoid timing races.
-  await page.getByTestId('command-bar-overlay').locator('.xterm-helper-textarea').focus();
+  await page.getByTestId('command-terminal-window').locator('.xterm-helper-textarea').focus();
 }
 
 test.describe('WriteBatcher - useTerminal IPC wiring', () => {
@@ -179,9 +179,9 @@ test.describe('WriteBatcher - useTerminal IPC wiring', () => {
       // events from inside a single evaluate() call avoids that boundary, keeping
       // all 5 dispatchEvent calls in one synchronous task.
       await page.evaluate(() => {
-        const overlay = document.querySelector('[data-testid="command-bar-overlay"]');
+        const overlay = document.querySelector('[data-testid="command-terminal-window"]');
         const textarea = overlay?.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
-        if (!textarea) throw new Error('xterm textarea not found inside command-bar-overlay');
+        if (!textarea) throw new Error('xterm textarea not found inside command-terminal-window');
 
         // Dispatch all 5 input events synchronously - same task, one microtask.
         for (const char of ['a', 'b', 'c', 'd', 'e']) {
@@ -232,7 +232,7 @@ test.describe('WriteBatcher - useTerminal IPC wiring', () => {
 
       // Open overlay - spawn will hang, xterm never mounts, no batcher created.
       await page.keyboard.press('Control+Shift+P');
-      await expect(page.getByTestId('command-bar-overlay')).toBeVisible();
+      await expect(page.getByTestId('command-terminal-window')).toBeVisible();
 
       // Intentional fixed wait - we cannot poll for non-occurrence.
       // 800ms gives the microtask queue and any async paths time to fire.

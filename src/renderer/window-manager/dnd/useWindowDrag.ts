@@ -24,12 +24,11 @@ import type { RefObject } from 'react';
 import { clamp, pixelsToFractional } from '../store/geometry';
 import type { PixelRect } from '../store/geometry';
 import { detectSnapEdge, snapEdgeToGeometry } from './snap';
-import { hideSnapPreview, showSnapPreview } from './snap-preview-controller';
 import { collectCandidatePanes, detectDropTarget, detectTiledDropTarget } from './drop-zone';
 import type { CandidatePane, DropTarget, TreeBounds } from './drop-zone';
 import { resolveTileLayout } from '../tiling/resolve-layout';
 import { insertWindowIntoTree, treeContainsWindow } from '../tiling/tree-ops';
-import { useWindowStore } from '../store/window-store';
+import { useWindowManager } from '../context';
 import type { SnapEdge, FractionalRect } from '../store/types';
 
 /** Pointer travel (px) before a press becomes a drag, so a plain click/double
@@ -132,6 +131,8 @@ function clampToOverlay(left: number, top: number, drag: DragSession): { left: n
 }
 
 export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragArgs) {
+  const { manager, snap } = useWindowManager();
+  const store = manager.store;
   const dragRef = useRef<DragSession | null>(null);
 
   /** Finish the active drag using the last observed pointer position. Used by
@@ -140,7 +141,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     const drag = dragRef.current;
     const frame = frameRef.current;
     dragRef.current = null;
-    hideSnapPreview();
+    snap.hide();
     if (!drag || !frame) return;
     if (frame.hasPointerCapture(drag.pointerId)) frame.releasePointerCapture(drag.pointerId);
     // Clear the imperative transform; the committed geometry re-renders the
@@ -159,7 +160,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
         drag.lastClientY - drag.startClientY,
         drag.overlay,
       );
-      useWindowStore.getState().setTileTreeRect({
+      store.getState().setTileTreeRect({
         x: drag.groupMove.startRect.x + moved.dx / drag.overlay.width,
         y: drag.groupMove.startRect.y + moved.dy / drag.overlay.height,
         w: drag.groupMove.startRect.w,
@@ -169,19 +170,19 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     }
 
     const container = { width: drag.overlay.width, height: drag.overlay.height };
-    const store = useWindowStore.getState();
+    const actions = store.getState();
 
     if (drag.dropTarget) {
       // Drag-to-dock: tile this window onto a side of the pane under the cursor
       // (insert into the tree if that pane is tiled, else seed a fresh pair).
-      store.dockIntoWindow(windowId, drag.dropTarget.targetWindowId, drag.dropTarget.side);
+      actions.dockIntoWindow(windowId, drag.dropTarget.targetWindowId, drag.dropTarget.side);
     } else if (drag.snapEdge === 'maximize') {
-      store.maximizeWindow(windowId);
+      actions.maximizeWindow(windowId);
     } else if (drag.snapEdge === 'left' || drag.snapEdge === 'right') {
       // Half-dock. dockWindow joins an opposite-half snapped window into a tile
       // pair (shared seam) if one exists, else a lone snap that remembers the
       // pre-snap size so dragging away restores it.
-      store.dockWindow(windowId, drag.snapEdge);
+      actions.dockWindow(windowId, drag.snapEdge);
     } else {
       // HARD clamp: snap the window fully back inside the frame.
       const clamped = clampToOverlay(
@@ -189,7 +190,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
         drag.startRect.top + (drag.lastClientY - drag.startClientY),
         drag,
       );
-      store.setGeometry(
+      actions.setGeometry(
         windowId,
         pixelsToFractional(
           { left: clamped.left, top: clamped.top, width: drag.startRect.width, height: drag.startRect.height },
@@ -200,7 +201,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     // A size change (snap/maximize) re-renders the frame; WindowFrame's size
     // effect schedules the single coalesced terminal resize. A pure move does
     // not change size, so no resize is needed.
-  }, [windowId, frameRef]);
+  }, [windowId, frameRef, store, snap]);
 
   // End the drag if focus leaves Kangentic (alt-tab, screenshot, popup) or the
   // tab is hidden, so the window is dropped where it was rather than staying
@@ -257,7 +258,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
    *  rect (Windows-style un-dock). A tiled window is pulled out of its group
    *  first (its partner floats in place). */
   const undockUnderCursor = (drag: DragSession, event: React.PointerEvent) => {
-    const managedWindow = useWindowStore.getState().windows[windowId];
+    const managedWindow = store.getState().windows[windowId];
     if (
       !managedWindow ||
       (managedWindow.state !== 'maximized' && managedWindow.state !== 'snapped' && managedWindow.state !== 'tiled')
@@ -265,7 +266,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
       return;
     }
     const restore = managedWindow.restoreGeometry ?? { x: 0.2, y: 0.15, w: 0.5, h: 0.6 };
-    if (managedWindow.state === 'tiled') useWindowStore.getState().untileWindow(windowId);
+    if (managedWindow.state === 'tiled') store.getState().untileWindow(windowId);
     const width = restore.w * drag.overlay.width;
     const height = restore.h * drag.overlay.height;
     // Shrink the window AROUND the grab point so it does not jump to re-center
@@ -282,7 +283,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     const grabOffsetY = clamp(pointerOverlayY - drag.startRect.top, 0, height);
     const left = clamp(pointerOverlayX - grabFractionX * width, 0, Math.max(0, drag.overlay.width - width));
     const top = clamp(pointerOverlayY - grabOffsetY, 0, Math.max(0, drag.overlay.height - height));
-    useWindowStore.getState().setGeometry(
+    store.getState().setGeometry(
       windowId,
       pixelsToFractional({ left, top, width, height }, { width: drag.overlay.width, height: drag.overlay.height }),
     );
@@ -300,10 +301,10 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
    *  half-of-pane rect for the seed/merge cases (a fresh 2-up, where half is
    *  exact). */
   const previewLandingRect = (dropTarget: DropTarget, overlay: OverlayBounds): PixelRect => {
-    const store = useWindowStore.getState();
-    const tree = store.tileTree;
+    const snapshot = store.getState();
+    const tree = snapshot.tileTree;
     if (tree && treeContainsWindow(tree, dropTarget.targetWindowId)) {
-      const footprint = store.tileTreeRect;
+      const footprint = snapshot.tileTreeRect;
       const previewTree = insertWindowIntoTree(
         tree,
         dropTarget.targetWindowId,
@@ -337,7 +338,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
       const deltaY = event.clientY - drag.startClientY;
       if (Math.abs(deltaX) < DRAG_ACTIVATION_PX && Math.abs(deltaY) < DRAG_ACTIVATION_PX) return;
       drag.activated = true;
-      const activationStore = useWindowStore.getState();
+      const activationStore = store.getState();
       // A tiled window's header drags the WHOLE docked group as a unit - UNLESS the
       // group fills the overlay (a full-screen tiling has nowhere to move), where
       // dragging a pane instead POPS IT OUT (undock below), the only useful drag
@@ -364,24 +365,24 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
         // Snapshot the dockable panes ONCE, AFTER any undock (which may have pruned
         // the tree). No store writes happen during the drag, so these rects stay
         // valid for the whole gesture (the dragged window moves only via transform).
-        const store = useWindowStore.getState();
+        const snapshot = store.getState();
         drag.candidatePanes = collectCandidatePanes(
           windowId,
-          store.windows,
-          store.tileTree,
+          snapshot.windows,
+          snapshot.tileTree,
           { width: drag.overlay.width, height: drag.overlay.height },
-          store.tileTreeRect,
+          snapshot.tileTreeRect,
         );
         // Snapshot the pruned tree's footprint + root axis for the outer-slot edge
         // zones (only a multi-pane split root has extremes to push into).
-        const tree = store.tileTree;
+        const tree = snapshot.tileTree;
         drag.rootDirection = tree && tree.kind === 'split' ? tree.direction : null;
         drag.treeBounds = tree
           ? {
-              left: store.tileTreeRect.x * drag.overlay.width,
-              top: store.tileTreeRect.y * drag.overlay.height,
-              right: (store.tileTreeRect.x + store.tileTreeRect.w) * drag.overlay.width,
-              bottom: (store.tileTreeRect.y + store.tileTreeRect.h) * drag.overlay.height,
+              left: snapshot.tileTreeRect.x * drag.overlay.width,
+              top: snapshot.tileTreeRect.y * drag.overlay.height,
+              right: (snapshot.tileTreeRect.x + snapshot.tileTreeRect.w) * drag.overlay.width,
+              bottom: (snapshot.tileTreeRect.y + snapshot.tileTreeRect.h) * drag.overlay.height,
             }
           : null;
       }
@@ -446,7 +447,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
       // sibling (e.g. a third row repartitions to thirds), so the new window's
       // real slot is not "half the target" - simulate the insert and show where
       // it actually lands.
-      showSnapPreview(previewLandingRect(dropTarget, drag.overlay));
+      snap.show(previewLandingRect(dropTarget, drag.overlay));
       return;
     }
     drag.dropTarget = null;
@@ -466,15 +467,15 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
       );
     drag.snapEdge = edge;
     if (edge) {
-      const snap = snapEdgeToGeometry(edge);
-      showSnapPreview({
-        left: snap.x * drag.overlay.width,
-        top: snap.y * drag.overlay.height,
-        width: snap.w * drag.overlay.width,
-        height: snap.h * drag.overlay.height,
+      const snapGeometry = snapEdgeToGeometry(edge);
+      snap.show({
+        left: snapGeometry.x * drag.overlay.width,
+        top: snapGeometry.y * drag.overlay.height,
+        width: snapGeometry.w * drag.overlay.width,
+        height: snapGeometry.h * drag.overlay.height,
       });
     } else {
-      hideSnapPreview();
+      snap.hide();
     }
   };
 

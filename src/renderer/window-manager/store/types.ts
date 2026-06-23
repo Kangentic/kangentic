@@ -30,11 +30,20 @@ export type WindowState = 'floating' | 'tiled' | 'snapped' | 'maximized';
  *  suspended/closed shell after its `sessionId` is cleared (P3 reconciliation). */
 export type WindowSessionStatus = 'live' | 'suspended' | 'closed';
 
+/** What a managed window hosts. The engine is content-agnostic and instantiated
+ *  once per kind on its own layer (board task-detail windows, command terminals).
+ *  `WindowContent` routes on this; `anchor` is interpreted per kind. */
+export type WindowContentKind = 'task-detail' | 'command-terminal';
+
 export interface ManagedWindow {
   /** Window id, distinct from the session id. */
   id: string;
-  /** Durable anchor: survives a session respawn (model/agent/isolation change). */
-  taskId: string;
+  /** What this window hosts; selects the content surface + how `anchor` is read. */
+  kind: WindowContentKind;
+  /** Durable anchor: survives a session respawn. For `task-detail` it is the
+   *  taskId (survives model/agent/isolation change). For `command-terminal` it is
+   *  a stable slot id (the transient session is ephemeral; the slot persists). */
+  anchor: string;
   /** Live PTY binding; null when suspended, closed, or respawning. */
   sessionId: string | null;
   /** Position + size as fractions of the overlay rect. */

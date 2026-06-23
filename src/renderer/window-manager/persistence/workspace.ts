@@ -1,11 +1,14 @@
 /**
- * Serialize / restore the in-app window-manager layout to `AppConfig.workspaceByProject`.
+ * Serialize / restore an in-app window-manager layout.
  *
- * Persisted form is taskId-anchored (a session respawn changes the sessionId but
- * not the task, so the durable anchor is the task) and uses fractional geometry
+ * Persisted form is ANCHOR-anchored (the durable anchor is a taskId for the board
+ * layer, a slot id for the command-terminal layer) and uses fractional geometry
  * (re-projects cleanly at a different viewport size). Restore re-resolves the live
- * sessionId from the taskId, regenerates window + tile-node ids, and drops anything
- * whose task no longer exists.
+ * sessionId from the anchor, regenerates window + tile-node ids, stamps each window
+ * with the restoring layer's `kind`, and drops anything whose anchor no longer
+ * exists. The on-disk field is named `taskId` for back-compat with the board's
+ * existing `AppConfig.workspaceByProject` blobs; for the command layer it simply
+ * carries the slot id.
  *
  * Restore is deliberately TOTAL: the layout is read back from an on-disk config the
  * app must never trust blindly. A stamped schema `version` gates the whole blob, and
@@ -13,11 +16,11 @@
  * a corrupt or off-overlay entry can never restore an invisible / off-screen window;
  * a window with malformed geometry or an unknown state is dropped, never thrown on.
  *
- * Pure module: the store actions supply the id generators + the taskId->session /
- * taskId-exists resolvers (which need live board + session state).
+ * Pure module: the store actions supply the id generators + the anchor->session /
+ * anchor-exists resolvers (which need live board + session state).
  */
 
-import type { ManagedWindow, TileNode, FractionalRect, WindowState } from '../store/types';
+import type { ManagedWindow, TileNode, FractionalRect, WindowState, WindowContentKind } from '../store/types';
 import type { SerializedWorkspace, SerializedTileNode } from '../../../shared/types';
 
 /** Bump when the persisted shape changes; an older / unknown version is ignored on
@@ -65,7 +68,7 @@ export function serializeWorkspace(
   return {
     version: WORKSPACE_SCHEMA_VERSION,
     windows: windows.map((window) => ({
-      taskId: window.taskId,
+      taskId: window.anchor,
       title: window.title,
       geometry: { ...window.geometry },
       restoreGeometry: window.restoreGeometry ? { ...window.restoreGeometry } : null,
@@ -73,13 +76,13 @@ export function serializeWorkspace(
     })),
     tileTree: tileTree ? serializeNode(tileTree, windowById) : null,
     tileTreeRect: { ...tileTreeRect },
-    focusedTaskId: focused?.taskId ?? null,
+    focusedTaskId: focused?.anchor ?? null,
   };
 }
 
 function serializeNode(node: TileNode, windowById: Map<string, ManagedWindow>): SerializedTileNode {
   if (node.kind === 'leaf') {
-    return { kind: 'leaf', taskId: windowById.get(node.windowId)?.taskId ?? node.windowId };
+    return { kind: 'leaf', taskId: windowById.get(node.windowId)?.anchor ?? node.windowId };
   }
   return {
     kind: 'split',
@@ -90,10 +93,13 @@ function serializeNode(node: TileNode, windowById: Map<string, ManagedWindow>): 
 }
 
 export interface RestoreContext {
-  /** Live PTY session id for a task, or null when suspended / not yet spawned. */
-  resolveSessionId: (taskId: string) => string | null;
-  /** Whether the task still exists on the board (else its window is dropped). */
-  isKnownTask: (taskId: string) => boolean;
+  /** The content kind to stamp on every restored window (the restoring layer's kind). */
+  kind: WindowContentKind;
+  /** Live PTY session id for an anchor, or null when suspended / not yet spawned. */
+  resolveSessionId: (anchor: string) => string | null;
+  /** Whether the anchor still exists (else its window is dropped). For the command
+   *  layer (synthetic slot anchors) this is always true. */
+  isKnownAnchor: (anchor: string) => boolean;
   makeWindowId: () => string;
   makeTileId: (kind: 'split' | 'leaf') => string;
 }
@@ -126,7 +132,7 @@ export function deserializeWorkspace(
   // sanitization; a malformed entry is dropped, never thrown on. restoreGeometry is
   // forgotten (set null) when invalid rather than dropping the window.
   const surviving = serialized.windows
-    .filter((window) => context.isKnownTask(window.taskId))
+    .filter((window) => context.isKnownAnchor(window.taskId))
     .map((window) => {
       const geometry = sanitizeRect(window.geometry);
       if (!geometry || !VALID_WINDOW_STATES.has(window.state)) return null;
@@ -146,7 +152,8 @@ export function deserializeWorkspace(
     zIndex += 1;
     windows[id] = {
       id,
-      taskId: persisted.taskId,
+      kind: context.kind,
+      anchor: persisted.taskId,
       sessionId: context.resolveSessionId(persisted.taskId),
       geometry: { ...persisted.geometry },
       state: persisted.state,

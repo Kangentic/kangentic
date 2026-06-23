@@ -1,25 +1,29 @@
 /**
- * The window layer: a body-level portal overlay that floats windows over the
- * live, clickable board. The overlay is `pointer-events:none` so clicks in the
- * gaps fall through to the board; each `WindowFrame` is `pointer-events:auto`.
- * Mounted once in `AppLayout`.
+ * A window-manager LAYER: a body-level portal overlay that floats a content-
+ * agnostic set of managed windows. The engine is mounted twice - the board
+ * task-detail layer (modeless, gaps fall through to the live board) and the
+ * command-terminal layer (modal-ish, a slight backdrop blur over the board) -
+ * each with its own instance via `WindowManagerProvider`.
+ *
+ * The generic `WindowManagerLayer` renders the provider + the overlay surface
+ * (frames, tile seams, footprint resizers, snap preview) and mounts the layer's
+ * bridges. `WindowLayer` is the board wrapper kept for back-compat (its import
+ * path and behavior are unchanged); the command layer composes its own wrapper.
  *
  * The portal host is a `document.body` sibling of `#root` (not a child) so the
  * overlay escapes the layout column's `overflow-hidden` wrappers. It is looked
- * up or created once and never removed, so StrictMode double-invoke and HMR
- * remounts reuse the same node.
- *
- * The overlay sits between the app chrome (title bar h-10, status bar h-9),
- * matching the maximize convention in `dialog-maximize.tsx`. It renders at
- * `z-40`, BELOW true modal dialogs (`BaseDialog` is `z-50`): while the
- * task-detail surface is still a modal, the modal must sit on top of floating
- * windows. When that surface becomes a window (the end state), there is no
- * competing modal.
+ * up or created once per host id and never removed, so StrictMode double-invoke
+ * and HMR remounts reuse the same node.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { useWindowStore } from '../store/window-store';
+import { boardWindowManager } from '../store/window-store';
+import type { WindowManager } from '../store/window-store';
+import { WindowManagerProvider, useLayerStore, useSnapPreviewController } from '../context';
+import type { WindowManagerLayerOptions } from '../context';
+import { DEFAULT_MIN_WIDTH_PX, DEFAULT_MIN_HEIGHT_PX } from '../dnd/useWindowResize';
 import { useTaskDetailWindowBridge } from '../bridge/useTaskDetailWindowBridge';
 import { useWindowSessionClaims } from '../bridge/useWindowSessionClaims';
 import { useWindowAutoCloseOnDone } from '../bridge/useWindowAutoCloseOnDone';
@@ -34,8 +38,6 @@ import { TileSplitter } from './TileSplitter';
 import { FootprintResizer } from './FootprintResizer';
 import type { FootprintEdge } from './FootprintResizer';
 import { SnapPreview } from './SnapPreview';
-
-const PORTAL_HOST_ID = 'window-layer-root';
 
 /** Panes sit FLUSH (zero reserved gap) so nothing shows through behind a tiled
  *  layout. The draggable seam is an invisible OVERLAY of this width, centered on
@@ -55,44 +57,50 @@ function footprintEdges(rect: FractionalRect): FootprintEdge[] {
   return edges;
 }
 
-function getPortalHost(): HTMLElement {
-  const existing = document.getElementById(PORTAL_HOST_ID);
+function getPortalHost(hostId: string): HTMLElement {
+  const existing = document.getElementById(hostId);
   if (existing) return existing;
   const host = document.createElement('div');
-  host.id = PORTAL_HOST_ID;
+  host.id = hostId;
   document.body.appendChild(host);
   return host;
 }
 
-export function WindowLayer() {
+interface WindowManagerLayerProps {
+  manager: WindowManager;
+  layer: WindowManagerLayerOptions;
+  /** The body-level portal host id (distinct per layer). */
+  portalHostId: string;
+  /** Stable `data-testid` for the overlay root (board: `window-overlay`). */
+  overlayTestId: string;
+  /** Full overlay className (positioning, z-index, `pointer-events-none`). */
+  overlayClassName: string;
+  /** Layer-specific bridges (open/close, session, persistence), mounted inside
+   *  the provider so their context reads target this instance. */
+  bridges?: ReactNode;
+  /** Optional backdrop element rendered BEHIND the frames (command layer). */
+  backdrop?: ReactNode;
+}
+
+/** Generic overlay surface: measures the overlay, projects fractional geometry to
+ *  pixels, and renders the frames + tile seams + footprint resizers + snap preview.
+ *  Reads the layer's store from context. Mounted inside `WindowManagerProvider`. */
+function WindowManagerSurface({
+  portalHostId,
+  overlayTestId,
+  overlayClassName,
+  bridges,
+  backdrop,
+}: Pick<WindowManagerLayerProps, 'portalHostId' | 'overlayTestId' | 'overlayClassName' | 'bridges' | 'backdrop'>) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLElement | null>(null);
-  if (!hostRef.current) hostRef.current = getPortalHost();
+  if (!hostRef.current) hostRef.current = getPortalHost(portalHostId);
 
-  // Open/close task-detail windows in response to the renderer's `detailTaskId`
-  // signal (the single open path every entry point already drives).
-  useTaskDetailWindowBridge();
-  // Keep the window-owned session claim set (`dialogSessionIds`) reconciled to
-  // the open windows, so an HMR re-sync (or any external reset) that clobbers it
-  // self-heals instead of leaving a window's terminal suppressed.
-  useWindowSessionClaims();
-  // Close a window the instant its task leaves the board (Done / delete / backlog),
-  // so it never lingers on the "no longer available" placeholder.
-  useWindowAutoCloseOnDone();
-  // When closing a window orphans keyboard focus, move it to a remaining window's
-  // terminal so the group keeps an active pane.
-  useWindowFocusReconcile();
-  // Persist the layout (debounced) to the open project's config so it survives a
-  // project switch + app restart. Restore is wired into the project-switch effect.
-  useWorkspacePersistence();
-  // Light-dismiss: a clean click on the empty board closes open windows per the
-  // user's `windowLightDismiss` policy (off / single / focused / all).
-  useClickOutsideToClose();
-
+  const useStore = useLayerStore();
   const [containerSize, setContainerSize] = useState<ContainerSize>({ width: 0, height: 0 });
-  const windows = useWindowStore((state) => state.windows);
-  const tileTree = useWindowStore((state) => state.tileTree);
-  const tileTreeRect = useWindowStore((state) => state.tileTreeRect);
+  const windows = useStore((state) => state.windows);
+  const tileTree = useStore((state) => state.tileTree);
+  const tileTreeRect = useStore((state) => state.tileTreeRect);
 
   // The tile tree lives inside this pixel sub-region of the overlay (the whole
   // overlay for edge-snap pairs; a half-snapped window's footprint for a group
@@ -148,44 +156,101 @@ export function WindowLayer() {
   const renderedWindows = Object.values(windows);
 
   return createPortal(
-    <div ref={overlayRef} data-testid="window-overlay" className="fixed left-0 right-0 top-10 bottom-9 z-40 pointer-events-none">
-      {renderedWindows.map((managedWindow) => (
-        <WindowFrame
-          key={managedWindow.id}
-          managedWindow={managedWindow}
-          containerSize={containerSize}
-          overlayRef={overlayRef}
-          tiledRect={tileLayout?.rects.get(managedWindow.id) ?? null}
-        />
-      ))}
-      {tileTree && tileLayout?.seams.map((seam) => (
-        <TileSplitter
-          key={`${seam.splitId}:${seam.index}`}
-          seam={seam}
-          tileTree={tileTree}
-          treeSize={treeBounds.size}
-          treeOrigin={treeBounds.origin}
-          gapPx={TILE_GAP_PX}
-          seamPx={TILE_SEAM_PX}
-          overlayRef={overlayRef}
-        />
-      ))}
-      {/* Outer-edge resizers: one per footprint edge that borders empty board, so
-          a docked group can be widened/heightened while staying docked. */}
-      {tileTree && containerSize.width > 0 && footprintEdges(tileTreeRect).map((edge) => (
-        <FootprintResizer
-          key={`footprint-${edge}`}
-          edge={edge}
-          tileTree={tileTree}
-          tileTreeRect={tileTreeRect}
-          containerSize={containerSize}
-          gapPx={TILE_GAP_PX}
-          seamPx={TILE_SEAM_PX}
-          overlayRef={overlayRef}
-        />
-      ))}
-      <SnapPreview />
-    </div>,
+    <>
+      {bridges}
+      <div ref={overlayRef} data-testid={overlayTestId} className={overlayClassName}>
+        {backdrop}
+        {renderedWindows.map((managedWindow) => (
+          <WindowFrame
+            key={managedWindow.id}
+            managedWindow={managedWindow}
+            containerSize={containerSize}
+            overlayRef={overlayRef}
+            tiledRect={tileLayout?.rects.get(managedWindow.id) ?? null}
+          />
+        ))}
+        {tileTree && tileLayout?.seams.map((seam) => (
+          <TileSplitter
+            key={`${seam.splitId}:${seam.index}`}
+            seam={seam}
+            tileTree={tileTree}
+            treeSize={treeBounds.size}
+            treeOrigin={treeBounds.origin}
+            gapPx={TILE_GAP_PX}
+            seamPx={TILE_SEAM_PX}
+            overlayRef={overlayRef}
+          />
+        ))}
+        {/* Outer-edge resizers: one per footprint edge that borders empty board, so
+            a docked group can be widened/heightened while staying docked. */}
+        {tileTree && containerSize.width > 0 && footprintEdges(tileTreeRect).map((edge) => (
+          <FootprintResizer
+            key={`footprint-${edge}`}
+            edge={edge}
+            tileTree={tileTree}
+            tileTreeRect={tileTreeRect}
+            containerSize={containerSize}
+            gapPx={TILE_GAP_PX}
+            seamPx={TILE_SEAM_PX}
+            overlayRef={overlayRef}
+          />
+        ))}
+        <SnapPreview />
+      </div>
+    </>,
     hostRef.current,
+  );
+}
+
+/** The generic, instantiable window-manager layer. */
+export function WindowManagerLayer(props: WindowManagerLayerProps) {
+  const snap = useSnapPreviewController();
+  return (
+    <WindowManagerProvider manager={props.manager} layer={props.layer} snap={snap}>
+      <WindowManagerSurface
+        portalHostId={props.portalHostId}
+        overlayTestId={props.overlayTestId}
+        overlayClassName={props.overlayClassName}
+        bridges={props.bridges}
+        backdrop={props.backdrop}
+      />
+    </WindowManagerProvider>
+  );
+}
+
+/** The board layer's bridges (open/close, session claims, auto-close, focus
+ *  reconcile, per-project persistence, light-dismiss). Operate on the board
+ *  instance (the exported singleton), so they are independent of the provider. */
+function BoardBridges(): null {
+  useTaskDetailWindowBridge();
+  useWindowSessionClaims();
+  useWindowAutoCloseOnDone();
+  useWindowFocusReconcile();
+  useWorkspacePersistence();
+  useClickOutsideToClose();
+  return null;
+}
+
+const BOARD_LAYER_OPTIONS: WindowManagerLayerOptions = {
+  minSize: { width: DEFAULT_MIN_WIDTH_PX, height: DEFAULT_MIN_HEIGHT_PX },
+};
+
+/**
+ * The board task-detail window layer. Modeless: `pointer-events:none` so clicks
+ * in the gaps fall through to the live board; each `WindowFrame` is
+ * `pointer-events:auto`. Sits between the app chrome (title bar h-10, status bar
+ * h-9) at `z-40`, BELOW true modal dialogs (`BaseDialog` is `z-50`). Mounted once
+ * in `AppLayout`.
+ */
+export function WindowLayer() {
+  return (
+    <WindowManagerLayer
+      manager={boardWindowManager}
+      layer={BOARD_LAYER_OPTIONS}
+      portalHostId="window-layer-root"
+      overlayTestId="window-overlay"
+      overlayClassName="fixed left-0 right-0 top-10 bottom-9 z-40 pointer-events-none"
+      bridges={<BoardBridges />}
+    />
   );
 }

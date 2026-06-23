@@ -9,7 +9,7 @@ import { BacklogView } from '../backlog/BacklogView';
 import { BacklogDialogs } from '../backlog/BacklogDialogs';
 import { TerminalPanel } from '../terminal/TerminalPanel';
 import { SettingsPanel } from '../settings/SettingsPanel';
-import { CommandBarOverlay } from '../command-bar/CommandBarOverlay';
+import { CommandTerminalLayer } from '../command-bar/CommandTerminalLayer';
 import { SearchPalette } from '../search/SearchPalette';
 import { WelcomeScreen } from './WelcomeScreen';
 import { ProjectPathMissingDialog } from '../dialogs/ProjectPathMissingDialog';
@@ -182,7 +182,7 @@ export function AppLayout() {
 
       {config.statusBarVisible !== false && <StatusBar />}
       {settingsOpen && <SettingsPanel />}
-      {commandBar.isOpen && <CommandBarOverlay onClose={commandBar.close} />}
+      {commandBar.isOpen && <CommandTerminalLayer onHide={commandBar.close} />}
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}
       <ProjectPathMissingDialog />
       <ToastContainer />

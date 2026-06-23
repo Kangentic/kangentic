@@ -7,7 +7,7 @@
 
 import { X } from 'lucide-react';
 import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
-import { useWindowStore } from '../store/window-store';
+import { useLayerStore } from '../context';
 
 interface WindowTitleBarProps {
   title: string;
@@ -29,7 +29,7 @@ export function WindowTitleBar({
   onHandlePointerDown,
   onRequestClose,
 }: WindowTitleBarProps) {
-  const toggleMaximizeWindow = useWindowStore((state) => state.toggleMaximizeWindow);
+  const toggleMaximizeWindow = useLayerStore()((state) => state.toggleMaximizeWindow);
 
   return (
     <div className="flex items-center gap-1 px-3 py-2 border-b border-edge flex-shrink-0 select-none">
