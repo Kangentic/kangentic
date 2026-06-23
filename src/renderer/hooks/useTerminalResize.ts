@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { AppConfig } from '../../shared/types';
+import { startPanelDrag } from './panel-drag';
 
 const MIN_HEIGHT = 100;
 export const COLLAPSED_HEIGHT = 36;
@@ -51,7 +52,7 @@ export interface TerminalResizeState {
   suppressTransition: boolean;
   contentColRef: React.RefObject<HTMLDivElement | null>;
   onToggleCollapse: () => void;
-  onResizeStart: (e: React.MouseEvent) => void;
+  onResizeStart: (event: React.MouseEvent) => void;
   handleTransitionEnd: () => void;
 }
 
@@ -218,38 +219,30 @@ export function useTerminalResize(
     }
   }, []);
 
-  const onResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
+  const onResizeStart = useCallback((event: React.MouseEvent) => {
     setIsResizing(true);
-    document.body.style.cursor = 'row-resize';
-    document.body.style.userSelect = 'none';
 
-    const startY = e.clientY;
+    const startY = event.clientY;
     const startHeight = height;
 
-    const onMouseMove = (e: MouseEvent) => {
-      const delta = startY - e.clientY;
-      const newHeight = clampHeight(startHeight + delta);
-      setHeight(newHeight);
-      latestHeightRef.current = newHeight;
-    };
-
-    const onMouseUp = () => {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      window.electronAPI.config.set({
-        terminal: { ...config.terminal, panelHeight: latestHeightRef.current },
-      });
-      setIsResizing(false);
-      // Explicit refit signal. The debounced ResizeObserver also handles this,
-      // but the explicit event gives a faster 50ms response.
-      window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
-    };
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    startPanelDrag(event, {
+      cursor: 'row-resize',
+      onMove: (moveEvent) => {
+        const delta = startY - moveEvent.clientY;
+        const newHeight = clampHeight(startHeight + delta);
+        setHeight(newHeight);
+        latestHeightRef.current = newHeight;
+      },
+      onRelease: () => {
+        window.electronAPI.config.set({
+          terminal: { ...config.terminal, panelHeight: latestHeightRef.current },
+        });
+        setIsResizing(false);
+        // Explicit refit signal. The debounced ResizeObserver also handles this,
+        // but the explicit event gives a faster 50ms response.
+        window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
+      },
+    });
   }, [height, config.terminal, clampHeight]);
 
   return { height, collapsed: effectiveCollapsed, isResizing, showContent, ready, suppressTransition, contentColRef, onToggleCollapse, onResizeStart, handleTransitionEnd };

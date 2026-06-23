@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import type { AppConfig } from '../../shared/types';
+import { startPanelDrag } from './panel-drag';
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 400;
@@ -14,7 +15,7 @@ export interface SidebarResizeState {
   isResizing: boolean;
   ready: boolean;
   toggle: () => void;
-  onResizeStart: (e: React.MouseEvent) => void;
+  onResizeStart: (event: React.MouseEvent) => void;
 }
 
 export function useSidebarResize(config: AppConfig): SidebarResizeState {
@@ -55,80 +56,73 @@ export function useSidebarResize(config: AppConfig): SidebarResizeState {
   }, []);
   toggleRef.current = toggle;
 
-  const onResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    document.body.style.userSelect = 'none';
-
-    const startX = e.clientX;
+  const onResizeStart = useCallback((event: React.MouseEvent) => {
+    const startX = event.clientX;
     const wasClosed = !openRef.current;
     const startWidth = wasClosed ? 0 : latestWidthRef.current;
     let isDragging = false;
     let didCollapse = false;
 
-    const onMouseMove = (e: MouseEvent) => {
-      const delta = Math.abs(e.clientX - startX);
+    startPanelDrag(event, {
+      // Cursor is set lazily below, only once the drag clears the dead zone, so a
+      // pure click never changes the cursor.
+      onMove: (moveEvent) => {
+        const delta = Math.abs(moveEvent.clientX - startX);
 
-      // Don't start dragging until past the dead zone
-      if (!isDragging) {
-        if (delta < DRAG_DEAD_ZONE) return;
-        isDragging = true;
-        setIsResizing(true);
-        document.body.style.cursor = 'col-resize';
-      }
+        // Don't start dragging until past the dead zone
+        if (!isDragging) {
+          if (delta < DRAG_DEAD_ZONE) return;
+          isDragging = true;
+          setIsResizing(true);
+          document.body.style.cursor = 'col-resize';
+        }
 
-      const rawWidth = startWidth + (e.clientX - startX);
+        const rawWidth = startWidth + (moveEvent.clientX - startX);
 
-      if (rawWidth < COLLAPSE_THRESHOLD) {
-        // Hold at min width during drag; collapse animates on mouseUp
-        setWidth(MIN_WIDTH);
-        didCollapse = true;
-      } else {
-        const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, rawWidth));
-        setWidth(newWidth);
-        latestWidthRef.current = newWidth;
-        didCollapse = false;
-        if (!openRef.current) setOpen(true);
-      }
-    };
+        if (rawWidth < COLLAPSE_THRESHOLD) {
+          // Hold at min width during drag; collapse animates on mouseUp
+          setWidth(MIN_WIDTH);
+          didCollapse = true;
+        } else {
+          const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, rawWidth));
+          setWidth(newWidth);
+          latestWidthRef.current = newWidth;
+          didCollapse = false;
+          if (!openRef.current) setOpen(true);
+        }
+      },
 
-    const onMouseUp = () => {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
+      onRelease: () => {
+        if (!isDragging) {
+          // Pure click - toggle sidebar
+          toggleRef.current();
+          return;
+        }
 
-      if (!isDragging) {
-        // Pure click -- toggle sidebar
-        toggleRef.current();
-        return;
-      }
+        // End resize state first so CSS transition re-enables
+        setIsResizing(false);
 
-      // End resize state first so CSS transition re-enables
-      setIsResizing(false);
-
-      if (didCollapse) {
-        collapsedByDragRef.current = true;
-        window.electronAPI.config.set({ sidebarVisible: false });
-        // Animate closed: transition is now active, so setting width to 0
-        // triggers the CSS transition from MIN_WIDTH → 0
+        if (didCollapse) {
+          collapsedByDragRef.current = true;
+          window.electronAPI.config.set({ sidebarVisible: false });
+          // Animate closed: transition is now active, so setting width to 0
+          // triggers the CSS transition from MIN_WIDTH → 0
+          requestAnimationFrame(() => {
+            setWidth(0);
+            setOpen(false);
+          });
+        } else {
+          setOpen(true);
+          window.electronAPI.config.set({
+            sidebar: { width: latestWidthRef.current },
+            sidebarVisible: true,
+          });
+        }
         requestAnimationFrame(() => {
-          setWidth(0);
-          setOpen(false);
+          window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
         });
-      } else {
-        setOpen(true);
-        window.electronAPI.config.set({
-          sidebar: { width: latestWidthRef.current },
-          sidebarVisible: true,
-        });
-      }
-      requestAnimationFrame(() => {
-        window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
-      });
-    };
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+      },
+    });
   }, []);
 
   return { open, width, isResizing, ready, toggle, onResizeStart };

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect, type RefObject } from 'react';
 import { useSessionStore } from '../stores/session-store';
+import { startPanelDrag } from './panel-drag';
 
 const MIN_RATIO = 0.25;
 const MAX_RATIO = 0.75;
@@ -17,10 +18,10 @@ export interface TaskSplitResizeState {
 }
 
 /**
- * Drag-to-resize for the task-detail terminal / right-panel split. Mirrors the
- * col-resize pattern in `useSidebarResize`: document-level mousemove/mouseup
- * listeners, body cursor + userSelect overrides, and a `terminal-panel-resize`
- * dispatch on release so the embedded xterm refits to its new width.
+ * Drag-to-resize for the task-detail terminal / right-panel split. Drives the
+ * gesture through the shared `startPanelDrag` helper (document mousemove/mouseup
+ * wiring + body cursor/userSelect lock) and dispatches `terminal-panel-resize` on
+ * release so the embedded xterm refits to its new width.
  *
  * The ratio is one shared value per task (keyed by `taskId` in the session
  * store), so the divider position is identical whether the Browser or Changes
@@ -47,36 +48,28 @@ export function useTaskSplitResize(
   }, [storedRatio, isResizing]);
 
   const onResizeStart = useCallback((event: React.MouseEvent) => {
-    event.preventDefault();
     const container = containerRef.current;
     if (!container) return;
 
     setIsResizing(true);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
 
-    const onMouseMove = (moveEvent: MouseEvent) => {
-      const rect = container.getBoundingClientRect();
-      if (rect.width === 0) return;
-      const nextRatio = clampRatio((moveEvent.clientX - rect.left) / rect.width);
-      setRatio(nextRatio);
-      latestRatioRef.current = nextRatio;
-    };
-
-    const onMouseUp = () => {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      setIsResizing(false);
-      setDividerRatio(taskId, latestRatioRef.current);
-      requestAnimationFrame(() => {
-        window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
-      });
-    };
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    startPanelDrag(event, {
+      cursor: 'col-resize',
+      onMove: (moveEvent) => {
+        const rect = container.getBoundingClientRect();
+        if (rect.width === 0) return;
+        const nextRatio = clampRatio((moveEvent.clientX - rect.left) / rect.width);
+        setRatio(nextRatio);
+        latestRatioRef.current = nextRatio;
+      },
+      onRelease: () => {
+        setIsResizing(false);
+        setDividerRatio(taskId, latestRatioRef.current);
+        requestAnimationFrame(() => {
+          window.dispatchEvent(new CustomEvent('terminal-panel-resize'));
+        });
+      },
+    });
   }, [containerRef, setDividerRatio, taskId]);
 
   return { ratio, isResizing, onResizeStart };
