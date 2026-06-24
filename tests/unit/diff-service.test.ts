@@ -657,6 +657,54 @@ describe('DiffService', () => {
         expect(result.original).toBe('head content');
         expect(result.modified).toBe('index content');
       });
+
+      it('branch scope: consults getMergeBase and fetches original via git.show(<mergeBase>:<path>)', async () => {
+        // The merge-base is resolved via git.raw(['merge-base','origin/main','HEAD'])
+        // (origin/ tried first). The original side is then fetched from that commit
+        // via git.show(['<mergeBase>:<path>']).
+        mockGit.raw.mockResolvedValue('base999\n');
+        mockGit.show.mockResolvedValue('base file content');
+        vi.mocked(fs.promises.readFile).mockResolvedValue('working tree content');
+
+        const result = await service.getFileContent({
+          projectPath: '/project',
+          worktreePath: '/project/wt',
+          baseBranch: 'main',
+          filePath: 'src/b.ts',
+          status: 'M',
+          scope: 'branch',
+        });
+
+        // getMergeBase must consult origin/main first.
+        expect(mockGit.raw).toHaveBeenCalledWith(['merge-base', 'origin/main', 'HEAD']);
+        // Original must come from the merge-base commit, not the index or HEAD.
+        expect(mockGit.show).toHaveBeenCalledWith(['base999:src/b.ts']);
+        expect(result.original).toBe('base file content');
+        // Modified is read from disk (working tree).
+        expect(result.modified).toBe('working tree content');
+      });
+
+      it('branch scope: returns empty string for original when getMergeBase throws', async () => {
+        // Both origin/main and main fail -> getMergeBase falls back to 'HEAD'.
+        // git.show('HEAD:...') then also throws to exercise the inner catch.
+        mockGit.raw.mockRejectedValue(new Error('fatal: not a valid object name'));
+        mockGit.show.mockRejectedValue(new Error('fatal: bad revision HEAD:src/c.ts'));
+        vi.mocked(fs.promises.readFile).mockResolvedValue('working tree content');
+
+        const result = await service.getFileContent({
+          projectPath: '/project',
+          worktreePath: '/project/wt',
+          baseBranch: 'main',
+          filePath: 'src/c.ts',
+          status: 'M',
+          scope: 'branch',
+        });
+
+        // The inner catch must return '' for original (graceful empty).
+        expect(result.original).toBe('');
+        // Modified is still read from disk.
+        expect(result.modified).toBe('working tree content');
+      });
     });
   });
 });

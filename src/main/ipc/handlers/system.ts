@@ -413,7 +413,10 @@ export function registerSystemHandlers(context: IpcContext): void {
   // === Shell ===
   ipcMain.handle(IPC.SHELL_GET_AVAILABLE, () => context.shellResolver.getAvailableShells());
   ipcMain.handle(IPC.SHELL_GET_DEFAULT, () => context.shellResolver.getDefaultShell());
-  ipcMain.handle(IPC.SHELL_OPEN_PATH, (_, dirPath: string) => shell.openPath(dirPath));
+  // Normalize so a path the renderer joined with forward slashes (git paths use
+  // '/') opens correctly on Windows, which needs native backslash separators -
+  // matching the SHELL_SHOW_ITEM_IN_FOLDER handler below.
+  ipcMain.handle(IPC.SHELL_OPEN_PATH, (_, dirPath: string) => shell.openPath(path.normalize(dirPath)));
   ipcMain.handle(IPC.SHELL_OPEN_EXTERNAL, (_, url: string) => shell.openExternal(url));
   // Normalize so a worktree-relative path joined with forward slashes in the
   // renderer (git paths use '/') resolves correctly on Windows, where

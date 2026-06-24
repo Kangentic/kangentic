@@ -154,7 +154,12 @@ export function DiffViewer({
     // already on, which Monaco does not fold on its own).
     const modifiedDom = diffEditor.getModifiedEditor().getDomNode();
     const diffRoot = modifiedDom ? modifiedDom.closest('.monaco-diff-editor') : null;
-    const alreadyFolded = (diffRoot ?? document).querySelectorAll('.diff-hidden-lines').length > 0;
+    // Scope the fold-state probe to THIS editor's root. Falling back to a
+    // document-wide query would read another co-mounted DiffViewer's fold
+    // widgets (two task windows open on Changes), wrongly skipping the fold
+    // here. When the root is unknown, treat as not-folded and apply the
+    // transition rather than skip it.
+    const alreadyFolded = diffRoot ? diffRoot.querySelectorAll('.diff-hidden-lines').length > 0 : false;
     if (alreadyFolded) return;
     diffEditor.updateOptions({ hideUnchangedRegions: { enabled: false } });
     collapseTimerRef.current = setTimeout(() => {

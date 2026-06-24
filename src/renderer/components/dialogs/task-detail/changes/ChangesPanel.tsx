@@ -1,5 +1,5 @@
 import '../../../../monacoConfig';
-import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import { RefreshCw, ChevronsLeftRight, ChevronsRightLeft, Loader2 } from 'lucide-react';
 import { FileTreePanel } from './FileTreePanel';
 import { DiffViewer } from './DiffViewer';
@@ -10,7 +10,17 @@ import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffFilesResult, GitD
 
 // Stable empty set so a task with no viewed files keeps a referentially-constant
 // prop (avoids re-rendering the file tree every render).
+// hmr-safe: never mutated; a referential-identity sentinel for "no viewed files".
 const EMPTY_VIEWED_FILES = new Set<string>();
+
+// File-tree width constraints (px) for the Changes panel two-pane layout.
+const FILE_TREE_DEFAULT_WIDTH = 220;          // width before an auto-fit measurement; also the auto-fit floor
+const FILE_TREE_AUTO_FIT_MAX = 420;           // ceiling so the tree never crowds the diff
+const FILE_TREE_AUTO_FIT_DIFF_RESERVE = 280;  // space kept for the diff pane when auto-fitting
+const FILE_TREE_DRAG_MIN = 160;               // minimum tree width while dragging the divider
+const DIFF_PANE_DRAG_MIN = 240;               // minimum diff-pane width while dragging the divider
+const BRANCH_NAME_FIT_PADDING = 100;          // room beside the branch name (git icon, ahead/behind badges)
+const LAST_COMMIT_FIT_PADDING = 28;           // room beside the last-commit line
 
 // Scoped error boundary prevents Monaco failures from crashing the entire app.
 class DiffErrorBoundary extends React.Component<
@@ -403,8 +413,8 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // state drives live drag feedback.
   const storedFileTreeWidth = useSessionStore((state) => state.changesFileTreeWidth[entityId]);
   const setChangesFileTreeWidth = useSessionStore((state) => state.setChangesFileTreeWidth);
-  const [fileTreeWidth, setFileTreeWidth] = useState<number>(storedFileTreeWidth ?? 220);
-  const fileTreeWidthRef = useRef<number>(storedFileTreeWidth ?? 220);
+  const [fileTreeWidth, setFileTreeWidth] = useState<number>(storedFileTreeWidth ?? FILE_TREE_DEFAULT_WIDTH);
+  const fileTreeWidthRef = useRef<number>(storedFileTreeWidth ?? FILE_TREE_DEFAULT_WIDTH);
   const [isResizingTree, setIsResizingTree] = useState(false);
   const panelRowRef = useRef<HTMLDivElement>(null);
   const autoFittedRef = useRef(false);
@@ -435,16 +445,31 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     autoFittedRef.current = true;
     const branchEl = container.querySelector('[data-testid="changes-branch-name"]');
     const commitEl = container.querySelector('[data-testid="changes-last-commit"]');
-    const branchNeeded = branchEl ? branchEl.scrollWidth + 100 : 0;
-    const commitNeeded = commitEl ? commitEl.scrollWidth + 28 : 0;
+    const branchNeeded = branchEl ? branchEl.scrollWidth + BRANCH_NAME_FIT_PADDING : 0;
+    const commitNeeded = commitEl ? commitEl.scrollWidth + LAST_COMMIT_FIT_PADDING : 0;
     const needed = Math.max(branchNeeded, commitNeeded);
     if (needed > 0) {
-      const fit = Math.round(Math.max(220, Math.min(420, container.getBoundingClientRect().width - 280, needed)));
+      const fit = Math.round(Math.max(
+        FILE_TREE_DEFAULT_WIDTH,
+        Math.min(FILE_TREE_AUTO_FIT_MAX, container.getBoundingClientRect().width - FILE_TREE_AUTO_FIT_DIFF_RESERVE, needed),
+      ));
       setFileTreeWidth(fit);
       fileTreeWidthRef.current = fit;
     }
     setAutoFitReady(true);
   }, [branchSummary, storedFileTreeWidth]);
+
+  // Safety net: never hold the two-pane hidden forever waiting on branch context
+  // that may never arrive (e.g. the branch-summary IPC rejected, so branchSummary
+  // stays null and the auto-fit effect above never runs). If auto-fit has not
+  // completed shortly after mount, reveal at the default width. The happy path
+  // sets autoFitReady within a frame or two, well before this fires, and clears
+  // the timer on cleanup.
+  useEffect(() => {
+    if (autoFitReady) return;
+    const revealFallbackTimer = setTimeout(() => setAutoFitReady(true), 1500);
+    return () => clearTimeout(revealFallbackTimer);
+  }, [autoFitReady]);
 
   const handleTreeResizeStart = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
@@ -457,8 +482,8 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     const onMouseMove = (moveEvent: MouseEvent) => {
       const rect = container.getBoundingClientRect();
       if (rect.width === 0) return;
-      // Keep at least 160px for the tree and 240px for the diff pane.
-      const next = Math.max(160, Math.min(rect.width - 240, moveEvent.clientX - rect.left));
+      // Keep at least FILE_TREE_DRAG_MIN for the tree and DIFF_PANE_DRAG_MIN for the diff pane.
+      const next = Math.max(FILE_TREE_DRAG_MIN, Math.min(rect.width - DIFF_PANE_DRAG_MIN, moveEvent.clientX - rect.left));
       setFileTreeWidth(next);
       fileTreeWidthRef.current = next;
     };
@@ -474,7 +499,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     document.addEventListener('mouseup', onMouseUp);
   }, [setChangesFileTreeWidth, entityId]);
 
-  const selectedFileEntry = files.find((file) => file.path === selectedFile);
+  const selectedFileEntry = useMemo(() => files.find((file) => file.path === selectedFile), [files, selectedFile]);
 
   if (error) {
     return (

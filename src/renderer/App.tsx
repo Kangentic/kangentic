@@ -637,6 +637,11 @@ if (import.meta.hot) {
     // hide the snap preview and clear any leftover frame transforms.
     clearSnapPreviewDom();
 
+    // ChangesPanel Pattern D: an HMR mid file-tree-resize drag fires no mouseup,
+    // so the body cursor / userSelect overrides set on mousedown would stick.
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+
     // Snapshot active tab before sync - syncSessions may transiently clear
     // activeSessionId if the sessions array is briefly empty during re-fetch.
     const previousActiveSessionId = useSessionStore.getState().activeSessionId;
