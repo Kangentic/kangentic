@@ -20,6 +20,12 @@ export interface TaskChangesPanelSlice {
    * open/close, like {@link dividerRatio}).
    */
   changesFileTreeWidth: Record<string, number>;
+  /**
+   * Per-file "viewed" marks for the Changes panel, keyed by task ID to the set of
+   * viewed file paths. A reviewed file's row dims. Panel state (persists across
+   * dialog open/close), reset on app restart like a review session.
+   */
+  changesViewedFiles: Record<string, Set<string>>;
   /** View mode for the task-detail Changes panel, keyed by task ID (default 'split'). */
   changesViewMode: Record<string, 'split' | 'expanded'>;
   /**
@@ -43,6 +49,7 @@ export interface TaskChangesPanelSlice {
   setChangesSelectedFile: (taskId: string, filePath: string | null) => void;
   setChangesScope: (taskId: string, scope: GitDiffScope) => void;
   setChangesFileTreeWidth: (taskId: string, width: number) => void;
+  toggleChangesFileViewed: (taskId: string, filePath: string) => void;
   setChangesViewMode: (taskId: string, mode: 'split' | 'expanded') => void;
   setDividerRatio: (taskId: string, ratio: number) => void;
   toggleBrowserOpen: (taskId: string) => void;
@@ -61,6 +68,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   changesSelectedFile: {},
   changesScope: {},
   changesFileTreeWidth: {},
+  changesViewedFiles: {},
   changesViewMode: {},
   dividerRatio: {},
   browserOpenTasks: new Set<string>(),
@@ -113,6 +121,16 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
 
   setChangesFileTreeWidth: (taskId, width) => {
     set({ changesFileTreeWidth: { ...get().changesFileTreeWidth, [taskId]: width } });
+  },
+
+  toggleChangesFileViewed: (taskId, filePath) => {
+    const next = new Set(get().changesViewedFiles[taskId] ?? []);
+    if (next.has(filePath)) {
+      next.delete(filePath);
+    } else {
+      next.add(filePath);
+    }
+    set({ changesViewedFiles: { ...get().changesViewedFiles, [taskId]: next } });
   },
 
   setChangesSelectedFile: (taskId, filePath) => {

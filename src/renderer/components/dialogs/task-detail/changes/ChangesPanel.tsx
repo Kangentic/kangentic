@@ -7,6 +7,10 @@ import { useSessionStore } from '../../../../stores/session-store';
 import { useConfigStore } from '../../../../stores/config-store';
 import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileContentResult } from '../../../../../shared/types';
 
+// Stable empty set so a task with no viewed files keeps a referentially-constant
+// prop (avoids re-rendering the file tree every render).
+const EMPTY_VIEWED_FILES = new Set<string>();
+
 // Scoped error boundary prevents Monaco failures from crashing the entire app.
 class DiffErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -140,6 +144,13 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
   const handleScopeChange = useCallback((nextScope: GitDiffScope) => {
     setChangesScope(entityId, nextScope);
   }, [entityId, setChangesScope]);
+
+  // Per-file "viewed" marks (per task, session-scoped).
+  const viewedFiles = useSessionStore((state) => state.changesViewedFiles[entityId] ?? EMPTY_VIEWED_FILES);
+  const toggleChangesFileViewed = useSessionStore((state) => state.toggleChangesFileViewed);
+  const handleToggleViewed = useCallback((filePath: string) => {
+    toggleChangesFileViewed(entityId, filePath);
+  }, [entityId, toggleChangesFileViewed]);
 
   // Refs for values needed inside callbacks to avoid stale closures
   // and subscription churn on every file selection or re-render.
@@ -455,6 +466,8 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
             totalInsertions={totalInsertions}
             totalDeletions={totalDeletions}
             branchSummary={branchSummary}
+            viewedFiles={viewedFiles}
+            onToggleViewed={handleToggleViewed}
             scope={scope}
             onScopeChange={handleScopeChange}
             worktreePath={worktreePath}

@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
-import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, FolderOpen, ExternalLink } from 'lucide-react';
+import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, FolderOpen, ExternalLink, Check } from 'lucide-react';
 import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus } from '../../../../../shared/types';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import { useToastStore } from '../../../../stores/toast-store';
@@ -19,6 +19,10 @@ interface FileTreePanelProps {
   totalDeletions: number;
   /** Live branch context (name, ahead/behind, last commit) shown in the header. */
   branchSummary?: GitBranchSummaryResult | null;
+  /** Paths the user has marked "viewed" (their rows dim). */
+  viewedFiles: Set<string>;
+  /** Toggle a file's "viewed" mark. */
+  onToggleViewed: (filePath: string) => void;
   /** Current diff scope (working / staged / branch). */
   scope?: GitDiffScope;
   /** Change the diff scope. */
@@ -184,12 +188,16 @@ const DirectoryRowView = memo(function DirectoryRowView({
 const FileRowView = memo(function FileRowView({
   row,
   isSelected,
+  viewed,
   onSelect,
+  onToggleViewed,
   onContextMenu,
 }: {
   row: FlatFileRow;
   isSelected: boolean;
+  viewed: boolean;
   onSelect: (filePath: string) => void;
+  onToggleViewed: (filePath: string) => void;
   onContextMenu: (file: GitDiffFileEntry, event: ReactMouseEvent) => void;
 }) {
   const statusConfig = STATUS_CONFIG[row.file.status];
@@ -197,24 +205,52 @@ const FileRowView = memo(function FileRowView({
   const fileName = row.file.path.split('/').pop() ?? row.file.path;
 
   return (
-    <button
-      onClick={() => onSelect(row.file.path)}
-      onContextMenu={(event) => onContextMenu(row.file, event)}
-      className={`flex items-center gap-1.5 w-full px-2 text-xs transition-colors ${
-        isSelected ? 'bg-accent/15 text-fg' : 'text-fg-secondary hover:bg-surface-raised/50'
+    <div
+      className={`group flex items-stretch w-full transition-colors ${
+        isSelected ? 'bg-accent/15' : 'hover:bg-surface-raised/50'
       }`}
-      style={{ paddingLeft: `${row.depth * 12 + 8}px`, height: ROW_HEIGHT }}
-      title={`${statusConfig.label}: ${row.file.path}`}
+      style={{ height: ROW_HEIGHT }}
     >
-      <StatusIcon size={12} className={`flex-shrink-0 ${statusConfig.colorClass}`} />
-      <span className="truncate">{fileName}</span>
-      {!row.file.binary && (row.file.insertions > 0 || row.file.deletions > 0) && (
-        <span className="ml-auto flex-shrink-0 flex items-center gap-1 text-[11px]">
-          {row.file.insertions > 0 && <span className="text-green-400">+{row.file.insertions}</span>}
-          {row.file.deletions > 0 && <span className="text-red-400">-{row.file.deletions}</span>}
+      <button
+        onClick={() => onSelect(row.file.path)}
+        onContextMenu={(event) => onContextMenu(row.file, event)}
+        className={`flex items-center gap-1.5 min-w-0 flex-1 px-2 text-xs ${
+          isSelected ? 'text-fg' : 'text-fg-secondary'
+        } ${viewed ? 'opacity-45' : ''}`}
+        style={{ paddingLeft: `${row.depth * 12 + 8}px` }}
+        title={`${statusConfig.label}: ${row.file.path}`}
+      >
+        <StatusIcon size={12} className={`flex-shrink-0 ${statusConfig.colorClass}`} />
+        <span className="truncate">{fileName}</span>
+        {!row.file.binary && (row.file.insertions > 0 || row.file.deletions > 0) && (
+          <span className="ml-auto flex-shrink-0 flex items-center gap-1 text-[11px]">
+            {row.file.insertions > 0 && <span className="text-green-400">+{row.file.insertions}</span>}
+            {row.file.deletions > 0 && <span className="text-red-400">-{row.file.deletions}</span>}
+          </span>
+        )}
+      </button>
+      {/* "Viewed" toggle: a reviewed file's row dims. Always visible (not
+          hover-only) so the review state is discoverable; subtle until checked. */}
+      <button
+        type="button"
+        onClick={() => onToggleViewed(row.file.path)}
+        title={viewed ? 'Mark as not viewed' : 'Mark as viewed'}
+        aria-pressed={viewed}
+        data-testid="changes-viewed-toggle"
+        data-path={row.file.path}
+        className="flex-shrink-0 flex items-center px-2"
+      >
+        <span
+          className={`flex items-center justify-center w-3.5 h-3.5 rounded border transition-colors ${
+            viewed
+              ? 'bg-accent-emphasis border-accent-emphasis text-accent-on'
+              : 'border-edge-input text-transparent group-hover:border-fg-muted'
+          }`}
+        >
+          <Check size={10} strokeWidth={3} />
         </span>
-      )}
-    </button>
+      </button>
+    </div>
   );
 });
 
@@ -225,13 +261,17 @@ const FileRowView = memo(function FileRowView({
 function VirtualizedFileTree({
   files,
   selectedFile,
+  viewedFiles,
   onSelect,
+  onToggleViewed,
   onContextMenu,
   defaultExpanded,
 }: {
   files: GitDiffFileEntry[];
   selectedFile: string | null;
+  viewedFiles: Set<string>;
   onSelect: (filePath: string) => void;
+  onToggleViewed: (filePath: string) => void;
   onContextMenu: (file: GitDiffFileEntry, event: ReactMouseEvent) => void;
   defaultExpanded: boolean;
 }) {
@@ -337,7 +377,9 @@ function VirtualizedFileTree({
                 key={row.key}
                 row={row}
                 isSelected={selectedFile === row.file.path}
+                viewed={viewedFiles.has(row.file.path)}
                 onSelect={onSelect}
+                onToggleViewed={onToggleViewed}
                 onContextMenu={onContextMenu}
               />
             ),
@@ -513,6 +555,8 @@ export function FileTreePanel({
   totalInsertions,
   totalDeletions,
   branchSummary,
+  viewedFiles,
+  onToggleViewed,
   scope,
   onScopeChange,
   worktreePath,
@@ -520,6 +564,11 @@ export function FileTreePanel({
 }: FileTreePanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
+
+  const viewedCount = useMemo(
+    () => files.reduce((count, file) => (viewedFiles.has(file.path) ? count + 1 : count), 0),
+    [files, viewedFiles],
+  );
 
   const filteredFiles = useMemo(() => {
     if (!searchQuery) return files;
@@ -576,6 +625,12 @@ export function FileTreePanel({
         <span>{files.length} file{files.length !== 1 ? 's' : ''}</span>
         {totalInsertions > 0 && <span className="text-green-400">+{totalInsertions}</span>}
         {totalDeletions > 0 && <span className="text-red-400">-{totalDeletions}</span>}
+        {viewedCount > 0 && (
+          <span className="ml-auto flex items-center gap-1 text-fg-faint" data-testid="changes-viewed-count">
+            <Check size={11} className="text-accent" />
+            {viewedCount}/{files.length} viewed
+          </span>
+        )}
       </div>
 
       {/* Search */}
@@ -601,7 +656,9 @@ export function FileTreePanel({
         <VirtualizedFileTree
           files={filteredFiles}
           selectedFile={selectedFile}
+          viewedFiles={viewedFiles}
           onSelect={onSelect}
+          onToggleViewed={onToggleViewed}
           onContextMenu={handleFileContextMenu}
           defaultExpanded
         />

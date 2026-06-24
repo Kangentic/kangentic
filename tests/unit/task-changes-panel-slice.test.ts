@@ -156,6 +156,35 @@ describe('setChangesFileTreeWidth', () => {
 });
 
 // ---------------------------------------------------------------------------
+// toggleChangesFileViewed
+// ---------------------------------------------------------------------------
+
+describe('toggleChangesFileViewed', () => {
+  it('starts empty', () => {
+    const { getState } = createTestStore();
+    expect(getState().changesViewedFiles).toEqual({});
+  });
+
+  it('marks a file viewed, then un-viewed, on successive toggles', () => {
+    const { actions, getState } = createTestStore();
+    actions.toggleChangesFileViewed('task-1', 'src/a.ts');
+    expect(getState().changesViewedFiles['task-1'].has('src/a.ts')).toBe(true);
+    actions.toggleChangesFileViewed('task-1', 'src/a.ts');
+    expect(getState().changesViewedFiles['task-1'].has('src/a.ts')).toBe(false);
+  });
+
+  it('tracks multiple files and keys them independently per task id', () => {
+    const { actions, getState } = createTestStore();
+    actions.toggleChangesFileViewed('task-1', 'src/a.ts');
+    actions.toggleChangesFileViewed('task-1', 'src/b.ts');
+    actions.toggleChangesFileViewed('task-2', 'src/a.ts');
+    expect(getState().changesViewedFiles['task-1'].size).toBe(2);
+    expect(getState().changesViewedFiles['task-2'].has('src/a.ts')).toBe(true);
+    expect(getState().changesViewedFiles['task-2'].has('src/b.ts')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // toggleMaximized
 // ---------------------------------------------------------------------------
 

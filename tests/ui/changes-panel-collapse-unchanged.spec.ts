@@ -123,7 +123,7 @@ test.describe('Changes panel: collapse unchanged regions', () => {
 
     // Reproduce the preview sequence: switch scope first (which refetches + remounts
     // the diff), then toggle collapse, to rule out a scope-switch interaction.
-    await page.locator('[data-testid="changes-scope-select"]').selectOption('working');
+    await page.locator('[data-testid="changes-scope-working"]').click();
     await expect.poll(async () => (await readMonaco(page)).lineChangeCount, { timeout: 10000 }).toBe(2);
 
     // Initially nothing is folded.
