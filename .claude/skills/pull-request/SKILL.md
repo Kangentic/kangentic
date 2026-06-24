@@ -223,6 +223,13 @@ worktree's local HEAD by design, Kangentic's branch-based auto-detection will NO
 stored `pr_number` is the only thing connecting the task to it. If the update fails, retry it; do
 not leave the task unlinked.
 
+**If the kangentic MCP is unavailable** (it can disconnect/reconnect mid-run): the PR work itself
+does not need it - only the Step 1.5 slug and this link do. Do not abort. For the slug, fall back to
+deriving `<desc>` from the commit messages instead of the task title. For the link, keep going (the
+PR is created and pushed) and retry `kangentic_get_current_task` + `kangentic_update_task` once the
+MCP is back (the notification fires when it reconnects); if it never returns this run, report the PR
+number prominently so the user can link it in-app.
+
 ## Step 6 - Monitor checks until green
 
 Wait for the PR's CI checks to finish, then branch on the outcome. Use `gh pr checks` in watch mode
@@ -230,14 +237,27 @@ rather than a manual poll loop (no `sleep` - the single-command rule forbids it)
 
 1. The PR head is `<branch>` (the clean public name from Step 1.5), so `gh pr checks <branch>`
    resolves it. The local HEAD differs by design; PR resolution does not need them to match.
-2. Run `gh pr checks <branch> --watch --fail-fast --interval 30` with a generous Bash tool
-   `timeout` (about 40 minutes / `2400000` ms) as the hard wall-clock cap. `--watch` returns when
-   the checks settle; `--fail-fast` returns as soon as one fails so the fix loop starts promptly.
-   The Windows Electron E2E job is the long pole (a few minutes cold).
+2. Run `gh pr checks <branch> --watch --fail-fast --interval 30` with the Bash tool `timeout` set to
+   its MAXIMUM of `600000` ms (10 minutes). Do NOT pass a larger value: the Bash tool clamps/rejects
+   anything over 600000, so the old "40 minutes" figure is not actually achievable in one call.
+   `--watch` returns when the checks settle; `--fail-fast` returns as soon as one fails so the fix
+   loop starts promptly. The sharded Linux E2E and UI jobs are the long pole (a few minutes; longer
+   on a cold runner).
+
+   Expect a non-zero exit while checks are unfinished. `gh pr checks` returns exit code `8` when not
+   all checks have passed yet (still pending OR a genuine failure), which the Bash tool surfaces as a
+   "Bash error exit code 8". That is STATUS, not a tooling failure - read the printed rows to decide.
+   Do NOT run a bare `gh pr checks <branch>` (without `--watch`) as a pre-flight probe: it always
+   exits 8 while anything is pending and only adds a scary-looking error to the transcript. Go
+   straight to the `--watch` form, which exits 0 once every row reads `pass`.
 3. Interpret the result:
-   - **All checks passed** (exit 0): go to Step 6b (flake scan).
-   - **A check failed** (non-zero exit): go to Step 7 (auto-fix).
-   - **The Bash timeout fired** (a check stuck pending): go to Step 8b (escalate, stuck checks).
+   - **All checks passed** (every row `pass`; the watch exited 0): go to Step 6b (flake scan).
+   - **A check failed** (a `fail`/`failure` row, or `--fail-fast` returned on a failure): go to
+     Step 7 (auto-fix).
+   - **The 10-minute Bash timeout fired with checks still only pending** (no failure yet, just
+     slow): RE-RUN the same `--watch` command - it resumes from the current state. Repeat as needed.
+     Only when the checks have made NO forward progress across two consecutive full 10-minute watches
+     (genuinely stuck, not merely slow) go to Step 8b (escalate, stuck checks).
 
 ## Step 6b - Flake scan (ZERO flaky tolerance)
 
