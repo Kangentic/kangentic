@@ -1,5 +1,6 @@
 import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
-import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, FolderOpen, ExternalLink, Check } from 'lucide-react';
+import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check } from 'lucide-react';
+import { useConfigStore } from '../../../../stores/config-store';
 import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus } from '../../../../../shared/types';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import { useToastStore } from '../../../../stores/toast-store';
@@ -102,6 +103,35 @@ function compactTree(node: DirectoryNode): DirectoryNode {
 }
 
 // ---------------------------------------------------------------------------
+// File sorting
+// ---------------------------------------------------------------------------
+
+type FileSortMode = 'name' | 'status' | 'size';
+
+// Status grouping order for "by status": additions, then untracked, modified,
+// renamed, copied, and deletions last.
+const STATUS_SORT_RANK: Record<GitDiffStatus, number> = { A: 0, U: 1, M: 2, R: 3, C: 4, D: 5 };
+
+function compareFiles(a: GitDiffFileEntry, b: GitDiffFileEntry, sort: FileSortMode): number {
+  if (sort === 'status') {
+    const byStatus = STATUS_SORT_RANK[a.status] - STATUS_SORT_RANK[b.status];
+    if (byStatus !== 0) return byStatus;
+  } else if (sort === 'size') {
+    const bySize = (b.insertions + b.deletions) - (a.insertions + a.deletions); // largest first
+    if (bySize !== 0) return bySize;
+  }
+  return a.path.localeCompare(b.path); // name sort, and the tiebreak for the others
+}
+
+/** Sort a directory tree in place: files by the chosen mode, directories by name. */
+function sortDirectoryTree(node: DirectoryNode, sort: FileSortMode): DirectoryNode {
+  node.files.sort((a, b) => compareFiles(a, b, sort));
+  node.children.sort((a, b) => a.name.localeCompare(b.name));
+  node.children.forEach((child) => sortDirectoryTree(child, sort));
+  return node;
+}
+
+// ---------------------------------------------------------------------------
 // Flatten tree into virtualized rows
 // ---------------------------------------------------------------------------
 
@@ -189,6 +219,7 @@ const FileRowView = memo(function FileRowView({
   row,
   isSelected,
   viewed,
+  flat,
   onSelect,
   onToggleViewed,
   onContextMenu,
@@ -196,13 +227,16 @@ const FileRowView = memo(function FileRowView({
   row: FlatFileRow;
   isSelected: boolean;
   viewed: boolean;
+  flat: boolean;
   onSelect: (filePath: string) => void;
   onToggleViewed: (filePath: string) => void;
   onContextMenu: (file: GitDiffFileEntry, event: ReactMouseEvent) => void;
 }) {
   const statusConfig = STATUS_CONFIG[row.file.status];
   const StatusIcon = statusConfig.icon;
-  const fileName = row.file.path.split('/').pop() ?? row.file.path;
+  // Flat mode shows the full repo-relative path (no directory rows for context);
+  // tree mode shows just the basename since the directory rows supply the path.
+  const displayName = flat ? row.file.path : (row.file.path.split('/').pop() ?? row.file.path);
 
   return (
     <div
@@ -224,7 +258,7 @@ const FileRowView = memo(function FileRowView({
         title={`${statusConfig.label}: ${row.file.path}`}
       >
         <StatusIcon size={12} className={`flex-shrink-0 ${statusConfig.colorClass}`} />
-        <span className="truncate">{fileName}</span>
+        <span className="truncate">{displayName}</span>
         {!row.file.binary && (row.file.insertions > 0 || row.file.deletions > 0) && (
           <span className="ml-auto flex-shrink-0 flex items-center gap-1 text-[11px]">
             {row.file.insertions > 0 && <span className="text-green-400">+{row.file.insertions}</span>}
@@ -265,6 +299,9 @@ function VirtualizedFileTree({
   files,
   selectedFile,
   viewedFiles,
+  sort,
+  flat,
+  expansionCommand,
   onSelect,
   onToggleViewed,
   onContextMenu,
@@ -273,12 +310,16 @@ function VirtualizedFileTree({
   files: GitDiffFileEntry[];
   selectedFile: string | null;
   viewedFiles: Set<string>;
+  sort: FileSortMode;
+  flat: boolean;
+  /** Bump `nonce` to expand (expand: true) or collapse (false) every directory. */
+  expansionCommand: { expand: boolean; nonce: number };
   onSelect: (filePath: string) => void;
   onToggleViewed: (filePath: string) => void;
   onContextMenu: (file: GitDiffFileEntry, event: ReactMouseEvent) => void;
   defaultExpanded: boolean;
 }) {
-  const tree = useMemo(() => buildDirectoryTree(files), [files]);
+  const tree = useMemo(() => sortDirectoryTree(buildDirectoryTree(files), sort), [files, sort]);
 
   // Collect all directory paths for default expansion
   const allDirectoryPaths = useMemo(() => {
@@ -312,6 +353,15 @@ function VirtualizedFileTree({
     }
   }, [allDirectoryPaths, defaultExpanded]);
 
+  // Collapse-all / expand-all: apply when the command nonce changes (not on mount,
+  // and not on an unrelated allDirectoryPaths change).
+  const expansionNonceRef = useRef(expansionCommand.nonce);
+  useEffect(() => {
+    if (expansionCommand.nonce === expansionNonceRef.current) return;
+    expansionNonceRef.current = expansionCommand.nonce;
+    setExpandedPaths(expansionCommand.expand ? new Set(allDirectoryPaths) : new Set<string>());
+  }, [expansionCommand, allDirectoryPaths]);
+
   const toggleDirectory = useCallback((fullPath: string) => {
     setExpandedPaths((previous) => {
       const next = new Set(previous);
@@ -325,10 +375,15 @@ function VirtualizedFileTree({
   }, []);
 
   const flatRows = useMemo(() => {
+    if (flat) {
+      return [...files]
+        .sort((a, b) => compareFiles(a, b, sort))
+        .map((file): FlatRow => ({ kind: 'file', key: `file:${file.path}`, file, depth: 0 }));
+    }
     const result: FlatRow[] = [];
     flattenTree(tree, 0, expandedPaths, result);
     return result;
-  }, [tree, expandedPaths]);
+  }, [flat, files, sort, tree, expandedPaths]);
 
   // Virtualization state
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -381,6 +436,7 @@ function VirtualizedFileTree({
                 row={row}
                 isSelected={selectedFile === row.file.path}
                 viewed={viewedFiles.has(row.file.path)}
+                flat={flat}
                 onSelect={onSelect}
                 onToggleViewed={onToggleViewed}
                 onContextMenu={onContextMenu}
@@ -568,6 +624,22 @@ export function FileTreePanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
 
+  const sort = useConfigStore((state) => state.config.diffFileSort);
+  const flat = useConfigStore((state) => state.config.diffFlatList);
+  const updateConfig = useConfigStore((state) => state.updateConfig);
+
+  const cycleSort = useCallback(() => {
+    const order: FileSortMode[] = ['name', 'status', 'size'];
+    updateConfig({ diffFileSort: order[(order.indexOf(sort) + 1) % order.length] });
+  }, [sort, updateConfig]);
+
+  // Collapse-all / expand-all command for the tree. `expand` is the last-applied
+  // direction (drives the button icon); bumping `nonce` re-applies it.
+  const [expansion, setExpansion] = useState({ expand: true, nonce: 0 });
+  const toggleCollapseAll = useCallback(() => {
+    setExpansion((previous) => ({ expand: !previous.expand, nonce: previous.nonce + 1 }));
+  }, []);
+
   const viewedCount = useMemo(
     () => files.reduce((count, file) => (viewedFiles.has(file.path) ? count + 1 : count), 0),
     [files, viewedFiles],
@@ -623,20 +695,53 @@ export function FileTreePanel({
         </div>
       )}
 
-      {/* Stats bar */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-edge text-xs text-fg-muted flex-shrink-0">
+      {/* List header: file count + view controls (sort, tree/flat, collapse-all),
+          right-aligned. The filter search gets its own full-width row below. */}
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-edge text-xs text-fg-muted flex-shrink-0">
         <span>{files.length} file{files.length !== 1 ? 's' : ''}</span>
         {totalInsertions > 0 && <span className="text-green-400">+{totalInsertions}</span>}
         {totalDeletions > 0 && <span className="text-red-400">-{totalDeletions}</span>}
-        {viewedCount > 0 && (
-          <span className="ml-auto flex items-center gap-1 text-fg-faint" data-testid="changes-viewed-count">
-            <Check size={11} className="text-accent" />
-            {viewedCount}/{files.length} viewed
-          </span>
-        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          {viewedCount > 0 && (
+            <span
+              className="flex items-center gap-1 text-fg-faint"
+              data-testid="changes-viewed-count"
+              title={`${viewedCount} of ${files.length} files viewed`}
+            >
+              <Check size={11} className="text-accent" />
+              {viewedCount}/{files.length} viewed
+            </span>
+          )}
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => updateConfig({ diffFlatList: !flat })}
+              title={flat ? 'Flat list (switch to tree)' : 'Tree view (switch to flat list)'}
+              aria-label={flat ? 'Flat list' : 'Tree view'}
+              data-testid="changes-tree-flat"
+              data-flat={flat}
+              className="flex-shrink-0 p-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
+            >
+              {flat ? <List size={14} /> : <ListTree size={14} />}
+            </button>
+            {/* Always rendered (disabled in flat mode, where there are no
+                directories) so toggling tree/flat never shifts the other buttons. */}
+            <button
+              type="button"
+              onClick={toggleCollapseAll}
+              disabled={flat}
+              title={flat ? 'Collapse / expand all (tree view only)' : expansion.expand ? 'Collapse all' : 'Expand all'}
+              aria-label={expansion.expand ? 'Collapse all' : 'Expand all'}
+              data-testid="changes-collapse-all"
+              className="flex-shrink-0 p-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-fg-muted"
+            >
+              {expansion.expand ? <FoldVertical size={14} /> : <UnfoldVertical size={14} />}
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Search */}
+      {/* Filter + sort: querying / ordering the list, grouped in one control. */}
       <div className="px-2 py-1.5 border-b border-edge flex-shrink-0">
         <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-surface text-xs">
           <Search size={12} className="text-fg-muted flex-shrink-0" />
@@ -645,8 +750,18 @@ export function FileTreePanel({
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             placeholder="Filter files..."
-            className="bg-transparent outline-none flex-1 text-fg placeholder:text-fg-disabled"
+            className="bg-transparent outline-none flex-1 min-w-0 text-fg placeholder:text-fg-disabled"
           />
+          <button
+            type="button"
+            onClick={cycleSort}
+            title={`Sort: by ${sort}`}
+            aria-label={`Sort: by ${sort}`}
+            data-testid="changes-sort"
+            className="flex-shrink-0 -mr-1 p-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
+          >
+            <ArrowDownUp size={14} />
+          </button>
         </div>
       </div>
 
@@ -660,6 +775,9 @@ export function FileTreePanel({
           files={filteredFiles}
           selectedFile={selectedFile}
           viewedFiles={viewedFiles}
+          sort={sort}
+          flat={flat}
+          expansionCommand={expansion}
           onSelect={onSelect}
           onToggleViewed={onToggleViewed}
           onContextMenu={handleFileContextMenu}

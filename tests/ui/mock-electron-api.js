@@ -52,6 +52,8 @@
     diffDefaultScope: 'working',
     diffIgnoreWhitespace: false,
     diffCollapseUnchanged: false,
+    diffFileSort: 'name',
+    diffFlatList: false,
     terminal: {
       shell: null,
       fontFamily: 'Consolas, "Courier New", monospace',

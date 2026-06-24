@@ -47,7 +47,7 @@ export function LayoutTab({ globalConfig }: { globalConfig: AppConfig }) {
         onChange={(value) => updateGlobal({ animationsEnabled: value })}
       />
 
-      <SectionHeader label="Diff" searchIds={['diffViewMode', 'diffDefaultScope', 'diffIgnoreWhitespace', 'diffCollapseUnchanged']} />
+      <SectionHeader label="Diff" searchIds={['diffViewMode', 'diffDefaultScope', 'diffIgnoreWhitespace', 'diffCollapseUnchanged', 'diffFileSort', 'diffFlatList']} />
       <SettingRow {...settingProps('diffViewMode')}>
         <Select
           value={globalConfig.diffViewMode}
@@ -76,6 +76,21 @@ export function LayoutTab({ globalConfig }: { globalConfig: AppConfig }) {
         {...settingProps('diffCollapseUnchanged')}
         checked={globalConfig.diffCollapseUnchanged}
         onChange={(value) => updateGlobal({ diffCollapseUnchanged: value })}
+      />
+      <SettingRow {...settingProps('diffFileSort')}>
+        <Select
+          value={globalConfig.diffFileSort}
+          onChange={(event) => updateGlobal({ diffFileSort: event.target.value as AppConfig['diffFileSort'] })}
+        >
+          <option value="name">Name</option>
+          <option value="status">Status</option>
+          <option value="size">Size</option>
+        </Select>
+      </SettingRow>
+      <SettingToggleRow
+        {...settingProps('diffFlatList')}
+        checked={globalConfig.diffFlatList}
+        onChange={(value) => updateGlobal({ diffFlatList: value })}
       />
     </>
   );
