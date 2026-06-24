@@ -53,6 +53,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `dev:createEphemeralProject` | invoke | Clone the current worktree into an isolated, throwaway preview project (TestHarness "Create Project" button); fills its working tree in the background and returns the usable `Project` |
+| `dev:seedGitChanges` | invoke | Seed a realistic all-scopes / all-statuses git changeset (committed, staged, working) into each ephemeral preview repo (active task worktrees plus the project) so the Changes tab has content to exercise; silently skips any path outside the preview-projects root. Returns `DevSeedGitChangesResult` |
 
 ### Project Groups (6 channels)
 | Channel | Pattern | Purpose |
@@ -257,26 +258,28 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 |---------|---------|---------|
 | `handoff:list` | handle | List handoff records for a task |
 
-### Shell (5 channels)
+### Shell (6 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `shell:getAvailable` | invoke | List available shells |
 | `shell:getDefault` | invoke | Get default shell |
 | `shell:openPath` | invoke | Open directory in file explorer |
 | `shell:openExternal` | invoke | Open URL in default browser |
+| `shell:showItemInFolder` | invoke | Reveal a file or directory in the native file manager (Explorer on Windows, Finder on macOS); the path is normalized to platform separators before dispatch |
 | `shell:exec` | invoke | Execute shell command |
 
-### Git (8 channels)
+### Git (9 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `git:detect` | invoke | Detect git installation (path, version, minimum version check) |
 | `git:listBranches` | invoke | List branches for a repository |
-| `git:diffFiles` | invoke | List changed files with status and stats between base branch and HEAD/working tree |
-| `git:fileContent` | invoke | Fetch original and modified file content for diff display |
-| `git:diffSubscribe` | send | Subscribe to file-system watcher for live diff updates on a worktree |
+| `git:diffFiles` | invoke | List changed files with status and stats for a scope (working / staged / branch) |
+| `git:fileContent` | invoke | Fetch original and modified file content for diff display (per scope) |
+| `git:diffSubscribe` | send | Subscribe to file-system watcher for live diff updates on a worktree (working tree plus git metadata) |
 | `git:diffUnsubscribe` | send | Unsubscribe from diff change watcher for a worktree |
-| `git:diffChanged` | on | Debounced event fired when watched worktree files change on disk |
+| `git:diffChanged` | on | Debounced event fired when watched worktree files or git metadata change on disk |
 | `git:checkPendingChanges` | invoke | Check whether a path has uncommitted or unpushed changes |
+| `git:branchSummary` | invoke | Lightweight branch summary for the Changes panel header: current branch, ahead/behind commit counts vs the base branch, and the HEAD tip commit (hash, subject, timestamp). Cheap enough to run on every panel open and watcher fire |
 
 ### Dialog (1 channel)
 | Channel | Pattern | Purpose |

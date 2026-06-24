@@ -28,6 +28,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 
 - `sidebarVisible`, `boardLayout`, `sidebar.width`
 - `cardDensity`, `columnWidth`, `terminalPanelVisible`, `animationsEnabled`, `statusBarVisible`, `diffViewMode`
+- `diffDefaultScope`, `diffIgnoreWhitespace`, `diffCollapseUnchanged`, `diffFileSort`, `diffFlatList`
 - `restoreWindowPosition`
 - `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`
 - `terminal.panelHeight`, `terminal.showPreview`
@@ -67,6 +68,11 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `animationsEnabled` | boolean | `true` | Enable CSS keyframe animations (idle pulse, dialog fades, status bar pulses). Global-only. |
 | `statusBarVisible` | boolean | `true` | Show the status bar at the bottom of the window. Global-only. |
 | `diffViewMode` | `'split'` \| `'inline'` | `'split'` | Default layout for Git file diffs in the Changes panel (`split` = side by side, `inline` = unified). The in-diff toggle and the Layout settings tab write this same key, so the choice sticks. Global-only. |
+| `diffDefaultScope` | `'working'` \| `'staged'` \| `'branch'` | `'working'` | Which changes a freshly opened Changes panel shows: `working` (uncommitted edits vs the index), `staged` (index vs HEAD), or `branch` (the whole branch vs its base). The in-panel scope control overrides it per session. Global-only. |
+| `diffIgnoreWhitespace` | boolean | `false` | Hide whitespace-only changes in the diff to filter reformatting noise. The in-diff toggle and the Layout tab write this key. Global-only. |
+| `diffCollapseUnchanged` | boolean | `false` | Fold away large unchanged regions so only changed hunks (with a little surrounding context) are shown. Global-only. |
+| `diffFileSort` | `'name'` \| `'status'` \| `'size'` | `'name'` | How the Changes panel orders files: by name, by status (added / modified / deleted), or by size (most changes first). Global-only. |
+| `diffFlatList` | boolean | `false` | Show changed files as a flat list of full paths instead of a nested directory tree. Global-only. |
 | `skipDeleteConfirm` | boolean | `false` | Skip confirmation dialog on task delete. Written by the delete dialog's "don't ask again" checkbox. No longer surfaced in the Settings panel. |
 | `autoFocusIdleSession` | boolean | `false` | Auto-switch to session tab when agent goes idle. Idle tabs are always highlighted regardless of this setting. |
 | `windowLightDismiss` | `'off'` \| `'single'` \| `'focused'` \| `'all'` | `'single'` | Click-outside (light-dismiss) policy for modeless task-detail windows. `off` disables; `single` closes the lone window (any state); `focused` closes the focused window (any state); `all` closes every window. Closing a window does not kill its session. Global-only. |
@@ -216,7 +222,7 @@ All context bar settings are global-only and cannot be overridden per-project.
 
 ### Hotkeys
 
-Lists every keyboard shortcut grouped by area (General, Task Detail, Windows, Browser, Terminal, Developer) and lets the user rebind the configurable ones. Global-only (per-machine). Each row's capture widget records the next key chord or a mouse button press (middle or side buttons, so an action can be bound to either input; Escape cancels) and probes whether that combo is already claimed by the OS or another app (via the `keybindings:probeGlobal` IPC channel), warning if so. Two actions resolving to the same combo in overlapping scopes are flagged as a conflict. Reset-to-default is available per row and for all at once. Terminal clipboard combos (Copy, Paste) and Escape are shown read-only. The registry of every shortcut + default combo lives in `src/shared/keybindings.ts`; handlers read their effective combo through the `useKeybinding` hook. Overrides persist to the `hotkeyOverrides` key (see the Top-Level table above).
+Lists every keyboard shortcut grouped by area (General, Task Detail, Git Changes, Windows, Browser, Terminal, Developer) and lets the user rebind the configurable ones. Global-only (per-machine). Each row's capture widget records the next key chord or a mouse button press (middle or side buttons, so an action can be bound to either input; Escape cancels) and probes whether that combo is already claimed by the OS or another app (via the `keybindings:probeGlobal` IPC channel), warning if so. Two actions resolving to the same combo in overlapping scopes are flagged as a conflict. Reset-to-default is available per row and for all at once. Terminal clipboard combos (Copy, Paste) and Escape are shown read-only. The registry of every shortcut + default combo lives in `src/shared/keybindings.ts`; handlers read their effective combo through the `useKeybinding` hook. Overrides persist to the `hotkeyOverrides` key (see the Top-Level table above). The **Git Changes** group adds four cross-file diff-navigation shortcuts for the Changes panel, scoped to the task dialog and gated on the focused window: `changes.nextChange` (Alt+Down, also F7) and `changes.prevChange` (Alt+Up, also Shift+F7) step through hunks and roll over into the adjacent file at the boundaries, while `changes.nextFile` (Alt+Shift+Down) and `changes.prevFile` (Alt+Shift+Up) jump whole files.
 
 ### Privacy
 
