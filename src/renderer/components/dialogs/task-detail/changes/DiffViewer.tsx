@@ -3,6 +3,7 @@ import { DiffEditor } from '@monaco-editor/react';
 import type { DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
 import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Pilcrow, FoldVertical } from 'lucide-react';
 import { useConfigStore } from '../../../../stores/config-store';
+import { useKeybinding } from '../../../../hooks/useKeybinding';
 import { NAMED_THEMES } from '../../../../../shared/types';
 import type { GitDiffStatus } from '../../../../../shared/types';
 import {
@@ -31,6 +32,16 @@ interface DiffViewerProps {
    *  (e.g. the task-detail expand/collapse buttons). Omitted by the standalone
    *  TaskChangesDialog, which has no panel-layout controls. */
   trailingControls?: ReactNode;
+  /** Whether the containing task window is focused (gates the change-nav keys). */
+  isFocused?: boolean;
+  /** Called when next/prev-change reaches a file boundary, so the panel rolls
+   *  into the adjacent file. */
+  onCrossFile?: (direction: 'next' | 'prev') => void;
+  /** When set, jump to this file's first/last change once its diff loads (used
+   *  when the panel just rolled into this file from an adjacent one). */
+  pendingChangeFocus?: 'first' | 'last' | null;
+  /** Called once the pending change-focus has been applied, so the panel clears it. */
+  onPendingChangeFocusConsumed?: () => void;
 }
 
 const STATUS_LABELS: Record<GitDiffStatus, { label: string; colorClass: string }> = {
@@ -74,6 +85,10 @@ export function DiffViewer({
   onViewModeChange,
   binary,
   trailingControls,
+  isFocused = false,
+  onCrossFile,
+  pendingChangeFocus = null,
+  onPendingChangeFocusConsumed,
 }: DiffViewerProps) {
   const theme = useConfigStore((state) => state.config.theme);
   const themeBase = NAMED_THEMES.find((namedTheme) => namedTheme.id === theme)?.base ?? 'dark';
@@ -106,6 +121,15 @@ export function DiffViewer({
 
   const collapseUnchangedRef = useRef(collapseUnchanged);
   collapseUnchangedRef.current = collapseUnchanged;
+
+  // Mirror nav props into refs so the stable navigateChange callback and the
+  // once-subscribed onDidUpdateDiff listener always read the latest values.
+  const onCrossFileRef = useRef(onCrossFile);
+  onCrossFileRef.current = onCrossFile;
+  const pendingChangeFocusRef = useRef(pendingChangeFocus);
+  pendingChangeFocusRef.current = pendingChangeFocus;
+  const onPendingChangeFocusConsumedRef = useRef(onPendingChangeFocusConsumed);
+  onPendingChangeFocusConsumedRef.current = onPendingChangeFocusConsumed;
 
   // Apply (or clear) the unchanged-region fold on the live editor. Monaco folds
   // only on a false->true transition of hideUnchangedRegions, so a diff that
@@ -145,27 +169,55 @@ export function DiffViewer({
   // file change so navigation restarts from the top of each new file.
   const changeIndexRef = useRef(-1);
 
-  // Reveal the next or previous changed region using the diff's line changes.
-  // Wraps around at the ends; a no-op when the diff has no changes yet.
+  // Reveal the change at `index`. Pure-deletion hunks have
+  // modifiedStartLineNumber 0; clamp to line 1.
+  const revealChangeLine = useCallback((lineNumber: number, smooth: boolean) => {
+    const modifiedEditor = diffEditorRef.current?.getModifiedEditor();
+    if (!modifiedEditor) return;
+    const scrollType = smooth
+      ? monacoRef.current?.editor.ScrollType.Smooth
+      : monacoRef.current?.editor.ScrollType.Immediate;
+    modifiedEditor.revealLineInCenter(Math.max(1, lineNumber), scrollType);
+    modifiedEditor.setPosition({ lineNumber: Math.max(1, lineNumber), column: 1 });
+  }, []);
+
+  // Reveal the next or previous changed region. At a file's first/last change,
+  // roll into the adjacent file via onCrossFile (the panel selects it and asks us
+  // to land on its first/last change). changeIndexRef === -1 means "nothing
+  // focused yet" (file just opened): next -> first change, prev -> last change.
   const navigateChange = useCallback((direction: 'next' | 'prev') => {
     const diffEditor = diffEditorRef.current;
-    if (diffEditor === null) return;
-    const lineChanges = diffEditor.getLineChanges();
-    if (!lineChanges || lineChanges.length === 0) return;
+    const lineChanges = diffEditor?.getLineChanges() ?? null;
+    if (diffEditor === null || lineChanges === null || lineChanges.length === 0) {
+      onCrossFileRef.current?.(direction); // no diff/changes here: roll on
+      return;
+    }
     const lastIndex = lineChanges.length - 1;
-    let nextIndex = changeIndexRef.current;
+    const current = changeIndexRef.current;
+    let nextIndex: number;
     if (direction === 'next') {
-      nextIndex = nextIndex >= lastIndex ? 0 : nextIndex + 1;
+      if (current === -1) nextIndex = 0;
+      else if (current >= lastIndex) { onCrossFileRef.current?.('next'); return; }
+      else nextIndex = current + 1;
     } else {
-      nextIndex = nextIndex <= 0 ? lastIndex : nextIndex - 1;
+      if (current === -1) nextIndex = lastIndex;
+      else if (current <= 0) { onCrossFileRef.current?.('prev'); return; }
+      else nextIndex = current - 1;
     }
     changeIndexRef.current = nextIndex;
-    // Pure-deletion hunks have modifiedStartLineNumber 0; clamp to line 1.
-    const targetLine = Math.max(1, lineChanges[nextIndex].modifiedStartLineNumber);
-    const modifiedEditor = diffEditor.getModifiedEditor();
-    modifiedEditor.revealLineInCenter(targetLine, monacoRef.current?.editor.ScrollType.Smooth);
-    modifiedEditor.setPosition({ lineNumber: targetLine, column: 1 });
-  }, []);
+    revealChangeLine(lineChanges[nextIndex].modifiedStartLineNumber, true);
+  }, [revealChangeLine]);
+
+  // Jump to this file's first or last change (used when rolling in from an
+  // adjacent file). Returns false if the diff has no changes yet.
+  const navigateToChange = useCallback((which: 'first' | 'last'): boolean => {
+    const lineChanges = diffEditorRef.current?.getLineChanges() ?? null;
+    if (!lineChanges || lineChanges.length === 0) return false;
+    const index = which === 'first' ? 0 : lineChanges.length - 1;
+    changeIndexRef.current = index;
+    revealChangeLine(lineChanges[index].modifiedStartLineNumber, false);
+    return true;
+  }, [revealChangeLine]);
 
   // Refs assigned during render so the once-subscribed Monaco event handlers
   // always read the current file's values, even for scroll events the child
@@ -220,6 +272,23 @@ export function DiffViewer({
     };
   }, []);
 
+  // When the panel rolled into this file from an adjacent one, jump to its
+  // first/last change instead of restoring the saved scroll. Returns true once
+  // applied (or once abandoned because the file has no changes), so the caller
+  // skips the normal saved-scroll reveal.
+  const consumePendingChangeFocus = useCallback((): boolean => {
+    const focus = pendingChangeFocusRef.current;
+    if (!focus) return false;
+    if (!contentMatchesRef.current) return false; // wait until this file's content shows
+    const positioned = navigateToChange(focus);
+    // Clear the request either way: a rolled-into file with no changes must not
+    // keep re-triggering on every later diff update.
+    pendingChangeFocusRef.current = null;
+    onPendingChangeFocusConsumedRef.current?.();
+    if (positioned) pendingRevealRef.current = null; // positioned explicitly
+    return positioned;
+  }, [navigateToChange]);
+
   const handleEditorMount: DiffOnMount = useCallback((diffEditor, monacoInstance) => {
     diffEditorRef.current = diffEditor;
     monacoRef.current = monacoInstance;
@@ -241,15 +310,17 @@ export function DiffViewer({
     // changes (the diff API offers no way to attribute a result to a content
     // version). It self-corrects on revisit.
     diffEditor.onDidUpdateDiff(() => {
-      consumePendingReveal(true);
+      // A cross-file roll-in jumps to the first/last change; otherwise restore
+      // the saved scroll / first-change reveal.
+      if (!consumePendingChangeFocus()) consumePendingReveal(true);
       // Re-apply the fold for the freshly computed diff (a file switch keeps the
       // editor mounted, so the option never transitions on its own).
       applyCollapseFold();
     });
     // The diff may have finished before onMount attached these listeners.
-    consumePendingReveal(true);
+    if (!consumePendingChangeFocus()) consumePendingReveal(true);
     applyCollapseFold();
-  }, [consumePendingReveal, applyCollapseFold]);
+  }, [consumePendingReveal, consumePendingChangeFocus, applyCollapseFold]);
 
   // Arm on entering a file; on leaving, commit the tracked scroll under the
   // outgoing key. One cleanup path covers file switch, panel close, dialog
@@ -310,6 +381,12 @@ export function DiffViewer({
   useEffect(() => () => {
     if (collapseTimerRef.current !== null) clearTimeout(collapseTimerRef.current);
   }, []);
+
+  // Keyboard navigation: next/prev change, rolling into the adjacent file at a
+  // boundary. Gated on the window being focused; capture phase so it beats the
+  // embedded terminal. Bound here because the diff editor owns the line changes.
+  useKeybinding('changes.nextChange', () => navigateChange('next'), { capture: true, enabled: isFocused });
+  useKeybinding('changes.prevChange', () => navigateChange('prev'), { capture: true, enabled: isFocused });
 
   return (
     <div className="flex flex-col h-full">

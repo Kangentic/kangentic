@@ -576,6 +576,7 @@ export function TaskDetailWindow({
           ) : (
             <TaskDetailBody
               task={task}
+              isFocused={isFocused}
               isArchived={isArchived}
               isInTodo={isInTodo}
               hasSessionContext={hasSessionContext}

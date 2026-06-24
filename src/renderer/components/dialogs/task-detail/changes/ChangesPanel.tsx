@@ -5,6 +5,7 @@ import { FileTreePanel } from './FileTreePanel';
 import { DiffViewer } from './DiffViewer';
 import { useSessionStore } from '../../../../stores/session-store';
 import { useConfigStore } from '../../../../stores/config-store';
+import { useKeybinding } from '../../../../hooks/useKeybinding';
 import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileContentResult } from '../../../../../shared/types';
 
 // Stable empty set so a task with no viewed files keeps a referentially-constant
@@ -52,6 +53,9 @@ class DiffErrorBoundary extends React.Component<
 
 interface ChangesPanelProps {
   entityId: string;
+  /** Whether the containing task window is focused (gates keyboard navigation
+   *  so only the focused window's Changes panel reacts). */
+  isFocused?: boolean;
   /**
    * Key under which diff scroll positions are remembered. Defaults to
    * `entityId`. The task-detail panel and the standalone TaskChangesDialog pass
@@ -87,7 +91,7 @@ interface DisplayedFileContent {
   filePath: string;
 }
 
-export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, baseBranch, emptyMessage, panelMode, onExpand, onCollapse }: ChangesPanelProps) {
+export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPath, worktreePath, baseBranch, emptyMessage, panelMode, onExpand, onCollapse }: ChangesPanelProps) {
   const effectiveScrollKey = scrollKey ?? entityId;
   // The task-detail embed passes panelMode + a handler; the standalone
   // TaskChangesDialog passes neither, so it never shows these controls. Expand
@@ -348,6 +352,51 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
     fetchFileContentRef.current(filePath);
   }, [setSelectedFile]);
 
+  const markChangesFileViewed = useSessionStore((state) => state.markChangesFileViewed);
+
+  // Cross-file change navigation. When next/prev-change in the DiffViewer reaches a
+  // file's last/first change, it rolls into the adjacent file: select it and ask the
+  // DiffViewer to land on that file's first (forward) or last (backward) change once
+  // its diff loads. Rolling forward past a file marks it viewed.
+  const [pendingChangeFocus, setPendingChangeFocus] = useState<'first' | 'last' | null>(null);
+
+  const handleCrossFile = useCallback((direction: 'next' | 'prev') => {
+    const currentFiles = filesRef.current;
+    const current = selectedFileRef.current;
+    if (current === null || currentFiles.length === 0) return;
+    const index = currentFiles.findIndex((file) => file.path === current);
+    if (index === -1) return;
+    if (direction === 'next') {
+      if (index >= currentFiles.length - 1) return; // last file: stop at the end
+      markChangesFileViewed(entityId, current); // rolled past its last change
+      setPendingChangeFocus('first');
+      handleSelectFile(currentFiles[index + 1].path);
+    } else {
+      if (index <= 0) return; // first file: stop at the start
+      setPendingChangeFocus('last');
+      handleSelectFile(currentFiles[index - 1].path);
+    }
+  }, [entityId, handleSelectFile, markChangesFileViewed]);
+
+  // Whole-file jump (next/prev changed file), independent of change navigation.
+  const handleNavigateFile = useCallback((direction: 'next' | 'prev') => {
+    const currentFiles = filesRef.current;
+    if (currentFiles.length === 0) return;
+    const current = selectedFileRef.current;
+    const index = current === null ? -1 : currentFiles.findIndex((file) => file.path === current);
+    let targetIndex: number;
+    if (direction === 'next') {
+      targetIndex = index < 0 ? 0 : Math.min(index + 1, currentFiles.length - 1);
+    } else {
+      targetIndex = index < 0 ? currentFiles.length - 1 : Math.max(index - 1, 0);
+    }
+    const target = currentFiles[targetIndex]?.path;
+    if (target && target !== current) handleSelectFile(target);
+  }, [handleSelectFile]);
+
+  useKeybinding('changes.nextFile', () => handleNavigateFile('next'), { capture: true, enabled: isFocused });
+  useKeybinding('changes.prevFile', () => handleNavigateFile('prev'), { capture: true, enabled: isFocused });
+
   // File-tree width is PER-TASK (session store, keyed by entityId), like the
   // terminal split's dividerRatio: an undefined stored width means auto-fit to the
   // branch name / last commit on open; a drag sets that task's own width. Local
@@ -507,6 +556,10 @@ export function ChangesPanel({ entityId, scrollKey, projectPath, worktreePath, b
                 onViewModeChange={(mode) => updateConfig({ diffViewMode: mode })}
                 binary={selectedFileEntry?.binary ?? false}
                 trailingControls={panelControls ?? undefined}
+                isFocused={isFocused}
+                onCrossFile={handleCrossFile}
+                pendingChangeFocus={pendingChangeFocus}
+                onPendingChangeFocusConsumed={() => setPendingChangeFocus(null)}
               />
             </DiffErrorBoundary>
           )}

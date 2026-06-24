@@ -210,6 +210,9 @@ const FileRowView = memo(function FileRowView({
         isSelected ? 'bg-accent/15' : 'hover:bg-surface-raised/50'
       }`}
       style={{ height: ROW_HEIGHT }}
+      data-testid="changes-file-row"
+      data-path={row.file.path}
+      data-selected={isSelected}
     >
       <button
         onClick={() => onSelect(row.file.path)}

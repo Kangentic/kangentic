@@ -22,6 +22,8 @@ const ChangesPanel = lazy(() => import('./changes/ChangesPanel').then((module) =
 
 interface TaskDetailBodyProps {
   task: Task;
+  /** Whether this task window is the focused one (gates Changes keyboard nav). */
+  isFocused: boolean;
   isArchived: boolean;
   isInTodo: boolean;
   hasSessionContext: boolean;
@@ -46,6 +48,7 @@ interface TaskDetailBodyProps {
 
 export function TaskDetailBody({
   task,
+  isFocused,
   isArchived,
   isInTodo,
   hasSessionContext,
@@ -161,6 +164,7 @@ export function TaskDetailBody({
     >
       <ChangesPanel
         entityId={task.id}
+        isFocused={isFocused}
         scrollKey={task.id}
         projectPath={projectPath}
         worktreePath={task.worktree_path ?? undefined}

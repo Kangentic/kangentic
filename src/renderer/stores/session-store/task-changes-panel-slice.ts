@@ -50,6 +50,7 @@ export interface TaskChangesPanelSlice {
   setChangesScope: (taskId: string, scope: GitDiffScope) => void;
   setChangesFileTreeWidth: (taskId: string, width: number) => void;
   toggleChangesFileViewed: (taskId: string, filePath: string) => void;
+  markChangesFileViewed: (taskId: string, filePath: string) => void;
   setChangesViewMode: (taskId: string, mode: 'split' | 'expanded') => void;
   setDividerRatio: (taskId: string, ratio: number) => void;
   toggleBrowserOpen: (taskId: string) => void;
@@ -130,6 +131,14 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     } else {
       next.add(filePath);
     }
+    set({ changesViewedFiles: { ...get().changesViewedFiles, [taskId]: next } });
+  },
+
+  markChangesFileViewed: (taskId, filePath) => {
+    const current = get().changesViewedFiles[taskId];
+    if (current?.has(filePath)) return; // already viewed; no-op (idempotent)
+    const next = new Set(current ?? []);
+    next.add(filePath);
     set({ changesViewedFiles: { ...get().changesViewedFiles, [taskId]: next } });
   },
 

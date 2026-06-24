@@ -185,6 +185,26 @@ describe('toggleChangesFileViewed', () => {
 });
 
 // ---------------------------------------------------------------------------
+// markChangesFileViewed (idempotent add, used by cross-file roll-forward)
+// ---------------------------------------------------------------------------
+
+describe('markChangesFileViewed', () => {
+  it('adds a file as viewed', () => {
+    const { actions, getState } = createTestStore();
+    actions.markChangesFileViewed('task-1', 'src/a.ts');
+    expect(getState().changesViewedFiles['task-1'].has('src/a.ts')).toBe(true);
+  });
+
+  it('is idempotent: marking an already-viewed file does not un-view it', () => {
+    const { actions, getState } = createTestStore();
+    actions.markChangesFileViewed('task-1', 'src/a.ts');
+    actions.markChangesFileViewed('task-1', 'src/a.ts');
+    expect(getState().changesViewedFiles['task-1'].has('src/a.ts')).toBe(true);
+    expect(getState().changesViewedFiles['task-1'].size).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // toggleMaximized
 // ---------------------------------------------------------------------------
 

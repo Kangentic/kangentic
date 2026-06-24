@@ -40,6 +40,7 @@ export type KeyScope =
 export type KeyGroup =
   | 'General'
   | 'Task Detail'
+  | 'Git Changes'
   | 'Windows'
   | 'Browser'
   | 'Terminal'
@@ -49,6 +50,7 @@ export type KeyGroup =
 export const KEY_GROUP_ORDER: readonly KeyGroup[] = [
   'General',
   'Task Detail',
+  'Git Changes',
   'Windows',
   'Browser',
   'Terminal',
@@ -225,6 +227,47 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     group: 'Task Detail',
     scope: 'task-dialog',
     defaultCombo: 'Mod+Shift+G',
+    rebindable: true,
+  },
+  // Changes panel review navigation. Next/prev change steps through the diff
+  // hunks and rolls into the adjacent file at a file's first/last change (F7 /
+  // Shift+F7 is the VS Code / JetBrains diff-nav convention, offered as an alt).
+  {
+    id: 'changes.nextChange',
+    label: 'Next Change',
+    description: 'Jump to the next change in the diff. Past a file\'s last change, continues into the next file.',
+    group: 'Git Changes',
+    scope: 'task-dialog',
+    defaultCombo: 'Alt+ArrowDown',
+    defaultComboAlt: 'F7',
+    rebindable: true,
+  },
+  {
+    id: 'changes.prevChange',
+    label: 'Previous Change',
+    description: 'Jump to the previous change in the diff. Before a file\'s first change, continues into the previous file.',
+    group: 'Git Changes',
+    scope: 'task-dialog',
+    defaultCombo: 'Alt+ArrowUp',
+    defaultComboAlt: 'Shift+F7',
+    rebindable: true,
+  },
+  {
+    id: 'changes.nextFile',
+    label: 'Next Changed File',
+    description: 'Select the next file in the Changes panel.',
+    group: 'Git Changes',
+    scope: 'task-dialog',
+    defaultCombo: 'Alt+Shift+ArrowDown',
+    rebindable: true,
+  },
+  {
+    id: 'changes.prevFile',
+    label: 'Previous Changed File',
+    description: 'Select the previous file in the Changes panel.',
+    group: 'Git Changes',
+    scope: 'task-dialog',
+    defaultCombo: 'Alt+Shift+ArrowUp',
     rebindable: true,
   },
 
