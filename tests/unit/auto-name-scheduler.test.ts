@@ -125,7 +125,7 @@ function setupStores(options: {
   sessionSequence?: Array<Session | null>;
   agents?: AgentDetectionInfo[];
   projects?: Array<{ id: string; default_agent: string | null }>;
-  transientSessions?: Record<string, { sessionId: string; branch: string | null; label?: string }>;
+  transientSessions?: Record<string, { projectId: string; slot: string; sessionId: string; branch: string | null; label?: string }>;
   config?: ConfigFixture;
   updateConfig?: ReturnType<typeof vi.fn>;
   setTransientSessionLabel?: ReturnType<typeof vi.fn>;
@@ -441,7 +441,7 @@ describe('maybeLabelTransientSession', () => {
   it('only fires for EventType.Prompt - other event types are ignored', () => {
     const setTransientSessionLabel = vi.fn();
     setupStores({
-      transientSessions: { 'project-1': { sessionId: 'transient-1', branch: null } },
+      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null } },
       setTransientSessionLabel,
     });
     setupSummarizeApi(() => ({ ok: true, title: 'should not fire' }));
@@ -456,7 +456,7 @@ describe('maybeLabelTransientSession', () => {
   it('skips sessions already in the labeled set (first prompt wins)', async () => {
     const setTransientSessionLabel = vi.fn();
     setupStores({
-      transientSessions: { 'project-1': { sessionId: 'transient-1', branch: null } },
+      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null } },
       setTransientSessionLabel,
     });
     setupSummarizeApi(() => ({ ok: true, title: 'derived' }));
@@ -470,7 +470,7 @@ describe('maybeLabelTransientSession', () => {
 
   it('skips when sessionId is not in the transient sessions map', () => {
     setupStores({
-      transientSessions: { 'project-1': { sessionId: 'other-session', branch: null } },
+      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'other-session', branch: null } },
     });
     maybeLabelTransientSession('unknown-session', makePromptEvent('hello'));
 
@@ -479,7 +479,7 @@ describe('maybeLabelTransientSession', () => {
 
   it('skips when prompt detail is empty/whitespace', () => {
     setupStores({
-      transientSessions: { 'project-1': { sessionId: 'transient-1', branch: null } },
+      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null } },
     });
     maybeLabelTransientSession('transient-1', makePromptEvent('   '));
     maybeLabelTransientSession('transient-1', makePromptEvent(''));
@@ -490,7 +490,7 @@ describe('maybeLabelTransientSession', () => {
   it('skips when the owning project agent does not support summarize', () => {
     const setTransientSessionLabel = vi.fn();
     setupStores({
-      transientSessions: { 'project-1': { sessionId: 'transient-1', branch: null } },
+      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null } },
       agents: [makeAdapter({ supportsSummarize: false })],
       setTransientSessionLabel,
     });
@@ -505,7 +505,7 @@ describe('maybeLabelTransientSession', () => {
   it('calls setTransientSessionLabel with the suggested title on summarize success', async () => {
     const setTransientSessionLabel = vi.fn();
     setupStores({
-      transientSessions: { 'project-1': { sessionId: 'transient-1', branch: null } },
+      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null } },
       setTransientSessionLabel,
     });
     setupSummarizeApi(() => ({ ok: true, title: 'Add Logging To Auth Module' }));
@@ -521,7 +521,7 @@ describe('maybeLabelTransientSession', () => {
   it('does not call setTransientSessionLabel when summarize returns ok:false', async () => {
     const setTransientSessionLabel = vi.fn();
     setupStores({
-      transientSessions: { 'project-1': { sessionId: 'transient-1', branch: null } },
+      transientSessions: { 'project-1::slot-1': { projectId: 'project-1', slot: 'slot-1', sessionId: 'transient-1', branch: null } },
       setTransientSessionLabel,
     });
     setupSummarizeApi(() => ({ ok: false, reason: 'rate limited' }));
