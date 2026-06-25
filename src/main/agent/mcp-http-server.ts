@@ -27,6 +27,7 @@ import { registerSessionTools } from './mcp-http/session-tools';
 import { registerProjectTools } from './mcp-http/project-tools';
 import { registerSearchTools } from './mcp-http/search-tools';
 import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
+import { registerBrowserTools, type AutomationConfigReader } from './mcp-http/browser-tools';
 import { registerDevtoolsMcpTools } from '../../devtools/mcp/register';
 import { buildServerInstructions } from './mcp-http/server-instructions';
 import { logMcpToolArguments } from './mcp-http/tool-call-logging';
@@ -66,13 +67,14 @@ export interface McpHttpServerHandle {
  */
 export async function startMcpHttpServer(
   buildContext: ProjectContextFactory,
+  getBrowserAutomationConfig: AutomationConfigReader,
 ): Promise<McpHttpServerHandle> {
   const token = randomBytes(32).toString('hex');
   const expectedTokenBuffer = Buffer.from(token, 'utf-8');
   const taskCounter = makeTaskCounter(MAX_TASKS_PER_SESSION);
 
   const httpServer: Server = createServer((req, res) => {
-    handleHttpRequest(req, res, expectedTokenBuffer, buildContext, taskCounter)
+    handleHttpRequest(req, res, expectedTokenBuffer, buildContext, taskCounter, getBrowserAutomationConfig)
       .catch((error) => {
         console.error('[mcp-http] Request handler crashed:', error);
         if (!res.headersSent) {
@@ -152,6 +154,7 @@ async function handleHttpRequest(
   expectedTokenBuffer: Buffer,
   buildContext: ProjectContextFactory,
   taskCounter: TaskCounter,
+  getBrowserAutomationConfig: AutomationConfigReader,
 ): Promise<void> {
   // Token check first -- cheapest reject path. Constant-time compare so a
   // local timing oracle can't byte-by-byte recover the token. Pure
@@ -209,6 +212,10 @@ async function handleHttpRequest(
   registerProjectTools(mcpServer, resolver);
   registerSearchTools(mcpServer, resolver);
   registerDiagnosticsTools(mcpServer, resolver);
+  // Shipped: the user-facing kangentic_browser_* family that drives the
+  // embedded Browser pane in-process. Registered unconditionally (NOT gated
+  // by __KANGENTIC_DEV__) - this targets the user's own dev server.
+  registerBrowserTools(mcpServer, getBrowserAutomationConfig);
 
   // Dev-only: register the kangentic_devtools_* tools that drive the
   // localhost inspection bridge. Production builds drop both the import

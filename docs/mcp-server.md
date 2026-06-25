@@ -31,6 +31,7 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 | Project Tools | `src/main/agent/mcp-http/project-tools.ts` | Multi-project discovery (`kangentic_list_projects`). |
 | Search Tools | `src/main/agent/mcp-http/search-tools.ts` | Cross-project unified search (`kangentic_search_everything`). The board-scoped `kangentic_search_tasks` lives in `task-tools.ts`. |
 | Diagnostics Tools | `src/main/agent/mcp-http/diagnostics-tools.ts` | Read-only product tools backing crash records, persistent console logs, process metrics, IPC traffic recordings, and worktree state. Annotated `readOnlyHint: true, idempotentHint: true` per the MCP spec. |
+| Browser Tools | `src/main/agent/mcp-http/browser-tools.ts` | Shipped `kangentic_browser_*` MCP tool family driving the embedded Browser pane via in-process CDP (no HTTP bridge, no lockfile). Gated by the global `browserAutomation.*` policy. |
 | Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, inventory, search, analytics, backlog, handoff, inspect (`get_transcript`, `query_db`), and session-files (`get_session_files`, `get_session_events`) commands. |
 | Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers. |
 | MCP Config Delivery | `src/main/agent/adapters/claude/command-builder.ts` | Writes session `mcp.json` (with the per-launch URL + token) and adds `--mcp-config` flag to CLI command. |
@@ -435,6 +436,23 @@ Enumerate worktrees for one or every registered project. Each `WorktreeRecord` c
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `project` | string | No | Project selector. When omitted, enumerates worktrees across every registered project. |
+
+## Browser automation tool surface (`kangentic_browser_*`)
+
+These **shipped** tools let an agent drive the embedded **Browser pane** of a task (an Electron `<webview>` showing the user's own dev server, e.g. `ng serve` on `http://localhost:4200`). They are distinct from the dev-only `kangentic_devtools_*` tools below, which debug Kangentic itself. They attach Chrome DevTools Protocol to the pane's guest webContents in-process (no HTTP bridge, no lockfile). Implementation: `src/main/agent/mcp-http/browser-tools.ts` plus `src/main/browser/` (pane registry, driver, shared CDP driver).
+
+Targeting: every tool takes an optional `sessionId` or `taskId`; omit both to use the single open pane (errors with candidates when more than one is open). `kangentic_browser_list_panes` lists open panes.
+
+Gating: the global **Browser Automation** settings tab controls the family, read live per call. `browserAutomation.enabled` is the master switch; `allowInteraction` gates click/type/keypress/drag (off = observe-only); `allowNavigation` gates navigate; `allowEval` gates eval (off by default); `restrictNavigationToLocalhost` confines navigation to localhost/private hosts (off by default). Each tool returns an actionable `{ kind, detail }` error when its capability is gated off or no driveable pane exists.
+
+Tool categories:
+- **Discovery:** `list_panes`
+- **Navigate:** `navigate` - point the pane at an http(s) URL
+- **Observe:** `screenshot`, `screenshot_element`, `query_dom`, `query_all`, `bounding_box`, `console`, `wait`
+- **Interact:** `click`, `type`, `keypress`, `drag`
+- **Eval:** `eval` - evaluate a JavaScript expression in the loaded page; gated by `browserAutomation.allowEval`
+
+Cookie isolation is per worktree (`persist:kngbrowser-<hash(worktreePath)>`) so concurrent worktrees' dev environments never share a `localhost` cookie jar. See [embedded-browser.md](embedded-browser.md).
 
 ## Dev-only tool surface (`kangentic_devtools_*`)
 

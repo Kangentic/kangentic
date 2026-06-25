@@ -10,6 +10,8 @@ import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } 
 import { registerSeedGitChangesDevIpc } from '../devtools/main/seed-git-changes';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
+import { readBrowserAutomationConfig } from './browser/browser-automation-config';
+import { browserPaneRegistry } from './browser/browser-pane-registry';
 import { createRequestResolver } from './agent/mcp-project-context';
 import { IPC, PROJECT_PATH_MISSING_PREFIX } from '../shared/ipc-channels';
 import { ConfigManager } from './config/config-manager';
@@ -217,6 +219,12 @@ app.on('web-contents-created', (_event, contents) => {
 
   contents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
+  // Deny all permission requests (camera, mic, geolocation, notifications, ...)
+  // on the embedded pane. The pane is for viewing dev servers, which need none
+  // of these, and agent-driven navigation could otherwise reach a page that
+  // auto-prompts. (embedded-browser.md decision log item 5.)
+  contents.session.setPermissionRequestHandler((_requestingContents, _permission, callback) => callback(false));
+
   contents.on('will-navigate', (navigationEvent, urlString) => {
     try {
       const parsed = new URL(urlString);
@@ -256,6 +264,19 @@ app.on('web-contents-created', (_event, contents) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(IPC.BROWSER_ZOOM_CHANGED, clampedFactor);
     }
+  });
+
+  // Keep the browser-pane registry honest from the guest's own lifecycle.
+  // The renderer registers/unregisters each pane (it knows the taskId), but a
+  // hard reload can skip the renderer's unmount cleanup, so the guest's own
+  // `destroyed` is the reliable removal signal and `did-navigate` keeps the
+  // tracked URL fresh without a renderer round-trip. `contents.id` is the same
+  // id the renderer reports via `getWebContentsId()`.
+  contents.on('destroyed', () => {
+    browserPaneRegistry.unregisterByWebContentsId(contents.id);
+  });
+  contents.on('did-navigate', (_navigationEvent, navigatedUrl) => {
+    browserPaneRegistry.updateUrlByWebContentsId(contents.id, navigatedUrl);
   });
 });
 
@@ -654,13 +675,16 @@ app.whenReady().then(async () => {
   // from before the toggle was flipped off can never grant access at
   // runtime.
   try {
-    mcpServerHandle = await startMcpHttpServer((projectId) => {
-      const ctx = getOptionalIpcContext();
-      if (!ctx) return null;
-      const globalConfig = ctx.configManager.load();
-      if (globalConfig.mcpServer?.enabled === false) return null;
-      return createRequestResolver(ctx, projectId);
-    });
+    mcpServerHandle = await startMcpHttpServer(
+      (projectId) => {
+        const ctx = getOptionalIpcContext();
+        if (!ctx) return null;
+        const globalConfig = ctx.configManager.load();
+        if (globalConfig.mcpServer?.enabled === false) return null;
+        return createRequestResolver(ctx, projectId);
+      },
+      () => readBrowserAutomationConfig(getOptionalIpcContext()?.configManager ?? windowConfigManager),
+    );
   } catch (err) {
     console.error('[APP] Failed to start MCP HTTP server:', err);
     // Continue without it -- agents will see "Unauthorized" or "Connection

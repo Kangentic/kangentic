@@ -38,7 +38,7 @@ vi.mock('electron', () => ({
 // `decodeImageDimensions` are replaced with vi.fn() so each test can
 // configure them independently via .mockResolvedValue / .mockReturnValue.
 // ---------------------------------------------------------------------------
-vi.mock('../../src/devtools/main/cdp', () => ({
+vi.mock('../../src/main/browser/cdp/cdp', () => ({
   captureScreenshot: vi.fn(),
   getLayoutMetrics: vi.fn(),
   decodeImageDimensions: vi.fn(),
@@ -49,12 +49,12 @@ import {
   captureScreenshotWithBudget,
   configureScreenshotProjectRoot,
   DEFAULT_INLINE_BYTE_CEILING,
-} from '../../src/devtools/main/screenshot';
+} from '../../src/main/browser/cdp/screenshot';
 import {
   captureScreenshot as mockCaptureScreenshot,
   getLayoutMetrics as mockGetLayoutMetrics,
   decodeImageDimensions as mockDecodeImageDimensions,
-} from '../../src/devtools/main/cdp';
+} from '../../src/main/browser/cdp/cdp';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -80,9 +80,9 @@ const FAKE_LAYOUT = {
 // Fake image dimensions returned by our decodeImageDimensions mock.
 const FAKE_DIMS = { width: 1280, height: 720 };
 
-// A fake BrowserWindow - captureScreenshotWithBudget passes it through to
+// A fake WebContents - captureScreenshotWithBudget passes it through to
 // the mocked CDP functions, so we only need a truthy object.
-const fakeWindow = {} as import('electron').BrowserWindow;
+const fakeWebContents = {} as import('electron').WebContents;
 
 let tempDirectory: string;
 
@@ -118,7 +118,7 @@ describe('captureScreenshotWithBudget - under-budget first attempt', () => {
     const captureSize = 500_000; // well under budget
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(captureSize));
 
-    const result = await captureScreenshotWithBudget(fakeWindow, { maxBytes: budget });
+    const result = await captureScreenshotWithBudget(fakeWebContents, { maxBytes: budget });
 
     expect(result).not.toBeNull();
     expect(result!.mode).toBe('inline');
@@ -144,7 +144,7 @@ describe('captureScreenshotWithBudget - PNG -> jpeg q70 on first retry', () => {
       .mockResolvedValueOnce(base64OfSize(800_000))
       .mockResolvedValueOnce(base64OfSize(400_000));
 
-    const result = await captureScreenshotWithBudget(fakeWindow, {
+    const result = await captureScreenshotWithBudget(fakeWebContents, {
       format: 'png',
       maxBytes: budget,
     });
@@ -187,7 +187,7 @@ describe('captureScreenshotWithBudget - quality step-down', () => {
       .mockResolvedValueOnce(base64OfSize(overSize))
       .mockResolvedValueOnce(base64OfSize(underSize));
 
-    const result = await captureScreenshotWithBudget(fakeWindow, {
+    const result = await captureScreenshotWithBudget(fakeWebContents, {
       format: 'png',
       maxBytes: budget,
     });
@@ -217,7 +217,7 @@ describe('captureScreenshotWithBudget - quality step-down', () => {
       .mockResolvedValueOnce(base64OfSize(overSize))
       .mockResolvedValueOnce(base64OfSize(underSize));
 
-    await captureScreenshotWithBudget(fakeWindow, { format: 'png', maxBytes: budget });
+    await captureScreenshotWithBudget(fakeWebContents, { format: 'png', maxBytes: budget });
 
     const retryCalls = vi.mocked(mockCaptureScreenshot).mock.calls.slice(1);
     const qualityValues = retryCalls.map(
@@ -244,7 +244,7 @@ describe('captureScreenshotWithBudget - scale step-down', () => {
     const overSize = 500_000;
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(overSize));
 
-    const result = await captureScreenshotWithBudget(fakeWindow, {
+    const result = await captureScreenshotWithBudget(fakeWebContents, {
       format: 'png',
       maxBytes: budget,
       clip: { x: 0, y: 0, width: 100, height: 100, scale: 1 },
@@ -280,7 +280,7 @@ describe('captureScreenshotWithBudget - exhausted retries -> file mode', () => {
   it('falls back to file mode with reason:over-max-bytes when all retries are over budget', async () => {
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(500_000));
 
-    const result = await captureScreenshotWithBudget(fakeWindow, {
+    const result = await captureScreenshotWithBudget(fakeWebContents, {
       format: 'png',
       maxBytes: 200_000,
       clip: { x: 0, y: 0, width: 100, height: 100, scale: 1 },
@@ -299,7 +299,7 @@ describe('captureScreenshotWithBudget - exhausted retries -> file mode', () => {
   it('writes the screenshot file to the configured project shots directory', async () => {
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(500_000));
 
-    const result = await captureScreenshotWithBudget(fakeWindow, {
+    const result = await captureScreenshotWithBudget(fakeWebContents, {
       format: 'png',
       maxBytes: 200_000,
       clip: { x: 0, y: 0, width: 100, height: 100, scale: 1 },
@@ -326,7 +326,7 @@ describe('captureScreenshotWithBudget - over inline ceiling', () => {
     const overCeilingSize = DEFAULT_INLINE_BYTE_CEILING + 100_000;
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(overCeilingSize));
 
-    const result = await captureScreenshotWithBudget(fakeWindow, {});
+    const result = await captureScreenshotWithBudget(fakeWebContents, {});
 
     expect(result).not.toBeNull();
     expect(result!.mode).toBe('file');
@@ -340,7 +340,7 @@ describe('captureScreenshotWithBudget - over inline ceiling', () => {
     // Over the custom ceiling but under the default ceiling.
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(200_000));
 
-    const result = await captureScreenshotWithBudget(fakeWindow, {
+    const result = await captureScreenshotWithBudget(fakeWebContents, {
       inlineCeiling: customCeiling,
     });
 
@@ -359,7 +359,7 @@ describe('captureScreenshotWithBudget - null propagation', () => {
   it('returns null when captureScreenshot returns null on the first attempt', async () => {
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(null);
 
-    const result = await captureScreenshotWithBudget(fakeWindow, { maxBytes: 1_000_000 });
+    const result = await captureScreenshotWithBudget(fakeWebContents, { maxBytes: 1_000_000 });
     expect(result).toBeNull();
   });
 
@@ -372,7 +372,7 @@ describe('captureScreenshotWithBudget - null propagation', () => {
       .mockResolvedValueOnce(base64OfSize(500_000)) // initial: over budget
       .mockResolvedValueOnce(null); // retry 1: null -> break
 
-    const result = await captureScreenshotWithBudget(fakeWindow, {
+    const result = await captureScreenshotWithBudget(fakeWebContents, {
       format: 'png',
       maxBytes: budget,
     });
@@ -391,7 +391,7 @@ describe('captureScreenshotWithBudget - metadata fields', () => {
   it('sets metricsAvailable:true when getLayoutMetrics succeeds', async () => {
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
 
-    const result = await captureScreenshotWithBudget(fakeWindow, {});
+    const result = await captureScreenshotWithBudget(fakeWebContents, {});
     expect(result).not.toBeNull();
     expect(result!.metricsAvailable).toBe(true);
   });
@@ -400,7 +400,7 @@ describe('captureScreenshotWithBudget - metadata fields', () => {
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
     vi.mocked(mockGetLayoutMetrics).mockResolvedValue(null);
 
-    const result = await captureScreenshotWithBudget(fakeWindow, {});
+    const result = await captureScreenshotWithBudget(fakeWebContents, {});
     expect(result).not.toBeNull();
     expect(result!.metricsAvailable).toBe(false);
     expect(result!.viewportWidth).toBe(0);
@@ -411,7 +411,7 @@ describe('captureScreenshotWithBudget - metadata fields', () => {
   it('passes fullPage flag through to the response', async () => {
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
 
-    const result = await captureScreenshotWithBudget(fakeWindow, { fullPage: true });
+    const result = await captureScreenshotWithBudget(fakeWebContents, { fullPage: true });
     expect(result).not.toBeNull();
     expect(result!.fullPage).toBe(true);
   });
@@ -424,7 +424,7 @@ describe('captureScreenshotWithBudget - metadata fields', () => {
       box: { x: 10, y: 20, width: 80, height: 40 },
     };
 
-    const result = await captureScreenshotWithBudget(fakeWindow, { clipMeta });
+    const result = await captureScreenshotWithBudget(fakeWebContents, { clipMeta });
     expect(result).not.toBeNull();
     expect(result!.elementClip).toEqual(clipMeta);
   });
@@ -432,7 +432,7 @@ describe('captureScreenshotWithBudget - metadata fields', () => {
   it('sets elementClip to null when clipMeta is not provided', async () => {
     vi.mocked(mockCaptureScreenshot).mockResolvedValue(base64OfSize(100));
 
-    const result = await captureScreenshotWithBudget(fakeWindow, {});
+    const result = await captureScreenshotWithBudget(fakeWebContents, {});
     expect(result).not.toBeNull();
     expect(result!.elementClip).toBeNull();
   });

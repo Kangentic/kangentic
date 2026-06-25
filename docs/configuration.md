@@ -20,7 +20,7 @@ The config directory (`<configDir>`) is platform-specific:
 
 Both panels use a VS Code-style layout: a sidebar with tab navigation on the left and the active settings pane on the right. A search bar at the top filters settings by keyword. Search uses multi-token matching (all tokens must appear in the setting name or description). Results are grouped by tab with match count badges on the sidebar; tabs with zero matches are dimmed. Press Ctrl+F (Cmd+F on macOS) to focus the search bar, Escape to clear the filter.
 
-- **Settings Panel** -- opened via the titlebar gear icon or the gear icon on each project row in the sidebar. A project switcher dropdown in the header allows switching between projects. Sidebar tabs: General, Theme, Terminal, Agent, Git, Browser, Shortcuts, Layout, Behavior, Hotkeys, MCP Server, Notifications, Privacy, Developer. The first seven tabs (above the separator) are per-project settings. Five of them (Theme, Terminal, Agent, Git, Browser) save to `.kangentic/config.json`, Shortcuts saves to the board config files (`kangentic.json` and `kangentic.local.json`), and the General tab edits the project record in the global index database. The General tab exposes the `project.location` setting -- the folder on disk the project points at -- with a "Change..." button to re-point the project after its folder is moved or renamed; because tasks and history are keyed by project id, they are preserved across a relocation. The Agent tab exposes the `project.defaultAgent` setting (the "Default Agent" dropdown) -- the agent CLI used for new sessions in this project; like `project.location`, it is stored on the project record in the global index database rather than in `AppConfig`. The last seven (Layout, Behavior, Hotkeys, MCP Server, Notifications, Privacy, Developer) are shared settings that apply across all projects, saved to the global config. When no project is open, only the 7 shared tabs appear. Changes save immediately. New projects inherit only the seeded settings subset (`theme`, `terminal.*`, `agent.permissionMode`, `git.*`) from the most recently configured project, falling back to defaults if none exist. Project-specific data such as `browser.defaultUrl` and `importSources` is stored per-project and is never cloned into a new project.
+- **Settings Panel** -- opened via the titlebar gear icon or the gear icon on each project row in the sidebar. A project switcher dropdown in the header allows switching between projects. Sidebar tabs: General, Theme, Terminal, Agent, Git, Browser, Shortcuts, Layout, Behavior, Hotkeys, MCP Server, Browser Automation, Notifications, Privacy, Developer. The first seven tabs (above the separator) are per-project settings. Five of them (Theme, Terminal, Agent, Git, Browser) save to `.kangentic/config.json`, Shortcuts saves to the board config files (`kangentic.json` and `kangentic.local.json`), and the General tab edits the project record in the global index database. The General tab exposes the `project.location` setting -- the folder on disk the project points at -- with a "Change..." button to re-point the project after its folder is moved or renamed; because tasks and history are keyed by project id, they are preserved across a relocation. The Agent tab exposes the `project.defaultAgent` setting (the "Default Agent" dropdown) -- the agent CLI used for new sessions in this project; like `project.location`, it is stored on the project record in the global index database rather than in `AppConfig`. The last eight (Layout, Behavior, Hotkeys, MCP Server, Browser Automation, Notifications, Privacy, Developer) are shared settings that apply across all projects, saved to the global config. When no project is open, only the 8 shared tabs appear. Changes save immediately. New projects inherit only the seeded settings subset (`theme`, `terminal.*`, `agent.permissionMode`, `git.*`) from the most recently configured project, falling back to defaults if none exist. Project-specific data such as `browser.defaultUrl` and `importSources` is stored per-project and is never cloned into a new project.
 
 ### App-Only Settings
 
@@ -39,6 +39,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `notifications.*` (all notification settings)
 - `agent.idleTimeoutMinutes`
 - `developer.activityDebugOverlay`, `developer.persistConsoleLogs`, `developer.recordIpcTraffic`, `developer.previewInspectionServer`, `developer.previewEvalEnabled`
+- `browserAutomation.enabled`, `browserAutomation.allowInteraction`, `browserAutomation.allowNavigation`, `browserAutomation.allowEval`, `browserAutomation.restrictNavigationToLocalhost`
 - `hotkeyOverrides`
 
 ### Per-Project Overridable Settings
@@ -218,7 +219,19 @@ All context bar settings are global-only and cannot be overridden per-project.
 | `browser.enabled` | boolean | `true` | Show the Browser pill in task detail headers. Disable for security-sensitive projects that should not embed external sites. Per-project overridable (stored per-project; not seeded into new projects). |
 | `browser.defaultUrl` | string \| undefined | `undefined` | Project default URL when a task has no per-task URL override. Auto-saved when the user first navigates the Browser pane. Per-project overridable (stored per-project; not seeded into new projects). |
 
-**Action (not a config key):** the Browser tab also exposes a destructive **Clear Browser Data** button (registry id `browser.clearStorage`) that wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the shared embedded browser partition (`persist:kangentic-browser`). Saved URLs are kept. Backed by the `browser:clearStorage` IPC channel; not persisted in `AppConfig`.
+**Action (not a config key):** the Browser tab also exposes a destructive **Clear Browser Data** button (registry id `browser.clearStorage`) that wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches across the per-worktree embedded browser partitions (`persist:kngbrowser-<hash(worktreePath)>`) plus the legacy shared jar (`persist:kangentic-browser`). Saved URLs are kept. Backed by the `browser:clearStorage` IPC channel; not persisted in `AppConfig`.
+
+### browserAutomation.*
+
+Global-only policy (no per-project override) for whether and how an agent may drive the embedded Browser pane via the `kangentic_browser_*` MCP tools. Distinct from `browser.*` (the per-project pane settings); lives below the settings separator in its own **Browser Automation** tab and is read live on each tool call.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `browserAutomation.enabled` | boolean | `true` | Master switch. When false the entire `kangentic_browser_*` family returns an actionable disabled error. |
+| `browserAutomation.allowInteraction` | boolean | `true` | Allow click / type / keypress / drag. When false the agent is observe-only (screenshots and DOM reads still work). |
+| `browserAutomation.allowNavigation` | boolean | `true` | Allow navigating the pane to other URLs. When false the agent is confined to the loaded page. |
+| `browserAutomation.allowEval` | boolean | `false` | Allow `kangentic_browser_eval` (arbitrary JavaScript in the loaded page's origin). Off by default - the one unbounded primitive. |
+| `browserAutomation.restrictNavigationToLocalhost` | boolean | `false` | Only allow navigation to localhost / private hosts, never public sites. Off by default (any http(s) URL allowed). |
 
 ### Hotkeys
 

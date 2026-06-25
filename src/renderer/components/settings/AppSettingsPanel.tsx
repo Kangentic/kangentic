@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { Bell, Bot, Bug, FolderCog, GitBranch, Globe, Keyboard, LayoutGrid, Palette, Plug, ShieldCheck, SlidersHorizontal, Terminal, Zap } from 'lucide-react';
+import { Bell, Bot, Bug, FolderCog, GitBranch, Globe, Keyboard, LayoutGrid, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Terminal, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { SettingsPanelProvider, SearchTabGroupHeader, NoSearchResults } from './shared';
 import type { SettingsTabDefinition, SettingScope, SettingsContentProps } from './shared';
@@ -14,6 +14,7 @@ import { BrowserTab } from './tabs/BrowserTab';
 import { LayoutTab } from './tabs/LayoutTab';
 import { BehaviorTab } from './tabs/BehaviorTab';
 import { McpServerTab } from './tabs/McpServerTab';
+import { BrowserAutomationTab } from './tabs/BrowserAutomationTab';
 import { NotificationsTab } from './tabs/NotificationsTab';
 import { PrivacyTab } from './tabs/PrivacyTab';
 import { DeveloperTab } from './tabs/DeveloperTab';
@@ -44,6 +45,7 @@ export const APP_TABS: SettingsTabDefinition[] = [
   { id: 'behavior', label: 'Behavior', icon: SlidersHorizontal, tooltip: 'Applies to all projects' },
   { id: 'hotkeys', label: 'Hotkeys', icon: Keyboard, tooltip: 'Applies to all projects' },
   { id: 'mcpServer', label: 'MCP Server', icon: Plug, tooltip: 'Applies to all projects' },
+  { id: 'browserAutomation', label: 'Browser Automation', icon: MousePointerClick, tooltip: 'Applies to all projects' },
   { id: 'notifications', label: 'Notifications', icon: Bell, tooltip: 'Applies to all projects' },
   { id: 'privacy', label: 'Privacy', icon: ShieldCheck, tooltip: 'Applies to all projects' },
   { id: 'developer', label: 'Developer', icon: Bug, tooltip: 'Applies to all projects' },
@@ -104,6 +106,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       case 'behavior': return <BehaviorTab globalConfig={globalConfig} />;
       case 'hotkeys': return <HotkeysTab globalConfig={globalConfig} />;
       case 'mcpServer': return <McpServerTab globalConfig={globalConfig} />;
+      case 'browserAutomation': return <BrowserAutomationTab globalConfig={globalConfig} />;
       case 'notifications': return <NotificationsTab globalConfig={globalConfig} />;
       case 'privacy': return <PrivacyTab />;
       default: return null;

@@ -310,15 +310,17 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 |---------|---------|---------|
 | `clipboard:saveImage` | invoke | Save clipboard image data to a temp file, returns file path |
 
-### Browser pane (6 channels)
+### Browser pane (8 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `browser:captureSend` | invoke | Composite the embedded webview frame + draw overlay + picked element into a PNG, write it to the session captures dir, and submit a structured prompt to the agent's PTY via PasteEngine |
 | `browser:urlGet` | invoke | Get the project default URL and per-task URL override for a given task |
 | `browser:urlSetTask` | invoke | Persist a per-task URL override |
 | `browser:urlClearTask` | invoke | Remove the per-task URL override (falls back to project default) |
-| `browser:clearStorage` | invoke | Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the shared embedded browser partition. Saved URLs are kept. |
+| `browser:clearStorage` | invoke | Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches across the per-worktree embedded browser partitions (and the legacy shared jar). Saved URLs are kept. |
 | `browser:zoomChanged` | push | Broadcast the new zoom factor after Ctrl+wheel is applied in the main process (the webview's `zoom-changed` event lives on WebContents, not the DOM tag, so the renderer learns about wheel zoom only via this push) |
+| `browser:paneRegister` | invoke | Register an open Browser pane's guest webContents (taskId, sessionId, webContentsId, url) with the main-process pane registry so the `kangentic_browser_*` MCP tools can target it |
+| `browser:paneUnregister` | invoke | Unregister a Browser pane on unmount (the guest's own `destroyed` event is the backstop) |
 
 ### Updater (3 channels)
 | Channel | Pattern | Purpose |

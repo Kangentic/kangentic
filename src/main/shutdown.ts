@@ -1,4 +1,5 @@
 import { closeAll, getProjectDb } from './db/database';
+import { browserPaneRegistry } from './browser/browser-pane-registry';
 import { SessionRepository } from './db/repositories/session-repository';
 import { TaskRepository } from './db/repositories/task-repository';
 import { UsageHistoryRepository } from './db/repositories/usage-history-repository';
@@ -41,6 +42,11 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
   dependencies.stopUpdaterTimers();
 
   try {
+    // Detach any CDP debuggers attached to embedded Browser panes. Synchronous
+    // per .claude/rules/synchronous-shutdown.md (detachDebugger guards a
+    // destroyed webContents).
+    browserPaneRegistry.detachAll();
+
     // Close active project's file watchers before killing sessions
     dependencies.getBoardConfigManager().detach();
 

@@ -234,6 +234,11 @@ export const IPC = {
   BROWSER_URL_CLEAR_TASK: 'browser:urlClearTask',
   BROWSER_CLEAR_STORAGE: 'browser:clearStorage',
   BROWSER_ZOOM_CHANGED: 'browser:zoomChanged',
+  // Register/unregister an open Browser pane's guest webContents so the
+  // kangentic_browser_* MCP tools can target it. The renderer is the only
+  // place that knows taskId + sessionId + the guest's getWebContentsId().
+  BROWSER_PANE_REGISTER: 'browser:paneRegister',
+  BROWSER_PANE_UNREGISTER: 'browser:paneUnregister',
 
   // Updater
   UPDATE_CHECK: 'updater:check',

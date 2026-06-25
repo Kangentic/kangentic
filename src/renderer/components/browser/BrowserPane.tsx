@@ -7,8 +7,9 @@ import { useBrowserUrl } from './useBrowserUrl';
 import { INSPECT_SCRIPT, CLEAR_PICK_SCRIPT } from './inspectScript';
 import { AttachmentChips } from './AttachmentChips';
 import { useToastStore } from '../../stores/toast-store';
+import { useProjectStore } from '../../stores/project-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
-import { BROWSER_PARTITION } from '../../../shared/browser-partition';
+import { browserPartitionForWorktree } from '../../../shared/browser-partition';
 import type { BrowserPickedElement } from '../../../shared/types';
 import type { WebviewElement } from './webview-types';
 import { MIN_ZOOM, MAX_ZOOM, stepZoom } from '../../../shared/zoom-steps';
@@ -99,6 +100,11 @@ function BrowserPaneActive({
   // re-binding the `src` attribute on every render can collapse history to
   // a single step in some webview revisions.
   const [initialSrc] = useState(effectiveUrl);
+  // Per-worktree persistent cookie jar, locked on mount (an Electron webview
+  // partition cannot change after attach). Keyed off the session cwd so
+  // concurrent worktrees' localhost logins stay isolated. See
+  // shared/browser-partition.ts.
+  const [partition] = useState(() => browserPartitionForWorktree(cwd));
   const [drawMode, setDrawMode] = useState(false);
   const [note, setNote] = useState('');
   const [sending, setSending] = useState(false);
@@ -159,6 +165,42 @@ function BrowserPaneActive({
       webview.removeEventListener('did-navigate-in-page', onUrlChanged);
     };
   }, [recordNavigation]);
+
+  // Register this pane's guest webContents with the main process so the
+  // kangentic_browser_* MCP tools can drive it. The renderer is the only place
+  // that knows taskId + sessionId + the guest's webContentsId. Registers on
+  // dom-ready (the id is valid once the guest attaches) and unregisters on
+  // unmount; main also tracks the guest's own destroyed / did-navigate events.
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (!webview) return;
+    let registered = false;
+    const register = () => {
+      if (registered || typeof webview.getWebContentsId !== 'function') return;
+      let webContentsId: number;
+      try {
+        webContentsId = webview.getWebContentsId();
+      } catch {
+        return; // guest not attached yet; dom-ready will retry
+      }
+      if (!Number.isInteger(webContentsId) || webContentsId <= 0) return;
+      registered = true;
+      const projectId = useProjectStore.getState().currentProject?.id ?? null;
+      let url: string | null = null;
+      try {
+        url = webview.getURL() || null;
+      } catch {
+        /* not attached */
+      }
+      void window.electronAPI.browser.registerPane({ sessionId, taskId, projectId, webContentsId, url });
+    };
+    webview.addEventListener('dom-ready', register);
+    register();
+    return () => {
+      webview.removeEventListener('dom-ready', register);
+      void window.electronAPI.browser.unregisterPane(sessionId);
+    };
+  }, [sessionId, taskId]);
 
   // Lift the dark loading cover once the webview paints. One-shot: it stays
   // lifted across later navigations (the old page remains visible until the new
@@ -527,10 +569,10 @@ function BrowserPaneActive({
         <webview
           ref={webviewRef as unknown as React.Ref<HTMLElement>}
           src={initialSrc}
-          // Single shared persistent partition (see src/shared/browser-partition.ts).
-          // All tasks across all projects share one cookie jar. Settings ->
-          // Browser -> Clear browser data wipes it.
-          partition={BROWSER_PARTITION}
+          // Per-worktree persistent cookie jar (browserPartitionForWorktree(cwd),
+          // computed above). Sessions sharing a checkout share the jar; concurrent
+          // worktrees stay isolated. Settings -> Browser -> Clear browser data wipes them.
+          partition={partition}
           style={{
             position: 'absolute',
             inset: 0,

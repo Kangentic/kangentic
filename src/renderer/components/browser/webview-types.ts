@@ -24,6 +24,8 @@ export interface WebviewElement extends HTMLElement {
   executeJavaScript<T = unknown>(code: string, userGesture?: boolean): Promise<T>;
   setZoomFactor(factor: number): void;
   getZoomFactor(): number;
+  /** Id of the guest webContents, used to register the pane for MCP targeting. Throws until attached. */
+  getWebContentsId(): number;
 }
 
 type WebviewProps = DetailedHTMLProps<HTMLAttributes<HTMLElement>, HTMLElement> & {

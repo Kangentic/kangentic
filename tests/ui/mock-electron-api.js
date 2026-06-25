@@ -28,6 +28,7 @@
   // shipped to the agent.
   let browserUrls = {};
   let browserCaptureCalls = [];
+  let browserPaneCalls = [];
 
   // Resolve the git diff fixture for a request. A test can seed a single fixture
   // via window.__mockGitDiff, or per-scope fixtures via window.__mockGitDiffByScope
@@ -2208,6 +2209,8 @@
       // mock just resolves so the renderer can exercise the success/error
       // toast paths via test-time monkeypatching.
       clearStorage: function () { return Promise.resolve(); },
+      registerPane: function (input) { browserPaneCalls.push({ type: 'register', input: input }); return Promise.resolve(); },
+      unregisterPane: function (sessionId) { browserPaneCalls.push({ type: 'unregister', sessionId: sessionId }); return Promise.resolve(); },
       // Ctrl+wheel zoom is applied in the main process and broadcast back.
       // The UI tier has no main process, so the mock just registers the
       // callback and returns a no-op unsubscribe.
@@ -2237,6 +2240,7 @@
     reset: function () {
       browserUrls = {};
       browserCaptureCalls = [];
+      browserPaneCalls = [];
       // Also drop any project-level browser default that the empty-state
       // submit path auto-seeded via saveForProject -- otherwise the next
       // test's BrowserPane.useBrowserUrl resolves an effectiveUrl from the
@@ -2250,6 +2254,9 @@
     },
     getCaptureCalls: function () {
       return browserCaptureCalls.slice();
+    },
+    getPaneCalls: function () {
+      return browserPaneCalls.slice();
     },
     seedTaskUrl: function (taskId, url) {
       browserUrls[taskId] = url;

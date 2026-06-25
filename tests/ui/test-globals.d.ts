@@ -14,6 +14,10 @@ declare global {
     __mockBrowser?: {
       reset: () => void;
       getCaptureCalls: () => unknown[];
+      getPaneCalls: () => Array<
+        | { type: 'register'; input: { sessionId: string; taskId: string; projectId: string | null; webContentsId: number; url: string | null } }
+        | { type: 'unregister'; sessionId: string }
+      >;
       seedTaskUrl: (taskId: string, url: string) => void;
     };
 

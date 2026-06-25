@@ -26,7 +26,7 @@ The webview is hardened in `src/main/index.ts`:
 
 The webview runs in its own renderer process. The host renderer cannot reach into it; the only channel is `webview.executeJavaScript()` (used by the inspector) and the navigation/capture APIs.
 
-**Cookie isolation:** the webview uses a single shared persistent partition, defined as `BROWSER_PARTITION` in `src/shared/browser-partition.ts` (currently `persist:kangentic-browser`). All tasks across all projects share this jar, which is the deliberate trade-off: sign in once and the cookies follow you across tasks. Per-project and per-task variants were considered and deferred. The storage and privacy concern is covered by the **Clear browser data** action in `Settings -> Browser` (see "Settings" below) without paying the migration cost. If we ever switch strategies, both the renderer `<webview partition>` and the main-process `session.fromPartition` use the same constant, so flipping it is a one-line change.
+**Cookie isolation:** the webview partition is keyed PER WORKTREE via `browserPartitionForWorktree(worktreePath)` in `src/shared/browser-partition.ts` (returns `persist:kngbrowser-<hash>`). Each task detail runs in its own working directory (a git worktree, or the project root for main-cwd tasks), and that directory is the dev environment. Browser cookies are scoped to HOST not port, so two worktrees running dev servers on `localhost:4200` and `:4300` would clobber each other's `localhost` session under one shared jar - therefore each worktree gets its own persistent jar. Sessions sharing a checkout share the jar (you sign in once per worktree). The renderer (`<webview partition>`, keyed off the session `cwd`) and the main process (the clear-storage handler, which enumerates the project's worktree directories) derive the same name from the same path. The legacy single jar `BROWSER_PARTITION` (`persist:kangentic-browser`) remains for the no-worktree fallback and is also wiped by **Clear browser data**.
 
 ### Capture and prompt payload
 
@@ -69,6 +69,14 @@ Per-adapter verification is exposed via each `AgentAdapter`'s `getSubmissionVeri
 
 Resolution rule: `taskOverride > projectDefault > null` (caller renders empty state). Auto-save: every successful navigation silently updates the task URL; the first navigation in a project also seeds the project default with a "Saved as project default" toast.
 
+### Agent automation (`kangentic_browser_*`)
+
+Shipped MCP tools let an agent drive THIS pane: screenshot, click, type, keypress, query DOM, read console, wait, navigate, and (opt-in) eval against the dev server the user has loaded. This closes the verify loop without a Kangentic-managed preview.
+
+- **Registration:** the renderer registers each open pane's guest webContents id (`webview.getWebContentsId()`) with the main process on `dom-ready`, via `BROWSER_PANE_REGISTER` / `BROWSER_PANE_UNREGISTER` IPC, and unregisters on unmount. The main-process pane registry (`src/main/browser/browser-pane-registry.ts`) maps the guest to its taskId/sessionId so the tools can target the right pane; main also tracks the guest's own `destroyed` / `did-navigate` so the registry stays honest across a hard reload.
+- **Driving (in-process):** the driver (`src/main/browser/browser-pane-driver.ts`) resolves the target, attaches Chrome DevTools Protocol to the guest webContents, and runs the shared CDP helpers in `src/main/browser/cdp/` (the same content-agnostic driver the dev inspection bridge uses through a compat shim). No HTTP bridge, no lockfile: the pane is in the same process as the MCP server. Debuggers detach synchronously on `before-quit`.
+- **Gating:** the global **Browser Automation** settings tab (master enable + per-capability switches: interaction, navigation, eval, restrict-to-localhost) is read live per tool call. `eval` is off by default. See [mcp-server.md](mcp-server.md) and `.claude/rules/browser-automation-driver.md`.
+
 ## Cross-platform notes
 
 | Platform | Concern | Status |
@@ -94,6 +102,8 @@ The webview is a regular Chromium browser context. WebSocket, ES modules, fetch 
 
 The Browser tab in `AppSettingsPanel` (per-project, above the separator) exposes all three. Future additions (per-task draw color, capture history) belong here.
 
+- **Browser Automation** (global, below the separator) - a separate tab (`AppConfig.browserAutomation`) gating the `kangentic_browser_*` agent tools: `enabled` (master), `allowInteraction`, `allowNavigation`, `allowEval` (default off), `restrictNavigationToLocalhost` (default off). This is a cross-project security policy, hence global, whereas the per-project Browser tab is pane workflow.
+
 ## Limitations and future work
 
 | Item | Status | Tracked |
@@ -118,11 +128,11 @@ The Browser tab in `AppSettingsPanel` (per-project, above the separator) exposes
 
 Open questions resolved during the build:
 
-1. **Cookie isolation** - single shared persistent partition. Convenience over isolation. Per-project partitions are a future option.
+1. **Cookie isolation** - per-worktree persistent partitions (`persist:kngbrowser-<hash(worktreePath)>`). Isolates each task's dev environment so concurrent worktrees never share a `localhost` jar, while persisting across restarts. Replaced the original single shared jar when agent automation shipped (the shared jar let an agent read another context's logged-in sessions, and concurrent worktrees clobbered each other's localhost cookies).
 2. **Host renderer CSP** - not added in this iteration. The webview is process-isolated, so the absence is not a same-origin escape risk. Defense-in-depth pass deferred.
 3. **DevTools exposure** - not enabled. Adds a security surface for the inspect feature; not worth it given Inspect mode covers the common need.
 4. **File downloads** - unhandled. A page with `<a download>` will trigger Chromium's default behavior (likely route through `defaultSession` to `Downloads/`). Future hardening: explicit `will-download` deny.
-5. **Permissions** - inherits the host session. Should be explicitly denied via `setPermissionRequestHandler` on the partition's session. Future hardening.
+5. **Permissions** - all permission requests (camera, mic, geolocation, notifications, ...) are denied via `setPermissionRequestHandler` on the guest session. Hardened when agent automation shipped, since agent-driven navigation could otherwise reach a page that auto-prompts.
 6. **Adapter capability shape** - resolved via `getSubmissionVerifier(contextType)` returning a per-context callback. The callback consumes adapter-specific signals (e.g. Claude's JSONL transcript for command-injection) and returns a boolean.
 7. **Pop-out window** - deferred. Side-pane is the shipped surface. If pop-out becomes a hard requirement, build on a child `BrowserWindow` from scratch rather than retrofit re-parenting.
 

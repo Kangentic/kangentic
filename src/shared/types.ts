@@ -1313,6 +1313,26 @@ export interface AppConfig {
     previewEvalEnabled?: boolean;
   };
 
+  /**
+   * Agent browser automation. GLOBAL (per-machine) policy for whether and how
+   * an agent may drive the embedded Browser pane via the kangentic_browser_*
+   * MCP tools. Distinct from `browser` above (the per-project pane settings):
+   * this is a cross-project security policy and lives below the settings
+   * separator in its own "Browser Automation" tab.
+   */
+  browserAutomation?: {
+    /** Master switch. When false the kangentic_browser_* tools are disabled. Default true. */
+    enabled?: boolean;
+    /** Allow click / type / keypress / drag. When false the agent is observe-only. Default true. */
+    allowInteraction?: boolean;
+    /** Allow navigating the pane to other URLs. Default true. */
+    allowNavigation?: boolean;
+    /** Allow arbitrary-JS eval in the loaded page's origin. Default false. */
+    allowEval?: boolean;
+    /** Restrict navigation to localhost / private hosts only. Default false (any http(s)). */
+    restrictNavigationToLocalhost?: boolean;
+  };
+
   hasCompletedFirstRun: boolean;
   skipDeleteConfirm: boolean;
   skipBoardConfigConfirm: boolean;
@@ -2726,6 +2746,10 @@ export interface ElectronAPI {
     setTaskUrl: (taskId: string, url: string) => Promise<void>;
     clearTaskUrl: (taskId: string) => Promise<void>;
     clearStorage: () => Promise<void>;
+    /** Register an open Browser pane's guest webContents for kangentic_browser_* targeting. */
+    registerPane: (input: BrowserPaneRegisterInput) => Promise<void>;
+    /** Unregister a Browser pane (on unmount). */
+    unregisterPane: (sessionId: string) => Promise<void>;
     /**
      * Subscribe to Ctrl+wheel zoom changes that fire inside the embedded
      * webview. The main process applies the zoom and broadcasts the resulting
@@ -2785,6 +2809,22 @@ export interface BrowserCaptureInput {
   pickedElement: BrowserPickedElement | null;
   selectedText: string;
   note: string;
+}
+
+/**
+ * Payload the renderer sends to register an open Browser pane's guest
+ * webContents with the main-process pane registry (for kangentic_browser_*
+ * targeting). projectId rides inside the payload (captured at interaction
+ * time); this is registry bookkeeping, not a task-state mutation, so it is
+ * not subject to the trailing-projectId mutation rule.
+ */
+export interface BrowserPaneRegisterInput {
+  sessionId: string;
+  taskId: string;
+  projectId: string | null;
+  /** The guest webview id from `webview.getWebContentsId()`. */
+  webContentsId: number;
+  url: string | null;
 }
 
 export interface SearchRequest {

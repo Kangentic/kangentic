@@ -2,10 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ipcMain, session } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
-import { BROWSER_PARTITION } from '../../../shared/browser-partition';
-import type { BrowserCaptureInput } from '../../../shared/types';
+import { BROWSER_PARTITION, browserPartitionForWorktree } from '../../../shared/browser-partition';
+import type { BrowserCaptureInput, BrowserPaneRegisterInput } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { browserUrlStore } from '../../browser/browser-url-store';
+import { browserPaneRegistry } from '../../browser/browser-pane-registry';
 import { PasteSubmitError } from '../../pty/terminal-submit';
 import { agentRegistry } from '../../agent/agent-registry';
 import {
@@ -143,17 +144,74 @@ export function registerBrowserHandlers(context: IpcContext): void {
     browserUrlStore.clear(projectPath, taskId);
   });
 
-  // Wipe the embedded browser's persistent partition. Cookies, localStorage,
+  // Wipe the embedded browser's persistent partitions. Cookies, localStorage,
   // IndexedDB, service workers, and HTTP/auth caches all go. Per-task URL
   // overrides and the project default URL live elsewhere (browser-urls.json,
   // AppConfig.browser.defaultUrl) and are intentionally left alone. Those
   // are workflow state, not browsing identity.
+  //
+  // Per-worktree isolation means a project has one jar per worktree, so clear
+  // them all: the legacy shared jar (data left from before the upgrade, plus
+  // no-worktree panes), the project-root jar, and every worktree jar under
+  // `.kangentic/worktrees/`. Enumerated from disk so no DB / registry coupling.
   ipcMain.handle(IPC.BROWSER_CLEAR_STORAGE, async () => {
-    const browserSession = session.fromPartition(BROWSER_PARTITION);
-    await browserSession.clearStorageData({
-      storages: ['cookies', 'localstorage', 'indexdb', 'shadercache', 'cachestorage', 'serviceworkers'],
+    const partitions = new Set<string>([BROWSER_PARTITION]);
+    const projectRoot = context.currentProjectPath;
+    if (projectRoot) {
+      partitions.add(browserPartitionForWorktree(projectRoot));
+      const worktreesDir = path.join(projectRoot, '.kangentic', 'worktrees');
+      let entries: fs.Dirent[] = [];
+      try {
+        entries = fs.readdirSync(worktreesDir, { withFileTypes: true });
+      } catch {
+        // No worktrees directory yet - just the root + legacy jars.
+      }
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          partitions.add(browserPartitionForWorktree(path.join(worktreesDir, entry.name)));
+        }
+      }
+    }
+    // Clear the partitions concurrently: they are independent session stores, so
+    // the three-call sequence per partition stays ordered while the (legacy +
+    // root + N worktree) jars clear in parallel rather than serially.
+    await Promise.all(
+      [...partitions].map(async (partition) => {
+        const browserSession = session.fromPartition(partition);
+        await browserSession.clearStorageData({
+          storages: ['cookies', 'localstorage', 'indexdb', 'shadercache', 'cachestorage', 'serviceworkers'],
+        });
+        await browserSession.clearCache();
+        await browserSession.clearAuthCache();
+      }),
+    );
+  });
+
+  // === Pane registry: track an open Browser pane's guest webContents so the
+  // kangentic_browser_* MCP tools can target it. Registry bookkeeping (not a
+  // task-state mutation), so projectId rides in the payload rather than as a
+  // trailing argument.
+  ipcMain.handle(IPC.BROWSER_PANE_REGISTER, (_event, input: BrowserPaneRegisterInput) => {
+    if (!input || !isValidSessionId(input.sessionId)) {
+      throw new Error('registerPane received a malformed sessionId');
+    }
+    if (!Number.isInteger(input.webContentsId) || input.webContentsId <= 0) {
+      throw new Error('registerPane received an invalid webContentsId');
+    }
+    browserPaneRegistry.register({
+      sessionId: input.sessionId,
+      taskId: input.taskId,
+      projectId: input.projectId ?? null,
+      webContentsId: input.webContentsId,
+      url: input.url ?? null,
     });
-    await browserSession.clearCache();
-    await browserSession.clearAuthCache();
+  });
+
+  ipcMain.handle(IPC.BROWSER_PANE_UNREGISTER, (_event, sessionId: string) => {
+    // Mirror the register handler's input guard (a registered sessionId always
+    // passed it). A bad key would be a harmless Map no-op, but validating keeps
+    // the two sibling handlers symmetric.
+    if (!isValidSessionId(sessionId)) return;
+    browserPaneRegistry.unregister(sessionId);
   });
 }

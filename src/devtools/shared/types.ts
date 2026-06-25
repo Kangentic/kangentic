@@ -87,52 +87,17 @@ export interface RendererStateSnapshot {
 }
 
 /**
- * Viewport-space layout box for one element, derived from
- * `getBoundingClientRect()` (CSS pixels relative to the viewport). This
- * differs from the singular `/bounding-box` endpoint, which returns the
- * raw CDP box-model quads (content / padding / border / margin).
+ * Query-all result shapes now live with the shipped CDP driver
+ * (`src/main/browser/cdp/types.ts`) so both the user-facing browser-pane
+ * driver and this dev-only bridge can share them. Re-exported here so
+ * existing dev-only consumers keep their `src/devtools/shared/types`
+ * import path.
  */
-export interface QueryAllElementBox {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  top: number;
-  right: number;
-  bottom: number;
-  left: number;
-}
-
-/**
- * One matched element returned by the `/query-all` and `/bounding-box-all`
- * endpoints. `attributes` and `outerHTML` are only populated when the
- * caller requests them (lean by default for multi-element measurement).
- */
-export interface QueryAllElement {
-  index: number;
-  tag: string;
-  attributes?: Record<string, string>;
-  box: QueryAllElementBox;
-  outerHTML?: string;
-  /** Set when `outerHTML` was clipped to the per-element character cap. */
-  outerHTMLTruncated?: boolean;
-}
-
-/**
- * Result of a query-all over a selector: every matching element measured
- * in a single `Runtime.evaluate`. `total` is the full match count;
- * `elements` is capped at `returned` (the caller's `limit`).
- */
-export interface QueryAllResult {
-  selector: string;
-  /** Resolved selector kind: 'css' | 'text' | 'text-contains' | 'aria'. */
-  kind: string;
-  total: number;
-  returned: number;
-  /** True when `total` exceeded `limit` and `elements` was clipped. */
-  truncated: boolean;
-  elements: QueryAllElement[];
-}
+export type {
+  QueryAllElementBox,
+  QueryAllElement,
+  QueryAllResult,
+} from '../../main/browser/cdp/types';
 
 /**
  * Result of a renderer store-state read via `/store-state`. On success
