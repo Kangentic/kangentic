@@ -107,6 +107,13 @@ describe('window-store actions', () => {
     expect(state.order).toEqual([id]);
   });
 
+  it('leaves a freshly opened window without the skip-enter flag, so it plays the entrance animation', () => {
+    // Only a workspace restore (deserializeWorkspace) sets skipEnterAnimation; a user-opened
+    // window must keep the normal entrance, so the flag stays unset here.
+    const id = useWindowStore.getState().openWindow({ anchor: 'task-a', sessionId: 'sess-a', title: 'A' });
+    expect(useWindowStore.getState().windows[id].skipEnterAnimation).toBeUndefined();
+  });
+
   it('focuses the existing window when re-opening the same task (one window per task)', () => {
     const first = useWindowStore.getState().openWindow({ anchor: 'task-a', sessionId: 'sess-a', title: 'A' });
     const second = useWindowStore.getState().openWindow({ anchor: 'task-a', sessionId: 'sess-a', title: 'A again' });

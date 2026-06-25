@@ -121,8 +121,12 @@ export function StatusBar() {
 
   // Pulse hooks - always called unconditionally (hooks rules)
   const tokenKey = `${displayInput}-${displayOutput}`;
-  const tokenPulseRef = useValuePulse(tokenKey);
-  const costPulseRef = useValuePulse(displayCost);
+  // Rebaseline the pulse on a project or period switch: that flips the displayed
+  // totals to a different context, which is not a live tick and must not animate
+  // (.claude/rules/restore-no-animation-replay.md).
+  const pulseResetKey = `${currentProject?.id ?? ''}:${selectedPeriod}`;
+  const tokenPulseRef = useValuePulse(tokenKey, { resetKey: pulseResetKey });
+  const costPulseRef = useValuePulse(displayCost, { resetKey: pulseResetKey });
 
   function handlePeriodSelect(period: UsageTimePeriod) {
     setSelectedPeriod(period);

@@ -159,19 +159,23 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
     (s) => s.agentList.find((a) => a.name === taskAgent)?.reportsRateLimits ?? false
   );
 
-  // Pulse hooks -- always called unconditionally (hooks rules)
-  const costRef = useValuePulse(usage?.cost.totalCostUsd);
-  const toolCallRef = useValuePulse(usage?.toolCallCount);
+  // Pulse hooks - always called unconditionally (hooks rules). Every pulse
+  // rebaselines on `sessionId`: switching the bar to a different session (a
+  // project/task switch swaps it) flips all these metrics to another context's
+  // numbers, which is not a live tick and must not animate
+  // (.claude/rules/restore-no-animation-replay.md).
+  const costRef = useValuePulse(usage?.cost.totalCostUsd, { resetKey: sessionId });
+  const toolCallRef = useValuePulse(usage?.toolCallCount, { resetKey: sessionId });
   const inputTokens = usage?.contextWindow.totalInputTokens;
   const outputTokens = usage?.contextWindow.totalOutputTokens;
   const tokenKey = `${inputTokens}-${outputTokens}`;
-  const tokenRef = useValuePulse(tokenKey);
-  const pctRef = useValuePulse(usage ? Math.round(usage.contextWindow.usedPercentage) : 0);
-  const fractionRef = useValuePulse(usage?.contextWindow.usedTokens);
+  const tokenRef = useValuePulse(tokenKey, { resetKey: sessionId });
+  const pctRef = useValuePulse(usage ? Math.round(usage.contextWindow.usedPercentage) : 0, { resetKey: sessionId });
+  const fractionRef = useValuePulse(usage?.contextWindow.usedTokens, { resetKey: sessionId });
   const rateLimitsKey = latestRateLimits
     ? latestRateLimits.rateLimits.map((limitWindow) => `${limitWindow.id}:${Math.round(limitWindow.usedPercentage)}`).join('|')
     : '';
-  const rateLimitsRef = useValuePulse(rateLimitsKey);
+  const rateLimitsRef = useValuePulse(rateLimitsKey, { resetKey: sessionId });
 
   // Tool-call breakdown popover. This pill lives directly in ContextBar, so it
   // owns its own open state (unlike the model/effort popovers, which live in the

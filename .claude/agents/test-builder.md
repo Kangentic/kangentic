@@ -97,6 +97,8 @@ These are project rules learned from production incidents. Violating any of them
 
 8. **Build is required for E2E.** `npm run build` must have been run since the last main process change. If you modify `src/main/`, you must rebuild before running E2E tests.
 
+9. **Run Playwright headless and non-interactively. NEVER pass `--debug`, `--ui`, or `--headed`, and never set `PWDEBUG`.** Those flags open the Playwright Inspector GUI and a visible browser, then PAUSE the run waiting for manual step-through. The team dogfoods Kangentic on this same machine, so the popup windows hijack the developer's screen mid-work; the run never exits on its own (it blocks forever); and when it is killed it leaks orphaned `ms-playwright` `chrome.exe` plus the worker `node.exe` that then have to be hunted down. Always run the plain, self-exiting form: `npx playwright test <spec> --project=ui` (or `--project=electron`). To DIAGNOSE a failure, never reach for an interactive pause - use `--reporter=line` (or `list`), `--trace retain-on-failure` and open the saved trace AFTER the run, `console.log` inside the spec, or `page.screenshot(...)`. Keep UI specs launching headless (`chromium.launch({ headless: true })`). The only acceptable way to "watch" a run is the offline trace viewer, never a live inspector.
+
 ## Deriving Expected Behavior (READ FIRST - self-review-bias guard)
 
 You are frequently invoked in the **same session that just wrote the code under test**. That is exactly when a test is most likely to be wrong in a way that hides a bug: if you infer "what the code should do" from the implementation, you encode the implementation's mistakes as the expected result, and the test passes against buggy behavior. This is **self-review bias** - validating what the code *does* instead of what it *should* do. Two non-negotiable rules counter it:
@@ -713,7 +715,7 @@ npm run test:unit
 npm run build
 ```
 
-Remember: every Bash call is exactly ONE command. No chaining.
+Remember: every Bash call is exactly ONE command. No chaining. And per Constraint 9, never append `--debug` / `--ui` / `--headed` (or set `PWDEBUG`) to any of these - they open the Inspector and hang the run. Diagnose with `--trace retain-on-failure` and the offline trace viewer instead.
 
 ## Known Pre-existing Flakes
 

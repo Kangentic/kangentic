@@ -41,7 +41,7 @@ export function WindowFrame({ managedWindow, containerSize, overlayRef, tiledRec
 
   const { requestClose, contentClassName, onAnimationEnd, isExiting } = useOverlayPhase(
     () => closeWindow(managedWindow.id),
-    { variant: 'dialog', skipEnterOnHmr: true },
+    { variant: 'dialog', skipEnterOnHmr: true, skipEnter: managedWindow.skipEnterAnimation ?? false },
   );
 
   // Fallback: if the exit animation's `animationend` never fires (animations

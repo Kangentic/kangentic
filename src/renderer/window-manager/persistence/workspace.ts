@@ -162,6 +162,7 @@ export function deserializeWorkspace(
       sessionStatus: 'live',
       restoreGeometry: persisted.restoreGeometry ? { ...persisted.restoreGeometry } : null,
       title: persisted.title,
+      skipEnterAnimation: true,
     };
   }
 

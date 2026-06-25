@@ -71,6 +71,23 @@ describe('workspace serialize / deserialize', () => {
     expect(restored.tileTree).toBeNull();
   });
 
+  it('marks every restored window to skip the entrance animation, and never persists the flag', () => {
+    // A restored window must paint flat (no project-switch entrance replay), so deserialize
+    // stamps the transient flag. It is presentation-only and must not survive a serialize.
+    const restoredWindow = makeWindow('win-1', 'task-a', 'floating', HALF_LEFT);
+    restoredWindow.skipEnterAnimation = true; // as a window already rebuilt by a prior restore carries
+    const serialized = serializeWorkspace([restoredWindow], null, FULL, 'win-1');
+    expect(serialized.windows[0]).not.toHaveProperty('skipEnterAnimation');
+
+    const windows = [
+      makeWindow('win-1', 'task-a', 'floating', { x: 0.1, y: 0.1, w: 0.4, h: 0.5 }),
+      makeWindow('win-2', 'task-b', 'maximized', { x: 0.2, y: 0.2, w: 0.4, h: 0.5 }),
+    ];
+    const fresh = serializeWorkspace(windows, null, FULL, 'win-1');
+    const restored = deserializeWorkspace(fresh, makeContext(['task-a', 'task-b']))!;
+    expect(Object.values(restored.windows).every((window) => window.skipEnterAnimation === true)).toBe(true);
+  });
+
   it('round-trips a 2-up tile tree, re-anchoring leaves by taskId then back to fresh window ids', () => {
     const tree: TileNode = {
       kind: 'split',
@@ -99,6 +116,8 @@ describe('workspace serialize / deserialize', () => {
     const tiled = Object.values(restored.windows).filter((window) => window.state === 'tiled');
     expect(tiled).toHaveLength(2);
     expect(tiled.every((window) => window.leafId)).toBe(true);
+    // The skip-enter flag rides the tiled-window spread too (restored tiles paint flat).
+    expect(tiled.every((window) => window.skipEnterAnimation === true)).toBe(true);
     // The tree's leaves reference exactly the restored windows' new ids.
     expect(new Set(leafWindowIds(restored.tileTree!))).toEqual(new Set(Object.keys(restored.windows)));
   });

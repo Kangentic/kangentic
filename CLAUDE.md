@@ -223,6 +223,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `activity-state-classification.md` - bucket `ActivityState` idle-vs-active only via `src/shared/activity-state.ts` (`src/renderer/`).
 - `board-completing-task-chokepoint.md` - hide in-flight Done-completing tasks only at KanbanBoard's `tasksPerLane`, never per-lane (`src/renderer/components/board/`).
 - `keybindings-registry.md` - renderer shortcuts declared in `KEYBINDINGS` and bound via `useKeybinding`, not ad-hoc `addEventListener('keydown')` (`src/renderer/`).
+- `restore-no-animation-replay.md` - a project switch / restore paints flat: restored windows skip the entrance animation (`skipEnterAnimation`) and `useValuePulse` rebaselines on a `resetKey` instead of pulsing (`src/renderer/`).
 - `cross-platform-parity.md` - code and tests must behave identically on Windows/macOS/Linux/CI; no OS-specific paths, no cross-test state leakage or pixel-exact assertions (`tests/`, `src/main/` pty/agent/git).
 
 **Local overrides:** there is no per-rule local file. Put machine-specific instruction

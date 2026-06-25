@@ -27,6 +27,12 @@ interface UseOverlayPhaseOptions {
    * overlays that can remount on HMR (command bar, search) opt in.
    */
   skipEnterOnHmr?: boolean;
+  /**
+   * Start already-visible this mount (unconditionally), skipping the entrance
+   * animation. For content remounted in a state that should not animate in
+   * (e.g. a window rebuilt by a workspace restore on project switch).
+   */
+  skipEnter?: boolean;
 }
 
 export interface OverlayPhaseApi {
@@ -66,10 +72,10 @@ export function useOverlayPhase(
   onClose: () => void,
   options: UseOverlayPhaseOptions = {},
 ): OverlayPhaseApi {
-  const { variant = 'dialog', skipEnterOnHmr = false } = options;
+  const { variant = 'dialog', skipEnterOnHmr = false, skipEnter = false } = options;
 
   const [phase, setPhase] = useState<OverlayPhaseName>(() =>
-    skipEnterOnHmr && getIsHmrReload() ? 'visible' : 'entering',
+    skipEnter || (skipEnterOnHmr && getIsHmrReload()) ? 'visible' : 'entering',
   );
 
   const requestClose = useCallback(() => {

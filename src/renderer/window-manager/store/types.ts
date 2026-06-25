@@ -67,6 +67,10 @@ export interface ManagedWindow {
    *  (not a component ref) so it survives the content remount the Done "fly" causes
    *  when the task briefly leaves `tasks`. */
   openedDone?: boolean;
+  /** Transient, never persisted: set true on windows rebuilt by a workspace
+   *  restore (project switch) so they paint flat with NO entrance animation,
+   *  unlike a fresh user-opened window. Re-derived on every restore. */
+  skipEnterAnimation?: boolean;
 }
 
 /**

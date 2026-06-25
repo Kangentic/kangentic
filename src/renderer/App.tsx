@@ -16,6 +16,7 @@ import { resolveAutoFocusTarget } from './utils/auto-focus';
 import { requiresUserInteraction } from '../shared/activity-state';
 import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
+import { useWindowStore } from './window-manager/store/window-store';
 import {
   autoNameTimers,
   scheduleAutoNameSuggestion,
@@ -672,5 +673,6 @@ if (import.meta.env.DEV) {
     config: useConfigStore,
     project: useProjectStore,
     session: useSessionStore,
+    window: useWindowStore,
   };
 }
