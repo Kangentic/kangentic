@@ -5,31 +5,93 @@ import { useToastStore } from '../toast-store';
 import type { SessionStore } from './types';
 import { buildSessionByTaskId } from './session-index';
 
+/**
+ * One transient (Command Terminal) session, owned by a single command-terminal
+ * window. `projectId` + `slot` are embedded in the value (not just the composite
+ * key) so value-iterating consumers (the focused set, the exit handler, the
+ * auto-name scheduler) can filter by project without parsing the key.
+ *
+ * `label` is the auto-derived display name (from the first prompt event); when
+ * absent the command bar falls back to "Command Terminal".
+ */
+export interface TransientSessionEntry {
+  projectId: string;
+  /** Durable window slot id (`slot-1`, `slot-2`, ...). The window persists across
+   *  the ephemeral PTY; the slot is the stable identity that pairs them. */
+  slot: string;
+  sessionId: string;
+  branch: string | null;
+  label?: string;
+}
+
+/** Composite map key. One Command Terminal window owns one (project, slot) PTY. */
+export function transientKey(projectId: string, slot: string): string {
+  return `${projectId}::${slot}`;
+}
+
+/** Every transient session id for a project, in map order. Drives the focused-set
+ *  push (each visible terminal must be focused) and the title-bar activity color
+ *  aggregate. */
+export function selectCurrentProjectTransientSessionIds(
+  transientSessions: Record<string, TransientSessionEntry>,
+  projectId: string | null,
+): string[] {
+  if (!projectId) return [];
+  return Object.values(transientSessions)
+    .filter((entry) => entry.projectId === projectId)
+    .map((entry) => entry.sessionId);
+}
+
+/** Shallow copy of `record` minus any key in `ids`. */
+function omitKeys<T>(record: Record<string, T>, ids: Set<string>): Record<string, T> {
+  const result: Record<string, T> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (!ids.has(key)) result[key] = value;
+  }
+  return result;
+}
+
+/**
+ * Strip every per-session dictionary entry + the sessions-list rows for a set of
+ * dead transient sessions, in one pass. Shared by the by-id, by-slot, and
+ * by-project removers: the session is gone, so leaving these entries would leak
+ * (a `sessionActivity[id] = 'thinking'` that never clears, stale usage/events).
+ */
+function scrubSessionDicts(state: SessionStore, sessionIds: string[]): Partial<SessionStore> {
+  const ids = new Set(sessionIds);
+  const sessions = state.sessions.filter((session) => !ids.has(session.id));
+  return {
+    sessions,
+    _sessionByTaskId: buildSessionByTaskId(sessions),
+    sessionUsage: omitKeys(state.sessionUsage, ids),
+    sessionFirstOutput: omitKeys(state.sessionFirstOutput, ids),
+    sessionActivity: omitKeys(state.sessionActivity, ids),
+    sessionActivityReason: omitKeys(state.sessionActivityReason, ids),
+    sessionEvents: omitKeys(state.sessionEvents, ids),
+    seenIdleSessions: omitKeys(state.seenIdleSessions, ids),
+  };
+}
+
 export interface TransientSessionSlice {
   /** Whether the command bar overlay is currently visible (drives focused-session priority). */
   commandBarVisible: boolean;
   setCommandBarVisible: (visible: boolean) => void;
 
-  /** Per-project transient session tracking: projectId -> { sessionId, branch, label? }.
-   *  `label` is the auto-derived display name (from the first prompt event); when absent
-   *  the command bar falls back to "Command Terminal". */
-  transientSessions: Record<string, { sessionId: string; branch: string | null; label?: string }>;
-  /** Current project's transient session ID (convenience pointer into transientSessions). */
-  transientSessionId: string | null;
-  /** Current project's transient branch (convenience pointer into transientSessions). */
-  transientBranch: string | null;
+  /** Per-(project, slot) transient session tracking, keyed by `transientKey()`.
+   *  Each Command Terminal window owns one entry. */
+  transientSessions: Record<string, TransientSessionEntry>;
 
-  spawnTransientSession: (branch?: string) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
-  killTransientSession: () => Promise<void>;
-  /** Clear transient session ID without IPC call (session already exited naturally). */
-  clearTransientSession: () => void;
-  /** Stash current project's transient session pointers (keep PTY alive for later restore). */
-  stashTransientSession: () => void;
-  /** Restore a project's transient session from the map (if still alive). */
-  restoreTransientSession: (projectId: string) => void;
-  /** Kill a specific project's transient session and clean up all data. */
+  /** Spawn a transient session for `slot` in the current project (optionally on a
+   *  branch). Records it in the map under `transientKey(projectId, slot)`. */
+  spawnTransientSession: (slot: string, branch?: string) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
+  /** Kill one slot's transient PTY (IPC) and scrub its renderer state. */
+  killTransientSessionBySlot: (projectId: string, slot: string) => Promise<void>;
+  /** Remove a transient session's renderer state by session id, no IPC (the PTY
+   *  already exited naturally). Drops its (project, slot) map entry too. */
+  clearTransientSessionById: (sessionId: string) => void;
+  /** Kill ALL of a project's transient sessions and clean up (project delete / relocate). */
   killTransientSessionForProject: (projectId: string) => Promise<void>;
-  /** Set the derived label on a transient session entry (for the active project). */
+  /** Set the derived label on a transient session entry (first prompt wins). */
   setTransientSessionLabel: (sessionId: string, label: string) => void;
   /** Inject a live model/effort change into a transient session's PTY (no DB persistence).
    *  Surfaces a toast on failure; the live pill updates when the CLI echoes the new value. */
@@ -37,35 +99,31 @@ export interface TransientSessionSlice {
 }
 
 /**
- * Ephemeral "command terminal" sessions spawned from the command bar
- * overlay. Unlike task-bound sessions, these have no DB row and their
- * identity is tracked entirely in renderer memory (persisted across
- * HMR via import.meta.hot.data; see session-store/hmr-persistence.ts).
+ * Ephemeral "command terminal" sessions spawned from the command bar overlay.
+ * Unlike task-bound sessions, these have no DB row and their identity is tracked
+ * entirely in renderer memory (persisted across HMR via import.meta.hot.data;
+ * see session-store.ts).
  *
- * Each project has at most one transient session at a time. Switching
- * projects stashes the current pointers so the PTY survives and can be
- * restored when the user returns. Closing the command bar overlay
- * keeps the PTY alive in the background.
+ * Phase 2: each project can have MULTIPLE transient sessions at once, one per
+ * Command Terminal window. They are keyed by `(projectId, slot)`, where `slot`
+ * is the owning window's durable anchor. Switching projects keeps every PTY
+ * alive in the map; the command bar closes and its windows rebind to the new
+ * project's slots on reopen. Closing the overlay keeps every PTY alive.
  *
- * killTransient* methods also scrub the session's entries from all the
- * derived per-session dictionaries (usage, activity, events, etc.)
- * that live on the core slice, because the session is gone and those
- * entries would leak.
+ * The remove paths also scrub the session's entries from all the derived
+ * per-session dictionaries (usage, activity, events, etc.) that live on the
+ * core slice, because the session is gone and those entries would leak.
  */
 export function createTransientSessionSlice(preserved: {
-  transientSessions: Record<string, { sessionId: string; branch: string | null; label?: string }>;
-  transientSessionId: string | null;
-  transientBranch: string | null;
+  transientSessions: Record<string, TransientSessionEntry>;
 } | undefined): StateCreator<SessionStore, [], [], TransientSessionSlice> {
   return (set, get) => ({
     commandBarVisible: false,
     setCommandBarVisible: (visible) => set({ commandBarVisible: visible }),
 
     transientSessions: preserved?.transientSessions ?? {},
-    transientSessionId: preserved?.transientSessionId ?? null,
-    transientBranch: preserved?.transientBranch ?? null,
 
-    spawnTransientSession: async (branch?) => {
+    spawnTransientSession: async (slot, branch?) => {
       const currentProject = useProjectStore.getState().currentProject;
       if (!currentProject) throw new Error('No project is currently open');
       const result = await window.electronAPI.sessions.spawnTransient({
@@ -74,93 +132,75 @@ export function createTransientSessionSlice(preserved: {
       });
       // Insert the session synchronously so anything that filters
       // state.sessions for `projectId === current && status === 'running'`
-      // (Activity Engine Debugger overlay, restoreTransientSession's
-      // liveness check) sees the row immediately. The push-based
-      // session-changed event from the main process arrives a moment
-      // later and calls upsertSession again; that call is idempotent.
+      // (Activity Engine Debugger overlay, syncSessions recovery's liveness
+      // check) sees the row immediately. The push-based session-changed event
+      // from the main process arrives a moment later and calls upsertSession
+      // again; that call is idempotent.
       get().upsertSession(result.session);
       set((state) => ({
         transientSessions: {
           ...state.transientSessions,
-          [currentProject.id]: { sessionId: result.session.id, branch: result.branch },
+          [transientKey(currentProject.id, slot)]: {
+            projectId: currentProject.id,
+            slot,
+            sessionId: result.session.id,
+            branch: result.branch,
+          },
         },
-        transientSessionId: result.session.id,
-        transientBranch: result.branch,
       }));
       return result;
     },
 
-    killTransientSession: async () => {
-      const transientSessionId = get().transientSessionId;
-      if (transientSessionId) {
-        await window.electronAPI.sessions.killTransient(transientSessionId);
-        get().clearTransientSession();
+    killTransientSessionBySlot: async (projectId, slot) => {
+      const entry = get().transientSessions[transientKey(projectId, slot)];
+      if (!entry) return;
+      try {
+        await window.electronAPI.sessions.killTransient(entry.sessionId);
+      } catch {
+        // Best-effort cleanup.
       }
+      get().clearTransientSessionById(entry.sessionId);
     },
 
-    clearTransientSession: () => {
-      const transientSessionId = get().transientSessionId;
-      if (transientSessionId) {
-        set((state) => {
-          const { [transientSessionId]: _usage, ...restUsage } = state.sessionUsage;
-          const { [transientSessionId]: _firstOutput, ...restFirstOutput } = state.sessionFirstOutput;
-          const { [transientSessionId]: _activity, ...restActivity } = state.sessionActivity;
-          const { [transientSessionId]: _activityReason, ...restActivityReason } = state.sessionActivityReason;
-          const { [transientSessionId]: _events, ...restEvents } = state.sessionEvents;
-          const { [transientSessionId]: _seen, ...restSeen } = state.seenIdleSessions;
-          const sessions = state.sessions.filter((s) => s.id !== transientSessionId);
-
-          // Remove owning project's entry from the per-project map
-          const updatedTransientSessions = { ...state.transientSessions };
-          for (const [projectId, entry] of Object.entries(updatedTransientSessions)) {
-            if (entry.sessionId === transientSessionId) {
-              delete updatedTransientSessions[projectId];
-              break;
-            }
+    clearTransientSessionById: (sessionId) => {
+      set((state) => {
+        // Drop the owning (project, slot) entry.
+        const transientSessions = { ...state.transientSessions };
+        for (const [key, entry] of Object.entries(transientSessions)) {
+          if (entry.sessionId === sessionId) {
+            delete transientSessions[key];
+            break;
           }
-
-          return {
-            sessions,
-            _sessionByTaskId: buildSessionByTaskId(sessions),
-            sessionUsage: restUsage,
-            sessionFirstOutput: restFirstOutput,
-            sessionActivity: restActivity,
-            sessionActivityReason: restActivityReason,
-            sessionEvents: restEvents,
-            seenIdleSessions: restSeen,
-            transientSessions: updatedTransientSessions,
-            transientSessionId: null,
-            transientBranch: null,
-          };
-        });
-      } else {
-        set({ transientSessionId: null, transientBranch: null });
-      }
-    },
-
-    stashTransientSession: () => {
-      // Null the convenience pointers only. The map entry and all session data
-      // (usage, activity, events, firstOutput) stay in the store keyed by sessionId.
-      set({ transientSessionId: null, transientBranch: null });
-    },
-
-    restoreTransientSession: (projectId) => {
-      const entry = get().transientSessions[projectId];
-      if (entry) {
-        // Verify the session is still alive
-        const session = get().sessions.find((s) => s.id === entry.sessionId && s.status === 'running');
-        if (session) {
-          set({ transientSessionId: entry.sessionId, transientBranch: entry.branch });
-        } else {
-          // Session died while stashed - clean up the map entry
-          set((state) => {
-            const { [projectId]: _removed, ...rest } = state.transientSessions;
-            return { transientSessions: rest, transientSessionId: null, transientBranch: null };
-          });
         }
-      } else {
-        set({ transientSessionId: null, transientBranch: null });
+        return {
+          ...scrubSessionDicts(state, [sessionId]),
+          transientSessions,
+        };
+      });
+    },
+
+    killTransientSessionForProject: async (projectId) => {
+      const entries = Object.values(get().transientSessions).filter(
+        (entry) => entry.projectId === projectId,
+      );
+      if (entries.length === 0) return;
+      for (const entry of entries) {
+        try {
+          await window.electronAPI.sessions.killTransient(entry.sessionId);
+        } catch {
+          // Best-effort
+        }
       }
+      set((state) => {
+        const transientSessions: Record<string, TransientSessionEntry> = {};
+        for (const [key, entry] of Object.entries(state.transientSessions)) {
+          if (entry.projectId !== projectId) transientSessions[key] = entry;
+        }
+        return {
+          ...scrubSessionDicts(state, entries.map((entry) => entry.sessionId)),
+          transientSessions,
+        };
+      });
     },
 
     setTransientSessionLabel: (sessionId, label) => {
@@ -168,19 +208,16 @@ export function createTransientSessionSlice(preserved: {
       if (!trimmed) return;
       set((state) => {
         const next = { ...state.transientSessions };
-        let changed = false;
-        for (const [projectId, entry] of Object.entries(next)) {
+        for (const [key, entry] of Object.entries(next)) {
           if (entry.sessionId === sessionId) {
             // Only set the label once (first prompt wins). Don't overwrite a
             // user-set or earlier-derived label on subsequent prompts.
             if (entry.label) return state;
-            next[projectId] = { ...entry, label: trimmed };
-            changed = true;
-            break;
+            next[key] = { ...entry, label: trimmed };
+            return { transientSessions: next };
           }
         }
-        if (!changed) return state;
-        return { transientSessions: next };
+        return state;
       });
     },
 
@@ -203,40 +240,6 @@ export function createTransientSessionSlice(preserved: {
           variant: 'error',
         });
       }
-    },
-
-    killTransientSessionForProject: async (projectId) => {
-      const entry = get().transientSessions[projectId];
-      if (!entry) return;
-      try {
-        await window.electronAPI.sessions.killTransient(entry.sessionId);
-      } catch {
-        // Best-effort
-      }
-      set((state) => {
-        const { [projectId]: _removed, ...restTransient } = state.transientSessions;
-        const { [entry.sessionId]: _usage, ...restUsage } = state.sessionUsage;
-        const { [entry.sessionId]: _firstOutput, ...restFirst } = state.sessionFirstOutput;
-        const { [entry.sessionId]: _activity, ...restActivity } = state.sessionActivity;
-        const { [entry.sessionId]: _activityReason, ...restActivityReason } = state.sessionActivityReason;
-        const { [entry.sessionId]: _events, ...restEvents } = state.sessionEvents;
-        const { [entry.sessionId]: _seen, ...restSeen } = state.seenIdleSessions;
-        const sessions = state.sessions.filter((s) => s.id !== entry.sessionId);
-        const isCurrentTransient = state.transientSessionId === entry.sessionId;
-        return {
-          transientSessions: restTransient,
-          transientSessionId: isCurrentTransient ? null : state.transientSessionId,
-          transientBranch: isCurrentTransient ? null : state.transientBranch,
-          sessions,
-          _sessionByTaskId: buildSessionByTaskId(sessions),
-          sessionUsage: restUsage,
-          sessionFirstOutput: restFirst,
-          sessionActivity: restActivity,
-          sessionActivityReason: restActivityReason,
-          sessionEvents: restEvents,
-          seenIdleSessions: restSeen,
-        };
-      });
     },
   });
 }

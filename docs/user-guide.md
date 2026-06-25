@@ -527,18 +527,20 @@ Sessions paused manually by the user (via the pause button in the task detail di
 
 The Command Terminal provides quick, ephemeral access to Claude Code without creating a task on the board. Useful for one-off actions like creating releases, running queries, or any ad-hoc interaction.
 
-**Opening:** Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS), or click the terminal icon in the title bar (next to the settings gear).
+**Opening:** Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS), or click the terminal icon in the title bar (next to the settings gear). The terminal icon's border reflects activity across your open terminals: it marches in emerald while an agent is working, holds a solid amber when one needs your input, and stays plain when idle.
 
 **Behavior:**
 - Spawns Claude Code at the project root on the configured default base branch
 - It opens as a **window** over a slight backdrop blur: drag it by the header, resize it from any edge or corner, maximize / restore it (double-click the header or use the maximize button), and snap it to a screen half or full screen (Windows-style). The layout (size, position, maximized state) **persists globally** across all projects and app restarts.
-- The **branch picker** in the header lets you switch branches - selecting a new branch kills the current session and respawns on the selected branch
+- **Run more than one at once.** While the layer is open, the title-bar terminal icon shows a **`+`** in its center - click it to open another terminal (up to four). New terminals split into the current window's footprint (side by side, keeping the size you set) so you can keep two ad-hoc tasks cooking and glance between them; drag the seam to rebalance, or maximize one to focus it.
+- **Layout controls (same as task windows).** The header's tile-layout button offers one-click snap (left / right / top / bottom) and tilings (columns / grid). When a terminal is tiled, a **pop-out** button floats it back out of the tile group. The title always wins the header's space: the quick-action pills (Commands, Project, Changes, shortcuts) fold into the `...` menu as the window narrows.
+- The **branch picker** in the header lets you switch branches - selecting a new branch kills that terminal's session and respawns it on the selected branch
 - A shimmer overlay shows while Claude Code initializes, then lifts to reveal the clean TUI
 - Transient sessions are fully independent of task sessions - they don't appear in the terminal panel tabs, don't count toward session limits, and produce no toasts on exit
-- The command terminal session is **preserved across project switches**. If you open the command terminal, switch to another project, and switch back, the session is still running. This allows you to keep a command terminal open for ad-hoc work while navigating between projects.
+- Your terminals are **preserved across project switches**. If you open terminals, switch to another project, and switch back, they are still running. Each project keeps its own terminals, so you can keep ad-hoc work going while navigating between projects.
 - If git checkout fails when switching branches (e.g., uncommitted changes), a warning toast explains the issue and the session stays on the current branch
 
-**Hiding vs stopping:** Press `Ctrl+Shift+P` again, `Ctrl+Shift+W`, click the header **X**, or click the blurred backdrop to **hide** the layer - the PTY stays alive in the background and reopening reattaches to it (so the layout and running session are right where you left them). The header's **Stop** button (and the kebab's "Stop terminal") **destroys** the session: it kills the PTY and cleans up the session directory. Transient sessions are non-resumable by design.
+**Hiding vs stopping:** Press `Ctrl+Shift+P` again, `Ctrl+Shift+W`, or click the blurred backdrop to **hide** the layer - every PTY stays alive in the background and reopening reattaches (so the layout and running sessions are right where you left them). There is no per-window close button: a window's **Stop** (red, and the kebab's "Stop terminal") **destroys** that one terminal - it kills the PTY, cleans up the session directory, and closes the window; the rest stay open. Stopping the last terminal hides the layer. Transient sessions are non-resumable by design.
 
 ## Status Bar
 

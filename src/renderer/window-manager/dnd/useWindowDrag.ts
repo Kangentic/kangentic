@@ -131,7 +131,7 @@ function clampToOverlay(left: number, top: number, drag: DragSession): { left: n
 }
 
 export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragArgs) {
-  const { manager, snap } = useWindowManager();
+  const { manager, snap, layer } = useWindowManager();
   const store = manager.store;
   const dragRef = useRef<DragSession | null>(null);
 
@@ -172,10 +172,18 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     const container = { width: drag.overlay.width, height: drag.overlay.height };
     const actions = store.getState();
 
+    // After a dock, never leave a pane below the configured min-size: grow the
+    // group's footprint so the narrowest pane clears the floor (capped at the
+    // overlay). The min-width is the same `layer.minSize` the seam / footprint
+    // resizers honour, so the engine never docks a window below it.
+    const enforceMin = (): void =>
+      store.getState().enforceMinPaneSize(layer.minSize.width, layer.minSize.height, drag.overlay.width, drag.overlay.height);
+
     if (drag.dropTarget) {
       // Drag-to-dock: tile this window onto a side of the pane under the cursor
       // (insert into the tree if that pane is tiled, else seed a fresh pair).
       actions.dockIntoWindow(windowId, drag.dropTarget.targetWindowId, drag.dropTarget.side);
+      enforceMin();
     } else if (drag.snapEdge === 'maximize') {
       actions.maximizeWindow(windowId);
     } else if (drag.snapEdge === 'left' || drag.snapEdge === 'right') {
@@ -183,6 +191,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
       // pair (shared seam) if one exists, else a lone snap that remembers the
       // pre-snap size so dragging away restores it.
       actions.dockWindow(windowId, drag.snapEdge);
+      enforceMin();
     } else {
       // HARD clamp: snap the window fully back inside the frame.
       const clamped = clampToOverlay(
@@ -201,7 +210,7 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
     // A size change (snap/maximize) re-renders the frame; WindowFrame's size
     // effect schedules the single coalesced terminal resize. A pure move does
     // not change size, so no resize is needed.
-  }, [windowId, frameRef, store, snap]);
+  }, [windowId, frameRef, store, snap, layer.minSize.width, layer.minSize.height]);
 
   // End the drag if focus leaves Kangentic (alt-tab, screenshot, popup) or the
   // tab is hidden, so the window is dropped where it was rather than staying
@@ -266,9 +275,18 @@ export function useWindowDrag({ windowId, frameRef, overlayRef }: UseWindowDragA
       return;
     }
     const restore = managedWindow.restoreGeometry ?? { x: 0.2, y: 0.15, w: 0.5, h: 0.6 };
-    if (managedWindow.state === 'tiled') store.getState().untileWindow(windowId);
-    const width = restore.w * drag.overlay.width;
-    const height = restore.h * drag.overlay.height;
+    // Pull out of tiling whenever this window is in the tree, keyed off TREE
+    // MEMBERSHIP rather than state==='tiled'. A window left in the tree while already
+    // marked snapped/floating (a stale reference) must still be removed here, or the
+    // upcoming drag-dock would insert a SECOND leaf for it - a phantom empty pane
+    // that reads as an "invisible wall" blocking the group.
+    const liveTree = store.getState().tileTree;
+    if (liveTree && treeContainsWindow(liveTree, windowId)) store.getState().untileWindow(windowId);
+    // Float back to the held/restore size, but never below the layer min-size (a
+    // stale restore point saved before the min was raised must not pop out a
+    // sub-min window), and never larger than the overlay.
+    const width = clamp(restore.w * drag.overlay.width, Math.min(layer.minSize.width, drag.overlay.width), drag.overlay.width);
+    const height = clamp(restore.h * drag.overlay.height, Math.min(layer.minSize.height, drag.overlay.height), drag.overlay.height);
     // Shrink the window AROUND the grab point so it does not jump to re-center
     // under the cursor (the jarring ~50px hop). Keep the cursor at the spot it
     // grabbed: the same FRACTION across the title bar horizontally, and the same

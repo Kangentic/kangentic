@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   fractionalToPixels,
   pixelsToFractional,
@@ -7,6 +7,8 @@ import {
 } from '../../src/renderer/window-manager/store/geometry';
 import { detectSnapEdge, snapEdgeToGeometry } from '../../src/renderer/window-manager/dnd/snap';
 import { useWindowStore } from '../../src/renderer/window-manager/store/window-store';
+import { findWindowTreeViolations } from '../../src/renderer/window-manager/store/tree-invariants';
+import type { ManagedWindow, TileNode } from '../../src/renderer/window-manager/store/types';
 
 describe('window-manager geometry', () => {
   it('projects fractional geometry to pixels against the container', () => {
@@ -217,12 +219,13 @@ describe('window-store tiling', () => {
     expect(state.windows[b].state).toBe('tiled');
   });
 
-  it('re-tiles after un-tile + re-dock (un-tile leaves the partner snapped, so re-docking re-pairs)', () => {
+  it('re-tiles after un-tile + re-dock (pop-out leaves the partner floating full-height, so re-docking re-pairs)', () => {
     const { a, b } = makeTiledPair();
     useWindowStore.getState().untileWindow(a);
-    // Un-tiling leaves BOTH snapped on their halves (deliberately docked).
-    expect(useWindowStore.getState().windows[b].state).toBe('snapped');
-    // Re-docking A to the opposite half re-pairs with the snapped B.
+    // Pop-out leaves BOTH floating on their halves (full-height, edge-flush), so a
+    // re-dock to the opposite half still re-pairs them.
+    expect(useWindowStore.getState().windows[b].state).toBe('floating');
+    // Re-docking A to the opposite half re-pairs with the full-height floating B.
     useWindowStore.getState().dockWindow(a, 'left');
     const state = useWindowStore.getState();
     expect(state.tileTree?.kind).toBe('split');
@@ -248,16 +251,17 @@ describe('window-store tiling', () => {
     expect((useWindowStore.getState().tileTree as Split).sizes[0]).toBeCloseTo(0.9, 6); // clamped
   });
 
-  it('untileWindow evicts the window (floats it) and snaps the lone remaining partner', () => {
+  it('untileWindow (pop-out) floats the window AND the lone remaining partner at their current rects', () => {
     const { a, b } = makeTiledPair();
     useWindowStore.getState().untileWindow(a);
     const state = useWindowStore.getState();
     expect(state.tileTree).toBeNull();
-    // The evicted window floats (undo tiling); the partner snaps to its half so
-    // re-docking re-pairs.
+    // Pop-out dissolves the 2-pane group: BOTH windows float (independently
+    // resizable) at the rects they held, rather than the partner snapping.
     expect(state.windows[a].state).toBe('floating');
     expect(state.windows[a].leafId).toBeNull();
-    expect(state.windows[b].state).toBe('snapped');
+    expect(state.windows[b].state).toBe('floating');
+    expect(state.windows[b].leafId).toBeNull();
   });
 
   it('closing a tiled window dissolves the tree and leaves its partner snapped on its half', () => {
@@ -313,24 +317,30 @@ describe('window-store tiling', () => {
     expect(collectLeafWindowIds(state.tileTree).sort()).toEqual([a, b].sort());
   });
 
-  it('partial eviction: untiling one of three floats it and keeps the other two tiled', () => {
-    const { a, b, c } = makeThreeTiled();
+  it('untiling one of three pops only that pane; the other two stay docked at their widths', () => {
+    const { a, b, c } = makeThreeTiled(); // flat horizontal thirds, full overlay
     useWindowStore.getState().untileWindow(c);
     const state = useWindowStore.getState();
+    // Only C pops out (floats at its current rect); A and B remain DOCKED.
     expect(state.windows[c].state).toBe('floating');
     expect(state.windows[c].leafId).toBeNull();
     expect(state.tileTree).not.toBeNull();
     expect(state.windows[a].state).toBe('tiled');
     expect(state.windows[b].state).toBe('tiled');
+    // A and B keep their absolute 1/3 widths: the footprint shrinks to 2/3 (no
+    // rescale to fill C's freed slot).
+    expect(state.tileTreeRect.x).toBeCloseTo(0, 6);
+    expect(state.tileTreeRect.w).toBeCloseTo(2 / 3, 5);
   });
 
-  it('evicting down to a single pane collapses the tree to a snapped window', () => {
+  it('evicting down to a single pane via pop-out floats the lone remaining window', () => {
     const { a, b, c } = makeThreeTiled();
     useWindowStore.getState().untileWindow(b);
     useWindowStore.getState().untileWindow(c);
     const state = useWindowStore.getState();
     expect(state.tileTree).toBeNull();
-    expect(state.windows[a].state).toBe('snapped');
+    // Pop-out floats the lone survivor (does not snap it to a half).
+    expect(state.windows[a].state).toBe('floating');
   });
 
   it('docking onto a half-snapped window confines the tile group to that footprint (not full width)', () => {
@@ -393,7 +403,7 @@ describe('window-store tiling', () => {
     expect(useWindowStore.getState().tileTreeRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
   });
 
-  it('evicting a top-level pane keeps the surviving group in its region (no full-width expansion)', () => {
+  it('evicting a top-level pane keeps the surviving group docked in its region (no rescale)', () => {
     // Root = [ left window | right column of two ], filling the overlay.
     const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
     useWindowStore.getState().snapWindow(a, { x: 0, y: 0, w: 0.5, h: 1 });
@@ -402,11 +412,14 @@ describe('window-store tiling', () => {
     const c = useWindowStore.getState().openWindow({ anchor: 'c', sessionId: 's3', title: 'C' });
     useWindowStore.getState().dockIntoWindow(c, b, 'bottom'); // B's cell -> column(B, C)
     expect(useWindowStore.getState().tileTreeRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
-    // Pull the LEFT pane out: the right column must KEEP its right-half width
-    // (the freed left half becomes empty board), not stretch to full screen.
+    // Pop the LEFT pane: ONLY A floats; the right column (B, C) STAYS DOCKED and
+    // keeps its right-half width (the freed left half becomes empty board), not
+    // stretching to full screen.
     useWindowStore.getState().untileWindow(a);
     const state = useWindowStore.getState();
     expect(state.windows[a].state).toBe('floating');
+    expect(state.windows[b].state).toBe('tiled');
+    expect(state.windows[c].state).toBe('tiled');
     expect(collectLeafWindowIds(state.tileTree).sort()).toEqual([b, c].sort());
     expect(state.tileTreeRect.x).toBeCloseTo(0.5, 6);
     expect(state.tileTreeRect.w).toBeCloseTo(0.5, 6);
@@ -421,6 +434,108 @@ describe('window-store tiling', () => {
     useWindowStore.setState({ tileTree: null, tileTreeRect: { x: 0, y: 0, w: 1, h: 1 } });
     useWindowStore.getState().setTileTreeRect({ x: 0.5, y: 0, w: 0.5, h: 1 });
     expect(useWindowStore.getState().tileTreeRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+  });
+
+  it('enforceMinPaneSize grows a confined group so the narrowest pane clears the min width', () => {
+    // A 2-pane group confined to a NARROW 20% footprint (each pane 10% of the overlay).
+    const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    useWindowStore.getState().snapWindow(a, { x: 0.4, y: 0, w: 0.2, h: 1 });
+    const b = useWindowStore.getState().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
+    useWindowStore.getState().dockIntoWindow(b, a, 'right'); // pair confined to the 20% footprint
+    expect(useWindowStore.getState().tileTreeRect.w).toBeCloseTo(0.2, 6);
+    // On a 2000px overlay each pane is 200px; a 650px min needs the footprint to grow
+    // to 0.65 (1300px) so each pane is exactly 650px, centred on the old footprint.
+    useWindowStore.getState().enforceMinPaneSize(650, 400, 2000, 2000);
+    expect(useWindowStore.getState().tileTreeRect.w).toBeCloseTo(0.65, 5);
+    expect(useWindowStore.getState().tileTreeRect.x).toBeCloseTo(0.175, 5);
+  });
+
+  it('enforceMinPaneSize is a no-op when every pane already clears the floor', () => {
+    makeTiledPair(); // full overlay, each pane 50% (1000px on a 2000px overlay)
+    const before = useWindowStore.getState().tileTreeRect;
+    useWindowStore.getState().enforceMinPaneSize(650, 400, 2000, 2000);
+    expect(useWindowStore.getState().tileTreeRect).toEqual(before);
+  });
+
+  it('snapWindow evicts the window from its tile group (no stale tree reference)', () => {
+    const { a, b } = makeTiledPair(); // A | B, full overlay
+    useWindowStore.getState().snapWindow(a, { x: 0, y: 0, w: 1, h: 0.5 }); // snap A to top half
+    const state = useWindowStore.getState();
+    expect(state.windows[a].state).toBe('snapped');
+    expect(state.windows[a].geometry).toMatchObject({ x: 0, y: 0, w: 1, h: 0.5 });
+    // The pair dissolved: A is gone from the tree (here the 2-up collapses entirely).
+    expect(state.tileTree === null || !collectLeafWindowIds(state.tileTree).includes(a)).toBe(true);
+    expect(state.windows[b].state).not.toBe('tiled');
+  });
+
+  it('snapWindow on one pane of a 3-up group leaves the other two tiled without it', () => {
+    const { a, b } = makeTiledPair(); // A | B
+    const c = useWindowStore.getState().openWindow({ anchor: 'c', sessionId: 's3', title: 'C' });
+    useWindowStore.getState().dockWindow(c, 'right'); // joins the tree as a third pane
+    expect(collectLeafWindowIds(useWindowStore.getState().tileTree).sort()).toEqual([a, b, c].sort());
+
+    useWindowStore.getState().snapWindow(b, { x: 0, y: 0, w: 1, h: 0.5 }); // snap the middle one out
+    const state = useWindowStore.getState();
+    expect(state.windows[b].state).toBe('snapped');
+    // The other two stay tiled; the tree no longer references the snapped window.
+    expect(collectLeafWindowIds(state.tileTree).sort()).toEqual([a, c].sort());
+    expect(collectLeafWindowIds(state.tileTree)).not.toContain(b);
+  });
+
+  it('dockIntoWindow never duplicates a leaf when the dragged window is already in the tree', () => {
+    const { a, b } = makeTiledPair(); // tree [a, b]
+    // Re-dock A (already tiled) into B - a stale-reference scenario that used to add a
+    // SECOND leaf for A (a phantom empty pane / invisible wall). It must MOVE, not dup.
+    useWindowStore.getState().dockIntoWindow(a, b, 'right');
+    const leaves = collectLeafWindowIds(useWindowStore.getState().tileTree);
+    expect(leaves.filter((id) => id === a).length).toBe(1);
+    expect(leaves.sort()).toEqual([a, b].sort());
+  });
+
+  it('snap-menu presets never corrupt the tree (no duplicate or stale leaves)', () => {
+    // The snap menu (Snap left/right/top/bottom, Columns, Grid) maps to applyTilePreset.
+    // Hammer cumulative sequences over 3 windows and assert the tree invariant after
+    // every step: each leaf is unique AND maps to a window whose state is 'tiled'. A
+    // duplicate or stale leaf is the "phantom empty pane / invisible wall" corruption.
+    const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    const b = useWindowStore.getState().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
+    const c = useWindowStore.getState().openWindow({ anchor: 'c', sessionId: 's3', title: 'C' });
+    const ids = new Set([a, b, c]);
+    const presets = [
+      'columns', 'left-half', 'right-half', 'grid', 'top-half', 'bottom-half',
+      'columns', 'left-half', 'left-half', 'right-half', 'grid', 'columns',
+    ] as const;
+    for (const preset of presets) {
+      useWindowStore.getState().applyTilePreset(preset);
+      const tree = useWindowStore.getState().tileTree;
+      const leaves = collectLeafWindowIds(tree);
+      // No duplicates.
+      expect(leaves.length).toBe(new Set(leaves).size);
+      // Every leaf maps to a known window that is actually 'tiled' (no stale ref).
+      for (const id of leaves) {
+        expect(ids.has(id)).toBe(true);
+        expect(useWindowStore.getState().windows[id].state).toBe('tiled');
+      }
+    }
+  });
+
+  it('restoreWindow returns a maximized TILED window to its docked slot, not floating', () => {
+    const { a, b } = makeTiledPair(); // a | b tiled
+    useWindowStore.getState().maximizeWindow(a);
+    expect(useWindowStore.getState().windows[a].state).toBe('maximized');
+    useWindowStore.getState().restoreWindow(a);
+    const state = useWindowStore.getState();
+    // Un-maximize re-docks it (no floating), and the tree keeps both panes (no stale ref).
+    expect(state.windows[a].state).toBe('tiled');
+    expect(collectLeafWindowIds(state.tileTree).sort()).toEqual([a, b].sort());
+  });
+
+  it('restoreWindow returns a maximized FLOATING window to floating', () => {
+    const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    useWindowStore.getState().maximizeWindow(a); // floating -> maximized (not in any tree)
+    useWindowStore.getState().restoreWindow(a);
+    expect(useWindowStore.getState().windows[a].state).toBe('floating');
+    expect(useWindowStore.getState().tileTree).toBeNull();
   });
 });
 
@@ -495,5 +610,234 @@ describe('createWindowManagerStore - two-instance isolation, id namespacing, and
     // Different kind -> two distinct windows, not a dedup.
     expect(commandId).not.toBe(taskDetailId);
     expect(Object.keys(instance.store.getState().windows)).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stale-leaf invariant: the tree <-> state <-> leafId contract must always hold.
+// The checker (findWindowTreeViolations) is the single source of truth shared by
+// the dev runtime tripwire and these tests. First prove the checker DETECTS each
+// corruption form, then prove every store mutation KEEPS the state clean.
+// ---------------------------------------------------------------------------
+
+/** Build a plain ManagedWindow for the pure-checker tests (no store). */
+function makeWindow(id: string, overrides: Partial<ManagedWindow> = {}): ManagedWindow {
+  return {
+    id,
+    kind: 'task-detail',
+    anchor: id,
+    sessionId: null,
+    geometry: { x: 0, y: 0, w: 0.5, h: 1 },
+    state: 'floating',
+    zIndex: 1,
+    leafId: null,
+    sessionStatus: 'closed',
+    restoreGeometry: null,
+    title: id,
+    ...overrides,
+  };
+}
+
+function leafNode(windowId: string, id: string): TileNode {
+  return { kind: 'leaf', id, windowId };
+}
+
+/** A clean two-leaf horizontal split between two windows. */
+function pairTree(leftWindowId: string, rightWindowId: string): TileNode {
+  return {
+    kind: 'split',
+    id: 'split-1',
+    direction: 'horizontal',
+    children: [leafNode(leftWindowId, 'leaf-1'), leafNode(rightWindowId, 'leaf-2')],
+    sizes: [0.5, 0.5],
+  };
+}
+
+describe('findWindowTreeViolations - stale-leaf checker', () => {
+  it('passes an empty workspace', () => {
+    expect(findWindowTreeViolations({}, null)).toEqual([]);
+  });
+
+  it('passes a lone floating window', () => {
+    expect(findWindowTreeViolations({ a: makeWindow('a') }, null)).toEqual([]);
+  });
+
+  it('passes a clean tiled pair', () => {
+    const windows = {
+      a: makeWindow('a', { state: 'tiled', leafId: 'leaf-1' }),
+      b: makeWindow('b', { state: 'tiled', leafId: 'leaf-2' }),
+    };
+    expect(findWindowTreeViolations(windows, pairTree('a', 'b'))).toEqual([]);
+  });
+
+  it('flags a stale leaf: a floating window still referenced by the tree', () => {
+    const windows = {
+      a: makeWindow('a', { state: 'floating', leafId: null }), // floating yet in the tree
+      b: makeWindow('b', { state: 'tiled', leafId: 'leaf-2' }),
+    };
+    expect(findWindowTreeViolations(windows, pairTree('a', 'b')).some((v) => v.includes('stale leaf'))).toBe(true);
+  });
+
+  it('flags a phantom tiled window not present in the tree', () => {
+    const windows = { a: makeWindow('a', { state: 'tiled', leafId: 'leaf-x' }) };
+    expect(findWindowTreeViolations(windows, null).some((v) => v.includes('not in the tile tree'))).toBe(true);
+  });
+
+  it('flags a dangling leafId on a floating window', () => {
+    const windows = { a: makeWindow('a', { state: 'floating', leafId: 'leaf-ghost' }) };
+    expect(findWindowTreeViolations(windows, null).some((v) => v.includes('dangling'))).toBe(true);
+  });
+
+  it('flags a duplicate leaf (the invisible-wall corruption)', () => {
+    const windows = {
+      a: makeWindow('a', { state: 'tiled', leafId: 'leaf-1' }),
+      b: makeWindow('b', { state: 'tiled', leafId: 'leaf-2' }),
+    };
+    // A referenced by TWO leaves -> the phantom empty pane / invisible wall.
+    const tree: TileNode = {
+      kind: 'split',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [leafNode('a', 'leaf-1'), leafNode('a', 'leaf-3'), leafNode('b', 'leaf-2')],
+      sizes: [1 / 3, 1 / 3, 1 / 3],
+    };
+    expect(findWindowTreeViolations(windows, tree).some((v) => v.includes('duplicate leaf'))).toBe(true);
+  });
+
+  it('flags an orphan leaf referencing a missing window', () => {
+    const windows = { a: makeWindow('a', { state: 'tiled', leafId: 'leaf-1' }) };
+    expect(findWindowTreeViolations(windows, pairTree('a', 'ghost')).some((v) => v.includes('missing window ghost'))).toBe(true);
+  });
+
+  it('flags a degenerate single-leaf tree (collapse should have cleared it)', () => {
+    const windows = { a: makeWindow('a', { state: 'tiled', leafId: 'leaf-1' }) };
+    expect(findWindowTreeViolations(windows, leafNode('a', 'leaf-1')).some((v) => v.includes('needs >= 2'))).toBe(true);
+  });
+
+  it('allows a maximized window that is still a tiled pane (maximize keeps its leaf)', () => {
+    const windows = {
+      a: makeWindow('a', { state: 'maximized', leafId: 'leaf-1' }),
+      b: makeWindow('b', { state: 'tiled', leafId: 'leaf-2' }),
+    };
+    expect(findWindowTreeViolations(windows, pairTree('a', 'b'))).toEqual([]);
+  });
+
+  it('flags a maximized window outside the tree that still carries a leafId', () => {
+    const windows = { a: makeWindow('a', { state: 'maximized', leafId: 'leaf-ghost' }) };
+    expect(findWindowTreeViolations(windows, null).some((v) => v.includes('dangling'))).toBe(true);
+  });
+});
+
+describe('window-store maintains the tiling invariant across every operation', () => {
+  beforeEach(() => {
+    useWindowStore.setState({ windows: {}, order: [], focusedWindowId: null, zCounter: 0, tileTree: null, tileTreeRect: { x: 0, y: 0, w: 1, h: 1 } });
+  });
+
+  /** Assert the live store state has no stale-leaf violations; the label + the
+   *  offending violation strings both print on failure so the failing step is
+   *  obvious. */
+  function assertClean(label: string): void {
+    const state = useWindowStore.getState();
+    const violations = findWindowTreeViolations(state.windows, state.tileTree);
+    expect({ label, violations }).toEqual({ label, violations: [] });
+  }
+
+  it('stays consistent through a full open/snap/dock/insert/untile/close lifecycle', () => {
+    const store = useWindowStore.getState;
+    const a = store().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    assertClean('open A');
+    store().snapWindow(a, { x: 0, y: 0, w: 0.5, h: 1 });
+    assertClean('snap A left');
+    const b = store().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
+    store().dockWindow(b, 'right');
+    assertClean('dock B right (pair)');
+    const c = store().openWindow({ anchor: 'c', sessionId: 's3', title: 'C' });
+    store().dockIntoWindow(c, b, 'right');
+    assertClean('insert C (3-up)');
+    store().untileWindow(c);
+    assertClean('untile C');
+    store().untileWindow(a);
+    assertClean('untile A (collapse to floating)');
+    store().closeWindow(b);
+    assertClean('close last window');
+  });
+
+  it('stays consistent through maximize / restore on both tiled and floating windows', () => {
+    const store = useWindowStore.getState;
+    const a = store().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    store().snapWindow(a, { x: 0, y: 0, w: 0.5, h: 1 });
+    const b = store().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
+    store().dockWindow(b, 'right'); // a | b tiled
+    store().maximizeWindow(a);
+    assertClean('maximize tiled pane A');
+    store().restoreWindow(a);
+    assertClean('restore A back to its docked slot');
+    store().untileWindow(a); // dissolve so B is no longer tiled
+    const d = store().openWindow({ anchor: 'd', sessionId: 's4', title: 'D' });
+    store().maximizeWindow(d);
+    assertClean('maximize floating D');
+    store().restoreWindow(d);
+    assertClean('restore floating D');
+  });
+
+  it('stays consistent under cumulative snap-menu presets over three windows', () => {
+    const store = useWindowStore.getState;
+    store().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    store().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
+    store().openWindow({ anchor: 'c', sessionId: 's3', title: 'C' });
+    const presets = ['columns', 'left-half', 'right-half', 'grid', 'top-half', 'bottom-half', 'columns', 'grid'] as const;
+    for (const preset of presets) {
+      store().applyTilePreset(preset);
+      assertClean(`applyTilePreset ${preset}`);
+    }
+  });
+
+  it('stays consistent when snapping a middle pane out of a 3-up group', () => {
+    const store = useWindowStore.getState;
+    const a = store().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    store().snapWindow(a, { x: 0, y: 0, w: 0.5, h: 1 });
+    const b = store().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
+    store().dockWindow(b, 'right');
+    const c = store().openWindow({ anchor: 'c', sessionId: 's3', title: 'C' });
+    store().dockWindow(c, 'right'); // a | b | c
+    store().snapWindow(b, { x: 0, y: 0, w: 1, h: 0.5 }); // snap the middle one out
+    assertClean('snap middle pane out of 3-up');
+  });
+
+  it('setGeometry on a still-tiled window evicts it instead of leaving a stale leaf', () => {
+    const store = useWindowStore.getState;
+    const a = store().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+    store().snapWindow(a, { x: 0, y: 0, w: 0.5, h: 1 });
+    const b = store().openWindow({ anchor: 'b', sessionId: 's2', title: 'B' });
+    store().dockWindow(b, 'right'); // a | b tiled
+    expect(store().windows[a].state).toBe('tiled');
+    // Commit a free geometry directly on the still-tiled pane A (the latent hole).
+    store().setGeometry(a, { x: 0.1, y: 0.1, w: 0.4, h: 0.4 });
+    const state = useWindowStore.getState();
+    expect(state.windows[a].state).toBe('floating');
+    expect(state.windows[a].leafId).toBeNull();
+    // A left the tree cleanly: no stale leaf, no dangling reference.
+    expect(findWindowTreeViolations(state.windows, state.tileTree)).toEqual([]);
+  });
+
+  it('restoreWindow scrubs a dangling leafId when un-maximizing to floating', () => {
+    // Silence the one expected dev-tripwire log from the crafted corrupt precondition.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const a = useWindowStore.getState().openWindow({ anchor: 'a', sessionId: 's1', title: 'A' });
+      // Craft the impossible-via-API state: maximized, carrying a leafId, but NOT in
+      // any tree (the tree was torn down under it). The floating restore branch must
+      // scrub the leafId so no dangling reference survives.
+      useWindowStore.setState((current) => ({
+        windows: { ...current.windows, [a]: { ...current.windows[a], state: 'maximized', leafId: 'leaf-ghost' } },
+      }));
+      useWindowStore.getState().restoreWindow(a);
+      const state = useWindowStore.getState();
+      expect(state.windows[a].state).toBe('floating');
+      expect(state.windows[a].leafId).toBeNull();
+      expect(findWindowTreeViolations(state.windows, state.tileTree)).toEqual([]);
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });

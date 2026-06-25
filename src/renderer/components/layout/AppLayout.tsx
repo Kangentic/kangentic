@@ -9,7 +9,8 @@ import { BacklogView } from '../backlog/BacklogView';
 import { BacklogDialogs } from '../backlog/BacklogDialogs';
 import { TerminalPanel } from '../terminal/TerminalPanel';
 import { SettingsPanel } from '../settings/SettingsPanel';
-import { CommandTerminalLayer } from '../command-bar/CommandTerminalLayer';
+import { CommandTerminalLayer, MAX_COMMAND_TERMINALS, spawnAdditionalCommandTerminal } from '../command-bar/CommandTerminalLayer';
+import { commandWindowManager } from '../../window-manager';
 import { SearchPalette } from '../search/SearchPalette';
 import { WelcomeScreen } from './WelcomeScreen';
 import { ProjectPathMissingDialog } from '../dialogs/ProjectPathMissingDialog';
@@ -54,6 +55,18 @@ export function AppLayout() {
   });
   const terminal = useTerminalResize(config, detailWindowsOpen, currentProject?.id ?? null);
   const commandBar = useCommandBar();
+  // Destructured for the callback's dep list: `open` is stable, `isOpen` changes;
+  // depending on the fresh `commandBar` object would rebuild the callback every render.
+  const { isOpen: commandBarIsOpen, open: openCommandBar } = commandBar;
+  // Live count of Command Terminal windows (the store is a module singleton that
+  // outlives the layer's mount), so the "+" affordance disables at the cap.
+  const commandWindowCount = commandWindowManager.store((state) => Object.keys(state.windows).length);
+  // The title-bar terminal button is context-aware: open the layer when closed,
+  // spawn another terminal when already open.
+  const handleCommandTerminalButton = useCallback(() => {
+    if (commandBarIsOpen) spawnAdditionalCommandTerminal();
+    else openCommandBar();
+  }, [commandBarIsOpen, openCommandBar]);
   // Plain Ctrl+F focuses the board search on the board view; otherwise it falls
   // back to the global search palette (resolved inside useSearchPalette).
   const handlePlainFindKey = useCallback(() => {
@@ -82,9 +95,10 @@ export function AppLayout() {
   return (
     <div className="h-screen flex flex-col bg-surface">
       <TitleBar
-        onQuickSession={commandBar.open}
+        onQuickSession={handleCommandTerminalButton}
         onOpenSearch={searchPalette.open}
         commandBarOpen={commandBar.isOpen}
+        canSpawnMore={commandWindowCount < MAX_COMMAND_TERMINALS}
       />
 
       <div className="flex flex-1 min-h-0">

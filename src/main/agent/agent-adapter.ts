@@ -282,6 +282,16 @@ export interface AgentAdapter {
   readonly liveTelemetryUnsupported?: AgentLiveTelemetryUnsupported;
 
   /**
+   * Set by adapters whose CLI streams ACCOUNT-WIDE rate-limit windows (e.g.
+   * Claude). The ContextBar shows its rate-limit pill for any session of such an
+   * agent using the shared global snapshot, so a freshly spawned terminal shows
+   * the same limits as its siblings instead of a blank until it reports its own.
+   * Omit (falsy) for adapters with no rate-limit telemetry, so they never show
+   * another agent's account limits.
+   */
+  readonly reportsRateLimits?: boolean;
+
+  /**
    * Optional session lifecycle hook called once per PTY spawn, after
    * the session is live. Adapters that need to do per-session work
    * outside the declarative `runtime` hooks (e.g. fire an out-of-band

@@ -32,7 +32,7 @@ export type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 export const DEFAULT_MIN_WIDTH_PX = 650;
 // Default floor for height: enough for the header + a usable slice of the task body
 // / terminal below it, so a manually resized window never collapses to a sliver.
-export const DEFAULT_MIN_HEIGHT_PX = 400;
+export const DEFAULT_MIN_HEIGHT_PX = 500;
 
 interface OverlayBounds {
   left: number;

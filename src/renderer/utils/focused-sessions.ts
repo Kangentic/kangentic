@@ -10,7 +10,9 @@ export interface DeriveFocusedSessionIdsInput {
    *  panel renders no terminal, so the panel session is NOT focused. */
   dialogSessionIds: string[];
   commandBarVisible: boolean;
-  transientSessionId: string | null;
+  /** Every Command Terminal session for the current project. Each visible terminal
+   *  must be focused or its PTY output is suppressed by the main process. */
+  transientSessionIds: string[];
 }
 
 /**
@@ -29,8 +31,8 @@ export interface DeriveFocusedSessionIdsInput {
  * 2. Board view with panel visible and no window open - the panel session is
  *    focused.
  * 3. Backlog view / panel hidden / no window - no panel session is focused.
- * 4. Command bar visible - the transient session is appended (unless already in
- *    the set).
+ * 4. Command bar visible - every current-project transient session is appended
+ *    (unless already in the set).
  */
 export function deriveFocusedSessionIds(input: DeriveFocusedSessionIdsInput): string[] {
   const focusedIds: string[] = [];
@@ -47,12 +49,10 @@ export function deriveFocusedSessionIds(input: DeriveFocusedSessionIdsInput): st
     focusedIds.push(input.panelSessionId);
   }
 
-  if (
-    input.commandBarVisible &&
-    input.transientSessionId &&
-    !focusedIds.includes(input.transientSessionId)
-  ) {
-    focusedIds.push(input.transientSessionId);
+  if (input.commandBarVisible) {
+    for (const sessionId of input.transientSessionIds) {
+      if (!focusedIds.includes(sessionId)) focusedIds.push(sessionId);
+    }
   }
 
   return focusedIds;

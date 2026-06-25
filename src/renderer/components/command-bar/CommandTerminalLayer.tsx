@@ -36,8 +36,73 @@ const COMMAND_WORKSPACE_KEY = 'command-terminal';
 /** Command terminals can resize down to the same comfortable floor as board
  *  windows; carried as a per-layer option so it is a one-line change later. */
 const COMMAND_LAYER_OPTIONS: WindowManagerLayerOptions = {
-  minSize: { width: 650, height: 400 },
+  minSize: { width: 750, height: 500 },
 };
+
+/** How many Command Terminals can run at once (per project). The slot allocator
+ *  and the title-bar "+" affordance both honor this cap. */
+export const MAX_COMMAND_TERMINALS = 4;
+
+/** Lowest free `slot-N` among the windows already open, or null at the cap. */
+function nextFreeSlot(usedSlots: Set<string>): string | null {
+  for (let index = 1; index <= MAX_COMMAND_TERMINALS; index += 1) {
+    const slot = `slot-${index}`;
+    if (!usedSlots.has(slot)) return slot;
+  }
+  return null;
+}
+
+/** True when another Command Terminal can be opened (below the cap). Reads the
+ *  module-singleton store, so it works whether or not the layer is mounted. */
+export function canSpawnAdditionalCommandTerminal(): boolean {
+  return Object.keys(commandWindowManager.store.getState().windows).length < MAX_COMMAND_TERMINALS;
+}
+
+/** Open another Command Terminal in the next free slot (up to the cap) and SPLIT
+ *  it into the existing window's footprint (side by side, keeping the size /
+ *  position the user set), rather than tiling everything full-screen. Operates on
+ *  the module-singleton store, so the title-bar button can call it whether or not
+ *  the layer is currently mounted. Returns false if already at the cap. */
+export function spawnAdditionalCommandTerminal(): boolean {
+  const store = commandWindowManager.store;
+  const existingWindows = Object.values(store.getState().windows);
+  const usedSlots = new Set(existingWindows.map((managedWindow) => managedWindow.anchor));
+  const slot = nextFreeSlot(usedSlots);
+  if (!slot) return false;
+
+  // Dock the new window to the RIGHT of the most-recently-opened existing window,
+  // so terminals append left-to-right. `dockIntoWindow` confines the pair to the
+  // target's current footprint (a floating/snapped target keeps its rect; an
+  // existing tiled group keeps its footprint and just gains a pane), which is the
+  // "split within the same size" behavior, not a full-screen columns blow-out.
+  const dockTarget = existingWindows[existingWindows.length - 1] ?? null;
+
+  const newWindowId = store.getState().openWindow({
+    kind: 'command-terminal',
+    anchor: slot,
+    sessionId: null,
+    title: COMMAND_WINDOW_TITLE,
+  });
+
+  if (dockTarget) {
+    // A maximized target would expand the pair to full-screen; restore it first so
+    // the split stays inside its windowed footprint.
+    if (dockTarget.state === 'maximized') store.getState().restoreWindow(dockTarget.id);
+    store.getState().dockIntoWindow(newWindowId, dockTarget.id, 'right');
+
+    // Keep each tiled pane at least the min size: grow the confined group's
+    // footprint so the panes don't squish below the floor (the same engine rule the
+    // dock / seam / footprint resizers honour). The command overlay spans the full
+    // window, so window.innerWidth/Height is its pixel size for the conversion.
+    store.getState().enforceMinPaneSize(
+      COMMAND_LAYER_OPTIONS.minSize.width,
+      COMMAND_LAYER_OPTIONS.minSize.height,
+      window.innerWidth || 1,
+      window.innerHeight || 1,
+    );
+  }
+  return true;
+}
 
 /** Ensure the command layer has its single window once mounted: reuse the live
  *  one (reopen after hide), else restore the saved global layout, else open a
@@ -90,11 +155,27 @@ function useCommandWorkspacePersistence(): void {
   }, [save, flush]);
 }
 
-/** Layer bridges: ensure the window exists, persist the global layout, and bind
- *  Escape to hide the layer. Mounted inside the layer's portal. */
+/** Hide the whole layer once the LAST command window closes (the user Stopped the
+ *  only remaining terminal). Watches the module-singleton store; subscribes after
+ *  `useEnsureCommandWindow` has opened the first window, so the initial empty
+ *  state never triggers a spurious hide. */
+function useHideLayerWhenEmpty(onHide: () => void): void {
+  useEffect(() => {
+    return commandWindowManager.store.subscribe((state, prevState) => {
+      const count = Object.keys(state.windows).length;
+      const previousCount = Object.keys(prevState.windows).length;
+      if (previousCount > 0 && count === 0) onHide();
+    });
+  }, [onHide]);
+}
+
+/** Layer bridges: ensure the window exists, persist the global layout, hide the
+ *  layer when the last terminal is Stopped, and bind Escape to hide. Mounted
+ *  inside the layer's portal. */
 function CommandBridges({ onHide }: { onHide: () => void }): null {
   useEnsureCommandWindow();
   useCommandWorkspacePersistence();
+  useHideLayerWhenEmpty(onHide);
   // The panel-close combo hides the whole layer (keeps the PTY alive). Capture
   // phase so it beats the embedded xterm's key handling. Ctrl+Shift+P (toggle) is
   // bound by `useCommandBar`; a backdrop click also hides.

@@ -17,7 +17,7 @@
 
 import { useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import { useLayerStore } from '../context';
+import { useLayerStore, useWindowManager } from '../context';
 import { clamp } from '../store/geometry';
 import type { ContainerSize, PixelRect } from '../store/geometry';
 import type { FractionalRect, TileNode } from '../store/types';
@@ -25,7 +25,8 @@ import { resolveTileLayout } from '../tiling/resolve-layout';
 
 export type FootprintEdge = 'left' | 'right' | 'top' | 'bottom';
 
-/** The group may not be resized below this fraction of the overlay on an axis. */
+/** Absolute backstop: the group never shrinks below this fraction of the overlay
+ *  on an axis (the per-pane min-size floor below usually dominates). */
 const MIN_FOOTPRINT = 0.15;
 
 interface FootprintResizerProps {
@@ -46,6 +47,9 @@ interface FootprintDrag {
   seamNodes: Map<string, HTMLElement>;
   selfNode: HTMLElement;
   footprint: FractionalRect;
+  /** Min footprint fraction along the resize axis (so the narrowest pane stays at
+   *  or above the layer min-size). Computed once at grab time. */
+  minFootprint: number;
 }
 
 function applyRect(node: HTMLElement, rect: PixelRect): void {
@@ -55,30 +59,41 @@ function applyRect(node: HTMLElement, rect: PixelRect): void {
   node.style.height = `${rect.height}px`;
 }
 
-/** The seam strip rect for `edge`, given the footprint's pixel box. */
-function stripRect(edge: FootprintEdge, origin: { left: number; top: number }, size: ContainerSize, seamPx: number): PixelRect {
+/** The seam strip rect for `edge`, given the footprint's pixel box. The strip is
+ *  centered on the edge but kept fully INSIDE the overlay, so a strip on an edge
+ *  flush against the overlay boundary (a full-screen group) does not fall half
+ *  off-screen and stays grabbable. */
+function stripRect(
+  edge: FootprintEdge,
+  origin: { left: number; top: number },
+  size: ContainerSize,
+  seamPx: number,
+  container: ContainerSize,
+): PixelRect {
   const seamHalf = seamPx / 2;
+  const clamp = (value: number, max: number): number => Math.min(Math.max(0, value), Math.max(0, max - seamPx));
   switch (edge) {
     case 'left':
-      return { left: origin.left - seamHalf, top: origin.top, width: seamPx, height: size.height };
+      return { left: clamp(origin.left - seamHalf, container.width), top: origin.top, width: seamPx, height: size.height };
     case 'right':
-      return { left: origin.left + size.width - seamHalf, top: origin.top, width: seamPx, height: size.height };
+      return { left: clamp(origin.left + size.width - seamHalf, container.width), top: origin.top, width: seamPx, height: size.height };
     case 'top':
-      return { left: origin.left, top: origin.top - seamHalf, width: size.width, height: seamPx };
+      return { left: origin.left, top: clamp(origin.top - seamHalf, container.height), width: size.width, height: seamPx };
     case 'bottom':
-      return { left: origin.left, top: origin.top + size.height - seamHalf, width: size.width, height: seamPx };
+      return { left: origin.left, top: clamp(origin.top + size.height - seamHalf, container.height), width: size.width, height: seamPx };
   }
 }
 
 export function FootprintResizer({ edge, tileTree, tileTreeRect, containerSize, gapPx, seamPx, overlayRef }: FootprintResizerProps) {
   const setTileTreeRect = useLayerStore()((state) => state.setTileTreeRect);
+  const { layer } = useWindowManager();
   const dragRef = useRef<FootprintDrag | null>(null);
   const [dragging, setDragging] = useState(false);
 
   const isVerticalBar = edge === 'left' || edge === 'right';
   const origin = { left: tileTreeRect.x * containerSize.width, top: tileTreeRect.y * containerSize.height };
   const footprintSize = { width: tileTreeRect.w * containerSize.width, height: tileTreeRect.h * containerSize.height };
-  const strip = stripRect(edge, origin, footprintSize, seamPx);
+  const strip = stripRect(edge, origin, footprintSize, seamPx, containerSize);
 
   const onPointerDown = (event: React.PointerEvent) => {
     if (event.button !== 0) return;
@@ -97,6 +112,21 @@ export function FootprintResizer({ edge, tileTree, tileTreeRect, containerSize, 
       const node = document.querySelector<HTMLElement>(`[data-testid="tile-splitter-${key}"]`);
       if (node) seamNodes.set(key, node);
     }
+    // Floor the footprint so the NARROWEST pane along the resize axis can't shrink
+    // below the layer min-size. Panes scale proportionally with the footprint, so
+    // the smallest pane's share of the footprint is the binding constraint:
+    // minFootprintExtent = minPaneSize / smallestPaneShare.
+    const footprintExtentPx = isVerticalBar ? footprintSize.width : footprintSize.height;
+    const minPanePx = isVerticalBar ? layer.minSize.width : layer.minSize.height;
+    const containerExtentPx = isVerticalBar ? containerSize.width : containerSize.height;
+    let smallestPaneShare = 1;
+    for (const rect of layout.rects.values()) {
+      const paneExtentPx = isVerticalBar ? rect.width : rect.height;
+      if (footprintExtentPx > 0) smallestPaneShare = Math.min(smallestPaneShare, paneExtentPx / footprintExtentPx);
+    }
+    const minFootprint = smallestPaneShare > 0 && containerExtentPx > 0
+      ? Math.min(1, Math.max(MIN_FOOTPRINT, (minPanePx / smallestPaneShare) / containerExtentPx))
+      : MIN_FOOTPRINT;
     dragRef.current = {
       pointerId: event.pointerId,
       overlayLeft: overlayRect.left,
@@ -105,6 +135,7 @@ export function FootprintResizer({ edge, tileTree, tileTreeRect, containerSize, 
       seamNodes,
       selfNode: event.currentTarget as HTMLElement,
       footprint: tileTreeRect,
+      minFootprint,
     };
     setDragging(true);
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
@@ -116,18 +147,19 @@ export function FootprintResizer({ edge, tileTree, tileTreeRect, containerSize, 
     if (!drag || event.pointerId !== drag.pointerId) return;
     const right = tileTreeRect.x + tileTreeRect.w;
     const bottom = tileTreeRect.y + tileTreeRect.h;
+    const minFootprint = drag.minFootprint;
     let next: FractionalRect;
     if (edge === 'left') {
-      const fx = clamp((event.clientX - drag.overlayLeft) / containerSize.width, 0, right - MIN_FOOTPRINT);
+      const fx = clamp((event.clientX - drag.overlayLeft) / containerSize.width, 0, right - minFootprint);
       next = { x: fx, y: tileTreeRect.y, w: right - fx, h: tileTreeRect.h };
     } else if (edge === 'right') {
-      const fr = clamp((event.clientX - drag.overlayLeft) / containerSize.width, tileTreeRect.x + MIN_FOOTPRINT, 1);
+      const fr = clamp((event.clientX - drag.overlayLeft) / containerSize.width, tileTreeRect.x + minFootprint, 1);
       next = { x: tileTreeRect.x, y: tileTreeRect.y, w: fr - tileTreeRect.x, h: tileTreeRect.h };
     } else if (edge === 'top') {
-      const fy = clamp((event.clientY - drag.overlayTop) / containerSize.height, 0, bottom - MIN_FOOTPRINT);
+      const fy = clamp((event.clientY - drag.overlayTop) / containerSize.height, 0, bottom - minFootprint);
       next = { x: tileTreeRect.x, y: fy, w: tileTreeRect.w, h: bottom - fy };
     } else {
-      const fb = clamp((event.clientY - drag.overlayTop) / containerSize.height, tileTreeRect.y + MIN_FOOTPRINT, 1);
+      const fb = clamp((event.clientY - drag.overlayTop) / containerSize.height, tileTreeRect.y + minFootprint, 1);
       next = { x: tileTreeRect.x, y: tileTreeRect.y, w: tileTreeRect.w, h: fb - tileTreeRect.y };
     }
     drag.footprint = next;
@@ -142,7 +174,7 @@ export function FootprintResizer({ edge, tileTree, tileTreeRect, containerSize, 
       const node = drag.seamNodes.get(`${candidate.splitId}:${candidate.index}`);
       if (node) applyRect(node, candidate.rect);
     }
-    applyRect(drag.selfNode, stripRect(edge, nextOrigin, nextSize, seamPx));
+    applyRect(drag.selfNode, stripRect(edge, nextOrigin, nextSize, seamPx, containerSize));
   };
 
   const onPointerUp = (event: React.PointerEvent) => {

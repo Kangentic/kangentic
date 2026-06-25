@@ -201,8 +201,16 @@ export function detectTiledDropTarget(
 ): DropTarget | null {
   const centerX = draggedRect.left + draggedRect.width / 2;
   const centerY = draggedRect.top + draggedRect.height / 2;
+  // The window's body center must be OVER the tree's footprint (both axes) for an
+  // outer slot to arm. Without the main-axis bound, a CONFINED tree (footprint
+  // shrunk to mid-screen after a pop-out) armed its extreme insert for a large
+  // window dragged well past it - its leading edge trivially clears the now
+  // mid-screen boundary. Requiring the center inside the footprint means dragging
+  // the window away from a confined group no longer re-docks it.
+  const overTree =
+    centerX >= treeBounds.left && centerX <= treeBounds.right &&
+    centerY >= treeBounds.top && centerY <= treeBounds.bottom;
   if (rootDirection === 'vertical') {
-    const overTree = centerX >= treeBounds.left && centerX <= treeBounds.right;
     const midY = (treeBounds.top + treeBounds.bottom) / 2;
     if (overTree && centerY < midY && draggedRect.top <= treeBounds.top + EDGE_ZONE_PX) {
       const pane = extremePane(candidates, 'top');
@@ -213,7 +221,6 @@ export function detectTiledDropTarget(
       if (pane) return { targetWindowId: pane.windowId, side: 'bottom', previewRect: previewRectFor(pane.rect, 'bottom') };
     }
   } else {
-    const overTree = centerY >= treeBounds.top && centerY <= treeBounds.bottom;
     const midX = (treeBounds.left + treeBounds.right) / 2;
     if (overTree && centerX < midX && draggedRect.left <= treeBounds.left + EDGE_ZONE_PX) {
       const pane = extremePane(candidates, 'left');

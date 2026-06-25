@@ -90,8 +90,10 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
   },
 
   openProject: async (id) => {
-    // Stash current project's transient session (keep PTY alive for later restore)
-    useSessionStore.getState().stashTransientSession();
+    // Transient (Command Terminal) sessions stay tracked per (project, slot) in
+    // the session store and survive the switch; the command bar closes on project
+    // change (useCommandBar) and its windows rebind to the new project's slots on
+    // reopen, so there is no singleton pointer to stash/restore here.
     try {
       await window.electronAPI.projects.open(id);
     } catch (err) {
@@ -106,8 +108,6 @@ const projectStoreInitializer: StateCreator<ProjectStore> = (set, get) => ({
     }
     const project = get().projects.find((p) => p.id === id) || await window.electronAPI.projects.getCurrent();
     set({ currentProject: project });
-    // Restore the target project's transient session if one exists
-    useSessionStore.getState().restoreTransientSession(id);
     useSessionStore.getState().markIdleSessionsSeen(id);
   },
 

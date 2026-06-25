@@ -289,21 +289,10 @@ export function App() {
         // Transient sessions (command terminal) are ephemeral - skip toasts and notifications
         if (currentSession?.transient) {
           updateSessionStatus(sessionId, { status: 'exited', exitCode });
-          const sessionState = useSessionStore.getState();
-          if (sessionState.transientSessionId === sessionId) {
-            // Current project's transient session - use existing clear
-            sessionState.clearTransientSession();
-          } else {
-            // Stashed transient session from another project - remove from map
-            const updatedTransientSessions = { ...sessionState.transientSessions };
-            for (const [entryProjectId, entry] of Object.entries(updatedTransientSessions)) {
-              if (entry.sessionId === sessionId) {
-                delete updatedTransientSessions[entryProjectId];
-                break;
-              }
-            }
-            useSessionStore.setState({ transientSessions: updatedTransientSessions });
-          }
+          // Remove this transient session's renderer state (its (project, slot)
+          // map entry + per-session dicts). Works whether the session belongs to
+          // the current project or another project's still-tracked terminal.
+          useSessionStore.getState().clearTransientSessionById(sessionId);
           return;
         }
 
@@ -363,9 +352,9 @@ export function App() {
       cleanups.push(sessions.onUsage((sessionId, data, projectId) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         const sessionState = useSessionStore.getState();
-        // Accept usage from the current transient session or any stashed transient session
-        const isTransient = sessionId === sessionState.transientSessionId
-          || Object.values(sessionState.transientSessions).some((entry) => entry.sessionId === sessionId);
+        // Accept usage from any transient (command terminal) session, regardless
+        // of which project owns it.
+        const isTransient = Object.values(sessionState.transientSessions).some((entry) => entry.sessionId === sessionId);
         if (isTransient || !projectId || !activeProjectId || projectId === activeProjectId) {
           enqueueUsage(sessionId, data);
 

@@ -140,15 +140,13 @@ export function maybeLabelTransientSession(sessionId: string, event: SessionEven
   if (autoNameLabeledTransient.has(sessionId)) return;
 
   const transientSessions = useSessionStore.getState().transientSessions;
-  const owningProjectId = Object.entries(transientSessions).find(
-    ([, entry]) => entry.sessionId === sessionId,
-  )?.[0];
-  if (!owningProjectId) return;
+  const owningEntry = Object.values(transientSessions).find((entry) => entry.sessionId === sessionId);
+  if (!owningEntry) return;
 
   const promptText = (event.detail ?? '').trim();
   if (!promptText) return;
 
-  if (!projectAgentCanSummarize(owningProjectId)) return;
+  if (!projectAgentCanSummarize(owningEntry.projectId)) return;
 
   autoNameLabeledTransient.add(sessionId);
 

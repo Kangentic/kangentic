@@ -14,7 +14,7 @@
 
 import { useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import { useLayerStore } from '../context';
+import { useLayerStore, useWindowManager } from '../context';
 import type { ContainerSize } from '../store/geometry';
 import type { TileNode } from '../store/types';
 import { resolveTileLayout } from '../tiling/resolve-layout';
@@ -59,6 +59,9 @@ function seamKey(seam: Pick<TileSeam, 'splitId' | 'index'>): string {
 
 export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seamPx, overlayRef }: TileSplitterProps) {
   const commitSeamRatio = useLayerStore()((state) => state.setSeamRatio);
+  // The layer's pixel min-size: a seam can't shrink either pane of the pair below
+  // it (so a tiled pane never goes narrower/shorter than a floating one's floor).
+  const { layer } = useWindowManager();
   const dragRef = useRef<SeamDrag | null>(null);
   // Keeps the accent line lit through the whole drag (CSS :hover drops out when
   // the captured pointer travels off the thin overlay).
@@ -98,11 +101,17 @@ export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seam
   const onPointerMove = (event: React.PointerEvent) => {
     const drag = dragRef.current;
     if (!drag || event.pointerId !== drag.pointerId) return;
-    const ratio = clampTileRatio(
-      seam.direction === 'horizontal'
-        ? (event.clientX - drag.overlayLeft - seam.bounds.left) / seam.bounds.width
-        : (event.clientY - drag.overlayTop - seam.bounds.top) / seam.bounds.height,
-    );
+    const isHorizontalSeam = seam.direction === 'horizontal';
+    const rawRatio = isHorizontalSeam
+      ? (event.clientX - drag.overlayLeft - seam.bounds.left) / seam.bounds.width
+      : (event.clientY - drag.overlayTop - seam.bounds.top) / seam.bounds.height;
+    // Floor each pane of the pair at the layer min-size (width along a col-resize
+    // seam, height along a row-resize seam), so a drag can't squeeze a pane below
+    // it. Capped at 0.5 so a too-small pair still meets in the middle.
+    const boundsExtent = isHorizontalSeam ? seam.bounds.width : seam.bounds.height;
+    const minDim = isHorizontalSeam ? layer.minSize.width : layer.minSize.height;
+    const minFraction = Math.min(0.5, minDim / boundsExtent);
+    const ratio = clampTileRatio(Math.min(Math.max(rawRatio, minFraction), 1 - minFraction));
     drag.ratio = ratio;
     // Re-resolve at the proposed pair ratio and write rects imperatively. No store
     // write -> no React render -> no terminal fit until release.

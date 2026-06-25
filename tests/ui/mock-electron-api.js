@@ -1581,6 +1581,9 @@
             ],
             defaultPermission: 'acceptEdits',
             supportsSummarize: true,
+            // KEEP IN SYNC with ClaudeAdapter.reportsRateLimits: gates the ContextBar
+            // rate-limit pill on the agent capability (account-wide snapshot).
+            reportsRateLimits: true,
             // Capabilities mirror what discoverClaudeCapabilities() would return
             // for a real Claude install: parsed from `claude --help` plus the
             // user's `availableModels` setting. Tests can override per-agent

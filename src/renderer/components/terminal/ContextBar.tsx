@@ -24,7 +24,14 @@ interface ContextBarProps {
 }
 
 const pill = 'px-2 py-0.5 rounded bg-surface-raised whitespace-nowrap select-none';
-const containerClass = 'min-h-8 bg-surface/80 border-t border-edge flex flex-wrap items-center px-3 py-1.5 gap-x-2 gap-y-2 text-xs flex-shrink-0';
+// `[transform:translateZ(0)]` promotes the footer to its own compositing layer.
+// Without it, a freshly-spawned tiled window's frame composites such that the bar's
+// text-only pills (shell / version / cost / tokens) lay out correctly but Chromium
+// skips PAINTING them until a repaint is forced (pop-out / resize otherwise heals
+// it). Its own layer makes the bar paint independently of the frame composite, so
+// the pills render from the first frame. Safe re: the bar's popovers - they use the
+// `'absolute'` strategy relative to their own inner wrappers, not the footer.
+const containerClass = 'min-h-8 bg-surface/80 border-t border-edge flex flex-wrap items-center px-3 py-1.5 gap-x-2 gap-y-2 text-xs flex-shrink-0 [transform:translateZ(0)]';
 
 function formatResetTime(epochSeconds: number): string {
   const ms = epochSeconds * 1000 - Date.now();
@@ -143,6 +150,13 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   const agentLiveTelemetryUnsupported = useConfigStore(
     (s) => s.agentList.find((a) => a.name === taskAgent)?.liveTelemetryUnsupported
   );
+  // Adapter-declared: this agent streams account-wide rate-limit windows. Gating
+  // the rate-limit pill on the CAPABILITY (not this session's own first report)
+  // means a freshly spawned terminal shows the shared global snapshot immediately,
+  // matching its siblings, while agents with no rate-limit telemetry never show it.
+  const agentReportsRateLimits = useConfigStore(
+    (s) => s.agentList.find((a) => a.name === taskAgent)?.reportsRateLimits ?? false
+  );
 
   // Pulse hooks -- always called unconditionally (hooks rules)
   const costRef = useValuePulse(usage?.cost.totalCostUsd);
@@ -255,11 +269,13 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   const showTokens = contextBarConfig.showTokens;
   const showFraction = contextBarConfig.showContextFraction;
   const showProgressBar = contextBarConfig.showProgressBar;
-  // Visibility gate stays per-session: only adapters that ever populated
-  // rateLimits (currently Claude) earn the pill. The displayed *value* comes
-  // from the global `latestRateLimits` snapshot so every agent in the window
-  // shows the freshest account-wide numbers, not its own stale ones.
-  const showRateLimits = !!usage.rateLimits && usage.rateLimits.length > 0
+  // Visibility gate is the AGENT CAPABILITY, not this session's own first report:
+  // any session of a rate-limit-reporting agent (e.g. Claude) earns the pill, so a
+  // freshly spawned terminal shows the shared account-wide numbers from the global
+  // `latestRateLimits` snapshot immediately instead of a blank gap until it reports
+  // its own. When no session anywhere has reported yet (`latestRateLimits` null) the
+  // pill stays hidden. Agents with no rate-limit telemetry never show it.
+  const showRateLimits = agentReportsRateLimits
     && !!latestRateLimits && latestRateLimits.rateLimits.length > 0
     && contextBarConfig.showRateLimits;
 

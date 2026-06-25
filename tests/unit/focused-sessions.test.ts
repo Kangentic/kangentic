@@ -60,7 +60,7 @@ function makeFocusedInput(
     panelSessionId: null,
     dialogSessionIds: [],
     commandBarVisible: false,
-    transientSessionId: null,
+    transientSessionIds: [],
     ...overrides,
   };
 }
@@ -178,7 +178,7 @@ describe('deriveFocusedSessionIds', () => {
         panelSessionId: 'sess-panel',
         dialogSessionIds: [],
         commandBarVisible: true,
-        transientSessionId: 'sess-transient',
+        transientSessionIds: ['sess-transient'],
       }),
     );
     // Panel session excluded (backlog), transient appended
@@ -193,30 +193,56 @@ describe('deriveFocusedSessionIds', () => {
         panelSessionId: 'sess-panel',
         dialogSessionIds: [],
         commandBarVisible: true,
-        transientSessionId: 'sess-transient',
+        transientSessionIds: ['sess-transient'],
       }),
     );
     expect(result).toEqual(['sess-panel', 'sess-transient']);
   });
 
-  it('does not duplicate transient session when it is already in the focused set', () => {
-    // Contrived scenario: a window-owned session === transientSessionId
+  it('appends EVERY transient session when multiple command terminals are open', () => {
+    // Phase 2: each Command Terminal window owns its own transient session, and
+    // all must be focused or the main process suppresses their PTY output.
+    const result = deriveFocusedSessionIds(
+      makeFocusedInput({
+        activeView: 'board',
+        terminalPanelVisible: true,
+        panelSessionId: 'sess-panel',
+        dialogSessionIds: [],
+        commandBarVisible: true,
+        transientSessionIds: ['sess-transient-1', 'sess-transient-2', 'sess-transient-3'],
+      }),
+    );
+    expect(result).toEqual(['sess-panel', 'sess-transient-1', 'sess-transient-2', 'sess-transient-3']);
+  });
+
+  it('does not duplicate a transient session when it is already in the focused set', () => {
+    // Contrived scenario: a window-owned session id collides with a transient id.
     const result = deriveFocusedSessionIds(
       makeFocusedInput({
         dialogSessionIds: ['sess-shared'],
         commandBarVisible: true,
-        transientSessionId: 'sess-shared',
+        transientSessionIds: ['sess-shared'],
       }),
     );
     expect(result).toEqual(['sess-shared']);
     expect(result.length).toBe(1);
   });
 
-  it('does not add transient when commandBar is visible but transientSessionId is null', () => {
+  it('does not add transient sessions when commandBar is visible but none exist', () => {
     const result = deriveFocusedSessionIds(
       makeFocusedInput({
         commandBarVisible: true,
-        transientSessionId: null,
+        transientSessionIds: [],
+      }),
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('does not add transient sessions when commandBar is hidden even if some exist', () => {
+    const result = deriveFocusedSessionIds(
+      makeFocusedInput({
+        commandBarVisible: false,
+        transientSessionIds: ['sess-transient-1', 'sess-transient-2'],
       }),
     );
     expect(result).toEqual([]);

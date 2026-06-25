@@ -1,37 +1,120 @@
 import React from 'react';
-import { Command, Minus, Settings, Square, TerminalSquare, X } from 'lucide-react';
+import { Command, Minus, Settings, Square, X } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
+import { selectCurrentProjectTransientSessionIds } from '../../stores/session-store/transient-session-slice';
 import { isWorktreePath } from '../../../shared/git-utils';
-import { requiresUserInteraction } from '../../../shared/activity-state';
+import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { useFormattedCombo } from '../../hooks/useKeybinding';
 import logoSrc from '../../assets/logo-32.png';
 
 const isMac = window.electronAPI.platform === 'darwin';
 
 interface TitleBarProps {
+  /** Context-aware: opens the Command Terminal layer when closed, or spawns
+   *  another terminal when already open. */
   onQuickSession?: () => void;
   onOpenSearch?: () => void;
   commandBarOpen?: boolean;
+  /** Whether another Command Terminal can be opened (below the cap). Drives the
+   *  `+` affordance shown while the layer is open. */
+  canSpawnMore?: boolean;
 }
 
-export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen }: TitleBarProps) {
+/**
+ * The title-bar Command Terminal glyph: a custom terminal icon whose state lives
+ * IN the glyph rather than in a separate corner badge. The stroke color is the
+ * aggregate activity of the project's terminals (emerald working / amber needs-you
+ * / muted rest), and the working border MARCHES (a dash flows around the
+ * perimeter). The center morphs from the shell prompt to a `+` when the layer is
+ * open and another terminal can be spawned, so the add affordance reads as part of
+ * the icon (no clashing blue corner dot). 24 viewBox at strokeWidth 2 to match the
+ * neighbouring lucide icons.
+ */
+function CommandTerminalIcon({
+  tone,
+  showPlus,
+}: {
+  tone: 'rest' | 'thinking' | 'idle';
+  showPlus: boolean;
+}): React.ReactNode {
+  const colorClass =
+    tone === 'thinking' ? 'text-emerald-400' : tone === 'idle' ? 'text-amber-400' : '';
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width={20}
+      height={20}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={colorClass}
+      data-testid="quick-session-icon"
+      data-activity={tone}
+      data-plus={showPlus ? 'true' : 'false'}
+      aria-hidden="true"
+    >
+      {/* Terminal screen border. While an agent works it marches (a dash flows
+          around the perimeter); pathLength normalizes the dash math to 100. */}
+      <rect
+        x="3"
+        y="3"
+        width="18"
+        height="18"
+        rx="3"
+        pathLength={100}
+        strokeDasharray={tone === 'thinking' ? '65 35' : undefined}
+        className={tone === 'thinking' ? 'animate-march-border' : undefined}
+      />
+      {showPlus ? (
+        // The add affordance, centered in the terminal (replaces the prompt).
+        <>
+          <path d="M12 8.5 V15.5" />
+          <path d="M8.5 12 H15.5" />
+        </>
+      ) : (
+        // The shell prompt: chevron + caret line.
+        <>
+          <path d="M7.5 9.5 L10.5 12 L7.5 14.5" />
+          <path d="M12.5 14.5 H16.5" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpawnMore }: TitleBarProps) {
   const currentProject = useProjectStore((s) => s.currentProject);
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
   const openProjectSettings = useConfigStore((s) => s.openProjectSettings);
-  const transientSessionId = useSessionStore((s) => s.transientSessionId);
-  const transientActivity = useSessionStore((s) =>
-    s.transientSessionId ? s.sessionActivity[s.transientSessionId] : undefined,
-  );
+
+  // Aggregate activity across THIS project's Command Terminal sessions, surfaced
+  // as the title-bar terminal icon's COLOR (the same active/idle language as the
+  // task-detail / per-terminal controls, no separate dot). WORKING (emerald) wins:
+  // if any terminal is active the icon is emerald, else amber if any needs you,
+  // else rest. Classified only via the shared helpers (activity-state rule).
+  const transientActivityTone = useSessionStore((state) => {
+    const ids = selectCurrentProjectTransientSessionIds(state.transientSessions, currentProject?.id ?? null);
+    let anyIdle = false;
+    for (const sessionId of ids) {
+      const activity = state.sessionActivity[sessionId];
+      if (isActive(activity)) return 'thinking';
+      if (requiresUserInteraction(activity)) anyIdle = true;
+    }
+    return anyIdle ? 'idle' : 'rest';
+  });
+
   // Tooltips read the live effective combo so they update when the user rebinds.
   const quickFindCombo = useFormattedCombo('search.togglePalette');
   const commandTerminalCombo = useFormattedCombo('commandBar.toggle');
   const settingsCombo = useFormattedCombo('settings.toggle');
 
-  const hasBackgroundSession = !!transientSessionId && !commandBarOpen;
-  const transientIsIdle = hasBackgroundSession && requiresUserInteraction(transientActivity);
+  // While the layer is open and below the cap, the button spawns ANOTHER terminal.
+  const spawnsAnother = !!commandBarOpen && !!canSpawnMore;
 
   const isWorktree = currentProject?.path ? isWorktreePath(currentProject.path) : false;
 
@@ -91,19 +174,14 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen }: Title
           <button
             onClick={onQuickSession}
             className="relative p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-            title={`Command Terminal (${commandTerminalCombo})`}
-            aria-label="Command Terminal"
+            title={spawnsAnother ? 'New command terminal' : `Command Terminal (${commandTerminalCombo})`}
+            aria-label={spawnsAnother ? 'New command terminal' : 'Command Terminal'}
             data-testid="quick-session-button"
           >
-            <TerminalSquare size={20} />
-            {hasBackgroundSession && (
-              <span
-                className={`absolute top-1 right-1 w-2 h-2 rounded-full animate-pulse ${
-                  transientIsIdle ? 'bg-yellow-400' : 'bg-green-400'
-                }`}
-                data-testid="transient-session-indicator"
-              />
-            )}
+            {/* The activity color and the `+` add affordance both live IN the
+                glyph (color = activity, center = `+` when another can be spawned),
+                so there is no separate corner badge to clash or clutter. */}
+            <CommandTerminalIcon tone={transientActivityTone} showPlus={spawnsAnother} />
           </button>
         )}
         <button

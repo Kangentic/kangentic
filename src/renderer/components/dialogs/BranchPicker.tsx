@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, type RefObject } from 'react';
 import { GitBranch, Search, Loader2, ChevronDown } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
@@ -11,17 +11,55 @@ interface BranchPickerProps {
   /** 'chip' = small pill (dialogs), 'input' = full-width field (settings) */
   variant?: 'chip' | 'input';
   className?: string;
+  /** Controlled open state. When provided, the parent owns open/close (e.g. to
+   *  re-open the picker from an overflow kebab after the chip has folded). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Render NO trigger chip - just the dropdown, positioned against `anchorRef`.
+   *  Used for the kebab fallback when the inline chip is hidden by overflow. */
+  hideTrigger?: boolean;
+  /** Element the dropdown positions against (defaults to the chip's own wrapper).
+   *  When set, the dropdown is portaled + fixed so it escapes the header clip. */
+  anchorRef?: RefObject<HTMLElement | null>;
 }
 
-export function BranchPicker({ value, defaultBranch, onChange, variant = 'chip', className }: BranchPickerProps) {
-  const [open, setOpen] = useState(false);
+export function BranchPicker({
+  value,
+  defaultBranch,
+  onChange,
+  variant = 'chip',
+  className,
+  open: controlledOpen,
+  onOpenChange,
+  hideTrigger = false,
+  anchorRef,
+}: BranchPickerProps) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isControlled = controlledOpen !== undefined;
+  const open = isControlled ? controlledOpen : internalOpen;
+  const setOpen = useCallback((next: boolean) => {
+    if (!isControlled) setInternalOpen(next);
+    onOpenChange?.(next);
+  }, [isControlled, onOpenChange]);
+
   const [branches, setBranches] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const { style: dropdownStyle } = usePopoverPosition(containerRef, dropdownRef, open, { mode: 'dropdown', preferRight: false });
+  // When anchored externally (kebab fallback) the dropdown is portaled + fixed so
+  // it escapes the header's overflow clip; otherwise it stays inline + absolute.
+  const usePortal = hideTrigger || anchorRef !== undefined;
+  const positionAnchor = anchorRef ?? containerRef;
+  const { style: dropdownStyle } = usePopoverPosition(
+    positionAnchor,
+    dropdownRef,
+    open,
+    usePortal
+      ? { mode: 'dropdown', strategy: 'fixed', preferRight: false }
+      : { mode: 'dropdown', preferRight: false },
+  );
 
   // Input variant: override horizontal positioning to stretch full width
   useLayoutEffect(() => {
@@ -44,30 +82,27 @@ export function BranchPicker({ value, defaultBranch, onChange, variant = 'chip',
     }
   }, []);
 
-  const handleOpen = useCallback(() => {
-    setOpen(true);
+  // Whenever the dropdown opens (chip click OR a controlled open from the kebab),
+  // reset the query, fetch branches, and focus the search box.
+  useEffect(() => {
+    if (!open) return;
     setQuery('');
     fetchBranches();
-  }, [fetchBranches]);
+    requestAnimationFrame(() => searchRef.current?.focus());
+  }, [open, fetchBranches]);
 
-  // Focus search input when dropdown opens
-  useEffect(() => {
-    if (open) {
-      requestAnimationFrame(() => searchRef.current?.focus());
-    }
-  }, [open]);
-
-  // Close on click outside
+  // Close on click outside (consider both the position anchor and the dropdown).
   useEffect(() => {
     if (!open) return;
     const handleMouseDown = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      const inAnchor = positionAnchor.current?.contains(target);
+      const inDropdown = dropdownRef.current?.contains(target);
+      if (!inAnchor && !inDropdown) setOpen(false);
     };
     document.addEventListener('mousedown', handleMouseDown, true);
     return () => document.removeEventListener('mousedown', handleMouseDown, true);
-  }, [open]);
+  }, [open, positionAnchor, setOpen]);
 
   // Close on Escape (without closing the parent dialog)
   useEffect(() => {
@@ -80,7 +115,7 @@ export function BranchPicker({ value, defaultBranch, onChange, variant = 'chip',
     };
     document.addEventListener('keydown', handleKeyDown, true);
     return () => document.removeEventListener('keydown', handleKeyDown, true);
-  }, [open]);
+  }, [open, setOpen]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return branches;
@@ -101,7 +136,7 @@ export function BranchPicker({ value, defaultBranch, onChange, variant = 'chip',
 
   const chipButton = (
     <Pill
-      onClick={open ? () => setOpen(false) : handleOpen}
+      onClick={() => setOpen(!open)}
       className={`border transition-colors ${
         open
           ? 'border-accent text-accent-fg bg-accent/10'
@@ -117,7 +152,7 @@ export function BranchPicker({ value, defaultBranch, onChange, variant = 'chip',
   const inputButton = (
     <button
       type="button"
-      onClick={open ? () => setOpen(false) : handleOpen}
+      onClick={() => setOpen(!open)}
       className={`w-full flex items-center gap-2 px-3 py-2 text-sm text-fg border border-edge-input rounded bg-surface hover:border-fg-faint transition-colors ${className || ''}`}
       data-testid="branch-picker-input"
     >
@@ -179,14 +214,15 @@ export function BranchPicker({ value, defaultBranch, onChange, variant = 'chip',
   );
 
   return (
-    <div className={`relative ${variant === 'input' ? 'w-full' : 'inline-block'}`} ref={containerRef}>
-      {variant === 'input' ? inputButton : chipButton}
+    <div className={hideTrigger ? 'contents' : `relative ${variant === 'input' ? 'w-full' : 'inline-block'}`} ref={containerRef}>
+      {!hideTrigger && (variant === 'input' ? inputButton : chipButton)}
       <OverlayPopover
         open={open}
         popoverRef={dropdownRef}
         style={dropdownStyle}
+        portal={usePortal}
         transformOrigin="top left"
-        className={`absolute bg-surface-raised border border-edge-input rounded-md shadow-xl z-50 overflow-hidden ${
+        className={`${usePortal ? 'fixed z-[2147483646]' : 'absolute z-50'} bg-surface-raised border border-edge-input rounded-md shadow-xl overflow-hidden ${
           variant === 'input' ? 'left-0 right-0' : 'w-64'
         }`}
       >

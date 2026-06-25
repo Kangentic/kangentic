@@ -32,6 +32,7 @@ import type { TileInsertSide } from '../tiling/tree-ops';
 import { buildPresetTree, presetHalfGeometry } from '../tiling/presets';
 import type { TilePreset } from '../tiling/presets';
 import { serializeWorkspace as toSerializedWorkspace, deserializeWorkspace } from '../persistence/workspace';
+import { findWindowTreeViolations } from './tree-invariants';
 import type { SerializedWorkspace } from '../../../shared/types';
 
 /** The whole overlay: the default tiling footprint (edge-snap pairs fill it). */
@@ -104,9 +105,11 @@ function evictWindowFromTiling(
   const evicted = nextWindows[windowId];
   if (evicted) {
     const heldRect = originalLayout.rects.get(windowId);
-    const floatGeometry =
-      evicted.restoreGeometry ??
-      (heldRect ? clampGeometry({ x: heldRect.left, y: heldRect.top, w: heldRect.width, h: heldRect.height }) : evicted.geometry);
+    const heldGeometry = heldRect
+      ? clampGeometry({ x: heldRect.left, y: heldRect.top, w: heldRect.width, h: heldRect.height })
+      : null;
+    // Float the window back to its pre-tile size (or the rect it held while tiled).
+    const floatGeometry = evicted.restoreGeometry ?? heldGeometry ?? evicted.geometry;
     nextWindows[windowId] = { ...evicted, state: 'floating', leafId: null, geometry: floatGeometry, restoreGeometry: null };
   }
 
@@ -219,6 +222,11 @@ export interface WindowStoreState {
    *  right-docked group's left edge to widen all its panes while it stays docked
    *  right. The vacated space stays empty board. */
   setTileTreeRect: (rect: FractionalRect) => void;
+  /** Grow the tile group's footprint (if needed) so the NARROWEST pane is at least
+   *  the configured min pixel size on each axis - the hard floor the engine never
+   *  crosses when docking. The overlay pixel size converts the fractional footprint
+   *  to pixels. No-op without a tree, or when every pane already clears the floor. */
+  enforceMinPaneSize: (minWidthPx: number, minHeightPx: number, overlayWidthPx: number, overlayHeightPx: number) => void;
   /** Pull a window out of tiling (drag-out); dissolves the group to floating. */
   untileWindow: (id: string) => void;
   toggleMaximizeWindow: (id: string) => void;
@@ -352,10 +360,20 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       set((current) => {
         const target = current.windows[id];
         if (!target) return current;
+        // Committing a free geometry means the window is now floating. If it is
+        // STILL a member of the tile tree (a tiled pane whose geometry is set
+        // directly), evict it first so the tree never keeps a stale reference to a
+        // now-floating window - the same stale-leaf class fixed in snapWindow /
+        // restoreWindow. Eviction is a no-op (same refs) when the window is already
+        // untiled, which is the live path: drag/resize untiles before committing.
+        const base = evictWindowFromTiling(current.windows, current.tileTree, current.tileTreeRect, id);
+        const evicted = base.windows[id] ?? target;
         return {
+          tileTree: base.tileTree,
+          tileTreeRect: base.tileTreeRect,
           windows: {
-            ...current.windows,
-            [id]: { ...target, geometry: clampGeometry(geometry), state: 'floating', restoreGeometry: null },
+            ...base.windows,
+            [id]: { ...evicted, geometry: clampGeometry(geometry), state: 'floating', leafId: null, restoreGeometry: null },
           },
         };
       });
@@ -378,14 +396,24 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       set((current) => {
         const target = current.windows[id];
         if (!target) return current;
+        // Snapping to a half LEAVES any tile group: evict from the tree first so it
+        // never keeps a stale reference to a now-floating window. A lingering
+        // reference made `collectCandidatePanes` resolve this pane at its phantom
+        // tiled position, so drop previews appeared in the wrong place and the drag
+        // still thought the windows were docked. Eviction is a no-op when untiled.
+        const base = evictWindowFromTiling(current.windows, current.tileTree, current.tileTreeRect, id);
+        const evicted = base.windows[id] ?? target;
         // A half-dock is like maximize: remember the pre-snap geometry so dragging
         // the window away restores the size the user had. Preserve an existing
-        // restore point so snapping left then right keeps the original size.
-        const restoreGeometry = target.restoreGeometry ?? target.geometry;
+        // restore point so snapping left then right keeps the original size (after
+        // eviction the held pre-tile size is the window's geometry).
+        const restoreGeometry = evicted.restoreGeometry ?? evicted.geometry;
         return {
+          tileTree: base.tileTree,
+          tileTreeRect: base.tileTreeRect,
           windows: {
-            ...current.windows,
-            [id]: { ...target, geometry: clampGeometry(geometry), state: 'snapped', restoreGeometry },
+            ...base.windows,
+            [id]: { ...evicted, geometry: clampGeometry(geometry), state: 'snapped', restoreGeometry },
           },
         };
       });
@@ -485,7 +513,16 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       const target = current.windows[targetId];
       if (!dragged || !target || draggedId === targetId) return;
 
-      const tree = current.tileTree;
+      // Defensive dedupe: if the dragged window is ALREADY referenced in the tree
+      // (a stale leaf left by an earlier op), remove that leaf first so docking MOVES
+      // the window instead of creating a SECOND leaf for it. A duplicate leaf renders
+      // as a phantom empty pane and the footprint clamps against it - an "invisible
+      // wall" that blocks the group from moving / resizing into that space. The normal
+      // drag path pops the window out (untile) before docking, so this is a no-op
+      // there; it only repairs a corrupt/stale state.
+      const tree = current.tileTree && treeContainsWindow(current.tileTree, draggedId)
+        ? removeWindowFromTree(current.tileTree, draggedId)
+        : current.tileTree;
       // Insert beside the target when it is already a tiled pane (arbitrary N-way).
       if (tree && treeContainsWindow(tree, targetId)) {
         const newLeafId = nextTileId('leaf');
@@ -585,10 +622,113 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       set((current) => (current.tileTree ? { tileTreeRect: clampGeometry(rect) } : current));
     },
 
+    enforceMinPaneSize: (minWidthPx, minHeightPx, overlayWidthPx, overlayHeightPx) => {
+      set((current) => {
+        const { tileTree, tileTreeRect } = current;
+        if (!tileTree || overlayWidthPx <= 0 || overlayHeightPx <= 0) return current;
+        // Measure the panes at the current footprint (pixels).
+        const layout = resolveTileLayout(
+          tileTree,
+          { width: tileTreeRect.w * overlayWidthPx, height: tileTreeRect.h * overlayHeightPx },
+          0,
+          0,
+          { left: tileTreeRect.x * overlayWidthPx, top: tileTreeRect.y * overlayHeightPx },
+        );
+        let narrowestPx = Infinity;
+        let shortestPx = Infinity;
+        for (const rect of layout.rects.values()) {
+          narrowestPx = Math.min(narrowestPx, rect.width);
+          shortestPx = Math.min(shortestPx, rect.height);
+        }
+        if (!Number.isFinite(narrowestPx)) return current;
+
+        // Panes scale proportionally with the footprint, so growing an axis by
+        // (minSize / narrowestPane) lifts the narrowest pane exactly to the floor.
+        // Grow around the footprint's centre, capped at the full overlay.
+        let next = tileTreeRect;
+        const grow = (axisMinPx: number, smallestPanePx: number, start: number, extent: number): { start: number; extent: number } | null => {
+          if (smallestPanePx <= 0 || smallestPanePx >= axisMinPx) return null;
+          const targetExtent = Math.min(1, extent * (axisMinPx / smallestPanePx));
+          if (targetExtent <= extent) return null;
+          const centre = start + extent / 2;
+          const nextStart = Math.min(Math.max(0, centre - targetExtent / 2), 1 - targetExtent);
+          return { start: nextStart, extent: targetExtent };
+        };
+        const widthGrow = grow(minWidthPx, narrowestPx, next.x, next.w);
+        if (widthGrow) next = { ...next, x: widthGrow.start, w: widthGrow.extent };
+        const heightGrow = grow(minHeightPx, shortestPx, next.y, next.h);
+        if (heightGrow) next = { ...next, y: heightGrow.start, h: heightGrow.extent };
+
+        if (next === tileTreeRect) return current;
+        return { tileTreeRect: clampGeometry(next) };
+      });
+    },
+
     untileWindow: (id) => {
       set((current) => {
-        if (!current.tileTree || !treeContainsWindow(current.tileTree, id)) return current;
-        return evictWindowFromTiling(current.windows, current.tileTree, current.tileTreeRect, id);
+        const { tileTree, tileTreeRect } = current;
+        if (!tileTree || !treeContainsWindow(tileTree, id)) return current;
+        // Resolve the tree within its footprint in 0..1 space so the rects ARE
+        // fractional geometry (the live tiled sizes/positions).
+        const layout = resolveTileLayout(
+          tileTree,
+          { width: tileTreeRect.w, height: tileTreeRect.h },
+          0,
+          0,
+          { left: tileTreeRect.x, top: tileTreeRect.y },
+        );
+        const floatAt = (windowId: string, base: Record<string, ManagedWindow>): void => {
+          const rect = layout.rects.get(windowId);
+          const target = base[windowId];
+          if (!target || !rect) return;
+          base[windowId] = {
+            ...target,
+            state: 'floating',
+            leafId: null,
+            geometry: clampGeometry({ x: rect.left, y: rect.top, w: rect.width, h: rect.height }),
+            restoreGeometry: null,
+          };
+        };
+
+        const nextWindows = { ...current.windows };
+        // The popped window floats at its current rect (keep its size, ready to drag).
+        floatAt(id, nextWindows);
+
+        const prunedTree = removeWindowFromTree(tileTree, id);
+        const survivorIds = collectWindowIds(prunedTree);
+
+        if (survivorIds.length <= 1) {
+          // 2 -> 1: the lone survivor also floats at its current rect, so popping one
+          // of a PAIR leaves both independently resizable (the group dissolves).
+          if (survivorIds.length === 1) floatAt(survivorIds[0], nextWindows);
+          return { windows: nextWindows, tileTree: null, tileTreeRect: FULL_TILE_RECT };
+        }
+
+        // 3+ -> the survivors STAY DOCKED and keep their absolute widths (no rescale
+        // to fill the freed slot): shrink the footprint to the survivors' packed
+        // extent. `removeWindowFromTree` renormalised their sizes to sum 1, so a
+        // footprint equal to their combined extent reproduces their original sizes.
+        const survivorRects = survivorIds
+          .map((survivorId) => layout.rects.get(survivorId))
+          .filter((rect): rect is PixelRect => !!rect);
+        const minX = Math.min(...survivorRects.map((rect) => rect.left));
+        const maxX = Math.max(...survivorRects.map((rect) => rect.left + rect.width));
+        const minY = Math.min(...survivorRects.map((rect) => rect.top));
+        const maxY = Math.max(...survivorRects.map((rect) => rect.top + rect.height));
+        let nextFootprint: FractionalRect;
+        if (prunedTree && prunedTree.kind === 'split' && prunedTree.children.every((child) => child.kind === 'leaf')) {
+          // Flat split (the common case): the footprint along the split axis is the
+          // SUM of survivor extents (gap removed); the perpendicular axis is their
+          // shared span. So end-pops keep the survivors in place and a middle-pop
+          // packs them together, freeing the popped slot as empty board.
+          nextFootprint = prunedTree.direction === 'horizontal'
+            ? { x: minX, y: minY, w: survivorRects.reduce((sum, rect) => sum + rect.width, 0), h: maxY - minY }
+            : { x: minX, y: minY, w: maxX - minX, h: survivorRects.reduce((sum, rect) => sum + rect.height, 0) };
+        } else {
+          // Nested tree: best-effort to the survivors' bounding box.
+          nextFootprint = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+        }
+        return { windows: nextWindows, tileTree: prunedTree, tileTreeRect: clampGeometry(nextFootprint) };
       });
     },
 
@@ -603,21 +743,33 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       set((current) => {
         const target = current.windows[id];
         if (!target) return current;
-        // Un-maximize: back to floating at the pre-maximize geometry.
-        if (target.state === 'maximized') {
+        if (target.state !== 'maximized') return current;
+        // A maximized window that is STILL a member of the tile tree was TILED before
+        // it maximized (maximize keeps its leaf + tree membership): un-maximize back
+        // to its DOCKED slot, not to a floating window. Returning it to 'floating'
+        // while the tree still referenced it left a stale reference - a now-floating
+        // window resolved at its phantom tiled rect - which mis-placed later drop
+        // previews (the same class as the snapWindow stale-ref bug).
+        if (target.leafId && current.tileTree && treeContainsWindow(current.tileTree, id)) {
           return {
-            windows: {
-              ...current.windows,
-              [id]: {
-                ...target,
-                state: 'floating',
-                geometry: target.restoreGeometry ?? target.geometry,
-                restoreGeometry: null,
-              },
-            },
+            windows: { ...current.windows, [id]: { ...target, state: 'tiled', restoreGeometry: null } },
           };
         }
-        return current;
+        // Otherwise un-maximize back to floating at the pre-maximize geometry, and
+        // clear any leafId so a window that left the tree under itself while
+        // maximized can never carry a dangling leaf reference.
+        return {
+          windows: {
+            ...current.windows,
+            [id]: {
+              ...target,
+              state: 'floating',
+              geometry: target.restoreGeometry ?? target.geometry,
+              leafId: null,
+              restoreGeometry: null,
+            },
+          },
+        };
       });
     },
 
@@ -650,6 +802,25 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       });
     },
   }));
+
+  // Dev-only stale-leaf tripwire: after EVERY mutation, assert the tiling
+  // invariant (tree membership <-> state <-> leafId). A regression then surfaces
+  // loudly at the mutator that caused it while dogfooding, instead of three drags
+  // later as a phantom pane / "invisible wall". Subscribed once here in the store
+  // factory, which runs only on a cold load (the HMR-pinned instance keeps its one
+  // subscription), and compiled out of production builds where import.meta.env.DEV
+  // is statically false.
+  // @ts-expect-error -- Vite defines import.meta.env; tsc's "module": "commonjs" doesn't support it
+  if (import.meta.env?.DEV) {
+    store.subscribe((state) => {
+      const violations = findWindowTreeViolations(state.windows, state.tileTree);
+      if (violations.length > 0) {
+        console.error(
+          `[window-manager:${options.idPrefix}] tiling invariant violated:\n  - ${violations.join('\n  - ')}`,
+        );
+      }
+    });
+  }
 
   return { store, options };
 }

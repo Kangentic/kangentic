@@ -181,7 +181,11 @@ export function snapshotsContentEqual(a: ActivityStatsSnapshot, b: ActivityStats
 
 function ActivityDebugOverlayContent() {
   const sessions = useSessionStore((state) => state.sessions);
-  const transientSessionId = useSessionStore((state) => state.transientSessionId);
+  // Stable, comma-joined key of every transient (Command Terminal) session id, so
+  // the label memo only recomputes when the set changes.
+  const transientSessionIdsKey = useSessionStore((state) =>
+    Object.values(state.transientSessions).map((entry) => entry.sessionId).sort().join(','),
+  );
   const tasks = useBoardStore((state) => state.tasks);
   const currentProjectId = useProjectStore((state) => state.currentProject?.id);
   const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -203,9 +207,10 @@ function ActivityDebugOverlayContent() {
   // transient session, the task title for task-bound sessions, falling
   // back to the short session id.
   const sessionLabels = useMemo(() => {
+    const transientIds = new Set(transientSessionIdsKey ? transientSessionIdsKey.split(',') : []);
     const labels = new Map<string, string>();
     for (const session of sessions) {
-      if (session.id === transientSessionId) {
+      if (transientIds.has(session.id)) {
         labels.set(session.id, 'Command Terminal');
         continue;
       }
@@ -213,7 +218,7 @@ function ActivityDebugOverlayContent() {
       labels.set(session.id, task?.title ?? session.id.slice(0, 8));
     }
     return labels;
-  }, [sessions, tasks, transientSessionId]);
+  }, [sessions, tasks, transientSessionIdsKey]);
 
   const [snapshots, setSnapshots] = useState<ActivityStatsSnapshot[]>([]);
   // Wall-clock anchor captured at the start of each poll tick and

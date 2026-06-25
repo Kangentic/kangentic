@@ -10,6 +10,8 @@
  *   - first-prompt-wins: second call does not overwrite an existing label
  *   - empty and whitespace-only strings are no-ops
  *   - unknown sessionId leaves state unchanged
+ *   - the map is keyed by (project, slot), so the label targets the matched
+ *     session regardless of which slot owns it
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -22,7 +24,11 @@ vi.mock('../../src/renderer/stores/project-store', () => ({
   },
 }));
 
-import { createTransientSessionSlice } from '../../src/renderer/stores/session-store/transient-session-slice';
+import {
+  createTransientSessionSlice,
+  transientKey,
+  type TransientSessionEntry,
+} from '../../src/renderer/stores/session-store/transient-session-slice';
 import type { SessionStore } from '../../src/renderer/stores/session-store/types';
 
 // ---------------------------------------------------------------------------
@@ -35,7 +41,7 @@ import type { SessionStore } from '../../src/renderer/stores/session-store/types
  * the other fields are never touched by setTransientSessionLabel.
  */
 function makeSliceStore(initial?: {
-  transientSessions?: Record<string, { sessionId: string; branch: string | null; label?: string }>;
+  transientSessions?: Record<string, TransientSessionEntry>;
 }) {
   let state: Pick<SessionStore, 'transientSessions'> & Record<string, unknown> = {
     transientSessions: initial?.transientSessions ?? {},
@@ -48,8 +54,6 @@ function makeSliceStore(initial?: {
     sessionEvents: {},
     seenIdleSessions: {},
     commandBarVisible: false,
-    transientSessionId: null,
-    transientBranch: null,
   };
 
   const get = () => state as unknown as SessionStore;
@@ -76,6 +80,10 @@ function makeSliceStore(initial?: {
   };
 }
 
+function entry(overrides: Partial<TransientSessionEntry> & Pick<TransientSessionEntry, 'projectId' | 'slot' | 'sessionId'>): TransientSessionEntry {
+  return { branch: null, ...overrides };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -84,92 +92,88 @@ describe('setTransientSessionLabel', () => {
   it('sets the label on the matching transient session entry', () => {
     const { slice, getState } = makeSliceStore({
       transientSessions: {
-        'proj-abc': { sessionId: 'sess-1', branch: null },
+        [transientKey('proj-abc', 'slot-1')]: entry({ projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1' }),
       },
     });
 
     slice.setTransientSessionLabel('sess-1', 'Fix Login Flow');
 
-    const entry = getState().transientSessions['proj-abc'];
-    expect(entry?.label).toBe('Fix Login Flow');
+    expect(getState().transientSessions[transientKey('proj-abc', 'slot-1')]?.label).toBe('Fix Login Flow');
   });
 
   it('first-prompt-wins: a second call does not overwrite an existing label', () => {
     const { slice, getState } = makeSliceStore({
       transientSessions: {
-        'proj-abc': { sessionId: 'sess-1', branch: null, label: 'First Label' },
+        [transientKey('proj-abc', 'slot-1')]: entry({ projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1', label: 'First Label' }),
       },
     });
 
     slice.setTransientSessionLabel('sess-1', 'Second Label Should Be Ignored');
 
-    const entry = getState().transientSessions['proj-abc'];
-    expect(entry?.label).toBe('First Label');
+    expect(getState().transientSessions[transientKey('proj-abc', 'slot-1')]?.label).toBe('First Label');
   });
 
   it('is a no-op for an empty string', () => {
     const { slice, getState } = makeSliceStore({
       transientSessions: {
-        'proj-abc': { sessionId: 'sess-1', branch: null },
+        [transientKey('proj-abc', 'slot-1')]: entry({ projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1' }),
       },
     });
 
     slice.setTransientSessionLabel('sess-1', '');
 
-    const entry = getState().transientSessions['proj-abc'];
-    // No label was set - entry has no label property
-    expect(entry?.label).toBeUndefined();
+    expect(getState().transientSessions[transientKey('proj-abc', 'slot-1')]?.label).toBeUndefined();
   });
 
   it('is a no-op for a whitespace-only string', () => {
     const { slice, getState } = makeSliceStore({
       transientSessions: {
-        'proj-abc': { sessionId: 'sess-1', branch: null },
+        [transientKey('proj-abc', 'slot-1')]: entry({ projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1' }),
       },
     });
 
     slice.setTransientSessionLabel('sess-1', '   \t  ');
 
-    const entry = getState().transientSessions['proj-abc'];
-    expect(entry?.label).toBeUndefined();
+    expect(getState().transientSessions[transientKey('proj-abc', 'slot-1')]?.label).toBeUndefined();
   });
 
   it('is a no-op for an unknown sessionId (leaves transientSessions unchanged)', () => {
     const initialMap = {
-      'proj-abc': { sessionId: 'sess-1', branch: null, label: 'Existing' },
+      [transientKey('proj-abc', 'slot-1')]: entry({ projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1', label: 'Existing' }),
     };
     const { slice, getState } = makeSliceStore({ transientSessions: initialMap });
 
     slice.setTransientSessionLabel('sess-nonexistent', 'Should Not Appear');
 
-    // The map should be structurally identical to the initial state
     expect(getState().transientSessions).toStrictEqual(initialMap);
   });
 
   it('trims surrounding whitespace from the label before storing', () => {
     const { slice, getState } = makeSliceStore({
       transientSessions: {
-        'proj-abc': { sessionId: 'sess-1', branch: null },
+        [transientKey('proj-abc', 'slot-1')]: entry({ projectId: 'proj-abc', slot: 'slot-1', sessionId: 'sess-1' }),
       },
     });
 
     slice.setTransientSessionLabel('sess-1', '  Refactor Auth Service  ');
 
-    const entry = getState().transientSessions['proj-abc'];
-    expect(entry?.label).toBe('Refactor Auth Service');
+    expect(getState().transientSessions[transientKey('proj-abc', 'slot-1')]?.label).toBe('Refactor Auth Service');
   });
 
-  it('correctly handles multiple project entries and only labels the matched session', () => {
+  it('labels only the matched session across multiple slots and projects', () => {
     const { slice, getState } = makeSliceStore({
       transientSessions: {
-        'proj-1': { sessionId: 'sess-a', branch: null },
-        'proj-2': { sessionId: 'sess-b', branch: null },
+        // Two slots in the same project, plus a slot in another project.
+        [transientKey('proj-1', 'slot-1')]: entry({ projectId: 'proj-1', slot: 'slot-1', sessionId: 'sess-a' }),
+        [transientKey('proj-1', 'slot-2')]: entry({ projectId: 'proj-1', slot: 'slot-2', sessionId: 'sess-b' }),
+        [transientKey('proj-2', 'slot-1')]: entry({ projectId: 'proj-2', slot: 'slot-1', sessionId: 'sess-c' }),
       },
     });
 
-    slice.setTransientSessionLabel('sess-b', 'Project Two Label');
+    slice.setTransientSessionLabel('sess-b', 'Second Slot Label');
 
-    expect(getState().transientSessions['proj-1']?.label).toBeUndefined();
-    expect(getState().transientSessions['proj-2']?.label).toBe('Project Two Label');
+    expect(getState().transientSessions[transientKey('proj-1', 'slot-1')]?.label).toBeUndefined();
+    expect(getState().transientSessions[transientKey('proj-1', 'slot-2')]?.label).toBe('Second Slot Label');
+    expect(getState().transientSessions[transientKey('proj-2', 'slot-1')]?.label).toBeUndefined();
   });
 });

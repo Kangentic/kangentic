@@ -19,18 +19,21 @@
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Circle, CircleStop, FolderOpen, GitCompare, Loader2, Maximize2, Minimize2, SquareChevronRight, X, Zap } from 'lucide-react';
+import { Circle, CircleStop, FolderOpen, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, PictureInPicture2, SquareChevronRight, Zap } from 'lucide-react';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { Pill } from '../Pill';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopover';
+import { useHeaderPillOverflow, type HeaderPillSpec } from '../dialogs/task-detail/useHeaderPillOverflow';
+import { WindowLayoutMenu } from '../dialogs/WindowLayoutMenu';
 import { useTerminal } from '../../hooks/useTerminal';
 import { useKeybinding, useFormattedCombo } from '../../hooks/useKeybinding';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from '../terminal/FileDropOverlay';
 import { ContextBar } from '../terminal/ContextBar';
 import { useSessionStore } from '../../stores/session-store';
+import { transientKey } from '../../stores/session-store/transient-session-slice';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -103,8 +106,19 @@ interface CommandTerminalWindowProps {
 
 export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPointerDown }: CommandTerminalWindowProps) {
   const windowId = managedWindow.id;
+  // The window's durable anchor IS its Command Terminal slot id (`slot-1`,
+  // `slot-2`, ...). It pairs the persistent window to its ephemeral PTY across
+  // hide/reopen and project switches; the transient session is keyed by it.
+  const slot = managedWindow.anchor;
   const useStore = useLayerStore();
   const toggleMaximizeWindow = useStore((state) => state.toggleMaximizeWindow);
+  const closeWindow = useStore((state) => state.closeWindow);
+  // Window-layout parity with the task-detail window: tile presets, pop-out
+  // (untile back to floating), and the multi-window gate for columns/grid.
+  const applyTilePreset = useStore((state) => state.applyTilePreset);
+  const untileWindow = useStore((state) => state.untileWindow);
+  const windowCount = useStore((state) => Object.keys(state.windows).length);
+  const isTiled = useStore((state) => state.windows[windowId]?.leafId != null);
   const { hideLayer } = useCommandTerminalLayer();
 
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -121,9 +135,21 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   const handleToggleChanges = useCallback(() => toggleChangesOpen(COMMAND_TERMINAL_ENTITY_ID), [toggleChangesOpen]);
 
   const maximizeCombo = useFormattedCombo('panel.maximize');
-  const closeCombo = useFormattedCombo('panel.close');
   const spawnedRef = useRef(false);
   const commandButtonRef = useRef<HTMLDivElement>(null);
+  // The branch picker can fold into the kebab; this drives the kebab-anchored
+  // fallback dropdown ("Switch branch").
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  // Refs for the measured "priority-plus" header overflow (title wins; pills fold
+  // into the kebab as the window narrows). Mirrors the task-detail header.
+  const headerRef = useRef<HTMLDivElement>(null);
+  const leadingRef = useRef<HTMLDivElement>(null);
+  const trailingRef = useRef<HTMLDivElement>(null);
+  const titleSpanRef = useRef<HTMLSpanElement>(null);
+  const pillsRef = useRef<HTMLDivElement>(null);
+  // The Commands palette anchors to its pill when visible, else to the kebab (so
+  // it still opens after the pill has folded into the overflow menu).
+  const kebabWrapRef = useRef<HTMLDivElement>(null);
 
   const headerShortcuts = useMemo(
     () => shortcuts.filter((action) => action.command && (!action.display || action.display === 'header' || action.display === 'both')),
@@ -135,27 +161,69 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     [shortcuts],
   );
 
-  const projectId = useProjectStore((s) => s.currentProject?.id ?? null);
-  const transientLabel = useSessionStore((state) =>
-    projectId ? state.transientSessions[projectId]?.label ?? null : null,
+  // Quick-access pills fold into the kebab in DESCENDING priority as the window
+  // narrows, so the title always wins the space fight (useHeaderPillOverflow).
+  const pillSpecs = useMemo<HeaderPillSpec[]>(() => {
+    const specs: HeaderPillSpec[] = [{ id: 'commands', priority: 50 }];
+    if (projectPath) specs.push({ id: 'folder', priority: 40 });
+    if (projectPath) specs.push({ id: 'changes', priority: 30 });
+    specs.push({ id: 'branch', priority: 25 });
+    for (const action of headerShortcuts) specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
+    return specs;
+  }, [projectPath, headerShortcuts]);
+
+  const hiddenPillIds = useHeaderPillOverflow(headerRef, leadingRef, trailingRef, titleSpanRef, pillsRef, pillSpecs);
+  const showPill = (id: string) => !hiddenPillIds.has(id);
+
+  // A header-only shortcut that folded must surface in the kebab so the overflow
+  // stays the complete action set. The built-in pills (Commands / Open folder /
+  // Changes) are always in the kebab already; a 'both'-display shortcut is already
+  // a menu shortcut, so it is skipped here.
+  const overflowMenuShortcuts = useMemo(
+    () => [
+      ...menuShortcuts,
+      ...headerShortcuts.filter(
+        (action) =>
+          hiddenPillIds.has(`shortcut:${action.id ?? action.label}`)
+          && !menuShortcuts.some((menuAction) => (menuAction.id ?? menuAction.label) === (action.id ?? action.label)),
+      ),
+    ],
+    [menuShortcuts, headerShortcuts, hiddenPillIds],
   );
 
-  // Spawn the transient session on mount, or reattach to an existing one (the PTY
-  // survives a layer hide, so reopening reattaches instead of respawning).
+  const projectId = useProjectStore((s) => s.currentProject?.id ?? null);
+  const transientLabel = useSessionStore((state) =>
+    projectId ? state.transientSessions[transientKey(projectId, slot)]?.label ?? null : null,
+  );
+
+  // Spawn this slot's transient session on mount, or reattach to an existing one
+  // (the PTY survives a layer hide, so reopening reattaches instead of
+  // respawning). Each window owns its (project, slot) session.
   useEffect(() => {
     if (spawnedRef.current) return;
     spawnedRef.current = true;
 
     const state = useSessionStore.getState();
-    const existingSessionId = state.transientSessionId;
-    if (existingSessionId) {
-      setSessionId(existingSessionId);
-      setBranch(state.transientBranch);
-      setTerminalReady(true);
+    const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+    if (!currentProjectId) {
+      hideLayer();
       return;
     }
 
-    state.spawnTransientSession()
+    const existing = state.transientSessions[transientKey(currentProjectId, slot)];
+    if (existing) {
+      // Reattach only if the PTY is still alive; a stale map entry (session died
+      // while stashed) falls through to a fresh spawn.
+      const alive = state.sessions.find((session) => session.id === existing.sessionId && session.status === 'running');
+      if (alive) {
+        setSessionId(existing.sessionId);
+        setBranch(existing.branch);
+        setTerminalReady(true);
+        return;
+      }
+    }
+
+    state.spawnTransientSession(slot)
       .then((result) => {
         setSessionId(result.session.id);
         setBranch(result.branch);
@@ -166,7 +234,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       .catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
         useToastStore.getState().addToast({ message, variant: 'error' });
-        hideLayer();
+        // Drop just this window; the layer's count bridge hides the layer if it
+        // was the last one.
+        closeWindow(windowId);
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -181,7 +251,15 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // session (otherwise useState(false) would flash the launch overlay).
   const [terminalReady, setTerminalReady] = useState(() => {
     if (!getIsHmrReload()) return false;
-    return !!useSessionStore.getState().transientSessionId;
+    const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+    if (!currentProjectId) return false;
+    // Reattach shimmer-free only if the slot's session is still alive; a stale
+    // entry (session died while the layer was hidden, exit event not yet applied)
+    // must fall through to the spawn path WITH the shimmer, mirroring the mount
+    // effect's alive check below.
+    const state = useSessionStore.getState();
+    const existing = state.transientSessions[transientKey(currentProjectId, slot)];
+    return !!existing && state.sessions.some((session) => session.id === existing.sessionId && session.status === 'running');
   });
 
   useEffect(() => {
@@ -306,15 +384,17 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
 
   const defaultBranch = config.git.defaultBaseBranch || 'main';
 
-  // Kill the current session, checkout the new branch, and respawn.
+  // Kill this slot's session, checkout the new branch, and respawn it.
   const handleBranchChange = useCallback(async (newBranch: string) => {
     const resolvedBranch = newBranch || defaultBranch;
+    const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+    if (!currentProjectId) return;
     try {
-      await useSessionStore.getState().killTransientSession();
+      await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
       setSessionId(null);
       setTerminalReady(false);
       initialized.current = false;
-      const result = await useSessionStore.getState().spawnTransientSession(resolvedBranch);
+      const result = await useSessionStore.getState().spawnTransientSession(slot, resolvedBranch);
       setSessionId(result.session.id);
       setBranch(result.branch);
       if (result.checkoutError) {
@@ -324,17 +404,22 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       const message = error instanceof Error ? error.message : String(error);
       useToastStore.getState().addToast({ message, variant: 'error' });
     }
-  }, [defaultBranch]);
+  }, [defaultBranch, slot]);
 
-  // Stop = destroy this terminal's PTY, then hide the layer.
+  // Stop = destroy THIS terminal's PTY and close its window. The layer's count
+  // bridge hides the whole layer when the last window closes. Hiding the layer
+  // (the X / Ctrl+Shift+P / backdrop) is separate and keeps every PTY alive.
   const handleTerminate = useCallback(async () => {
+    const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
     try {
-      await useSessionStore.getState().killTransientSession();
+      if (currentProjectId) {
+        await useSessionStore.getState().killTransientSessionBySlot(currentProjectId, slot);
+      }
     } catch {
       // Best-effort cleanup.
     }
-    hideLayer();
-  }, [hideLayer]);
+    closeWindow(windowId);
+  }, [closeWindow, windowId, slot]);
 
   const handleCommandSelect = useCallback((command: AgentCommand) => {
     setShowCommandPalette(false);
@@ -355,6 +440,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
 
   const handleToggleMaximized = useCallback(() => toggleMaximizeWindow(windowId), [toggleMaximizeWindow, windowId]);
 
+  // Pop out: evict this terminal from its tile group back to a floating window
+  // (the partner stays / collapses to its half). Mirrors the task-detail pop-out.
+  const handleUndock = useCallback(() => untileWindow(windowId), [untileWindow, windowId]);
+
   // Maximize hotkey (mirrors the task-detail window). Capture phase so it beats
   // the embedded xterm's control-char handling. Layer hide (panel.close) is bound
   // once by the layer's bridge, so it is not re-bound here.
@@ -362,26 +451,35 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden" data-testid="command-terminal-window">
-      {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-2.5 border-b border-edge flex-shrink-0 select-none">
-        <button
-          onClick={handleTerminate}
-          className={`inline-flex items-center justify-center p-1 rounded-full transition-colors flex-shrink-0 ${
-            showActivityRing ? 'hover:bg-surface-hover' : 'text-red-400 hover:bg-red-400/10'
-          }`}
-          title="Stop terminal"
-          aria-label="Stop terminal"
-          data-testid="command-bar-terminate-button"
-        >
-          <StopButtonIcon isThinking={isThinking} isIdle={isIdle} />
-        </button>
-        {/* Drag handle: the title region. Double-click toggles maximize. */}
+      {/* Header. Priority-plus layout: the title wins the space fight; the pills
+          fold into the kebab as the window narrows (useHeaderPillOverflow). */}
+      <div ref={headerRef} className="flex items-center gap-3 px-4 py-2.5 border-b border-edge flex-shrink-0 select-none min-w-0">
+        {/* Leading cluster: Stop (protected, measured as one unit). */}
+        <div ref={leadingRef} className="flex items-center flex-shrink-0">
+          <button
+            onClick={handleTerminate}
+            className={`inline-flex items-center justify-center p-1 rounded-full transition-colors flex-shrink-0 ${
+              showActivityRing ? 'hover:bg-surface-hover' : 'text-red-400 hover:bg-red-400/10'
+            }`}
+            title="Stop terminal"
+            aria-label="Stop terminal"
+            data-testid="command-bar-terminate-button"
+          >
+            <StopButtonIcon isThinking={isThinking} isIdle={isIdle} />
+          </button>
+        </div>
+
+        {/* Title - reserves its full natural width so pills fold first; it is also
+            the drag handle (double-click toggles maximize). */}
         <div
-          className="flex-1 min-w-0 cursor-grab active:cursor-grabbing"
+          className="flex-1 min-w-[64px] truncate cursor-grab active:cursor-grabbing"
           onPointerDown={titleBarPointerDown}
           onDoubleClick={handleToggleMaximized}
         >
+          {/* Inline span so its scrollWidth measures the TEXT width (not the
+              flex-grown div), which useHeaderPillOverflow reserves for the title. */}
           <span
+            ref={titleSpanRef}
             className="text-base font-semibold text-fg truncate"
             title={transientLabel ?? 'Command Terminal'}
             data-testid="command-bar-label"
@@ -389,154 +487,204 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             {transientLabel ?? 'Command Terminal'}
           </span>
         </div>
-        <BranchPicker
-          value={branch || ''}
-          defaultBranch={defaultBranch}
-          onChange={handleBranchChange}
-        />
 
-        {/* Action pills */}
-        <div className={`flex items-center flex-wrap gap-3 min-w-0${showCommandPalette ? '' : ' overflow-hidden max-h-7'}`}>
-          <div className="relative flex-shrink-0" ref={commandButtonRef}>
-            <Pill
-              shape="square"
-              onClick={() => setShowCommandPalette(!showCommandPalette)}
-              className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors"
-              title="Run a command or skill"
-              data-testid="command-bar-commands-button"
-            >
-              <SquareChevronRight size={14} />
-              Commands
-            </Pill>
-            {showCommandPalette && (
-              <CommandPalettePopover
-                triggerRef={commandButtonRef}
-                cwd={projectPath ?? undefined}
-                onSelect={handleCommandSelect}
-                onClose={() => setShowCommandPalette(false)}
-              />
-            )}
-          </div>
-
-          {projectPath && (
-            <Pill
-              shape="square"
-              onClick={() => window.electronAPI.shell.openPath(projectPath)}
-              className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
-              title={projectPath}
-              data-testid="command-bar-folder-button"
-            >
-              <FolderOpen size={14} />
-              Project
-            </Pill>
+        {/* Quick-access pills - each wrapped with `data-pill-id` so the overflow
+            calc can measure it; only the ones that fit are rendered. */}
+        <div ref={pillsRef} className="flex items-center gap-3 flex-shrink-0">
+          {showPill('commands') && (
+            <div data-pill-id="commands" className="relative flex-shrink-0" ref={commandButtonRef}>
+              <Pill
+                shape="square"
+                onClick={() => setShowCommandPalette(!showCommandPalette)}
+                className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors"
+                title="Run a command or skill"
+                data-testid="command-bar-commands-button"
+              >
+                <SquareChevronRight size={14} />
+                Commands
+              </Pill>
+            </div>
           )}
 
-          {projectPath && (
-            <Pill
-              shape="square"
-              onClick={handleToggleChanges}
-              className={`flex-shrink-0 transition-colors border ${
-                changesOpen
-                  ? 'bg-accent/15 text-accent-fg border-accent/30'
-                  : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
-              }`}
-              title={changesOpen ? 'Hide changes' : 'Show changes'}
-              data-testid="command-bar-changes-toggle"
-            >
-              <GitCompare size={14} />
-              Changes
-            </Pill>
+          {projectPath && showPill('folder') && (
+            <div data-pill-id="folder" className="flex-shrink-0">
+              <Pill
+                shape="square"
+                onClick={() => window.electronAPI.shell.openPath(projectPath)}
+                className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
+                title={projectPath}
+                data-testid="command-bar-folder-button"
+              >
+                <FolderOpen size={14} />
+                Project
+              </Pill>
+            </div>
+          )}
+
+          {projectPath && showPill('changes') && (
+            <div data-pill-id="changes" className="flex-shrink-0">
+              <Pill
+                shape="square"
+                onClick={handleToggleChanges}
+                className={`flex-shrink-0 transition-colors border ${
+                  changesOpen
+                    ? 'bg-accent/15 text-accent-fg border-accent/30'
+                    : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
+                }`}
+                title={changesOpen ? 'Hide changes' : 'Show changes'}
+                data-testid="command-bar-changes-toggle"
+              >
+                <GitCompare size={14} />
+                Changes
+              </Pill>
+            </div>
+          )}
+
+          {showPill('branch') && (
+            <div data-pill-id="branch" className="flex-shrink-0">
+              <BranchPicker
+                value={branch || ''}
+                defaultBranch={defaultBranch}
+                onChange={handleBranchChange}
+              />
+            </div>
           )}
 
           {headerShortcuts.map((action) => {
+            const pillId = `shortcut:${action.id ?? action.label}`;
+            if (!showPill(pillId)) return null;
             const ActionIcon = ICON_REGISTRY.get(action.icon ?? 'zap') ?? Zap;
             return (
-              <Pill
-                key={action.id ?? action.label}
-                shape="square"
-                onClick={() => handleShortcutExecute(action)}
-                className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
-                title={action.command}
-                data-testid={`command-bar-shortcut-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
-              >
-                <ActionIcon size={14} />
-                {action.label}
-              </Pill>
+              <div key={pillId} data-pill-id={pillId} className="flex-shrink-0">
+                <Pill
+                  shape="square"
+                  onClick={() => handleShortcutExecute(action)}
+                  className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
+                  title={action.command}
+                  data-testid={`command-bar-shortcut-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
+                >
+                  <ActionIcon size={14} />
+                  {action.label}
+                </Pill>
+              </div>
             );
           })}
         </div>
 
-        {/* Kebab menu */}
-        <KebabMenu>
-          {(close) => (
-            <>
-              {projectPath && (
-                <KebabMenuItem
-                  icon={<FolderOpen size={14} />}
-                  label="Open folder"
-                  onClick={() => { close(); window.electronAPI.shell.openPath(projectPath); }}
-                />
-              )}
-              <KebabMenuItem
-                icon={<SquareChevronRight size={14} />}
-                label="Commands"
-                onClick={() => { close(); setShowCommandPalette(true); }}
-              />
-              {projectPath && (
-                <KebabMenuItem
-                  icon={<GitCompare size={14} />}
-                  label={changesOpen ? 'Hide changes' : 'Show changes'}
-                  onClick={() => { close(); handleToggleChanges(); }}
-                />
-              )}
-              {menuShortcuts.length > 0 && (
+        {/* Trailing window controls (always protected, so they never get clipped):
+            kebab, layout menu, pop-out (when tiled), maximize. There is no per-window
+            hide/X - Stop destroys this terminal; the backdrop / Ctrl+Shift+W /
+            Ctrl+Shift+P hide the whole layer. */}
+        <div ref={trailingRef} className="flex items-center gap-3 flex-shrink-0">
+          <div ref={kebabWrapRef} className="flex-shrink-0">
+            <KebabMenu>
+              {(close) => (
                 <>
+                  {projectPath && (
+                    <KebabMenuItem
+                      icon={<FolderOpen size={14} />}
+                      label="Open folder"
+                      onClick={() => { close(); window.electronAPI.shell.openPath(projectPath); }}
+                    />
+                  )}
+                  <KebabMenuItem
+                    icon={<SquareChevronRight size={14} />}
+                    label="Commands"
+                    onClick={() => { close(); setShowCommandPalette(true); }}
+                  />
+                  <KebabMenuItem
+                    icon={<GitBranch size={14} />}
+                    label="Switch branch"
+                    onClick={() => { close(); setBranchMenuOpen(true); }}
+                    data-testid="command-bar-kebab-switch-branch"
+                  />
+                  {projectPath && (
+                    <KebabMenuItem
+                      icon={<GitCompare size={14} />}
+                      label={changesOpen ? 'Hide changes' : 'Show changes'}
+                      onClick={() => { close(); handleToggleChanges(); }}
+                    />
+                  )}
+                  {overflowMenuShortcuts.length > 0 && (
+                    <>
+                      <KebabMenuDivider />
+                      {overflowMenuShortcuts.map((action) => {
+                        const ActionIcon = ICON_REGISTRY.get(action.icon ?? 'zap') ?? Zap;
+                        return (
+                          <KebabMenuItem
+                            key={action.id ?? action.label}
+                            icon={<ActionIcon size={14} />}
+                            label={action.label}
+                            onClick={() => { close(); handleShortcutExecute(action); }}
+                            data-testid={`command-bar-kebab-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
+                          />
+                        );
+                      })}
+                    </>
+                  )}
                   <KebabMenuDivider />
-                  {menuShortcuts.map((action) => {
-                    const ActionIcon = ICON_REGISTRY.get(action.icon ?? 'zap') ?? Zap;
-                    return (
-                      <KebabMenuItem
-                        key={action.id ?? action.label}
-                        icon={<ActionIcon size={14} />}
-                        label={action.label}
-                        onClick={() => { close(); handleShortcutExecute(action); }}
-                        data-testid={`command-bar-kebab-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
-                      />
-                    );
-                  })}
+                  <KebabMenuItem
+                    icon={<CircleStop size={14} />}
+                    label="Stop terminal"
+                    onClick={() => { close(); handleTerminate(); }}
+                    destructive
+                    data-testid="command-bar-kebab-stop"
+                  />
                 </>
               )}
-              <KebabMenuDivider />
-              <KebabMenuItem
-                icon={<CircleStop size={14} />}
-                label="Stop terminal"
-                onClick={() => { close(); handleTerminate(); }}
-                destructive
-                data-testid="command-bar-kebab-stop"
-              />
-            </>
-          )}
-        </KebabMenu>
+            </KebabMenu>
+          </div>
 
-        <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
-        <button
-          onClick={handleToggleMaximized}
-          className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-          title={`${isMaximized ? 'Restore' : 'Maximize'} (${maximizeCombo})`}
-          aria-label={isMaximized ? 'Restore terminal' : 'Maximize terminal'}
-          data-testid="command-bar-maximize"
-        >
-          {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-        </button>
-        <button
-          onClick={hideLayer}
-          className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
-          title={`Hide terminal (${closeCombo})`}
-          aria-label="Hide terminal"
-          data-testid="command-bar-hide"
-        >
-          <X size={16} />
-        </button>
+          {/* Kebab-anchored branch dropdown, shown when the inline branch pill has
+              folded into the overflow menu ("Switch branch"). Renders nothing until
+              opened. */}
+          <BranchPicker
+            value={branch || ''}
+            defaultBranch={defaultBranch}
+            onChange={handleBranchChange}
+            hideTrigger
+            open={branchMenuOpen}
+            onOpenChange={setBranchMenuOpen}
+            anchorRef={kebabWrapRef}
+          />
+
+          <WindowLayoutMenu onApply={applyTilePreset} canTileMultiple={windowCount >= 2} />
+
+          {isTiled && (
+            <button
+              onClick={handleUndock}
+              className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
+              title="Pop out (float)"
+              aria-label="Pop out terminal"
+              data-testid="command-bar-popout"
+            >
+              <PictureInPicture2 size={16} />
+            </button>
+          )}
+
+          <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
+          <button
+            onClick={handleToggleMaximized}
+            className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"
+            title={`${isMaximized ? 'Restore' : 'Maximize'} (${maximizeCombo})`}
+            aria-label={isMaximized ? 'Restore terminal' : 'Maximize terminal'}
+            data-testid="command-bar-maximize"
+          >
+            {isMaximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
+        </div>
+
+        {/* Commands palette: rendered once at the header root; anchors to the
+            Commands pill when shown, else to the kebab (so opening it from the
+            overflow menu after the pill folded still positions correctly). */}
+        {showCommandPalette && (
+          <CommandPalettePopover
+            triggerRef={showPill('commands') ? commandButtonRef : kebabWrapRef}
+            cwd={projectPath ?? undefined}
+            onSelect={handleCommandSelect}
+            onClose={() => setShowCommandPalette(false)}
+          />
+        )}
       </div>
 
       {/* Body */}

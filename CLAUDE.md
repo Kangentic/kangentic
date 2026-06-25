@@ -89,12 +89,33 @@ won't be found.
   `createWindowManagerStore` and distributed through `WindowManagerProvider` context. So the
   Command Terminal is a movable / resizable / maximizable / snappable WINDOW (top-layered over a
   slight backdrop blur), and its arrangement persists GLOBALLY (one blob, `AppConfig.commandTerminalWorkspace`,
-  shared across all projects). The `transientSessions` map in `session-store.ts` tracks per-project
-  transient sessions (keyed by project ID). Unlike task-bound sessions, transient sessions are NOT
-  restored by `syncSessions()`; they rely entirely on the in-memory map. The map is preserved
-  across HMR via `import.meta.hot.data`. Hiding the layer (Ctrl+Shift+P / Ctrl+Shift+W / the header
-  X / backdrop click) keeps the PTY alive in the background; reopening reattaches. The window's Stop
-  control destroys the session. Project switching stashes/restores transient session pointers.
+  shared across all projects). Multiple terminals can run at once (cap `MAX_COMMAND_TERMINALS`),
+  tiled among themselves via the engine's N-ary tiling: each window owns a durable SLOT id
+  (`slot-1`, `slot-2`, ...) as its `anchor`. The `transientSessions` map in `transient-session-slice.ts`
+  tracks them keyed by `transientKey(projectId, slot)` (`${projectId}::${slot}`); the value carries
+  `projectId` + `slot` so consumers can filter by project. There is no singleton pointer. The map is
+  preserved across HMR via `import.meta.hot.data`; on a hard reload `syncSessions()` best-effort
+  re-pairs surviving transient PTYs to slots. Hiding the layer (Ctrl+Shift+P / Ctrl+Shift+W /
+  backdrop click) keeps every PTY alive in the background; reopening reattaches each slot. There is
+  NO per-window X/hide button (removed to avoid the task-detail "close this window" confusion). A
+  window's Stop control destroys THAT window's session and closes the window; Stopping the last
+  window hides the layer. The header is responsive (priority-plus via `useHeaderPillOverflow`): only
+  Stop + title + the window controls (kebab, layout menu, pop-out, maximize) are protected; the
+  pills AND the branch picker fold into the kebab as the window narrows, down to the min width. Each
+  window has full task-detail parity: tile-layout menu, pop-out (`untileWindow`: the clicked pane
+  floats at its current rect; the survivors STAY DOCKED and keep their absolute widths by shrinking
+  the footprint - no rescale - except a 2-pane group fully dissolves so both float), and a
+  min-pane-width floor on tiling (seam-drag clamp in `TileSplitter` + a footprint grow on spawn).
+  Both behaviors live in the shared engine, so task-detail windows get them too. The title-bar terminal button is context-aware: it opens the layer when
+  closed, and spawns another terminal (up to the cap) when open. The title-bar glyph is a custom
+  SVG (`CommandTerminalIcon` in `TitleBar.tsx`): its stroke color is the aggregate activity of the
+  project's terminals (emerald working / amber needs-you / muted rest) and the working border
+  MARCHES (`@keyframes march-border` + a `pathLength`-normalized stroke-dash). The `+` add
+  affordance lives in the CENTER of the glyph (replacing the shell prompt) when the layer is open
+  and below the cap, not a corner badge, so it never clashes with the activity color. This replaces
+  the old background dot. Project switching keeps every slot's PTY alive in the map (no
+  stash/restore); the bar closes on switch and its windows rebind to the new project's slots on
+  reopen.
 - **Settings tab separator** - In `AppSettingsPanel`, tabs above the `separator: true` marker
   are per-project settings (saved to `.kangentic/config.json`). Tabs below the separator
   (Behavior, Notifications, Privacy) are shared settings that apply across all projects (saved

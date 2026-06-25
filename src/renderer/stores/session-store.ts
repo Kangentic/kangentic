@@ -7,7 +7,7 @@ import type { SessionStore } from './session-store/types';
 import { buildSessionByTaskId } from './session-store/session-index';
 import { createTaskChangesPanelSlice } from './session-store/task-changes-panel-slice';
 import { createUsagePeriodSlice } from './session-store/usage-period-slice';
-import { createTransientSessionSlice } from './session-store/transient-session-slice';
+import { createTransientSessionSlice, transientKey, type TransientSessionEntry } from './session-store/transient-session-slice';
 
 const MAX_EVENTS_PER_SESSION = 500;
 
@@ -151,9 +151,7 @@ let syncController: AbortController | null = import.meta.hot?.data?.syncControll
 // @ts-expect-error -- Vite handles import.meta.hot
 const hmrTransientData: Record<string, unknown> | undefined = import.meta.hot?.data?.transientState;
 const preservedTransientState = hmrTransientData as {
-  transientSessions: Record<string, { sessionId: string; branch: string | null; label?: string }>;
-  transientSessionId: string | null;
-  transientBranch: string | null;
+  transientSessions: Record<string, TransientSessionEntry>;
 } | undefined;
 
 /** Spawn progress labels preserved across HMR. Without this, a main-process
@@ -173,8 +171,6 @@ if (import.meta.hot) {
     const state = useSessionStore.getState();
     data.transientState = {
       transientSessions: state.transientSessions,
-      transientSessionId: state.transientSessionId,
-      transientBranch: state.transientBranch,
     };
     data.spawnProgress = state.spawnProgress;
     data.pendingCommandLabel = state.pendingCommandLabel;
@@ -393,23 +389,36 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
       pendingCommandLabel: nextPendingCommandLabel,
     });
 
-    // Recover transient session pointers after a full page reload.
-    // The main process keeps transient PTYs alive, but the renderer's
-    // in-memory pointers (transientSessionId, transientSessions map)
-    // are lost on full reload. Rebuild them from the session list.
-    if (currentProjectId && !get().transientSessionId) {
-      const transientSession = mergedSessions.find(
-        (s) => s.transient && s.projectId === currentProjectId && s.status === 'running',
+    // Recover transient session entries after a full page reload. The main
+    // process keeps transient PTYs alive, but the renderer's in-memory map is
+    // lost on a hard reload (HMR preserves it via import.meta.hot.data, so this
+    // only fires on a true reload, not Fast Refresh). Rebuild best-effort: pair
+    // the project's surviving transient PTYs to slot ids in a stable order. The
+    // command windows reattach by (project, slot) on next open. Skip if the
+    // project already has tracked entries (the HMR-preserved path).
+    if (currentProjectId) {
+      const alreadyTracked = Object.values(get().transientSessions).some(
+        (entry) => entry.projectId === currentProjectId,
       );
-      if (transientSession) {
-        set((state) => ({
-          transientSessions: {
-            ...state.transientSessions,
-            [currentProjectId]: { sessionId: transientSession.id, branch: null },
-          },
-          transientSessionId: transientSession.id,
-          transientBranch: null,
-        }));
+      if (!alreadyTracked) {
+        const survivors = mergedSessions
+          .filter((session) => session.transient && session.projectId === currentProjectId && session.status === 'running')
+          .sort((sessionA, sessionB) => sessionA.id.localeCompare(sessionB.id));
+        if (survivors.length > 0) {
+          set((state) => {
+            const transientSessions: Record<string, TransientSessionEntry> = { ...state.transientSessions };
+            survivors.forEach((session, index) => {
+              const slot = `slot-${index + 1}`;
+              transientSessions[transientKey(currentProjectId, slot)] = {
+                projectId: currentProjectId,
+                slot,
+                sessionId: session.id,
+                branch: null,
+              };
+            });
+            return { transientSessions };
+          });
+        }
       }
     }
 

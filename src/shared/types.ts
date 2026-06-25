@@ -78,6 +78,9 @@ export interface AgentDetectionInfo {
   defaultPermission: PermissionMode;
   /** Set by adapters that have no live-telemetry channel - drives the ContextBar fallback pill. */
   liveTelemetryUnsupported?: AgentLiveTelemetryUnsupported;
+  /** True if the adapter streams account-wide rate-limit windows; gates the ContextBar
+   *  rate-limit pill so any session of this agent shows the shared global snapshot. */
+  reportsRateLimits?: boolean;
   /** True if the adapter exposes a one-shot summarize capability (used by auto-name task title). */
   supportsSummarize?: boolean;
   /** Discovered at detection time; absent for adapters that do not implement discovery. */

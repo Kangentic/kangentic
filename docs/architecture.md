@@ -251,7 +251,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 ### Agents (1 channel)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, supportsSummarize) |
+| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, supportsSummarize) |
 
 ### Handoffs (1 channel)
 | Channel | Pattern | Purpose |

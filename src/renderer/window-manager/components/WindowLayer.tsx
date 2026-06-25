@@ -31,7 +31,6 @@ import { useWindowFocusReconcile } from '../bridge/useWindowFocusReconcile';
 import { useWorkspacePersistence } from '../bridge/useWorkspacePersistence';
 import { useClickOutsideToClose } from '../bridge/useClickOutsideToClose';
 import type { ContainerSize } from '../store/geometry';
-import type { FractionalRect } from '../store/types';
 import { resolveTileLayout } from '../tiling/resolve-layout';
 import { WindowFrame } from './WindowFrame';
 import { TileSplitter } from './TileSplitter';
@@ -45,17 +44,14 @@ import { SnapPreview } from './SnapPreview';
 const TILE_GAP_PX = 0;
 const TILE_SEAM_PX = 10;
 
-/** A footprint edge gets an outer resizer only if it borders empty board (it is
- *  not flush against the overlay boundary). */
-const FOOTPRINT_EDGE_EPSILON = 0.001;
-function footprintEdges(rect: FractionalRect): FootprintEdge[] {
-  const edges: FootprintEdge[] = [];
-  if (rect.x > FOOTPRINT_EDGE_EPSILON) edges.push('left');
-  if (rect.x + rect.w < 1 - FOOTPRINT_EDGE_EPSILON) edges.push('right');
-  if (rect.y > FOOTPRINT_EDGE_EPSILON) edges.push('top');
-  if (rect.y + rect.h < 1 - FOOTPRINT_EDGE_EPSILON) edges.push('bottom');
-  return edges;
-}
+/** Every footprint edge gets an outer resizer, so a tiled group can be resized
+ *  from any side - including shrunk INWARD from an edge that is flush against the
+ *  overlay boundary (a full-screen group, e.g. the Columns/Grid preset, must still
+ *  be height/width-resizable). The resizer's own min-footprint clamp prevents
+ *  dragging a flush edge OUTWARD past the boundary, so a flush edge is simply
+ *  shrink-only; `FootprintResizer` keeps each strip inside the overlay so the
+ *  screen-edge ones stay grabbable. */
+const ALL_FOOTPRINT_EDGES: FootprintEdge[] = ['left', 'right', 'top', 'bottom'];
 
 function getPortalHost(hostId: string): HTMLElement {
   const existing = document.getElementById(hostId);
@@ -183,7 +179,7 @@ function WindowManagerSurface({
         ))}
         {/* Outer-edge resizers: one per footprint edge that borders empty board, so
             a docked group can be widened/heightened while staying docked. */}
-        {tileTree && containerSize.width > 0 && footprintEdges(tileTreeRect).map((edge) => (
+        {tileTree && containerSize.width > 0 && ALL_FOOTPRINT_EDGES.map((edge) => (
           <FootprintResizer
             key={`footprint-${edge}`}
             edge={edge}

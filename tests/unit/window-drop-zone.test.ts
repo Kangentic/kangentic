@@ -216,4 +216,26 @@ describe('detectTiledDropTarget', () => {
     const target = detectTiledDropTarget(dragged, row, 'horizontal', rowBounds);
     expect(target).toMatchObject({ targetWindowId: 'l', side: 'left' });
   });
+
+  // A CONFINED row (e.g. left after a pop-out): footprint right edge is mid-screen
+  // (666), not the screen edge. A large window dragged PAST it must not re-dock.
+  const CONFINED_ROW: CandidatePane[] = [
+    { windowId: 'l', zIndex: 1, rect: { left: 0, top: 0, width: 333, height: 800 } },
+    { windowId: 'r', zIndex: 1, rect: { left: 333, top: 0, width: 333, height: 800 } },
+  ];
+  const CONFINED_BOUNDS: TreeBounds = { left: 0, top: 0, right: 666, bottom: 800 };
+
+  it('does NOT arm a confined-tree extreme when the window is dragged PAST its mid-screen boundary', () => {
+    // Center at x=900, well past the footprint's right edge (666), even though the
+    // window's leading edge clears the boundary - dragging away must not re-dock.
+    const dragged = { left: 700, top: 200, width: 400, height: 400 }; // center x = 900
+    expect(detectTiledDropTarget(dragged, CONFINED_ROW, 'horizontal', CONFINED_BOUNDS)).toBeNull();
+  });
+
+  it('arms a confined-tree right extreme once the window center is back OVER the footprint', () => {
+    // Center at x=500 (inside [0, 666]); right edge past the boundary -> re-docks right.
+    const dragged = { left: 300, top: 200, width: 400, height: 400 }; // center x = 500, right edge 700
+    const target = detectTiledDropTarget(dragged, CONFINED_ROW, 'horizontal', CONFINED_BOUNDS);
+    expect(target).toMatchObject({ targetWindowId: 'r', side: 'right' });
+  });
 });

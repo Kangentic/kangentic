@@ -4,6 +4,7 @@ import { useBoardStore } from '../stores/board-store';
 import { useConfigStore } from '../stores/config-store';
 import { useProjectStore } from '../stores/project-store';
 import { deriveFocusedSessionIds, derivePanelSessionId } from '../utils/focused-sessions';
+import { selectCurrentProjectTransientSessionIds } from '../stores/session-store/transient-session-slice';
 
 /**
  * Pushes the set of "focused" session IDs to the main process whenever the
@@ -32,7 +33,12 @@ export function useFocusedSessionsSync(): void {
   const currentProjectId = useProjectStore((s) => s.currentProject?.id ?? null);
   const dialogSessionIds = useSessionStore((s) => s.dialogSessionIds);
   const commandBarVisible = useSessionStore((s) => s.commandBarVisible);
-  const transientSessionId = useSessionStore((s) => s.transientSessionId);
+  // A stable, comma-joined key of the current project's transient session ids:
+  // the selector returns a fresh array each call, so joining to a primitive lets
+  // Zustand skip re-renders when the set is unchanged (mirrors panelSessionId).
+  const transientSessionIdsKey = useSessionStore((s) =>
+    selectCurrentProjectTransientSessionIds(s.transientSessions, currentProjectId).join(','),
+  );
 
   // Single derived selector: returns the primitive panel session id. The
   // selector body runs on every store change (O(N) over running sessions),
@@ -55,9 +61,9 @@ export function useFocusedSessionsSync(): void {
       panelSessionId,
       dialogSessionIds,
       commandBarVisible,
-      transientSessionId,
+      transientSessionIds: transientSessionIdsKey ? transientSessionIdsKey.split(',') : [],
     });
 
     window.electronAPI.sessions.setFocused(focusedIds);
-  }, [activeView, terminalPanelVisible, panelSessionId, dialogSessionIds, commandBarVisible, transientSessionId]);
+  }, [activeView, terminalPanelVisible, panelSessionId, dialogSessionIds, commandBarVisible, transientSessionIdsKey]);
 }
