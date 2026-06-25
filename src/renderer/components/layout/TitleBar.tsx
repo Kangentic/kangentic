@@ -39,8 +39,12 @@ function CommandTerminalIcon({
   tone: 'rest' | 'thinking' | 'idle';
   showPlus: boolean;
 }): React.ReactNode {
-  const colorClass =
-    tone === 'thinking' ? 'text-emerald-400' : tone === 'idle' ? 'text-amber-400' : '';
+  // `tone` is a derived PRESENTATIONAL union (rest | thinking | idle); the idle-vs-active
+  // bucketing already happened upstream via isActive / requiresUserInteraction when this
+  // tone was computed, so these are per-tone affordances, not a hand-rolled ActivityState bucket.
+  const isWorking = tone === 'thinking'; // activity-state-ok: presentational tone, not an ActivityState
+  const needsAttention = tone === 'idle'; // activity-state-ok: presentational tone, not an ActivityState
+  const colorClass = isWorking ? 'text-emerald-400' : needsAttention ? 'text-amber-400' : '';
   return (
     <svg
       viewBox="0 0 24 24"
@@ -66,8 +70,8 @@ function CommandTerminalIcon({
         height="18"
         rx="3"
         pathLength={100}
-        strokeDasharray={tone === 'thinking' ? '65 35' : undefined}
-        className={tone === 'thinking' ? 'animate-march-border' : undefined}
+        strokeDasharray={isWorking ? '65 35' : undefined}
+        className={isWorking ? 'animate-march-border' : undefined}
       />
       {showPlus ? (
         // The add affordance, centered in the terminal (replaces the prompt).
