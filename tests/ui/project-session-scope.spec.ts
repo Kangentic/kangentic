@@ -243,16 +243,16 @@ test.describe('Project Session Scope', () => {
 
       // Project Alpha (active) should show the amber idle mail icon
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
-      await expect(alphaRow.locator('svg.text-amber-400').first()).toBeVisible();
+      await expect(alphaRow.locator('svg.text-attention').first()).toBeVisible();
       await expect(alphaRow).toHaveAttribute('title', /1 thinking, 1 idle|0 thinking, 1 idle/);
 
       // Project Beta (non-active) should also show the amber idle mail icon
       const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
-      await expect(betaRow.locator('svg.text-amber-400').first()).toBeVisible();
+      await expect(betaRow.locator('svg.text-attention').first()).toBeVisible();
 
       // Neither should show a green thinking spinner (only one indicator per row; idle uses amber)
-      await expect(alphaRow.locator('svg.text-green-400')).toHaveCount(0);
-      await expect(betaRow.locator('svg.text-green-400')).toHaveCount(0);
+      await expect(alphaRow.locator('svg.text-active')).toHaveCount(0);
+      await expect(betaRow.locator('svg.text-active')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -272,13 +272,13 @@ test.describe('Project Session Scope', () => {
 
       // Project Alpha should show a green thinking spinner (no amber)
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
-      await expect(alphaRow.locator('svg.text-green-400').first()).toBeVisible();
-      await expect(alphaRow.locator('svg.text-amber-400')).toHaveCount(0);
+      await expect(alphaRow.locator('svg.text-active').first()).toBeVisible();
+      await expect(alphaRow.locator('svg.text-attention')).toHaveCount(0);
 
       // Project Beta still idle -- amber mail icon, no green
       const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
-      await expect(betaRow.locator('svg.text-amber-400').first()).toBeVisible();
-      await expect(betaRow.locator('svg.text-green-400')).toHaveCount(0);
+      await expect(betaRow.locator('svg.text-attention').first()).toBeVisible();
+      await expect(betaRow.locator('svg.text-active')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -308,8 +308,8 @@ test.describe('Project Session Scope', () => {
       // Project Gamma has no sessions -- no activity indicator icon renders
       const gammaRow = page.locator('[role="button"]:has-text("Project Gamma")');
       await expect(gammaRow).toBeVisible();
-      await expect(gammaRow.locator('svg.text-amber-400')).toHaveCount(0);
-      await expect(gammaRow.locator('svg.text-green-400')).toHaveCount(0);
+      await expect(gammaRow.locator('svg.text-attention')).toHaveCount(0);
+      await expect(gammaRow.locator('svg.text-active')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -359,8 +359,8 @@ test.describe('Project Session Scope', () => {
       // Project Alpha shows both idle and thinking indicators with their counts;
       // the row title surfaces both counts for screen-reader parity.
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
-      await expect(alphaRow.locator('svg.text-green-400').first()).toBeVisible();
-      await expect(alphaRow.locator('svg.text-amber-400').first()).toBeVisible();
+      await expect(alphaRow.locator('svg.text-active').first()).toBeVisible();
+      await expect(alphaRow.locator('svg.text-attention').first()).toBeVisible();
       await expect(alphaRow).toHaveAttribute('title', /1 thinking, 1 idle/);
     } finally {
       await browser.close();
@@ -370,7 +370,7 @@ test.describe('Project Session Scope', () => {
   test('count digits render next to icon for each activity type', async () => {
     // Project Alpha: 2 idle sessions + 3 thinking sessions.
     // Verifies that the numeric count span rendered by SidebarActivityCounts
-    // contains the correct digit and is coloured with the matching amber/green class.
+    // contains the correct digit and is coloured with the matching attention/active class.
     const preConfig = twoProjectPreConfig() + `
       window.__mockPreConfigure(function (state) {
         var ts = new Date().toISOString();
@@ -414,20 +414,20 @@ test.describe('Project Session Scope', () => {
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
 
       // Amber idle pair: icon present + count span shows "2"
-      const idlePair = alphaRow.locator('svg.text-amber-400').first().locator('..');
+      const idlePair = alphaRow.locator('svg.text-attention').first().locator('..');
       await expect(idlePair).toBeVisible();
-      const idleCountSpan = alphaRow.locator('span.text-amber-400');
+      const idleCountSpan = alphaRow.locator('span.text-attention');
       await expect(idleCountSpan).toBeVisible();
       await expect(idleCountSpan).toContainText('2');
 
       // Green thinking pair: icon present + count span shows "3"
-      const thinkingCountSpan = alphaRow.locator('span.text-green-400');
+      const thinkingCountSpan = alphaRow.locator('span.text-active');
       await expect(thinkingCountSpan).toBeVisible();
       await expect(thinkingCountSpan).toContainText('3');
 
       // Project Beta still has 1 idle only -- count span shows "1"
       const betaRow = page.locator('[role="button"]:has-text("Project Beta")');
-      const betaIdleCountSpan = betaRow.locator('span.text-amber-400');
+      const betaIdleCountSpan = betaRow.locator('span.text-attention');
       await expect(betaIdleCountSpan).toBeVisible();
       await expect(betaIdleCountSpan).toContainText('1');
     } finally {
@@ -466,12 +466,12 @@ test.describe('Project Session Scope', () => {
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
 
       // Amber idle span counts both the base idle session and the permission one.
-      const idleCountSpan = alphaRow.locator('span.text-amber-400');
+      const idleCountSpan = alphaRow.locator('span.text-attention');
       await expect(idleCountSpan).toBeVisible();
       await expect(idleCountSpan).toContainText('2');
 
       // The permission session must NOT be counted as active -- no green span.
-      await expect(alphaRow.locator('span.text-green-400')).toHaveCount(0);
+      await expect(alphaRow.locator('span.text-active')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -507,12 +507,12 @@ test.describe('Project Session Scope', () => {
       // 1 transient idle session added above. Only the non-transient one should
       // be counted, so the amber count span must show "1", not "2".
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
-      const idleCountSpan = alphaRow.locator('span.text-amber-400');
+      const idleCountSpan = alphaRow.locator('span.text-attention');
       await expect(idleCountSpan).toBeVisible();
       await expect(idleCountSpan).toContainText('1');
 
       // No thinking count should appear for Project Alpha
-      await expect(alphaRow.locator('span.text-green-400')).toHaveCount(0);
+      await expect(alphaRow.locator('span.text-active')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -546,12 +546,12 @@ test.describe('Project Session Scope', () => {
       // Project Alpha has 1 running idle session (from base config) plus 1
       // suspended idle session. Only the running one counts; amber span = "1".
       const alphaRow = page.locator('[role="button"]:has-text("Project Alpha")');
-      const idleCountSpan = alphaRow.locator('span.text-amber-400');
+      const idleCountSpan = alphaRow.locator('span.text-attention');
       await expect(idleCountSpan).toBeVisible();
       await expect(idleCountSpan).toContainText('1');
 
       // No thinking count should appear
-      await expect(alphaRow.locator('span.text-green-400')).toHaveCount(0);
+      await expect(alphaRow.locator('span.text-active')).toHaveCount(0);
     } finally {
       await browser.close();
     }

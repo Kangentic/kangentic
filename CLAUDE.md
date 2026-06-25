@@ -109,7 +109,8 @@ won't be found.
   Both behaviors live in the shared engine, so task-detail windows get them too. The title-bar terminal button is context-aware: it opens the layer when
   closed, and spawns another terminal (up to the cap) when open. The title-bar glyph is a custom
   SVG (`CommandTerminalIcon` in `TitleBar.tsx`): its stroke color is the aggregate activity of the
-  project's terminals (emerald working / amber needs-you / muted rest) and the working border
+  project's terminals (active-green working / attention-amber needs-you / muted rest, via the
+  central `--kng-active` / `--kng-attention` tokens) and the working border
   MARCHES (`@keyframes march-border` + a `pathLength`-normalized stroke-dash). The `+` add
   affordance lives in the CENTER of the glyph (replacing the shell prompt) when the layer is open
   and below the cap, not a corner badge, so it never clashes with the activity color. This replaces

@@ -1367,8 +1367,8 @@ test.describe('Command Terminal', () => {
   // Stop activity ring - the Stop button in CommandTerminalWindow carries the
   // same ring affordance as the task-detail pause button, but with a stop square
   // instead of pause bars. Three ring states:
-  //   thinking (isActive)          -> spinning emerald Circle + emerald stop-square
-  //   idle/permission (requiresUI) -> static amber Circle + amber stop-square
+  //   thinking (isActive)          -> spinning active Circle + active stop-square
+  //   idle/permission (requiresUI) -> static attention Circle + attention stop-square
   //   no session / not running     -> plain CircleStop, no stop-square
   //
   // Each test uses a deterministic spawnTransient override (known session id) so
@@ -1457,10 +1457,10 @@ test.describe('Command Terminal', () => {
       // We assert the activity-specific state in each individual test instead.
     }
 
-    test('thinking activity shows spinning emerald ring and emerald stop-square', async () => {
+    test('thinking activity shows spinning active ring and active stop-square', async () => {
       // Derives expected behavior from the contract in CommandTerminalWindow.tsx:
       //   isThinking = sessionRunning && isActive(activity)
-      //   -> spinning Circle with text-emerald-400 animate-spin, plus StopSquare bg-emerald-400
+      //   -> spinning Circle with text-active animate-spin, plus StopSquare bg-active
       const { browser, page } = await launchWithState(
         ringBasePreConfig() + deterministicSpawn
       );
@@ -1484,15 +1484,15 @@ test.describe('Command Terminal', () => {
         // stop-square must be present (the StopSquare inner span inside the ring)
         await expect(stopButton.getByTestId('stop-square')).toBeVisible({ timeout: 3000 });
 
-        // The stop-square inner span carries bg-emerald-400 for thinking
+        // The stop-square inner span carries bg-active for thinking
         const squareInner = stopButton.getByTestId('stop-square').locator('span');
-        await expect(squareInner).toHaveClass(/bg-emerald-400/);
+        await expect(squareInner).toHaveClass(/bg-active/);
 
-        // The animated emerald ring (Circle svg) must also be present
+        // The animated active ring (Circle svg) must also be present
         // lucide-circle is the CSS class Lucide attaches to the Circle component
         await expect(stopButton.locator('.lucide-circle')).toBeVisible();
         const ringCircle = stopButton.locator('.lucide-circle');
-        await expect(ringCircle).toHaveClass(/text-emerald-400/);
+        await expect(ringCircle).toHaveClass(/text-active/);
         await expect(ringCircle).toHaveClass(/animate-spin/);
 
         // The plain rest-state icon (CircleStop) must NOT be present when thinking
@@ -1502,11 +1502,11 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('idle activity shows static amber ring and amber stop-square', async () => {
+    test('idle activity shows static attention ring and attention stop-square', async () => {
       // Derives expected behavior from the contract in CommandTerminalWindow.tsx:
       //   isIdle = sessionRunning && requiresUserInteraction(activity)
       //   requiresUserInteraction('idle') = true (ACTIVITY_DISPOSITION idle -> 'idle')
-      //   -> static Circle with text-amber-400 (no animate-spin), plus StopSquare bg-amber-400
+      //   -> static Circle with text-attention (no animate-spin), plus StopSquare bg-attention
       const { browser, page } = await launchWithState(
         ringBasePreConfig() + deterministicSpawn
       );
@@ -1530,14 +1530,14 @@ test.describe('Command Terminal', () => {
         // stop-square must be present for idle state
         await expect(stopButton.getByTestId('stop-square')).toBeVisible({ timeout: 3000 });
 
-        // The stop-square inner span carries bg-amber-400 for idle
+        // The stop-square inner span carries bg-attention for idle
         const squareInner = stopButton.getByTestId('stop-square').locator('span');
-        await expect(squareInner).toHaveClass(/bg-amber-400/);
+        await expect(squareInner).toHaveClass(/bg-attention/);
 
-        // The static amber ring (Circle svg) must be present and NOT spinning
+        // The static attention ring (Circle svg) must be present and NOT spinning
         await expect(stopButton.locator('.lucide-circle')).toBeVisible();
         const ringCircle = stopButton.locator('.lucide-circle');
-        await expect(ringCircle).toHaveClass(/text-amber-400/);
+        await expect(ringCircle).toHaveClass(/text-attention/);
         // Idle ring is static: no animate-spin class
         const ringClass = await ringCircle.getAttribute('class');
         expect(ringClass).not.toContain('animate-spin');
@@ -1549,11 +1549,11 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('permission activity shows static amber ring (same as idle)', async () => {
+    test('permission activity shows static attention ring (same as idle)', async () => {
       // requiresUserInteraction('permission') = true (ACTIVITY_DISPOSITION maps
       // 'permission' -> 'idle'). The ring is identical to the idle ring.
       // This pins the activity-state-classification contract in the UI layer:
-      // 'permission' must be treated as "needs user" (amber) not "working" (emerald).
+      // 'permission' must be treated as "needs user" (attention) not "working" (active).
       const { browser, page } = await launchWithState(
         ringBasePreConfig() + deterministicSpawn
       );
@@ -1577,14 +1577,14 @@ test.describe('Command Terminal', () => {
         // stop-square must be present for permission state
         await expect(stopButton.getByTestId('stop-square')).toBeVisible({ timeout: 3000 });
 
-        // The stop-square inner span carries bg-amber-400 for permission (same as idle)
+        // The stop-square inner span carries bg-attention for permission (same as idle)
         const squareInner = stopButton.getByTestId('stop-square').locator('span');
-        await expect(squareInner).toHaveClass(/bg-amber-400/);
+        await expect(squareInner).toHaveClass(/bg-attention/);
 
-        // Static amber ring (no spin) - permission maps to idle disposition
+        // Static attention ring (no spin) - permission maps to idle disposition
         await expect(stopButton.locator('.lucide-circle')).toBeVisible();
         const ringClass = await stopButton.locator('.lucide-circle').getAttribute('class');
-        expect(ringClass).toContain('text-amber-400');
+        expect(ringClass).toContain('text-attention');
         expect(ringClass).not.toContain('animate-spin');
 
         // No plain CircleStop for permission state

@@ -138,8 +138,8 @@ export function StatusBar() {
       {currentProject && (
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1.5" data-testid="session-count">
-            <SquareTerminal size={14} className={activeSessions > 0 ? 'text-green-400' : 'text-fg-faint'} />
-            <span className={activeSessions > 0 ? 'text-green-400' : ''}>
+            <SquareTerminal size={14} className={activeSessions > 0 ? 'text-active' : 'text-fg-faint'} />
+            <span className={activeSessions > 0 ? 'text-active' : ''}>
               {activeSessions} agents
             </span>
             {queued > 0 && <span className="text-fg-faint">{queued} queued</span>}

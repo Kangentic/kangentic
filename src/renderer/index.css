@@ -27,6 +27,10 @@
   --kng-accent-emphasis: #2563eb;
   --kng-accent-fg: #60a5fa;
   --kng-accent-on: #ffffff;
+
+  /* Activity indicators (identical across all themes) */
+  --kng-active: #34d399;      /* working / thinking (emerald-400) */
+  --kng-attention: #e3b341;   /* needs-you / idle / permission (soft honey) */
 }
 
 .theme-light {
@@ -241,6 +245,9 @@
   --color-accent-emphasis: var(--kng-accent-emphasis);
   --color-accent-fg: var(--kng-accent-fg);
   --color-accent-on: var(--kng-accent-on);
+
+  --color-active: var(--kng-active);
+  --color-attention: var(--kng-attention);
 }
 
 /* Custom scrollbar */

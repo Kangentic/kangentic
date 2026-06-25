@@ -18,7 +18,10 @@ export const SidebarActivityCounts = React.memo(function SidebarActivityCounts({
   const hasIdle = idleCount > 0;
   if (!hasThinking && !hasIdle) return null;
 
-  const iconSize = size === 'group' ? 11 : 12;
+  // Match the row's sibling icons (project name text, kebab) and the task-card
+  // indicator at 14px: the lucide Mail/Loader2 glyphs smear at 11-12px because the
+  // 2px stroke scales down to a sub-pixel hairline.
+  const iconSize = size === 'group' ? 12 : 14;
   const labelParts: string[] = [];
   if (hasIdle) labelParts.push(`${idleCount} idle`);
   if (hasThinking) labelParts.push(`${thinkingCount} thinking`);
@@ -32,9 +35,9 @@ export const SidebarActivityCounts = React.memo(function SidebarActivityCounts({
     >
       {hasIdle && (
         <span className="flex items-center gap-1" aria-hidden>
-          <Mail size={iconSize} className="text-amber-400 flex-shrink-0" />
+          <Mail size={iconSize} className="text-attention flex-shrink-0" />
           <span
-            className="flex items-center justify-center min-w-[1ch] font-semibold text-amber-400"
+            className="flex items-center justify-center min-w-[1ch] font-semibold text-attention"
             style={countBoxStyle}
           >
             {idleCount}
@@ -43,9 +46,9 @@ export const SidebarActivityCounts = React.memo(function SidebarActivityCounts({
       )}
       {hasThinking && (
         <span className="flex items-center gap-1" aria-hidden>
-          <Loader2 size={iconSize} className="text-green-400 animate-spin flex-shrink-0" />
+          <Loader2 size={iconSize} className="text-active animate-spin flex-shrink-0" />
           <span
-            className="flex items-center justify-center min-w-[1ch] font-semibold text-green-400"
+            className="flex items-center justify-center min-w-[1ch] font-semibold text-active"
             style={countBoxStyle}
           >
             {thinkingCount}

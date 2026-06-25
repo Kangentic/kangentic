@@ -45,14 +45,14 @@ export function ActivityReasonTooltip({ reason }: { reason: ActivityReason }): R
     case 'idle':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
-          <Mail size={12} className="text-amber-400" />
+          <Mail size={12} className="text-attention" />
           <span>Idle</span>
         </span>
       );
     case 'permission':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
-          <Lock size={12} className="text-amber-400" />
+          <Lock size={12} className="text-attention" />
           <span>Awaiting permission</span>
         </span>
       );
@@ -75,7 +75,7 @@ export function ActivityReasonTooltip({ reason }: { reason: ActivityReason }): R
     case 'background-shell':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
-          <Terminal size={12} className="text-emerald-400" />
+          <Terminal size={12} className="text-active" />
           <span>
             {reason.count} background shell{reason.count === 1 ? '' : 's'}
             {reason.ids.length > 0 ? ` (${reason.ids.join(', ')})` : ''}
@@ -85,7 +85,7 @@ export function ActivityReasonTooltip({ reason }: { reason: ActivityReason }): R
     case 'turn-active':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
-          <Loader2 size={12} className="text-green-400 animate-spin" />
+          <Loader2 size={12} className="text-active animate-spin" />
           <span>Thinking</span>
         </span>
       );

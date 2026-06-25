@@ -527,7 +527,7 @@ Sessions paused manually by the user (via the pause button in the task detail di
 
 The Command Terminal provides quick, ephemeral access to Claude Code without creating a task on the board. Useful for one-off actions like creating releases, running queries, or any ad-hoc interaction.
 
-**Opening:** Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS), or click the terminal icon in the title bar (next to the settings gear). The terminal icon's border reflects activity across your open terminals: it marches in emerald while an agent is working, holds a solid amber when one needs your input, and stays plain when idle.
+**Opening:** Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS), or click the terminal icon in the title bar (next to the settings gear). The terminal icon's border reflects activity across your open terminals: it marches in green while an agent is working, holds a steady warm amber when one needs your input, and stays plain when idle.
 
 **Behavior:**
 - Spawns Claude Code at the project root on the configured default base branch

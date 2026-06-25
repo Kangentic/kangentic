@@ -256,7 +256,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           {isIdle && (
             <Mail
               size={14}
-              className="text-amber-400 shrink-0"
+              className="text-attention shrink-0"
               aria-label={activityReason ? formatActivityReasonText(activityReason) : 'Idle'}
             >
               {activityReason && <title>{formatActivityReasonText(activityReason)}</title>}
@@ -265,7 +265,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           {isThinking && (
             <Loader2
               size={14}
-              className="text-emerald-400 animate-spin shrink-0"
+              className="text-active animate-spin shrink-0"
               aria-label={activityReason ? formatActivityReasonText(activityReason) : 'Thinking'}
             >
               {activityReason && <title>{formatActivityReasonText(activityReason)}</title>}

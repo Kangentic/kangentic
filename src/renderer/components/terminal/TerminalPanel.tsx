@@ -164,14 +164,14 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
                 }`}
               >
                 {session.status === 'running' && isActive(sessionActivity[session.id]) ? (
-                  <Loader2 size={8} className="text-green-400 animate-spin" />
+                  <Loader2 size={8} className="text-active animate-spin" />
                 ) : session.status === 'running' && requiresUserInteraction(sessionActivity[session.id]) ? (
-                  <div className={`w-1.5 h-1.5 rounded-full bg-amber-400${
+                  <div className={`w-1.5 h-1.5 rounded-full bg-attention${
                     effectiveActiveId !== session.id && !seenIdleSessions[session.id] ? ' animate-pulse' : ''
                   }`} />
                 ) : (
                   <div className={`w-1.5 h-1.5 rounded-full ${
-                    session.status === 'running' ? 'bg-green-400' : 'bg-fg-faint'
+                    session.status === 'running' ? 'bg-active' : 'bg-fg-faint'
                   }`} />
                 )}
                 {label}

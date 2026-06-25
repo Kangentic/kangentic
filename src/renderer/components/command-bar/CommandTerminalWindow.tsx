@@ -72,24 +72,24 @@ function StopSquare({ colorClass }: { colorClass: string }): ReactNode {
  * folds into its pause button (`PauseButtonIcon`), but with a STOP square centered
  * instead of pause bars - the command terminal stops (kills the PTY); it never
  * pauses. Activity is encoded by the surrounding ring:
- *   - thinking (agent working): a spinning emerald ring around the stop square.
- *   - idle/permission (needs you): a static amber ring around the stop square.
+ *   - thinking (agent working): a spinning active ring around the stop square.
+ *   - idle/permission (needs you): a static attention ring around the stop square.
  *   - not yet running / no activity: the plain red CircleStop (rest state).
  */
 function StopButtonIcon({ isThinking, isIdle }: { isThinking: boolean; isIdle: boolean }): ReactNode {
   if (isThinking) {
     return (
       <span className="grid place-items-center">
-        <Circle size={20} className="col-start-1 row-start-1 text-emerald-400 animate-spin [stroke-dasharray:47_16]" />
-        <StopSquare colorClass="bg-emerald-400" />
+        <Circle size={20} className="col-start-1 row-start-1 text-active animate-spin [stroke-dasharray:47_16]" />
+        <StopSquare colorClass="bg-active" />
       </span>
     );
   }
   if (isIdle) {
     return (
       <span className="grid place-items-center">
-        <Circle size={20} className="col-start-1 row-start-1 text-amber-400" />
-        <StopSquare colorClass="bg-amber-400" />
+        <Circle size={20} className="col-start-1 row-start-1 text-attention" />
+        <StopSquare colorClass="bg-attention" />
       </span>
     );
   }

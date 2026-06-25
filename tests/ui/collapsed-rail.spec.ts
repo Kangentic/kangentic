@@ -228,8 +228,8 @@ test.describe('CollapsedRail - distinct projects (no sessions)', () => {
     const alphaButton = page.locator(`[data-testid="rail-project-${PROJECT_A_ID}"]`);
     await alphaButton.waitFor({ state: 'attached', timeout: 5000 });
 
-    await expect(alphaButton.locator('svg.text-amber-400')).toHaveCount(0);
-    await expect(alphaButton.locator('svg.text-green-400')).toHaveCount(0);
+    await expect(alphaButton.locator('svg.text-attention')).toHaveCount(0);
+    await expect(alphaButton.locator('svg.text-active')).toHaveCount(0);
   });
 
   test('expand button re-opens the full sidebar', async () => {
@@ -333,8 +333,8 @@ test.describe('CollapsedRail - idle session, no activity icon', () => {
     const alphaButton = page.locator(`[data-testid="rail-project-${PROJECT_A_ID}"]`);
     await alphaButton.waitFor({ state: 'attached', timeout: 5000 });
 
-    await expect(alphaButton.locator('svg.text-amber-400')).toHaveCount(0);
-    await expect(alphaButton.locator('svg.text-green-400')).toHaveCount(0);
+    await expect(alphaButton.locator('svg.text-attention')).toHaveCount(0);
+    await expect(alphaButton.locator('svg.text-active')).toHaveCount(0);
   });
 });
 
@@ -365,8 +365,8 @@ test.describe('CollapsedRail - thinking session, no icon and plain title', () =>
     const alphaButton = page.locator(`[data-testid="rail-project-${PROJECT_A_ID}"]`);
     await alphaButton.waitFor({ state: 'attached', timeout: 5000 });
 
-    await expect(alphaButton.locator('svg.text-amber-400')).toHaveCount(0);
-    await expect(alphaButton.locator('svg.text-green-400')).toHaveCount(0);
+    await expect(alphaButton.locator('svg.text-attention')).toHaveCount(0);
+    await expect(alphaButton.locator('svg.text-active')).toHaveCount(0);
   });
 
   test('title is plain project name even when a thinking session is active', async () => {

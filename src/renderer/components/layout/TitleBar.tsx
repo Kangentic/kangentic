@@ -25,8 +25,9 @@ interface TitleBarProps {
 /**
  * The title-bar Command Terminal glyph: a custom terminal icon whose state lives
  * IN the glyph rather than in a separate corner badge. The stroke color is the
- * aggregate activity of the project's terminals (emerald working / amber needs-you
- * / muted rest), and the working border MARCHES (a dash flows around the
+ * aggregate activity of the project's terminals (green while working / warm amber
+ * when one needs you / muted rest, via the --kng-active / --kng-attention tokens),
+ * and the working border MARCHES (a dash flows around the
  * perimeter). The center morphs from the shell prompt to a `+` when the layer is
  * open and another terminal can be spawned, so the add affordance reads as part of
  * the icon (no clashing blue corner dot). 24 viewBox at strokeWidth 2 to match the
@@ -44,7 +45,7 @@ function CommandTerminalIcon({
   // tone was computed, so these are per-tone affordances, not a hand-rolled ActivityState bucket.
   const isWorking = tone === 'thinking'; // activity-state-ok: presentational tone, not an ActivityState
   const needsAttention = tone === 'idle'; // activity-state-ok: presentational tone, not an ActivityState
-  const colorClass = isWorking ? 'text-emerald-400' : needsAttention ? 'text-amber-400' : '';
+  const colorClass = isWorking ? 'text-active' : needsAttention ? 'text-attention' : '';
   return (
     <svg
       viewBox="0 0 24 24"
@@ -98,8 +99,8 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpaw
 
   // Aggregate activity across THIS project's Command Terminal sessions, surfaced
   // as the title-bar terminal icon's COLOR (the same active/idle language as the
-  // task-detail / per-terminal controls, no separate dot). WORKING (emerald) wins:
-  // if any terminal is active the icon is emerald, else amber if any needs you,
+  // task-detail / per-terminal controls, no separate dot). WORKING (active) wins:
+  // if any terminal is active the icon is active-green, else attention-amber if any needs you,
   // else rest. Classified only via the shared helpers (activity-state rule).
   const transientActivityTone = useSessionStore((state) => {
     const ids = selectCurrentProjectTransientSessionIds(state.transientSessions, currentProject?.id ?? null);
