@@ -820,25 +820,22 @@ test.describe('Task Activity Indicators', () => {
       }
     });
 
-    test('hides pill when usage.rateLimits is absent even though latestRateLimits is populated globally', async () => {
-      // The visibility gate is `!!usage.rateLimits && !!latestRateLimits`. Adapters
-      // like Codex or Gemini never populate usage.rateLimits, so the pill must stay
-      // hidden even when a sibling Claude session has already seeded latestRateLimits.
-      //
-      // Setup: task has usage (so ContextBar renders fully) but usage.rateLimits is
-      // absent. We then inject latestRateLimits directly into the session store via
-      // Zustand to simulate a sibling session's update having already arrived.
+    test('hides the pill for an agent that does not report rate limits, even with latestRateLimits populated globally', async () => {
+      // The visibility gate is the AGENT CAPABILITY (reportsRateLimits), not this
+      // session's own first report. Agents like Codex or Gemini do not report
+      // account-wide rate limits, so their ContextBar must stay pill-free even when a
+      // sibling Claude session has already seeded the global latestRateLimits snapshot.
       const { browser, page } = await launchWithState(
-        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true })
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, agent: 'codex' })
       );
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
-        // Inject a non-null latestRateLimits snapshot into the store, simulating
-        // a sibling session having already reported its rate limits.
+        // Inject a non-null latestRateLimits snapshot into the store, simulating a
+        // sibling (Claude) session having already reported its account-wide limits.
         await page.evaluate(() => {
           const stores = (window as unknown as {
-            __zustandStores: { session: { getState: () => { latestRateLimits: unknown } & Record<string, unknown>; setState: (patch: Record<string, unknown>) => void } };
+            __zustandStores: { session: { setState: (patch: Record<string, unknown>) => void } };
           }).__zustandStores;
           stores.session.setState({
             latestRateLimits: {
@@ -858,9 +855,56 @@ test.describe('Task Activity Indicators', () => {
         const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
         await expect(contextBar).toBeVisible({ timeout: 10000 });
 
-        // The pill must be absent: this session's usage has no rateLimits, so the
-        // per-session visibility gate blocks it regardless of latestRateLimits.
+        // Codex does not report rate limits, so the capability gate blocks the pill
+        // even though latestRateLimits is populated by a sibling session.
         await expect(contextBar.locator('[data-testid="rate-limits-pill"]')).toHaveCount(0);
+
+        await page.locator('[data-testid="task-detail-close"]').click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('shows the pill from the global snapshot for a reporting agent whose own usage has no rateLimits yet', async () => {
+      // Phase 2 behavior: the gate is the agent capability, not this session's own
+      // first report. A Claude session whose own usage.rateLimits has not arrived yet
+      // still shows the shared account-wide numbers from the global latestRateLimits
+      // snapshot, so a freshly spawned terminal matches its siblings immediately.
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true })
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Inject the global snapshot a sibling Claude session would have reported.
+        await page.evaluate(() => {
+          const stores = (window as unknown as {
+            __zustandStores: { session: { setState: (patch: Record<string, unknown>) => void } };
+          }).__zustandStores;
+          stores.session.setState({
+            latestRateLimits: {
+              rateLimits: [
+                { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 65, resetsAt: Math.floor(Date.now() / 1000) + 3600, windowDurationSeconds: 5 * 60 * 60 },
+                { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 30, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
+              ],
+              capturedAt: Date.now(),
+              sourceSessionId: 'some-other-session',
+            },
+          });
+        });
+
+        await page.locator('text=Test Initializing Task').first().click();
+        await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+
+        const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
+        await expect(contextBar).toBeVisible({ timeout: 10000 });
+
+        // Claude reports rate limits, so the pill shows the injected global numbers.
+        const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
+        await expect(pill).toBeVisible();
+        await expect(pill).toContainText('65%');
+        await expect(pill).toContainText('30%');
 
         await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
