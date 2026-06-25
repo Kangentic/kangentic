@@ -29,8 +29,9 @@ const pill = 'px-2 py-0.5 rounded bg-surface-raised whitespace-nowrap select-non
 // text-only pills (shell / version / cost / tokens) lay out correctly but Chromium
 // skips PAINTING them until a repaint is forced (pop-out / resize otherwise heals
 // it). Its own layer makes the bar paint independently of the frame composite, so
-// the pills render from the first frame. Safe re: the bar's popovers - they use the
-// `'absolute'` strategy relative to their own inner wrappers, not the footer.
+// the pills render from the first frame. The bar's popovers (model / effort picker,
+// token breakdown) BODY-PORTAL with `strategy: 'fixed'`, so they escape this layer's
+// stacking context / hit-test clip rather than overflowing it.
 const containerClass = 'min-h-8 bg-surface/80 border-t border-edge flex flex-wrap items-center px-3 py-1.5 gap-x-2 gap-y-2 text-xs flex-shrink-0 [transform:translateZ(0)]';
 
 function formatResetTime(epochSeconds: number): string {

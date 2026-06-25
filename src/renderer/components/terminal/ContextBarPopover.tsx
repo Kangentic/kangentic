@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
@@ -69,7 +70,12 @@ export function ContextBarPopover({
   // dialog, bottom panel, or the floating command-terminal overlay). Prefer
   // opening upward so the menu never renders past a floating container's bottom
   // edge (which clips it) even when there is viewport room below the trigger.
-  const { style: popoverStyle } = usePopoverPosition(triggerRef, popoverRef, true, { mode: 'dropdown', preferVertical: 'above' });
+  // `strategy: 'fixed'` + a body portal (below) make the popover escape the
+  // ContextBar footer's compositing layer (`[transform:translateZ(0)]`) and any
+  // `overflow-hidden` window frame: an inline absolute popover overflows that
+  // layer and its hit-test region gets clipped to the footer box, so option
+  // clicks above the bar silently pass through (the command-terminal picker bug).
+  const { style: popoverStyle } = usePopoverPosition(triggerRef, popoverRef, true, { mode: 'dropdown', strategy: 'fixed', preferVertical: 'above' });
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -95,7 +101,7 @@ export function ContextBarPopover({
     return () => document.removeEventListener('keydown', handleEscape, true);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div
       ref={popoverRef}
       style={{ ...popoverStyle, transformOrigin: 'bottom center' }}
@@ -105,7 +111,7 @@ export function ContextBarPopover({
       // pathological CLI-reported names with ellipsis truncation so they
       // can't push the popover off-screen; the full value still surfaces in
       // the button's title attribute.
-      className="absolute z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 w-max max-w-[420px] max-h-[340px] overflow-y-auto overlay-popover-in"
+      className="fixed z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 w-max max-w-[420px] max-h-[340px] overflow-y-auto overlay-popover-in"
       data-testid={testId}
     >
       <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
@@ -203,6 +209,7 @@ export function ContextBarPopover({
           </button>
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }

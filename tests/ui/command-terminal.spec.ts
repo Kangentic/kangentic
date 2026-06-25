@@ -1206,9 +1206,11 @@ test.describe('Command Terminal', () => {
         await expect(modelTrigger).toBeVisible({ timeout: 5000 });
         await expect(effortTrigger).toBeVisible({ timeout: 5000 });
 
-        // Pick a model -> session-keyed inject, not the task override path.
+        // Pick a model -> session-keyed inject, not the task override path. The
+        // popover body-portals (strategy: 'fixed') to escape the footer's compositing
+        // layer, so the option lives at the page root, not inside the overlay element.
         await modelTrigger.click();
-        await overlay.locator('[data-testid="context-bar-model-popover-option-sonnet"]').click();
+        await page.locator('[data-testid="context-bar-model-popover-option-sonnet"]').click();
 
         const injectCalls = await page.evaluate(() =>
           (window as unknown as { electronAPI: { sessions: { __injectSettingsCalls?: Array<Record<string, unknown>> } } }).electronAPI.sessions.__injectSettingsCalls,
