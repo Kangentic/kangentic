@@ -38,7 +38,12 @@ const killTransientMock = vi.fn();
   },
 };
 
-import { createTransientSessionSlice, transientKey } from '../../src/renderer/stores/session-store/transient-session-slice';
+import {
+  createTransientSessionSlice,
+  transientKey,
+  selectCurrentProjectTransientSessionIds,
+  type TransientSessionEntry,
+} from '../../src/renderer/stores/session-store/transient-session-slice';
 import type { SessionStore } from '../../src/renderer/stores/session-store/types';
 import { buildSessionByTaskId } from '../../src/renderer/stores/session-store/session-index';
 
@@ -103,6 +108,17 @@ function makeSliceStore(
     get,
     {} as unknown as Parameters<typeof sliceCreator>[2],
   );
+
+  // Inject only the slice's METHODS (functions) into state so cross-method calls
+  // (e.g. killTransientSessionBySlot calling get().clearTransientSessionById) resolve
+  // correctly inside the harness. Data properties (transientSessions, commandBarVisible)
+  // are intentionally excluded here because the slice initializes them to defaults and
+  // would overwrite the caller-supplied initialTransientSessions.
+  for (const [key, value] of Object.entries(slice)) {
+    if (typeof value === 'function') {
+      (state as Record<string, unknown>)[key] = value;
+    }
+  }
 
   return {
     slice,
@@ -353,5 +369,152 @@ describe('spawnTransientSession — debugger overlay wiring', () => {
 
     expect(getState().sessions).toHaveLength(1);
     expect(getState().sessions[0]).toEqual(session);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// selectCurrentProjectTransientSessionIds
+// ---------------------------------------------------------------------------
+
+describe('selectCurrentProjectTransientSessionIds', () => {
+  function makeEntry(projectId: string, slot: string, sessionId: string): TransientSessionEntry {
+    return { projectId, slot, sessionId, branch: null };
+  }
+
+  it('returns empty array when projectId is null', () => {
+    const map: Record<string, TransientSessionEntry> = {
+      [transientKey('proj-1', 'slot-1')]: makeEntry('proj-1', 'slot-1', 'sess-1'),
+    };
+    expect(selectCurrentProjectTransientSessionIds(map, null)).toEqual([]);
+  });
+
+  it('returns empty array when the map is empty', () => {
+    expect(selectCurrentProjectTransientSessionIds({}, 'proj-1')).toEqual([]);
+  });
+
+  it('returns empty array when no entries belong to the project', () => {
+    const map: Record<string, TransientSessionEntry> = {
+      [transientKey('proj-other', 'slot-1')]: makeEntry('proj-other', 'slot-1', 'sess-other'),
+    };
+    expect(selectCurrentProjectTransientSessionIds(map, 'proj-1')).toEqual([]);
+  });
+
+  it('returns session ids for every slot of the matching project', () => {
+    const map: Record<string, TransientSessionEntry> = {
+      [transientKey('proj-1', 'slot-1')]: makeEntry('proj-1', 'slot-1', 'sess-a'),
+      [transientKey('proj-1', 'slot-2')]: makeEntry('proj-1', 'slot-2', 'sess-b'),
+      [transientKey('proj-2', 'slot-1')]: makeEntry('proj-2', 'slot-1', 'sess-other'),
+    };
+    const result = selectCurrentProjectTransientSessionIds(map, 'proj-1');
+    // Both of proj-1's sessions must appear; proj-2's must not.
+    expect(result.sort()).toEqual(['sess-a', 'sess-b'].sort());
+    expect(result).not.toContain('sess-other');
+  });
+
+  it('returns only the single matching session when the project has one slot', () => {
+    const map: Record<string, TransientSessionEntry> = {
+      [transientKey('proj-1', 'slot-1')]: makeEntry('proj-1', 'slot-1', 'sess-x'),
+    };
+    expect(selectCurrentProjectTransientSessionIds(map, 'proj-1')).toEqual(['sess-x']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// killTransientSessionBySlot
+// ---------------------------------------------------------------------------
+
+describe('killTransientSessionBySlot', () => {
+  beforeEach(() => {
+    spawnTransientMock.mockReset();
+    killTransientMock.mockReset();
+  });
+
+  it('is a no-op when no entry exists for the (project, slot) pair', async () => {
+    const { slice, getState } = makeSliceStore();
+    // No entries at all - should return without calling IPC or mutating state.
+    await slice.killTransientSessionBySlot('proj-1', 'slot-1');
+    expect(killTransientMock).not.toHaveBeenCalled();
+    expect(getState().transientSessions).toEqual({});
+  });
+
+  it('calls killTransient IPC and scrubs the map entry + session row on success', async () => {
+    const session = buildFakeSession({ id: 'sess-to-kill', taskId: 'task-to-kill' });
+    killTransientMock.mockResolvedValueOnce(undefined);
+
+    const { slice, getState } = makeSliceStore(
+      [session],
+      {
+        [transientKey(FAKE_PROJECT_ID, 'slot-1')]: {
+          projectId: FAKE_PROJECT_ID,
+          slot: 'slot-1',
+          sessionId: session.id,
+          branch: 'main',
+        },
+      },
+    );
+
+    await slice.killTransientSessionBySlot(FAKE_PROJECT_ID, 'slot-1');
+
+    expect(killTransientMock).toHaveBeenCalledWith(session.id);
+    expect(getState().transientSessions[transientKey(FAKE_PROJECT_ID, 'slot-1')]).toBeUndefined();
+    expect(getState().sessions.find((s) => s.id === session.id)).toBeUndefined();
+  });
+
+  it('still scrubs the map entry + session row even when killTransient IPC throws (best-effort)', async () => {
+    const session = buildFakeSession({ id: 'sess-ipc-fail', taskId: 'task-ipc-fail' });
+    killTransientMock.mockRejectedValueOnce(new Error('PTY already dead'));
+
+    const { slice, getState } = makeSliceStore(
+      [session],
+      {
+        [transientKey(FAKE_PROJECT_ID, 'slot-1')]: {
+          projectId: FAKE_PROJECT_ID,
+          slot: 'slot-1',
+          sessionId: session.id,
+          branch: null,
+        },
+      },
+    );
+
+    // Must not throw even though IPC rejects.
+    await expect(slice.killTransientSessionBySlot(FAKE_PROJECT_ID, 'slot-1')).resolves.toBeUndefined();
+
+    // Cleanup must still have run despite the IPC failure.
+    expect(getState().transientSessions[transientKey(FAKE_PROJECT_ID, 'slot-1')]).toBeUndefined();
+    expect(getState().sessions.find((s) => s.id === session.id)).toBeUndefined();
+  });
+
+  it('only kills the targeted slot and leaves sibling slots for the same project intact', async () => {
+    const sessionOne = buildFakeSession({ id: 'sess-slot-1', taskId: 'task-s1' });
+    const sessionTwo = buildFakeSession({ id: 'sess-slot-2', taskId: 'task-s2' });
+    killTransientMock.mockResolvedValue(undefined);
+
+    const { slice, getState } = makeSliceStore(
+      [sessionOne, sessionTwo],
+      {
+        [transientKey(FAKE_PROJECT_ID, 'slot-1')]: {
+          projectId: FAKE_PROJECT_ID,
+          slot: 'slot-1',
+          sessionId: sessionOne.id,
+          branch: null,
+        },
+        [transientKey(FAKE_PROJECT_ID, 'slot-2')]: {
+          projectId: FAKE_PROJECT_ID,
+          slot: 'slot-2',
+          sessionId: sessionTwo.id,
+          branch: null,
+        },
+      },
+    );
+
+    await slice.killTransientSessionBySlot(FAKE_PROJECT_ID, 'slot-1');
+
+    // slot-1 must be gone.
+    expect(getState().transientSessions[transientKey(FAKE_PROJECT_ID, 'slot-1')]).toBeUndefined();
+    expect(getState().sessions.find((s) => s.id === sessionOne.id)).toBeUndefined();
+
+    // slot-2 must be untouched.
+    expect(getState().transientSessions[transientKey(FAKE_PROJECT_ID, 'slot-2')]?.sessionId).toBe(sessionTwo.id);
+    expect(getState().sessions.find((s) => s.id === sessionTwo.id)).toEqual(sessionTwo);
   });
 });
