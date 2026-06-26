@@ -63,7 +63,14 @@ export class FitAddon implements ITerminalAddon {
       return undefined;
     }
 
-    const scrollbarWidth = this._terminal.options.scrollback === 0
+    // Reserve room for the scrollbar so it never overlaps the last column - EXCEPT
+    // when the alternate screen buffer is active (a fullscreen TUI like Claude's
+    // `/tui fullscreen`, vim, or htop). The alt buffer is exactly viewport-sized
+    // and has no scrollbar, so reserving width there just leaves an empty strip on
+    // the right; reclaim it for the grid instead. Re-evaluated on every fit, so the
+    // column count follows the buffer mode on the next resize.
+    const inAltBuffer = this._terminal.buffer?.active?.type === 'alternate';
+    const scrollbarWidth = (this._terminal.options.scrollback === 0 || inAltBuffer)
       ? 0
       : (this._terminal.options.overviewRuler?.width ?? DEFAULT_SCROLLBAR_WIDTH);
 

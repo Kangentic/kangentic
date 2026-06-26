@@ -4,14 +4,13 @@
  *
  * Migrated from tests/e2e/command-builder.spec.ts -- pure logic, no Electron needed.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { execFileSync, execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {
   quoteArg,
-  isUnixLikeShell,
   isCmdShell,
   adaptCommandForShell,
   convertWindowsExePath,
@@ -1179,6 +1178,109 @@ describe('Merged Settings -- Local Settings Merge', () => {
     // Worktree "always allow" grants should be merged in
     expect(merged.permissions.allow).toContain('Bash(npm test:*)');
     expect(merged.permissions.allow).toContain('Edit');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TUI Fullscreen Default
+// Tests for the `merged.tui = 'fullscreen'` injection in createMergedSettings.
+// userHasGlobalTuiPreference() reads os.homedir()/.claude/settings.json, so
+// we spy on os.homedir() to redirect reads to a controlled temp directory that
+// we populate per-case. This makes all four cases hermetic regardless of what
+// any developer's real ~/.claude/settings.json contains.
+// ---------------------------------------------------------------------------
+
+describe('Merged Settings -- TUI Fullscreen Default', () => {
+  let tmpDir: string;
+  let tempHome: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-tui-'));
+    tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-home-'));
+    // Project .claude/settings.json starts empty so there is no tui key.
+    fs.mkdirSync(path.join(tmpDir, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.claude', 'settings.json'), JSON.stringify({}));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tempHome, { recursive: true, force: true });
+  });
+
+  /**
+   * Spy on os.homedir() to return tempHome, then build and return the written
+   * merged settings. Callers set up project settings and/or tempHome/.claude/
+   * before invoking this helper.
+   */
+  function buildAndReadMerged(): Record<string, unknown> {
+    vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
+    const builder = new CommandBuilder();
+    const statusOutput = path.join(tmpDir, '.kangentic', 'sessions', 'tui-test', 'status.json');
+    fs.mkdirSync(path.dirname(statusOutput), { recursive: true });
+    builder.buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: 'tui-task',
+      cwd: tmpDir,
+      permissionMode: 'default',
+      sessionId: 'tui-test',
+      statusOutputPath: statusOutput,
+    });
+    const mergedPath = path.join(tmpDir, '.kangentic', 'sessions', 'tui-test', 'settings.json');
+    return JSON.parse(fs.readFileSync(mergedPath, 'utf-8'));
+  }
+
+  it('A: injects tui=fullscreen when no global preference and project settings has no tui key', () => {
+    // tempHome has no .claude/ directory -> userHasGlobalTuiPreference() returns false.
+    // project settings.json is {} -> no tui key.
+    // Expected: Kangentic injects fullscreen default.
+    // RED: removing `merged.tui = 'fullscreen'` makes merged.tui undefined, failing this.
+    const merged = buildAndReadMerged();
+    expect(merged.tui).toBe('fullscreen');
+  });
+
+  it('B: preserves project-level tui when project settings.json already specifies tui=auto', () => {
+    // A project with { tui: 'auto' } in .claude/settings.json wins: merged.tui starts
+    // as 'auto' from baseSettings, the guard sees merged.tui !== undefined, and skips
+    // the fullscreen injection.
+    // RED: removing the `merged.tui === undefined` guard would overwrite 'auto' to 'fullscreen'.
+    fs.writeFileSync(
+      path.join(tmpDir, '.claude', 'settings.json'),
+      JSON.stringify({ tui: 'auto' }),
+    );
+    // tempHome has no .claude/ -> global preference absent.
+    const merged = buildAndReadMerged();
+    expect(merged.tui).toBe('auto');
+  });
+
+  it('C: suppresses the fullscreen default when global ~/.claude/settings.json sets tui=auto', () => {
+    // userHasGlobalTuiPreference() reads tempHome/.claude/settings.json and finds
+    // tui: 'auto', so it returns true. The injection condition is false and tui is
+    // NOT set to 'fullscreen' (it stays undefined in the merged output).
+    // RED: removing the `!this.userHasGlobalTuiPreference()` guard makes merged.tui
+    //      'fullscreen' even though the user explicitly chose 'auto'.
+    fs.mkdirSync(path.join(tempHome, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tempHome, '.claude', 'settings.json'),
+      JSON.stringify({ tui: 'auto' }),
+    );
+    const merged = buildAndReadMerged();
+    expect(merged.tui).not.toBe('fullscreen');
+  });
+
+  it('D: treats global tui=null as no preference and injects the fullscreen default', () => {
+    // `tui: null` is the reset sentinel (e.g. a hand-edited file). The code gates
+    // on `parsedGlobalSettings.tui !== null`, so null -> userHasGlobalTuiPreference()
+    // returns false -> Kangentic still injects its fullscreen default.
+    // RED: removing the null check makes null treated as a real preference, returning
+    //      true from userHasGlobalTuiPreference(), and merged.tui stays undefined.
+    fs.mkdirSync(path.join(tempHome, '.claude'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tempHome, '.claude', 'settings.json'),
+      JSON.stringify({ tui: null }),
+    );
+    const merged = buildAndReadMerged();
+    expect(merged.tui).toBe('fullscreen');
   });
 });
 

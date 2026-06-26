@@ -297,7 +297,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     ),
   );
 
-  const { terminalRef, initTerminal, fit, focus } = useTerminal({
+  const { terminalRef, initTerminal, fit, flushResize, focus } = useTerminal({
     sessionId: effectiveSessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
@@ -348,11 +348,14 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // all that is needed.
   useEffect(() => {
     const onPanelResize = () => {
-      if (initialized.current) fit();
+      // fit() reflows xterm; flushResize() lands the PTY SIGWINCH immediately rather
+      // than 200ms later, so Claude's redraw arrives with the reflow (no resize
+      // flash). Mirrors the task-detail terminal's immediatePanelResize path.
+      if (initialized.current) { fit(); flushResize(); }
     };
     window.addEventListener('terminal-panel-resize', onPanelResize);
     return () => window.removeEventListener('terminal-panel-resize', onPanelResize);
-  }, [fit]);
+  }, [fit, flushResize]);
 
   // Refit when the changes panel toggles (the terminal column width changes).
   useEffect(() => {
@@ -689,8 +692,12 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
 
       {/* Body */}
       <div className="relative flex flex-1 min-h-0">
-        {/* Terminal */}
-        <div className={`${changesOpen ? 'w-1/2' : 'flex-1'} relative`} style={{ backgroundColor: '#18181b' }}>
+        {/* Terminal. min-w-0 lets this flex item shrink below the xterm's content
+            width when the window narrows; without it `min-width: auto` pins the pane
+            to the terminal's column width, so it overflows the window and fit() reads
+            the stale (too-wide) size and never reduces columns. overflow-hidden clips
+            the brief pre-fit overflow. Mirrors the Changes panel sibling. */}
+        <div className={`${changesOpen ? 'w-1/2' : 'flex-1'} relative min-w-0 overflow-hidden`} style={{ backgroundColor: '#18181b' }}>
           {!terminalReady && <LaunchOverlay label="Starting Command Terminal..." />}
           <FileDropOverlay {...fileDrop} />
           <div

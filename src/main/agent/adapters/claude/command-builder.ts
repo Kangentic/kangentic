@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
@@ -54,6 +55,27 @@ export class CommandBuilder {
   /** Clear the cached project settings (e.g., when settings files change). */
   clearSettingsCache(): void {
     this.projectSettingsCache.clear();
+  }
+
+  /**
+   * Whether the user has explicitly chosen a Claude TUI renderer in their global
+   * `~/.claude/settings.json` (where Claude's `/tui` command persists the `tui`
+   * setting). When they have, Kangentic must NOT inject its own `tui` default -
+   * `--settings` would override the user's choice. Read fresh each spawn (small
+   * file, infrequent) so a `/tui` change is honored on the next session.
+   */
+  private userHasGlobalTuiPreference(): boolean {
+    try {
+      const globalSettingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+      const parsedGlobalSettings = JSON.parse(fs.readFileSync(globalSettingsPath, 'utf-8')) as Record<string, unknown>;
+      // Treat `tui: null` (a reset sentinel, or a hand-edited file) the same as an
+      // absent key: null is not a renderer choice, so Kangentic should still inject
+      // its fullscreen default rather than leave Claude on the classic renderer.
+      return parsedGlobalSettings.tui !== undefined && parsedGlobalSettings.tui !== null;
+    } catch {
+      // No global settings file, or unreadable/invalid -> user has not chosen.
+      return false;
+    }
   }
 
   buildClaudeCommand(options: CommandOptions): string {
@@ -249,6 +271,20 @@ export class CommandBuilder {
     if (eventsPath) {
       const eventBridge = toForwardSlash(resolveBridgeScript('event-bridge'));
       merged.hooks = buildHooks(eventBridge, eventsPath, baseSettings.hooks || {});
+    }
+
+    // Default Claude's TUI renderer to fullscreen (alt-screen) for the embedded
+    // experience. The classic main-screen renderer re-emits its WHOLE frame into
+    // the normal-buffer scrollback on every resize, which piles up duplicate
+    // banners in an embedded xterm and flickers on resize. The alt-screen renderer
+    // - which Claude's own docs recommend for embedded terminal wrappers - has no
+    // scrollback accumulation and no resize flicker. We only set this when the user
+    // has NOT chosen a renderer themselves: `merged.tui` already carries any
+    // project-level choice, and `userHasGlobalTuiPreference()` covers their global
+    // ~/.claude/settings.json (where `/tui` persists). `--settings` outranks both,
+    // so gating on both keeps Claude's native `/tui` control authoritative.
+    if (merged.tui === undefined && !this.userHasGlobalTuiPreference()) {
+      merged.tui = 'fullscreen';
     }
 
     // Session directory (used for the merged Claude settings file).

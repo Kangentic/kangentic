@@ -13,11 +13,12 @@
  * WindowFrame wires the frame's move/up to call back here.
  */
 
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { clamp, pixelsToFractional } from '../store/geometry';
 import type { PixelRect } from '../store/geometry';
 import { useWindowManager } from '../context';
+import { beginManagerResize, endManagerResize } from '../terminal/manager-resize-gate';
 
 export type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 
@@ -109,6 +110,16 @@ export function useWindowResize({ windowId, frameRef, overlayRef }: UseWindowRes
   const minHeight = layer.minSize.height;
   const resizeRef = useRef<ResizeSession | null>(null);
 
+  // Balance the manager-resize gate if the frame unmounts mid-drag (the window or
+  // its overlay is torn down while a pointer is held - e.g. a keyboard shortcut
+  // closes the window). React removes the move/up handlers on unmount, so endResize's
+  // endManagerResize() would never fire; without this the module-level gate stays
+  // open and suppresses refits in terminals on OTHER layers until a reload. Gated on
+  // `captured`, the same condition that opened the gate.
+  useEffect(() => () => {
+    if (resizeRef.current?.captured) endManagerResize();
+  }, []);
+
   const handlePointerDown = (direction: ResizeDirection) => (event: React.PointerEvent) => {
     if (event.button !== 0) return;
     const frame = frameRef.current;
@@ -158,6 +169,11 @@ export function useWindowResize({ windowId, frameRef, overlayRef }: UseWindowRes
         // ignore: capture not available for this pointer
       }
       resize.captured = true;
+      // Open the manager-resize gate now that a real drag has started (gated on
+      // `captured`, so a no-move click never opens it). Window terminals suppress
+      // their per-frame refit until endResize closes the gate, so the PTY resizes
+      // once on commit instead of once per drag frame. Closed in endResize.
+      beginManagerResize();
     }
     // Remember the last good pointer position; the commit reads it instead of the
     // pointerup/cancel coords (which can be a bogus (0,0) on a captured release).
@@ -176,6 +192,10 @@ export function useWindowResize({ windowId, frameRef, overlayRef }: UseWindowRes
     resizeRef.current = null;
     // Always restore text selection, even on the guard return below.
     document.body.style.userSelect = '';
+    // Close the gate this gesture opened. Gated on `captured` (the same condition
+    // that opened it) and independent of the frame/pointerId guards below, so a
+    // captured drag always closes its gate and never leaves it stuck open.
+    if (resize?.captured) endManagerResize();
     if (!resize || !frame || event.pointerId !== resize.pointerId) return;
     if (frame.hasPointerCapture(event.pointerId)) frame.releasePointerCapture(event.pointerId);
     // Commit from the LAST tracked move position, never the end event's coords: a

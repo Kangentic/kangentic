@@ -348,6 +348,22 @@ export function useTerminal(options: UseTerminalOptions) {
     }
   }, []);
 
+  // Flush a pending (debounced) PTY resize immediately, instead of waiting out
+  // PTY_RESIZE_DEBOUNCE_MS. Window-hosted terminals fit synchronously on the
+  // window manager's committed resize, and the manager-resize gate already
+  // coalesces a gesture to a single dimension change, so for them the debounce is
+  // pure latency: it delays Claude's SIGWINCH redraw well past the visual reflow,
+  // which reads as "reflow ... then flash". Calling this right after fit() lands
+  // the PTY resize (and Claude's redraw) in the same beat as the reflow. No-op if
+  // no resize is pending (cols/rows did not change).
+  const flushResize = useCallback(() => {
+    if (!resizeTimerRef.current || !xtermRef.current || !options.sessionId) return;
+    clearTimeout(resizeTimerRef.current);
+    resizeTimerRef.current = null;
+    const { cols, rows } = xtermRef.current;
+    window.electronAPI.sessions.resize(options.sessionId, cols, rows);
+  }, [options.sessionId]);
+
   // Re-fetch scrollback from the PTY and write it to xterm. Called when
   // the loading overlay lifts so that suppressed TUI output is recovered.
   //
@@ -427,6 +443,7 @@ export function useTerminal(options: UseTerminalOptions) {
     terminalRef,
     initTerminal,
     fit,
+    flushResize,
     focus,
     reloadScrollback,
     scrollbackPending: scrollbackPendingRef,

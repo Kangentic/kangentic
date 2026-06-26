@@ -12,7 +12,7 @@
  * writes. Sits in the gap BETWEEN panes, so it never overlaps a live terminal.
  */
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { useLayerStore, useWindowManager } from '../context';
 import type { ContainerSize } from '../store/geometry';
@@ -20,6 +20,7 @@ import type { TileNode } from '../store/types';
 import { resolveTileLayout } from '../tiling/resolve-layout';
 import type { TileSeam } from '../tiling/resolve-layout';
 import { clampTileRatio, setSeamRatio as resizeSeamInTree } from '../tiling/tree-ops';
+import { beginManagerResize, endManagerResize } from '../terminal/manager-resize-gate';
 
 interface TileSplitterProps {
   seam: TileSeam;
@@ -67,8 +68,22 @@ export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seam
   // the captured pointer travels off the thin overlay).
   const [dragging, setDragging] = useState(false);
 
+  // Balance the manager-resize gate if this splitter unmounts mid-drag (the overlay
+  // is torn down while a pointer is held - e.g. a keyboard shortcut hides the layer
+  // or closes the dialog). React removes the pointer handlers on unmount, so
+  // onPointerUp's endManagerResize() would never fire; without this the module-level
+  // gate stays open and suppresses refits in terminals on OTHER layers (the bottom
+  // panel, the command bar) until a reload.
+  useEffect(() => () => {
+    if (dragRef.current) { endManagerResize(); dragRef.current = null; }
+  }, []);
+
   const onPointerDown = (event: React.PointerEvent) => {
     if (event.button !== 0) return;
+    // Re-entry guard: a second pointer-down while a drag is live would overwrite
+    // dragRef (abandoning the first gesture's capture) and open the gate a second
+    // time, which a single matching pointer-up cannot fully close. Ignore it.
+    if (dragRef.current) return;
     const overlay = overlayRef.current;
     if (!overlay) return;
     const overlayRect = overlay.getBoundingClientRect();
@@ -93,6 +108,9 @@ export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seam
       ratio: 0,
     };
     setDragging(true);
+    // Open the manager-resize gate so window terminals suppress per-frame refits
+    // (one SIGWINCH on commit instead of one per drag frame). Closed in onPointerUp.
+    beginManagerResize();
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     // Don't let the pointer-down fall through to focus/raise a window under the seam.
     event.stopPropagation();
@@ -131,6 +149,10 @@ export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seam
     setDragging(false);
     const drag = dragRef.current;
     dragRef.current = null;
+    // Close the gate this gesture opened (the begin/end pair is balanced on `drag`,
+    // nulled above so a second up/cancel cannot double-close). Runs before the
+    // pointerId guard so the gate is never left stuck open.
+    if (drag) endManagerResize();
     if (!drag || event.pointerId !== drag.pointerId) return;
     const element = event.currentTarget as HTMLElement;
     if (element.hasPointerCapture(drag.pointerId)) element.releasePointerCapture(drag.pointerId);

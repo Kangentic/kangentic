@@ -7,6 +7,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { getIsHmrReload } from '../../utils/hmr-flag';
 import { useTerminalOverlay } from '../../utils/task-progress';
+import { isManagerResizeInProgress } from '../../window-manager/terminal/manager-resize-gate';
 
 const FIT_DELAY_MS = 100;
 
@@ -60,7 +61,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   // PTY output from accumulating in xterm behind the overlay.
   const [terminalReady, setTerminalReady] = useState(() => hasFirstOutput || hasUsage);
 
-  const { terminalRef, initTerminal, fit, focus, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
+  const { terminalRef, initTerminal, fit, flushResize, focus, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
@@ -209,7 +210,16 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
       // Window-manager terminals defer container-driven fits: the window manager
       // owns sizing and dispatches a single settle-debounced terminal-panel-resize,
       // so rapid snap/maximize/restore resizes the PTY once (one clean SIGWINCH).
-      if (!deferContainerResize) scheduleRefit(200);
+      //
+      // While a window-manager imperative resize gesture is in progress (seam drag,
+      // footprint resize, 8-handle window resize) this observer fires per frame as
+      // the frame's DOM box is rewritten. Refitting per frame would send a SIGWINCH
+      // per frame, and a full-screen TUI re-emits its whole banner on each - stacking
+      // duplicates in scrollback. Suppress the per-frame refit during the gesture; the
+      // store commit on release dispatches a single terminal-panel-resize that refits
+      // once. The gate is OFF for container-only changes (Changes/Browser pane toggle),
+      // so those still refit normally.
+      if (!deferContainerResize && !isManagerResizeInProgress()) scheduleRefit(200);
     });
     observer.observe(el);
 
@@ -227,7 +237,11 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
       // run a redundant second fit afterward.
       if (immediatePanelResize) {
         if (resizeTimer) { clearTimeout(resizeTimer); resizeTimer = null; }
-        if (initialized.current) fit();
+        // Fit synchronously, then flush the PTY resize immediately (don't wait out
+        // the 200ms debounce) so Claude's redraw lands with the reflow instead of
+        // a beat later - minimizes the resize "flash". The manager-resize gate
+        // already guarantees one resize per gesture, so there's nothing to coalesce.
+        if (initialized.current) { fit(); flushResize(); }
         return;
       }
       // Window terminals (deferContainerResize) fit on the next tick; other
@@ -251,7 +265,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
       observer.disconnect();
       window.removeEventListener('terminal-panel-resize', handlePanelResize);
     };
-  }, [active, fit, focus, deferContainerResize, immediatePanelResize, reloadScrollback, terminalRef, scrollbackPending]);
+  }, [active, fit, flushResize, focus, deferContainerResize, immediatePanelResize, reloadScrollback, terminalRef, scrollbackPending]);
 
   const fileDrop = useTerminalFileDrop(sessionId, focus, sessionShell);
 

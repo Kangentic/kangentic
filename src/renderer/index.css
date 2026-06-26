@@ -340,6 +340,18 @@
   background-color: var(--kng-surface) !important;
 }
 
+/* Terminal scrollbar visibility: the global thumb color (--kng-edge, #3f3f46) is
+   nearly invisible against the dark terminal background (#18181b), so the scrollbar
+   reads as missing. Use a brighter translucent thumb so it is discoverable. Width is
+   left at the global 8px so the fit-addon's DEFAULT_SCROLLBAR_WIDTH assumption holds. */
+.xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(228, 228, 231, 0.28);
+  border-radius: 4px;
+}
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: rgba(228, 228, 231, 0.5);
+}
+
 /* Terminal panel resize handle */
 .resize-handle {
   cursor: ns-resize;
