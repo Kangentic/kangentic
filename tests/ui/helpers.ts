@@ -4,20 +4,14 @@ import path from 'node:path';
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 
-/**
- * Renderer errors that are known-benign and outside the app's control, so a
- * spec asserting "no uncaught errors" should ignore them.
- *
- * - The monaco DiffEditor disposal-order quirk. On unmount, @monaco-editor/react
- *   disposes a DiffEditor's two TextModels before the widget, so monaco logs a
- *   self-healing BugIndicatingError and immediately resets its own model. It is
- *   non-fatal and does not leak (both models are disposed regardless of order),
- *   and no stable @monaco-editor/react (4.7.0) or monaco-editor (0.55.1) release
- *   fixes it. Upstream: https://github.com/suren-atoyan/monaco-react/issues/647
- */
-export const BENIGN_RENDERER_ERRORS: RegExp[] = [
-  /TextModel got disposed before DiffEditorWidget model got reset/,
-];
+// Single source of truth for known-benign renderer errors, shared with the
+// renderer's runtime suppressor (the monaco error-funnel wrapper in
+// src/renderer/monacoConfig.ts, which reassigns errorHandler.unexpectedErrorHandler).
+// monacoConfig.ts swallows these before they reach the page, so collectPageErrors
+// rarely sees them, but the filter stays as a belt-and-suspenders for any path
+// that reaches window despite the funnel wrapper.
+import { BENIGN_RENDERER_ERRORS, isBenignRendererError } from '../../src/shared/benign-renderer-errors';
+export { BENIGN_RENDERER_ERRORS, isBenignRendererError };
 
 /**
  * Attach a `pageerror` collector that drops messages matching
@@ -29,7 +23,7 @@ export const BENIGN_RENDERER_ERRORS: RegExp[] = [
 export function collectPageErrors(page: Page): () => string[] {
   const errors: string[] = [];
   page.on('pageerror', (error) => {
-    if (BENIGN_RENDERER_ERRORS.some((pattern) => pattern.test(error.message))) return;
+    if (isBenignRendererError(error)) return;
     errors.push(error.message);
   });
   return () => errors.slice();

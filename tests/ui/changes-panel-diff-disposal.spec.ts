@@ -4,18 +4,23 @@
  * Background:
  * The task-detail Changes panel mounts a @monaco-editor/react DiffEditor and
  * unmounts it instantly when toggled closed. On unmount the library disposes
- * the DiffEditor's two TextModels before the widget, so monaco logs a
+ * the DiffEditor's two TextModels before the widget, so monaco throws a
  * self-healing BugIndicatingError ("TextModel got disposed before
  * DiffEditorWidget model got reset"). It is benign and does not leak: both
  * models are disposed regardless of order, so `editor.getModels()` returns to
  * baseline. See src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
  * and https://github.com/suren-atoyan/monaco-react/issues/647
  *
- * This spec locks two properties under rapid open/close:
+ * This spec locks three properties under rapid open/close:
  *   1. No NON-benign renderer errors (the known monaco message is filtered by
  *      the shared collector; anything else fails).
  *   2. No model leak - rapid open/close does not accumulate TextModels; the
  *      registry returns to its baseline count once the panel is closed.
+ *   3. The benign monaco message no longer surfaces as an uncaught pageerror at
+ *      all: monacoConfig.ts wraps monaco's error funnel
+ *      (errorHandler.unexpectedErrorHandler) to swallow it at the source before
+ *      monaco re-throws it to the window, so it stops rendering red in the
+ *      console. A regression that dropped that wrapper would let it fire again.
  *
  * Tier: UI (headless Chromium). A diff fixture is seeded via the mock's
  * __mockGitDiff hook so a real DiffEditor mounts; no PTY or real git needed.
@@ -23,7 +28,7 @@
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, collectPageErrors } from './helpers';
+import { waitForViteReady, collectPageErrors, isBenignRendererError } from './helpers';
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
@@ -189,6 +194,13 @@ test.describe('Changes panel - Monaco DiffEditor disposal', () => {
     // filtered; anything else fails the assertion below.
     const getPageErrors = collectPageErrors(page);
 
+    // A second, RAW collector that keeps every pageerror unfiltered. Used to
+    // assert the benign monaco message no longer reaches the page at all
+    // (monacoConfig.ts suppresses it at monaco's error funnel before it is
+    // re-thrown to the window).
+    const rawPageErrors: string[] = [];
+    page.on('pageerror', (error) => rawPageErrors.push(error.message));
+
     // Open the task dialog (view mode, since the session is suspended). The
     // suspended body branch renders the Changes panel once Changes is toggled on.
     const card = page.locator(`[data-task-id="${TASK_ID}"]`);
@@ -225,5 +237,12 @@ test.describe('Changes panel - Monaco DiffEditor disposal', () => {
     // No non-benign renderer errors across all the teardowns. The monaco
     // disposal-order message is expected and filtered by collectPageErrors.
     expect(getPageErrors()).toHaveLength(0);
+
+    // The benign monaco message must not have surfaced as an uncaught pageerror
+    // at all: monacoConfig.ts swallows it at monaco's error funnel before it is
+    // re-thrown to the window, so it stops rendering red in the console. Before
+    // that wrapper this raw collector would have caught it on every teardown.
+    const benignThatLeaked = rawPageErrors.filter((message) => isBenignRendererError(message));
+    expect(benignThatLeaked).toHaveLength(0);
   });
 });

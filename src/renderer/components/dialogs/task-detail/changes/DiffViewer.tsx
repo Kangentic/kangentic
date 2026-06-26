@@ -485,13 +485,16 @@ export function DiffViewer({
         ) : (
           // On unmount (panel close, Changes<->Browser switch, file deselect),
           // @monaco-editor/react disposes this DiffEditor's two TextModels
-          // before the widget, so monaco logs a self-healing BugIndicatingError
+          // before the widget, so a disposal listener throws a BugIndicatingError
           // ("TextModel got disposed before DiffEditorWidget model got reset")
-          // and resets its own model. It is benign and does not leak (both
+          // and monaco resets its own model. It is benign and does not leak (both
           // models are disposed regardless of order); no stable release fixes
           // the order, and taking over disposal here would only add leak
-          // surface. The test harness filters this known message; do not
-          // "fix" it by adding keepCurrent*Model + manual disposal.
+          // surface. Do not "fix" it by adding keepCurrent*Model + manual
+          // disposal. The thrown message is swallowed at monaco's error funnel
+          // (monacoConfig.ts wraps errorHandler.unexpectedErrorHandler; pattern
+          // list in src/shared/benign-renderer-errors.ts) so it no longer renders
+          // red in the console, and the test harness filters the same message.
           // Upstream: https://github.com/suren-atoyan/monaco-react/issues/647
           <DiffEditor
             height="100%"
