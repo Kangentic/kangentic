@@ -336,16 +336,25 @@ export class SessionTelemetry {
       this.activityEngine.markThinkingSignal(sessionId);
     }
 
-    // Heartbeat recovery: if tokens increased while idle for >1s, the
-    // agent resumed work. The 1-second grace prevents races between
-    // status updates and an idle event landing in the same tick.
+    // Heartbeat recovery: if OUTPUT tokens grew while idle for >1s, the agent
+    // resumed generating, so force thinking. Compare output only, never input.
+    // Claude's `totalInputTokens` is current context-window occupancy
+    // (cache_read + cache_creation + input), which climbs monotonically while a
+    // session is parked at its prompt (cache settling, pending/pasted input,
+    // statusline recompute) with no generation at all. Summing it with output lets
+    // context-fill alone trip `currentTokens > previousTokens` and force-flip a
+    // correct, hook-derived idle to thinking on a parked Claude session - and the
+    // heartbeat is the ONLY force-thinking path for pure-hooks agents, so nothing
+    // corrected it (empirically observed on #295 / #297: false flips fired in
+    // windows with zero assistant output). `totalOutputTokens` is the current
+    // turn's output: frozen while parked, growing only on real generation. The
+    // 1-second grace prevents races between a status update and an idle event
+    // landing in the same tick.
     if (previousUsage && state.activity === 'idle') {
-      const previousTokens = previousUsage.contextWindow.totalInputTokens
-                           + previousUsage.contextWindow.totalOutputTokens;
-      const currentTokens = usage.contextWindow.totalInputTokens
-                          + usage.contextWindow.totalOutputTokens;
+      const previousOutputTokens = previousUsage.contextWindow.totalOutputTokens;
+      const currentOutputTokens = usage.contextWindow.totalOutputTokens;
       const idleStart = state.idleTimestamp;
-      if (currentTokens > previousTokens && idleStart && (Date.now() - idleStart) > 1000) {
+      if (currentOutputTokens > previousOutputTokens && idleStart && (Date.now() - idleStart) > 1000) {
         this.activityEngine.forceThinking(sessionId);
       }
     }

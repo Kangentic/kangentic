@@ -113,12 +113,12 @@ describe('SessionTelemetry activity decisions', () => {
   });
 
   describe('processStatusUpdate heartbeat recovery', () => {
-    it('forces thinking when tokens grow while idle for >1s', () => {
+    it('forces thinking when output tokens grow while idle for >1s', () => {
       telemetry.initSession('s1'); // idle, idleTimestamp = now
       telemetry.processStatusUpdate('s1', usage(100, 50)); // seeds previousUsage
       expect(telemetry.getActivityCache()['s1']).toBe('idle');
       vi.advanceTimersByTime(1_500); // idle for >1s
-      telemetry.processStatusUpdate('s1', usage(200, 100)); // tokens grew
+      telemetry.processStatusUpdate('s1', usage(200, 100)); // output tokens grew
       expect(telemetry.getActivityCache()['s1']).toBe('thinking');
     });
 
@@ -135,6 +135,45 @@ describe('SessionTelemetry activity decisions', () => {
       telemetry.processStatusUpdate('s1', usage(100, 50));
       vi.advanceTimersByTime(1_500);
       telemetry.processStatusUpdate('s1', usage(100, 50)); // same totals
+      expect(telemetry.getActivityCache()['s1']).toBe('idle');
+    });
+
+    // Claude's totalInputTokens is current context-window occupancy (cache +
+    // input), which climbs while a session is parked at its prompt (cache
+    // settling, pending/pasted input, statusline) with no generation. Heartbeat
+    // recovery must compare OUTPUT tokens only, or that context-fill alone
+    // false-flips a correct hook-derived idle to thinking. Values mirror the real
+    // #295 window-2 capture: output frozen at 4111 while context drifted up.
+    it('does NOT recover when only input (context occupancy) grows', () => {
+      telemetry.initSession('s1');
+      telemetry.processStatusUpdate('s1', usage(443667, 4111));
+      vi.advanceTimersByTime(1_500);
+      telemetry.processStatusUpdate('s1', usage(447789, 4111)); // context grew, output frozen
+      expect(telemetry.getActivityCache()['s1']).toBe('idle');
+    });
+
+    it('recovers when output grows even if input is flat (real generation)', () => {
+      telemetry.initSession('s1');
+      telemetry.processStatusUpdate('s1', usage(447789, 200));
+      vi.advanceTimersByTime(1_500);
+      telemetry.processStatusUpdate('s1', usage(447789, 959)); // output grew: the agent resumed
+      expect(telemetry.getActivityCache()['s1']).toBe('thinking');
+    });
+
+    // Contract: heartbeat recovery compares OUTPUT tokens only. A drop in
+    // output tokens must never flip idle to thinking, regardless of how
+    // much input (context-window occupancy) grew. This directly pins the
+    // diff that replaced summed-token comparison with output-only comparison.
+    //
+    // Red-green: the old summed-token logic would compute
+    //   (500 + 90) = 590 > (100 + 100) = 200 -> force thinking (wrong).
+    // The current output-only logic computes
+    //   90 > 100 -> false -> stays idle (correct).
+    it('does NOT recover when output tokens drop even if input grows substantially', () => {
+      telemetry.initSession('s1');
+      telemetry.processStatusUpdate('s1', usage(100, 100)); // seed: input=100, output=100
+      vi.advanceTimersByTime(1_500); // idle for >1s, past the grace window
+      telemetry.processStatusUpdate('s1', usage(500, 90)); // input rose, output DROPPED
       expect(telemetry.getActivityCache()['s1']).toBe('idle');
     });
 

@@ -115,8 +115,10 @@ function mergeStreams(bundle: TraceBundle): TimedItem[] {
 /**
  * Mirrors `SessionTelemetry.processStatusUpdate`: status updates that
  * see the engine in 'thinking' reset lastSignalAt; status updates that
- * see the engine 'idle' for >1s with token growth force-recover to
- * thinking. If the production rule changes, update this function.
+ * see the engine 'idle' for >1s with OUTPUT-token growth force-recover to
+ * thinking. Output only, never input: Claude's input total is context-window
+ * occupancy that climbs while parked with no generation (see the production
+ * comment). If the production rule changes, update this function.
  */
 function applyStatusDelta(
   engine: ActivityEngine,
@@ -131,10 +133,8 @@ function applyStatusDelta(
     return;
   }
   if (state.activity === 'idle' && previous) {
-    const previousTokens = previous.inputTokens + previous.outputTokens;
-    const currentTokens = current.inputTokens + current.outputTokens;
     const idleStart = state.idleTimestamp;
-    if (currentTokens > previousTokens && idleStart && Date.now() - idleStart > 1000) {
+    if (current.outputTokens > previous.outputTokens && idleStart && Date.now() - idleStart > 1000) {
       engine.forceThinking(sessionId);
     }
   }
@@ -268,6 +268,28 @@ describe('ActivityEngine trace-bundle replay', () => {
     };
     const merged = mergeStreams(bundle);
     expect(merged.map((item) => item.kind)).toEqual(['event', 'status', 'pty']);
+  });
+
+  // Pins the applyStatusDelta OUTPUT-only mirror. The session starts idle;
+  // two status deltas arrive 2s apart with a growing input total but frozen
+  // output total. The grace (>1000ms) is satisfied, so the only guard
+  // keeping the engine idle is the output-only comparison. If applyStatusDelta
+  // were reverted to the summed-token check, the second delta would compute
+  // 5000+50=5050 > 100+50=150, calling engine.forceThinking and producing
+  // finalActivity 'thinking' - causing this test to fail (red confirmed).
+  it('heartbeat recovery: does NOT force-think when input grows but output is frozen across >1s idle', () => {
+    const baseTs = 1_700_000_000_000;
+    const bundle: TraceBundle = {
+      events: [],
+      statusDeltas: [
+        { ts: baseTs, inputTokens: 100, outputTokens: 50 },
+        { ts: baseTs + 2000, inputTokens: 5000, outputTokens: 50 }, // input grew, output frozen
+      ],
+      ptyChunks: [],
+      meta: { sessionId: SESSION_ID },
+    };
+    const result = replayBundle(bundle);
+    expect(result.finalActivity).toBe('idle');
   });
 
   // Real capture of bug B (task #210): a long quiet foreground
