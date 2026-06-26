@@ -18,6 +18,8 @@ files:
   - "node_modules/node-pty/**"
   - "node_modules/bindings/**"
   - "node_modules/file-uri-to-path/**"
+  - "node_modules/sherpa-onnx-node/**"
+  - "node_modules/sherpa-onnx-*/**"
   - "!node_modules/better-sqlite3/{src,deps}/**"
   - "!node_modules/better-sqlite3/binding.gyp"
   - "!node_modules/node-pty/{src,scripts,deps,third_party}/**"
@@ -26,6 +28,7 @@ files:
 asar: true
 asarUnpack:
   - "node_modules/node-pty/prebuilds/**"
+  - "node_modules/sherpa-onnx-*/**"
   - ".vite/build/event-bridge.js"
   - ".vite/build/status-bridge.js"
   - ".vite/build/plugins/**"
@@ -65,6 +68,9 @@ mac:
   minimumSystemVersion: "10.15"
   entitlements: build/entitlements.plist
   entitlementsInherit: build/entitlements.plist
+  extendInfo:
+    # Shown in the macOS microphone-permission prompt for voice dictation.
+    NSMicrophoneUsageDescription: "Kangentic uses your microphone for voice-to-text dictation into terminals. Audio is transcribed locally and never leaves your machine unless you configure a remote backend."
 
 linux:
   target:

@@ -27,6 +27,8 @@ import { useCommandBar } from '../../hooks/useCommandBar';
 import { useSearchPalette } from '../../hooks/useSearchPalette';
 import { useViewToggle } from '../../hooks/useViewToggle';
 import { useFocusedSessionsSync } from '../../hooks/useFocusedSessionsSync';
+import { useDictation } from '../../hooks/useDictation';
+import { DictationSurface } from '../dictation/DictationSurface';
 import { useKeybinding } from '../../hooks/useKeybinding';
 
 export function AppLayout() {
@@ -77,6 +79,7 @@ export function AppLayout() {
   const searchPalette = useSearchPalette({ onPlainFindKey: handlePlainFindKey });
   useViewToggle();
   useFocusedSessionsSync();
+  useDictation();
 
   // App-level shortcuts wired here, where the layout owns the relevant state and
   // resize controllers. Combos come from the central keybinding registry.
@@ -214,6 +217,7 @@ export function AppLayout() {
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}
       <ProjectPathMissingDialog />
       <ToastContainer />
+      <DictationSurface />
       <WindowLayer />
     </div>
   );

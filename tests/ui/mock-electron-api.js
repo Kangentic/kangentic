@@ -1451,6 +1451,121 @@
       },
     },
 
+    dictation: {
+      // Call logs for test assertions. Reset between tests by truncating length.
+      __startCalls: [],
+      start: async function (options) {
+        window.electronAPI.dictation.__startCalls.push(options);
+        return { dictationSessionId: 'mock-dictation-1', engineId: 'stub', modelId: null, needsDownload: false };
+      },
+      __stopCalls: [],
+      stop: async function (dictationSessionId, expectedFrames) {
+        window.electronAPI.dictation.__stopCalls.push({ dictationSessionId, expectedFrames });
+        return 'This is a test of dictation.';
+      },
+      __cancelCalls: [],
+      cancel: async function (dictationSessionId) {
+        window.electronAPI.dictation.__cancelCalls.push(dictationSessionId);
+      },
+      // Each entry is { sessionId, text }.
+      __commits: [],
+      commit: async function (sessionId, text) {
+        window.electronAPI.dictation.__commits.push({ sessionId: sessionId, text: text });
+        return true;
+      },
+      // Each entry is { sessionId, text, eraseCount }.
+      __submits: [],
+      submit: async function (sessionId, text, eraseCount) {
+        window.electronAPI.dictation.__submits.push({ sessionId: sessionId, text: text, eraseCount: eraseCount });
+        return true;
+      },
+      getInfo: async function () {
+        return {
+          hardware: { cpuModel: 'Mock CPU', cpuCores: 8, totalRamGb: 16, hasAvx2: true, gpu: 'none', gpuDescription: 'Integrated', platform: 'linux', arch: 'x64' },
+          tier: 'accurate-base',
+          selectedEngineId: 'stub',
+          engines: [{ id: 'stub', displayName: 'Stub (test)', streaming: true, punctuation: true, license: 'none', requiresModelDownload: false }],
+          installedModels: [],
+          selectedModelId: null,
+          selectedModelSizeMb: null,
+          availableModels: [],
+          liveModels: [],
+          finalModels: [],
+          selectedLiveModelId: null,
+          selectedFinalModelId: null,
+        };
+      },
+      // Push-event subscribers. Tests drive these via window.__emitDictationPartial
+      // (dictationSessionId, text) and window.__emitDictationFinal(...).
+      onPartial: function (callback) {
+        if (!window.__mockDictationPartialListeners) window.__mockDictationPartialListeners = [];
+        window.__mockDictationPartialListeners.push(callback);
+        if (!window.__emitDictationPartial) {
+          window.__emitDictationPartial = function (dictationSessionId, text) {
+            var listeners = (window.__mockDictationPartialListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](dictationSessionId, text); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockDictationPartialListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+      onFinal: function (callback) {
+        if (!window.__mockDictationFinalListeners) window.__mockDictationFinalListeners = [];
+        window.__mockDictationFinalListeners.push(callback);
+        if (!window.__emitDictationFinal) {
+          window.__emitDictationFinal = function (dictationSessionId, text) {
+            var listeners = (window.__mockDictationFinalListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](dictationSessionId, text); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockDictationFinalListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+      // Count of streamed PCM frames (tests assert audio is flowing).
+      __audioChunkCount: 0,
+      sendAudioChunk: function () {
+        window.electronAPI.dictation.__audioChunkCount += 1;
+      },
+      __requestMicCalls: 0,
+      requestMic: async function () {
+        window.electronAPI.dictation.__requestMicCalls += 1;
+        return 'granted';
+      },
+      onModelProgress: function (callback) {
+        if (!window.__mockDictationModelProgressListeners) window.__mockDictationModelProgressListeners = [];
+        window.__mockDictationModelProgressListeners.push(callback);
+        if (!window.__emitDictationModelProgress) {
+          window.__emitDictationModelProgress = function (progress) {
+            var listeners = (window.__mockDictationModelProgressListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](progress); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockDictationModelProgressListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+      __downloadModelCalls: [],
+      downloadModel: async function (config) {
+        window.electronAPI.dictation.__downloadModelCalls.push(config);
+      },
+      __liveWriteCalls: [],
+      liveWrite: function (sessionId, payload) {
+        window.electronAPI.dictation.__liveWriteCalls.push({ sessionId: sessionId, payload: payload });
+      },
+      __prewarmCalls: [],
+      prewarm: function (config) {
+        window.electronAPI.dictation.__prewarmCalls.push(config);
+      },
+    },
+
     config: {
       get: async function () {
         // Return effective config: global merged with current project's overrides

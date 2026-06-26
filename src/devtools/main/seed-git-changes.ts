@@ -162,7 +162,7 @@ export async function seedGitChanges(targetPaths: string[]): Promise<DevSeedGitC
 let devIpcRegistered = false;
 
 /**
- * Register the dev-only IPC behind the TestHarness "Seed Changes" button. The
+ * Register the dev-only IPC behind the TestHarness "Seed File Changes" button. The
  * renderer passes the active task worktrees + the project path; the handler
  * refuses anything outside the ephemeral preview root. Idempotent.
  */

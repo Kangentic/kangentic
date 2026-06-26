@@ -16,6 +16,7 @@ import { resolveAutoFocusTarget } from './utils/auto-focus';
 import { requiresUserInteraction } from '../shared/activity-state';
 import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
+import { setRebindCaptureActive } from './utils/rebind-state';
 import { useWindowStore } from './window-manager/store/window-store';
 import {
   autoNameTimers,
@@ -631,6 +632,14 @@ if (import.meta.hot) {
     // so the body cursor / userSelect overrides set on mousedown would stick.
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
+
+    // Keybindings Pattern D: a Hotkeys rebind capture interrupted by an HMR (e.g.
+    // mid-rebind when an unrelated module Fast-Refreshes) leaves the module-scope
+    // rebind-suppress flag stuck true, which silently kills EVERY app shortcut
+    // (push-to-talk included) until a full reload. Reset it on every HMR - you are
+    // never legitimately mid-rebind across one, and the capture widget re-arms it
+    // on remount if it still is.
+    setRebindCaptureActive(false);
 
     // Snapshot active tab before sync - syncSessions may transiently clear
     // activeSessionId if the sessions array is briefly empty during re-fetch.

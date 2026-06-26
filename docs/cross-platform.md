@@ -52,9 +52,10 @@ Adaptations applied during the spawn flow (`src/main/pty/lifecycle/session-spawn
 |--------|---------------|-----------|
 | better-sqlite3 | Rebuilt against Electron headers via `scripts/rebuild-native.js` | Included via `files` in `electron-builder.yml`, C++ source excluded |
 | node-pty | Prebuilt NAPI binaries, no rebuild needed | Included via `files`, prebuilds unpacked from asar via `asarUnpack` |
+| sherpa-onnx-node | Prebuilt platform-specific binaries (no rebuild needed) | Included via `files` (`sherpa-onnx-node/**` plus the `sherpa-onnx-*/**` platform packages), unpacked from asar via `asarUnpack: node_modules/sherpa-onnx-*/**` (voice dictation engine) |
 | simple-git | Pure JavaScript, bundled by esbuild | Not in node_modules (bundled into main process) |
 
-The `files` array in `electron-builder.yml` explicitly whitelists `.vite/build/**`, `better-sqlite3`, `node-pty`, `bindings`, and `file-uri-to-path`. Everything else is excluded from the packaged app.
+The `files` array in `electron-builder.yml` explicitly whitelists `.vite/build/**`, `better-sqlite3`, `node-pty`, `sherpa-onnx-node`, the `sherpa-onnx-*` platform packages, `bindings`, and `file-uri-to-path`. Everything else is excluded from the packaged app.
 
 ### Bridge Script Unpacking
 

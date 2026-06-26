@@ -4,7 +4,7 @@
  * `src/shared/keybindings.ts`; this module is the part that touches
  * `KeyboardEvent` / `PointerEvent` and the host platform.
  */
-import { isMouseCombo, mouseComboToButton, normalizeCombo } from '../../shared/keybindings';
+import { isMouseCombo, normalizeCombo } from '../../shared/keybindings';
 
 /** True on macOS, where `Mod` resolves to Cmd (metaKey) instead of Ctrl.
  *  Guard `window` so this module is safe to import in the node/unit test
@@ -13,6 +13,42 @@ export const IS_MAC = typeof window !== 'undefined' && window.electronAPI?.platf
 
 /** Modifier key names, used to ignore lone-modifier keydowns during capture. */
 export const MODIFIER_KEY_NAMES = new Set(['Control', 'Shift', 'Alt', 'Meta']);
+
+/**
+ * The bindable mouse buttons, mapping the canonical combo token to the DOM
+ * `MouseEvent.button` code (used on pointerup, identifies the single released
+ * button) and the `MouseEvent.buttons` bitmask flag (used on pointerdown,
+ * identifies which buttons are currently held). Left (button 0 / flag 1) and
+ * right (button 2 / flag 2) are intentionally absent: they are not bindable.
+ */
+const BINDABLE_MOUSE_BUTTONS: ReadonlyArray<{ token: string; button: number; flag: number }> = [
+  { token: 'Mouse:Middle', button: 1, flag: 4 },
+  { token: 'Mouse:Back', button: 3, flag: 8 },
+  { token: 'Mouse:Forward', button: 4, flag: 16 },
+];
+
+/** The bindable mouse buttons currently held, as canonical tokens, from a
+ *  pointer event's `buttons` bitmask. */
+export function heldMouseTokens(buttons: number): string[] {
+  return BINDABLE_MOUSE_BUTTONS.filter((entry) => (buttons & entry.flag) !== 0).map((entry) => entry.token);
+}
+
+/** The canonical token for a single `MouseEvent.button` code, or null if it is
+ *  not a bindable button. */
+function mouseTokenForButton(button: number): string | null {
+  return BINDABLE_MOUSE_BUTTONS.find((entry) => entry.button === button)?.token ?? null;
+}
+
+/**
+ * Whether a pointerup event releases a (possibly chord) mouse combo: true when
+ * the released button is one of the combo's buttons. Releasing any button of a
+ * chord ends the hold, which is the desired push-to-talk semantics.
+ */
+export function matchesMouseRelease(event: PointerEvent, combo: string): boolean {
+  if (!isMouseCombo(combo) || !('button' in event)) return false;
+  const releasedToken = mouseTokenForButton(event.button);
+  return releasedToken !== null && combo.split('+').includes(releasedToken);
+}
 
 /** Compare the event's main key against a canonical main-key token. */
 function keyMatches(event: KeyboardEvent, mainKey: string): boolean {
@@ -40,8 +76,13 @@ export function matchesCombo(event: KeyboardEvent | PointerEvent, combo: string)
   // correct in the node unit-test environment, where the DOM event constructors
   // (PointerEvent / KeyboardEvent) may be absent.
   if (isMouseCombo(combo)) {
-    const wantButton = mouseComboToButton(combo);
-    return wantButton !== null && 'button' in event && event.button === wantButton;
+    // Press match: the held bindable mouse buttons exactly equal the combo's
+    // button set, so a chord fires only when ALL its buttons are down. Read on a
+    // pointerdown, where `buttons` already includes the just-pressed button.
+    if (!('buttons' in event)) return false;
+    const held = heldMouseTokens(event.buttons);
+    const want = combo.split('+');
+    return held.length === want.length && want.every((token) => held.includes(token));
   }
   // A keyboard combo never matches a pointer event.
   if (!('key' in event)) return false;
@@ -113,7 +154,8 @@ const MOUSE_COMBO_LABELS: Record<string, string> = {
  * renders as a single readable segment.
  */
 export function formatComboSegments(combo: string): string[] {
-  if (isMouseCombo(combo)) return [MOUSE_COMBO_LABELS[combo] ?? combo];
+  // A mouse combo renders one segment per button (a chord becomes two chips).
+  if (isMouseCombo(combo)) return combo.split('+').map((token) => MOUSE_COMBO_LABELS[token] ?? token);
   const parts = combo.split('+');
   const mainKey = parts[parts.length - 1];
   const modifiers = parts.slice(0, -1);

@@ -28,6 +28,8 @@ import { registerTaskBranchHandlers } from './handlers/task-branch';
 import { registerTaskRuntimeOverrideHandlers } from './handlers/task-runtime-override';
 import { registerSessionHandlers } from './handlers/sessions';
 import { registerTransientSessionHandlers } from './handlers/transient-sessions';
+import { registerTranscriptionHandlers } from './handlers/transcription';
+import { TranscriptionService } from '../transcription/transcription-service';
 import { registerBoardHandlers } from './handlers/board';
 import { registerSystemHandlers } from './handlers/system';
 import { registerBacklogHandlers } from './handlers/backlog';
@@ -73,6 +75,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   const pasteEngine = createPasteEngine(sessionManager);
   const terminalSubmit = new TerminalSubmit(sessionManager, pasteEngine);
   const terminalSubmitScheduler = new TerminalSubmitScheduler(sessionManager, terminalSubmit);
+  const transcriptionService = new TranscriptionService();
   const boardConfigManager = new BoardConfigManager({
     ephemeral: process.argv.includes('--ephemeral'),
   });
@@ -112,6 +115,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     },
     terminalSubmitScheduler,
     terminalSubmit,
+    transcriptionService,
     currentProjectId: null,
     currentProjectPath: null,
     recoveredProjects: new Set<string>(),
@@ -126,6 +130,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerTaskRuntimeOverrideHandlers(context);
   registerSessionHandlers(context);
   registerTransientSessionHandlers(context);
+  registerTranscriptionHandlers(context);
   registerBoardHandlers(context);
   registerBacklogHandlers(context);
   registerGitDiffHandlers(context);

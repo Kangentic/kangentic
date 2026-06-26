@@ -116,6 +116,14 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── Hotkeys ──
   { id: 'hotkeys', tabId: 'hotkeys', label: 'Hotkeys', description: 'Keyboard shortcuts and key bindings', scope: 'global', keywords: ['keyboard', 'shortcut', 'hotkey', 'keybind', 'rebind', 'key', 'ctrl', 'cmd', 'shift', 'combo'] },
 
+  // ── Dictation ──
+  { id: 'dictation.enabled', tabId: 'dictation', label: 'Voice dictation', description: 'Hold a key to dictate into the focused terminal. On-device by default; choose a Cloud refinement model to use your own endpoint.', scope: 'global', section: 'Transcription', keywords: ['enable', 'off', 'disable', 'on', 'toggle', 'engine', 'streaming', 'live', 'whisper', 'parakeet', 'sherpa', 'remote', 'cloud', 'on-device', 'local', 'model', 'voice', 'dictation', 'speech', 'microphone', 'mic', 'transcribe', 'stt', 'push to talk'] },
+  { id: 'dictation.language', tabId: 'dictation', label: 'Language', description: 'The language you speak. The models below adapt to your choice.', scope: 'global', section: 'Transcription', keywords: ['language', 'locale', 'multilingual', 'spanish', 'portuguese', 'french', 'italian', 'german', 'english', 'voice', 'dictation'] },
+  { id: 'dictation.punctuation', tabId: 'dictation', label: 'Punctuation and Capitalization', description: 'Add punctuation and capitalization to your dictated text.', scope: 'global', section: 'Transcription', keywords: ['punctuation', 'capitalization', 'casing', 'voice', 'dictation'] },
+  { id: 'dictation.autoSubmit', tabId: 'dictation', label: 'Auto-submit', description: 'Press Enter automatically after inserting, or leave the text in the input for you to review and send.', scope: 'global', section: 'Input', keywords: ['send', 'submit', 'enter', 'auto', 'release', 'commit', 'voice', 'dictation'] },
+  { id: 'dictation.releaseBufferMs', tabId: 'dictation', label: 'Release buffer', description: 'Keep capturing briefly after release so the last word is not clipped.', scope: 'global', section: 'Input', keywords: ['release', 'buffer', 'tail', 'trailing', 'capture', 'delay', 'grace', 'clip', 'cutoff', 'word', 'voice', 'dictation'] },
+  { id: 'dictation.remote', tabId: 'dictation', label: 'Cloud Backend', description: 'OpenAI-compatible /v1/audio/transcriptions endpoint for the final text, used when the Refinement model is set to Cloud. The live preview still streams on-device; only the final clip is sent to this server.', scope: 'global', section: 'Cloud backend', keywords: ['remote', 'cloud', 'openai', 'endpoint', 'api', 'url', 'voice', 'dictation'] },
+
   // ── Privacy (synthetic) ──
   { id: 'privacy.info', tabId: 'privacy', label: 'Privacy', description: 'Anonymous analytics and data collection policy', scope: 'global', keywords: ['telemetry', 'analytics', 'aptabase', 'gdpr', 'opt out'] },
 
@@ -143,6 +151,7 @@ export const TAB_LABELS: Record<string, string> = {
   mcpServer: 'MCP Server',
   notifications: 'Notifications',
   privacy: 'Privacy',
+  dictation: 'Dictation',
 };
 
 /** Helper to get props for a SettingRow from the registry. */

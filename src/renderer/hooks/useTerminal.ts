@@ -4,6 +4,7 @@ import { FitAddon } from '../addons/fit-addon';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { cleanSelection, enableTerminalClipboard } from '../utils/terminal-clipboard';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
+import { noteTerminalFocus } from '../utils/dictation-target';
 import '@xterm/xterm/css/xterm.css';
 
 /** Delay before forwarding a resize to the PTY. Coalesces rapid resizes
@@ -123,6 +124,15 @@ export function useTerminal(options: UseTerminalOptions) {
     terminal.loadAddon(fitAddon);
 
     terminal.open(terminalRef.current);
+
+    // Record this terminal as the last-focused one for dictation injection
+    // target resolution. The textarea is xterm's focusable element, so this
+    // fires on both a user click and a programmatic focus(); it is torn down
+    // automatically when the terminal is disposed on unmount.
+    if (options.sessionId) {
+      const focusedSessionId = options.sessionId;
+      terminal.textarea?.addEventListener('focus', () => noteTerminalFocus(focusedSessionId));
+    }
 
     // Batch outgoing input into one IPC write per microtask. A paste or
     // programmatic terminal.paste() often dispatches onData multiple times

@@ -39,6 +39,7 @@ export type KeyScope =
 /** Display grouping in the settings panel. Cosmetic, independent of scope. */
 export type KeyGroup =
   | 'General'
+  | 'Dictation'
   | 'Task Detail'
   | 'Git Changes'
   | 'Windows'
@@ -49,6 +50,7 @@ export type KeyGroup =
 /** Render order of groups in the Hotkeys settings tab. */
 export const KEY_GROUP_ORDER: readonly KeyGroup[] = [
   'General',
+  'Dictation',
   'Task Detail',
   'Git Changes',
   'Windows',
@@ -131,6 +133,15 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     group: 'General',
     scope: 'global',
     defaultCombo: 'Mod+Shift+P',
+    rebindable: true,
+  },
+  {
+    id: 'dictation.pushToTalk',
+    label: 'Push-to-Talk (Hold)',
+    description: 'Hold to dictate; release to populate the focused terminal.',
+    group: 'Dictation',
+    scope: 'global',
+    defaultCombo: 'Mouse:Back',
     rebindable: true,
   },
   {
@@ -479,10 +490,18 @@ const MOUSE_BUTTON_BY_COMBO: Record<string, number> = {
   'Mouse:Forward': 4,
 };
 
-/** Whether a combo is a mouse-button binding (`Mouse:Middle` etc.) rather than a
- *  keyboard chord. */
+/** Whether a combo is a mouse-button binding (`Mouse:Middle`, or a multi-button
+ *  chord like `Mouse:Back+Mouse:Forward`) rather than a keyboard chord. A combo
+ *  is a mouse combo only when EVERY `+`-joined part is a mouse token (mixed
+ *  modifier+mouse combos are not supported). */
 export function isMouseCombo(combo: string): boolean {
-  return combo.startsWith('Mouse:');
+  return combo.length > 0 && combo.split('+').every((part) => part.startsWith('Mouse:'));
+}
+
+/** The mouse button tokens of a (possibly chord) mouse combo, in canonical
+ *  order. Returns [] for a non-mouse combo. */
+export function mouseComboTokens(combo: string): string[] {
+  return isMouseCombo(combo) ? combo.split('+') : [];
 }
 
 /** The DOM `MouseEvent.button` code a mouse combo targets, or `null` if the combo
@@ -498,8 +517,13 @@ export function mouseComboToButton(combo: string): number | null {
  * conflict detection relies on.
  */
 export function normalizeCombo(combo: string): string {
-  // Mouse-button combos have no modifier grammar to canonicalize; pass through.
-  if (isMouseCombo(combo)) return combo;
+  // Mouse combos: dedupe and sort the chord buttons into canonical order so
+  // `Mouse:Forward+Mouse:Back` and `Mouse:Back+Mouse:Forward` compare equal.
+  if (isMouseCombo(combo)) {
+    const tokens = Array.from(new Set(combo.split('+')));
+    tokens.sort((a, b) => (MOUSE_BUTTON_BY_COMBO[a] ?? 99) - (MOUSE_BUTTON_BY_COMBO[b] ?? 99));
+    return tokens.join('+');
+  }
   const parts = combo.split('+');
   const mainKey = parts[parts.length - 1];
   const modifiers = parts.slice(0, -1);

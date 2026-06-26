@@ -22,5 +22,10 @@
   -->
   <key>com.apple.security.network.server</key>
   <true/>
+  <!-- Microphone access for voice-to-text dictation (getUserMedia in the
+       renderer). Paired with NSMicrophoneUsageDescription in
+       electron-builder.yml mac.extendInfo. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
 </dict>
 </plist>

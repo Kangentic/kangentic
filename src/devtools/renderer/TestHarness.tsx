@@ -233,7 +233,7 @@ export function TestHarness() {
         title="Seed the active project repo with working + staged + committed changes to test the Changes tab"
       >
         <FileDiff size={16} />
-        {seeding ? 'Seeding...' : 'Seed Changes'}
+        {seeding ? 'Seeding...' : 'Seed File Changes'}
       </button>
     </div>
   );

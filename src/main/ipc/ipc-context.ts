@@ -10,6 +10,7 @@ import type { ShellResolver } from '../pty/spawn/shell-resolver';
 import type { TerminalSubmitScheduler } from '../transition-engine/terminal-submit-scheduler';
 import type { TerminalSubmit } from '../pty/terminal-submit';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
+import type { TranscriptionService } from '../transcription/transcription-service';
 
 export interface IpcContext {
   mainWindow: BrowserWindow;
@@ -46,6 +47,14 @@ export interface IpcContext {
    * paste-engine directly.
    */
   terminalSubmit: TerminalSubmit;
+  /**
+   * The single voice-to-text transcription funnel. Owns the active engine and
+   * routes all audio (local renderer PCM today, a future mobile client later)
+   * through one ingest boundary. Emits `'partial'` / `'final'` events the
+   * dictation handler forwards to the renderer popup. See
+   * `src/main/transcription/`.
+   */
+  transcriptionService: TranscriptionService;
   currentProjectId: string | null;
   currentProjectPath: string | null;
   /**

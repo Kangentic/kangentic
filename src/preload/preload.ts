@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, TaskBulkDeleteProgress, ProjectMoveProgress } from '../shared/types';
+import type { ElectronAPI, NotificationInput, Project, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress } from '../shared/types';
 import { installConsoleCapture } from './diagnostics/console-capture';
 import { installDevtoolsPreloadHooks } from '../devtools/preload/install-globals';
 
@@ -214,6 +214,35 @@ const api: ElectronAPI = {
     setFocused: (sessionIds: string[]) => ipcRenderer.invoke(IPC.SESSION_SET_FOCUSED, sessionIds),
     notifyUserInterrupt: (sessionId: string) => ipcRenderer.invoke(IPC.SESSION_NOTIFY_USER_INTERRUPT, sessionId),
     injectSettings: (input) => ipcRenderer.invoke(IPC.SESSION_INJECT_SETTINGS, input),
+  },
+
+  dictation: {
+    start: (options) => ipcRenderer.invoke(IPC.TRANSCRIBE_START, options),
+    stop: (dictationSessionId, expectedFrames) => ipcRenderer.invoke(IPC.TRANSCRIBE_STOP, dictationSessionId, expectedFrames),
+    cancel: (dictationSessionId) => ipcRenderer.invoke(IPC.TRANSCRIBE_CANCEL, dictationSessionId),
+    commit: (sessionId, text) => ipcRenderer.invoke(IPC.TRANSCRIBE_COMMIT, sessionId, text),
+    submit: (sessionId, text, eraseCount) => ipcRenderer.invoke(IPC.TRANSCRIBE_SUBMIT, sessionId, text, eraseCount),
+    getInfo: (config) => ipcRenderer.invoke(IPC.TRANSCRIBE_GET_INFO, config),
+    onPartial: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, dictationSessionId: string, text: string) => callback(dictationSessionId, text);
+      ipcRenderer.on(IPC.TRANSCRIBE_PARTIAL, handler);
+      return () => ipcRenderer.removeListener(IPC.TRANSCRIBE_PARTIAL, handler);
+    },
+    onFinal: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, dictationSessionId: string, text: string) => callback(dictationSessionId, text);
+      ipcRenderer.on(IPC.TRANSCRIBE_FINAL, handler);
+      return () => ipcRenderer.removeListener(IPC.TRANSCRIBE_FINAL, handler);
+    },
+    sendAudioChunk: (chunk) => ipcRenderer.send(IPC.TRANSCRIBE_AUDIO_CHUNK, chunk),
+    requestMic: () => ipcRenderer.invoke(IPC.TRANSCRIBE_REQUEST_MIC),
+    onModelProgress: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: DictationModelProgress) => callback(progress);
+      ipcRenderer.on(IPC.TRANSCRIBE_MODEL_PROGRESS, handler);
+      return () => ipcRenderer.removeListener(IPC.TRANSCRIBE_MODEL_PROGRESS, handler);
+    },
+    downloadModel: (config) => ipcRenderer.invoke(IPC.TRANSCRIBE_DOWNLOAD_MODEL, config),
+    liveWrite: (sessionId, payload) => ipcRenderer.send(IPC.TRANSCRIBE_LIVE_WRITE, sessionId, payload),
+    prewarm: (config) => ipcRenderer.send(IPC.TRANSCRIBE_PREWARM, config),
   },
 
   config: {

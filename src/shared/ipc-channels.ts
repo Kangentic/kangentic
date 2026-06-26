@@ -253,6 +253,22 @@ export const IPC = {
   // See src/main/diagnostics/ for the consumers.
   LOG_APPEND: 'diagnostics:logAppend',
   CRASH_REPORT: 'diagnostics:crashReport',
+
+  // Dictation (voice-to-text). By-session-id, not task-scoped (no projectId).
+  TRANSCRIBE_START: 'transcribe:start',
+  TRANSCRIBE_STOP: 'transcribe:stop',
+  TRANSCRIBE_CANCEL: 'transcribe:cancel',
+  TRANSCRIBE_COMMIT: 'transcribe:commit',
+  TRANSCRIBE_SUBMIT: 'transcribe:submit',
+  TRANSCRIBE_GET_INFO: 'transcribe:getInfo',
+  TRANSCRIBE_PARTIAL: 'transcribe:partial',
+  TRANSCRIBE_FINAL: 'transcribe:final',
+  TRANSCRIBE_AUDIO_CHUNK: 'transcribe:audioChunk',
+  TRANSCRIBE_REQUEST_MIC: 'transcribe:requestMic',
+  TRANSCRIBE_MODEL_PROGRESS: 'transcribe:modelProgress',
+  TRANSCRIBE_DOWNLOAD_MODEL: 'transcribe:downloadModel',
+  TRANSCRIBE_LIVE_WRITE: 'transcribe:liveWrite',
+  TRANSCRIBE_PREWARM: 'transcribe:prewarm',
 } as const;
 
 /**

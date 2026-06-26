@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { Bell, Bot, Bug, FolderCog, GitBranch, Globe, Keyboard, LayoutGrid, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Terminal, Zap } from 'lucide-react';
+import { Bell, Bot, Bug, FolderCog, GitBranch, Globe, Keyboard, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Terminal, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { SettingsPanelProvider, SearchTabGroupHeader, NoSearchResults } from './shared';
 import type { SettingsTabDefinition, SettingScope, SettingsContentProps } from './shared';
@@ -13,6 +13,7 @@ import { GitTab } from './tabs/GitTab';
 import { BrowserTab } from './tabs/BrowserTab';
 import { LayoutTab } from './tabs/LayoutTab';
 import { BehaviorTab } from './tabs/BehaviorTab';
+import { DictationTab } from './tabs/DictationTab';
 import { McpServerTab } from './tabs/McpServerTab';
 import { BrowserAutomationTab } from './tabs/BrowserAutomationTab';
 import { NotificationsTab } from './tabs/NotificationsTab';
@@ -43,6 +44,7 @@ export const APP_TABS: SettingsTabDefinition[] = [
   // -- Shared settings (separator marks the boundary) --
   { id: 'layout', label: 'Layout', icon: LayoutGrid, separator: true, tooltip: 'Applies to all projects' },
   { id: 'behavior', label: 'Behavior', icon: SlidersHorizontal, tooltip: 'Applies to all projects' },
+  { id: 'dictation', label: 'Dictation', icon: Mic, tooltip: 'Applies to all projects' },
   { id: 'hotkeys', label: 'Hotkeys', icon: Keyboard, tooltip: 'Applies to all projects' },
   { id: 'mcpServer', label: 'MCP Server', icon: Plug, tooltip: 'Applies to all projects' },
   { id: 'browserAutomation', label: 'Agent Browser', icon: MousePointerClick, tooltip: 'Applies to all projects' },
@@ -104,6 +106,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       case 'developer': return <DeveloperTab globalConfig={globalConfig} />;
       case 'layout': return <LayoutTab globalConfig={globalConfig} />;
       case 'behavior': return <BehaviorTab globalConfig={globalConfig} />;
+      case 'dictation': return <DictationTab globalConfig={globalConfig} onOpenHotkeys={() => navigateToTab('hotkeys')} />;
       case 'hotkeys': return <HotkeysTab globalConfig={globalConfig} />;
       case 'mcpServer': return <McpServerTab globalConfig={globalConfig} />;
       case 'browserAutomation': return <BrowserAutomationTab globalConfig={globalConfig} />;

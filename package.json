@@ -120,6 +120,7 @@
     "p-queue": "^9.3.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "remove-markdown": "^0.6.4"
+    "remove-markdown": "^0.6.4",
+    "sherpa-onnx-node": "^1.13.3"
   }
 }

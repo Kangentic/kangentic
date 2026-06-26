@@ -340,6 +340,25 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `diagnostics:logAppend` | invoke | Renderer / preload forwards a `LogEntry` to the main process. The main-side log mirror persists `error` and `warn` levels unconditionally and `info` / `debug` / `log` when `developer.persistConsoleLogs` is on. NDJSON written to `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`. |
 | `diagnostics:crashReport` | invoke | Renderer forwards a `CrashRecord` (window.onerror, unhandledrejection) to the main process. Crash capture writes one JSON file per record to `<projectRoot>/.kangentic/logs/crashes/<ts>.json`. Always-on - no toggle. |
 
+### Dictation (14 channels)
+By-session-id, not task-scoped (no `projectId`), in the same category as `session:write`.
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `transcribe:start` | invoke | Begin a dictation session; resolves the engine + model from config + hardware. Returns `{ dictationSessionId, engineId, modelId, needsDownload }` |
+| `transcribe:stop` | invoke | Finalize and return the committed text. Passes the renderer's sent-frame count so the decode drains all in-flight audio first (the tail is never clipped) |
+| `transcribe:cancel` | invoke | Abort a session without committing |
+| `transcribe:commit` | invoke | Inject finalized text into the focused terminal WITHOUT submitting (no Enter) |
+| `transcribe:submit` | invoke | Auto-submit: erase the live preview, then paste + submit the refined text via the paste engine (settle -> separate Enter -> submission evidence with retry) |
+| `transcribe:getInfo` | invoke | Hardware profile + engines + installed models + per-slot model lists (settings panel) |
+| `transcribe:partial` | on | Push: live revising hypothesis to the renderer |
+| `transcribe:final` | on | Push: finalized text to the renderer |
+| `transcribe:audioChunk` | on | Stream one PCM frame into the funnel (fire-and-forget, no round-trip) |
+| `transcribe:requestMic` | invoke | Ensure microphone access (macOS TCC prompt on first use) |
+| `transcribe:modelProgress` | on | Push: first-use model download progress |
+| `transcribe:downloadModel` | invoke | Pre-download the selected model from settings |
+| `transcribe:liveWrite` | on | Live experience: write raw bytes (text + backspaces) straight into the focused terminal as the user speaks (fire-and-forget) |
+| `transcribe:prewarm` | on | Pre-load the selected engine so the next press is instant; `null` releases the warm engines (fire-and-forget) |
+
 ## Database
 
 Two SQLite databases using better-sqlite3 with WAL mode and foreign keys enabled.

@@ -18,17 +18,13 @@ function getDataDirFromArgs(): string | null {
   return null;
 }
 
-function getConfigDir(): string {
-  // Priority: env var > CLI flag > platform default
-  if (process.env.KANGENTIC_DATA_DIR) {
-    return process.env.KANGENTIC_DATA_DIR;
-  }
-
-  const dataDirFromArgs = getDataDirFromArgs();
-  if (dataDirFromArgs) {
-    return dataDirFromArgs;
-  }
-
+/**
+ * The persistent, machine-global config dir (platform default), ignoring any
+ * KANGENTIC_DATA_DIR / --data-dir override. The model cache resolves from this so
+ * its immutable, shared weights survive per-instance data dirs (the ephemeral
+ * preview, a relocated data dir) instead of re-downloading.
+ */
+function getPlatformConfigDir(): string {
   const platform = process.platform;
   let base: string;
   if (platform === 'win32') {
@@ -41,15 +37,38 @@ function getConfigDir(): string {
   return path.join(base, 'kangentic');
 }
 
+function getConfigDir(): string {
+  // Priority: env var > CLI flag > platform default
+  if (process.env.KANGENTIC_DATA_DIR) {
+    return process.env.KANGENTIC_DATA_DIR;
+  }
+
+  const dataDirFromArgs = getDataDirFromArgs();
+  if (dataDirFromArgs) {
+    return dataDirFromArgs;
+  }
+
+  return getPlatformConfigDir();
+}
+
 export const PATHS = {
   configDir: getConfigDir(),
+  // The model cache holds immutable, machine-global weights (hundreds of MB), so
+  // it resolves from the persistent platform config dir, NOT the per-instance
+  // data dir (KANGENTIC_DATA_DIR / --data-dir). The ephemeral preview and a
+  // relocated data dir share one cache instead of re-downloading ~730 MB.
+  modelCacheDir: path.join(getPlatformConfigDir(), 'models'),
   get globalDb() { return path.join(this.configDir, 'index.db'); },
   get configFile() { return path.join(this.configDir, 'config.json'); },
   get projectsDir() { return path.join(this.configDir, 'projects'); },
   projectDb(projectId: string) { return path.join(this.projectsDir, `${projectId}.db`); },
+  /** Downloaded voice-dictation models, one subdirectory per model id (global cache). */
+  get modelsDir() { return this.modelCacheDir; },
+  modelDir(modelId: string) { return path.join(this.modelCacheDir, modelId); },
 };
 
 export function ensureDirs(): void {
   fs.mkdirSync(PATHS.configDir, { recursive: true });
   fs.mkdirSync(PATHS.projectsDir, { recursive: true });
+  fs.mkdirSync(PATHS.modelsDir, { recursive: true });
 }

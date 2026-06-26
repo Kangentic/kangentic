@@ -250,8 +250,13 @@ describe('Mouse-button combos', () => {
     formatComboSegments = module.formatComboSegments;
   });
 
-  // A minimal PointerEvent-shaped object: matchesCombo only reads `.button`.
-  const pointer = (button: number): PointerEvent => ({ button }) as unknown as PointerEvent;
+  // A minimal PointerEvent-shaped object. matchesCombo's mouse-press path reads
+  // the `buttons` bitmask (DOM codes: left=1, middle=4, right=2, back=8,
+  // forward=16), so map the single-button code to its bitmask flag; the release
+  // path still reads `.button`, which is also set here.
+  const BUTTON_TO_BUTTONS_FLAG: Record<number, number> = { 0: 1, 1: 4, 2: 2, 3: 8, 4: 16 };
+  const pointer = (button: number): PointerEvent =>
+    ({ button, buttons: BUTTON_TO_BUTTONS_FLAG[button] ?? 0 }) as unknown as PointerEvent;
 
   describe('matchesCombo', () => {
     it('a middle-button pointerdown matches Mouse:Middle', () => {

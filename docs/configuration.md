@@ -20,7 +20,7 @@ The config directory (`<configDir>`) is platform-specific:
 
 Both panels use a VS Code-style layout: a sidebar with tab navigation on the left and the active settings pane on the right. A search bar at the top filters settings by keyword. Search uses multi-token matching (all tokens must appear in the setting name or description). Results are grouped by tab with match count badges on the sidebar; tabs with zero matches are dimmed. Press Ctrl+F (Cmd+F on macOS) to focus the search bar, Escape to clear the filter.
 
-- **Settings Panel** -- opened via the titlebar gear icon or the gear icon on each project row in the sidebar. A project switcher dropdown in the header allows switching between projects. Sidebar tabs: General, Theme, Terminal, Agent, Git, Browser, Shortcuts, Layout, Behavior, Hotkeys, MCP Server, Agent Browser, Notifications, Privacy, Developer. The first seven tabs (above the separator) are per-project settings. Five of them (Theme, Terminal, Agent, Git, Browser) save to `.kangentic/config.json`, Shortcuts saves to the board config files (`kangentic.json` and `kangentic.local.json`), and the General tab edits the project record in the global index database. The General tab exposes the `project.location` setting -- the folder on disk the project points at -- with a "Change..." button to re-point the project after its folder is moved or renamed; because tasks and history are keyed by project id, they are preserved across a relocation. The Agent tab exposes the `project.defaultAgent` setting (the "Default Agent" dropdown) -- the agent CLI used for new sessions in this project; like `project.location`, it is stored on the project record in the global index database rather than in `AppConfig`. The last eight (Layout, Behavior, Hotkeys, MCP Server, Agent Browser, Notifications, Privacy, Developer) are shared settings that apply across all projects, saved to the global config. When no project is open, only the 8 shared tabs appear. Changes save immediately. New projects inherit only the seeded settings subset (`theme`, `terminal.*`, `agent.permissionMode`, `git.*`) from the most recently configured project, falling back to defaults if none exist. Project-specific data such as `browser.defaultUrl` and `importSources` is stored per-project and is never cloned into a new project.
+- **Settings Panel** -- opened via the titlebar gear icon or the gear icon on each project row in the sidebar. A project switcher dropdown in the header allows switching between projects. Sidebar tabs: General, Theme, Terminal, Agent, Git, Browser, Shortcuts, Layout, Behavior, Dictation, Hotkeys, MCP Server, Agent Browser, Notifications, Privacy, Developer. The first seven tabs (above the separator) are per-project settings. Five of them (Theme, Terminal, Agent, Git, Browser) save to `.kangentic/config.json`, Shortcuts saves to the board config files (`kangentic.json` and `kangentic.local.json`), and the General tab edits the project record in the global index database. The General tab exposes the `project.location` setting -- the folder on disk the project points at -- with a "Change..." button to re-point the project after its folder is moved or renamed; because tasks and history are keyed by project id, they are preserved across a relocation. The Agent tab exposes the `project.defaultAgent` setting (the "Default Agent" dropdown) -- the agent CLI used for new sessions in this project; like `project.location`, it is stored on the project record in the global index database rather than in `AppConfig`. The last nine (Layout, Behavior, Dictation, Hotkeys, MCP Server, Agent Browser, Notifications, Privacy, Developer) are shared settings that apply across all projects, saved to the global config. When no project is open, only the 9 shared tabs appear. Changes save immediately. New projects inherit only the seeded settings subset (`theme`, `terminal.*`, `agent.permissionMode`, `git.*`) from the most recently configured project, falling back to defaults if none exist. Project-specific data such as `browser.defaultUrl` and `importSources` is stored per-project and is never cloned into a new project.
 
 ### App-Only Settings
 
@@ -40,6 +40,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `agent.idleTimeoutMinutes`
 - `developer.activityDebugOverlay`, `developer.persistConsoleLogs`, `developer.recordIpcTraffic`, `developer.previewInspectionServer`, `developer.previewEvalEnabled`
 - `browserAutomation.enabled`, `browserAutomation.allowInteraction`, `browserAutomation.allowNavigation`, `browserAutomation.allowEval`, `browserAutomation.restrictNavigationToLocalhost`
+- `dictation.*` (all voice dictation settings)
 - `hotkeyOverrides`
 
 ### Per-Project Overridable Settings
@@ -232,6 +233,29 @@ Global-only policy (no per-project override) for whether and how an agent may dr
 | `browserAutomation.allowNavigation` | boolean | `true` | Allow navigating the pane to other URLs. When false the agent is confined to the loaded page. |
 | `browserAutomation.allowEval` | boolean | `false` | Allow `kangentic_browser_eval` (arbitrary JavaScript in the loaded page's origin). Off by default - the one unbounded primitive. |
 | `browserAutomation.restrictNavigationToLocalhost` | boolean | `false` | Only allow navigation to localhost / private hosts, never public sites. Off by default (any http(s) URL allowed). |
+
+### Dictation
+
+Free, fully-local push-to-talk voice-to-text into the focused terminal: hold a key (default a mouse
+side button), speak, watch a live transcript stream into the input, and on release the finalized text
+is inserted (and optionally submitted). Global-only (App Settings only; no per-project override).
+Engines run on-device via `sherpa-onnx-node`; a Cloud refinement option routes only the final clip to
+an OpenAI-compatible endpoint. The first six keys below are settings-panel rows; the rest are
+config-only (driven by the Mode preset + Live/Refinement model dropdowns).
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `dictation.enabled` | boolean | `false` | Master on/off. Shows the mic button and enables push-to-talk. (Transcription section row.) |
+| `dictation.language` | string (BCP-47) | `'en'` | Spoken language. The Live/Refinement model dropdowns narrow to models that support it; non-English uses the multilingual Whisper builds. (Transcription section row.) |
+| `dictation.punctuation` | boolean | `true` | Add punctuation + capitalization to the committed text. (Transcription section row.) |
+| `dictation.autoSubmit` | boolean | `true` | Press Enter automatically after inserting (via the paste engine's settle -> Enter -> evidence path), or leave the text in the input for review. (Input section row.) |
+| `dictation.releaseBufferMs` | number | `250` | Keep capturing this many ms after release so the last word is not clipped; snaps to 50ms steps (0-500); 0 = off. (Input section row.) |
+| `dictation.remote` | DictationRemoteEndpoint \| undefined | `undefined` | OpenAI-compatible `/v1/audio/transcriptions` endpoint (`url`, `apiKey`, `model`) used when the Refinement model is set to Cloud. (Cloud backend section row.) |
+| `dictation.engineMode` | DictationEngineMode | `'auto'` | Engine selection (`'auto'` tiers by hardware; `'remote'` = cloud final). Config-only; set by the Refinement dropdown's Cloud option. |
+| `dictation.modelId` | string \| null | `null` | The FINAL (accurate) model id, `null` = the tier default (Parakeet), `'none'` = no post-processing pass. Config-only (Refinement dropdown). |
+| `dictation.liveModelId` | string \| null | `undefined` | The LIVE (preview) model id: absent = the streaming Zipformer, an offline id = chunked live, `'none'` = no live preview. Config-only (Live dropdown). |
+| `dictation.mode` | `'fast'`/`'balanced'`/`'accurate'`/`'custom'` | `undefined` | Quality preset. A preset sets AND locks the Live + Refinement models; `'custom'` unlocks them. UI-only; the engine reads the resolved model ids. |
+| `dictation.experience` | `'popup'`/`'docked'`/`'live'` | `'popup'` | Live UI surface. Ships as `'live'` (transcript types straight into the terminal). Config-only. |
 
 ### Hotkeys
 

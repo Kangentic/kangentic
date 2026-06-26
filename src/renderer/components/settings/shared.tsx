@@ -305,11 +305,11 @@ export function Select({
   ...props
 }: React.SelectHTMLAttributes<HTMLSelectElement> & SelectExtraProps) {
   return (
-    <div className={wrapperClassName}>
+    <div className={`${wrapperClassName}${props.disabled ? ' opacity-60' : ''}`}>
       {leadingIcon}
       <select
         {...props}
-        className={className ?? 'appearance-none bg-surface-hover border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg w-full focus:outline-none focus:border-accent'}
+        className={className ?? 'appearance-none bg-surface-hover border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg w-full focus:outline-none focus:border-accent disabled:cursor-not-allowed'}
       >
         {children}
       </select>

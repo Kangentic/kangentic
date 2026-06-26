@@ -1173,6 +1173,137 @@ export interface NotificationConfig {
  *  `focused` closes the focused window in any state; `all` closes every window. */
 export type WindowLightDismiss = 'off' | 'single' | 'focused' | 'all';
 
+// === Dictation (voice-to-text) ===
+
+/** Concrete transcription engine ids. `stub` is the no-ML test engine. */
+export type DictationEngineId = 'stub' | 'sherpa-onnx' | 'whisper-cpp' | 'remote-openai' | 'hybrid' | 'chunked-offline';
+
+/** User-facing engine selection. `auto` tiers by detected hardware; the rest
+ *  force a specific engine for latency-vs-accuracy comparison. `remote` maps
+ *  to the `remote-openai` engine. */
+export type DictationEngineMode = 'auto' | 'sherpa-onnx' | 'whisper-cpp' | 'hybrid' | 'remote';
+
+/** Coarse hardware tier driving the auto engine/model choice. */
+export type DictationEngineTier = 'remote' | 'streaming-tiny' | 'accurate-base';
+
+/** Static description of an engine, surfaced to the settings panel. */
+export interface DictationEngineInfo {
+  id: DictationEngineId;
+  displayName: string;
+  /** Emits revising partials live (transducer) vs. a single final pass. */
+  streaming: boolean;
+  /** Produces punctuation + casing natively (whisper / remote). */
+  punctuation: boolean;
+  /** SPDX-ish license string for the engine code (not the model weights). */
+  license: string;
+  requiresModelDownload: boolean;
+}
+
+/** Best-effort detected hardware used for engine/model auto-selection. */
+export interface DictationHardwareProfile {
+  /** CPU brand string, e.g. "AMD Ryzen 9 9950X3D 16-Core Processor". */
+  cpuModel: string;
+  /** Logical processors (threads). */
+  cpuCores: number;
+  totalRamGb: number;
+  hasAvx2: boolean;
+  /** Acceleration backend our engines can use. `none` = CPU only (which still
+   *  covers a present-but-unaccelerated adapter like AMD/Intel in v1);
+   *  `unknown` = detection failed. The human-readable adapter is in
+   *  `gpuDescription`. */
+  gpu: 'none' | 'cuda' | 'metal' | 'unknown';
+  /** Human-readable detected GPU vendor for display (e.g. "NVIDIA (CUDA)"). */
+  gpuDescription?: string;
+  platform: NodeJS.Platform;
+  arch: string;
+}
+
+/** Remote OpenAI-compatible `/v1/audio/transcriptions` backend config. All
+ *  fields are optional because the user fills them in incrementally in
+ *  settings; the remote engine validates that `url` is present before use. */
+export interface DictationRemoteEndpoint {
+  url?: string;
+  apiKey?: string;
+  model?: string;
+}
+
+/** Payload for `dictation.start` (renderer passes the current global config). */
+export interface DictationStartOptions {
+  engineMode: DictationEngineMode;
+  /** The FINAL (accurate) model id, or null/undefined for the tier default
+   *  (Parakeet on the accurate tier), or `'none'` for no post-processing pass. */
+  modelId?: string | null;
+  /** The LIVE (preview) model id: null/undefined = the streaming Zipformer default,
+   *  an offline model id = chunked live, `'none'` = no live preview. */
+  liveModelId?: string | null;
+  punctuation: boolean;
+  language: string;
+}
+
+/** Result of `dictation.start`. */
+export interface DictationStartResult {
+  dictationSessionId: string;
+  engineId: DictationEngineId;
+  modelId: string | null;
+  needsDownload: boolean;
+}
+
+/** A user-selectable transcription model (for the settings model dropdown). */
+export interface DictationModelOption {
+  id: string;
+  displayName: string;
+  sizeMb: number;
+  engineKind: 'online-transducer' | 'offline-whisper' | 'offline-nemo-transducer' | 'offline-moonshine';
+  /** Spoken languages this model can transcribe (Whisper / BCP-47 codes). The
+   *  Language dropdown shows the intersection of the selected models' sets. */
+  languages: string[];
+}
+
+/** Hardware + engine snapshot for the settings panel (`dictation.getInfo`). */
+export interface DictationInfo {
+  hardware: DictationHardwareProfile;
+  tier: DictationEngineTier;
+  selectedEngineId: DictationEngineId;
+  engines: DictationEngineInfo[];
+  installedModels: string[];
+  /** The model the selected engine will load, or null (remote/no model). */
+  selectedModelId: string | null;
+  /** Approximate download size of the selected model in MB, or null. */
+  selectedModelSizeMb: number | null;
+  /** Selectable offline models (accuracy/size trade-off) - kept as the union for
+   *  any general consumer; the two-stage dropdowns use the lists below. */
+  availableModels: DictationModelOption[];
+  /** Live-preview model choices: the streaming Zipformer (native, instant) plus
+   *  the offline models small enough to chunk (Parakeet, Whisper tiny/base). */
+  liveModels: DictationModelOption[];
+  /** Final/accurate model choices: every offline model (Parakeet + Whisper ladder). */
+  finalModels: DictationModelOption[];
+  /** The resolved live + final model ids for the current selection. */
+  selectedLiveModelId: string | null;
+  selectedFinalModelId: string | null;
+}
+
+/** Progress event for an in-flight model download. */
+export interface DictationModelProgress {
+  modelId: string;
+  status: 'downloading' | 'verifying' | 'done' | 'error';
+  downloadedBytes: number;
+  totalBytes: number;
+  error?: string;
+}
+
+/** One streamed PCM frame (16 kHz mono Int16, carried as a transferable
+ *  ArrayBuffer). `seq` lets the service detect dropped frames. */
+export interface DictationAudioChunk {
+  dictationSessionId: string;
+  seq: number;
+  pcm: ArrayBuffer;
+}
+
+/** Microphone permission outcome. `unavailable` covers an OS-level denial or
+ *  a platform with no mic. */
+export type DictationMicPermission = 'granted' | 'denied' | 'unavailable';
+
 export interface AppConfig {
   theme: ThemeMode;
   sidebarVisible: boolean;
@@ -1333,6 +1464,49 @@ export interface AppConfig {
     restrictNavigationToLocalhost?: boolean;
   };
 
+  /**
+   * Voice-to-text dictation. GLOBAL/shared scope (hardware/user level, not
+   * per-project): lives below the settings separator in the Dictation tab.
+   * The push-to-talk binding is NOT here; it lives in `hotkeyOverrides` keyed
+   * by the `dictation.pushToTalk` keybinding-registry id.
+   */
+  dictation?: {
+    /** Master toggle: show the mic button and enable push-to-talk. Default false. */
+    enabled?: boolean;
+    /** Engine selection. `auto` tiers by detected hardware. Default `auto`. */
+    engineMode?: DictationEngineMode;
+    /** The FINAL (accurate) model: a model id, null/absent = the tier default
+     *  (Parakeet), or `'none'` = no post-processing pass (keep the live text). */
+    modelId?: string | null;
+    /** The LIVE (preview) model: null/absent = the streaming Zipformer, an offline
+     *  model id = chunked live, `'none'` = no live preview. */
+    liveModelId?: string | null;
+    /** Quality preset. `fast`/`balanced`/`accurate` set AND lock the live +
+     *  refinement models; `custom` unlocks the two dropdowns for manual choice.
+     *  Absent = derive from the model selection (back-compat). UI-only; the engine
+     *  reads the resolved model ids, not this. */
+    mode?: 'fast' | 'balanced' | 'accurate' | 'custom';
+    /** Add punctuation + capitalization to committed text. Default true (OFF = faster path). */
+    punctuation?: boolean;
+    /** BCP-47 language. v1 ships English only. Default `en`. */
+    language?: string;
+    /** Press Enter automatically once the transcription is inserted, submitting it to
+     *  the agent. Default true; set false to leave the text in the input for you to
+     *  review and send yourself. */
+    autoSubmit?: boolean;
+    /** Trailing-capture buffer: keep the mic open this many ms after the user releases
+     *  push-to-talk, so the tail of the last word (still being spoken as they release)
+     *  is captured instead of clipped. Snaps to 50ms steps in the UI (0-500). 0 = stop
+     *  immediately. Default 250. */
+    releaseBufferMs?: number;
+    /** Which live UI surface to show while dictating (experiment switcher).
+     *  `popup` = floating panel; `docked` = bar by the terminal input; `live` =
+     *  type directly into the terminal as you speak. Default `popup`. */
+    experience?: 'popup' | 'docked' | 'live';
+    /** Remote backend (used when engineMode = `remote`). */
+    remote?: DictationRemoteEndpoint;
+  };
+
   hasCompletedFirstRun: boolean;
   skipDeleteConfirm: boolean;
   skipBoardConfigConfirm: boolean;
@@ -1381,6 +1555,9 @@ export interface AppConfig {
    *  only (per-machine), like `developer.*`. See `src/shared/keybindings.ts`. */
   hotkeyOverrides: Record<string, string>;
 }
+
+/** The resolved dictation config block (never undefined at the field level). */
+export type DictationConfig = NonNullable<AppConfig['dictation']>;
 
 /** A persisted in-app window-manager layout (one entry per project in
  *  `AppConfig.workspaceByProject`). taskId-anchored and fractional, so it survives
@@ -1519,6 +1696,16 @@ export const DEFAULT_CONFIG: AppConfig = {
   commandTerminalWorkspace: null,
   discoveredModelsByAgent: {},
   hotkeyOverrides: {},
+  dictation: {
+    enabled: false,
+    engineMode: 'auto',
+    modelId: null,
+    punctuation: true,
+    language: 'en',
+    autoSubmit: true,
+    releaseBufferMs: 250,
+    experience: 'popup',
+  },
 };
 
 // === Agent Commands ===
@@ -2579,6 +2766,60 @@ export interface ElectronAPI {
      * persistence, best-effort live slash injection only.
      */
     injectSettings: (input: SessionInjectSettingsInput) => Promise<SessionInjectSettingsResult>;
+  };
+
+  // Voice-to-text dictation (push-to-talk -> live popup -> focused terminal).
+  // Channels are by session id, not task-scoped, so they carry no projectId
+  // (same category as session write). See .claude/rules/ipc-7-layer-parity.md.
+  dictation: {
+    /** Begin a dictation session; resolves the engine from config + hardware. */
+    start: (options: DictationStartOptions) => Promise<DictationStartResult>;
+    /** Finalize and return the committed text (also pushed via onFinal).
+     *  `expectedFrames` is the total number of PCM frames the renderer sent for
+     *  this utterance; finalize waits (briefly, bounded) until they have all been
+     *  ingested before the decode, so the tail is never cut off by the audio
+     *  frames (fire-and-forget) racing this invoke. */
+    stop: (dictationSessionId: string, expectedFrames?: number) => Promise<string>;
+    /** Abort without committing. */
+    cancel: (dictationSessionId: string) => Promise<void>;
+    /**
+     * Inject finalized text into a focused terminal WITHOUT submitting (no
+     * Enter; the user presses Enter themselves). Newlines are collapsed to
+     * spaces. Returns true if the text was written.
+     */
+    commit: (sessionId: string, text: string) => Promise<boolean>;
+    /**
+     * Auto-submit path: erase `eraseCount` chars of live preview, then paste +
+     * submit `text` through the robust paste engine (settle -> separate Enter ->
+     * submission evidence with retry). A plain `\r` appended to the live text
+     * does NOT submit - the TUI reads an Enter in the same write as the text with
+     * stale state. Resolves true if a submit signal was observed, false if the
+     * paste engine exhausted its retries (text left in the input for manual send).
+     */
+    submit: (sessionId: string, text: string, eraseCount: number) => Promise<boolean>;
+    /** Hardware profile + available engines for the settings panel. */
+    getInfo: (config: DictationConfig) => Promise<DictationInfo>;
+    /** Live revising hypothesis stream (renders in the popup only). */
+    onPartial: (callback: (dictationSessionId: string, text: string) => void) => () => void;
+    /** Finalized text stream. */
+    onFinal: (callback: (dictationSessionId: string, text: string) => void) => () => void;
+    /** Stream one PCM frame into the funnel (fire-and-forget, no round-trip). */
+    sendAudioChunk: (chunk: DictationAudioChunk) => void;
+    /** Ensure microphone access (macOS prompt on first use). */
+    requestMic: () => Promise<DictationMicPermission>;
+    /** Model download progress (first-use auto-download). */
+    onModelProgress: (callback: (progress: DictationModelProgress) => void) => () => void;
+    /** Pre-download the model for the given config (settings Download button).
+     *  Resolves when present; no-op for the remote/stub engines. */
+    downloadModel: (config: DictationConfig) => Promise<void>;
+    /** Write raw bytes straight into a terminal session (the `live` experience
+     *  types partials directly into the focused input; payload may include
+     *  `\x7f` backspaces to erase the previous partial). Fire-and-forget. */
+    liveWrite: (sessionId: string, payload: string) => void;
+    /** Pre-load the engine for the given config so the next push-to-talk is
+     *  instant (the model load happens ahead of the press, not during it). Pass
+     *  `null` to release the warm engines (dictation disabled). Fire-and-forget. */
+    prewarm: (config: DictationConfig | null) => void;
   };
 
   // Config

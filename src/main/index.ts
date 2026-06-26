@@ -1,6 +1,6 @@
 const PROCESS_START = performance.now();
 
-import { app, BrowserWindow, clipboard, Menu, nativeImage } from 'electron';
+import { app, BrowserWindow, clipboard, Menu, nativeImage, session } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
@@ -539,7 +539,7 @@ const createWindow = () => {
       if (ephemeralContext) {
         try {
           registerEphemeralProjectDevIpc(getOptionalIpcContext, cwd);
-          // Seed-changes dev IPC for the TestHarness "Seed Changes" button. Only
+          // Seed-changes dev IPC for the TestHarness "Seed File Changes" button. Only
           // registered in ephemeral preview, the one place its safety guard
           // (preview-projects root) has clones to operate on.
           registerSeedGitChangesDevIpc();
@@ -690,6 +690,20 @@ app.whenReady().then(async () => {
     // Continue without it -- agents will see "Unauthorized" or "Connection
     // refused" but the rest of the app stays functional.
   }
+
+  // Grant microphone access for voice-to-text dictation. getUserMedia in the
+  // renderer raises a 'media' permission request; we approve mic access for our
+  // own app origin (the renderer is first-party, not arbitrary web content).
+  // The actual OS-level gate still applies (macOS TCC handled via
+  // systemPreferences in the dictation handler; an OS denial surfaces as a
+  // getUserMedia rejection in the popup).
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    // 'media' covers getUserMedia microphone/camera requests.
+    callback(permission === 'media');
+  });
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
+    return permission === 'media';
+  });
 
   createWindow();
   initUpdater(mainWindow!);

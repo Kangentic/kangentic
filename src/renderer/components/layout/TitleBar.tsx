@@ -1,7 +1,8 @@
 import React from 'react';
-import { Command, Minus, Settings, Square, X } from 'lucide-react';
+import { Command, Mic, Minus, Settings, Square, X } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
+import { useDictationStore } from '../../stores/dictation-store';
 import { useSessionStore } from '../../stores/session-store';
 import { selectCurrentProjectTransientSessionIds } from '../../stores/session-store/transient-session-slice';
 import { isWorktreePath } from '../../../shared/git-utils';
@@ -96,6 +97,14 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpaw
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
   const openProjectSettings = useConfigStore((s) => s.openProjectSettings);
+  const openSettingsToTab = useConfigStore((s) => s.openSettingsToTab);
+
+  // Voice dictation mic button: shown only when dictation is enabled; its color
+  // reflects whether a push-to-talk session is live (active token), matching the
+  // command-terminal glyph's activity language.
+  const dictationEnabled = useConfigStore((s) => s.globalConfig.dictation?.enabled ?? false);
+  const dictationStatus = useDictationStore((s) => s.status);
+  const dictationActive = dictationStatus === 'recording' || dictationStatus === 'finalizing';
 
   // Aggregate activity across THIS project's Command Terminal sessions, surfaced
   // as the title-bar terminal icon's COLOR (the same active/idle language as the
@@ -130,6 +139,16 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpaw
       openProjectSettings(currentProject.path, currentProject.name);
     } else {
       setSettingsOpen(true);
+    }
+  };
+
+  // Push-to-talk is the primary trigger; clicking the mic opens settings directly
+  // to the Dictation tab (works with or without a project, since it is global).
+  const handleMicClick = () => {
+    if (currentProject) {
+      openProjectSettings(currentProject.path, currentProject.name, 'dictation');
+    } else {
+      openSettingsToTab('dictation');
     }
   };
 
@@ -187,6 +206,19 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpaw
                 glyph (color = activity, center = `+` when another can be spawned),
                 so there is no separate corner badge to clash or clutter. */}
             <CommandTerminalIcon tone={transientActivityTone} showPlus={spawnsAnother} />
+          </button>
+        )}
+        {dictationEnabled && (
+          <button
+            onClick={handleMicClick}
+            className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
+              dictationActive ? 'text-active' : 'text-fg-muted hover:text-fg'
+            }`}
+            title={dictationActive ? 'Listening...' : 'Voice dictation'}
+            aria-label={dictationActive ? 'Listening' : 'Voice dictation'}
+            data-testid="dictation-mic-button"
+          >
+            <Mic size={20} />
           </button>
         )}
         <button

@@ -75,6 +75,10 @@ interface ConfigStore {
   // -- Settings panel UI --
   settingsOpen: boolean;
   setSettingsOpen: (open: boolean) => void;
+  /** Open the settings panel directly to a given tab (used by the title-bar
+   *  mic button to jump to the global Dictation tab). Works with or without a
+   *  project open, since the target may be a shared (global) tab. */
+  openSettingsToTab: (tabId: string) => void;
   /** Last settings tab the user viewed, so closing and reopening the panel
    *  returns to the same section instead of resetting to the first tab. */
   lastSettingsTab: string | null;
@@ -268,6 +272,10 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       get().updateConfig({
         discoveredModelsByAgent: { ...current, [agent]: next },
       }).catch(() => undefined);
+    },
+
+    openSettingsToTab: (tabId) => {
+      set({ settingsOpen: true, projectSettingsInitialTab: tabId });
     },
 
     setSettingsOpen: (open) => {

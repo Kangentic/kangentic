@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useConfigStore } from '../stores/config-store';
 import { effectiveCombo, getKeybinding, isMouseCombo } from '../../shared/keybindings';
 import { matchesCombo, formatCombo } from '../utils/keybindings';
+import { isRebindCaptureActive } from '../utils/rebind-state';
 
 /**
  * The current effective combo for an action, formatted for display (tooltips,
@@ -76,6 +77,10 @@ export function useKeybinding(
     if (!enabled || !combo) return;
     const element: Window | Document = target === 'document' ? document : window;
     const onEvent = (event: Event): void => {
+      // While a Hotkeys-settings rebind capture is active, suppress ALL app
+      // shortcuts (without preventDefault/stopPropagation) so the captured input
+      // reaches the capture widget instead of firing its current binding.
+      if (isRebindCaptureActive()) return;
       const inputEvent = event as KeyboardEvent | PointerEvent;
       if (whenRef.current && !whenRef.current(inputEvent)) return;
       const hit = matchesCombo(inputEvent, combo) || (!!altCombo && matchesCombo(inputEvent, altCombo));
