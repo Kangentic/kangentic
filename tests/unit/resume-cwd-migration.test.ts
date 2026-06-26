@@ -178,6 +178,30 @@ describe('migrateResumeCwdIfRenamed - guards', () => {
     expect(relocateSpy).not.toHaveBeenCalled();
   });
 
+  it('does nothing when projectPath is null (guard: path.resolve(projectPath) is outside try/catch)', async () => {
+    // Without the !projectPath guard, path.resolve(null) would throw TypeError
+    // at the isDedicatedWorktree check, which sits OUTSIDE the try/catch. That
+    // error would escape into the spawn path and break the task-move. This test
+    // pins that the function returns silently when projectPath is absent.
+    //
+    // Red: remove `!projectPath ||` from the guard in resume-cwd-migration.ts
+    //      -> path.resolve(null) throws TypeError, test fails with propagated error.
+    // Green: guard present -> early return, no adapter calls, resolves undefined.
+    const { adapter, locateSpy, relocateSpy } = spyAdapter({ locate: null });
+    await expect(
+      migrateResumeCwdIfRenamed({
+        adapter,
+        agentSessionId: AGENT_SESSION_ID,
+        canResume: true,
+        oldCwd: oldWorktree,
+        newCwd: newWorktree,
+        projectPath: null,
+      }),
+    ).resolves.toBeUndefined();
+    expect(locateSpy).not.toHaveBeenCalled();
+    expect(relocateSpy).not.toHaveBeenCalled();
+  });
+
   it('is fault-tolerant: a failing onProjectRelocated does not throw into the spawn', async () => {
     const { adapter, relocateSpy } = spyAdapter({
       locate: null,
