@@ -1,6 +1,6 @@
 import { Plug } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/types';
-import { SectionHeader, SettingToggleRow, useScopedUpdate } from '../shared';
+import { INPUT_CLASS, SectionHeader, SettingRow, SettingToggleRow, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
 export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
@@ -16,6 +16,17 @@ export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
       />
 
       <div className={enabled ? '' : 'opacity-40 pointer-events-none'}>
+        <SettingRow {...settingProps('mcpServer.maxTaskCreateCount')}>
+          <input
+            type="number"
+            value={globalConfig.mcpServer?.maxTaskCreateCount ?? 50}
+            onChange={(event) => updateGlobal({ mcpServer: { maxTaskCreateCount: Number(event.target.value) } })}
+            min={1}
+            max={500}
+            className={INPUT_CLASS}
+          />
+        </SettingRow>
+
         <SectionHeader label="Available Tools" searchIds={['mcpServer.enabled']} />
         <ul className="list-disc list-inside text-sm text-fg-muted space-y-1 ml-1">
           <li><strong className="text-fg-secondary">Create Task</strong> - add tasks to any column from within an agent session</li>

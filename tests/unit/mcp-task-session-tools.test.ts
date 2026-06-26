@@ -73,14 +73,15 @@ vi.mock('../../src/main/agent/mcp-http/handler-helpers', () => ({
   // Identity stub: the real sanitizer is unit-tested elsewhere; here we
   // only need the routing-check message to embed names verbatim.
   sanitizeProjectName: (name: string) => name,
-  makeTaskCounter: (max: number) => {
+  makeTaskCounter: (getMaxTaskCreateCount: () => number) => {
     let count = 0;
     return {
       tryReserve: vi.fn(() => {
-        if (count >= max) return false;
+        if (count >= getMaxTaskCreateCount()) return false;
         count++;
         return true;
       }),
+      limit: () => getMaxTaskCreateCount(),
     };
   },
   PROJECT_SELECTOR_DESCRIPTION: 'optional project selector',
@@ -170,8 +171,9 @@ describe('create_task rate-limit wiring', () => {
         count++;
         return true;
       }),
+      limit: () => MAX_TASKS,
     };
-    registerTaskTools(server as never, resolver, taskCounter, MAX_TASKS);
+    registerTaskTools(server as never, resolver, taskCounter);
   });
 
   it('does NOT call tryReserve when the project selector is invalid', async () => {
@@ -225,8 +227,8 @@ describe('create_task routing guardrail', () => {
     mockDetectCrossProjectMention.mockReturnValue([]);
     server = makeFakeServer();
     const resolver = makeResolver();
-    taskCounter = { tryReserve: vi.fn(() => true) };
-    registerTaskTools(server as never, resolver, taskCounter, 50);
+    taskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
   });
 
   it('blocks and creates nothing when defaulting to active but the text names another project', async () => {
@@ -327,8 +329,8 @@ describe('get_current_task uses defaultContextResolved, not withProject', () => 
     vi.clearAllMocks();
     server = makeFakeServer();
     resolver = makeResolver();
-    const taskCounter: TaskCounter = { tryReserve: vi.fn(() => true) };
-    registerTaskTools(server as never, resolver, taskCounter, 50);
+    const taskCounter: TaskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
   });
 
   it('calls resolver.defaultContextResolved() instead of withProject when cwd is supplied', async () => {
@@ -375,8 +377,8 @@ describe('routing-cue hints in tool descriptions', () => {
     vi.clearAllMocks();
     server = makeFakeServer();
     const resolver = makeResolver();
-    const taskCounter: TaskCounter = { tryReserve: vi.fn(() => true) };
-    registerTaskTools(server as never, resolver, taskCounter, 50);
+    const taskCounter: TaskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
   });
 
   it('kangentic_create_task description nudges the model to route by prompt cues', () => {

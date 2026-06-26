@@ -284,6 +284,12 @@ test.describe('Settings Panel', () => {
     await expect(page.getByText('Kangentic MCP Server')).toBeVisible();
     await expect(page.getByText('Give agents tools to interact with your board')).toBeVisible();
 
+    // Settings-driven task-creation cap, defaulting to 50
+    await expect(page.getByText('Max Tasks Per Session')).toBeVisible();
+    await expect(
+      page.getByTestId('setting-row-mcpServer.maxTaskCreateCount').locator('input[type="number"]'),
+    ).toHaveValue('50');
+
     // Tools list should be visible (spot-check a few)
     await expect(page.getByRole('list').getByText('Create Task')).toBeVisible();
     await expect(page.getByText('Board Summary')).toBeVisible();

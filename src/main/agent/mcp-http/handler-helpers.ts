@@ -31,17 +31,25 @@ export const PROJECT_SELECTOR_DESCRIPTION =
 export interface TaskCounter {
   /** Reserve one slot. Returns false if the rate-limit ceiling is reached. */
   tryReserve(): boolean;
+  /** Current configured ceiling, read live. Used to build the rate-limit error message. */
+  limit(): number;
 }
 
-/** Build an in-memory TaskCounter enforcing a per-launch ceiling. */
-export function makeTaskCounter(max: number): TaskCounter {
+/**
+ * Build an in-memory TaskCounter enforcing a per-launch ceiling. The ceiling
+ * is read live through `getMaxTaskCreateCount` on every reservation, so a
+ * settings change to the cap takes effect without restarting the app (the
+ * accumulated count still persists for the app launch and resets on restart).
+ */
+export function makeTaskCounter(getMaxTaskCreateCount: () => number): TaskCounter {
   let count = 0;
   return {
     tryReserve: () => {
-      if (count >= max) return false;
+      if (count >= getMaxTaskCreateCount()) return false;
       count++;
       return true;
     },
+    limit: () => getMaxTaskCreateCount(),
   };
 }
 

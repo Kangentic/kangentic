@@ -1358,6 +1358,8 @@ export interface AppConfig {
 
   mcpServer: {
     enabled: boolean;
+    /** Max tasks an agent may create via MCP before it must stop, per app launch. Resets on restart. */
+    maxTaskCreateCount: number;
   };
 
   contextBar: {
@@ -1635,6 +1637,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   mcpServer: {
     enabled: true,
+    maxTaskCreateCount: 50,
   },
   contextBar: {
     showShell: true,

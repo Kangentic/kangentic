@@ -684,6 +684,7 @@ app.whenReady().then(async () => {
         return createRequestResolver(ctx, projectId);
       },
       () => readBrowserAutomationConfig(getOptionalIpcContext()?.configManager ?? windowConfigManager),
+      () => (getOptionalIpcContext()?.configManager ?? windowConfigManager).load().mcpServer.maxTaskCreateCount,
     );
   } catch (err) {
     console.error('[APP] Failed to start MCP HTTP server:', err);

@@ -94,7 +94,7 @@ If the target column has `auto_spawn` enabled, creating a task there will also s
 
 **Cross-project routing guard:** when `project` is omitted (so the task would default to the active project) but the title or description names a *different* registered project, the tool refuses with a routing-check error instead of creating the task. No task is created and no rate-limit slot is consumed. Re-run with `project: "<that project>"` to file it there, or with `project: "<active project>"` to confirm the active project. This catches the common cross-project triage case (filing a bug about one project from another) when the routing cue is only implied by the task text.
 
-Rate limit: 50 task creations per session (shared across board and backlog).
+Rate limit: capped at the Settings -> MCP Server "Max Tasks Per Session" value (`mcpServer.maxTaskCreateCount`, default 50) per app launch, shared across board and backlog. Exceeding the cap returns a clear error and creates nothing. The value is read live, so a change applies without restarting; the accumulated count resets on restart.
 
 ### kangentic_list_columns
 
@@ -496,7 +496,7 @@ The `.claude/settings.json` file includes a wildcard permission entry (`mcp__kan
 - **Per-launch token** - every Kangentic launch generates a fresh 32-byte random `X-Kangentic-Token`. Clients without the token get `401`. Comparison is constant-time (`timingSafeEqual`) so a local timing oracle cannot byte-by-byte recover the token.
 - **DNS rebinding protection** - the Streamable HTTP transport enforces a host allowlist (`127.0.0.1`, `localhost`, `[::1]`) on top of the loopback bind.
 - **Project routing via URL path** - the URL embeds the project ID (`/mcp/<projectId>`). A stale `mcp.json` for a different project cannot be reused against the current launch.
-- **Rate limiting** - maximum 50 task creations per session, enforced atomically by the shared `TaskCounter`.
+- **Rate limiting** - task creations are capped per app launch at the configurable Settings -> MCP Server "Max Tasks Per Session" value (`mcpServer.maxTaskCreateCount`, default 50), enforced atomically by the shared `TaskCounter`.
 - **Input validation** - Zod schemas enforce title (200 chars) and description (10000 chars) limits at the protocol level; the command handlers validate again.
 - **Column safety** - `kangentic_create_task` defaults to the To Do column; creating in an auto_spawn column intentionally triggers agent spawn.
 - **Destructive operations are explicit** - `kangentic_delete_task`, `kangentic_delete_backlog_item`, and `kangentic_move_task` mutate the board. Agents must invoke them by name; there is no implicit fallback.

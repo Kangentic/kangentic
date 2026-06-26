@@ -35,7 +35,6 @@ import type { RequestResolver } from './mcp-http/project-resolver';
 
 const SERVER_NAME = 'kangentic';
 const SERVER_VERSION = '1.0.0';
-const MAX_TASKS_PER_SESSION = 50;
 
 /**
  * Builds a `RequestResolver` bound to the given URL-path project. The
@@ -68,10 +67,11 @@ export interface McpHttpServerHandle {
 export async function startMcpHttpServer(
   buildContext: ProjectContextFactory,
   getBrowserAutomationConfig: AutomationConfigReader,
+  getMaxTaskCreateCount: () => number,
 ): Promise<McpHttpServerHandle> {
   const token = randomBytes(32).toString('hex');
   const expectedTokenBuffer = Buffer.from(token, 'utf-8');
-  const taskCounter = makeTaskCounter(MAX_TASKS_PER_SESSION);
+  const taskCounter = makeTaskCounter(getMaxTaskCreateCount);
 
   const httpServer: Server = createServer((req, res) => {
     handleHttpRequest(req, res, expectedTokenBuffer, buildContext, taskCounter, getBrowserAutomationConfig)
@@ -207,7 +207,7 @@ async function handleHttpRequest(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { instructions },
   );
-  registerTaskTools(mcpServer, resolver, taskCounter, MAX_TASKS_PER_SESSION);
+  registerTaskTools(mcpServer, resolver, taskCounter);
   registerSessionTools(mcpServer, resolver);
   registerProjectTools(mcpServer, resolver);
   registerSearchTools(mcpServer, resolver);

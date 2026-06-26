@@ -39,7 +39,6 @@ export function registerTaskTools(
   server: McpServer,
   resolver: RequestResolver,
   taskCounter: TaskCounter,
-  maxTasksPerSession: number,
 ): void {
   // --- kangentic_create_task ---
   server.registerTool(
@@ -96,7 +95,7 @@ export function registerTaskTools(
       // No await between the check and the increment, so this can't race.
       if (!taskCounter.tryReserve()) {
         return Promise.resolve({
-          content: [{ type: 'text' as const, text: `Rate limit reached: maximum ${maxTasksPerSession} tasks per session.` }],
+          content: [{ type: 'text' as const, text: `Rate limit reached: maximum ${taskCounter.limit()} tasks per session.` }],
           isError: true,
         });
       }
