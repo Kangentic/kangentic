@@ -120,7 +120,7 @@ async function openAgentSettingsTab(page: Page, agentId: string): Promise<void> 
   // Open settings and navigate to the Agent tab.
   await page.locator('[data-testid="settings-button"]').click();
   await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
-  await page.getByRole('button', { name: 'Agent' }).click();
+  await page.getByRole('button', { name: 'Agent', exact: true }).click();
 }
 
 async function closeSettings(page: Page): Promise<void> {
