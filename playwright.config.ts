@@ -54,13 +54,18 @@ export default defineConfig({
       testDir: './tests/ui',
       testMatch: '**/*.spec.ts',
       timeout: 15_000,
-      // 4 workers (caps below the global 8): UI shards are headless Chromium
-      // pages and gain ~nothing from 8 on a 4-vCPU runner (~93s vs ~96s), but at
-      // 8 the page event loop starves under contention and timing-sensitive
-      // specs (e.g. Escape-to-close-dropdown in new-task-dialog) drop input and
-      // fail deterministically. The electron project keeps 8 - its per-file
-      // launch overlap is the real win there.
-      workers: 4,
+      // 3 workers (caps below the global 8): UI shards are headless Chromium
+      // pages that gain ~nothing from more parallelism on a 4-vCPU runner (8 vs
+      // 4 was ~93s vs ~96s), so worker count is a pure stability-vs-margin knob.
+      // Above the runner's per-page headroom the event loop starves under
+      // contention and timing-sensitive specs (Escape-to-close-dropdown in
+      // new-task-dialog, the Changes-panel branch header) drop input and fail
+      // even past the CI retry. 8 failed deterministically; 4 held until the
+      // always-mounted app surface grew enough to tip it under load; 3 restores
+      // the per-page headroom at a negligible wall-clock cost (the 9 shards run
+      // in parallel). The electron project keeps 8 - its per-file launch overlap
+      // is the real win there.
+      workers: 3,
       // CI-only single retry: the UI suite has a few timing-sensitive specs
       // (drag-and-drop settle/animation) that flake under load. A retry marks
       // them "flaky" (still visible) rather than failing the whole run on one
