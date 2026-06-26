@@ -123,6 +123,9 @@ describe('buildServerInstructions - browser section', () => {
     expect(instructions).toContain('BROWSER VERIFICATION (kangentic_browser_* tools):');
     // Guidance paragraph: the agent should prefer the browser tools over Playwright.
     expect(instructions).toContain('kangentic_browser_list_panes');
+    // Steering: prefer the in-app pane over an external/desktop browser tool
+    // (e.g. a Chrome-extension browser MCP), not just over a Playwright script.
+    expect(instructions).toContain('external or desktop browser-automation tool');
     // Guard against proactive driving (the "do not drive" contract).
     expect(instructions).toContain('Do not drive the browser proactively');
     // Open-pane discovery advice.
@@ -148,7 +151,9 @@ describe('buildServerInstructions - browser section', () => {
     expect(instructions).toContain(
       'A Browser pane is currently open at http://localhost:3000 (task task-abc).',
     );
-    expect(instructions).toContain('You can drive it now with the kangentic_browser_* tools.');
+    expect(instructions).toContain(
+      'You can drive it now with the kangentic_browser_* tools - drive this pane, not a separate external browser.',
+    );
     // Must NOT also emit the multi-pane format.
     expect(instructions).not.toContain('Browser panes are currently open:');
   });
@@ -185,6 +190,8 @@ describe('buildServerInstructions - browser section', () => {
     expect(instructions).toContain('task task-2');
     // Agent is told to pass sessionId or taskId to disambiguate.
     expect(instructions).toContain('Drive a specific one with the kangentic_browser_* tools');
+    // Steering suffix: drive the in-app panes, not a separate external browser.
+    expect(instructions).toContain('drive these panes, not a separate external browser');
     // Must NOT also emit the single-pane format.
     expect(instructions).not.toContain('A Browser pane is currently open');
   });

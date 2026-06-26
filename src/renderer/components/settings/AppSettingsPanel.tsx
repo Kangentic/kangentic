@@ -45,7 +45,7 @@ export const APP_TABS: SettingsTabDefinition[] = [
   { id: 'behavior', label: 'Behavior', icon: SlidersHorizontal, tooltip: 'Applies to all projects' },
   { id: 'hotkeys', label: 'Hotkeys', icon: Keyboard, tooltip: 'Applies to all projects' },
   { id: 'mcpServer', label: 'MCP Server', icon: Plug, tooltip: 'Applies to all projects' },
-  { id: 'browserAutomation', label: 'Browser Automation', icon: MousePointerClick, tooltip: 'Applies to all projects' },
+  { id: 'browserAutomation', label: 'Agent Browser', icon: MousePointerClick, tooltip: 'Applies to all projects' },
   { id: 'notifications', label: 'Notifications', icon: Bell, tooltip: 'Applies to all projects' },
   { id: 'privacy', label: 'Privacy', icon: ShieldCheck, tooltip: 'Applies to all projects' },
   { id: 'developer', label: 'Developer', icon: Bug, tooltip: 'Applies to all projects' },

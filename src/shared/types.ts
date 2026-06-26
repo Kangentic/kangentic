@@ -1318,7 +1318,7 @@ export interface AppConfig {
    * an agent may drive the embedded Browser pane via the kangentic_browser_*
    * MCP tools. Distinct from `browser` above (the per-project pane settings):
    * this is a cross-project security policy and lives below the settings
-   * separator in its own "Browser Automation" tab.
+   * separator in its own "Agent Browser" tab.
    */
   browserAutomation?: {
     /** Master switch. When false the kangentic_browser_* tools are disabled. Default true. */

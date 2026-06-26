@@ -315,7 +315,7 @@ Settings are accessed from two entry points:
 - **App Settings** - click the gear icon in the title bar. This is the main settings panel with all app-wide and project-default settings.
 - **Project Settings** - click the gear icon on a project row in the sidebar. This shows only the per-project overridable subset.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. In App Settings, tabs above the separator (General, Theme, Terminal, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below the separator (Layout, Behavior, Hotkeys, MCP Server, Browser Automation, Notifications, Privacy, Developer) are shared across all projects. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)). When no project is open, only the shared tabs appear. Project Settings shows inherited defaults as hints, with reset buttons on any overridden value and a "Reset All" footer when overrides exist.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. In App Settings, tabs above the separator (General, Theme, Terminal, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below the separator (Layout, Behavior, Hotkeys, MCP Server, Agent Browser, Notifications, Privacy, Developer) are shared across all projects. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)). When no project is open, only the shared tabs appear. Project Settings shows inherited defaults as hints, with reset buttons on any overridden value and a "Reset All" footer when overrides exist.
 
 ### Moving a project
 
@@ -424,9 +424,9 @@ The MCP Server tab controls the built-in Model Context Protocol server. When ena
 |---------|-------------|
 | Kangentic MCP Server | Enable or disable the built-in MCP server that gives agents board-aware tools |
 
-### Browser Automation
+### Agent Browser
 
-The Browser Automation tab controls whether and how agents may drive the embedded Browser pane via the `kangentic_browser_*` tools (screenshot, click, type, navigate, and more), so an agent can verify a dev server you have loaded. It is a global (per-machine) policy, separate from the per-project Browser tab.
+The Agent Browser tab controls whether and how agents may drive the embedded Browser pane via the `kangentic_browser_*` tools (screenshot, click, type, navigate, and more), so an agent can verify a dev server you have loaded. It is a global (per-machine) policy, separate from the per-project Browser tab.
 
 | Setting | Description |
 |---------|-------------|

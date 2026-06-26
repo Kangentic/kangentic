@@ -23,7 +23,7 @@ export interface DriverError {
 
 export type DriverResult<T> = { ok: true; data: T } | { ok: false; error: DriverError };
 
-const SETTINGS_HINT = 'Settings -> Browser Automation';
+const SETTINGS_HINT = 'Settings -> Agent Browser';
 
 function capabilityGate(
   capability: BrowserCapability,

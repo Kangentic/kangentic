@@ -38,7 +38,7 @@ const INSTRUCTIONS_PANE_LIST_CAP = 5;
 function buildBrowserSection(activeProjectId: string | null): string[] {
   const lines = [
     'BROWSER VERIFICATION (kangentic_browser_* tools):',
-    'When the user asks you to verify, check, look at, click, type, or test something in the running app or a page in the browser, prefer the kangentic_browser_* tools - they drive the embedded Browser pane of a task (the dev server the user has loaded) - over writing a separate Playwright/Puppeteer script. Call kangentic_browser_list_panes first; target a tool with sessionId or taskId, or omit both when a single pane is open. If no pane is open, ask the user to open the Browser pill in the task header and load a URL. Do not drive the browser proactively when the user has not asked about on-screen behavior.',
+    'When the user asks you to verify, check, look at, click, type, or test something in the running app or a page in the browser, prefer the kangentic_browser_* tools - they drive the embedded Browser pane of a task (the dev server the user has loaded). Use them over any external or desktop browser-automation tool (for example a Chrome-extension browser MCP) and over writing a separate Playwright/Puppeteer script: those drive a separate real browser, not the in-app pane the user is looking at. Call kangentic_browser_list_panes first; target a tool with sessionId or taskId, or omit both when a single pane is open. If no pane is open, ask the user to open the Browser pill in the task header and load a URL. Do not drive the browser proactively when the user has not asked about on-screen behavior.',
   ];
   const panes = browserPaneRegistry
     .list()
@@ -46,7 +46,7 @@ function buildBrowserSection(activeProjectId: string | null): string[] {
   if (panes.length === 1) {
     const pane = panes[0];
     lines.push(
-      `A Browser pane is currently open${pane.url ? ` at ${pane.url}` : ''} (task ${pane.taskId}). You can drive it now with the kangentic_browser_* tools.`,
+      `A Browser pane is currently open${pane.url ? ` at ${pane.url}` : ''} (task ${pane.taskId}). You can drive it now with the kangentic_browser_* tools - drive this pane, not a separate external browser.`,
     );
   } else if (panes.length > 1) {
     const summary = panes
@@ -54,7 +54,7 @@ function buildBrowserSection(activeProjectId: string | null): string[] {
       .map((pane) => `task ${pane.taskId}${pane.url ? ` (${pane.url})` : ''}`)
       .join(', ');
     lines.push(
-      `${panes.length} Browser panes are currently open: ${summary}. Drive a specific one with the kangentic_browser_* tools by passing its sessionId or taskId.`,
+      `${panes.length} Browser panes are currently open: ${summary}. Drive a specific one with the kangentic_browser_* tools by passing its sessionId or taskId - drive these panes, not a separate external browser.`,
     );
   }
   return lines;

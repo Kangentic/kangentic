@@ -443,7 +443,7 @@ These **shipped** tools let an agent drive the embedded **Browser pane** of a ta
 
 Targeting: every tool takes an optional `sessionId` or `taskId`; omit both to use the single open pane (errors with candidates when more than one is open). `kangentic_browser_list_panes` lists open panes.
 
-Gating: the global **Browser Automation** settings tab controls the family, read live per call. `browserAutomation.enabled` is the master switch; `allowInteraction` gates click/type/keypress/drag (off = observe-only); `allowNavigation` gates navigate; `allowEval` gates eval (off by default); `restrictNavigationToLocalhost` confines navigation to localhost/private hosts (off by default). Each tool returns an actionable `{ kind, detail }` error when its capability is gated off or no driveable pane exists.
+Gating: the global **Agent Browser** settings tab controls the family, read live per call. `browserAutomation.enabled` is the master switch; `allowInteraction` gates click/type/keypress/drag (off = observe-only); `allowNavigation` gates navigate; `allowEval` gates eval (off by default); `restrictNavigationToLocalhost` confines navigation to localhost/private hosts (off by default). Each tool returns an actionable `{ kind, detail }` error when its capability is gated off or no driveable pane exists.
 
 Tool categories:
 - **Discovery:** `list_panes`
