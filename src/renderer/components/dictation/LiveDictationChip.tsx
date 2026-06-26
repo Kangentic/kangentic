@@ -15,6 +15,7 @@ import { dictationPopupActions } from '../../hooks/useDictation';
 export function LiveDictationChip() {
   const status = useDictationStore((state) => state.status);
   const modelProgress = useDictationStore((state) => state.modelProgress);
+  // activity-state-ok: the dictation store's own status enum (idle/recording/finalizing/error), not ActivityState
   if (status === 'idle' && !modelProgress) return null;
   return <LiveDictationChipContent />;
 }

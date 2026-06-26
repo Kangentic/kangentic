@@ -402,6 +402,7 @@ export function useDictation(): void {
   // Tear down any in-flight session when dictation is turned off.
   useEffect(() => {
     if (enabled) return;
+    // activity-state-ok: the dictation store's own status enum, not ActivityState
     if (activeRef.current || useDictationStore.getState().status !== 'idle') {
       void cancelDictation();
     }
