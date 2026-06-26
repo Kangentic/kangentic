@@ -24,6 +24,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TransitionEngine } from '../../src/main/transition-engine/transition-engine';
 import { buildTaskXml } from '../../src/main/agent/shared/prompt-xml';
 import { sanitizeForPty } from '../../src/shared/paths';
+import { migrateResumeCwdIfRenamed } from '../../src/main/transition-engine/resume-cwd-migration';
 
 // ---------------------------------------------------------------------------
 // Minimal mock factories
@@ -63,6 +64,10 @@ function makeSessionRepo() {
     insert: vi.fn((record: unknown) => { insertedRecords.push(record); }),
     update: vi.fn(),
     updateAppliedSettings: vi.fn(),
+    // Needed by retireRecord() which fires in the resume path when
+    // intent.retireRecordId is non-null (existing tests never reach it
+    // because they always produce a fresh spawn with retireRecordId=null).
+    compareAndUpdateStatus: vi.fn(() => true),
     insertedRecords,
   };
 }
@@ -141,6 +146,13 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
     getOrThrow: vi.fn(() => mockAdapter),
     list: vi.fn(() => ['claude']),
   },
+}));
+
+// Mocked so executeSpawnAgent's unconditional migrateResumeCwdIfRenamed call
+// does not touch the real filesystem. Existing tests never reach the migration
+// body (canResume is always false there); this mock makes it transparent.
+vi.mock('../../src/main/transition-engine/resume-cwd-migration', () => ({
+  migrateResumeCwdIfRenamed: vi.fn(async () => {}),
 }));
 
 vi.mock('node:fs', async (importOriginal) => {
@@ -441,5 +453,61 @@ describe('TransitionEngine - create_worktree action threads signal + progress', 
     const [, , options] = worktreeManagerMock.ensureWorktree.mock.calls[0] as [unknown, unknown, EnsureWorktreeOptions];
     expect(options.signal).toBeUndefined();
     expect(options.onProgress).toBeUndefined();
+  });
+});
+
+describe('TransitionEngine - migrateResumeCwdIfRenamed wiring', () => {
+  // Each test in this describe needs a clean mock slate. The describe above also
+  // calls vi.clearAllMocks() in its beforeEach, but that only covers tests inside
+  // that describe. Without clearing here, migrateResumeCwdIfRenamed call counts
+  // from describe 1's spawn_agent tests would leak into these assertions.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => {
+      return `claude ${options.prompt ?? ''}`;
+    });
+  });
+
+  it('calls migrateResumeCwdIfRenamed with oldCwd=intent.resumeFromCwd and newCwd=resolved cwd on a resume spawn', async () => {
+    // Arrange: a session record whose cwd differs from the task's current worktree
+    // path, simulating a post-rename resume scenario.
+    const sessionRepo = makeSessionRepo();
+    sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue({
+      id: 'session-record-1',
+      agent_session_id: 'agent-sess-uuid',
+      session_type: 'claude_agent',
+      status: 'suspended',
+      cwd: '/old/worktree/path',
+    });
+
+    // task.worktree_path becomes `cwd` inside executeSpawnAgent via:
+    //   const cwd = task.worktree_path || appConfig.projectPath || process.cwd();
+    const task = makeTask({ worktree_path: '/new/worktree/path' });
+
+    const { engine } = makeEngine({ sessionRepo });
+    await engine.executeTransition(
+      task as Parameters<typeof engine.executeTransition>[0],
+      'todo',
+      'doing',
+    );
+
+    // The migration must be called exactly once, threaded with:
+    //   oldCwd = intent.resumeFromCwd = match.cwd  (the session's original worktree cwd)
+    //   newCwd = cwd = task.worktree_path           (the renamed worktree the agent is spawned into)
+    //   canResume = true                            (resume-eligible record found)
+    //   agentSessionId = match.agent_session_id     (forwarded from the intent)
+    //
+    // Red: deleting the migrateResumeCwdIfRenamed call block from executeSpawnAgent
+    //      causes this to fail (called 0 times instead of 1).
+    // Red: swapping oldCwd/newCwd causes the objectContaining check to fail.
+    expect(migrateResumeCwdIfRenamed).toHaveBeenCalledOnce();
+    expect(migrateResumeCwdIfRenamed).toHaveBeenCalledWith(
+      expect.objectContaining({
+        oldCwd: '/old/worktree/path',
+        newCwd: '/new/worktree/path',
+        canResume: true,
+        agentSessionId: 'agent-sess-uuid',
+      }),
+    );
   });
 });

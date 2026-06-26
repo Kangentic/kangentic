@@ -309,4 +309,39 @@ describe('resolveSpawnIntent', () => {
     expect(intent.mode).toBe('fresh');
     expect(intent.retireRecordId).toBeNull();
   });
+
+  it('exposes the resumed record cwd as resumeFromCwd when resuming', () => {
+    // The resume path uses this to detect a worktree-rename cwd change and
+    // migrate the agent's per-cwd history (resume-cwd-migration.ts).
+    const record = mockSessionRecord({ status: 'suspended', cwd: '/project/.kangentic/worktrees/old-1a2b3c4d' });
+    const intent = resolveSpawnIntent({
+      ...baseOptions,
+      sessionRepo: mockSessionRepo(record),
+    });
+
+    expect(intent.mode).toBe('resume');
+    expect(intent.resumeFromCwd).toBe('/project/.kangentic/worktrees/old-1a2b3c4d');
+  });
+
+  it('returns null resumeFromCwd on a fresh spawn', () => {
+    const intent = resolveSpawnIntent({
+      ...baseOptions,
+      sessionRepo: mockSessionRepo(undefined),
+    });
+
+    expect(intent.mode).toBe('fresh');
+    expect(intent.resumeFromCwd).toBeNull();
+  });
+
+  it('returns null resumeFromCwd on a forceFresh spawn even with a resumable record', () => {
+    const record = mockSessionRecord({ status: 'suspended' });
+    const intent = resolveSpawnIntent({
+      ...baseOptions,
+      sessionRepo: mockSessionRepo(record),
+      forceFresh: true,
+    });
+
+    expect(intent.mode).toBe('fresh');
+    expect(intent.resumeFromCwd).toBeNull();
+  });
 });

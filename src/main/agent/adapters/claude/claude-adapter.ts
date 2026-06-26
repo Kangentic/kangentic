@@ -230,7 +230,9 @@ export class ClaudeAdapter implements AgentAdapter {
    * per-project state (~/.claude.json projects keys) to the absolute project
    * path, both outside the project folder. Migrate them so sessions stay
    * resumable after a relocation. Best-effort and non-destructive; see
-   * migrateClaudeProjectData.
+   * migrateClaudeProjectData. Also invoked with a single worktree's old/new path
+   * on the first resume after a worktree rename (resume-cwd-migration.ts), which
+   * migrates only that worktree's slug.
    */
   async onProjectRelocated(oldPath: string, newPath: string): Promise<void> {
     await migrateClaudeProjectData(oldPath, newPath);

@@ -24,6 +24,13 @@ export interface SpawnIntent {
   prompt: string | undefined;
   /** Session record to retire when resuming (same agent type only). Null for fresh spawns. */
   retireRecordId: string | null;
+  /**
+   * The cwd the resumed session originally ran in (the matched record's `cwd`).
+   * Null for fresh spawns. Used by the resume path to detect a worktree-rename
+   * cwd change and migrate the agent's per-cwd history so `--resume` still finds
+   * the transcript (see `resume-cwd-migration.ts`).
+   */
+  resumeFromCwd: string | null;
 }
 
 export interface SpawnIntentOptions {
@@ -97,12 +104,14 @@ export function resolveSpawnIntent(options: SpawnIntentOptions): SpawnIntent {
       agentSessionId: match!.agent_session_id!,
       prompt: resumePrompt,
       retireRecordId: match!.id,
+      resumeFromCwd: match!.cwd ?? null,
     };
   }
 
   return {
     mode: 'fresh',
     agentSessionId: null,
+    resumeFromCwd: null,
     // When the spawn has no task template (skipPromptTemplate - e.g. an isolated
     // review column that omits the "do this task" prompt), fall back to
     // resumePrompt so a caller-supplied auto_command becomes the fresh session's

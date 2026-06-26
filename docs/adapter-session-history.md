@@ -299,6 +299,37 @@ leak. If a future, *demonstrated* resume regression for a specific agent ever ne
 it to that one adapter with a mock that round-trips the resume artifact under `os.tmpdir()` - do
 not reinstate a blanket transcript-presence check on the shared spawn path.
 
+### Migrate-on-resume after a worktree rename (not the `canResumeSession` guard)
+
+A separate, narrower failure exists for the cwd-keyed agents: when a task's branch is renamed, its
+worktree directory is later recreated at a new path (the folder follows the renamed branch). The
+re-spawned agent then runs with the new worktree as cwd, so `--resume <id>` looks under the new
+cwd's slug and finds nothing - the transcript is intact, just orphaned under the old slug. A
+worktree rename is a per-cwd relocation, so `migrateResumeCwdIfRenamed`
+(`src/main/transition-engine/resume-cwd-migration.ts`) reuses the same `onProjectRelocated(oldCwd,
+newCwd)` hook the project-move path uses to move the history to the new slug on the first resume,
+before any empty transcript is written.
+
+This is **not** the reverted `canResumeSession` guard, and does not reintroduce its problems:
+
+1. It never downgrades resume to fresh. It performs a non-destructive directory rename, then issues
+   the same `--resume <id>`. On any failure it degrades to today's exact behavior (a visible "No
+   conversation found"), never to silent loss.
+2. It is gated on `oldCwd !== newCwd`. The mocked E2E resume specs keep cwd identical across spawns,
+   so the helper early-returns before touching `locateSessionHistoryFile` or `onProjectRelocated` -
+   the 10 specs that killed the old guard cannot be reached.
+3. `locateSessionHistoryFile` is used as a positive "already reachable? then skip" check, not as a
+   gate that suppresses resume. id-keyed agents (Codex, OpenCode) locate the file regardless of cwd,
+   so the helper no-ops for them.
+4. A load-bearing guard restricts migration to an `oldCwd` under
+   `<projectPath>/.kangentic/worktrees/`. The enable-worktree flow resumes a session whose oldCwd is
+   the shared project root; relocating that would move the whole `~/.claude/projects/<root-slug>/`
+   directory and orphan every other task's main-repo session.
+
+Pre-existing orphans (a task that already failed a resume and wrote an empty transcript under the
+new slug) are left to one-time manual recovery: copy the intact `<id>.jsonl` from the old slug
+directory into the current worktree's slug directory.
+
 ## Known gaps
 
 ### WSL on Windows

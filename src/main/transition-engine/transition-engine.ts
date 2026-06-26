@@ -10,6 +10,7 @@ import { WorktreeManager } from '../git/worktree-manager';
 import { agentRegistry } from '../agent/agent-registry';
 import { retireRecord, markRecordSuspended } from './session-lifecycle';
 import { resolveSpawnIntent } from './spawn-intent';
+import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
 import { sessionOutputPaths } from './session-paths';
 import type { ActionRepository } from '../db/repositories/action-repository';
 import type { TaskRepository } from '../db/repositories/task-repository';
@@ -243,6 +244,19 @@ export class TransitionEngine {
       + (agentSessionId ? ` agentSessionId=${agentSessionId.slice(0, 8)}` : '')
       + (intent.retireRecordId ? ` retiring=${intent.retireRecordId.slice(0, 8)}` : ''),
     );
+
+    // If the task's worktree was renamed since the session last ran, its history
+    // lives under the OLD cwd's slug and `--resume` would look under the new cwd
+    // and find nothing. Migrate it to the new cwd before building the command.
+    // Best-effort; on failure the resume proceeds unchanged.
+    await migrateResumeCwdIfRenamed({
+      adapter,
+      agentSessionId,
+      canResume,
+      oldCwd: intent.resumeFromCwd,
+      newCwd: cwd,
+      projectPath: appConfig.projectPath,
+    });
 
     // Session history reference overlay (separate from the resume/fresh decision).
     // Prepends a pointer to the source agent's native session file.

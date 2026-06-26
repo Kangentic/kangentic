@@ -327,19 +327,28 @@ export interface AgentAdapter {
   summarize?(prompt: string, cliPath: string, cwd: string): Promise<string>;
 
   /**
-   * Optional: notify the adapter that a Kangentic project moved from `oldPath`
-   * to `newPath`. Agents that keep per-project data OUTSIDE the project folder,
-   * keyed by the absolute project path, must migrate it here so sessions stay
-   * resumable after a relocation (Claude renames its `~/.claude/projects/<slug>/`
+   * Optional: notify the adapter that per-cwd data must move from `oldPath` to
+   * `newPath`. Agents that keep per-cwd data OUTSIDE the working directory, keyed
+   * by the absolute cwd path, must migrate it here so sessions stay resumable
+   * after the path changes (Claude renames its `~/.claude/projects/<slug>/`
    * transcript directories and rewrites the matching `~/.claude.json` keys).
    *
-   * Called best-effort by `relocateProject` after the stored DB paths are
-   * rewritten and `git worktree repair` has run, while the project's own
-   * sessions are suspended and before the renderer reopens the project. The
-   * caller wraps each invocation in try/catch, but implementations should also
-   * be internally fault-tolerant: a failure must never block relocation, and
-   * must degrade to leaving data in place (never destructive). Adapters whose
-   * per-project data lives inside the project folder (so it moves with it) omit
+   * Invoked for two relocations, both with the same (oldPath, newPath) contract:
+   * 1. A whole-project move - called best-effort by `relocateProject` after the
+   *    stored DB paths are rewritten and `git worktree repair` has run, while the
+   *    project's sessions are suspended and before the renderer reopens it. Here
+   *    the paths are project roots, and the implementation also migrates every
+   *    worktree found under them.
+   * 2. A single worktree-cwd rename - called best-effort on the first resume after
+   *    a task's worktree directory was recreated at a new path (see
+   *    `transition-engine/resume-cwd-migration.ts`). Here the paths are one
+   *    task's old and new worktree directories, so only that cwd's data moves.
+   *
+   * Implementations must be internally fault-tolerant: a failure must never block
+   * the caller, and must degrade to leaving data in place (never destructive).
+   * Because `replacePathPrefix` confines every rewrite to keys under `oldPath`,
+   * passing a single worktree path migrates only that worktree. Adapters whose
+   * per-cwd data lives inside the working directory (so it moves with it) omit
    * this method.
    */
   onProjectRelocated?(oldPath: string, newPath: string): Promise<void>;
