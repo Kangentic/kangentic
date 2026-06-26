@@ -16,6 +16,9 @@
  *    element is removed from the DOM (not.toBeAttached()).
  * 7. BehaviorTab toggle persistence - clicking a SettingToggleRow saves the
  *    new value to global config via config.set IPC.
+ * 8. BrowserAutomationTab master-switch gating - the four dependent toggles
+ *    are wrapped in an opacity-40 + inert div when the master switch is off,
+ *    and fully interactable when it is on.
  *
  * All tests are UI-tier (headless Chromium, no Electron, no PTY).
  * One shared browser+page across the whole file.
@@ -363,6 +366,64 @@ test.describe('BehaviorTab SettingToggleRow persistence', () => {
       const globalConfig = await page.evaluate(() => window.electronAPI.config.getGlobal());
       return (globalConfig as { skipBoardConfigConfirm: boolean }).skipBoardConfigConfirm;
     }, { timeout: 3000 }).toBe(false);
+
+    await closeSettings();
+  });
+});
+
+// ── Gap 8: BrowserAutomationTab master-switch gating ──────────────────────
+//
+// When the master "Enable Browser Automation" switch is off, the four dependent
+// capability toggles (Allow Interaction, Allow Navigation, Allow Eval, Restrict
+// Navigation to Localhost) are wrapped in a div that gains the `opacity-40`
+// class and the HTML `inert` attribute. This communicates visually that the
+// toggles are disabled and prevents accidental interaction while preserving
+// their stored values so re-enabling restores prior choices.
+//
+// `inert` is used only in BrowserAutomationTab in the entire renderer, so
+// `page.locator('[inert]')` is an unambiguous selector for this wrapper div.
+// The equivalent McpServerTab gating is deliberately untested (it predates
+// this commit); we guard the new gating here so a refactor cannot silently
+// drop the wrapper without a test catching it.
+
+test.describe('BrowserAutomationTab master-switch gating', () => {
+  test.afterEach(async () => {
+    // Restore enabled:true so subsequent tests start from a known state.
+    await setGlobalConfigAndSync({ browserAutomation: { enabled: true } });
+  });
+
+  test('sub-toggle wrapper gains opacity-40 and inert when master switch is off', async () => {
+    await setGlobalConfigAndSync({ browserAutomation: { enabled: false } });
+    await openTab('Agent Browser');
+
+    // Master switch must be unchecked.
+    const masterSwitch = page.getByRole('switch', { name: 'Enable Browser Automation' });
+    await expect(masterSwitch).toHaveAttribute('aria-checked', 'false');
+
+    // The wrapper div around the four dependent toggles must be dimmed (opacity-40)
+    // and non-interactive (inert). inert is the only usage of that attribute in the
+    // renderer, so the locator is unambiguous.
+    const inertWrapper = page.locator('[inert]');
+    await expect(inertWrapper).toBeAttached();
+    await expect(inertWrapper).toHaveClass(/opacity-40/);
+
+    await closeSettings();
+  });
+
+  test('sub-toggle wrapper has no opacity-40 or inert when master switch is on', async () => {
+    await setGlobalConfigAndSync({ browserAutomation: { enabled: true } });
+    await openTab('Agent Browser');
+
+    // Master switch must be checked.
+    const masterSwitch = page.getByRole('switch', { name: 'Enable Browser Automation' });
+    await expect(masterSwitch).toHaveAttribute('aria-checked', 'true');
+
+    // No inert wrapper present when the master is on.
+    await expect(page.locator('[inert]')).not.toBeAttached();
+
+    // The Allow Interaction sub-toggle must be visible and interactable (in the
+    // accessibility tree, not behind an inert barrier).
+    await expect(page.getByRole('switch', { name: 'Allow Interaction' })).toBeVisible();
 
     await closeSettings();
   });
