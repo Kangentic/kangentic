@@ -152,4 +152,54 @@ describe('selectEngine - language clamp (resolveLanguage)', () => {
     const result = selectEngine(makeProfile(), makeConfig());
     expect(result.language).toBe('en');
   });
+
+  it('unsupported language code clamps to en even with a multilingual live model', () => {
+    // A code that is not in any model's language set (e.g. a stale/unknown
+    // BCP-47 tag) must always clamp to 'en'. whisper-base-multi supports the
+    // curated set but 'xyz' is not in it.
+    const result = selectEngine(
+      makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
+      makeConfig({ language: 'xyz', liveModelId: 'whisper-base-multi', modelId: 'none' }),
+    );
+    expect(result.language).toBe('en');
+  });
+
+  it('multilingual final + English-only live clamps to en (live constrains the intersection)', () => {
+    // The live model is the streaming Zipformer (English-only). Even though the
+    // final model (whisper-small-multi) supports 'fr', the intersection of both
+    // active slots is ['en'] only, so 'fr' is clamped. This guards a regression
+    // where resolveLanguage might ignore the live model's constraint.
+    const result = selectEngine(
+      makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
+      makeConfig({ language: 'fr', modelId: 'whisper-small-multi' }),
+    );
+    expect(result.language).toBe('en');
+  });
+
+  it('multilingual final + no live slot: language passes through', () => {
+    // With no live model (liveModelId: 'none') and a multilingual final
+    // (whisper-small-multi), the only active slot supports 'fr', so it passes.
+    const result = selectEngine(
+      makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
+      makeConfig({ language: 'fr', liveModelId: 'none', modelId: 'whisper-small-multi' }),
+    );
+    expect(result.language).toBe('fr');
+  });
+
+  it('remote mode: final modelId is excluded from language resolution - multilingual live passes fr', () => {
+    // In remote mode, resolveLanguage only considers the live slot (the code
+    // passes `isRemote ? null : final`). Even if modelId points to an
+    // English-only model (parakeet), the remote path ignores it for language
+    // resolution, so 'fr' passes through via the multilingual live model.
+    const result = selectEngine(
+      makeProfile({ cpuCores: 8, totalRamGb: 16, gpu: 'none' }),
+      makeConfig({
+        engineMode: 'remote',
+        language: 'fr',
+        liveModelId: 'whisper-base-multi',
+        modelId: 'parakeet-tdt-0.6b-en',
+      }),
+    );
+    expect(result.language).toBe('fr');
+  });
 });

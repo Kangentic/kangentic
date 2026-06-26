@@ -9,6 +9,7 @@ import {
   MODELS,
   type ModelDef,
 } from '../../src/main/transcription/models/model-registry';
+import { MULTILINGUAL_LANGUAGE_CODES } from '../../src/shared/dictation-languages';
 
 describe('modelLanguages', () => {
   it('returns the declared languages array when the field is present', () => {
@@ -180,5 +181,83 @@ describe('finalCapableModels', () => {
     expect(finalIds).toContain('parakeet-tdt-0.6b-en');
     expect(finalIds).toContain('whisper-tiny-en');
     expect(finalIds).toContain('moonshine-tiny-en');
+  });
+
+  it('includes both multilingual whisper models (they are offline-whisper)', () => {
+    const finalIds = finalCapableModels().map((model) => model.id);
+    expect(finalIds).toContain('whisper-base-multi');
+    expect(finalIds).toContain('whisper-small-multi');
+  });
+});
+
+describe('whisper-base-multi model registration', () => {
+  it('exists in the MODELS catalogue', () => {
+    expect(getModel('whisper-base-multi')).toBeDefined();
+  });
+
+  it('engineKind is offline-whisper (loads via the Whisper config)', () => {
+    expect(getModel('whisper-base-multi')!.engineKind).toBe('offline-whisper');
+  });
+
+  it('liveCapable is true (base is light enough to chunk for the live preview)', () => {
+    // whisper-base-multi is the live-capable multilingual model. The small
+    // multilingual build (whisper-small-multi) is final-only, matching its
+    // English counterpart (whisper-small-en).
+    expect(getModel('whisper-base-multi')!.liveCapable).toBe(true);
+  });
+
+  it('languages field equals MULTILINGUAL_LANGUAGE_CODES', () => {
+    const model = getModel('whisper-base-multi')!;
+    expect(model.languages).toEqual([...MULTILINGUAL_LANGUAGE_CODES]);
+  });
+
+  it('has exactly 3 files (encoder, decoder, tokens)', () => {
+    // The Whisper offline shape: encoder + decoder + tokens.txt.
+    const files = getModel('whisper-base-multi')!.files;
+    expect(files).toHaveLength(3);
+    const fileNames = files.map((file) => file.file);
+    expect(fileNames).toContain('encoder.int8.onnx');
+    expect(fileNames).toContain('decoder.int8.onnx');
+    expect(fileNames).toContain('tokens.txt');
+  });
+
+  it('is in liveCapableModels()', () => {
+    const liveIds = liveCapableModels().map((model) => model.id);
+    expect(liveIds).toContain('whisper-base-multi');
+  });
+});
+
+describe('whisper-small-multi model registration', () => {
+  it('exists in the MODELS catalogue', () => {
+    expect(getModel('whisper-small-multi')).toBeDefined();
+  });
+
+  it('engineKind is offline-whisper', () => {
+    expect(getModel('whisper-small-multi')!.engineKind).toBe('offline-whisper');
+  });
+
+  it('liveCapable is falsy (small is too heavy to chunk for live preview, matching whisper-small-en)', () => {
+    // whisper-small-multi deliberately omits liveCapable (same as whisper-small-en).
+    // Asserting falsy covers both `undefined` and `false`.
+    expect(getModel('whisper-small-multi')!.liveCapable).toBeFalsy();
+  });
+
+  it('languages field equals MULTILINGUAL_LANGUAGE_CODES', () => {
+    const model = getModel('whisper-small-multi')!;
+    expect(model.languages).toEqual([...MULTILINGUAL_LANGUAGE_CODES]);
+  });
+
+  it('has exactly 3 files (encoder, decoder, tokens)', () => {
+    const files = getModel('whisper-small-multi')!.files;
+    expect(files).toHaveLength(3);
+    const fileNames = files.map((file) => file.file);
+    expect(fileNames).toContain('encoder.int8.onnx');
+    expect(fileNames).toContain('decoder.int8.onnx');
+    expect(fileNames).toContain('tokens.txt');
+  });
+
+  it('is NOT in liveCapableModels()', () => {
+    const liveIds = liveCapableModels().map((model) => model.id);
+    expect(liveIds).not.toContain('whisper-small-multi');
   });
 });
