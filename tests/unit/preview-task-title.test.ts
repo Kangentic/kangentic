@@ -144,6 +144,17 @@ describe('resolvePreviewTaskTitle', () => {
     expect(resolvePreviewTaskTitle(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBeNull();
   });
 
+  it('returns null when the global DB exists and a project matches but the project DB is absent', () => {
+    // findProjectId succeeds (global DB present, project row matches), but the per-project
+    // DB file does not exist on disk, so findTaskTitle's fs.existsSync guard fires.
+    mockState.projectsRows = [{ id: PROJECT_ID, path: projectRoot }];
+    mockState.tasksRows = [{ id: TASK_ID, title: 'Improve /preview dev UX', worktree_path: null }];
+    // Touch only the global DB; leave the project DB absent.
+    touchDbFiles(true, false);
+
+    expect(resolvePreviewTaskTitle(worktreePath(`improve-preview-dev-${SHORT_ID}`))).toBeNull();
+  });
+
   it('returns null for an empty worktree path', () => {
     expect(resolvePreviewTaskTitle('')).toBeNull();
   });
