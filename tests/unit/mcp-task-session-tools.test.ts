@@ -210,6 +210,48 @@ describe('create_task rate-limit wiring', () => {
     // callHandler must NOT be called after a failed tryReserve.
     expect(mockCallHandler).not.toHaveBeenCalled();
   });
+
+  it('rate-limit error message sources from taskCounter.limit(), not the count at exhaustion', async () => {
+    // The counter exhausts after EXHAUST_AT=3 reservations but limit() returns
+    // REPORTED_LIMIT=7 - deliberately mismatched values. If task-tools.ts were
+    // changed to interpolate a captured constant (e.g. the accumulated count at
+    // exhaustion time, or any frozen number) instead of calling taskCounter.limit()
+    // live, the error text would say "maximum 3 tasks per session" and the
+    // toContain('7') assertion below would fail.
+    //
+    // Red-green: temporarily change the rate-limit error string in task-tools.ts
+    // from `taskCounter.limit()` to `3` (or capture the count variable) - observe
+    // red (toContain('7') fails), restore `taskCounter.limit()` - observe green.
+    const EXHAUST_AT = 3;
+    const REPORTED_LIMIT = 7;
+    let decoupledCount = 0;
+    const decoupledCounter: TaskCounter = {
+      tryReserve: vi.fn(() => {
+        if (decoupledCount >= EXHAUST_AT) return false;
+        decoupledCount++;
+        return true;
+      }),
+      limit: () => REPORTED_LIMIT,
+    };
+    const decoupledServer = makeFakeServer();
+    registerTaskTools(decoupledServer as never, makeResolver(), decoupledCounter);
+
+    // Exhaust the counter at EXHAUST_AT reservations.
+    for (let index = 0; index < EXHAUST_AT; index++) {
+      await decoupledServer.getHandler('kangentic_create_task')({ title: `Task ${index}` });
+    }
+
+    const result = await decoupledServer.getHandler('kangentic_create_task')({ title: 'Overflow' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Rate limit reached');
+    // Must contain the live limit() value ('7'), not the exhaustion count ('3').
+    expect(result.content[0].text).toContain(String(REPORTED_LIMIT));
+    // Defensive: '3' must NOT appear; if it does, the code read the count at
+    // exhaustion instead of calling limit() live. (Message is
+    // "Rate limit reached: maximum 7 tasks per session." which contains no '3'.)
+    expect(result.content[0].text).not.toContain(String(EXHAUST_AT));
+  });
 });
 
 // ---------------------------------------------------------------------------

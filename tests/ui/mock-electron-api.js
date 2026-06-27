@@ -86,6 +86,7 @@
     },
     mcpServer: {
       enabled: true,
+      maxTaskCreateCount: 50,
     },
     contextBar: {
       showShell: true,

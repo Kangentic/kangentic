@@ -1,5 +1,6 @@
 import { Plug } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/types';
+import { DEFAULT_CONFIG } from '../../../../shared/types';
 import { INPUT_CLASS, SectionHeader, SettingRow, SettingToggleRow, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
@@ -19,8 +20,13 @@ export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
         <SettingRow {...settingProps('mcpServer.maxTaskCreateCount')}>
           <input
             type="number"
-            value={globalConfig.mcpServer?.maxTaskCreateCount ?? 50}
-            onChange={(event) => updateGlobal({ mcpServer: { maxTaskCreateCount: Number(event.target.value) } })}
+            value={globalConfig.mcpServer?.maxTaskCreateCount ?? DEFAULT_CONFIG.mcpServer.maxTaskCreateCount}
+            onChange={(event) => {
+              if (event.target.value === '') return;
+              const value = Number(event.target.value);
+              if (Number.isNaN(value)) return;
+              updateGlobal({ mcpServer: { maxTaskCreateCount: Math.max(1, Math.min(500, Math.floor(value))) } });
+            }}
             min={1}
             max={500}
             className={INPUT_CLASS}
