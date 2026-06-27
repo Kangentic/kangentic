@@ -438,10 +438,19 @@ if (__KANGENTIC_DEV__) {
   // BrowserWindow `additionalArguments`) ONLY in dev-preview mode, so this is
   // true for `/preview` and false for the regular `npm start` dogfood.
   const isEphemeralPreview = process.argv.includes('--kangentic-ephemeral');
+  // The original task title (base64-encoded in the BrowserWindow additionalArguments by
+  // main) so the title bar can identify which task the preview clones belong to. Null
+  // when not in preview, or when main could not resolve it.
+  const PREVIEW_TITLE_FLAG = '--kangentic-preview-task-title=';
+  const previewTitleArg = process.argv.find((arg) => arg.startsWith(PREVIEW_TITLE_FLAG));
+  const previewTaskTitle = previewTitleArg
+    ? Buffer.from(previewTitleArg.slice(PREVIEW_TITLE_FLAG.length), 'base64').toString('utf-8')
+    : null;
   api.dev = {
     createEphemeralProject: () => ipcRenderer.invoke(IPC.DEV_CREATE_EPHEMERAL_PROJECT),
     seedGitChanges: (targetPaths: string[]) => ipcRenderer.invoke(IPC.DEV_SEED_GIT_CHANGES, targetPaths),
     isEphemeralPreview,
+    previewTaskTitle,
   };
 }
 

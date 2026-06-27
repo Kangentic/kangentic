@@ -162,6 +162,23 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpaw
       <div className="flex items-center gap-1.5 flex-shrink-0">
         <img src={logoSrc} alt="Kangentic" className="w-5 h-5" />
         <span className="text-sm font-semibold text-fg-secondary">Kangentic</span>
+        {/*
+          Dev-only (preview): the original task's title after the wordmark, in a muted
+          pill (raised surface + edge border) so it stands out without the low-contrast
+          of a colored fill, so each preview window is identifiable when several are open
+          ("Project N" still tells the two clones apart). Shown in full (no truncation,
+          by request). Surface/edge/fg tokens re-color across all themes. Built out of
+          prod by __KANGENTIC_DEV__; previewTaskTitle is non-null only in `/preview`, so
+          its truthiness gates the render.
+        */}
+        {__KANGENTIC_DEV__ && window.electronAPI.dev?.previewTaskTitle && (
+          <span
+            className="ml-1 px-2.5 py-0.5 rounded-full bg-surface-raised border border-edge text-fg-secondary text-sm font-semibold whitespace-nowrap"
+            title={window.electronAPI.dev.previewTaskTitle}
+          >
+            {window.electronAPI.dev.previewTaskTitle}
+          </span>
+        )}
       </div>
 
       {/* Centered project name */}
