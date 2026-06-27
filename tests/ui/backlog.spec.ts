@@ -1,6 +1,11 @@
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import { launchPage, createProject, waitForBoard } from './helpers';
 
+// Each describe is isolated per worker (separate process). Within a worker, tests either
+// launch their own browser ('Backlog View') or reset shared store state between tests
+// ('Backlog Search and Filter'), so the file's tests can fan out across the UI workers safely.
+test.describe.configure({ mode: 'parallel' });
+
 test.describe('Backlog View', () => {
   test.beforeEach(async ({ }, testInfo) => {
     testInfo.setTimeout(30000);
