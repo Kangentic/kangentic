@@ -56,7 +56,7 @@ const COMPACT_DISPLAY_ID = 99;
 
 const preConfig = `
   window.__mockPreConfigure(function (state) {
-    var ts = new Date().toISOString();
+    var timestamp = new Date().toISOString();
 
     state.projects.push({
       id: '${PROJECT_ID}',
@@ -64,15 +64,15 @@ const preConfig = `
       path: '/mock/display-id-test',
       github_url: null,
       default_agent: 'claude',
-      last_opened: ts,
-      created_at: ts,
+      last_opened: timestamp,
+      created_at: timestamp,
     });
 
     var laneIds = {};
     state.DEFAULT_SWIMLANES.forEach(function (s, i) {
       var id = 'lane-tcdi-' + s.name.toLowerCase().replace(/\\s+/g, '-');
       laneIds[s.name] = id;
-      state.swimlanes.push(Object.assign({}, s, { id: id, position: i, created_at: ts }));
+      state.swimlanes.push(Object.assign({}, s, { id: id, position: i, created_at: timestamp }));
     });
 
     state.tasks.push({
@@ -90,8 +90,8 @@ const preConfig = `
       pr_url: null,
       base_branch: null,
       archived_at: null,
-      created_at: ts,
-      updated_at: ts,
+      created_at: timestamp,
+      updated_at: timestamp,
     });
 
     // Seed an archived task so the DoneSwimlane renders it via compact={true}.
@@ -112,9 +112,9 @@ const preConfig = `
       pr_number: null,
       pr_url: null,
       base_branch: null,
-      archived_at: ts,
-      created_at: ts,
-      updated_at: ts,
+      archived_at: timestamp,
+      created_at: timestamp,
+      updated_at: timestamp,
     });
 
     return { currentProjectId: '${PROJECT_ID}' };
