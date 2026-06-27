@@ -5,6 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
+import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
 import { resolvePreviewTaskTitle } from '../devtools/main/preview-task-title';
@@ -17,6 +18,7 @@ import { createRequestResolver } from './agent/mcp-project-context';
 import { IPC, PROJECT_PATH_MISSING_PREFIX } from '../shared/ipc-channels';
 import { ConfigManager } from './config/config-manager';
 import { isShuttingDown, setShuttingDown } from './shutdown-state';
+import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage } from './analytics/analytics';
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
@@ -30,6 +32,12 @@ import { MIN_ZOOM, MAX_ZOOM } from '../shared/zoom-steps';
 
 initStartupTimer(PROCESS_START);
 mark('process_start');
+
+// Dev-only freeze flight recorder: start sampling main-process event-loop lag
+// as early as possible so a stall during boot or normal operation is recorded
+// for the inspection server's /event-loop-lag route. Dead-code-eliminated in
+// production via __KANGENTIC_DEV__.
+if (__KANGENTIC_DEV__) startEventLoopLagMonitor();
 
 // Install product diagnostics (log mirror, crash capture, IPC recorder,
 // debug-dump path resolver) BEFORE any IPC handler registers. The recorder
@@ -126,8 +134,19 @@ function isBenignShutdownStreamError(error: unknown): boolean {
   return code === 'EAGAIN' || code === 'EPIPE' || code === 'ERR_IPC_CHANNEL_CLOSED';
 }
 
+// Suppress an uncaught error from the echo/telemetry path. Two cases:
+//   1. A shutdown-window stream/IPC teardown error (above).
+//   2. A recurring stdio `write EAGAIN`/EPIPE during NORMAL operation - the
+//      Windows `npm start` TTY artifact. Echoing it via console.error here
+//      would itself write to the same TTY and re-trigger the error (the
+//      observed "batches of 2-3"), so the echo AND telemetry are skipped.
+//      Scoped to `syscall === 'write'` so real faults still report.
+function isSuppressibleUncaughtError(error: unknown): boolean {
+  return isBenignShutdownStreamError(error) || isBenignStreamWriteError(error);
+}
+
 process.on('uncaughtException', (error) => {
-  if (isBenignShutdownStreamError(error)) return;
+  if (isSuppressibleUncaughtError(error)) return;
   console.error('[APP] Uncaught exception:', error);
   if (!isShuttingDown()) {
     trackEvent('app_error', {
@@ -137,7 +156,7 @@ process.on('uncaughtException', (error) => {
   }
 });
 process.on('unhandledRejection', (reason) => {
-  if (isBenignShutdownStreamError(reason)) return;
+  if (isSuppressibleUncaughtError(reason)) return;
   console.error('[APP] Unhandled rejection:', reason);
   if (!isShuttingDown()) {
     trackEvent('app_error', {

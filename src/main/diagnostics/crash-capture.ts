@@ -4,6 +4,7 @@ import { app, ipcMain } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
 import type { CrashRecord } from '../../shared/types';
 import { resolveCrashRecord } from './source-map-resolver';
+import { isBenignStreamWriteError } from './benign-stream-error';
 
 /**
  * Captures fatal-error events from main, preload, and renderer and persists
@@ -34,6 +35,10 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
   installed = true;
 
   process.on('uncaughtException', (error) => {
+    // A recurring stdio `write EAGAIN`/EPIPE (the Windows npm-start TTY
+    // artifact) is transient and survivable; do not persist a crash record
+    // for it. See `benign-stream-error.ts`.
+    if (isBenignStreamWriteError(error)) return;
     writeRecord(options.getProjectRoot(), {
       ts: new Date().toISOString(),
       kind: 'main-uncaught-exception',
@@ -47,6 +52,7 @@ export function startCrashCapture(options: CrashCaptureOptions): void {
   });
 
   process.on('unhandledRejection', (reason) => {
+    if (isBenignStreamWriteError(reason)) return;
     const error = reason instanceof Error ? reason : new Error(String(reason));
     writeRecord(options.getProjectRoot(), {
       ts: new Date().toISOString(),

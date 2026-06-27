@@ -8,6 +8,7 @@ import { getProjectDb } from '../../db/database';
 import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides } from '../helpers';
 import { linkPR, autoLinkPRForTask } from '../../pr/pr-linking';
 import { resolveProjectContext } from '../helpers/project-repos';
+import { getCachedTaskTitle } from './task-title-cache';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
 import { captureSessionMetrics } from './session-metrics';
@@ -45,6 +46,12 @@ export function registerSessionHandlers(context: IpcContext): void {
     return withTaskLock(taskId, async () => context.sessionManager.kill(id));
   });
   ipcMain.handle(IPC.SESSION_WRITE, (_, id, data) => context.sessionManager.write(id, data));
+  // Renderer drain acknowledgement for per-session output backpressure. One-way
+  // (send, not invoke): the renderer reports bytes it has consumed so main can
+  // pause/resume the session's PTY. Keyed by sessionId only - not project-scoped.
+  ipcMain.on(IPC.SESSION_DRAIN_ACK, (_, id: string, bytes: number) => {
+    context.sessionManager.acknowledgeDrain(id, bytes);
+  });
   ipcMain.handle(IPC.SESSION_RESIZE, (_, id, cols, rows) => context.sessionManager.resize(id, cols, rows));
   ipcMain.handle(IPC.SESSION_LIST, () => context.sessionManager.listSessions());
   // Targeted self-heal probe: returns the live registry session for a task
@@ -369,13 +376,18 @@ export function registerSessionHandlers(context: IpcContext): void {
       const taskId = context.sessionManager.getSessionTaskId(sessionId);
       let taskTitle: string | undefined;
       if (taskId && projectId) {
-        try {
-          const db = getProjectDb(projectId);
-          const taskRepository = new TaskRepository(db);
-          taskTitle = taskRepository.getById(taskId)?.title;
-        } catch {
-          // Project DB may not exist yet -- skip title lookup
-        }
+        // Resolved through a short-TTL cache: this fires on every activity
+        // transition (including the frequent `thinking` signal) but the title
+        // is only used for the occasional notification, so a per-event DB query
+        // would be pure main-loop tax. See task-title-cache.ts.
+        taskTitle = getCachedTaskTitle(taskId, Date.now(), () => {
+          try {
+            return new TaskRepository(getProjectDb(projectId)).getById(taskId)?.title;
+          } catch {
+            // Project DB may not exist yet -- skip title lookup
+            return undefined;
+          }
+        });
       }
       context.mainWindow.webContents.send(IPC.SESSION_ACTIVITY, sessionId, state, reason, projectId, taskId, taskTitle);
 

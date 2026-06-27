@@ -1,6 +1,38 @@
 import { findSafeStartIndex } from './scrollback-utils';
 
 const MAX_SCROLLBACK = 512 * 1024; // 512KB per session
+/**
+ * Trim scrollback only once it grows this far past the cap, then trim back to
+ * the cap. Slicing a 512KB string is O(n); doing it on every chunk once the
+ * buffer is full (the steady state for a heavily streaming session) burns the
+ * main thread. The slack amortizes the slice to roughly once per
+ * `SCROLLBACK_TRIM_SLACK` bytes of output instead of once per chunk.
+ */
+const SCROLLBACK_TRIM_SLACK = 256 * 1024;
+const SCROLLBACK_TRIM_THRESHOLD = MAX_SCROLLBACK + SCROLLBACK_TRIM_SLACK;
+/**
+ * Max characters (UTF-16 code units, i.e. string `.length`, not raw bytes)
+ * shipped to the renderer per 16ms flush. A multi-MB output burst accumulated
+ * inside one flush window would otherwise ship as one giant IPC message and one
+ * giant synchronous `xterm.write`, monopolizing the renderer thread. Capping
+ * the flush bounds each message; the remainder stays buffered and the next
+ * flush is rescheduled immediately so a backlog still drains quickly, just in
+ * interruptible slices.
+ */
+const MAX_BYTES_PER_FLUSH = 256 * 1024;
+
+/**
+ * Largest slice end <= `max` that does not split a UTF-16 surrogate pair.
+ * xterm's parser reassembles escape sequences across `write` calls, so the
+ * only cross-slice hazard is a split surrogate pair (which would render as
+ * U+FFFD). Escape-sequence boundaries do not need protecting here.
+ */
+function surrogateSafeFlushEnd(buffer: string, max: number): number {
+  if (max >= buffer.length) return buffer.length;
+  const code = buffer.charCodeAt(max - 1);
+  if (code >= 0xd800 && code <= 0xdbff) return max - 1;
+  return max;
+}
 
 interface PtyBufferManagerCallbacks {
   onFlush(sessionId: string, data: string): void;
@@ -52,7 +84,7 @@ export class PtyBufferManager {
 
     state.buffer += data;
     state.scrollback += data;
-    if (state.scrollback.length > MAX_SCROLLBACK) {
+    if (state.scrollback.length > SCROLLBACK_TRIM_THRESHOLD) {
       state.scrollback = state.scrollback.slice(-MAX_SCROLLBACK);
       const safeStart = findSafeStartIndex(state.scrollback);
       if (safeStart > 0) {
@@ -61,18 +93,32 @@ export class PtyBufferManager {
       // Reset cached index after truncation
       state.tuiStartIndex = -1;
     }
-    if (!state.flushScheduled) {
-      state.flushScheduled = true;
-      setTimeout(() => {
-        // Guard: session may have been removed during the 16ms window
-        const current = this.buffers.get(sessionId);
-        if (current && current.buffer) {
-          this.callbacks.onFlush(sessionId, current.buffer);
-          current.buffer = '';
-        }
-        if (current) current.flushScheduled = false;
-      }, 16);
-    }
+    this.scheduleFlush(sessionId, state);
+  }
+
+  /**
+   * Arm the 16ms flush timer if one is not already pending. The flush ships at
+   * most `MAX_BYTES_PER_FLUSH` bytes; if a backlog remains it re-arms itself
+   * for the next tick so a large burst drains in bounded, interruptible slices.
+   */
+  private scheduleFlush(sessionId: string, state: BufferState): void {
+    if (state.flushScheduled) return;
+    state.flushScheduled = true;
+    setTimeout(() => {
+      // Guard: session may have been removed during the 16ms window.
+      const current = this.buffers.get(sessionId);
+      if (!current) return;
+      current.flushScheduled = false;
+      if (!current.buffer) return;
+      const end = current.buffer.length > MAX_BYTES_PER_FLUSH
+        ? surrogateSafeFlushEnd(current.buffer, MAX_BYTES_PER_FLUSH)
+        : current.buffer.length;
+      const chunk = current.buffer.slice(0, end);
+      current.buffer = current.buffer.slice(end);
+      this.callbacks.onFlush(sessionId, chunk);
+      // Drain any remainder on the next tick instead of waiting for new data.
+      if (current.buffer) this.scheduleFlush(sessionId, current);
+    }, 16);
   }
 
   /**
@@ -124,6 +170,19 @@ export class PtyBufferManager {
       scrollback = scrollback.slice(state.tuiStartIndex);
     }
 
+    // The in-memory buffer is trimmed on hysteresis (onData lets it grow to
+    // SCROLLBACK_TRIM_THRESHOLD before slicing, to amortize the O(n) trim off
+    // the hot path), so it can transiently exceed MAX_SCROLLBACK. Bound the
+    // replay here instead - reads happen only on a focus/tab switch, so the
+    // slice cost is paid rarely rather than on every PTY chunk.
+    if (scrollback.length > MAX_SCROLLBACK) {
+      scrollback = scrollback.slice(-MAX_SCROLLBACK);
+      const safeStart = findSafeStartIndex(scrollback);
+      if (safeStart > 0) {
+        scrollback = scrollback.slice(safeStart);
+      }
+    }
+
     return '\x1b[0m' + scrollback;
   }
 
@@ -144,5 +203,17 @@ export class PtyBufferManager {
 
   removeSession(sessionId: string): void {
     this.buffers.delete(sessionId);
+  }
+
+  /**
+   * Dev diagnostics: the pending (un-flushed) buffer size and accumulated
+   * scrollback size for a session, in characters. Used by the inspection
+   * server's terminal-pipeline route to spot a session whose buffer is
+   * ballooning under a flood. Returns null for an unknown session.
+   */
+  getBufferStats(sessionId: string): { pendingBytes: number; scrollbackBytes: number } | null {
+    const state = this.buffers.get(sessionId);
+    if (!state) return null;
+    return { pendingBytes: state.buffer.length, scrollbackBytes: state.scrollback.length };
   }
 }

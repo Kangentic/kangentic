@@ -508,6 +508,7 @@ Operates on a per-project DB. Manages ANSI-stripped session transcripts.
 |--------|-------------|
 | `upsert(sessionId, transcript, sizeBytes)` | Insert or update a transcript record |
 | `getBySessionId(sessionId)` | Get the transcript for a session |
+| `getTranscriptTail(sessionId, maxChars)` | Get the last `maxChars` characters of a session's transcript plus its full length, computed in SQLite (`substr`) so a multi-MB transcript is not materialized in JS |
 | `getByTaskId(taskId)` | Get the transcript for a task's latest session |
 
 ### HandoffRepository

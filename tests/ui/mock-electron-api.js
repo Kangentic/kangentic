@@ -1295,6 +1295,9 @@
       onData: function () {
         return noop;
       },
+      ackData: function () {
+        // No-op in the headless mock: backpressure pause/resume has no PTY here.
+      },
       onFirstOutput: function (callback) {
         // Tests can fire this via window.__mockFireFirstOutput(sessionId).
         if (!window.__mockFirstOutputListeners) window.__mockFirstOutputListeners = [];
