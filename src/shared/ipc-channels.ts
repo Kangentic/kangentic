@@ -84,6 +84,7 @@ export const IPC = {
   SESSION_LIST: 'session:list',
   SESSION_GET_SCROLLBACK: 'session:getScrollback',
   SESSION_DATA: 'session:data',
+  SESSION_DRAIN_ACK: 'session:drainAck',
   SESSION_FIRST_OUTPUT: 'session:firstOutput',
   SESSION_GET_FIRST_OUTPUT: 'session:getFirstOutput',
   SESSION_EXIT: 'session:exit',
@@ -225,7 +226,7 @@ export const IPC = {
   BACKLOG_ATTACHMENT_OPEN: 'backlogAttachment:open',
 
   // Clipboard
-  CLIPBOARD_SAVE_IMAGE: 'clipboard:saveImage',
+  CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
 
   // Browser pane: embedded webview capture-and-send
   BROWSER_CAPTURE_SEND: 'browser:captureSend',

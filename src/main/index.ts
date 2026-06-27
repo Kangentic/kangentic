@@ -5,8 +5,10 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
+import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
+import { resolvePreviewTaskTitle } from '../devtools/main/preview-task-title';
 import { registerSeedGitChangesDevIpc } from '../devtools/main/seed-git-changes';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
@@ -16,6 +18,7 @@ import { createRequestResolver } from './agent/mcp-project-context';
 import { IPC, PROJECT_PATH_MISSING_PREFIX } from '../shared/ipc-channels';
 import { ConfigManager } from './config/config-manager';
 import { isShuttingDown, setShuttingDown } from './shutdown-state';
+import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
 import { initAnalytics, trackEvent, sanitizeErrorMessage } from './analytics/analytics';
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
@@ -24,10 +27,17 @@ import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { restoreShellEnv } from './shell-env';
+import { isFirstPartyPermissionAllowed } from './permission-policy';
 import { MIN_ZOOM, MAX_ZOOM } from '../shared/zoom-steps';
 
 initStartupTimer(PROCESS_START);
 mark('process_start');
+
+// Dev-only freeze flight recorder: start sampling main-process event-loop lag
+// as early as possible so a stall during boot or normal operation is recorded
+// for the inspection server's /event-loop-lag route. Dead-code-eliminated in
+// production via __KANGENTIC_DEV__.
+if (__KANGENTIC_DEV__) startEventLoopLagMonitor();
 
 // Install product diagnostics (log mirror, crash capture, IPC recorder,
 // debug-dump path resolver) BEFORE any IPC handler registers. The recorder
@@ -124,8 +134,19 @@ function isBenignShutdownStreamError(error: unknown): boolean {
   return code === 'EAGAIN' || code === 'EPIPE' || code === 'ERR_IPC_CHANNEL_CLOSED';
 }
 
+// Suppress an uncaught error from the echo/telemetry path. Two cases:
+//   1. A shutdown-window stream/IPC teardown error (above).
+//   2. A recurring stdio `write EAGAIN`/EPIPE during NORMAL operation - the
+//      Windows `npm start` TTY artifact. Echoing it via console.error here
+//      would itself write to the same TTY and re-trigger the error (the
+//      observed "batches of 2-3"), so the echo AND telemetry are skipped.
+//      Scoped to `syscall === 'write'` so real faults still report.
+function isSuppressibleUncaughtError(error: unknown): boolean {
+  return isBenignShutdownStreamError(error) || isBenignStreamWriteError(error);
+}
+
 process.on('uncaughtException', (error) => {
-  if (isBenignShutdownStreamError(error)) return;
+  if (isSuppressibleUncaughtError(error)) return;
   console.error('[APP] Uncaught exception:', error);
   if (!isShuttingDown()) {
     trackEvent('app_error', {
@@ -135,7 +156,7 @@ process.on('uncaughtException', (error) => {
   }
 });
 process.on('unhandledRejection', (reason) => {
-  if (isBenignShutdownStreamError(reason)) return;
+  if (isSuppressibleUncaughtError(reason)) return;
   console.error('[APP] Unhandled rejection:', reason);
   if (!isShuttingDown()) {
     trackEvent('app_error', {
@@ -175,6 +196,19 @@ app.setAppUserModelId(
 const appLaunchTime = Date.now();
 const isEphemeral = process.argv.includes('--ephemeral');
 const isE2ETest = process.env.NODE_ENV === 'test';
+
+// Dev-only: the original task's title for a `/preview` window, resolved once from
+// the real parent project DB (the preview clones never contain it). Surfaced to the
+// renderer via additionalArguments so the title bar can identify the task both clones
+// belong to. Memoized; null outside dev-preview or when resolution misses (graceful).
+let cachedPreviewTaskTitle: string | null | undefined;
+function getPreviewTaskTitle(): string | null {
+  if (cachedPreviewTaskTitle === undefined) {
+    cachedPreviewTaskTitle =
+      __KANGENTIC_DEV__ && isEphemeral ? resolvePreviewTaskTitle(getCwdArg() ?? '') : null;
+  }
+  return cachedPreviewTaskTitle;
+}
 
 // Harden any <webview> tags attached to the renderer (embedded browser pane).
 // `will-attach-webview` fires before the webview is created and lets us
@@ -324,6 +358,10 @@ const createWindow = () => {
 
   const savedBounds = resolveWindowBounds();
 
+  // Dev-preview only: resolve once (memoized) so the additionalArguments spread below reads a
+  // single local instead of calling getPreviewTaskTitle() twice (and dropping the non-null `!`).
+  const previewTaskTitle = __KANGENTIC_DEV__ && isEphemeral ? getPreviewTaskTitle() : null;
+
   mainWindow = new BrowserWindow({
     icon: iconImage,
     ...(savedBounds ? savedBounds : { width: 1400, height: 900 }),
@@ -340,10 +378,20 @@ const createWindow = () => {
       // Enable <webview> for the embedded browser side-pane in the task-detail
       // window. Hardened via the will-attach-webview hook below.
       webviewTag: true,
-      // Surface the ephemeral-preview flag to the renderer (read in preload via
-      // process.argv). Set ONLY in dev-preview mode (`--ephemeral`), so the dev
-      // TestHarness stays out of the regular `npm start` dogfood.
-      additionalArguments: __KANGENTIC_DEV__ && isEphemeral ? ['--kangentic-ephemeral'] : [],
+      // Surface the ephemeral-preview flag (and, when resolvable, the original task
+      // title) to the renderer (read in preload via process.argv). Set ONLY in
+      // dev-preview mode (`--ephemeral`), so the dev TestHarness and the preview title
+      // stay out of the regular `npm start` dogfood. The title is base64-encoded so a
+      // value with spaces / `:` / `/` survives command-line round-tripping intact.
+      additionalArguments:
+        __KANGENTIC_DEV__ && isEphemeral
+          ? [
+              '--kangentic-ephemeral',
+              ...(previewTaskTitle
+                ? [`--kangentic-preview-task-title=${Buffer.from(previewTaskTitle, 'utf-8').toString('base64')}`]
+                : []),
+            ]
+          : [],
     },
   });
 
@@ -692,18 +740,23 @@ app.whenReady().then(async () => {
     // refused" but the rest of the app stays functional.
   }
 
-  // Grant microphone access for voice-to-text dictation. getUserMedia in the
-  // renderer raises a 'media' permission request; we approve mic access for our
-  // own app origin (the renderer is first-party, not arbitrary web content).
-  // The actual OS-level gate still applies (macOS TCC handled via
-  // systemPreferences in the dictation handler; an OS denial surfaces as a
-  // getUserMedia rejection in the popup).
+  // Grant the first-party renderer the web-platform permissions it actually uses:
+  // 'media' (getUserMedia microphone access for voice-to-text dictation) and the
+  // async Clipboard API ('clipboard-read' / 'clipboard-sanitized-write') that backs
+  // terminal copy/paste and every "copy to clipboard" affordance. The renderer is
+  // our own trusted UI, not arbitrary web content. Without the clipboard grant,
+  // navigator.clipboard.readText()/writeText() throw NotAllowedError and the actions
+  // silently no-op (this broke Ctrl+V text/image paste and the copy buttons). The
+  // policy lives in permission-policy.ts so both handlers stay in lockstep and it is
+  // unit-tested. OS-level gates still apply (macOS TCC for the mic surfaces as a
+  // getUserMedia rejection). The embedded browser webview is untrusted guest content
+  // and keeps its own deny-all handler below; this default-session policy does not
+  // touch it.
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    // 'media' covers getUserMedia microphone/camera requests.
-    callback(permission === 'media');
+    callback(isFirstPartyPermissionAllowed(permission));
   });
   session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
-    return permission === 'media';
+    return isFirstPartyPermissionAllowed(permission);
   });
 
   createWindow();

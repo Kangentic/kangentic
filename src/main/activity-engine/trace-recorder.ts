@@ -1,6 +1,11 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { SessionUsage } from '../../shared/types';
+import {
+  queueAppendWithRotation,
+  resetRotationState,
+  ROTATED_FILE_SUFFIX,
+} from '../diagnostics/async-file-queue';
 
 /**
  * Dev-only passive recording of PTY chunk arrivals and status.json
@@ -38,122 +43,64 @@ import type { SessionUsage } from '../../shared/types';
  * unattended dev session pile up gigabytes of recorder output.
  */
 export const TRACE_FILE_MAX_BYTES = 10 * 1024 * 1024;
-const ROTATED_SUFFIX = '.1';
 const TRACE_FILES = ['pty-chunks.jsonl', 'status-deltas.jsonl'] as const;
 
 const sessionDirs = new Map<string, string>();
-const byteCounts = new Map<string, Map<string, number>>();
-const errorOnceLogged = new Set<string>();
 
 /**
- * Pure rotation + append helper. Exported for unit tests so the
- * rotation contract can be verified without going through the
- * `__KANGENTIC_DEV__` gate or the per-session bookkeeping.
+ * Append `line` to `<sessionDir>/<fileName>` through the async file queue.
  *
- * Returns the new byte count for `filePath` after the append (zero
- * plus the appended line's length when rotation fired; otherwise
- * `currentBytes + line.length`).
- *
- * Sync I/O on purpose: rotation must observe the previous append's
- * effect on disk before renaming, otherwise an in-flight async write
- * could land in the rotated `.1` file instead of the fresh primary.
- * Append latency for a ~50-byte line on NTFS is sub-millisecond, so
- * the cost is negligible even at 60Hz from the PTY hot path.
+ * The queue buffers the write off the PTY hot path (no synchronous
+ * `appendFileSync` on the ~60Hz `onData` path), rotates the file at
+ * `TRACE_FILE_MAX_BYTES`, serializes all ops per path, and best-effort
+ * swallows its own errors - including the ENOENT shutdown race where
+ * `killAllSessions` deletes the session dir while a final chunk is still in
+ * flight. So the recorder no longer does sync I/O, byte bookkeeping, or
+ * per-session error logging here.
  */
-export function appendWithRotationSync(
-  filePath: string,
-  line: string,
-  currentBytes: number,
-  maxBytes: number = TRACE_FILE_MAX_BYTES,
-): number {
-  let bytes = currentBytes;
-  if (bytes + line.length > maxBytes) {
-    const rotatedPath = filePath + ROTATED_SUFFIX;
-    // Drop any prior rotated copy. fs.renameSync on Windows fails when
-    // the destination exists, so we unlink first regardless of OS to
-    // keep the behavior portable.
-    try {
-      fs.unlinkSync(rotatedPath);
-    } catch {
-      // May not exist - ignore.
-    }
-    try {
-      fs.renameSync(filePath, rotatedPath);
-    } catch {
-      // Primary may not exist on the very first rotation attempt
-      // after a session start with an empty cap (uncommon). Either
-      // way the next appendFileSync will create a fresh primary.
-    }
-    bytes = 0;
-  }
-  fs.appendFileSync(filePath, line);
-  return bytes + line.length;
-}
-
-function getCounter(sessionId: string, fileName: string): number {
-  return byteCounts.get(sessionId)?.get(fileName) ?? 0;
-}
-
-function setCounter(sessionId: string, fileName: string, bytes: number): void {
-  let counts = byteCounts.get(sessionId);
-  if (!counts) {
-    counts = new Map();
-    byteCounts.set(sessionId, counts);
-  }
-  counts.set(fileName, bytes);
-}
-
 function tryRecord(sessionId: string, fileName: string, line: string): void {
   const sessionDir = sessionDirs.get(sessionId);
   if (!sessionDir) return;
   const filePath = path.join(sessionDir, fileName);
-  try {
-    const newBytes = appendWithRotationSync(
-      filePath,
-      line,
-      getCounter(sessionId, fileName),
-    );
-    setCounter(sessionId, fileName, newBytes);
-  } catch (error) {
-    // ENOENT is the expected shutdown race: killAllSessions deletes the
-    // session dir while a final PTY chunk is still in flight. Swallow it
-    // silently - it is noise, not a fault. Log other errors once per session.
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return;
-    if (!errorOnceLogged.has(sessionId)) {
-      errorOnceLogged.add(sessionId);
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(
-        `[trace-recorder] append failed for session=${sessionId.slice(0, 8)} file=${fileName}: ${message}`,
-      );
-    }
-  }
+  queueAppendWithRotation(filePath, line, TRACE_FILE_MAX_BYTES);
 }
 
 export function setSessionDir(sessionId: string, sessionDir: string): void {
   if (!__KANGENTIC_DEV__) return;
   sessionDirs.set(sessionId, sessionDir);
-  byteCounts.delete(sessionId);
   // Truncate stale recorder output (primary AND rotated) from a prior
   // run with this sessionId. status-file-reader's attach() already
   // truncates status.json and events.jsonl on the same boundary; mirror
   // that so a resumed session doesn't replay old chunks/deltas mixed
   // in with fresh ones. Best-effort: a missing file is the common case.
+  // This runs once at session start, not on the hot path, so sync unlink
+  // is fine.
   for (const fileName of TRACE_FILES) {
-    for (const variant of [fileName, fileName + ROTATED_SUFFIX]) {
+    const filePath = path.join(sessionDir, fileName);
+    for (const variant of [filePath, filePath + ROTATED_FILE_SUFFIX]) {
       try {
-        fs.unlinkSync(path.join(sessionDir, variant));
+        fs.unlinkSync(variant);
       } catch {
         // File may not exist yet (fresh session) - ignore.
       }
     }
+    // The on-disk primary is now gone; reset the queue's byte counter so the
+    // first fresh append starts from zero, not a stale total from a prior run.
+    resetRotationState(filePath);
   }
 }
 
 export function clearSessionDir(sessionId: string): void {
   if (!__KANGENTIC_DEV__) return;
+  const sessionDir = sessionDirs.get(sessionId);
   sessionDirs.delete(sessionId);
-  byteCounts.delete(sessionId);
-  errorOnceLogged.delete(sessionId);
+  // Free the queue's per-path byte counters. The trace files themselves
+  // persist on disk so a post-exit "Capture trace" still bundles them.
+  if (sessionDir) {
+    for (const fileName of TRACE_FILES) {
+      resetRotationState(path.join(sessionDir, fileName));
+    }
+  }
 }
 
 export function recordPtyChunk(sessionId: string, length: number): void {

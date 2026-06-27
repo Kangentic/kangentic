@@ -75,6 +75,7 @@ type FieldSharing = 'team' | 'db-only';
 const SWIMLANE_FIELD_SHARING: Record<keyof Swimlane, FieldSharing> = {
   // Team-shared: must round-trip through BoardColumnConfig (build + apply).
   name: 'team',
+  description: 'team',
   role: 'team',
   color: 'team',
   icon: 'team',
@@ -103,6 +104,7 @@ const SWIMLANE_FIELD_SHARING: Record<keyof Swimlane, FieldSharing> = {
  * swimlane field name) and `dbValue`.
  */
 const ROUNDTRIP_CASES: Array<{ field: keyof Swimlane; configKey: keyof BoardColumnConfig; dbValue: unknown; configValue: unknown }> = [
+  { field: 'description', configKey: 'description', dbValue: 'Review happens here', configValue: 'Review happens here' },
   { field: 'color', configKey: 'color', dbValue: '#abcdef', configValue: '#abcdef' },
   { field: 'icon', configKey: 'icon', dbValue: 'flask-conical', configValue: 'flask-conical' },
   { field: 'is_archived', configKey: 'archived', dbValue: true, configValue: true },
@@ -129,6 +131,7 @@ function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {
   return {
     id: 'lane-custom',
     name: 'Review',
+    description: null,
     role: null,
     position: 1,
     color: '#3b82f6',
@@ -256,5 +259,33 @@ describe('board-config parity: apply (kangentic.json -> DB)', () => {
         `apply-config.ts update() does not thread '${entry.field}'`,
       ).toBe(entry.dbValue);
     }
+  });
+
+  it('update preserves existing description when config omits the description key', () => {
+    // Build-config omits the description key entirely when lane.description is
+    // null/falsy (the `if (lane.description)` guard).  When apply-config processes
+    // a config that has no description key, the update input must fall back to
+    // `existing.description` so the receiving machine's existing description is not
+    // silently cleared.
+    //
+    // Red trigger: change `columnConfig.description ?? existing.description` to
+    // `columnConfig.description ?? null` in apply-config.ts - the update call then
+    // gets `description: null` and this assertion fails.
+    hoisted.lanes = [
+      makeSwimlane({ id: 'lane-todo', name: 'To Do', role: 'todo' }),
+      makeSwimlane({ id: 'lane-review', name: 'Review', description: 'Pre-existing description text' }),
+      makeSwimlane({ id: 'lane-done', name: 'Done', role: 'done', is_archived: true }),
+    ];
+
+    // Incoming config knows lane-review by id but carries no description key,
+    // matching what build-config produces when the building machine had no description.
+    applyBoardConfigToDb('p', makeConfig({ id: 'lane-review', name: 'Review' }));
+
+    const updated = hoisted.updateCalls.find((call) => call.id === 'lane-review');
+    expect(updated, 'apply-config.ts did not call update for the existing Review column').toBeDefined();
+    expect(
+      (updated as Record<string, unknown>).description,
+      'apply-config.ts must fall back to existing.description when config omits the description key',
+    ).toBe('Pre-existing description text');
   });
 });

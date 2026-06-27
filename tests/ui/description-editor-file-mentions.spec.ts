@@ -2,6 +2,10 @@ import { expect, test } from '@playwright/test';
 import { createProject, createTask, launchPage } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 
+// Each describe is isolated per worker (separate process; per-test page launch / goto reset),
+// so the file's tests can fan out across the UI workers safely.
+test.describe.configure({ mode: 'parallel' });
+
 const PROJECT_NAME = `Description Mention Test ${Date.now()}`;
 let browser: Browser;
 let page: Page;

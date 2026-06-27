@@ -664,6 +664,14 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec('ALTER TABLE handoffs ADD COLUMN session_history_path TEXT');
   }
 
+  // Migration: add description column to swimlanes for a free-form, team-shared
+  // column purpose blurb (surfaced as a header tooltip, round-trips via kangentic.json).
+  const hasSwimlaneDescription = (db.pragma('table_info(swimlanes)') as Array<{ name: string }>)
+    .some((column) => column.name === 'description');
+  if (!hasSwimlaneDescription) {
+    db.exec('ALTER TABLE swimlanes ADD COLUMN description TEXT DEFAULT NULL');
+  }
+
   // Hot-path indices for session lookups.
   // - sessions(task_id, started_at): getLatestForTask, cost summaries, per-task history
   // - sessions(task_id, session_type, isolated_swimlane_id, started_at): getLatestForTaskByTypeAndIsolation,

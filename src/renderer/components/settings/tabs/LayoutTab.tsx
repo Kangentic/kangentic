@@ -27,6 +27,11 @@ export function LayoutTab({ globalConfig }: { globalConfig: AppConfig }) {
         </Select>
       </SettingRow>
       <SettingToggleRow
+        {...settingProps('showTaskNumbers')}
+        checked={globalConfig.showTaskNumbers}
+        onChange={(value) => updateGlobal({ showTaskNumbers: value })}
+      />
+      <SettingToggleRow
         {...settingProps('terminalPanelVisible')}
         checked={globalConfig.terminalPanelVisible !== false}
         onChange={(value) => updateGlobal({ terminalPanelVisible: value })}

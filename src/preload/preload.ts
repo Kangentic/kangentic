@@ -164,6 +164,7 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.SESSION_DATA, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_DATA, handler);
     },
+    ackData: (id, bytes) => ipcRenderer.send(IPC.SESSION_DRAIN_ACK, id, bytes),
     onFirstOutput: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, projectId?: string) => callback(sessionId, projectId);
       ipcRenderer.on(IPC.SESSION_FIRST_OUTPUT, handler);
@@ -402,7 +403,7 @@ const api: ElectronAPI = {
   },
 
   clipboard: {
-    saveImage: (data: string, extension: string) => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE, data, extension),
+    readImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE),
   },
 
   browser: {
@@ -438,10 +439,19 @@ if (__KANGENTIC_DEV__) {
   // BrowserWindow `additionalArguments`) ONLY in dev-preview mode, so this is
   // true for `/preview` and false for the regular `npm start` dogfood.
   const isEphemeralPreview = process.argv.includes('--kangentic-ephemeral');
+  // The original task title (base64-encoded in the BrowserWindow additionalArguments by
+  // main) so the title bar can identify which task the preview clones belong to. Null
+  // when not in preview, or when main could not resolve it.
+  const PREVIEW_TITLE_FLAG = '--kangentic-preview-task-title=';
+  const previewTitleArg = process.argv.find((arg) => arg.startsWith(PREVIEW_TITLE_FLAG));
+  const previewTaskTitle = previewTitleArg
+    ? Buffer.from(previewTitleArg.slice(PREVIEW_TITLE_FLAG.length), 'base64').toString('utf-8')
+    : null;
   api.dev = {
     createEphemeralProject: () => ipcRenderer.invoke(IPC.DEV_CREATE_EPHEMERAL_PROJECT),
     seedGitChanges: (targetPaths: string[]) => ipcRenderer.invoke(IPC.DEV_SEED_GIT_CHANGES, targetPaths),
     isEphemeralPreview,
+    previewTaskTitle,
   };
 }
 

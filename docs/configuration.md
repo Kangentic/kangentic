@@ -27,7 +27,7 @@ Both panels use a VS Code-style layout: a sidebar with tab navigation on the lef
 These settings appear only in App Settings and cannot be overridden per-project:
 
 - `sidebarVisible`, `boardLayout`, `sidebar.width`
-- `cardDensity`, `columnWidth`, `terminalPanelVisible`, `animationsEnabled`, `statusBarVisible`, `diffViewMode`
+- `cardDensity`, `columnWidth`, `showTaskNumbers`, `terminalPanelVisible`, `animationsEnabled`, `statusBarVisible`, `diffViewMode`
 - `diffDefaultScope`, `diffIgnoreWhitespace`, `diffCollapseUnchanged`, `diffFileSort`, `diffFlatList`
 - `restoreWindowPosition`
 - `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`
@@ -66,6 +66,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `boardLayout` | `'horizontal'` \| `'vertical'` | `'horizontal'` | Board scroll direction. Global-only. |
 | `cardDensity` | `'compact'` \| `'default'` \| `'comfortable'` | `'default'` | Amount of detail shown on task cards. Global-only. |
 | `columnWidth` | `'narrow'` \| `'default'` \| `'wide'` | `'default'` | Width of board columns. Global-only. |
+| `showTaskNumbers` | boolean | `false` | Show each task's `#N` (`display_id`) as a muted badge in the board card header. Opt-in; matches the number shown in the task detail header. Global-only. |
 | `terminalPanelVisible` | boolean | `true` | Show the terminal panel below the board. Global-only. |
 | `animationsEnabled` | boolean | `true` | Enable CSS keyframe animations (idle pulse, dialog fades, status bar pulses). Global-only. |
 | `statusBarVisible` | boolean | `true` | Show the status bar at the bottom of the window. Global-only. |
@@ -284,6 +285,7 @@ Each swimlane has its own overrides (stored in the per-project DB):
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `description` | string \| null | null | Free-form description of the column's purpose. Shown as a header tooltip and round-trips through `kangentic.json`. |
 | `permission_mode` | PermissionMode \| null | null | Permission mode override for this column |
 | `auto_spawn` | boolean | true | Whether moving a task here spawns an agent |
 | `auto_command` | string \| null | null | Command injected into running session on task arrival |
@@ -340,6 +342,7 @@ Ghost columns are invisible on the board but still exist in the database. Once a
     {
       "id": "uuid",
       "name": "Executing",
+      "description": "Agents actively work tasks here.",
       "icon": "square-terminal",
       "color": "#10b981",
       "autoSpawn": true,

@@ -241,18 +241,19 @@ export async function handleGetTranscript(
     }
 
     // format === 'raw' - view/tail/search do not apply, but the char budget does.
+    // Fetch only the tail via SQL so a multi-MB transcript is never fully
+    // materialized in JS just to slice off its last charBudget chars.
     const transcriptRepo = new TranscriptRepository(db);
-    const rawRecord = transcriptRepo.getBySessionId(targetSessionId);
-    if (!rawRecord || !rawRecord.transcript) {
+    const rawTail = transcriptRepo.getTranscriptTail(targetSessionId, charBudget);
+    if (!rawTail || rawTail.fullLength === 0) {
       return { success: true, message: `No raw transcript captured for session ${targetSessionId.slice(0, 8)}.` };
     }
 
-    const fullRaw = rawRecord.transcript;
-    const rawTruncated = fullRaw.length > charBudget;
-    const rawBody = rawTruncated ? fullRaw.slice(fullRaw.length - charBudget) : fullRaw;
+    const rawTruncated = rawTail.fullLength > charBudget;
+    const rawBody = rawTail.tail;
 
-    const sizeKb = (rawRecord.size_bytes / 1024).toFixed(1);
-    let rawHeader = `Session: ${targetSessionId.slice(0, 8)}... | Format: raw | Size: ${sizeKb} KB | Updated: ${rawRecord.updated_at}`;
+    const sizeKb = (rawTail.sizeBytes / 1024).toFixed(1);
+    let rawHeader = `Session: ${targetSessionId.slice(0, 8)}... | Format: raw | Size: ${sizeKb} KB | Updated: ${rawTail.updatedAt}`;
     // Raw is verbatim scrollback - mostly repeated terminal redraws. When a
     // parsed view exists for this agent, point the reader at it: structured is
     // far smaller and noise-free. Capability check, so this stays agent-agnostic.
@@ -262,7 +263,7 @@ export async function handleGetTranscript(
         `A parsed "structured" view is available for this agent and is far smaller - pass format="structured" to evaluate the conversation.`;
     }
     if (rawTruncated) {
-      const omittedKb = ((fullRaw.length - rawBody.length) / 1024).toFixed(1);
+      const omittedKb = ((rawTail.fullLength - rawBody.length) / 1024).toFixed(1);
       rawHeader +=
         `\n[Truncated to the most recent ${Math.round(charBudget / 1000)}k chars; ` +
         `${omittedKb} KB of earlier scrollback omitted. Raise maxChars (up to ${TRANSCRIPT_CHAR_BUDGET_MAX}) for more.]`;
@@ -273,10 +274,10 @@ export async function handleGetTranscript(
       data: {
         sessionId: targetSessionId,
         format,
-        sizeBytes: rawRecord.size_bytes,
+        sizeBytes: rawTail.sizeBytes,
         truncated: rawTruncated,
-        createdAt: rawRecord.created_at,
-        updatedAt: rawRecord.updated_at,
+        createdAt: rawTail.createdAt,
+        updatedAt: rawTail.updatedAt,
       },
     };
   } catch (error) {
@@ -286,6 +287,12 @@ export async function handleGetTranscript(
 
 /** Maximum rows returned by query_db to prevent accidental large result sets. */
 const MAX_QUERY_ROWS = 100;
+
+/** Strip a trailing `;` (and surrounding whitespace) so the SQL can be wrapped
+ *  in a `SELECT * FROM (<sql>) LIMIT n` subquery without a syntax error. */
+function stripTrailingSemicolon(sql: string): string {
+  return sql.replace(/;\s*$/, '').trim();
+}
 
 /**
  * MCP command handler: query_db
@@ -316,7 +323,18 @@ export function handleQueryDb(
     db.pragma('query_only = ON');
     let rows: Record<string, unknown>[];
     try {
-      rows = db.prepare(sql).all() as Record<string, unknown>[];
+      // Cap the result in SQL so a `SELECT * FROM big_table` returns at most
+      // MAX_QUERY_ROWS+1 rows (the +1 detects truncation) instead of
+      // materializing the entire table into JS only to slice it. Wrapping in a
+      // subquery works for any SELECT/CTE; queries that cannot be wrapped
+      // (EXPLAIN, PRAGMA, multi-statement) fall back to the raw query, whose
+      // own error surfaces if the SQL is genuinely invalid.
+      const cappedSql = `SELECT * FROM (${stripTrailingSemicolon(sql)}) LIMIT ${MAX_QUERY_ROWS + 1}`;
+      try {
+        rows = db.prepare(cappedSql).all() as Record<string, unknown>[];
+      } catch {
+        rows = db.prepare(sql).all() as Record<string, unknown>[];
+      }
     } finally {
       // Always restore write capability for other operations
       db.pragma('query_only = OFF');
@@ -347,7 +365,7 @@ export function handleQueryDb(
     }
 
     const summary = truncated
-      ? `Showing ${MAX_QUERY_ROWS} of ${rows.length} rows (truncated).`
+      ? `Showing the first ${MAX_QUERY_ROWS} rows (more exist; add a LIMIT or WHERE to narrow the result).`
       : `${rows.length} row(s).`;
     lines.push('');
     lines.push(summary);

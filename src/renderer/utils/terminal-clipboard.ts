@@ -92,16 +92,6 @@ export function quoteForShell(filePath: string, shellName?: string): string {
   return `"${filePath.replace(/`/g, '``').replace(/\$/g, '`$').replace(/"/g, '\\"')}"`;
 }
 
-/** MIME type to file extension mapping for clipboard images.
- *  Matches the formats supported by the Claude API vision input:
- *  image/jpeg, image/png, image/gif, image/webp */
-const IMAGE_EXTENSION_MAP: Record<string, string> = {
-  'image/png': '.png',
-  'image/jpeg': '.jpg',
-  'image/gif': '.gif',
-  'image/webp': '.webp',
-};
-
 /**
  * Handle Ctrl+V / Cmd+V paste in the terminal.
  *
@@ -126,30 +116,20 @@ async function handlePaste(
     // readText failed or denied - try image below
   }
 
-  // Priority 2: image clipboard (only useful if we can write to PTY)
+  // Priority 2: image clipboard (only useful if we can write to PTY).
+  // Read the image natively in the main process (Electron clipboard), which avoids
+  // the document-focus requirement of the web clipboard API and behaves identically
+  // across platforms, then write the saved file path to the PTY so Claude Code can
+  // pick it up.
   if (!onWrite) return;
 
   try {
-    const items = await navigator.clipboard.read();
-    for (const item of items) {
-      const imageType = item.types.find(type => type.startsWith('image/'));
-      if (!imageType) continue;
-
-      const blob = await item.getType(imageType);
-      const buffer = await blob.arrayBuffer();
-      const base64 = btoa(
-        new Uint8Array(buffer).reduce((accumulated, byte) => accumulated + String.fromCharCode(byte), ''),
-      );
-
-      const extension = IMAGE_EXTENSION_MAP[imageType] || '.png';
-      let filePath = await window.electronAPI.clipboard.saveImage(base64, extension);
-      if (shellName) filePath = convertPathForShell(filePath, shellName);
-      const quoted = quoteForShell(filePath, shellName);
-      onWrite(quoted);
-      return; // only paste the first image
-    }
+    let filePath = await window.electronAPI.clipboard.readImage();
+    if (!filePath) return;
+    if (shellName) filePath = convertPathForShell(filePath, shellName);
+    onWrite(quoteForShell(filePath, shellName));
   } catch {
-    // clipboard.read() not available or denied - silently fail
+    // native clipboard read failed - silently fail
   }
 }
 

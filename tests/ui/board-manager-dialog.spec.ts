@@ -14,6 +14,10 @@ import { test, expect } from '@playwright/test';
 import { launchPage, waitForBoard, createProject } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 
+// Each describe is isolated per worker (separate process; per-test page launch / goto reset),
+// so the file's tests can fan out across the UI workers safely.
+test.describe.configure({ mode: 'parallel' });
+
 const PROJECT_NAME = `BoardMgr Test ${Date.now()}`;
 let browser: Browser;
 let page: Page;
@@ -112,6 +116,39 @@ test.describe('BoardManagerDialog', () => {
     await page.locator('[data-testid="board-manager-name"]').fill('Tests');
     await page.locator('[data-testid="board-manager-save"]').click();
     await page.locator('[data-testid="board-manager-dialog"]').waitFor({ state: 'detached', timeout: 3000 });
+  });
+
+  test('Description edits persist and round-trip back into the dialog', async () => {
+    const description = 'Agents run /code-review here in an isolated session.';
+
+    await openManagerByHeader('Code Review');
+    const descriptionInput = page.locator('[data-testid="board-manager-description"]');
+    await descriptionInput.fill(description);
+    await page.locator('[data-testid="board-manager-save"]').click();
+    await page.locator('[data-testid="board-manager-dialog"]').waitFor({ state: 'detached', timeout: 3000 });
+
+    // Persisted to the store/main process.
+    const stored = await page.evaluate(async () => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      return lanes.find((lane) => lane.name === 'Code Review')?.description ?? null;
+    });
+    expect(stored).toBe(description);
+
+    // Reopening rehydrates the textarea from the persisted value.
+    await openManagerByHeader('Code Review');
+    await expect(page.locator('[data-testid="board-manager-description"]')).toHaveValue(description);
+
+    // Reset to empty so the shared page stays clean for later tests; a blank
+    // textarea must clear the field back to null.
+    await page.locator('[data-testid="board-manager-description"]').fill('');
+    await page.locator('[data-testid="board-manager-save"]').click();
+    await page.locator('[data-testid="board-manager-dialog"]').waitFor({ state: 'detached', timeout: 3000 });
+
+    const cleared = await page.evaluate(async () => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      return lanes.find((lane) => lane.name === 'Code Review')?.description ?? null;
+    });
+    expect(cleared).toBeNull();
   });
 
   test('Cancel with dirty drafts opens the discard confirm modal', async () => {

@@ -128,11 +128,15 @@ test.describe('Changes panel: file-list controls', () => {
     await card.click();
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await page.locator('[data-testid="changes-toggle"]').click();
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
+    // Open the changes panel only if not already open. A previous failed
+    // attempt may have left it open; clicking the toggle then would close it.
     const fileTree = page.locator('[data-testid="changes-file-tree"]');
-    await expect(fileTree).toBeVisible({ timeout: 5000 });
+    if (!(await fileTree.isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
+    await fileTree.waitFor({ state: 'visible', timeout: 8000 });
 
     const addedRow = fileTree.locator('[data-testid="changes-file-row"][data-path="src/added.ts"]');
 

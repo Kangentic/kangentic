@@ -181,7 +181,7 @@ Read the agent's native session history file for a task. Returns the raw file co
 
 ### kangentic_get_column_detail
 
-Get detailed column configuration: auto-spawn, permission mode, plan exit target, and visual settings.
+Get detailed column configuration: description, auto-spawn, permission mode, plan exit target, and visual settings.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -234,6 +234,7 @@ Update a swimlane (column) configuration. Use `kangentic_get_column_detail` to i
 |-----------|------|----------|-------------|
 | `column` | string | Yes | Column name to update (case-insensitive) |
 | `name` | string | No | New column name (max 100 chars) |
+| `description` | string \| null | No | Free-form column purpose shown as a header tooltip and shared via `kangentic.json` (max 1000 chars). `null` clears. |
 | `color` | string | No | Hex color (e.g. `"#71717a"`) |
 | `icon` | string \| null | No | Lucide icon name, or `null` to clear |
 | `autoSpawn` | boolean | No | Whether moving a task into this column auto-spawns an agent |

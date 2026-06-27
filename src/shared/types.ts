@@ -253,6 +253,8 @@ export type SessionSpawnStrategy = 'create_or_resume' | 'always_spawn_new';
 export interface Swimlane {
   id: string;
   name: string;
+  /** Free-form description of the column's purpose. Shown as a header tooltip and shared with the team via kangentic.json. Null when unset. */
+  description: string | null;
   role: SwimlaneRole | null;
   position: number;
   color: string;
@@ -1310,6 +1312,7 @@ export interface AppConfig {
   boardLayout: 'horizontal' | 'vertical';
   cardDensity: 'compact' | 'default' | 'comfortable';
   columnWidth: 'narrow' | 'default' | 'wide';
+  showTaskNumbers: boolean; // show each task's #N (display_id) on its board card
   terminalPanelVisible: boolean;
   animationsEnabled: boolean;
   statusBarVisible: boolean;
@@ -1596,6 +1599,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   boardLayout: 'horizontal',
   cardDensity: 'default',
   columnWidth: 'default',
+  showTaskNumbers: false,
   terminalPanelVisible: true,
   animationsEnabled: true,
   statusBarVisible: true,
@@ -2063,6 +2067,7 @@ export interface TaskBulkDeleteProgress {
 
 export interface SwimlaneCreateInput {
   name: string;
+  description?: string | null;
   color?: string;
   icon?: string | null;
   is_archived?: boolean;
@@ -2081,6 +2086,7 @@ export interface SwimlaneCreateInput {
 export interface SwimlaneUpdateInput {
   id: string;
   name?: string;
+  description?: string | null;
   color?: string;
   icon?: string | null;
   position?: number;
@@ -2506,6 +2512,8 @@ export interface NotificationInput {
 export interface BoardColumnConfig {
   id?: string; // opaque DB UUID for reconciliation identity
   name: string;
+  /** Free-form description of the column's purpose. Shared with the team. */
+  description?: string | null;
   role?: SwimlaneRole;
   icon?: string;
   color?: string;
@@ -2589,6 +2597,12 @@ export interface ElectronAPI {
     seedGitChanges: (targetPaths: string[]) => Promise<DevSeedGitChangesResult>;
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;
+    /**
+     * The original task's title for a `/preview` window, so the title bar can identify
+     * which task the "Project 1" / "Project 2" clones belong to. Null outside preview, or
+     * when main could not resolve it from the parent project DB.
+     */
+    previewTaskTitle: string | null;
   };
   // Projects
   projects: {
@@ -2726,6 +2740,14 @@ export interface ElectronAPI {
     getFirstOutput: () => Promise<Record<string, boolean>>;
     getUsage: (projectId?: string) => Promise<Record<string, SessionUsage>>;
     onData: (callback: (sessionId: string, data: string, projectId?: string) => void) => () => void;
+    /**
+     * Acknowledge that the renderer has consumed `bytes` of a session's output
+     * (written to xterm or dropped during scrollback replay). Drives per-session
+     * output backpressure: main pauses a session's PTY when too many emitted
+     * bytes are unacknowledged and resumes it as the renderer drains. One-way
+     * (fire-and-forget send), keyed by sessionId only - not project-scoped.
+     */
+    ackData: (sessionId: string, bytes: number) => void;
     onFirstOutput: (callback: (sessionId: string, projectId?: string) => void) => () => void;
     onExit: (callback: (sessionId: string, exitCode: number, projectId?: string, intentional?: boolean) => void) => () => void;
     onStatus: (callback: (sessionId: string, session: Session, projectId?: string) => void) => () => void;
@@ -2980,7 +3002,7 @@ export interface ElectronAPI {
 
   // Clipboard
   clipboard: {
-    saveImage: (data: string, extension: string) => Promise<string>;
+    readImage: () => Promise<string | null>;
   };
 
   // Browser pane: embedded webview capture-and-send

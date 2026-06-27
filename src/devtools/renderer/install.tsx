@@ -1,6 +1,11 @@
 import { useEffect } from 'react';
 import { useToastStore } from '../../renderer/stores/toast-store';
 import { buildPreviewSnapshot, pushToastEntry, readStoreState } from './state-mirror';
+import {
+  startRendererLagRecorder,
+  stopRendererLagRecorder,
+  getRendererLagReport,
+} from './lag-recorder';
 
 /**
  * Renderer-side bootstrap for the dev-only inspection bridge.
@@ -21,9 +26,15 @@ export function DevtoolsBootstrap(): null {
     type DevtoolsWindow = Window & {
       __kangenticPreviewSnapshot?: () => unknown;
       __kangenticPreviewStoreState?: (storeName: string, path?: string | null) => unknown;
+      __kangenticLagReport?: () => unknown;
     };
     (window as DevtoolsWindow).__kangenticPreviewSnapshot = buildPreviewSnapshot;
     (window as DevtoolsWindow).__kangenticPreviewStoreState = readStoreState;
+
+    // Freeze flight recorder: record renderer event-loop stalls so the
+    // inspection server's /event-loop-lag route can surface UI-freeze history.
+    startRendererLagRecorder();
+    (window as DevtoolsWindow).__kangenticLagReport = getRendererLagReport;
 
     // Subscribe to the toast store: every push lands in our ring.
     const unsubscribeToast = useToastStore.subscribe((state, prevState) => {
@@ -44,8 +55,10 @@ export function DevtoolsBootstrap(): null {
 
     return () => {
       unsubscribeToast();
+      stopRendererLagRecorder();
       delete (window as DevtoolsWindow).__kangenticPreviewSnapshot;
       delete (window as DevtoolsWindow).__kangenticPreviewStoreState;
+      delete (window as DevtoolsWindow).__kangenticLagReport;
     };
   }, []);
 

@@ -38,6 +38,7 @@ import {
 // graph. The cost of the lazy import is one microtask per /command call.
 import type { IpcContext } from '../../main/ipc/ipc-context';
 import { getProcessMetrics } from '../../main/diagnostics/process-metrics';
+import { getEventLoopLagReport } from '../../main/diagnostics/event-loop-lag';
 import type { SessionManager } from '../../main/pty/session-manager';
 
 /**
@@ -145,6 +146,14 @@ async function handleRequest(
 
   if (route === 'GET /process-metrics') {
     return respondJson(response, 200, getProcessMetrics());
+  }
+
+  if (route === 'GET /event-loop-lag') {
+    return respondEventLoopLag(options, response);
+  }
+
+  if (route === 'GET /pty-pipeline') {
+    return respondPtyPipeline(options, response);
   }
 
   if (route === 'GET /logs') {
@@ -474,6 +483,62 @@ function respondEngineState(
     out[session.id] = engine.getStatsSnapshot(session.id);
   }
   respondJson(response, 200, out);
+}
+
+// ---------------------------------------------------------------------------
+// Performance diagnostics (freeze flight recorder + terminal pipeline)
+// ---------------------------------------------------------------------------
+
+/**
+ * Event-loop lag for BOTH processes: the main-process report is always
+ * available (in-process); the renderer report is a best-effort CDP read of the
+ * `window.__kangenticLagReport` global, returning an `unavailable` marker when
+ * the debugger is not attached or the recorder is not installed. Together they
+ * are a retroactive freeze log - recorded stalls with timestamps + durations.
+ */
+async function respondEventLoopLag(
+  options: InspectionServerOptions,
+  response: http.ServerResponse,
+): Promise<void> {
+  const main = getEventLoopLagReport();
+  let renderer: unknown = { unavailable: 'cdp-not-attached' };
+  const window = options.getMainWindow();
+  if (window && isDebuggerAttached(window)) {
+    try {
+      const result = await runtimeEvaluate(
+        window,
+        `(() => {
+          const report = window.__kangenticLagReport;
+          return typeof report === 'function' ? report() : null;
+        })()`,
+      );
+      if (result.error) {
+        renderer = { error: result.error };
+      } else {
+        renderer = result.value ?? { unavailable: 'recorder-not-installed' };
+      }
+    } catch (error) {
+      renderer = { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  respondJson(response, 200, { ts: new Date().toISOString(), main, renderer });
+}
+
+/** Per-session terminal output-pipeline stats (in-process). Diagnoses
+ *  terminal-driven lag: a paused session with high in-flight bytes or a
+ *  ballooning pending buffer points at a flooding agent. */
+function respondPtyPipeline(
+  options: InspectionServerOptions,
+  response: http.ServerResponse,
+): void {
+  const sessionManager = options.getSessionManager();
+  if (!sessionManager) {
+    return respondError(response, 503, 'no-session-manager', 'Session manager is not available.');
+  }
+  respondJson(response, 200, {
+    ts: new Date().toISOString(),
+    sessions: sessionManager.getPipelineStats(),
+  });
 }
 
 // ---------------------------------------------------------------------------

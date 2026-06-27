@@ -23,6 +23,11 @@ export class FileWatcher {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private lastWatcherFireTime: number;
+  /** When fs.watch itself last delivered an OS event (0 = never). Tracked
+   *  separately from lastWatcherFireTime, which also advances on poll-detected
+   *  changes, so a broken watcher (only the poll fires) still falls back to
+   *  full polling. Used to skip the redundant stat while fs.watch is healthy. */
+  private lastWatcherNativeFireTime = 0;
   private closed = false;
 
   private readonly filePath: string;
@@ -80,9 +85,17 @@ export class FileWatcher {
     }, this.debounceMs);
   };
 
+  /** fs.watch delivered an OS event: record native-watcher health, then handle
+   *  the change. The poll uses lastWatcherNativeFireTime to skip its stat while
+   *  the OS is already delivering events. */
+  private onWatcherEvent = (): void => {
+    this.lastWatcherNativeFireTime = Date.now();
+    this.onFileChange();
+  };
+
   private setupWatcher(): void {
     try {
-      const watcher = fs.watch(this.filePath, this.onFileChange);
+      const watcher = fs.watch(this.filePath, this.onWatcherEvent);
       watcher.on('error', () => {
         // fs.watch broke - polling will cover it silently
       });
@@ -94,7 +107,7 @@ export class FileWatcher {
       try {
         const watcher = fs.watch(directory, (_eventType, filename) => {
           if (filename === expectedFilename) {
-            this.onFileChange();
+            this.onWatcherEvent();
           }
         });
         watcher.on('error', () => {
@@ -110,6 +123,13 @@ export class FileWatcher {
   private startPolling(): void {
     this.pollTimer = setInterval(() => {
       if (this.closed || this.debounceTimer) return;
+      // fs.watch delivered an OS event within the last interval: it is healthy
+      // and already pushing changes, so skip the redundant stat entirely. This
+      // removes the per-interval statSync precisely during active streaming
+      // (when the main loop is busiest). The poll still runs its full stat
+      // when the native watcher is quiet (broke, or genuinely no changes), so
+      // the fallback is preserved.
+      if (Date.now() - this.lastWatcherNativeFireTime < this.pollIntervalMs) return;
       if (this.isStale()) {
         this.onFileChange();
       }
