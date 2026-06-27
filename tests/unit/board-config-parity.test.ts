@@ -260,4 +260,32 @@ describe('board-config parity: apply (kangentic.json -> DB)', () => {
       ).toBe(entry.dbValue);
     }
   });
+
+  it('update preserves existing description when config omits the description key', () => {
+    // Build-config omits the description key entirely when lane.description is
+    // null/falsy (the `if (lane.description)` guard).  When apply-config processes
+    // a config that has no description key, the update input must fall back to
+    // `existing.description` so the receiving machine's existing description is not
+    // silently cleared.
+    //
+    // Red trigger: change `columnConfig.description ?? existing.description` to
+    // `columnConfig.description ?? null` in apply-config.ts - the update call then
+    // gets `description: null` and this assertion fails.
+    hoisted.lanes = [
+      makeSwimlane({ id: 'lane-todo', name: 'To Do', role: 'todo' }),
+      makeSwimlane({ id: 'lane-review', name: 'Review', description: 'Pre-existing description text' }),
+      makeSwimlane({ id: 'lane-done', name: 'Done', role: 'done', is_archived: true }),
+    ];
+
+    // Incoming config knows lane-review by id but carries no description key,
+    // matching what build-config produces when the building machine had no description.
+    applyBoardConfigToDb('p', makeConfig({ id: 'lane-review', name: 'Review' }));
+
+    const updated = hoisted.updateCalls.find((call) => call.id === 'lane-review');
+    expect(updated, 'apply-config.ts did not call update for the existing Review column').toBeDefined();
+    expect(
+      (updated as Record<string, unknown>).description,
+      'apply-config.ts must fall back to existing.description when config omits the description key',
+    ).toBe('Pre-existing description text');
+  });
 });
