@@ -506,10 +506,12 @@ Operates on a per-project DB. Manages ANSI-stripped session transcripts.
 
 | Method | Description |
 |--------|-------------|
-| `upsert(sessionId, transcript, sizeBytes)` | Insert or update a transcript record |
-| `getBySessionId(sessionId)` | Get the transcript for a session |
+| `create(sessionId)` | Insert an empty transcript row for a new session (call before any data arrives so `appendChunk` has a row to update) |
+| `appendChunk(sessionId, chunk)` | Append a chunk of ANSI-stripped text to the session's transcript via SQLite string concatenation |
+| `getBySessionId(sessionId)` | Get the full transcript record for a session |
+| `getTranscriptText(sessionId)` | Get just the transcript text for a session (lighter than `getBySessionId` when only the content is needed) |
 | `getTranscriptTail(sessionId, maxChars)` | Get the last `maxChars` characters of a session's transcript plus its full length, computed in SQLite (`substr`) so a multi-MB transcript is not materialized in JS |
-| `getByTaskId(taskId)` | Get the transcript for a task's latest session |
+| `getSizeBytes(sessionId)` | Get the transcript size in bytes without loading the content |
 
 ### HandoffRepository
 
