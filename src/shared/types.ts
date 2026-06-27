@@ -1310,6 +1310,7 @@ export interface AppConfig {
   boardLayout: 'horizontal' | 'vertical';
   cardDensity: 'compact' | 'default' | 'comfortable';
   columnWidth: 'narrow' | 'default' | 'wide';
+  showTaskNumbers: boolean; // show each task's #N (display_id) on its board card
   terminalPanelVisible: boolean;
   animationsEnabled: boolean;
   statusBarVisible: boolean;
@@ -1594,6 +1595,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   boardLayout: 'horizontal',
   cardDensity: 'default',
   columnWidth: 'default',
+  showTaskNumbers: false,
   terminalPanelVisible: true,
   animationsEnabled: true,
   statusBarVisible: true,

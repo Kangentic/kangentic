@@ -46,6 +46,7 @@
     boardLayout: 'horizontal',
     cardDensity: 'default',
     columnWidth: 'default',
+    showTaskNumbers: false,
     terminalPanelVisible: true,
     animationsEnabled: true,
     statusBarVisible: true,

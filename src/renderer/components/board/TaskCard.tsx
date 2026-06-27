@@ -146,6 +146,19 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
   const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
   const taskLabels = task.labels ?? [];
   const cardDensity = useConfigStore((state) => state.config.cardDensity);
+  const showTaskNumbers = useConfigStore((state) => state.config.showTaskNumbers);
+
+  // Subtle, muted `#N` (display_id) matching the task-detail header format. Right-aligned
+  // and shrink-0 so a long title truncates before the number; rendered only when the
+  // board's Ticket Numbers setting is on.
+  const displayIdBadge = showTaskNumbers ? (
+    <span
+      className="shrink-0 font-mono text-xs text-fg-muted"
+      data-testid="task-card-display-id"
+    >
+      #{task.display_id}
+    </span>
+  ) : null;
 
   const handleContextDelete = async (dontAskAgain: boolean) => {
     if (dontAskAgain) useConfigStore.getState().updateConfig({ skipDeleteConfirm: true });
@@ -174,6 +187,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         >
           <div className="flex items-center gap-2">
             <span className="text-sm text-fg-tertiary truncate flex-1" data-testid="compact-title">{task.title}</span>
+            {displayIdBadge}
             {onDelete && (
               <button
                 type="button"
@@ -271,7 +285,8 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
               {activityReason && <title>{formatActivityReasonText(activityReason)}</title>}
             </Loader2>
           )}
-          <div className="text-sm text-fg font-medium truncate">{task.title}</div>
+          <div className="text-sm text-fg font-medium truncate flex-1 min-w-0">{task.title}</div>
+          {displayIdBadge}
         </div>
 
         {!isCompactDensity && task.pr_url && (

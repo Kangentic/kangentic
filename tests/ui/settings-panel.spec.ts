@@ -90,6 +90,9 @@ test.describe('Settings Panel', () => {
     await page.getByRole('button', { name: 'Layout' }).click();
     await expect(page.locator('text=Card Density')).toBeVisible();
     await expect(page.locator('text=Column Width')).toBeVisible();
+    // Ticket Numbers toggle row (showTaskNumbers) - goes RED if SettingToggleRow is
+    // removed from LayoutTab.tsx, while leaving all other assertions green.
+    await expect(page.locator('text=Ticket Numbers')).toBeVisible();
     await expect(page.getByText('Terminal Panel', { exact: true })).toBeVisible();
     await expect(page.getByText('Status Bar', { exact: true })).toBeVisible();
     await expect(page.locator('text=Restore Window Position')).toBeVisible();
