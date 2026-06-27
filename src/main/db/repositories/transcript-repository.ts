@@ -59,6 +59,47 @@ export class TranscriptRepository {
   }
 
   /**
+   * Get the last `maxChars` characters of a session's transcript plus the
+   * total character length, WITHOUT materializing the full transcript in JS.
+   * SQLite computes the substring internally (`substr`), so a multi-MB
+   * transcript stays on the C side and only the tail crosses into the JS heap.
+   * Used by the raw `get_transcript` MCP path, which only ever shows the tail -
+   * loading the whole blob there blocked the main loop for tens to hundreds of
+   * ms on a verbose session. Returns null when no transcript row exists.
+   */
+  getTranscriptTail(sessionId: string, maxChars: number): {
+    tail: string;
+    fullLength: number;
+    sizeBytes: number;
+    createdAt: string;
+    updatedAt: string;
+  } | null {
+    // substr(X, -N) returns the last N characters (or the whole string when
+    // it is shorter). Bind the negative start directly.
+    const row = this.db.prepare(`
+      SELECT substr(transcript, ?) AS tail,
+             length(transcript) AS full_length,
+             size_bytes, created_at, updated_at
+      FROM session_transcripts
+      WHERE session_id = ?
+    `).get(-Math.max(0, maxChars), sessionId) as {
+      tail: string | null;
+      full_length: number | null;
+      size_bytes: number | null;
+      created_at: string;
+      updated_at: string;
+    } | undefined;
+    if (!row) return null;
+    return {
+      tail: row.tail ?? '',
+      fullLength: row.full_length ?? 0,
+      sizeBytes: row.size_bytes ?? 0,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
    * Get the transcript size without loading the content.
    * Useful for UI display.
    */

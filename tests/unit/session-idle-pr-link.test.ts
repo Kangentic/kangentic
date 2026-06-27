@@ -33,6 +33,7 @@ const capturedSessionEventHandlers = new Map<string, (...args: unknown[]) => unk
 vi.mock('electron', () => ({
   ipcMain: {
     handle: vi.fn(),
+    on: vi.fn(),
   },
 }));
 

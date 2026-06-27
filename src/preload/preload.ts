@@ -164,6 +164,7 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.SESSION_DATA, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_DATA, handler);
     },
+    ackData: (id, bytes) => ipcRenderer.send(IPC.SESSION_DRAIN_ACK, id, bytes),
     onFirstOutput: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, projectId?: string) => callback(sessionId, projectId);
       ipcRenderer.on(IPC.SESSION_FIRST_OUTPUT, handler);

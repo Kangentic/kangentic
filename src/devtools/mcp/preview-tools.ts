@@ -489,6 +489,35 @@ export function registerDevtoolsPreviewTools(server: McpServer): void {
       ),
   );
 
+  // ── Performance diagnostics ──────────────────────────────────────────
+  server.registerTool(
+    'kangentic_devtools_event_loop_lag',
+    {
+      description:
+        'Freeze flight recorder: event-loop lag for the MAIN process AND the RENDERER of the inspected instance. Each report carries the recorded recent stalls (UTC timestamp + duration ms), the worst stall, and the spike count, so a freeze is diagnosed RETROACTIVELY - call this AFTER a user reports lag/freezing to see exactly when and for how long each thread blocked, without having been probing at that instant. The main report is always present; the renderer report needs an attached debugger (it reports `unavailable` otherwise). Dev-only.',
+      inputSchema: z.object({
+        instanceId: z.string().optional().describe(INSTANCE_ARG_DESCRIPTION),
+      }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ instanceId }) =>
+      toolResult(await callBridge({ method: 'GET', path: '/event-loop-lag', instanceId })),
+  );
+
+  server.registerTool(
+    'kangentic_devtools_pty_pipeline',
+    {
+      description:
+        'Per-session terminal output-pipeline stats for the inspected instance: pending (un-flushed) buffer size, scrollback size, backpressure state (paused + bytes in flight to the renderer), and whether each session is focused (emitting to the renderer). Diagnoses terminal-driven lag - a paused session with high in-flight bytes, or a ballooning pending buffer, is a flooding agent throttling the renderer. Pair with kangentic_devtools_event_loop_lag when a freeze coincides with heavy agent output. Dev-only.',
+      inputSchema: z.object({
+        instanceId: z.string().optional().describe(INSTANCE_ARG_DESCRIPTION),
+      }),
+      annotations: READ_ONLY_ANNOTATIONS,
+    },
+    async ({ instanceId }) =>
+      toolResult(await callBridge({ method: 'GET', path: '/pty-pipeline', instanceId })),
+  );
+
   // ── Visual / DOM ─────────────────────────────────────────────────────
   server.registerTool(
     'kangentic_devtools_screenshot',

@@ -21,6 +21,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   queueAppend,
+  queueAppendWithRotation,
+  resetRotationState,
   flushAllForTest,
   resetForTest,
 } from '../../src/main/diagnostics/async-file-queue';
@@ -188,6 +190,115 @@ describe('async-file-queue: flushAllForTest', () => {
     await flushAllForTest();
 
     expect(readFileLines(filePath)).toEqual(['a', 'b']);
+  });
+});
+
+describe('async-file-queue: queueAppendWithRotation', () => {
+  // Rotation tracks the primary's byte count across appends, so the running
+  // total only advances once a flush has actually written each batch. These
+  // tests flush between appends to accumulate the count the way the PTY hot
+  // path does (one batch per setImmediate window). This is the rotation
+  // contract that used to live in the trace-recorder's sync helper.
+  function readRaw(filePath: string): string {
+    return fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf-8') : '';
+  }
+
+  it('appends without rotating when under cap', async () => {
+    const filePath = path.join(tempDirectory, 'rot.jsonl');
+    queueAppendWithRotation(filePath, 'line1\n', 1024);
+    await flushAllForTest();
+    expect(readRaw(filePath)).toBe('line1\n');
+    expect(fs.existsSync(filePath + '.1')).toBe(false);
+  });
+
+  it('continues appending to the primary across writes under cap', async () => {
+    const filePath = path.join(tempDirectory, 'rot.jsonl');
+    queueAppendWithRotation(filePath, 'line1\n', 1024);
+    await flushAllForTest();
+    queueAppendWithRotation(filePath, 'line2\n', 1024);
+    await flushAllForTest();
+    queueAppendWithRotation(filePath, 'line3\n', 1024);
+    await flushAllForTest();
+    expect(readRaw(filePath)).toBe('line1\nline2\nline3\n');
+    expect(fs.existsSync(filePath + '.1')).toBe(false);
+  });
+
+  it('rotates the primary to .1 once the running total would exceed cap', async () => {
+    const filePath = path.join(tempDirectory, 'rot.jsonl');
+    const cap = 16;
+    queueAppendWithRotation(filePath, 'older-content\n', cap); // 14 bytes
+    await flushAllForTest();
+    // 14 + 8 = 22 > 16 -> rotate before appending.
+    queueAppendWithRotation(filePath, 'fresh-1\n', cap);
+    await flushAllForTest();
+    expect(readRaw(filePath)).toBe('fresh-1\n');
+    expect(readRaw(filePath + '.1')).toBe('older-content\n');
+  });
+
+  it('overwrites the rotated file on subsequent rotations', async () => {
+    const filePath = path.join(tempDirectory, 'rot.jsonl');
+    // A stale rotated copy from a prior cycle must be dropped, not kept.
+    fs.writeFileSync(filePath + '.1', 'stale');
+    queueAppendWithRotation(filePath, 'first', 5);
+    await flushAllForTest(); // 0 + 5 = 5, not > 5 -> primary = 'first'
+    queueAppendWithRotation(filePath, 'second', 5);
+    await flushAllForTest(); // 5 + 6 = 11 > 5 -> rotate
+    expect(readRaw(filePath)).toBe('second');
+    expect(readRaw(filePath + '.1')).toBe('first');
+  });
+
+  it('keeps total disk usage bounded at 2x cap across many writes', async () => {
+    const filePath = path.join(tempDirectory, 'rot.jsonl');
+    const cap = 256;
+    const line = 'x'.repeat(50) + '\n';
+    for (let writeIndex = 0; writeIndex < 100; writeIndex += 1) {
+      queueAppendWithRotation(filePath, line, cap);
+      await flushAllForTest();
+    }
+    const primarySize = fs.statSync(filePath).size;
+    const rotatedSize = fs.existsSync(filePath + '.1')
+      ? fs.statSync(filePath + '.1').size
+      : 0;
+    expect(primarySize).toBeLessThanOrEqual(cap);
+    expect(rotatedSize).toBeLessThanOrEqual(cap);
+    expect(primarySize + rotatedSize).toBeLessThanOrEqual(2 * cap);
+    // Sanity: we wrote 5100 bytes total; the bound enforces <= 512.
+    expect(primarySize + rotatedSize).toBeLessThan(5100);
+  });
+
+  it('does not rotate when the batch lands exactly at cap', async () => {
+    const filePath = path.join(tempDirectory, 'rot.jsonl');
+    queueAppendWithRotation(filePath, 'aaaaa', 10);
+    await flushAllForTest(); // 5 bytes
+    queueAppendWithRotation(filePath, 'bbbbb', 10);
+    await flushAllForTest(); // 5 + 5 = 10, not > 10 -> no rotate
+    expect(readRaw(filePath)).toBe('aaaaabbbbb');
+    expect(fs.existsSync(filePath + '.1')).toBe(false);
+  });
+
+  it('creates a fresh primary when rotating from a missing file', async () => {
+    const filePath = path.join(tempDirectory, 'rot.jsonl');
+    // No primary exists. 0 + 20 = 20 > 10 -> rotate (rename of the missing
+    // primary fails silently), then append creates a fresh primary.
+    queueAppendWithRotation(filePath, 'a'.repeat(20), 10);
+    await flushAllForTest();
+    expect(readRaw(filePath)).toBe('a'.repeat(20));
+    expect(fs.existsSync(filePath + '.1')).toBe(false);
+  });
+
+  it('resetRotationState makes the next append start counting from zero', async () => {
+    const filePath = path.join(tempDirectory, 'rot.jsonl');
+    const cap = 16;
+    queueAppendWithRotation(filePath, 'older-content\n', cap); // 14 bytes tracked
+    await flushAllForTest();
+    // Caller truncated the file out-of-band and reset the counter: the next
+    // append must not rotate on the stale 14-byte total.
+    fs.rmSync(filePath, { force: true });
+    resetRotationState(filePath);
+    queueAppendWithRotation(filePath, 'fresh\n', cap); // 0 + 6 = 6, not > 16
+    await flushAllForTest();
+    expect(readRaw(filePath)).toBe('fresh\n');
+    expect(fs.existsSync(filePath + '.1')).toBe(false);
   });
 });
 

@@ -120,12 +120,25 @@ test.describe('Changes panel: viewed marks', () => {
     await card.click();
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await page.locator('[data-testid="changes-toggle"]').click();
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
+    // Open the changes panel only if it is not already open. A previous failed
+    // attempt may have left it open; clicking the toggle then would close it,
+    // causing the fileRow wait below to time out on retry.
     const fileTree = page.locator('[data-testid="changes-file-tree"]');
+    if (!(await fileTree.isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
+
     const toggleA = fileTree.locator('[data-testid="changes-viewed-toggle"][data-path="src/a.ts"]');
-    await expect(toggleA).toBeVisible({ timeout: 5000 });
+    await toggleA.waitFor({ state: 'visible', timeout: 8000 });
+
+    // Reset viewed state: if src/a.ts was marked viewed by a previous failed
+    // attempt, clear it so the initial assertion starts from a clean baseline.
+    if ((await toggleA.getAttribute('aria-pressed')) === 'true') {
+      await toggleA.click();
+      await expect(toggleA).toHaveAttribute('aria-pressed', 'false', { timeout: 3000 });
+    }
 
     // Initially nothing is viewed: no count chip, checkbox unpressed.
     const viewedCount = fileTree.locator('[data-testid="changes-viewed-count"]');
@@ -134,13 +147,13 @@ test.describe('Changes panel: viewed marks', () => {
 
     // Mark src/a.ts viewed: checkbox flips, count reads 1/2.
     await toggleA.click();
-    await expect(toggleA).toHaveAttribute('aria-pressed', 'true');
-    await expect(viewedCount).toContainText('1/2 viewed');
+    await expect(toggleA).toHaveAttribute('aria-pressed', 'true', { timeout: 3000 });
+    await expect(viewedCount).toContainText('1/2 viewed', { timeout: 3000 });
 
     // Un-view it: checkbox flips back, count chip disappears.
     await toggleA.click();
-    await expect(toggleA).toHaveAttribute('aria-pressed', 'false');
-    await expect(viewedCount).toHaveCount(0);
+    await expect(toggleA).toHaveAttribute('aria-pressed', 'false', { timeout: 3000 });
+    await expect(viewedCount).toHaveCount(0, { timeout: 3000 });
 
     // Close panel + dialog so state does not leak to other tests.
     await page.locator('[data-testid="changes-toggle"]').click();

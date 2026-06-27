@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -142,9 +142,18 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     });
   };
 
-  // Label display config
-  const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
-  const taskLabels = task.labels ?? [];
+  // Label display config. Wrap the `?? {}` / `?? []` fallbacks in useMemo so
+  // they return a stable reference; otherwise a fresh empty object/array each
+  // render defeats LabelPills' React.memo for label-less / archived cards.
+  const labelColorsRaw = useConfigStore((state) => state.config.backlog?.labelColors);
+  const labelColors = useMemo(() => labelColorsRaw ?? {}, [labelColorsRaw]);
+  const taskLabels = useMemo(() => task.labels ?? [], [task.labels]);
+  // Memoized so it recomputes only when archived_at changes, not on every
+  // unrelated re-render of the card.
+  const archivedRelativeTime = useMemo(
+    () => (task.archived_at ? formatRelativeTime(task.archived_at) : null),
+    [task.archived_at],
+  );
   const cardDensity = useConfigStore((state) => state.config.cardDensity);
 
   const handleContextDelete = async (dontAskAgain: boolean) => {
@@ -195,7 +204,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           {task.archived_at && (
             <div className="mt-0.5">
               <span className="text-xs text-fg-disabled">
-                {formatRelativeTime(task.archived_at)}
+                {archivedRelativeTime}
               </span>
             </div>
           )}

@@ -112,6 +112,28 @@ function createMockDb(options: {
           all: vi.fn(() => transcripts),
         };
       }
+      // TranscriptRepository.getTranscriptTail - SELECT substr(transcript, ?) ...
+      // bound as (negativeStart, sessionId). Simulates SQLite's substr(X, -N)
+      // (last N chars) so the raw get_transcript tail path is exercised end to end.
+      if (sql.includes('FROM session_transcripts') && sql.includes('substr(transcript')) {
+        return {
+          get: vi.fn((negativeStart: number, sessionId: string) => {
+            const record = transcripts.find((transcript) => transcript.session_id === sessionId);
+            if (!record) return undefined;
+            const full = record.transcript ?? '';
+            // substr(X, Y): Y < 0 -> last |Y| chars; Y === 0 -> the whole string.
+            const start = negativeStart < 0 ? Math.max(0, full.length + negativeStart) : 0;
+            return {
+              tail: full.slice(start),
+              full_length: full.length,
+              size_bytes: record.size_bytes,
+              created_at: record.created_at,
+              updated_at: record.updated_at,
+            };
+          }),
+          all: vi.fn(() => transcripts),
+        };
+      }
       if (sql.includes('FROM session_transcripts') && sql.includes('transcript')) {
         return {
           get: vi.fn((sessionId: string) => {
@@ -964,5 +986,55 @@ describe('handleQueryDb', () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain('read-only database');
+  });
+
+  it('wraps SELECT in a subquery with LIMIT 101, stripping a trailing semicolon', () => {
+    const db = createMockDb({ queryResults: [{ id: '1' }] });
+    const context = createMockContext(db);
+
+    handleQueryDb({ sql: 'SELECT id FROM tasks;' }, context);
+
+    // The handler strips the trailing semicolon and wraps the SQL before calling prepare.
+    // Only the wrapped form is attempted when it succeeds (no raw fallback needed).
+    expect(db.prepare).toHaveBeenCalledWith('SELECT * FROM (SELECT id FROM tasks) LIMIT 101');
+    expect(db.prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the raw query when the wrapped subquery form throws (e.g. EXPLAIN, PRAGMA)', () => {
+    // Build a minimal db mock where prepare throws for the wrapped form but
+    // succeeds for the raw form, simulating what real SQLite does for statements
+    // that cannot be placed inside a subquery such as EXPLAIN or bare PRAGMA.
+    const rawResults: Record<string, unknown>[] = [{ journal_mode: 'wal' }];
+    const prepareFn = vi.fn((sql: string) => {
+      if (sql.startsWith('SELECT * FROM (')) {
+        throw new Error('syntax error: cannot be used as a subquery');
+      }
+      return { all: () => rawResults };
+    });
+    const customDb = { pragma: vi.fn(), prepare: prepareFn };
+    const context = createMockContext(customDb as ReturnType<typeof createMockDb>);
+
+    const result = handleQueryDb({ sql: 'PRAGMA journal_mode' }, context);
+
+    expect(result.success).toBe(true);
+    // Wrapped form was attempted first (throws), then raw fallback succeeded.
+    expect(prepareFn).toHaveBeenNthCalledWith(1, 'SELECT * FROM (PRAGMA journal_mode) LIMIT 101');
+    expect(prepareFn).toHaveBeenNthCalledWith(2, 'PRAGMA journal_mode');
+    expect(result.message).toContain('journal_mode');
+  });
+
+  it('summary says "Showing the first N rows (more exist; ...)" when over MAX_QUERY_ROWS rows', () => {
+    // Return MAX_QUERY_ROWS + 1 = 101 rows so the handler detects truncation.
+    const queryResults = Array.from({ length: 101 }, (_, index) => ({ id: String(index) }));
+    const db = createMockDb({ queryResults });
+    const context = createMockContext(db);
+
+    const result = handleQueryDb({ sql: 'SELECT id FROM tasks' }, context);
+
+    expect(result.success).toBe(true);
+    expect(result.message).toContain(
+      'Showing the first 100 rows (more exist; add a LIMIT or WHERE to narrow the result).',
+    );
+    expect(Array.isArray(result.data) && result.data.length).toBe(100);
   });
 });

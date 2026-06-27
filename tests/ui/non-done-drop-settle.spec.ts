@@ -193,19 +193,22 @@ test.describe('Non-Done cross-column move - default drop animation (settle guard
       ).toBeVisible();
 
       // Install a rAF sampler that records the maximum .drag-overlay count seen
-      // across frames. The sampler is installed immediately before mouse.up() so
-      // it captures both the during-drag overlay (expected to be 1) and, crucially,
+      // across frames. The sampler is installed before the drag starts so it
+      // captures both the during-drag overlay (expected to be 1) and, crucially,
       // any frames AFTER release where the settle animation keeps the overlay
       // mounted. With the old global `dropAnimation={null}` the overlay detaches
       // synchronously on release (count returns to 0 on the very first post-release
       // frame); with `dropAnimation={undefined}` the default 250ms settle keeps it
       // mounted for several more frames.
       //
-      // We also record whether the count was still >= 1 on the SECOND rAF frame
-      // after release (i.e. after mouse.up() fires). The first post-release frame
-      // can still be the during-drag overlay if mouse.up() and the rAF happen in
-      // the same microtask batch; the second frame proves it survived one full
-      // browser-paint cycle past release.
+      // We record the overlay count on the SECOND rAF frame after release.
+      // `__overlayPostReleaseCount` uses -1 as a sentinel meaning "the second
+      // post-release frame has not yet fired". This is critical: with the initial
+      // value at 0, the previous poll condition (`mouseUpFired && maxCount >= 1`)
+      // could resolve immediately after mouseup (maxCount is always >= 1 from
+      // during-drag frames) before the second post-release frame had actually run,
+      // leaving postReleaseCount stuck at the default 0. The sentinel ensures the
+      // poll cannot resolve until the second frame has genuinely executed.
       await page.evaluate(() => {
         const win = window as unknown as {
           __overlayMaxCount: number;
@@ -214,7 +217,10 @@ test.describe('Non-Done cross-column move - default drop animation (settle guard
           __overlayMouseUpFired: boolean;
         };
         win.__overlayMaxCount = 0;
-        win.__overlayPostReleaseCount = 0;
+        // -1 = "second post-release frame not yet seen".
+        // 0  = "second frame ran, overlay was absent" (null path regression).
+        // >= 1 = "second frame ran, overlay still mounted" (settle animation running).
+        win.__overlayPostReleaseCount = -1;
         win.__overlayMouseUpFired = false;
 
         // Listen for the mouseup so we know when "post-release" starts.
@@ -232,6 +238,7 @@ test.describe('Non-Done cross-column move - default drop animation (settle guard
             // Record the count on the second post-release frame to avoid
             // the same-microtask-batch ambiguity of the first frame.
             if (framesSinceRelease === 2) {
+              // Overwrites the -1 sentinel with the actual count (0 or >= 1).
               win.__overlayPostReleaseCount = count;
             }
           }
@@ -242,24 +249,22 @@ test.describe('Non-Done cross-column move - default drop animation (settle guard
 
       await dragTaskToNonDoneColumn(page, 'Settle Test Task', 'Code Review');
 
-      // Cancel the sampler after giving the animation two full animation frames
-      // to breathe. Playwright's mouse.up() returns synchronously after the
-      // pointer event is dispatched; the rAF loop needs a moment to observe the
-      // post-release frames. We poll for the second post-release frame count
-      // rather than using a fixed sleep.
-      //
-      // Intentional poll (not a fixed wait) - we wait for the sampler's
-      // `framesSinceRelease` to reach at least 2, indicated by a non-zero
-      // __overlayPostReleaseCount when the overlay was still visible, OR for the
-      // overall max to be >= 1 (always true after a during-drag frame).
+      // Wait until the SECOND post-release rAF frame has genuinely executed.
+      // We gate on __overlayPostReleaseCount >= 0 (any value other than the -1
+      // sentinel) rather than on `mouseUpFired && maxCount >= 1`. The old
+      // condition was the source of the CI flake: maxCount is always >= 1 from
+      // during-drag frames, so it resolved the moment mouseup fired - potentially
+      // before a single post-release rAF frame had run, leaving postReleaseCount
+      // stuck at 0 (the former default) even when the settle animation was active.
+      // The sentinel approach makes the poll causally dependent on the second frame.
       await expect.poll(async () => page.evaluate(() => {
         const win = window as unknown as {
-          __overlayMouseUpFired: boolean;
-          __overlayMaxCount: number;
+          __overlayPostReleaseCount: number;
         };
-        // Poll until mouse.up has been observed AND at least one overlay frame
-        // has been recorded (confirming the sampler ran during the drag).
-        return win.__overlayMouseUpFired && win.__overlayMaxCount >= 1;
+        // -1 means the second post-release frame has not fired yet. Any other
+        // value (0 = overlay gone, >= 1 = overlay still present) means we can
+        // safely read the result.
+        return win.__overlayPostReleaseCount >= 0;
       }), { timeout: 3000, intervals: [50, 50, 50, 100, 100] }).toBe(true);
 
       const samplerResult = await page.evaluate(() => {
