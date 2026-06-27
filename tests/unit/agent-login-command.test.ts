@@ -45,6 +45,10 @@ describe('agentLoginCommand', () => {
     expect(agentLoginCommand('droid')).toBeUndefined();
   });
 
+  it('returns undefined for ollama (local inference tool, no auth UX)', () => {
+    expect(agentLoginCommand('ollama')).toBeUndefined();
+  });
+
   it('returns undefined for an unknown agent identifier', () => {
     expect(agentLoginCommand('unknown-agent-xyz')).toBeUndefined();
   });
