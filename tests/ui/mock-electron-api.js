@@ -1809,6 +1809,14 @@
                 'Tracked upstream: Factory-AI/factory (see docs/agent-integration.md).',
             },
           },
+          {
+            name: 'ollama', displayName: 'Ollama', found: false, path: null, version: null,
+            // KEEP IN SYNC with OllamaAdapter.permissions in src/main/agent/adapters/ollama/ollama-adapter.ts
+            permissions: [
+              { mode: 'default', label: 'Chat' },
+            ],
+            defaultPermission: 'default',
+          },
         ];
         return defaults.map(function (agent) {
           var override = overrides[agent.name];

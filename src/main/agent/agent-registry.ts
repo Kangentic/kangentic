@@ -10,6 +10,7 @@ import { OpenCodeAdapter } from './adapters/opencode';
 import { QwenAdapter } from './adapters/qwen-code';
 import { KimiAdapter } from './adapters/kimi';
 import { DroidAdapter } from './adapters/droid';
+import { OllamaAdapter } from './adapters/ollama';
 
 class AgentRegistry {
   private adapters = new Map<string, AgentAdapter>();
@@ -63,3 +64,4 @@ agentRegistry.register(new OpenCodeAdapter());
 agentRegistry.register(new QwenAdapter());
 agentRegistry.register(new KimiAdapter());
 agentRegistry.register(new DroidAdapter());
+agentRegistry.register(new OllamaAdapter());

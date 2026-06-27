@@ -1,6 +1,6 @@
 # Agent Integration
 
-Kangentic supports eleven AI coding agents: Claude Code, Codex CLI, Gemini CLI, Qwen Code, Cursor CLI, GitHub Copilot CLI, OpenCode, Aider, Oz CLI (Warp), Kimi Code, and Droid. Each agent is wrapped behind a common `AgentAdapter` interface that handles CLI detection, command building, permission mapping, session lifecycle hooks, and cross-agent handoff. This doc covers the adapter system, agent-specific details, and shared infrastructure.
+Kangentic supports twelve AI coding agents: Claude Code, Codex CLI, Gemini CLI, Qwen Code, Cursor CLI, GitHub Copilot CLI, OpenCode, Aider, Oz CLI (Warp), Kimi Code, Droid, and Ollama. Each agent is wrapped behind a common `AgentAdapter` interface that handles CLI detection, command building, permission mapping, session lifecycle hooks, and cross-agent handoff. This doc covers the adapter system, agent-specific details, and shared infrastructure.
 
 ## Agent Adapter Interface
 
@@ -27,7 +27,7 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 
 | Property | Type | Purpose |
 |----------|------|---------|
-| `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'cursor'`, `'copilot'`, `'opencode'`, `'aider'`, `'warp'`, `'kimi'`, `'droid'`) |
+| `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'cursor'`, `'copilot'`, `'opencode'`, `'aider'`, `'warp'`, `'kimi'`, `'droid'`, `'ollama'`) |
 | `displayName` | `string` | Human-readable product name |
 | `sessionType` | `SessionRecord['session_type']` | Value stored in the sessions DB table |
 | `supportsCallerSessionId` | `boolean` | True when the CLI accepts a caller-supplied session ID via `--session-id` (Claude). When false, Kangentic captures the agent's own ID via `runtime.sessionId` for `--resume`. |
@@ -45,9 +45,9 @@ Every agent implements the `AgentAdapter` interface. Each adapter lives in `src/
 | `buildEnv?(options)` | `(SpawnCommandOptions) => Record<string, string> \| null` | Adapter-specific environment variables to inject into the PTY spawn. Used by adapters whose CLI has no flag-based MCP wiring and must deliver the Kangentic MCP server config via env (e.g. OpenCode's `OPENCODE_CONFIG_CONTENT`). |
 | `getExitSequence?()` | `() => string[]` | Sequence of strings to write to the PTY for a graceful exit. Default is `['\x03']` (Ctrl+C only). Claude overrides with `['\x03', '/exit\r']` to flush conversation state. |
 | `attachSession?(context)` | `(SessionContext) => SessionAttachment \| void` | Per-session lifecycle hook for adapters that need work outside the declarative `runtime` strategy (out-of-band CLI queries, file watchers, etc.). The returned `dispose` is called on session end. |
-| `summarize?(prompt, cliPath, cwd)` | `(string, string, string) => Promise<string>` | One-shot summarization for the auto-name-tasks-from-prompt feature. Spawns the CLI in non-interactive `--print` mode. Adapters without a clean headless mode (Aider, Warp) omit this. |
-| `parseTranscript?(agentSessionId, cwd)` | `(string, string) => Promise<ParsedTranscript>` | Parse the agent's native session history into agent-agnostic `TranscriptEntry[]` for the MCP `get_transcript` structured format. The adapter owns all format/location knowledge (JSONL file, chat JSONL, SQLite DB), so `handleGetTranscript` never branches on agent name. Must not throw; returns `{ entries: [], sourcePath }` on missing/corrupt history. Implemented by Claude, Droid, Codex, Gemini, Qwen, Kimi, and OpenCode; Aider/Warp/Cursor/Copilot omit it (raw format only). See [MCP server - get_transcript](mcp-server.md#kangentic_get_transcript). |
-| `onProjectRelocated?(oldPath, newPath)` | `(string, string) => Promise<void>` | Migrate per-cwd data the agent keeps OUTSIDE the working directory, keyed by the absolute path, when that path changes. Invoked for two relocations with the same (oldPath, newPath) contract: a whole-project move (the `project:relocate` IPC handler, reached via Locate Folder / Change or the one-step "Move..." flow), and a single worktree-cwd rename on the first resume after a task's worktree was recreated at a new path (`migrateResumeCwdIfRenamed` in `src/main/transition-engine/resume-cwd-migration.ts`, which passes one worktree's old/new path so only that cwd's data moves). Called best-effort after the stored paths are settled and the new location exists. Implemented by Claude, Codex, Gemini, Qwen, Copilot, OpenCode, Kimi, and Droid (per-agent details in [Project relocation](#project-relocation) below); the shared mechanics (path-pair collection, directory rename/merge, backup + atomic write, serial lock) live in `src/main/agent/shared/relocation-utils.ts`. Implementations must be non-destructive and never block the caller. Aider, Cursor, and Warp omit this (their resumable state is in-project or absent). |
+| `summarize?(prompt, cliPath, cwd)` | `(string, string, string) => Promise<string>` | One-shot summarization for the auto-name-tasks-from-prompt feature. Spawns the CLI in non-interactive `--print` mode. Adapters without a clean headless mode (Aider, Warp) omit this, as does Ollama (its headless mode is not yet wired). |
+| `parseTranscript?(agentSessionId, cwd)` | `(string, string) => Promise<ParsedTranscript>` | Parse the agent's native session history into agent-agnostic `TranscriptEntry[]` for the MCP `get_transcript` structured format. The adapter owns all format/location knowledge (JSONL file, chat JSONL, SQLite DB), so `handleGetTranscript` never branches on agent name. Must not throw; returns `{ entries: [], sourcePath }` on missing/corrupt history. Implemented by Claude, Droid, Codex, Gemini, Qwen, Kimi, and OpenCode; Aider/Warp/Cursor/Copilot/Ollama omit it (raw format only). See [MCP server - get_transcript](mcp-server.md#kangentic_get_transcript). |
+| `onProjectRelocated?(oldPath, newPath)` | `(string, string) => Promise<void>` | Migrate per-cwd data the agent keeps OUTSIDE the working directory, keyed by the absolute path, when that path changes. Invoked for two relocations with the same (oldPath, newPath) contract: a whole-project move (the `project:relocate` IPC handler, reached via Locate Folder / Change or the one-step "Move..." flow), and a single worktree-cwd rename on the first resume after a task's worktree was recreated at a new path (`migrateResumeCwdIfRenamed` in `src/main/transition-engine/resume-cwd-migration.ts`, which passes one worktree's old/new path so only that cwd's data moves). Called best-effort after the stored paths are settled and the new location exists. Implemented by Claude, Codex, Gemini, Qwen, Copilot, OpenCode, Kimi, and Droid (per-agent details in [Project relocation](#project-relocation) below); the shared mechanics (path-pair collection, directory rename/merge, backup + atomic write, serial lock) live in `src/main/agent/shared/relocation-utils.ts`. Implementations must be non-destructive and never block the caller. Aider, Cursor, Warp, and Ollama omit this (their resumable state is in-project or absent). |
 | `probeAuth?()` | `() => Promise<boolean \| null>` | See the methods table above. |
 | `discoverCapabilities?(cliPath)` | `(string) => Promise<AgentCapabilities>` | Probe the live CLI for adapter-specific knobs (e.g. parsing `--help` for valid effort levels and the presence of a `--model` flag). Result is attached to `AgentDetectionInfo.capabilities` and read by the renderer to gate optional UI controls (Model and Effort dropdowns on `EditColumnDialog`). Implementations must never throw - return an empty object on parse failure so the rest of detection still succeeds. |
 | `getInjectionSequence?(spec)` | `(SettingsChangeSpec) => string[]` | Translate a column-level settings change (model / effort) into the writes the `TerminalSubmitScheduler` should push onto the live PTY. Sibling of `getExitSequence` - both return `string[]` of writes. Claude returns `['/model X', '/effort Y']` for changed fields. Adapters with no live-swap slash return `[]` and the caller falls back to suspend+respawn. |
@@ -124,6 +124,7 @@ Omit `sessionId` entirely for agents that use caller-owned IDs (Claude via `--se
 | Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <uuid>` (caller-owned) | Yes (`wire.jsonl`) | No | No |
 | Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | No (PTY-only) | No (use Droid's TUI: `/model` + Ctrl+D, shift+tab; MCP via manual `droid mcp add`) | No |
 | OpenCode | `opencode-adapter.ts` | `opencode` | Plugin/PTY-captured `ses_<id>` (auto-generated) | Yes (plugin JSONL via `tool.execute.before/after` + `event` `session.*`) | No (`opencode.json` + `OPENCODE_CONFIG_CONTENT` env) | No (auth via `opencode auth login` -> `~/.local/share/opencode/auth.json`) |
+| Ollama | `ollama-adapter.ts` | `ollama` | No | No | No | No |
 
 ## Agent Resolution
 
@@ -157,6 +158,7 @@ Each adapter implements `detectFirstOutput(data)` to signal when the agent's TUI
 | Kimi Code | `\x1b[?25l` (cursor hide) | TUI hides cursor when its alternate-screen buffer takes over (verified empirically with kimi v1.37.0) |
 | Droid | `\x1b[?25l` (cursor hide) | Ink-based TUI, same pattern as Claude (verified empirically) |
 | OpenCode | `\x1b[?25l` (cursor hide) | Full-screen TUI initializes alternate screen buffer with cursor hide on first frame |
+| Ollama | `data.length > 0` | Ollama streams output immediately (no alternate screen buffer) |
 
 The `\x1b[?25l` (ANSI cursor hide) sequence fires after the shell prompt noise but before the TUI draws its startup banner. This keeps the shell command hidden behind the shimmer overlay.
 
@@ -177,6 +179,7 @@ Graceful exit sequences written to the PTY during `SessionManager.suspend()`:
 | Kimi Code | `Ctrl+C`, `/exit` | Conventional TUI quit; flushes context.jsonl / wire.jsonl |
 | Droid | `Ctrl+C`, `/quit` | Triggers clean shutdown of the Ink TUI |
 | OpenCode | `Ctrl+C` | Verified 2026-04-28: PTY exits in ~1s. `/exit` and `/quit` are not recognized slash commands. |
+| Ollama | `Ctrl+C`, `/bye` | `/bye` exits the interactive REPL; harmless after a one-shot run has already exited |
 
 ## Session History File Location
 
@@ -195,10 +198,11 @@ During cross-agent handoff, each adapter's `locateSessionHistoryFile()` finds th
 | Kimi Code | `~/.kimi/sessions/<work_dir_hash>/<sessionId>/wire.jsonl` | Glob across all hash dirs (work_dir hash is opaque) and match on session UUID |
 | OpenCode | `~/.local/share/opencode/opencode.db` (SQLite `session` table) | Read-only WAL handle; match `directory == cwd` and `time_created` within spawn window |
 | Droid | N/A | Returns null (no native session history file; activity flows through PTY-only detection) |
+| Ollama | N/A | Returns null (no CLI-accessible session history) |
 
 ## Auto-Name (Summarize)
 
-Always-on feature that suggests a task title from the task description, via each adapter's optional `summarize?(prompt, cliPath, cwd)` method. Adapters without a clean plain-text headless mode (Aider, Warp) omit `summarize` and are gated out automatically: the renderer hides the button and never schedules the rename toast.
+Always-on feature that suggests a task title from the task description, via each adapter's optional `summarize?(prompt, cliPath, cwd)` method. Adapters that omit `summarize` are gated out automatically (Aider and Warp lack a clean plain-text headless mode; Ollama's is not yet wired): the renderer hides the button and never schedules the rename toast.
 
 ### Surfaces
 
@@ -221,6 +225,7 @@ Implementations live next to each adapter and call the shared `runCliPrintSummar
 | Droid | `droid exec -o text "<prompt>"` | positional arg |
 | Copilot | `copilot --silent -p "<prompt>"` | positional arg |
 | Aider, Warp | (no clean plain-text headless mode yet) | n/a |
+| Ollama | (summarize not yet wired) | n/a |
 
 ### Configuration knobs
 
@@ -942,6 +947,7 @@ same caveat the Claude adapter documents).
 | Aider | None. | History (`.aider.chat.history.md`) lives inside the project folder and moves with it. |
 | Cursor | None. | No cwd-keyed external session store Kangentic depends on. |
 | Oz (Warp) | None. | No resumable on-disk session state. |
+| Ollama | None. | No resumable external session state; `onProjectRelocated` omitted. |
 
 ## Prompt Templates
 

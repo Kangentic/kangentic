@@ -72,6 +72,11 @@ const AGENT_META: Record<string, AgentMeta> = {
     short: 'Droid',
     installUrl: 'https://docs.factory.ai/cli/getting-started/overview',
   },
+  ollama: {
+    display: 'Ollama',
+    short: 'Ollama',
+    installUrl: 'https://ollama.com/download',
+  },
 };
 
 /** Full product name for an agent identifier (e.g. 'claude' -> 'Claude Code'). */

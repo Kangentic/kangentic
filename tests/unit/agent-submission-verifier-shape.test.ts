@@ -20,6 +20,7 @@ const ADAPTER_CLASSES = [
   { name: 'droid',     importPath: '../../src/main/agent/adapters/droid/droid-adapter',        className: 'DroidAdapter' },
   { name: 'kimi',      importPath: '../../src/main/agent/adapters/kimi/kimi-adapter',          className: 'KimiAdapter' },
   { name: 'warp',      importPath: '../../src/main/agent/adapters/warp/warp-adapter',          className: 'WarpAdapter' },
+  { name: 'ollama',    importPath: '../../src/main/agent/adapters/ollama/ollama-adapter',      className: 'OllamaAdapter' },
 ] as const;
 
 describe('Adapter getSubmissionVerifier implementation', () => {
