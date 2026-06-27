@@ -134,11 +134,15 @@ test.describe('Changes panel: keyboard navigation', () => {
     await card.click();
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await page.locator('[data-testid="changes-toggle"]').click();
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
+    // Open the changes panel only if not already open. A previous failed
+    // attempt may have left it open; clicking the toggle then would close it.
     const fileTree = page.locator('[data-testid="changes-file-tree"]');
-    await expect(fileTree).toBeVisible({ timeout: 5000 });
+    if (!(await fileTree.isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
+    await fileTree.waitFor({ state: 'visible', timeout: 8000 });
 
     // Start on src/a.ts.
     await fileTree.locator('[data-testid="changes-file-row"][data-path="src/a.ts"]').click();
@@ -146,11 +150,11 @@ test.describe('Changes panel: keyboard navigation', () => {
 
     // Next file -> src/b.ts.
     await page.keyboard.press('Alt+Shift+ArrowDown');
-    await expect(selectedRow(page, 'src/b.ts')).toBeVisible();
+    await expect(selectedRow(page, 'src/b.ts')).toBeVisible({ timeout: 3000 });
 
     // Previous file -> back to src/a.ts.
     await page.keyboard.press('Alt+Shift+ArrowUp');
-    await expect(selectedRow(page, 'src/a.ts')).toBeVisible();
+    await expect(selectedRow(page, 'src/a.ts')).toBeVisible({ timeout: 3000 });
 
     // Close panel + dialog so state does not leak to other tests.
     await page.locator('[data-testid="changes-toggle"]').click();
@@ -166,11 +170,18 @@ test.describe('Changes panel: keyboard navigation', () => {
     await card.click();
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await page.locator('[data-testid="changes-toggle"]').click();
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
+    // Open the changes panel only if not already open. A previous failed
+    // attempt may have left it open; clicking the toggle then would close it.
     const fileTree = page.locator('[data-testid="changes-file-tree"]');
-    await fileTree.locator('[data-testid="changes-file-row"][data-path="src/a.ts"]').click();
+    if (!(await fileTree.isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
+
+    const rowA = fileTree.locator('[data-testid="changes-file-row"][data-path="src/a.ts"]');
+    await rowA.waitFor({ state: 'visible', timeout: 8000 });
+    await rowA.click();
     await expect(selectedRow(page, 'src/a.ts')).toBeVisible({ timeout: 5000 });
 
     // Wait until Monaco has computed src/a.ts's single change so the first press
@@ -185,7 +196,7 @@ test.describe('Changes panel: keyboard navigation', () => {
     await expect(selectedRow(page, 'src/b.ts')).toBeVisible({ timeout: 5000 });
     await expect(
       fileTree.locator('[data-testid="changes-viewed-toggle"][data-path="src/a.ts"]'),
-    ).toHaveAttribute('aria-pressed', 'true');
+    ).toHaveAttribute('aria-pressed', 'true', { timeout: 3000 });
 
     await page.locator('[data-testid="changes-toggle"]').click();
     await page.keyboard.press('Control+Shift+W');

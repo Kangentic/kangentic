@@ -1296,6 +1296,9 @@
       onData: function () {
         return noop;
       },
+      ackData: function () {
+        // No-op in the headless mock: backpressure pause/resume has no PTY here.
+      },
       onFirstOutput: function (callback) {
         // Tests can fire this via window.__mockFireFirstOutput(sessionId).
         if (!window.__mockFirstOutputListeners) window.__mockFirstOutputListeners = [];
@@ -2289,7 +2292,7 @@
     },
 
     clipboard: {
-      saveImage: function (_data, extension) { return Promise.resolve('/tmp/kangentic-clipboard/pasted-image-1234567890' + extension); },
+      readImage: function () { return Promise.resolve('/tmp/kangentic-clipboard/pasted-image-1234567890.png'); },
     },
 
     search: {

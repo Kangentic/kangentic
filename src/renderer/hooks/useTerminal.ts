@@ -4,6 +4,7 @@ import { FitAddon } from '../addons/fit-addon';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { cleanSelection, enableTerminalClipboard } from '../utils/terminal-clipboard';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
+import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
 import { noteTerminalFocus } from '../utils/dictation-target';
 import '@xterm/xterm/css/xterm.css';
 
@@ -243,7 +244,8 @@ export function useTerminal(options: UseTerminalOptions) {
             });
           };
           if (scrollback && xtermRef.current) {
-            xtermRef.current.write(scrollback, afterWrite);
+            // Chunked so a 512KB replay doesn't parse in one synchronous write.
+            writeChunkedToTerminal(xtermRef.current, scrollback, afterWrite);
           } else {
             afterWrite();
           }
@@ -260,27 +262,35 @@ export function useTerminal(options: UseTerminalOptions) {
     }
   }, [options.sessionId, options.fontFamily, options.fontSize, options.scrollbackLines, options.cursorStyle, options.shellName, options.releaseEscapeWhenPointerOutside]);
 
-  // Set up data listener
+  // Set up data listener. Inbound PTY data flows through a bounded queue that
+  // writes capped slices paced by xterm.write's completion callback, yielding
+  // to input/React between slices so a heavy output burst can't freeze the UI.
+  // Each consumed slice is acked back to main, which drives per-session PTY
+  // backpressure (pause when the renderer falls behind, resume as it drains).
   useEffect(() => {
-    if (!options.sessionId) return;
+    const sessionId = options.sessionId;
+    if (!sessionId) return;
 
-    const cleanup = window.electronAPI.sessions.onData((sessionId, data) => {
-      if (sessionId !== options.sessionId || !xtermRef.current) return;
+    const queue = createIncomingWriteQueue({
+      getTerminal: () => xtermRef.current,
+      // While scrollback is loading (or an overlay is up), drop onData -- it's
+      // duplicate data already included in the scrollback replay. The
+      // server-side getScrollback() drains the pending buffer, so this is
+      // defense-in-depth. Dropped slices are still acked inside the queue.
+      shouldDrop: () => scrollbackPendingRef.current || suppressDataRef.current,
+      ack: (bytes) => window.electronAPI.sessions.ackData(sessionId, bytes),
+    });
 
-      // While scrollback is loading, drop onData -- it's duplicate data
-      // already included in the scrollback replay. The server-side
-      // getScrollback() drains the pending buffer to prevent stale
-      // flushes, so this guard is defense-in-depth only.
-      if (scrollbackPendingRef.current) return;
-      if (suppressDataRef.current) return;
-
-      xtermRef.current.write(data);
+    const cleanup = window.electronAPI.sessions.onData((incomingSessionId, data) => {
+      if (incomingSessionId !== sessionId) return;
+      queue.push(data);
     });
 
     cleanupRef.current = cleanup;
     return () => {
       cleanup();
       cleanupRef.current = null;
+      queue.reset();
     };
   }, [options.sessionId]);
 
@@ -432,7 +442,9 @@ export function useTerminal(options: UseTerminalOptions) {
           });
         };
         if (scrollback && xtermRef.current) {
-          xtermRef.current.write(scrollback, afterWrite);
+          // Chunked so a 512KB replay (tab/window switch, resize) doesn't parse
+          // in one synchronous write that stalls the renderer mid-drag.
+          writeChunkedToTerminal(xtermRef.current, scrollback, afterWrite);
         } else {
           afterWrite();
         }

@@ -11,6 +11,10 @@ import { test, expect } from '@playwright/test';
 import { launchPage, createProject } from './helpers';
 import type { Browser, Page } from '@playwright/test';
 
+// Each describe is isolated per worker (separate process; per-test page launch / goto reset),
+// so the file's tests can fan out across the UI workers safely.
+test.describe.configure({ mode: 'parallel' });
+
 // Each test spins up its own browser to avoid maximize-state leakage across
 // tests (maximizedTasks is a Set keyed by the sentinel 'new-backlog-task-dialog'
 // and persists in the store across dialog open/close within a single page session).

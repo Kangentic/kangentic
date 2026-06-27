@@ -30,7 +30,7 @@ const capturedSessionEventHandlers = new Map<string, (...args: unknown[]) => unk
 // ---------------------------------------------------------------------------
 
 vi.mock('electron', () => ({
-  ipcMain: { handle: vi.fn() },
+  ipcMain: { handle: vi.fn(), on: vi.fn() },
 }));
 
 // The fallback path queries `SELECT id, status ... WHERE agent_session_id = ?`;

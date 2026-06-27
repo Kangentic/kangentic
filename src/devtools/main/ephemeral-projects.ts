@@ -31,6 +31,7 @@ import { promisify } from 'node:util';
 import { ipcMain } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
 import { getProjectDb } from '../../main/db/database';
+import { agentRegistry } from '../../main/agent/agent-registry';
 import { DEFAULT_AGENT } from '../../shared/types';
 import type { Project } from '../../shared/types';
 import type { IpcContext } from '../../main/ipc/ipc-context';
@@ -93,6 +94,18 @@ export async function createPreviewClone(context: IpcContext, worktreePath: stri
   const project = context.projectRepo.create({ name: projectName, path: cloneDir, default_agent: DEFAULT_AGENT });
   // Initialize the project DB (tables + default swimlanes) so it shows a real board.
   getProjectDb(project.id);
+  // Pre-seed agent trust for the brand-new clone path BEFORE the board opens and any
+  // agent (or capability-detection probe) runs there. Without this, the clone lives at a
+  // path the agent CLI has never seen, so it treats the workspace as untrusted and ignores
+  // the committed .claude/settings.json permissions.allow entries. Going through the generic
+  // adapter (not a hardcoded Claude helper) keeps this agent-agnostic; each adapter merges into
+  // its own trust store (e.g. Claude's ~/.claude.json) under a serial lock, idempotent with the
+  // spawn-time call.
+  try {
+    await agentRegistry.get(project.default_agent)?.ensureTrust(cloneDir);
+  } catch (trustError) {
+    console.warn(`[DEV] Preview trust seeding failed for ${cloneDir}:`, trustError);
+  }
   // create() prepends at position 0; append so the sidebar keeps creation order.
   const orderedIds = context.projectRepo
     .list()

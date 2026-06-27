@@ -24,7 +24,7 @@ function getDataDirFromArgs(): string | null {
  * its immutable, shared weights survive per-instance data dirs (the ephemeral
  * preview, a relocated data dir) instead of re-downloading.
  */
-function getPlatformConfigDir(): string {
+export function getPlatformConfigDir(): string {
   const platform = process.platform;
   let base: string;
   if (platform === 'win32') {

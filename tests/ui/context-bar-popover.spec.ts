@@ -32,6 +32,10 @@ import type {
   Task,
 } from '../../src/shared/types';
 
+// Each describe is isolated per worker (separate process; per-test page launch / goto reset),
+// so the file's tests can fan out across the UI workers safely.
+test.describe.configure({ mode: 'parallel' });
+
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 

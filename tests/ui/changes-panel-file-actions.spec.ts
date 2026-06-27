@@ -112,6 +112,12 @@ test.afterAll(async () => {
 
 test.describe('Changes panel: file context menu', () => {
   test('right-click offers open / reveal / copy, and reveal calls showItemInFolder with the absolute path', async () => {
+    // Clear the call log so a retry does not read a path recorded in a
+    // previous attempt.
+    await page.evaluate(() => {
+      (window as unknown as { __mockShowItemInFolderCalls: string[] }).__mockShowItemInFolderCalls = [];
+    });
+
     const card = page
       .locator('[data-swimlane-name="Code Review"]')
       .locator('text=File Actions Task')
@@ -119,29 +125,50 @@ test.describe('Changes panel: file context menu', () => {
     await card.click();
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await page.locator('[data-testid="changes-toggle"]').click();
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
+    // Open the changes panel only if it is not already open. A previous failed
+    // attempt may have left it open; clicking the toggle then would close it,
+    // causing the fileRow wait below to time out on retry.
     const fileTree = page.locator('[data-testid="changes-file-tree"]');
+    if (!(await fileTree.isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
+
     const fileRow = fileTree.getByRole('button', { name: /index\.ts/ });
-    await expect(fileRow).toBeVisible({ timeout: 5000 });
+    await fileRow.waitFor({ state: 'visible', timeout: 8000 });
 
     // Right-click the file row to open the context menu.
     await fileRow.click({ button: 'right' });
     const menu = page.locator('[data-testid="changes-file-context-menu"]');
-    await expect(menu).toBeVisible();
-    await expect(menu.locator('[data-testid="context-open-file"]')).toBeVisible();
-    await expect(menu.locator('[data-testid="context-reveal-file"]')).toBeVisible();
-    await expect(menu.locator('[data-testid="context-copy-path"]')).toBeVisible();
+    // Explicit 8s timeout: under CI event-loop contention the React scheduling
+    // of setContextMenu can be delayed past the default 5s polling budget.
+    await expect(menu).toBeVisible({ timeout: 8000 });
+    await expect(menu.locator('[data-testid="context-open-file"]')).toBeVisible({ timeout: 3000 });
+    await expect(menu.locator('[data-testid="context-reveal-file"]')).toBeVisible({ timeout: 3000 });
+    await expect(menu.locator('[data-testid="context-copy-path"]')).toBeVisible({ timeout: 3000 });
 
-    // Reveal calls showItemInFolder with the worktree-joined absolute path.
-    await menu.locator('[data-testid="context-reveal-file"]').click();
-    await expect(menu).toBeHidden();
-    const revealedPath = await page.evaluate(() => {
-      const calls = (window as unknown as { __mockShowItemInFolderCalls?: string[] }).__mockShowItemInFolderCalls;
-      return calls && calls.length ? calls[calls.length - 1] : null;
-    });
-    expect(revealedPath).toBe('/mock/worktrees/file-actions/src/index.ts');
+    // Wait for the reveal item to be fully ready before clicking it, then
+    // confirm the menu closes before reading the call log.
+    const revealItem = menu.locator('[data-testid="context-reveal-file"]');
+    await revealItem.waitFor({ state: 'visible', timeout: 3000 });
+    await revealItem.click();
+    await expect(menu).toBeHidden({ timeout: 5000 });
+
+    // Poll for the recorded call: showItemInFolder is invoked synchronously
+    // before onClose(), but polling guards against any future scheduling
+    // change between the click dispatch and page.evaluate().
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() => {
+            const calls = (window as unknown as { __mockShowItemInFolderCalls?: string[] })
+              .__mockShowItemInFolderCalls;
+            return calls && calls.length ? calls[calls.length - 1] : null;
+          }),
+        { timeout: 5000 },
+      )
+      .toBe('/mock/worktrees/file-actions/src/index.ts');
 
     // Close panel + dialog.
     await page.locator('[data-testid="changes-toggle"]').click();

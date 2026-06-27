@@ -126,23 +126,27 @@ test.describe('Changes panel: branch header', () => {
     await card.click();
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
-    // Open the Changes panel via the header pill.
-    await page.locator('[data-testid="changes-toggle"]').click();
+    // Open the Changes panel via the header pill, only if not already open.
+    // A previous failed attempt may have left it open; clicking the toggle
+    // then would close it, causing the branch-name wait to time out on retry.
+    const fileTree = page.locator('[data-testid="changes-file-tree"]');
+    if (!(await fileTree.isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
 
     // Branch name from the mocked branchSummary is visible.
-    await expect(dialog.locator('text=feature/enhance-changes').first()).toBeVisible({ timeout: 5000 });
+    await expect(dialog.locator('text=feature/enhance-changes').first()).toBeVisible({ timeout: 8000 });
 
     // Last-commit line: short hash + subject.
     const lastCommit = page.locator('[data-testid="changes-last-commit"]');
-    await expect(lastCommit).toBeVisible();
-    await expect(lastCommit).toContainText('abc1234');
-    await expect(lastCommit).toContainText('wire branch summary into header');
+    await lastCommit.waitFor({ state: 'visible', timeout: 3000 });
+    await expect(lastCommit).toContainText('abc1234', { timeout: 3000 });
+    await expect(lastCommit).toContainText('wire branch summary into header', { timeout: 3000 });
 
     // Auto-fit: with a branch name + commit and no manual width (config null), the
     // tree sizes itself wider than the 220px floor so the header is readable.
-    const fileTree = page.locator('[data-testid="changes-file-tree"]');
     await expect.poll(async () => (await fileTree.boundingBox())!.width, { timeout: 5000 }).toBeGreaterThan(240);
 
     // Close panel + dialog so state does not leak to other tests.

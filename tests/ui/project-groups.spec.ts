@@ -1,6 +1,10 @@
 import { test, expect, type Page } from '@playwright/test';
 import { launchPage, waitForBoard, createProject } from './helpers';
 
+// Each describe is isolated per worker (separate process; per-test page launch / goto reset),
+// so the file's tests can fan out across the UI workers safely.
+test.describe.configure({ mode: 'parallel' });
+
 let page: Page;
 
 test.beforeEach(async () => {

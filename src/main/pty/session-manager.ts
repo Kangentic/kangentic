@@ -19,6 +19,7 @@ import { safeKillPty } from './lifecycle/pty-kill';
 import { performSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession } from './session-registry';
 import { createWriteQueue, type WriteQueue } from './write-queue';
+import { BackpressureController } from './buffer/backpressure-controller';
 import { isShuttingDown } from '../shutdown-state';
 import type { TranscriptRepository } from '../db/repositories/transcript-repository';
 import type {
@@ -68,6 +69,15 @@ export class SessionManager extends EventEmitter {
    * cannot be fragmented by interleaved writes.
    */
   private writeQueues = new Map<string, WriteQueue>();
+  /**
+   * Per-session output backpressure: pauses a session's PTY when the renderer
+   * falls behind on its emitted bytes, resuming as the renderer acks. Only
+   * tracks sessions actively emitting to the renderer (focused); reset on focus
+   * change and per-session on teardown. See BackpressureController.
+   */
+  private backpressure = new BackpressureController(
+    (sessionId) => this.registry.get(sessionId)?.pty ?? null,
+  );
   private transcriptWriter: TranscriptWriter | null = null;
 
   // Sub-modules owned by SessionManager. Cross-wired in the constructor
@@ -114,6 +124,7 @@ export class SessionManager extends EventEmitter {
         // accumulate in scrollback and reload via getScrollback() on tab switch.
         if (this.focusedSessionIds.size === 0 || this.focusedSessionIds.has(sessionId)) {
           this.emit('data', sessionId, data);
+          this.backpressure.recordEmitted(sessionId, data.length);
         }
       },
     });
@@ -239,6 +250,8 @@ export class SessionManager extends EventEmitter {
         writeQueue.dispose();
         this.writeQueues.delete(sessionId);
       }
+      // The PTY is gone; drop any backpressure accounting (resume is moot).
+      this.backpressure.release(sessionId);
     });
   }
 
@@ -267,6 +280,25 @@ export class SessionManager extends EventEmitter {
   /** Set which sessions are currently visible (terminal panel + command bar overlay). */
   setFocusedSessions(sessionIds: string[]): void {
     this.focusedSessionIds = new Set(sessionIds);
+    // The emit set just changed, so prior in-flight accounting is stale (a
+    // session leaving the focused set would otherwise stay paused forever
+    // because the renderer no longer acks its data). Resume every paused PTY
+    // and clear the counters; backpressure rebuilds from zero as fresh data
+    // flows to the now-focused terminals (the scrollback replay catches them
+    // up). Focus changes are user-driven and infrequent, so a blanket reset is
+    // cheap and robust.
+    this.backpressure.reset();
+  }
+
+  /**
+   * The renderer reports that it has consumed `bytes` of this session's output
+   * (written to xterm or deliberately dropped during scrollback replay), which
+   * drops the in-flight count and resumes a paused PTY once it has caught up.
+   * Acking dropped bytes too is essential: otherwise a session whose data is
+   * dropped (overlay / scrollback reload) would never resume.
+   */
+  acknowledgeDrain(sessionId: string, bytes: number): void {
+    this.backpressure.acknowledge(sessionId, bytes);
   }
 
   /**
@@ -507,6 +539,11 @@ export class SessionManager extends EventEmitter {
     // status='suspended' (a hard reset is 'exited', not resumable), so this
     // orthogonal marker carries the intent.
     if (session) session.intentionalExit = true;
+    // Release backpressure BEFORE nulling the PTY so a paused session is
+    // resumed (lets any buffered output flush) and its accounting entry is
+    // dropped immediately, rather than waiting for the async onExit handler.
+    // release() is idempotent, so the later 'exit'-driven release is a no-op.
+    this.backpressure.release(sessionId);
     if (session?.pty) {
       const ptyRef = session.pty;
       session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
@@ -619,6 +656,10 @@ export class SessionManager extends EventEmitter {
     // Mark suspended BEFORE killing so the async onExit handler preserves it
     session.status = 'suspended';
 
+    // Resume a backpressure-paused PTY so the agent's exit-sequence output is
+    // not held back during the graceful shutdown window.
+    this.backpressure.release(sessionId);
+
     if (session.pty) {
       // Send exit sequence, wait up to 1500ms for natural exit, then
       // force-kill and wait another 1500ms for kill propagation so
@@ -651,6 +692,51 @@ export class SessionManager extends EventEmitter {
 
   getScrollback(sessionId: string): string {
     return this.bufferManager.getScrollback(sessionId);
+  }
+
+  /**
+   * Dev diagnostics: per-session terminal output-pipeline stats - the pending
+   * (un-flushed) buffer and scrollback sizes, backpressure state (paused +
+   * in-flight bytes), and whether the session is currently emitting to the
+   * renderer (focused). Surfaced by the inspection server's terminal-pipeline
+   * route to diagnose terminal-driven lag: a paused session with high in-flight
+   * bytes, or a ballooning pending buffer, points straight at a flooding agent.
+   */
+  getPipelineStats(): Array<{
+    sessionId: string;
+    taskId: string;
+    status: string;
+    focused: boolean;
+    pendingBytes: number;
+    scrollbackBytes: number;
+    paused: boolean;
+    inFlightBytes: number;
+  }> {
+    const allFocused = this.focusedSessionIds.size === 0;
+    const stats: Array<{
+      sessionId: string;
+      taskId: string;
+      status: string;
+      focused: boolean;
+      pendingBytes: number;
+      scrollbackBytes: number;
+      paused: boolean;
+      inFlightBytes: number;
+    }> = [];
+    for (const session of this.registry.values()) {
+      const buffer = this.bufferManager.getBufferStats(session.id);
+      stats.push({
+        sessionId: session.id,
+        taskId: session.taskId,
+        status: session.status,
+        focused: allFocused || this.focusedSessionIds.has(session.id),
+        pendingBytes: buffer?.pendingBytes ?? 0,
+        scrollbackBytes: buffer?.scrollbackBytes ?? 0,
+        paused: this.backpressure.isPaused(session.id),
+        inFlightBytes: this.backpressure.getInFlight(session.id),
+      });
+    }
+    return stats;
   }
 
   getSession(sessionId: string): Session | undefined {

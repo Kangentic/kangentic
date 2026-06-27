@@ -148,7 +148,15 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
         return { status: 'unchanged', task };
       }
     }
-    lastResolveAt.set(taskId, Date.now());
+    const resolveNow = Date.now();
+    // Prune entries past the throttle window before recording this one. An
+    // entry older than RESOLVE_TTL_MS no longer coalesces anything, so the map
+    // can stay bounded to tasks resolved in the last minute instead of growing
+    // for the life of the process across every task ever resolved.
+    for (const [id, ts] of lastResolveAt) {
+      if (resolveNow - ts >= RESOLVE_TTL_MS) lastResolveAt.delete(id);
+    }
+    lastResolveAt.set(taskId, resolveNow);
 
     const cwd = task.worktree_path ?? deps.projectPath;
 

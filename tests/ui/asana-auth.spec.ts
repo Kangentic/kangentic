@@ -1,6 +1,10 @@
 import { test, expect, type Page } from '@playwright/test';
 import { launchPage, createProject } from './helpers';
 
+// Each describe is isolated per worker (separate process; per-test page launch / goto reset),
+// so the file's tests can fan out across the UI workers safely.
+test.describe.configure({ mode: 'parallel' });
+
 // Synthetic test tokens, not real PATs. Asana's PAT format is `1/{user_id}:{random}`.
 const SAMPLE_TOKEN = '1/12345678901234:abcdefghijklmnopqrstuvwxyz1234567890';
 const INVALID_TOKEN = '1/00000000000000:zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz';

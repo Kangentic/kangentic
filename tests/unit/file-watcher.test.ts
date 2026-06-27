@@ -168,6 +168,40 @@ describe('FileWatcher', () => {
       watcher.close();
     });
 
+    it('skips the redundant poll stat while fs.watch fired within the interval', () => {
+      const isStale = vi.fn().mockReturnValue(false);
+      createWatcher({ pollIntervalMs: 1000, debounceMs: 50, isStale });
+
+      // Native fs.watch event at t=500 -> marks the watcher healthy.
+      vi.advanceTimersByTime(500);
+      fireWatcher();
+      vi.advanceTimersByTime(50); // let the debounce fire
+      isStale.mockClear();
+
+      // First poll at t=1000: the native watcher fired 500ms ago (< 1000ms),
+      // so the poll skips its stat entirely (isStale is the stat proxy here).
+      vi.advanceTimersByTime(450);
+      expect(isStale).not.toHaveBeenCalled();
+    });
+
+    it('resumes the poll stat once fs.watch has been quiet past one interval', () => {
+      const isStale = vi.fn().mockReturnValue(true);
+      createWatcher({ pollIntervalMs: 1000, debounceMs: 50, isStale });
+
+      // Native event at t=100, then fs.watch goes silent.
+      vi.advanceTimersByTime(100);
+      fireWatcher();
+      vi.advanceTimersByTime(50);
+      onChange.mockClear();
+
+      // Poll at t=1000: gap 900 < 1000 -> skipped.
+      vi.advanceTimersByTime(850);
+      // Poll at t=2000: gap 1900 >= 1000 -> proceeds, stale -> onChange fires.
+      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(50); // debounce
+      expect(onChange).toHaveBeenCalledTimes(1);
+    });
+
     it('polls repeatedly when data keeps arriving', () => {
       let staleCount = 0;
       const isStale = vi.fn(() => {

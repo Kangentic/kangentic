@@ -2592,6 +2592,12 @@ export interface ElectronAPI {
     seedGitChanges: (targetPaths: string[]) => Promise<DevSeedGitChangesResult>;
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;
+    /**
+     * The original task's title for a `/preview` window, so the title bar can identify
+     * which task the "Project 1" / "Project 2" clones belong to. Null outside preview, or
+     * when main could not resolve it from the parent project DB.
+     */
+    previewTaskTitle: string | null;
   };
   // Projects
   projects: {
@@ -2729,6 +2735,14 @@ export interface ElectronAPI {
     getFirstOutput: () => Promise<Record<string, boolean>>;
     getUsage: (projectId?: string) => Promise<Record<string, SessionUsage>>;
     onData: (callback: (sessionId: string, data: string, projectId?: string) => void) => () => void;
+    /**
+     * Acknowledge that the renderer has consumed `bytes` of a session's output
+     * (written to xterm or dropped during scrollback replay). Drives per-session
+     * output backpressure: main pauses a session's PTY when too many emitted
+     * bytes are unacknowledged and resumes it as the renderer drains. One-way
+     * (fire-and-forget send), keyed by sessionId only - not project-scoped.
+     */
+    ackData: (sessionId: string, bytes: number) => void;
     onFirstOutput: (callback: (sessionId: string, projectId?: string) => void) => () => void;
     onExit: (callback: (sessionId: string, exitCode: number, projectId?: string, intentional?: boolean) => void) => () => void;
     onStatus: (callback: (sessionId: string, session: Session, projectId?: string) => void) => () => void;
@@ -2983,7 +2997,7 @@ export interface ElectronAPI {
 
   // Clipboard
   clipboard: {
-    saveImage: (data: string, extension: string) => Promise<string>;
+    readImage: () => Promise<string | null>;
   };
 
   // Browser pane: embedded webview capture-and-send

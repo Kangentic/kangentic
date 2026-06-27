@@ -115,8 +115,14 @@ test.describe('Changes panel: collapse unchanged regions', () => {
     await card.click();
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await page.locator('[data-testid="changes-toggle"]').click();
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
+
+    // Open the changes panel only if not already open. A previous failed attempt
+    // may have left it open; clicking the toggle then would close it.
+    const fileTree = page.locator('[data-testid="changes-file-tree"]');
+    if (!(await fileTree.isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
 
     // Wait until Monaco has mounted and computed the two-hunk diff.
     await expect.poll(async () => (await readMonaco(page)).lineChangeCount, { timeout: 15000 }).toBe(2);
