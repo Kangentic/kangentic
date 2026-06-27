@@ -402,7 +402,7 @@ const api: ElectronAPI = {
   },
 
   clipboard: {
-    saveImage: (data: string, extension: string) => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE, data, extension),
+    readImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE),
   },
 
   browser: {

@@ -2288,7 +2288,7 @@
     },
 
     clipboard: {
-      saveImage: function (_data, extension) { return Promise.resolve('/tmp/kangentic-clipboard/pasted-image-1234567890' + extension); },
+      readImage: function () { return Promise.resolve('/tmp/kangentic-clipboard/pasted-image-1234567890.png'); },
     },
 
     search: {

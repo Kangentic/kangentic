@@ -225,7 +225,7 @@ export const IPC = {
   BACKLOG_ATTACHMENT_OPEN: 'backlogAttachment:open',
 
   // Clipboard
-  CLIPBOARD_SAVE_IMAGE: 'clipboard:saveImage',
+  CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
 
   // Browser pane: embedded webview capture-and-send
   BROWSER_CAPTURE_SEND: 'browser:captureSend',

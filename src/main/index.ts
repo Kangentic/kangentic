@@ -24,6 +24,7 @@ import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { restoreShellEnv } from './shell-env';
+import { isFirstPartyPermissionAllowed } from './permission-policy';
 import { MIN_ZOOM, MAX_ZOOM } from '../shared/zoom-steps';
 
 initStartupTimer(PROCESS_START);
@@ -691,18 +692,23 @@ app.whenReady().then(async () => {
     // refused" but the rest of the app stays functional.
   }
 
-  // Grant microphone access for voice-to-text dictation. getUserMedia in the
-  // renderer raises a 'media' permission request; we approve mic access for our
-  // own app origin (the renderer is first-party, not arbitrary web content).
-  // The actual OS-level gate still applies (macOS TCC handled via
-  // systemPreferences in the dictation handler; an OS denial surfaces as a
-  // getUserMedia rejection in the popup).
+  // Grant the first-party renderer the web-platform permissions it actually uses:
+  // 'media' (getUserMedia microphone access for voice-to-text dictation) and the
+  // async Clipboard API ('clipboard-read' / 'clipboard-sanitized-write') that backs
+  // terminal copy/paste and every "copy to clipboard" affordance. The renderer is
+  // our own trusted UI, not arbitrary web content. Without the clipboard grant,
+  // navigator.clipboard.readText()/writeText() throw NotAllowedError and the actions
+  // silently no-op (this broke Ctrl+V text/image paste and the copy buttons). The
+  // policy lives in permission-policy.ts so both handlers stay in lockstep and it is
+  // unit-tested. OS-level gates still apply (macOS TCC for the mic surfaces as a
+  // getUserMedia rejection). The embedded browser webview is untrusted guest content
+  // and keeps its own deny-all handler below; this default-session policy does not
+  // touch it.
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    // 'media' covers getUserMedia microphone/camera requests.
-    callback(permission === 'media');
+    callback(isFirstPartyPermissionAllowed(permission));
   });
   session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
-    return permission === 'media';
+    return isFirstPartyPermissionAllowed(permission);
   });
 
   createWindow();

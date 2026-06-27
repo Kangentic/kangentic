@@ -2977,7 +2977,7 @@ export interface ElectronAPI {
 
   // Clipboard
   clipboard: {
-    saveImage: (data: string, extension: string) => Promise<string>;
+    readImage: () => Promise<string | null>;
   };
 
   // Browser pane: embedded webview capture-and-send

@@ -308,7 +308,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 ### Clipboard (1 channel)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `clipboard:saveImage` | invoke | Save clipboard image data to a temp file, returns file path |
+| `clipboard:readImage` | invoke | Read the native clipboard image, save it to a temp file, returns file path or null |
 
 ### Browser pane (8 channels)
 | Channel | Pattern | Purpose |

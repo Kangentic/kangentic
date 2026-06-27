@@ -15,7 +15,10 @@
  *
  *   - The clipboard onWrite path (enableTerminalClipboard receives
  *     batcher.schedule) is exercised end-to-end: Ctrl+Enter sends a single
- *     write containing the newline character.
+ *     write containing the newline character; Ctrl+V with clipboard text pastes
+ *     the text through terminal.paste -> onData; and Ctrl+V with a clipboard
+ *     image writes the shell-quoted temp-file path returned by the native
+ *     clipboard.readImage IPC.
  *
  * Coverage of gap 1 (unmount-flush): flush() is called on unmount by the
  * cleanup effect. The synchronous flush() behavior is already unit-tested in
@@ -100,10 +103,13 @@ const deterministicSpawnScript = `
   };
 `;
 
-async function launchWithState(extraScript: string): Promise<{ browser: Browser; page: Page }> {
+async function launchWithState(
+  extraScript: string,
+  permissions?: string[],
+): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady();
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, permissions });
   const page = await context.newPage();
 
   await page.addInitScript({ path: MOCK_SCRIPT });
@@ -273,6 +279,84 @@ test.describe('WriteBatcher - useTerminal IPC wiring', () => {
       const writeCalls = await page.evaluate(() => window.electronAPI.sessions.__writeCalls);
       expect((writeCalls as Array<{ sessionId: string; payload: string }>)[0].sessionId).toBe(TRANSIENT_SESSION_ID);
       expect((writeCalls as Array<{ sessionId: string; payload: string }>)[0].payload).toBe('\n');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Ctrl+V with clipboard text pastes the text through to the PTY', async () => {
+    // The text-paste path: handlePaste Priority 1 reads navigator.clipboard.readText()
+    // and feeds it to xterm's terminal.paste(), which emits an onData event that the
+    // batcher forwards to sessions.write. The clipboard-read/-write permissions are
+    // granted on the context to simulate the first-party permission grant that the
+    // main-process permission handler now provides (without it, readText() throws
+    // NotAllowedError and the paste silently no-ops - the reported bug).
+    const PASTED_TEXT = 'hello-from-clipboard-42';
+    const { browser, page } = await launchWithState(deterministicSpawnScript, ['clipboard-read', 'clipboard-write']);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      await page.evaluate(() => {
+        window.electronAPI.sessions.__writeCalls.length = 0;
+      });
+
+      await openCommandBarWithTerminal(page);
+
+      // Seed the clipboard with text (write permission granted on the context).
+      await page.evaluate((text) => navigator.clipboard.writeText(text), PASTED_TEXT);
+
+      // Ctrl+V triggers handlePaste; Priority 1 readText() returns the seeded text.
+      await page.keyboard.press('Control+v');
+
+      // terminal.paste() may or may not be wrapped in bracketed-paste markers
+      // depending on terminal mode, so assert the payload CONTAINS the text.
+      await expect.poll(async () => {
+        return page.evaluate(() =>
+          window.electronAPI.sessions.__writeCalls.map((c: { payload: string }) => c.payload).join(''),
+        );
+      }, { timeout: 3000 }).toContain(PASTED_TEXT);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Ctrl+V with a clipboard image writes the temp-file path via the onWrite batcher path', async () => {
+    // The image-paste fix: handlePaste's Priority 1 (text) falls through when the
+    // clipboard has no text, then Priority 2 reads the image natively via
+    // window.electronAPI.clipboard.readImage() (the main-process Electron clipboard,
+    // which bypasses the denied web clipboard-read permission). The returned temp
+    // file path is shell-converted, quoted, and written to the PTY through the same
+    // batcher.schedule onWrite callback. This guards the Ctrl+V image regression.
+    // The path has no spaces or special chars, so quoteForShell leaves it unquoted
+    // and the write payload equals the path verbatim on every platform.
+    const IMAGE_PATH = '/tmp/kangentic-clipboard/pasted-image-test.png';
+    const clipboardOverrideScript = `
+      ${deterministicSpawnScript}
+      // Force an empty text clipboard so Priority 1 falls through to the image path,
+      // independent of the headless browser's clipboard-permission state.
+      try { navigator.clipboard.readText = function () { return Promise.resolve(''); }; } catch (e) {}
+      window.electronAPI.clipboard.readImage = function () { return Promise.resolve('${IMAGE_PATH}'); };
+    `;
+    const { browser, page } = await launchWithState(clipboardOverrideScript);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      await page.evaluate(() => {
+        window.electronAPI.sessions.__writeCalls.length = 0;
+      });
+
+      await openCommandBarWithTerminal(page);
+
+      // Ctrl+V triggers handlePaste in enableTerminalClipboard's custom key handler.
+      await page.keyboard.press('Control+v');
+
+      await expect.poll(async () => {
+        return page.evaluate(() => window.electronAPI.sessions.__writeCalls.length);
+      }, { timeout: 3000 }).toBe(1);
+
+      const writeCalls = await page.evaluate(() => window.electronAPI.sessions.__writeCalls);
+      expect((writeCalls as Array<{ sessionId: string; payload: string }>)[0].sessionId).toBe(TRANSIENT_SESSION_ID);
+      expect((writeCalls as Array<{ sessionId: string; payload: string }>)[0].payload).toBe(IMAGE_PATH);
     } finally {
       await browser.close();
     }

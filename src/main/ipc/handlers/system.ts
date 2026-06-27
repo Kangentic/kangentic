@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { app, ipcMain, Notification, dialog, shell, globalShortcut } from 'electron';
+import { app, ipcMain, Notification, dialog, shell, globalShortcut, clipboard } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { comboToAccelerator } from '../../../shared/keybindings';
 import { WorktreeManager } from '../../git/worktree-manager';
@@ -523,18 +523,21 @@ export function registerSystemHandlers(context: IpcContext): void {
   });
 
   // === Clipboard ===
-  // Matches Claude API vision input: image/jpeg, image/png, image/gif, image/webp
-  const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
-
-  ipcMain.handle(IPC.CLIPBOARD_SAVE_IMAGE, (_, data: string, extension: string) => {
-    if (!ALLOWED_IMAGE_EXTENSIONS.includes(extension.toLowerCase())) {
-      throw new Error(`Unsupported image extension: ${extension}`);
-    }
+  // Read the clipboard image natively in the main process rather than via the web
+  // `navigator.clipboard.read()`. The native path avoids the document-focus
+  // requirement (the terminal may not hold document focus when Ctrl+V fires) and
+  // behaves identically on Windows/macOS/Linux, where the web Clipboard API's image
+  // support is inconsistent. Returns the saved PNG file path, or null when the
+  // clipboard holds no image. Always PNG: a NativeImage is a still bitmap, so an
+  // animated GIF copied from a browser is reduced to a single static frame, matching
+  // how OS "copy screenshot" already populates the clipboard.
+  ipcMain.handle(IPC.CLIPBOARD_READ_IMAGE, (): string | null => {
+    const image = clipboard.readImage();
+    if (image.isEmpty()) return null;
     const tempDir = path.join(os.tmpdir(), 'kangentic-clipboard');
     fs.mkdirSync(tempDir, { recursive: true });
-    const filename = `pasted-image-${Date.now()}${extension.toLowerCase()}`;
-    const filePath = path.join(tempDir, filename);
-    fs.writeFileSync(filePath, Buffer.from(data, 'base64'));
+    const filePath = path.join(tempDir, `pasted-image-${Date.now()}.png`);
+    fs.writeFileSync(filePath, image.toPNG());
     return filePath;
   });
 
