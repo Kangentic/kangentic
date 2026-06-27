@@ -102,7 +102,12 @@ export class OllamaAdapter implements AgentAdapter {
       const safePrompt = needsDoubleQuoteReplacement
         ? options.prompt.replace(/"/g, "'")
         : options.prompt;
-      parts.push(quoteArg(safePrompt, shell, { multiline: true }));
+      // `ollama run` is a cobra/pflag CLI with flag parsing on, so a prompt
+      // beginning with a dash (a markdown bullet, a dashed list item) would be
+      // misread as a flag. Push the `--` end-of-options marker first so the
+      // prompt is always taken as the positional argument (matches the Warp
+      // adapter).
+      parts.push('--', quoteArg(safePrompt, shell, { multiline: true }));
     }
 
     return parts.join(' ');

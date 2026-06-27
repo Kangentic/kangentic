@@ -216,6 +216,15 @@ describe('OllamaAdapter', () => {
       expect(command).not.toContain('session-123');
     });
 
+    it('inserts a "--" end-of-options guard before a dash-prefixed prompt so it is not parsed as a flag', () => {
+      const command = adapter.buildCommand(makeOptions({ prompt: '- fix the bug', shell: 'bash' }));
+      // The guard token must appear after the model and immediately before the
+      // prompt positional: `... run <model> -- <prompt>`.
+      expect(command).toMatch(/ run \S+ -- /);
+      const guardIndex = command.indexOf(' -- ');
+      expect(command.indexOf('- fix the bug')).toBeGreaterThan(guardIndex);
+    });
+
     // ── Shell quoting ────────────────────────────────────────────────────
 
     describe('shell quoting', () => {
