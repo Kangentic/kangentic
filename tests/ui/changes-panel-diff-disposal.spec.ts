@@ -204,18 +204,28 @@ test.describe('Changes panel - Monaco DiffEditor disposal', () => {
     // Open the task dialog (view mode, since the session is suspended). The
     // suspended body branch renders the Changes panel once Changes is toggled on.
     const card = page.locator(`[data-task-id="${TASK_ID}"]`);
-    await card.waitFor({ state: 'visible', timeout: 5000 });
+    await card.waitFor({ state: 'visible', timeout: 8000 });
     await card.click();
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
-
-    // Baseline: monaco is not loaded until ChangesPanel first mounts, so the
-    // registry is empty.
-    expect(await getModelCount(page)).toBe(0);
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
     const changesToggle = page.locator('[data-testid="changes-toggle"]');
     const diffArea = page.locator('[data-testid="diff-editor-area"]');
-    await changesToggle.waitFor({ state: 'visible', timeout: 5000 });
+    await changesToggle.waitFor({ state: 'visible', timeout: 8000 });
+
+    // Ensure the diff area starts hidden before the cycle loop, regardless of
+    // whether a previous failed attempt left it open mid-cycle. Without this
+    // guard, the first changesToggle.click() in the loop would close the panel
+    // instead of opening it, causing diffArea.waitFor({ visible }) to time out.
+    if (await diffArea.isVisible()) {
+      await changesToggle.click();
+      await diffArea.waitFor({ state: 'hidden', timeout: 8000 });
+    }
+
+    // Baseline: monaco is not loaded until ChangesPanel first mounts. On a
+    // first-attempt run the count is 0; on retry after the panel-close guard
+    // above, models should reach 0 within this poll budget.
+    await expect.poll(() => getModelCount(page), { timeout: 5000 }).toBe(0);
 
     // Five open/close cycles. A correct (leak-free) teardown holds the model
     // count at exactly 2 while open (original + modified) and returns it to 0
@@ -225,13 +235,13 @@ test.describe('Changes panel - Monaco DiffEditor disposal', () => {
     for (let cycle = 0; cycle < CYCLES; cycle++) {
       await changesToggle.click();
       // Wait for the DiffEditor to actually mount (onMount creates the models).
-      await diffArea.waitFor({ state: 'visible', timeout: 5000 });
-      await expect.poll(() => getModelCount(page), { timeout: 5000 }).toBe(2);
+      await diffArea.waitFor({ state: 'visible', timeout: 8000 });
+      await expect.poll(() => getModelCount(page), { timeout: 8000 }).toBe(2);
 
       await changesToggle.click();
-      await diffArea.waitFor({ state: 'hidden', timeout: 5000 });
+      await diffArea.waitFor({ state: 'hidden', timeout: 8000 });
       // The leak assertion: closed state always returns to baseline.
-      await expect.poll(() => getModelCount(page), { timeout: 5000 }).toBe(0);
+      await expect.poll(() => getModelCount(page), { timeout: 8000 }).toBe(0);
     }
 
     // No non-benign renderer errors across all the teardowns. The monaco

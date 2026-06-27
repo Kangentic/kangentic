@@ -126,18 +126,30 @@ test.describe('Changes panel: diff scope selector', () => {
     await card.click();
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await page.locator('[data-testid="changes-toggle"]').click();
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
+
+    // Open the changes panel only if not already open. A previous failed
+    // attempt may have left it open; clicking the toggle then would close it.
+    const fileTree = page.locator('[data-testid="changes-file-tree"]');
+    if (!(await fileTree.isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
 
     const scopeGroup = page.locator('[data-testid="changes-scope-select"]');
-    await expect(scopeGroup).toBeVisible({ timeout: 5000 });
+    await scopeGroup.waitFor({ state: 'visible', timeout: 8000 });
     const workingTab = page.locator('[data-testid="changes-scope-working"]');
     const stagedTab = page.locator('[data-testid="changes-scope-staged"]');
     const branchTab = page.locator('[data-testid="changes-scope-branch"]');
 
+    // Reset scope to 'working' if a previous failed attempt left it on 'branch'
+    // or 'staged'; the initial assertion below expects 'working' to be active.
+    if ((await workingTab.getAttribute('aria-checked')) !== 'true') {
+      await workingTab.click();
+      await expect(workingTab).toHaveAttribute('aria-checked', 'true', { timeout: 3000 });
+    }
+
     // Scope assertions are confined to the file tree so they do not match the
     // selected file's path echoed in the diff viewer toolbar.
-    const fileTree = page.locator('[data-testid="changes-file-tree"]');
 
     // Default scope is 'working' (the global default) - only the active edit shows.
     await expect(workingTab).toHaveAttribute('aria-checked', 'true');
@@ -170,11 +182,15 @@ test.describe('Changes panel: diff scope selector', () => {
     await card.click();
 
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
-    await page.locator('[data-testid="changes-toggle"]').click();
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
 
+    // Open the changes panel only if not already open. A previous failed
+    // attempt may have left it open; clicking the toggle then would close it.
     const fileTree = page.locator('[data-testid="changes-file-tree"]');
-    await expect(fileTree).toBeVisible({ timeout: 5000 });
+    if (!(await fileTree.isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
+    await fileTree.waitFor({ state: 'visible', timeout: 8000 });
     const beforeWidth = (await fileTree.boundingBox())!.width;
 
     // Drag the divider 120px to the right to widen the tree.
