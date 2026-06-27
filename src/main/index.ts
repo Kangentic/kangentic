@@ -7,6 +7,7 @@ import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoard
 import { installDiagnostics } from './diagnostics/install';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
+import { resolvePreviewTaskTitle } from '../devtools/main/preview-task-title';
 import { registerSeedGitChangesDevIpc } from '../devtools/main/seed-git-changes';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
@@ -177,6 +178,19 @@ const appLaunchTime = Date.now();
 const isEphemeral = process.argv.includes('--ephemeral');
 const isE2ETest = process.env.NODE_ENV === 'test';
 
+// Dev-only: the original task's title for a `/preview` window, resolved once from
+// the real parent project DB (the preview clones never contain it). Surfaced to the
+// renderer via additionalArguments so the title bar can identify the task both clones
+// belong to. Memoized; null outside dev-preview or when resolution misses (graceful).
+let cachedPreviewTaskTitle: string | null | undefined;
+function getPreviewTaskTitle(): string | null {
+  if (cachedPreviewTaskTitle === undefined) {
+    cachedPreviewTaskTitle =
+      __KANGENTIC_DEV__ && isEphemeral ? resolvePreviewTaskTitle(getCwdArg() ?? '') : null;
+  }
+  return cachedPreviewTaskTitle;
+}
+
 // Harden any <webview> tags attached to the renderer (embedded browser pane).
 // `will-attach-webview` fires before the webview is created and lets us
 // strip dangerous webPreferences and validate the initial src. The
@@ -325,6 +339,10 @@ const createWindow = () => {
 
   const savedBounds = resolveWindowBounds();
 
+  // Dev-preview only: resolve once (memoized) so the additionalArguments spread below reads a
+  // single local instead of calling getPreviewTaskTitle() twice (and dropping the non-null `!`).
+  const previewTaskTitle = __KANGENTIC_DEV__ && isEphemeral ? getPreviewTaskTitle() : null;
+
   mainWindow = new BrowserWindow({
     icon: iconImage,
     ...(savedBounds ? savedBounds : { width: 1400, height: 900 }),
@@ -341,10 +359,20 @@ const createWindow = () => {
       // Enable <webview> for the embedded browser side-pane in the task-detail
       // window. Hardened via the will-attach-webview hook below.
       webviewTag: true,
-      // Surface the ephemeral-preview flag to the renderer (read in preload via
-      // process.argv). Set ONLY in dev-preview mode (`--ephemeral`), so the dev
-      // TestHarness stays out of the regular `npm start` dogfood.
-      additionalArguments: __KANGENTIC_DEV__ && isEphemeral ? ['--kangentic-ephemeral'] : [],
+      // Surface the ephemeral-preview flag (and, when resolvable, the original task
+      // title) to the renderer (read in preload via process.argv). Set ONLY in
+      // dev-preview mode (`--ephemeral`), so the dev TestHarness and the preview title
+      // stay out of the regular `npm start` dogfood. The title is base64-encoded so a
+      // value with spaces / `:` / `/` survives command-line round-tripping intact.
+      additionalArguments:
+        __KANGENTIC_DEV__ && isEphemeral
+          ? [
+              '--kangentic-ephemeral',
+              ...(previewTaskTitle
+                ? [`--kangentic-preview-task-title=${Buffer.from(previewTaskTitle, 'utf-8').toString('base64')}`]
+                : []),
+            ]
+          : [],
     },
   });
 

@@ -2586,6 +2586,12 @@ export interface ElectronAPI {
     seedGitChanges: (targetPaths: string[]) => Promise<DevSeedGitChangesResult>;
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;
+    /**
+     * The original task's title for a `/preview` window, so the title bar can identify
+     * which task the "Project 1" / "Project 2" clones belong to. Null outside preview, or
+     * when main could not resolve it from the parent project DB.
+     */
+    previewTaskTitle: string | null;
   };
   // Projects
   projects: {
