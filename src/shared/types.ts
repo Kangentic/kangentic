@@ -253,6 +253,8 @@ export type SessionSpawnStrategy = 'create_or_resume' | 'always_spawn_new';
 export interface Swimlane {
   id: string;
   name: string;
+  /** Free-form description of the column's purpose. Shown as a header tooltip and shared with the team via kangentic.json. Null when unset. */
+  description: string | null;
   role: SwimlaneRole | null;
   position: number;
   color: string;
@@ -2060,6 +2062,7 @@ export interface TaskBulkDeleteProgress {
 
 export interface SwimlaneCreateInput {
   name: string;
+  description?: string | null;
   color?: string;
   icon?: string | null;
   is_archived?: boolean;
@@ -2078,6 +2081,7 @@ export interface SwimlaneCreateInput {
 export interface SwimlaneUpdateInput {
   id: string;
   name?: string;
+  description?: string | null;
   color?: string;
   icon?: string | null;
   position?: number;
@@ -2503,6 +2507,8 @@ export interface NotificationInput {
 export interface BoardColumnConfig {
   id?: string; // opaque DB UUID for reconciliation identity
   name: string;
+  /** Free-form description of the column's purpose. Shared with the team. */
+  description?: string | null;
   role?: SwimlaneRole;
   icon?: string;
   color?: string;

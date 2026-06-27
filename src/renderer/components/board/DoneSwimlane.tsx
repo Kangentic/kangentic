@@ -81,7 +81,10 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
       />
 
       {/* Column header */}
-      <div className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left hover:bg-surface-hover/30 transition-colors">
+      <div
+        className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left hover:bg-surface-hover/30 transition-colors"
+        title={swimlane.description ?? undefined}
+      >
         {(() => {
           const Icon = getSwimlaneIcon(swimlane);
           return Icon ? (

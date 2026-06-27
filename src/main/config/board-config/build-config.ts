@@ -45,6 +45,7 @@ export function buildBoardConfigFromDb(params: {
         name: lane.name,
       };
       if (lane.role) column.role = lane.role;
+      if (lane.description) column.description = lane.description;
       if (lane.icon) column.icon = lane.icon;
       if (lane.color && lane.color !== '#3b82f6') column.color = lane.color;
       if (lane.auto_spawn) column.autoSpawn = true;

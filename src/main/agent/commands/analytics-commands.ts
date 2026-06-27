@@ -456,6 +456,7 @@ export const handleGetColumnDetail: CommandHandler = (
     `  Auto-spawn: ${matched.auto_spawn ? 'yes' : 'no'}`,
     `  Permission mode: ${matched.permission_mode ?? 'default (inherited)'}`,
   ];
+  if (matched.description) lines.push(`  Description: ${matched.description}`);
   if (matched.auto_command) lines.push(`  Auto-command: ${matched.auto_command}`);
   if (matched.agent_override) lines.push(`  Agent override: ${matched.agent_override}`);
   if (matched.model_override) lines.push(`  Model override: ${matched.model_override}`);
@@ -472,6 +473,7 @@ export const handleGetColumnDetail: CommandHandler = (
     data: {
       id: matched.id,
       name: matched.name,
+      description: matched.description,
       role: matched.role,
       taskCount: tasks.length,
       autoSpawn: matched.auto_spawn,

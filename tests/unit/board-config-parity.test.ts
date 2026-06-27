@@ -75,6 +75,7 @@ type FieldSharing = 'team' | 'db-only';
 const SWIMLANE_FIELD_SHARING: Record<keyof Swimlane, FieldSharing> = {
   // Team-shared: must round-trip through BoardColumnConfig (build + apply).
   name: 'team',
+  description: 'team',
   role: 'team',
   color: 'team',
   icon: 'team',
@@ -103,6 +104,7 @@ const SWIMLANE_FIELD_SHARING: Record<keyof Swimlane, FieldSharing> = {
  * swimlane field name) and `dbValue`.
  */
 const ROUNDTRIP_CASES: Array<{ field: keyof Swimlane; configKey: keyof BoardColumnConfig; dbValue: unknown; configValue: unknown }> = [
+  { field: 'description', configKey: 'description', dbValue: 'Review happens here', configValue: 'Review happens here' },
   { field: 'color', configKey: 'color', dbValue: '#abcdef', configValue: '#abcdef' },
   { field: 'icon', configKey: 'icon', dbValue: 'flask-conical', configValue: 'flask-conical' },
   { field: 'is_archived', configKey: 'archived', dbValue: true, configValue: true },
@@ -129,6 +131,7 @@ function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {
   return {
     id: 'lane-custom',
     name: 'Review',
+    description: null,
     role: null,
     position: 1,
     color: '#3b82f6',

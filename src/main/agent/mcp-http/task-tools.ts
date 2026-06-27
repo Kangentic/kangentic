@@ -414,10 +414,11 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_update_column',
     {
-      description: 'Update a swimlane (column) configuration. Supports renaming, recoloring, toggling auto-spawn, setting an auto-command template, overriding the agent for the column, changing permission mode, enabling handoff context, and setting a plan-exit target column. Use kangentic_get_column_detail to inspect current values first. Pass `project` to update a column in a different project.',
+      description: 'Update a swimlane (column) configuration. Supports renaming, setting a free-form description, recoloring, toggling auto-spawn, setting an auto-command template, overriding the agent for the column, changing permission mode, enabling handoff context, and setting a plan-exit target column. Use kangentic_get_column_detail to inspect current values first. Pass `project` to update a column in a different project.',
       inputSchema: z.object({
         column: z.string().describe('Column name to update (case-insensitive, e.g. "Review").'),
         name: z.string().max(100).optional().describe('New column name.'),
+        description: z.string().max(1000).nullable().optional().describe('Free-form description of the column\'s purpose, shown as a header tooltip and shared with the team via kangentic.json. Null to clear.'),
         color: z.string().optional().describe('Hex color (e.g. "#71717a").'),
         icon: z.string().nullable().optional().describe('Lucide icon name, or null to clear.'),
         autoSpawn: z.boolean().optional().describe('Whether moving a task into this column auto-spawns an agent.'),
@@ -431,9 +432,10 @@ export function registerTaskTools(
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
     },
-    async ({ column, name, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, planExitTargetColumn, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
+    async ({ column, name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, planExitTargetColumn, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
       column,
       name: name ?? undefined,
+      description: description === undefined ? undefined : description,
       color: color ?? undefined,
       icon: icon === undefined ? undefined : icon,
       autoSpawn: autoSpawn ?? undefined,

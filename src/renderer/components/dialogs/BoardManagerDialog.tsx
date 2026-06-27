@@ -86,6 +86,7 @@ export function buildUpdateInput(draft: Swimlane, original: Swimlane): SwimlaneU
   return {
     id: draft.id,
     name: draft.name.trim(),
+    description: draft.description?.trim() || null,
     color: draft.color,
     icon: draft.icon,
     permission_mode: isTodoOrDone ? undefined : draft.permission_mode,
@@ -105,6 +106,7 @@ export function buildCreateInput(draft: Swimlane): SwimlaneCreateInput {
   const isPlanMode = draft.permission_mode === 'plan';
   return {
     name: draft.name.trim(),
+    description: draft.description?.trim() || null,
     color: draft.color,
     icon: draft.icon,
     permission_mode: draft.permission_mode,
@@ -144,6 +146,7 @@ function makeNewDraft(): Swimlane {
   return {
     id,
     name: 'New column',
+    description: null,
     role: null,
     position: 0,
     color: DEFAULT_COLOR,
@@ -981,6 +984,21 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     onKeyDown={(event) => { if (event.key === 'Enter') void handleSave(); }}
                     data-testid="board-manager-name"
                     className="w-full bg-surface-hover border border-edge-input rounded px-3 py-1.5 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent"
+                  />
+                </SettingField>
+
+                <SettingField
+                  label="Description"
+                  description="Shown when you hover the column header. Shared with your team via kangentic.json."
+                >
+                  <textarea
+                    value={draft.description ?? ''}
+                    placeholder="What is this column for?"
+                    onChange={(event) => updateDraft((current) => ({ ...current, description: event.target.value }))}
+                    rows={2}
+                    maxLength={1000}
+                    data-testid="board-manager-description"
+                    className="w-full bg-surface-hover border border-edge-input rounded px-3 py-1.5 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent resize-y"
                   />
                 </SettingField>
 

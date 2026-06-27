@@ -63,6 +63,7 @@ export const Swimlane = React.memo(function Swimlane({ swimlane, tasks, dragHand
       <div
         className="px-3 py-2 flex items-center gap-2 border-b border-edge/50 w-full text-left hover:bg-surface-hover/30 transition-colors cursor-pointer"
         onClick={() => openBoardManager(swimlane.id)}
+        title={swimlane.description ?? undefined}
         data-no-dismiss
       >
         {/* Drag handle for custom columns */}

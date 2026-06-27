@@ -88,6 +88,7 @@ All queries are synchronous via **better-sqlite3** -- they block the Node.js eve
 | session_target | TEXT | NOT NULL | 'main' |
 | session_spawn_strategy | TEXT | NOT NULL | 'create_or_resume' |
 | created_at | TEXT | NOT NULL | |
+| description | TEXT | | NULL |
 
 Valid role values: `todo`, `done`, or NULL (custom column).
 
@@ -378,6 +379,7 @@ Listed in execution order within `runProjectMigrations()`:
 40. **`isolated_swimlane_id` column on sessions** - adds `isolated_swimlane_id TEXT DEFAULT NULL` so a task can hold multiple parallel, independently-resumable sessions. NULL = the task's main session; a swimlane id = the separate, context-isolated session belonging to that `isolated`-target column. Existing rows are NULL (main). Companion index `idx_sessions_task_type_isolation_started` (see migration 35) keys the resume-decision lookup. Idempotent guarded `ALTER TABLE`.
 41. **`applied_model` and `applied_effort` columns on sessions** - adds `applied_model TEXT DEFAULT NULL` and `applied_effort TEXT DEFAULT NULL`. They record the model/effort a session was actually spawned, resumed, or live-switched with (the `--model` / `--effort` flag value; NULL = agent default, no flag). This is the ground truth the column-transition injection delta compares against in `prepareInjectionPlan`: a move injects `/model` or `/effort` only when the session's real running value differs from the destination's effective value, so a drifted column config (or a null leaving-column) no longer triggers a spurious injection. Maintained by `SessionRepository.updateAppliedSettings` at spawn/resume and after every live settings switch. Distinct from `model_id` (the agent-reported model captured at exit via metrics). Both columns are idempotent guarded `ALTER TABLE`.
 42. **Per-column session model on swimlanes (`session_target` + `session_spawn_strategy`)** - renames the original `session_strategy` column to `session_target` (`main` | `isolated`, values unchanged) via a guarded `RENAME COLUMN`, and adds `session_spawn_strategy TEXT NOT NULL DEFAULT 'create_or_resume'` (`create_or_resume` | `always_spawn_new`). Idempotent across fresh DBs, DBs still on the old `session_strategy` column, and already-migrated DBs. Together they select which session track a column runs a task on and whether it resumes or always spawns fresh on entry; the fresh-vs-resume default is context-aware (`resolveForceFresh`). See `docs/session-lifecycle.md` "Isolated Sessions".
+43. **`description` column on swimlanes** - adds `description TEXT DEFAULT NULL`, a free-form, team-shared blurb describing a column's purpose. Surfaced as a header tooltip and round-trips through `kangentic.json` (`BoardColumnConfig.description`). Idempotent guarded `ALTER TABLE`.
 
 ### Key Migrations (Global DB)
 

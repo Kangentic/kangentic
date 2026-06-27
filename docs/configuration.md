@@ -283,6 +283,7 @@ Each swimlane has its own overrides (stored in the per-project DB):
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `description` | string \| null | null | Free-form description of the column's purpose. Shown as a header tooltip and round-trips through `kangentic.json`. |
 | `permission_mode` | PermissionMode \| null | null | Permission mode override for this column |
 | `auto_spawn` | boolean | true | Whether moving a task here spawns an agent |
 | `auto_command` | string \| null | null | Command injected into running session on task arrival |
@@ -339,6 +340,7 @@ Ghost columns are invisible on the board but still exist in the database. Once a
     {
       "id": "uuid",
       "name": "Executing",
+      "description": "Agents actively work tasks here.",
       "icon": "square-terminal",
       "color": "#10b981",
       "autoSpawn": true,

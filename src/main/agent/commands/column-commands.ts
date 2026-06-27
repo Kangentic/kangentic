@@ -28,6 +28,10 @@ export const handleUpdateColumn: CommandHandler = (
     updates.name = String(params.name).slice(0, 100);
     changedFields.push('name');
   }
+  if (params.description !== undefined) {
+    updates.description = params.description === null ? null : String(params.description).slice(0, 1000);
+    changedFields.push('description');
+  }
   if (params.color !== undefined && params.color !== null) {
     updates.color = String(params.color);
     changedFields.push('color');
@@ -91,7 +95,7 @@ export const handleUpdateColumn: CommandHandler = (
   if (changedFields.length === 0) {
     return {
       success: false,
-      error: 'No fields to update. Provide at least one of: name, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, planExitTargetColumn.',
+      error: 'No fields to update. Provide at least one of: name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, planExitTargetColumn.',
     };
   }
 
@@ -106,6 +110,7 @@ export const handleUpdateColumn: CommandHandler = (
     data: {
       id: updated.id,
       name: updated.name,
+      description: updated.description,
       color: updated.color,
       icon: updated.icon,
       role: updated.role,

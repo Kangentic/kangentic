@@ -119,6 +119,7 @@ export function applyBoardConfigToDb(
         swimlaneRepo.update({
           id: existing.id,
           name: columnConfig.name,
+          description: columnConfig.description ?? existing.description,
           color: columnConfig.color ?? existing.color,
           icon: columnConfig.icon ?? existing.icon,
           position: index,
@@ -138,6 +139,7 @@ export function applyBoardConfigToDb(
         swimlaneRepo.create({
           id: columnConfig.id,
           name: columnConfig.name,
+          description: columnConfig.description ?? null,
           role: columnConfig.role as SwimlaneRole | undefined,
           color: columnConfig.color ?? '#3b82f6',
           icon: columnConfig.icon ?? null,
