@@ -12,6 +12,7 @@ function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {
   return {
     id: 'lane-1',
     name: 'Code Review',
+    description: null,
     role: null,
     position: 2,
     color: '#3b82f6',
@@ -96,6 +97,7 @@ describe('buildUpdateInput', () => {
     const original = makeSwimlane();
     const draft = makeSwimlane({
       name: '  Renamed  ',
+      description: '  Documents the column  ',
       color: '#ff0000',
       icon: 'pencil',
       permission_mode: 'plan',
@@ -111,6 +113,7 @@ describe('buildUpdateInput', () => {
     expect(input).toEqual({
       id: 'lane-1',
       name: 'Renamed',
+      description: 'Documents the column',
       color: '#ff0000',
       icon: 'pencil',
       permission_mode: 'plan',
