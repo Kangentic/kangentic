@@ -1,6 +1,10 @@
 import { test, expect, type Page } from '@playwright/test';
 import { launchPage, createProject, waitForBoard } from './helpers';
 
+// Each describe is isolated per worker (separate process; per-test page launch / goto reset),
+// so the file's tests can fan out across the UI workers safely.
+test.describe.configure({ mode: 'parallel' });
+
 /** Create a backlog task with labels and priority via the mock API directly. */
 async function createBacklogTaskWithLabels(
   page: Page,
