@@ -132,6 +132,25 @@ describe('buildServerInstructions - browser section', () => {
     expect(instructions).toContain('Browser pill in the task header');
   });
 
+  it('omits the entire BROWSER VERIFICATION section when browser automation is disabled', () => {
+    // When the policy is off, the kangentic_browser_* tools are not registered,
+    // so the section must not advertise tools the agent cannot call (and its
+    // tokens are shed). The rest of the instructions are unaffected.
+    fakeList.mockReturnValue([makePane({ taskId: 'task-abc' })]);
+    const instructions = buildServerInstructions(ACTIVE_RESOLVER, false);
+
+    expect(instructions).not.toContain('BROWSER VERIFICATION');
+    expect(instructions).not.toContain('kangentic_browser_list_panes');
+    expect(instructions).not.toContain('A Browser pane is currently open');
+    // Non-browser content survives.
+    expect(instructions).toContain('PROJECT ROUTING RULE');
+  });
+
+  it('includes the BROWSER VERIFICATION section when browser automation is enabled', () => {
+    const instructions = buildServerInstructions(ACTIVE_RESOLVER, true);
+    expect(instructions).toContain('BROWSER VERIFICATION (kangentic_browser_* tools):');
+  });
+
   it('adds no pane advertisement when the registry is empty', () => {
     const instructions = buildServerInstructions(ACTIVE_RESOLVER);
 

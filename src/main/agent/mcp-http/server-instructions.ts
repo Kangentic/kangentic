@@ -60,7 +60,18 @@ function buildBrowserSection(activeProjectId: string | null): string[] {
   return lines;
 }
 
-export function buildServerInstructions(resolver: RequestResolver): string {
+/**
+ * @param browserAutomationEnabled When false, the BROWSER VERIFICATION section
+ *   is omitted because the `kangentic_browser_*` tools are not registered (the
+ *   global policy blocks them). Keeps the instructions consistent with the
+ *   advertised tool set and sheds the section's tokens for opt-out users.
+ *   Defaults to true so callers that do not gate on the policy (e.g. tests) get
+ *   the section as before.
+ */
+export function buildServerInstructions(
+  resolver: RequestResolver,
+  browserAutomationEnabled = true,
+): string {
   const projects = resolver.listProjects();
   const active = projects.find((project) => project.isActive);
   // Normalise every embedded name through the same sanitizer used by the
@@ -84,7 +95,9 @@ export function buildServerInstructions(resolver: RequestResolver): string {
     'When a kangentic_create_task or kangentic_update_task call carries both a long description (roughly 1KB or more) and labels, the labels can be dropped before they reach the server. To make labels stick, set them in a separate labels-only kangentic_update_task call after creating or updating the task with the long description.',
   ];
 
-  lines.push('', ...buildBrowserSection(active?.id ?? null));
+  if (browserAutomationEnabled) {
+    lines.push('', ...buildBrowserSection(active?.id ?? null));
+  }
 
   if (projects.length > 0) {
     lines.push('', 'Registered projects (use any name or id below as the `project` argument):');

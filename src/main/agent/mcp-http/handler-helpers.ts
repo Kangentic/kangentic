@@ -20,8 +20,15 @@ export interface McpToolResult {
  * cross-project-aware MCP tool accepts. Lives here so task-tools and
  * session-tools import one source of truth.
  */
+// Kept deliberately concise: the full cross-project routing rule (including
+// how project mentions are phrased) lives once in the server `instructions`
+// string (server-instructions.ts, "PROJECT ROUTING RULE"), which is in every
+// agent's system prompt, and create_task carries its own routing guidance plus
+// a runtime guardrail. Repeating the full paragraph on all ~28 project-aware
+// tools added ~4.5k tokens of duplicated context to every spawned agent; this
+// pointer keeps the behavioral trigger while shedding the duplication.
 export const PROJECT_SELECTOR_DESCRIPTION =
-  'Optional project selector. Pass a project name (case-insensitive exact) or project UUID to route this call to a different project than the one the MCP client is bound to. If the user\'s request names another Kangentic project, pass that name here instead of omitting - do not rely on the active default when the prompt specifies a different target. The name counts however it is phrased, not just the explicit "create a task in X" form: treat "in X", "in the X board", "on X\'s board", "the X to do", "X\'s backlog", and "add it to X" as all targeting project X. Use kangentic_list_projects to discover valid selectors. Omit to target the active project.';
+  'Optional project name (case-insensitive exact) or UUID to target a different project than the active one. Set it whenever the user\'s request names another registered project; omit for the active project. See the server instructions ("PROJECT ROUTING RULE") for how mentions are phrased, and kangentic_list_projects for valid names.';
 
 /**
  * Atomic create_task rate-limit counter shared across all requests served

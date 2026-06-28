@@ -147,6 +147,50 @@ export function closeMcpHttpServerSafely(httpServer: Pick<Server, 'closeAllConne
   }
 }
 
+/**
+ * Build a fully-configured per-request McpServer: instructions + every tool
+ * family registered. Exported so the registration and policy gating are
+ * unit-testable without booting the HTTP server.
+ *
+ * The kangentic_browser_* family is registered (and its instructions section
+ * emitted) ONLY when browser automation is enabled in settings. When it is off,
+ * every CDP-driving browser tool is already blocked by the withGuest capability
+ * gate, and the one non-gated tool (kangentic_browser_list_panes) could only
+ * report panes the agent cannot act on, so advertising the ~14 unusable tools
+ * would just inject ~3.6k tokens of dead schema into every agent's context. The
+ * policy is read once here, per request, so a Settings toggle takes effect on
+ * the next agent session.
+ */
+export function buildConfiguredMcpServer(
+  resolver: RequestResolver,
+  taskCounter: TaskCounter,
+  getBrowserAutomationConfig: AutomationConfigReader,
+): McpServer {
+  const browserAutomationEnabled = getBrowserAutomationConfig().enabled;
+  const instructions = buildServerInstructions(resolver, browserAutomationEnabled);
+  const mcpServer = new McpServer(
+    { name: SERVER_NAME, version: SERVER_VERSION },
+    { instructions },
+  );
+  registerTaskTools(mcpServer, resolver, taskCounter);
+  registerSessionTools(mcpServer, resolver);
+  registerProjectTools(mcpServer, resolver);
+  registerSearchTools(mcpServer, resolver);
+  registerDiagnosticsTools(mcpServer, resolver);
+  if (browserAutomationEnabled) {
+    registerBrowserTools(mcpServer, getBrowserAutomationConfig);
+  }
+
+  // Dev-only: register the kangentic_devtools_* tools that drive the localhost
+  // inspection bridge. Production builds drop both the import (top of file) and
+  // this call via `__KANGENTIC_DEV__` dead-code elimination.
+  if (__KANGENTIC_DEV__) {
+    registerDevtoolsMcpTools(mcpServer);
+  }
+
+  return mcpServer;
+}
+
 /** Validates the URL path and token, then dispatches to a per-request McpServer. */
 async function handleHttpRequest(
   req: IncomingMessage,
@@ -194,35 +238,13 @@ async function handleHttpRequest(
     return;
   }
 
-  // Per-request McpServer + transport. Stateless mode, plain JSON
-  // responses (no SSE), built-in DNS rebinding protection on top of the
-  // 127.0.0.1 bind for belt-and-suspenders.
-  //
-  // `instructions` is surfaced to the agent at initialize time (Claude
-  // Code renders it as `## kangentic` in its system prompt). We build it
-  // per-request so the active-project name and registered-project list
-  // reflect the current DB state, not whatever was true at launch.
-  const instructions = buildServerInstructions(resolver);
-  const mcpServer = new McpServer(
-    { name: SERVER_NAME, version: SERVER_VERSION },
-    { instructions },
-  );
-  registerTaskTools(mcpServer, resolver, taskCounter);
-  registerSessionTools(mcpServer, resolver);
-  registerProjectTools(mcpServer, resolver);
-  registerSearchTools(mcpServer, resolver);
-  registerDiagnosticsTools(mcpServer, resolver);
-  // Shipped: the user-facing kangentic_browser_* family that drives the
-  // embedded Browser pane in-process. Registered unconditionally (NOT gated
-  // by __KANGENTIC_DEV__) - this targets the user's own dev server.
-  registerBrowserTools(mcpServer, getBrowserAutomationConfig);
-
-  // Dev-only: register the kangentic_devtools_* tools that drive the
-  // localhost inspection bridge. Production builds drop both the import
-  // (above) and this call via `__KANGENTIC_DEV__` dead-code elimination.
-  if (__KANGENTIC_DEV__) {
-    registerDevtoolsMcpTools(mcpServer);
-  }
+  // Per-request McpServer + transport. Stateless mode, plain JSON responses
+  // (no SSE), built-in DNS rebinding protection on top of the 127.0.0.1 bind
+  // for belt-and-suspenders. The server is rebuilt per request so the
+  // instructions (active-project name, registered-project list) and the
+  // browser-tool gating reflect current DB / settings state (see
+  // buildConfiguredMcpServer).
+  const mcpServer = buildConfiguredMcpServer(resolver, taskCounter, getBrowserAutomationConfig);
 
   const transport = new StreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
