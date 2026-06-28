@@ -31,11 +31,11 @@ interface TaskCardProps {
 }
 
 const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete }: TaskCardProps) {
-  // A single `useShallow`-gated selector replaces six individual subscriptions.
-  // Scaling: 100 cards × 6 subs each = 600 selector invocations per session-store
+  // A single `useShallow`-gated selector replaces four individual subscriptions.
+  // Scaling: 100 cards × 4 subs each = 400 selector invocations per session-store
   // update; with one selector it drops to 100, and shallow equality still skips
   // re-renders when the projected object hasn't actually changed.
-  const { sessionId, isHighlighted, isResuming, hasFirstOutput, hasActivityEntry, activityReason } = useSessionStore(
+  const { sessionId, isHighlighted, isResuming, activityReason } = useSessionStore(
     useShallow(
       useCallback(
         (s: ReturnType<typeof useSessionStore.getState>) => {
@@ -44,8 +44,6 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
             sessionId: resolvedSessionId,
             isHighlighted: !!resolvedSessionId && resolvedSessionId === s.activeSessionId,
             isResuming: s._sessionByTaskId.get(task.id)?.resuming ?? false,
-            hasFirstOutput: resolvedSessionId ? !!s.sessionFirstOutput[resolvedSessionId] : false,
-            hasActivityEntry: resolvedSessionId ? s.sessionActivity[resolvedSessionId] !== undefined : false,
             activityReason: resolvedSessionId ? s.sessionActivityReason[resolvedSessionId] : undefined,
           };
         },
@@ -328,13 +326,15 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         {!isCompactDensity && (() => {
           switch (displayState.kind) {
             case 'running': {
+              // Footer model label comes only from the CLI's status.json (the
+              // human name, e.g. "Opus 4.8"). We deliberately do NOT fall back to
+              // the raw configured model id (e.g. "claude-opus-4-8") - a user
+              // doesn't know what that means. Until status.json reports, show the
+              // loading spinner; the spawn-time statusline kick + the settings'
+              // refreshInterval make the real name arrive within a moment, even
+              // for a background (never-opened) session.
               const resolvedModelName = displayState.usage?.model.displayName || null;
-              // Before the CLI has produced any signal (first output, activity
-              // event, or usage data), show a single spinner pill so we don't
-              // flash intermediate labels. Once any signal arrives, fall through
-              // to the rich or minimal pill.
-              const cliHasReported = hasFirstOutput || hasActivityEntry || !!displayState.usage;
-              if (!cliHasReported) {
+              if (!resolvedModelName) {
                 const spinnerLabel = isResuming ? 'Resuming agent...' : 'Starting agent...';
                 return (
                   <div className="mt-2 pt-2 border-t border-edge" data-testid="usage-bar">
@@ -366,16 +366,9 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
               return (
                 <div className="mt-2 pt-2 border-t border-edge" data-testid="usage-bar">
                   <div className="flex items-center justify-between mb-1.5">
-                    {resolvedModelName ? (
-                      <span className="text-xs text-fg-faint truncate">
-                        {resolvedModelName}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-fg-faint flex items-center gap-1 truncate">
-                        <Loader2 size={12} className="animate-spin shrink-0" />
-                        Loading agent...
-                      </span>
-                    )}
+                    <span className="text-xs text-fg-faint truncate">
+                      {resolvedModelName}
+                    </span>
                     <span className="text-xs text-fg-faint">{pct}%</span>
                   </div>
                   <div className="w-full h-1 bg-surface-hover rounded-full overflow-hidden">

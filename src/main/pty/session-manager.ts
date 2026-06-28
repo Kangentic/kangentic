@@ -16,7 +16,7 @@ import { ResizeManager } from './lifecycle/resize-manager';
 import { FirstOutputTracker } from './lifecycle/first-output-tracker';
 import { disposeAdapterAttachment, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
 import { safeKillPty } from './lifecycle/pty-kill';
-import { performSpawn } from './lifecycle/session-spawn-flow';
+import { performSpawn, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession } from './session-registry';
 import { createWriteQueue, type WriteQueue } from './write-queue';
 import { BackpressureController } from './buffer/backpressure-controller';
@@ -112,6 +112,18 @@ export class SessionManager extends EventEmitter {
           : undefined;
         if (this.firstOutputTracker.consume(sessionId, data, detector)) {
           this.emit('first-output', sessionId);
+          // Statusline-based agents (Claude) only write status.json - the sole
+          // source of the board card's live model + context % - when their TUI
+          // paints. In the app's pwsh-wrapped PTY a background (never-opened)
+          // session never does that initial paint on its own, so status.json is
+          // never written and the card is stuck on the spawn-time model
+          // placeholder. Now that the CLI has started rendering (first output),
+          // nudge the PTY once to force a paint; the settings' refreshInterval
+          // then keeps status.json fresh. Gated on the statusFile capability so
+          // it stays scoped to agents that use the statusline pipeline.
+          if (session?.agentParser?.runtime?.statusFile) {
+            this.kickStatuslineRepaint(sessionId);
+          }
           // Clear the resuming flag once the resumed CLI has actually
           // produced output. This unblocks card / overlay labels for
           // adapters (Codex, Gemini) that don't emit a usage statusline.
@@ -482,6 +494,45 @@ export class SessionManager extends EventEmitter {
     // transitions during the redraw burst that follows.
     this.resizeManager.notifyResize(sessionId);
     return { colsChanged };
+  }
+
+  /**
+   * One-time SIGWINCH nudge to force a statusline-based agent's TUI to paint,
+   * called when the CLI first produces output.
+   *
+   * Why: Claude only runs its statusLine command - the sole source of the live
+   * model + context % (status.json) - when its TUI actually paints. In the app's
+   * pwsh-wrapped PTY, a background (never-opened) session never does that initial
+   * paint on its own, so status.json is never written and the board card never
+   * advances past the spawn-time model placeholder. (`refreshInterval` only
+   * SUPPLEMENTS an already-painting statusline; it cannot kick off the first
+   * paint.) A resize forces the paint - which is exactly why opening a task
+   * historically "fixed" it (the terminal mount resized the PTY). This does the
+   * same once, automatically, so background cards get the real model + % without
+   * being opened.
+   *
+   * Nudge rows down then back to the PTY's CURRENT size so it ends where it
+   * started; routing through resize() reuses the redraw-suppression grace
+   * window so the forced repaint is not misread as activity.
+   *
+   * Nudge relative to the live `pty.cols`/`pty.rows` (falling back to the spawn
+   * defaults) rather than the hardcoded defaults: a background session is still
+   * at the spawn size, but a session whose task is already open has had its PTY
+   * fit to the real terminal viewport, and forcing it back to the spawn default
+   * would leave the PTY mismatched with the displayed xterm (wrong wrapping)
+   * until the next renderer-driven resize.
+   */
+  private kickStatuslineRepaint(sessionId: string): void {
+    const session = this.registry.get(sessionId);
+    if (!session?.pty) return;
+    const cols = session.pty.cols || DEFAULT_PTY_COLS;
+    const rows = session.pty.rows || DEFAULT_PTY_ROWS;
+    this.resize(sessionId, cols, rows - 1);
+    setTimeout(() => {
+      if (this.registry.get(sessionId)?.pty) {
+        this.resize(sessionId, cols, rows);
+      }
+    }, 200);
   }
 
   /**

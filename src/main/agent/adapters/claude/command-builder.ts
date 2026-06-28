@@ -8,9 +8,24 @@ import { buildHooks } from './hook-manager';
 import type { ClaudeHookEntry } from './hook-manager';
 import type { CommandOptions } from '../../agent-adapter';
 
+/**
+ * Coarse seconds for the statusLine `refreshInterval`. Claude only runs the
+ * statusLine command on event-driven triggers (after an assistant message,
+ * /compact, permission-mode change, vim toggle - never at session start), so a
+ * background / idle session can go a long time without writing status.json and
+ * the board card never learns the live model + context %. `refreshInterval`
+ * re-runs the command on a fixed timer regardless, which keeps status.json
+ * flowing for unopened cards. Kept coarse (not the 1s minimum) on purpose: the
+ * card already shows a correct model/agent placeholder instantly (see
+ * TaskCard), so this only backfills the slow-moving live numbers; one node
+ * bridge spawn per session per interval is plenty. Docs:
+ * https://code.claude.com/docs/en/statusline (units are seconds, min 1).
+ */
+const STATUS_LINE_REFRESH_INTERVAL_SECONDS = 10;
+
 /** Subset of Claude Code settings.json that we read/write. */
 interface ClaudeSettings {
-  statusLine?: { type: string; command: string };
+  statusLine?: { type: string; command: string; refreshInterval?: number };
   hooks?: Record<string, ClaudeHookEntry[]>;
   [key: string]: unknown; // preserve unknown keys from user's settings
 }
@@ -263,6 +278,7 @@ export class CommandBuilder {
       statusLine: {
         type: 'command',
         command: `node "${statusBridge}" "${statusPath}"`,
+        refreshInterval: STATUS_LINE_REFRESH_INTERVAL_SECONDS,
       },
     };
 

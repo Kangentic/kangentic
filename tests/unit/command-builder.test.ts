@@ -847,6 +847,37 @@ describe('Merged Settings -- Local Settings Merge', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it('writes a coarse statusLine refreshInterval so background sessions keep writing status.json', () => {
+    // Claude only runs the statusLine command on event-driven triggers (never
+    // at session start), so a background/idle session can stall without ever
+    // writing status.json -- the board card then never learns the live model +
+    // context %. refreshInterval re-runs the command on a fixed timer. Kept
+    // coarse (not the 1s minimum) because the card already shows a placeholder
+    // instantly; this only backfills the slow-moving live numbers.
+    const builder = new CommandBuilder();
+    const statusOutput = path.join(tmpDir, '.kangentic', 'sessions', 'refresh-sess', 'status.json');
+    fs.mkdirSync(path.dirname(statusOutput), { recursive: true });
+
+    builder.buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: 'refresh-task',
+      cwd: tmpDir,
+      permissionMode: 'default',
+      sessionId: 'refresh-sess',
+      statusOutputPath: statusOutput,
+    });
+
+    const mergedPath = path.join(tmpDir, '.kangentic', 'sessions', 'refresh-sess', 'settings.json');
+    const merged = JSON.parse(fs.readFileSync(mergedPath, 'utf-8'));
+
+    expect(merged.statusLine.type).toBe('command');
+    expect(merged.statusLine.command).toContain('status-bridge');
+    // Present, valid (docs: seconds, min 1), and coarse (not a 1s hot loop).
+    expect(typeof merged.statusLine.refreshInterval).toBe('number');
+    expect(merged.statusLine.refreshInterval).toBeGreaterThanOrEqual(1);
+    expect(merged.statusLine.refreshInterval).toBeLessThanOrEqual(60);
+  });
+
   it('merges user hooks from .claude/settings.local.json into session settings', () => {
     // Set up project with both settings.json and settings.local.json
     const claudeDir = path.join(tmpDir, '.claude');

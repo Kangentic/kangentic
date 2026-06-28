@@ -50,6 +50,10 @@ function createMockPty() {
 
   const mockPty = {
     pid: 12345,
+    // node-pty's IPty exposes the live cols/rows; track them so resize() reads
+    // back the current size (the statusline kick nudges relative to it).
+    cols: 120,
+    rows: 30,
     onData: vi.fn((cb: (data: string) => void) => {
       dataHandler = cb;
     }),
@@ -57,7 +61,10 @@ function createMockPty() {
       exitHandler = cb;
     }),
     write: vi.fn(),
-    resize: vi.fn(),
+    resize: vi.fn((cols: number, rows: number) => {
+      mockPty.cols = cols;
+      mockPty.rows = rows;
+    }),
     kill: vi.fn(() => {
       if (exitHandler) setTimeout(() => exitHandler!({ exitCode: 0 }), 0);
     }),
@@ -997,6 +1004,109 @@ describe('Write and resize', () => {
     manager.resize(session.id, 80, 24);
 
     expect(mock.mockPty.resize).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 11b. Statusline repaint kick (background status.json fix)
+// ---------------------------------------------------------------------------
+
+describe('Statusline repaint kick', () => {
+  let manager: SessionManager;
+
+  beforeEach(() => {
+    manager = new SessionManager();
+  });
+
+  afterEach(async () => {
+    manager.killAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  // Claude only writes status.json - the board card's live model + context % -
+  // when its TUI paints. In the app's pwsh-wrapped PTY a background (never
+  // opened) session never does that initial paint on its own, so status.json is
+  // never written and the card stays on the spawn-time model placeholder until
+  // the task is opened (which resized the PTY). On first output we now nudge the
+  // PTY once - rows down then back to the spawn size - to force that first
+  // paint; the settings' refreshInterval then keeps status.json fresh.
+  // Regression guard for the board-card-stuck bug.
+  it('nudges the PTY rows down then back after first output for a statusline agent (Claude)', async () => {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    await manager.spawn({
+      taskId: 'task-kick',
+      command: '',
+      cwd: tmpDir,
+      agentParser: claudeAdapter,
+    });
+    mock.mockPty.resize.mockClear();
+
+    // Claude hides the cursor (ESC[?25l) when its TUI takes over - this is what
+    // detectFirstOutput matches, which drives the kick.
+    mock.feedData('\x1b[?25l');
+    // Wait for the buffer flush (~16ms) + the nudge-back setTimeout (200ms).
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const resizeCalls = mock.mockPty.resize.mock.calls;
+    expect(resizeCalls).toContainEqual([120, 29]);
+    expect(resizeCalls).toContainEqual([120, 30]);
+  });
+
+  it('does not kick agents without a statusline pipeline (no runtime.statusFile)', async () => {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    // Stub adapter that reports first output but does NOT use the statusFile
+    // pipeline (mirrors Codex/Gemini, which derive usage from native logs).
+    const stub = {
+      ...claudeAdapter,
+      name: 'stub-no-statusfile',
+      detectFirstOutput: () => true,
+      removeHooks: () => {},
+      runtime: { activity: claudeAdapter.runtime.activity },
+    };
+    await manager.spawn({
+      taskId: 'task-no-kick',
+      command: '',
+      cwd: tmpDir,
+      agentParser: stub as unknown as typeof claudeAdapter,
+      agentName: 'stub-no-statusfile',
+    });
+    mock.mockPty.resize.mockClear();
+
+    mock.feedData('booting...');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(mock.mockPty.resize).not.toHaveBeenCalled();
+  });
+
+  // A session whose task is already OPEN when it spawns has had its PTY fit to
+  // the real terminal viewport by the renderer. The kick must nudge relative to
+  // that live size, not the 120x30 spawn default -- otherwise it would leave the
+  // PTY mismatched with the displayed xterm (wrong wrapping) until the next
+  // renderer resize. Background sessions (never resized) still end at the spawn
+  // default because that IS their current size.
+  it('nudges relative to the terminal current size, preserving an open terminal dimensions', async () => {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: 'task-open-kick',
+      command: '',
+      cwd: tmpDir,
+      agentParser: claudeAdapter,
+    });
+    // Renderer fits the PTY to a real, non-default viewport (task open).
+    manager.resize(session.id, 150, 40);
+    mock.mockPty.resize.mockClear();
+
+    mock.feedData('\x1b[?25l');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const resizeCalls = mock.mockPty.resize.mock.calls;
+    expect(resizeCalls).toContainEqual([150, 39]);
+    expect(resizeCalls).toContainEqual([150, 40]);
+    // Must NOT clobber the open terminal back to the spawn default.
+    expect(resizeCalls).not.toContainEqual([120, 30]);
   });
 });
 

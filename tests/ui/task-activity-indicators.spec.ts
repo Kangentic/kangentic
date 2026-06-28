@@ -46,7 +46,7 @@ const SESSION_ID = 'sess-activity-test';
 const SWIMLANE_ID = 'lane-backlog';
 
 /** Base pre-configure that creates a project with a task linked to a running session */
-function makePreConfig(opts: { sessionStatus: string; activity: string; withUsage: boolean; nullSessionId?: boolean; withEvents?: boolean; noActivityCache?: boolean; withRateLimits?: boolean; emptyRateLimits?: boolean; rateLimitResetsInPast?: boolean; rateLimitResetsWithin24h?: boolean; agent?: string | null }): string {
+function makePreConfig(opts: { sessionStatus: string; activity: string; withUsage: boolean; nullSessionId?: boolean; withEvents?: boolean; noActivityCache?: boolean; withRateLimits?: boolean; emptyRateLimits?: boolean; rateLimitResetsInPast?: boolean; rateLimitResetsWithin24h?: boolean; agent?: string | null; modelOverride?: string | null }): string {
   return `
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
@@ -103,6 +103,8 @@ function makePreConfig(opts: { sessionStatus: string; activity: string; withUsag
         swimlane_id: '${SWIMLANE_ID}',
         position: 0,
         agent: ${opts.agent !== undefined ? (opts.agent === null ? 'null' : `'${opts.agent}'`) : 'null'},
+        model_override: ${opts.modelOverride ? `'${opts.modelOverride}'` : 'null'},
+        effort_override: null,
         session_id: ${opts.sessionStatus === 'suspended' || opts.nullSessionId ? 'null' : `'${SESSION_ID}'`},
         worktree_path: null,
         branch_name: null,
@@ -555,25 +557,46 @@ test.describe('Task Activity Indicators', () => {
       }
     });
 
-    test('shows "Loading agent..." spinner with 0% bar when CLI has reported but usage is still null', async () => {
-      // hasActivityEntry (eventCache) flips cliHasReported true while usage is
-      // still null -- the running branch should render the full bar layout
-      // with a spinner + "Loading agent..." label and 0%, never an empty slot.
+    test('default session (no override) shows the loading spinner, never "Loading agent..." or an agent-name fallback', async () => {
+      // No model override and no live usage yet: the model is the agent's own
+      // default, which Kangentic only learns from status.json. The footer shows
+      // the loading spinner pill until then -- never the old stuck "Loading
+      // agent..." label, and never an agent-name ("Claude Code") fallback.
+      // refreshInterval keeps status.json flowing so it resolves to the real
+      // model. Regression guard for the board-card-stuck bug.
       const { browser, page } = await launchWithState(
-        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: false, withEvents: true }),
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: false, withEvents: true, agent: 'claude' }),
       );
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         const usageBar = page.locator(`[data-task-id="${TASK_ID}"] [data-testid="usage-bar"]`);
         await expect(usageBar).toBeVisible({ timeout: 10000 });
-        await expect(usageBar).toContainText('Loading agent...');
-        await expect(usageBar).toContainText('0%');
+        await expect(usageBar).toContainText('Starting agent...');
         await expect(usageBar.locator('.lucide-loader-circle')).toBeVisible();
-        await expect(usageBar).not.toContainText('Starting agent...');
-        // Inner progress bar element exists at zero width
-        // Inner progress bar element exists at zero width (not "visible" since 0px wide)
-        await expect(usageBar.locator('div.h-full.rounded-full')).toHaveCount(1);
-        await expect(usageBar.locator('div.h-full.rounded-full')).toHaveAttribute('style', /width:\s*0%/);
+        await expect(usageBar).not.toContainText('Loading agent...');
+        await expect(usageBar).not.toContainText('Claude Code');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('never flashes the raw model override id - shows the loading spinner until status.json reports', async () => {
+      // A task with a model override must NOT show the raw model id (e.g.
+      // "claude-opus-4-8") in the footer - a user doesn't know what that means.
+      // The footer shows the loading spinner until the CLI's status.json reports
+      // the human model name (e.g. "Opus 4.8"), which the spawn-time statusline
+      // kick + refreshInterval deliver shortly even for a background session.
+      // Regression guard for the raw-id flash.
+      const { browser, page } = await launchWithState(
+        makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: false, withEvents: true, agent: 'claude', modelOverride: 'claude-opus-4-8' }),
+      );
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        const usageBar = page.locator(`[data-task-id="${TASK_ID}"] [data-testid="usage-bar"]`);
+        await expect(usageBar).toBeVisible({ timeout: 10000 });
+        await expect(usageBar).toContainText('Starting agent...');
+        await expect(usageBar).not.toContainText('claude-opus-4-8');
+        await expect(usageBar).not.toContainText('Loading agent...');
       } finally {
         await browser.close();
       }

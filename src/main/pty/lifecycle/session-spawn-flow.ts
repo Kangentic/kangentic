@@ -22,6 +22,17 @@ import { isShuttingDown } from '../../shutdown-state';
 import { adaptCommandForShell } from '../../../shared/paths';
 
 /**
+ * Default PTY dimensions a session is spawned at, before any renderer-driven
+ * resize. Exported so the statusline-repaint kick in SessionManager has a
+ * fallback size for a background session that has not been resized yet: the
+ * kick nudges relative to the PTY's current size (resize to rows-1 then back
+ * forces a SIGWINCH without changing the ending dimensions), and for a
+ * never-resized session that current size is exactly this spawn default.
+ */
+export const DEFAULT_PTY_COLS = 120;
+export const DEFAULT_PTY_ROWS = 30;
+
+/**
  * Collaborators that the spawn flow reads and mutates. Grouped into a
  * single object so the signature stays readable as new modules get
  * wired into the lifecycle.
@@ -151,8 +162,8 @@ export async function performSpawn(
   try {
     ptyProcess = pty.spawn(shellExe, shellArgs, {
       name: 'xterm-256color',
-      cols: 120,
-      rows: 30,
+      cols: DEFAULT_PTY_COLS,
+      rows: DEFAULT_PTY_ROWS,
       cwd: effectiveCwd,
       env: cleanEnv,
     });
