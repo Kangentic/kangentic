@@ -35,6 +35,7 @@ function makeSummary(options: {
     modelDisplayName: '',
     durationMs: 0,
     toolCallCount: options.toolCallCount ?? 0,
+    compactionCount: 0,
     linesAdded: 0,
     linesRemoved: 0,
     filesChanged: 0,

@@ -11,7 +11,7 @@ import { resolveProjectContext } from '../helpers/project-repos';
 import { getCachedTaskTitle } from './task-title-cache';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
-import { captureSessionMetrics } from './session-metrics';
+import { captureSessionMetrics, refineTranscriptTokens } from './session-metrics';
 import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessionId } from '../../transition-engine/session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
@@ -604,6 +604,7 @@ export function registerSessionHandlers(context: IpcContext): void {
             metricsRecord.started_at,
             metricsRecord.session_type,
           );
+          refineTranscriptTokens(context.sessionManager, sessionRepo, sessionId, metricsRecord.id);
         }
       } catch {
         // DB may be closed during shutdown

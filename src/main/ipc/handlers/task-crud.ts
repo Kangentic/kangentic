@@ -21,7 +21,7 @@ import { guardActiveNonWorktreeSessions } from './task-move';
 import { interpolateTemplate } from '../../agent/shared';
 import { withTaskLock } from '../task-lifecycle-lock';
 import type { IpcContext } from '../ipc-context';
-import type { TaskBulkDeleteFailure, TaskBulkDeleteResult, TaskBulkDeleteProgress } from '../../../shared/types';
+import type { TaskBulkDeleteFailure, TaskBulkDeleteResult, TaskBulkDeleteProgress, TaskDetailViewState } from '../../../shared/types';
 
 /**
  * Cap on concurrent bulk-delete workers. Git mutations serialize through the
@@ -206,6 +206,19 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
     }
 
     return tasks.update(input);
+  });
+
+  // Persist the task-detail dialog's layout blob (debounced from the renderer).
+  // Single synchronous, single-column write that is independent of session /
+  // swimlane lifecycle state, so it deliberately takes NO withTaskLock: there
+  // is no await boundary to race across, and a view-state save must not queue
+  // behind an in-flight spawn/resume. resolveProjectContext keeps it
+  // project-scoped (project-scoped-ipc rule).
+  ipcMain.handle(IPC.TASK_SET_DETAIL_VIEW_STATE, (_, taskId: string, state: TaskDetailViewState | null, projectId?: string | null) => {
+    const { projectId: resolvedProjectId } = resolveProjectContext(context, projectId);
+    if (!resolvedProjectId) return;
+    const { tasks } = getProjectRepos(context, resolvedProjectId);
+    tasks.setDetailViewState(taskId, state ? JSON.stringify(state) : null);
   });
 
   ipcMain.handle(IPC.TASK_DELETE, async (_, id, projectId?: string | null) => {

@@ -80,6 +80,11 @@ export class ClaudeStatusParser {
 
       const modelId = (model?.id as string) ?? '';
       const sessionId = typeof data.session_id === 'string' ? data.session_id : undefined;
+      // Claude's status line carries the absolute path to its own session JSONL
+      // transcript. It is the only truly-cumulative token source (the
+      // context_window counts above became a current-context snapshot in
+      // 2.1.132+), so capture it for the lifetime-stats rollup.
+      const transcriptPath = typeof data.transcript_path === 'string' ? data.transcript_path : undefined;
 
       // Claude Code 2.1.119+ reports the active effort level (low/medium/high/xhigh)
       // as a top-level `effort: { level }` object alongside model. Older versions
@@ -137,6 +142,7 @@ export class ClaudeStatusParser {
             effort: effortLevel,
           },
           sessionId,
+          transcriptPath,
           rateLimits,
         },
         meta: { modelId, rawUsedPercentage },

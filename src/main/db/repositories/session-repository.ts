@@ -8,7 +8,7 @@ import type { PerToolStat, SessionRecord, SessionRecordStatus, SessionSummary, S
  * (set via updateAppliedSettings, mirroring how metrics are maintained).
  */
 type SessionInsertInput = Omit<SessionRecord,
-  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown'
+  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count'
 >;
 
 export interface SessionMetricsInput {
@@ -21,6 +21,8 @@ export interface SessionMetricsInput {
   toolCallCount: number | null;
   /** JSON-serialized PerToolStat[]; null for sessions with no tool events. */
   toolBreakdown: string | null;
+  /** Context compactions during this run (PreCompact hooks). Defaults to 0. */
+  compactionCount: number;
 }
 
 /**
@@ -99,6 +101,7 @@ export class SessionRepository {
       lines_removed: null,
       files_changed: null,
       tool_breakdown: null,
+      compaction_count: 0,
     };
   }
 
@@ -317,7 +320,8 @@ export class SessionRepository {
         model_display_name = ?,
         total_duration_ms = ?,
         tool_call_count = ?,
-        tool_breakdown = ?
+        tool_breakdown = ?,
+        compaction_count = ?
       WHERE id = ?
     `).run(
       metrics.totalCostUsd,
@@ -328,6 +332,7 @@ export class SessionRepository {
       metrics.totalDurationMs,
       metrics.toolCallCount,
       metrics.toolBreakdown,
+      metrics.compactionCount,
       id,
     );
   }
@@ -356,6 +361,20 @@ export class SessionRepository {
     this.db.prepare(`UPDATE sessions SET ${sets.join(', ')} WHERE id = ?`).run(...params);
   }
 
+  /**
+   * Override ONLY the cumulative token columns for a session record, with the
+   * transcript-derived lifetime totals. Called fire-and-forget after the
+   * snapshot capture (see `refineTranscriptTokens`): the live statusLine token
+   * counts are a current-context snapshot, so the transcript is the
+   * authoritative lifetime source on Claude Code 2.1.132+. Keyed by record id,
+   * so it is safe to land after the session is removed from the manager.
+   */
+  updateTranscriptTokens(id: string, tokens: { totalInputTokens: number; totalOutputTokens: number }): void {
+    this.db.prepare(
+      'UPDATE sessions SET total_input_tokens = ?, total_output_tokens = ? WHERE id = ?',
+    ).run(tokens.totalInputTokens, tokens.totalOutputTokens, id);
+  }
+
   /** Update git diff stats for a session record. */
   updateGitStats(id: string, stats: { linesAdded: number; linesRemoved: number; filesChanged: number }): void {
     this.db.prepare(`
@@ -365,12 +384,22 @@ export class SessionRepository {
   }
 
   /**
-   * Get session summary for a task, aggregated across all session records.
+   * Get the LIFETIME session summary for a task, aggregated across every session
+   * record so totals strictly increase as the task is worked across restarts.
    *
-   * Cumulative Claude metrics (cost, tokens, duration, model) come from the
-   * latest record (Claude's status.json accumulates across --resume cycles).
-   * Per-PTY metrics (tool calls, git stats) are summed across all records.
-   * Timeline uses task.created_at as the start time.
+   * Each `--resume` (even within one app run, and across restarts) is a fresh
+   * session row holding ONE CLI process's captured cumulative, so:
+   *   - cost / duration / compactions / tool calls / lines are SUMmed across rows
+   *     (each row is an independent process contribution), files_changed is MAX;
+   *   - tokens are special: the live statusLine `context_window` counts are a
+   *     current-context snapshot (NOT cumulative on Claude Code 2.1.132+), so
+   *     each row instead stores the transcript-derived CUMULATIVE tokens for its
+   *     own session lineage (written by `refineTranscriptTokens`). Summing every
+   *     row would double-count a session resumed across restarts, so we take the
+   *     latest row per `agent_session_id` and SUM across distinct sessions
+   *     (additive over a task's main + isolated-swimlane sessions).
+   *   - model / exit code / tool breakdown come from the latest record (the most
+   *     recent run's values), and the timeline spans the task's whole life.
    */
   getSummaryForTask(taskId: string): SessionSummary | null {
     const latestRecord = this.db.prepare(
@@ -384,7 +413,10 @@ export class SessionRepository {
 
     const aggregated = this.db.prepare(
       `SELECT
+         COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd,
+         COALESCE(SUM(total_duration_ms), 0) AS total_duration_ms,
          COALESCE(SUM(tool_call_count), 0) AS total_tool_calls,
+         COALESCE(SUM(compaction_count), 0) AS total_compactions,
          COALESCE(SUM(lines_added), 0) AS total_lines_added,
          COALESCE(SUM(lines_removed), 0) AS total_lines_removed,
          MAX(COALESCE(files_changed, 0)) AS max_files_changed,
@@ -393,7 +425,10 @@ export class SessionRepository {
        FROM sessions
        WHERE task_id = ? AND total_cost_usd IS NOT NULL`
     ).get(taskId) as {
+      total_cost_usd: number;
+      total_duration_ms: number;
       total_tool_calls: number;
+      total_compactions: number;
       total_lines_added: number;
       total_lines_removed: number;
       max_files_changed: number;
@@ -401,14 +436,30 @@ export class SessionRepository {
       latest_ended_at: string | null;
     };
 
+    // Lifetime tokens: latest row per session lineage, then summed across
+    // lineages (see the doc comment above for why this is not a flat SUM).
+    const tokens = this.db.prepare(
+      `SELECT COALESCE(SUM(input_tokens), 0) AS total_input_tokens,
+              COALESCE(SUM(output_tokens), 0) AS total_output_tokens
+       FROM (
+         SELECT total_input_tokens AS input_tokens,
+                total_output_tokens AS output_tokens,
+                ROW_NUMBER() OVER (PARTITION BY COALESCE(agent_session_id, id) ORDER BY started_at DESC) AS rn
+         FROM sessions
+         WHERE task_id = ? AND total_cost_usd IS NOT NULL
+       )
+       WHERE rn = 1`
+    ).get(taskId) as { total_input_tokens: number; total_output_tokens: number };
+
     return {
       sessionId: latestRecord.agent_session_id ?? latestRecord.id,
-      totalCostUsd: latestRecord.total_cost_usd ?? 0,
-      totalInputTokens: latestRecord.total_input_tokens ?? 0,
-      totalOutputTokens: latestRecord.total_output_tokens ?? 0,
+      totalCostUsd: aggregated.total_cost_usd,
+      totalInputTokens: tokens.total_input_tokens,
+      totalOutputTokens: tokens.total_output_tokens,
       modelDisplayName: latestRecord.model_display_name ?? '',
-      durationMs: latestRecord.total_duration_ms ?? 0,
+      durationMs: aggregated.total_duration_ms,
       toolCallCount: aggregated.total_tool_calls,
+      compactionCount: aggregated.total_compactions,
       linesAdded: aggregated.total_lines_added,
       linesRemoved: aggregated.total_lines_removed,
       filesChanged: aggregated.max_files_changed,
@@ -445,6 +496,7 @@ export class SessionRepository {
          s.lines_removed,
          s.files_changed,
          s.tool_breakdown,
+         s.compaction_count,
          ROW_NUMBER() OVER (PARTITION BY s.task_id ORDER BY s.started_at DESC) AS row_num
        FROM sessions s
        JOIN tasks t ON t.id = s.task_id
@@ -468,6 +520,7 @@ export class SessionRepository {
       lines_removed: number | null;
       files_changed: number | null;
       tool_breakdown: string | null;
+      compaction_count: number | null;
       row_num: number;
     }>;
 
@@ -485,14 +538,29 @@ export class SessionRepository {
     const result: Record<string, SessionSummary> = {};
     for (const [taskId, group] of taskGroups) {
       const latest = group.find((row) => row.row_num === 1)!;
+      // Lifetime aggregation - mirrors getSummaryForTask: SUM cost / duration /
+      // compactions / tool calls / lines across every run, MAX files_changed,
+      // and tokens are the latest row per session lineage SUMmed across lineages
+      // (a flat SUM would double-count a session resumed across restarts).
+      let totalCostUsd = 0;
+      let totalDurationMs = 0;
+      let totalCompactions = 0;
       let totalToolCalls = 0;
       let totalLinesAdded = 0;
       let totalLinesRemoved = 0;
       let maxFilesChanged = 0;
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
       let earliestStartedAt = latest.started_at;
       let latestEndedAt: string | null = null;
+      // Rows are ordered started_at DESC within the task, so the FIRST row seen
+      // for a lineage is its latest - the one carrying the transcript cumulative.
+      const seenLineages = new Set<string>();
 
       for (const row of group) {
+        totalCostUsd += row.total_cost_usd ?? 0;
+        totalDurationMs += row.total_duration_ms ?? 0;
+        totalCompactions += row.compaction_count ?? 0;
         totalToolCalls += row.tool_call_count ?? 0;
         totalLinesAdded += row.lines_added ?? 0;
         totalLinesRemoved += row.lines_removed ?? 0;
@@ -500,16 +568,23 @@ export class SessionRepository {
         if (row.started_at < earliestStartedAt) earliestStartedAt = row.started_at;
         const endedAt = row.exited_at ?? row.suspended_at;
         if (endedAt && (!latestEndedAt || endedAt > latestEndedAt)) latestEndedAt = endedAt;
+        const lineageKey = row.agent_session_id ?? row.record_id;
+        if (!seenLineages.has(lineageKey)) {
+          seenLineages.add(lineageKey);
+          totalInputTokens += row.total_input_tokens ?? 0;
+          totalOutputTokens += row.total_output_tokens ?? 0;
+        }
       }
 
       result[taskId] = {
         sessionId: latest.agent_session_id ?? latest.record_id,
-        totalCostUsd: latest.total_cost_usd ?? 0,
-        totalInputTokens: latest.total_input_tokens ?? 0,
-        totalOutputTokens: latest.total_output_tokens ?? 0,
+        totalCostUsd,
+        totalInputTokens,
+        totalOutputTokens,
         modelDisplayName: latest.model_display_name ?? '',
-        durationMs: latest.total_duration_ms ?? 0,
+        durationMs: totalDurationMs,
         toolCallCount: totalToolCalls,
+        compactionCount: totalCompactions,
         linesAdded: totalLinesAdded,
         linesRemoved: totalLinesRemoved,
         filesChanged: maxFilesChanged,

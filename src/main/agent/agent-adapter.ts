@@ -10,6 +10,7 @@ import type {
   SubmissionVerifier,
   AgentCapabilities,
   TranscriptEntry,
+  TranscriptUsage,
 } from '../../shared/types';
 
 /**
@@ -208,6 +209,25 @@ export interface AgentAdapter {
    * the structured format is unsupported and points at `format: "raw"`.
    */
   parseTranscript?(agentSessionId: string, cwd: string): Promise<ParsedTranscript>;
+
+  /**
+   * Optional: parse CUMULATIVE lifetime token usage for a session from the
+   * agent's own transcript. This is the authoritative source for the per-task
+   * lifetime-stats rollup, because the live statusLine token counts are a
+   * current-context snapshot, not a cumulative total (Claude Code 2.1.132+).
+   *
+   * The adapter owns all location + format knowledge: prefer the explicit
+   * `transcriptPath` the CLI reported (Claude's status.json `transcript_path`),
+   * else locate the file from `agentSessionId` + `cwd`. Must NOT throw on a
+   * missing/partial transcript: return null so the caller falls back to the
+   * live snapshot. Implemented only by adapters whose CLI writes a parseable,
+   * append-across-resume transcript (Claude today).
+   */
+  transcriptUsage?(input: {
+    transcriptPath?: string | null;
+    agentSessionId?: string | null;
+    cwd?: string | null;
+  }): Promise<TranscriptUsage | null>;
 
   /**
    * Optional: return a callback that confirms a submission was processed.

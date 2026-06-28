@@ -110,6 +110,26 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap: every callee is a stable Zustand action or an IPC listener registered exactly once
   }, []);
 
+  // Hydrate each task's persisted detail-view layout (divider, panels, view
+  // mode, reviewed files, scope, ...) from its `detail_view_state` blob whenever
+  // the board's tasks change. A store subscription (not a reactive selector) so
+  // the root App component never re-renders on board changes; the hydrate action
+  // is guarded to seed each task only once per session.
+  //
+  // Hydration runs ONLY from the subscription, never eagerly here. board-store is
+  // HMR-instance-pinned (Pattern E): on a Fast Refresh its `tasks` still hold the
+  // PRE-reload blobs while the session-store hydration guard has reset. An eager
+  // getState() read would hydrate those stale blobs and mark every task seeded,
+  // so the fresh `vite:afterUpdate` loadBoard() (which fires this subscription)
+  // would early-exit and the user's just-made layout edit would be lost until a
+  // full reload. On cold boot the board is empty until loadBoard() resolves and
+  // fires the subscription anyway, so nothing is missed by waiting for it.
+  useEffect(() => {
+    return useBoardStore.subscribe((state) => {
+      useSessionStore.getState().hydrateDetailViewStateForTasks(state.tasks);
+    });
+  }, []);
+
   // Owns the warm-switch cache lifecycle. See
   // hooks/useProjectSwitchEffect.ts and stores/project-cache.ts.
   useProjectSwitchEffect(currentProject);

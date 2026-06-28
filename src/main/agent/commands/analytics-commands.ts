@@ -47,6 +47,7 @@ export const handleGetTaskStats: CommandHandler = (
         `  Cost: $${summary.totalCostUsd.toFixed(4)}`,
         `  Duration: ${Math.round(summary.durationMs / 1000)}s`,
         `  Tool calls: ${summary.toolCallCount}`,
+        `  Sessions compacted: ${summary.compactionCount}`,
         `  Lines: +${summary.linesAdded} / -${summary.linesRemoved} across ${summary.filesChanged} file(s)`,
         `  Model: ${summary.modelDisplayName}`,
       ].join('\n'),

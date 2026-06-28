@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { ClaudeDetector } from './detector';
 import { CommandBuilder } from './command-builder';
 import { ClaudeStatusParser } from './status-parser';
-import { locateClaudeTranscriptFile, parseClaudeTranscript } from './transcript-parser';
+import { locateClaudeTranscriptFile, parseClaudeTranscript, parseClaudeTranscriptUsage } from './transcript-parser';
 import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { ensureWorktreeTrust, ensureMcpServerTrust } from './trust-manager';
 import { migrateClaudeProjectData } from './project-relocation';
@@ -25,6 +25,7 @@ import type {
   SubmissionContextType,
   SubmissionVerifier,
   SubmissionContext,
+  TranscriptUsage,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -162,6 +163,26 @@ export class ClaudeAdapter implements AgentAdapter {
     const filePath = locateClaudeTranscriptFile(agentSessionId, cwd);
     const entries = await parseClaudeTranscript(filePath);
     return { entries, sourcePath: filePath };
+  }
+
+  /**
+   * Lifetime cumulative tokens from Claude's own session JSONL. Prefers the
+   * exact `transcriptPath` Claude reported in status.json; otherwise derives the
+   * canonical `~/.claude/projects/<slug>/<id>.jsonl` path from the session id +
+   * cwd. Returns null (caller falls back to the live snapshot) when neither a
+   * path nor an id+cwd is available, or the file is missing/unparseable.
+   */
+  async transcriptUsage(input: {
+    transcriptPath?: string | null;
+    agentSessionId?: string | null;
+    cwd?: string | null;
+  }): Promise<TranscriptUsage | null> {
+    const filePath = input.transcriptPath
+      ?? (input.agentSessionId && input.cwd
+        ? locateClaudeTranscriptFile(input.agentSessionId, input.cwd)
+        : null);
+    if (!filePath) return null;
+    return parseClaudeTranscriptUsage(filePath);
   }
 
   async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {

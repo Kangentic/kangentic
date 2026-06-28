@@ -113,6 +113,7 @@ export class TaskRepository {
       effort_override: input.effort_override ?? null,
       agent_override: input.agent_override ?? null,
       attachment_count: 0,
+      detail_view_state: null,
       archived_at: null,
       created_at: now,
       updated_at: now,
@@ -158,6 +159,17 @@ export class TaskRepository {
     this.db.prepare(
       'UPDATE tasks SET model_override = ?, effort_override = ?, updated_at = ? WHERE id = ?',
     ).run(newModel, newEffort, new Date().toISOString(), taskId);
+  }
+
+  /**
+   * Persist the task-detail dialog's layout blob (serialized
+   * `TaskDetailViewState`, or null to clear). Deliberately does NOT bump
+   * `updated_at`: view-state churn (every divider drag) must not reorder the
+   * board or trip "recently updated". The generic `update()` column list
+   * omits `detail_view_state`, so a normal task edit never clobbers it.
+   */
+  setDetailViewState(taskId: string, detailViewState: string | null): void {
+    this.db.prepare('UPDATE tasks SET detail_view_state = ? WHERE id = ?').run(detailViewState, taskId);
   }
 
   move(input: TaskMoveInput): void {

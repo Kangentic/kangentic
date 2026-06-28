@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
+import type { TranscriptEntry, TranscriptBlock, TranscriptUsage } from '../../../../shared/types';
 
 // Maximum slug length before Claude Code truncates and appends a hash suffix.
 // Matches the `jgH`/`NmK` constant in the shipped CLI (Claude Code 2.x).
@@ -194,6 +194,63 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
 }
 
 /**
+ * Parse Claude's native session JSONL into CUMULATIVE lifetime token usage.
+ *
+ * The transcript is the only truly-cumulative token source on Claude Code
+ * 2.1.132+: the statusLine `context_window` counts are a current-context-window
+ * snapshot (summing them across `--resume` runs double-counts; taking the latest
+ * under-reports), whereas this file is append-only across resumes/compactions.
+ *
+ * Per-message `usage` is deduped by `message.id` (the Claude Code cost-tracking
+ * guidance: parallel tool calls in one turn, and any streamed re-emission of the
+ * same assistant message, share a `message.id`, so its usage must be counted
+ * once). Input is the full input side (input + cache creation + cache read);
+ * output is `output_tokens`. Returns null when the file is missing/unreadable or
+ * carries no assistant usage, so the caller can fall back to the live snapshot.
+ */
+export async function parseClaudeTranscriptUsage(filePath: string): Promise<TranscriptUsage | null> {
+  let content: string;
+  try {
+    content = await fs.readFile(filePath, 'utf-8');
+  } catch {
+    return null; // transcript rotated/absent -> caller falls back to the snapshot
+  }
+
+  // message.id -> deduped per-message usage (last write wins; usage is identical
+  // across lines that share an id).
+  const usageByMessageId = new Map<string, { input: number; output: number }>();
+  for (const line of content.split(/\r?\n/)) {
+    if (line.length === 0) continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isRecord(raw) || raw.type !== 'assistant') continue;
+    const message = raw.message;
+    if (!isRecord(message)) continue;
+    const messageId = typeof message.id === 'string' ? message.id : null;
+    const usage = message.usage;
+    if (!messageId || !isRecord(usage)) continue;
+    const input =
+      numberOrZero(usage.input_tokens) +
+      numberOrZero(usage.cache_creation_input_tokens) +
+      numberOrZero(usage.cache_read_input_tokens);
+    usageByMessageId.set(messageId, { input, output: numberOrZero(usage.output_tokens) });
+  }
+
+  if (usageByMessageId.size === 0) return null;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  for (const entry of usageByMessageId.values()) {
+    inputTokens += entry.input;
+    outputTokens += entry.output;
+  }
+  return { inputTokens, outputTokens };
+}
+
+/**
  * Locate the JSONL file for a Claude session given its agent session id
  * and original cwd. Returns null if the file does not exist (no polling -
  * unlike SessionHistoryReader.locate, this is called on demand and the
@@ -211,6 +268,11 @@ export function locateClaudeTranscriptFile(agentSessionId: string, cwd: string):
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Finite number or 0 (for tolerant transcript `usage` field reads). */
+function numberOrZero(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 function parseTimestamp(value: unknown): number {

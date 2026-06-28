@@ -124,6 +124,7 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `do
 | model_override | TEXT | | NULL |
 | effort_override | TEXT | | NULL |
 | agent_override | TEXT | | NULL |
+| detail_view_state | TEXT | | NULL |
 | archived_at | TEXT | | NULL |
 | created_at | TEXT | NOT NULL | |
 | updated_at | TEXT | NOT NULL | |
@@ -188,6 +189,7 @@ Index: `idx_transitions_from_to` on (from_swimlane_id, to_swimlane_id).
 | lines_removed | INTEGER | | NULL |
 | files_changed | INTEGER | | NULL |
 | tool_breakdown | TEXT | | NULL |
+| compaction_count | INTEGER | NOT NULL | 0 |
 
 Valid session_type values: `claude_agent`, `codex_agent`, `gemini_agent`, `qwen_agent`, `aider_agent`, `cursor_agent`, `copilot_agent`, `warp_agent`, `kimi_agent`, `opencode_agent`, `droid_agent`, `run_script`.
 
@@ -222,6 +224,7 @@ Indexes: `idx_sessions_task_started` on (task_id, started_at DESC), `idx_session
 | lines_added | INTEGER | NOT NULL | 0 |
 | lines_removed | INTEGER | NOT NULL | 0 |
 | files_changed | INTEGER | NOT NULL | 0 |
+| compaction_count | INTEGER | NOT NULL | 0 |
 
 Indexes: `idx_usage_history_session_started_at` on (session_started_at), `idx_usage_history_recorded_at` on (recorded_at).
 
@@ -380,6 +383,8 @@ Listed in execution order within `runProjectMigrations()`:
 41. **`applied_model` and `applied_effort` columns on sessions** - adds `applied_model TEXT DEFAULT NULL` and `applied_effort TEXT DEFAULT NULL`. They record the model/effort a session was actually spawned, resumed, or live-switched with (the `--model` / `--effort` flag value; NULL = agent default, no flag). This is the ground truth the column-transition injection delta compares against in `prepareInjectionPlan`: a move injects `/model` or `/effort` only when the session's real running value differs from the destination's effective value, so a drifted column config (or a null leaving-column) no longer triggers a spurious injection. Maintained by `SessionRepository.updateAppliedSettings` at spawn/resume and after every live settings switch. Distinct from `model_id` (the agent-reported model captured at exit via metrics). Both columns are idempotent guarded `ALTER TABLE`.
 42. **Per-column session model on swimlanes (`session_target` + `session_spawn_strategy`)** - renames the original `session_strategy` column to `session_target` (`main` | `isolated`, values unchanged) via a guarded `RENAME COLUMN`, and adds `session_spawn_strategy TEXT NOT NULL DEFAULT 'create_or_resume'` (`create_or_resume` | `always_spawn_new`). Idempotent across fresh DBs, DBs still on the old `session_strategy` column, and already-migrated DBs. Together they select which session track a column runs a task on and whether it resumes or always spawns fresh on entry; the fresh-vs-resume default is context-aware (`resolveForceFresh`). See `docs/session-lifecycle.md` "Isolated Sessions".
 43. **`description` column on swimlanes** - adds `description TEXT DEFAULT NULL`, a free-form, team-shared blurb describing a column's purpose. Surfaced as a header tooltip and round-trips through `kangentic.json` (`BoardColumnConfig.description`). Idempotent guarded `ALTER TABLE`.
+44. **`compaction_count` columns on sessions and usage_history** - adds `compaction_count INTEGER NOT NULL DEFAULT 0` to `sessions` (via the metrics-columns loop, migration 17) and the same to `usage_history` (in the `CREATE TABLE` block plus a guarded `ALTER TABLE` for existing DBs). Counts context compactions per CLI run (Claude `PreCompact` hook -> `EventType.Compact`, counted in `UsageAccumulator`); the per-task lifetime "sessions compacted" total is the SUM across the task's session rows. NOT NULL DEFAULT 0 so existing rows and never-compacted runs aggregate correctly.
+45. **`detail_view_state` column on tasks** - adds `detail_view_state TEXT DEFAULT NULL`, a per-task JSON blob (`TaskDetailViewState`) holding the task-detail dialog's layout (divider ratio, which side panel is open, Changes view mode, selected diff file, reviewed files, diff scope, file-tree width). Hydrated into the session store on board load and saved debounced via the task-scoped `TASK_SET_DETAIL_VIEW_STATE` IPC so reopening a task restores its layout across restarts. The dedicated `setDetailViewState` writer deliberately does not bump `updated_at` (view-state churn must not reorder the board). Idempotent guarded `ALTER TABLE`.
 
 ### Key Migrations (Global DB)
 
@@ -548,7 +553,7 @@ Operates on a per-project DB. Append-only ledger of finalized session usage. Dec
 
 | Method | Description |
 |--------|-------------|
-| `recordSessionUsage(input)` | Insert or UPSERT a history row keyed by `session_record_id`. UPSERT updates cost / tokens / duration / tool count / model fields on conflict but intentionally excludes git stat columns from the `DO UPDATE SET` clause (those are owned by `updateGitStats`). Called from `captureSessionMetrics` whenever `usage` is defined - including subscription-user sessions where `cost = 0` with real token counts. |
+| `recordSessionUsage(input)` | Insert or UPSERT a history row keyed by `session_record_id`. UPSERT updates cost / tokens / duration / tool count / model / compaction-count fields on conflict but intentionally excludes git stat columns from the `DO UPDATE SET` clause (those are owned by `updateGitStats`). Called from `captureSessionMetrics` whenever `usage` is defined - including subscription-user sessions where `cost = 0` with real token counts. Token columns here hold the per-capture SNAPSHOT (not the transcript cumulative), so period stats summed across a session's `--resume` rows do not double-count. |
 | `updateGitStats(sessionRecordId, stats)` | Update `lines_added`, `lines_removed`, `files_changed` for an existing history row. Silent no-op if no row exists for the given `sessionRecordId` (e.g. the session never had usage captured). Called from `captureGitStats` in `src/main/ipc/handlers/git-stats-capture.ts` alongside the matching `SessionRepository.updateGitStats` call. |
 | `getStatsAfter(since)` | Sum `total_cost_usd`, `total_input_tokens`, `total_output_tokens` across all rows where `session_started_at >= since`. Pass `null` for "All Time" (no WHERE clause). Period bucketing uses `session_started_at` (when work happened), not `recorded_at` (when metrics flushed), so Today/Week/Month semantics are preserved across midnight boundaries. Used by the `SESSION_GET_PERIOD_STATS` IPC handler that drives the StatusBar. |
 

@@ -64,6 +64,8 @@ function emptyUsage(): SessionUsage {
 export class UsageAccumulator {
   private usageCache = new Map<string, SessionUsage>();
   private toolStats = new Map<string, Map<string, ToolAccumulator>>();
+  /** Per-session count of context compactions (PreCompact -> Compact events). */
+  private compactionCounts = new Map<string, number>();
 
   /** Latest cached usage for a session, or undefined if none recorded yet. */
   getSessionUsage(sessionId: string): SessionUsage | undefined {
@@ -215,6 +217,21 @@ export class UsageAccumulator {
     return rows;
   }
 
+  /**
+   * Record one context compaction for a session (driven by the Claude
+   * PreCompact hook -> EventType.Compact). Per CLI run: a `--resume` after a
+   * restart is a new session record whose count starts at 0, so the per-task
+   * lifetime total is the SUM across the task's records (mirrors tool calls).
+   */
+  recordCompaction(sessionId: string): void {
+    this.compactionCounts.set(sessionId, (this.compactionCounts.get(sessionId) ?? 0) + 1);
+  }
+
+  /** Compaction count for this session's current run, or 0 if none recorded. */
+  getCompactionCount(sessionId: string): number {
+    return this.compactionCounts.get(sessionId) ?? 0;
+  }
+
   /** Snapshot of all cached usage entries. Used by IPC getters. */
   getUsageCache(): Record<string, SessionUsage> {
     const result: Record<string, SessionUsage> = {};
@@ -228,5 +245,6 @@ export class UsageAccumulator {
   removeSession(sessionId: string): void {
     this.usageCache.delete(sessionId);
     this.toolStats.delete(sessionId);
+    this.compactionCounts.delete(sessionId);
   }
 }

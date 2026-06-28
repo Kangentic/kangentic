@@ -27,6 +27,7 @@ import { registerTaskMoveHandlers } from './handlers/task-move';
 import { registerTaskBranchHandlers } from './handlers/task-branch';
 import { registerTaskRuntimeOverrideHandlers } from './handlers/task-runtime-override';
 import { registerSessionHandlers } from './handlers/sessions';
+import { startMetricsSnapshotTimer } from './handlers/metrics-snapshot-timer';
 import { registerTransientSessionHandlers } from './handlers/transient-sessions';
 import { registerTranscriptionHandlers } from './handlers/transcription';
 import { TranscriptionService } from '../transcription/transcription-service';
@@ -137,6 +138,10 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerBrowserHandlers(context);
   registerSearchHandlers(context);
   registerSystemHandlers(context);
+
+  // Periodically flush live-session metrics so an app/OS kill mid-run doesn't
+  // lose that run's cost/duration/compactions (stopped on before-quit).
+  startMetricsSnapshotTimer(sessionManager);
 
   // Analytics: renderer error tracking (fire-and-forget from renderer)
   ipcMain.on(IPC.TRACK_RENDERER_ERROR, (_event, message: string) => {

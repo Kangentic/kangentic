@@ -74,6 +74,7 @@ function makeUsageInput(overrides: Partial<RecordSessionUsageInput> = {}): Recor
     toolCallCount: 7,
     modelId: 'claude-opus-4',
     modelDisplayName: 'Claude Opus 4',
+    compactionCount: 0,
     ...overrides,
   };
 }
@@ -101,8 +102,9 @@ describe('UsageHistoryRepository.recordSessionUsage', () => {
     // Positional order matches the INSERT column list:
     //   id, session_record_id, recorded_at, session_started_at, session_type,
     //   total_cost_usd, total_input_tokens, total_output_tokens,
-    //   total_duration_ms, tool_call_count, model_id, model_display_name
-    expect(params).toHaveLength(12);
+    //   total_duration_ms, tool_call_count, model_id, model_display_name,
+    //   compaction_count
+    expect(params).toHaveLength(13);
     // id (param 0) is a generated uuid - just assert it's a string
     expect(typeof params[0]).toBe('string');
     expect((params[0] as string).length).toBeGreaterThan(0);
@@ -119,6 +121,7 @@ describe('UsageHistoryRepository.recordSessionUsage', () => {
     expect(params[9]).toBe(7);
     expect(params[10]).toBe('claude-opus-4');
     expect(params[11]).toBe('Claude Opus 4');
+    expect(params[12]).toBe(0);
   });
 
   it('does NOT include git stat columns in the DO UPDATE SET clause (owned by updateGitStats)', () => {

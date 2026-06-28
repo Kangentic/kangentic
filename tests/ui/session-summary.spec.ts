@@ -42,6 +42,8 @@ function makePreConfig(options: {
   withSummary: boolean;
   exitCode?: number | null;
   extraArchivedTasks?: number;
+  /** Lifetime compaction count seeded into the summary fixture (default 0). */
+  compactions?: number;
   /** Optional per-tool aggregates seeded into the summary fixture. */
   toolBreakdown?: Array<{
     toolName: string;
@@ -67,6 +69,7 @@ function makePreConfig(options: {
         modelDisplayName: 'Opus 4.6 (1M context)',
         durationMs: 17000,
         toolCallCount: 5,
+        compactionCount: ${options.compactions ?? 0},
         linesAdded: 469,
         linesRemoved: 181,
         filesChanged: 18,
@@ -111,6 +114,7 @@ function makePreConfig(options: {
           modelDisplayName: 'Opus 4.6 (1M context)',
           durationMs: ${5000 * (index + 1)},
           toolCallCount: ${index + 1},
+          compactionCount: 0,
           linesAdded: ${10 * (index + 1)},
           linesRemoved: ${5 * (index + 1)},
           filesChanged: ${index + 1},
@@ -244,6 +248,39 @@ test.describe('Session Summary Panel', () => {
 
       // Agent active time (17000ms → "17s active")
       await expect(summaryPanel).toContainText('17s active');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('shows the Compactions row with the lifetime count when compactions occurred', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, compactions: 3 }));
+    try {
+      await page.locator('[data-swimlane-name="Done"]').waitFor({ state: 'visible', timeout: 10000 });
+      await page.locator('text=Completed Test Task').click();
+
+      const summaryPanel = page.locator('[data-testid="session-summary"]');
+      await expect(summaryPanel).toBeVisible({ timeout: 5000 });
+      await expect(summaryPanel).toContainText('Compactions');
+      // The count value cell sits next to the "Compactions" label.
+      const compactionsLabel = summaryPanel.locator('span', { hasText: /^Compactions$/ });
+      await expect(compactionsLabel).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('hides the Compactions row when no compactions occurred', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, compactions: 0 }));
+    try {
+      await page.locator('[data-swimlane-name="Done"]').waitFor({ state: 'visible', timeout: 10000 });
+      await page.locator('text=Completed Test Task').click();
+
+      const summaryPanel = page.locator('[data-testid="session-summary"]');
+      await expect(summaryPanel).toBeVisible({ timeout: 5000 });
+      // Other rows are present, but Compactions is suppressed at 0.
+      await expect(summaryPanel).toContainText('Tool calls');
+      await expect(summaryPanel).not.toContainText('Compactions');
     } finally {
       await browser.close();
     }

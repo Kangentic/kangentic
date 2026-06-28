@@ -13,6 +13,7 @@ export interface RecordSessionUsageInput {
   toolCallCount: number;
   modelId: string | null;
   modelDisplayName: string | null;
+  compactionCount: number;
 }
 
 export interface UsageHistoryGitStatsInput {
@@ -46,8 +47,9 @@ export class UsageHistoryRepository {
       INSERT INTO usage_history
         (id, session_record_id, recorded_at, session_started_at, session_type,
          total_cost_usd, total_input_tokens, total_output_tokens,
-         total_duration_ms, tool_call_count, model_id, model_display_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         total_duration_ms, tool_call_count, model_id, model_display_name,
+         compaction_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(session_record_id) DO UPDATE SET
         recorded_at = excluded.recorded_at,
         session_started_at = excluded.session_started_at,
@@ -58,7 +60,8 @@ export class UsageHistoryRepository {
         total_duration_ms = excluded.total_duration_ms,
         tool_call_count = excluded.tool_call_count,
         model_id = excluded.model_id,
-        model_display_name = excluded.model_display_name
+        model_display_name = excluded.model_display_name,
+        compaction_count = excluded.compaction_count
     `).run(
       uuidv4(),
       input.sessionRecordId,
@@ -72,6 +75,7 @@ export class UsageHistoryRepository {
       input.toolCallCount,
       input.modelId,
       input.modelDisplayName,
+      input.compactionCount,
     );
   }
 

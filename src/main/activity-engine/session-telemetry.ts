@@ -596,6 +596,9 @@ export class SessionTelemetry {
       this.callbacks.onEvent(sessionId, event);
 
       this.usage.recordToolEvent(sessionId, event);
+      // Count context compactions (Claude PreCompact hook -> EventType.Compact)
+      // for the per-task lifetime-stats rollup.
+      if (event.type === EventType.Compact) this.usage.recordCompaction(sessionId);
 
       this.maybeSuppressPtyTracker(sessionId, event, parser);
       this.detectExitPlanMode(sessionId, event);
@@ -705,6 +708,11 @@ export class SessionTelemetry {
 
   getToolBreakdown(sessionId: string): PerToolStat[] {
     return this.usage.getToolBreakdown(sessionId);
+  }
+
+  /** Compaction count for a session's current run (PreCompact -> Compact). */
+  getCompactionCount(sessionId: string): number {
+    return this.usage.getCompactionCount(sessionId);
   }
 
   // ==== Internal ====

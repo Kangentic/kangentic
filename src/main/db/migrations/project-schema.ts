@@ -88,7 +88,8 @@ export function runProjectMigrations(db: Database.Database): void {
       model_display_name TEXT,
       lines_added INTEGER NOT NULL DEFAULT 0,
       lines_removed INTEGER NOT NULL DEFAULT 0,
-      files_changed INTEGER NOT NULL DEFAULT 0
+      files_changed INTEGER NOT NULL DEFAULT 0,
+      compaction_count INTEGER NOT NULL DEFAULT 0
     );
   `);
 
@@ -334,11 +335,26 @@ export function runProjectMigrations(db: Database.Database): void {
     // exit/suspend so the Session Summary panel can show a breakdown for
     // archived tasks where the in-memory event log is no longer available.
     ['tool_breakdown', 'TEXT DEFAULT NULL'],
+    // Number of context compactions during this session record's CLI run
+    // (PreCompact hooks, counted by the activity engine). NOT NULL DEFAULT 0 so
+    // existing rows and never-compacted runs sum correctly into the per-task
+    // lifetime rollup and the column matches its non-null `SessionRecord` type and
+    // the `usage_history` sibling. Per-run; lifetime = SUM across the task's rows.
+    ['compaction_count', 'INTEGER NOT NULL DEFAULT 0'],
   ];
   for (const [columnName, columnDef] of metricsColumns) {
     if (!sessionColumns.has(columnName)) {
       db.exec(`ALTER TABLE sessions ADD COLUMN ${columnName} ${columnDef}`);
     }
+  }
+
+  // Migration: mirror compaction_count into the append-only usage_history ledger
+  // so the per-period rollups can carry it too. Idempotent for existing DBs (the
+  // CREATE TABLE above already includes it for fresh ones).
+  const hasUsageHistoryCompactionCount = (db.pragma('table_info(usage_history)') as Array<{ name: string }>)
+    .some((col) => col.name === 'compaction_count');
+  if (!hasUsageHistoryCompactionCount) {
+    db.exec('ALTER TABLE usage_history ADD COLUMN compaction_count INTEGER NOT NULL DEFAULT 0');
   }
 
   // Migration: add 'isolated_swimlane_id' so a task can hold multiple parallel,
@@ -496,6 +512,16 @@ export function runProjectMigrations(db: Database.Database): void {
   const hasTaskPriorityColumn = (db.pragma('table_info(tasks)') as Array<{ name: string }>).some((col) => col.name === 'priority');
   if (!hasTaskPriorityColumn) {
     db.exec('ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0');
+  }
+
+  // Migration: add detail_view_state column - a per-task JSON blob holding the
+  // task-detail dialog's layout (divider ratio, open side panel, Changes view
+  // mode, selected diff file, maximized, reviewed-file marks, diff scope,
+  // file-tree width) so reopening a task restores it across app restarts.
+  const hasDetailViewStateColumn = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
+    .some((col) => col.name === 'detail_view_state');
+  if (!hasDetailViewStateColumn) {
+    db.exec('ALTER TABLE tasks ADD COLUMN detail_view_state TEXT DEFAULT NULL');
   }
 
   // Migration: rename claude_session_id -> agent_session_id

@@ -643,6 +643,7 @@
           agent_override: input.agent_override || null,
           attachment_count: 0,
           archived_at: null,
+          detail_view_state: null,
           created_at: now(),
           updated_at: now(),
         };
@@ -1070,6 +1071,21 @@
         var found = tasks.find(function (t) { return t.id === taskId; }) || null;
         var isLinked = !!(found && found.pr_url);
         return { task: found, linked: isLinked, reason: isLinked ? 'unchanged' : 'not-found' };
+      },
+      setDetailViewState: async function (taskId, state, projectId) {
+        // Persist the detail-view-state blob onto the mock task row (serialized
+        // like the real repo) so a spec can assert hydration + debounced saves.
+        // Records calls + the stamped projectId for project-scoped assertions.
+        if (typeof window !== 'undefined') {
+          if (!window.__mockDetailViewStateCalls) window.__mockDetailViewStateCalls = [];
+          window.__mockDetailViewStateCalls.push({
+            taskId: taskId,
+            state: state,
+            projectId: projectId === undefined ? null : projectId,
+          });
+        }
+        var found = tasks.find(function (t) { return t.id === taskId; });
+        if (found) found.detail_view_state = state ? JSON.stringify(state) : null;
       },
     },
 
@@ -2059,6 +2075,7 @@
             priority: item.priority || 0,
             attachment_count: 0,
             archived_at: null,
+            detail_view_state: null,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           };

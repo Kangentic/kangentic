@@ -806,6 +806,15 @@ export class SessionManager extends EventEmitter {
     return this.telemetry.getToolBreakdown(sessionId);
   }
 
+  /**
+   * Context-compaction count for a session's current run (Claude PreCompact
+   * hook). Per-run; captureSessionMetrics persists it so the per-task lifetime
+   * rollup can SUM it across the task's session records.
+   */
+  getCompactionCount(sessionId: string): number {
+    return this.telemetry.getCompactionCount(sessionId);
+  }
+
   /** Return the transcript writer instance (if enabled). */
   getTranscriptWriter(): TranscriptWriter | null {
     return this.transcriptWriter;

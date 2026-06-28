@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, Cpu, Wrench, CheckCircle2, XCircle, Hash, ArrowUp, ArrowDown, ArrowRight, Calendar, Clock, Hourglass, Fingerprint, GitBranch, FileCode, Copy, Check, ChevronDown, ChevronRight } from 'lucide-react';
+import { DollarSign, Cpu, Wrench, CheckCircle2, XCircle, Hash, ArrowUp, ArrowDown, ArrowRight, Calendar, Clock, Hourglass, Fingerprint, GitBranch, FileCode, Copy, Check, ChevronDown, ChevronRight, Layers } from 'lucide-react';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatDuration, formatCost } from '../../utils/format-session';
 import { formatShortDateTime, formatDurationBetween } from '../../lib/datetime';
@@ -170,6 +170,16 @@ export function SessionSummaryPanel({ taskId }: SessionSummaryPanelProps) {
           <span className="text-red-400/70">-{summary.linesRemoved}</span>
         </span>
       ),
+    });
+  }
+
+  // Sessions compacted across the task's whole life (lifetime sum). Shown only
+  // when at least one compaction happened, to avoid clutter on short tasks.
+  if (summary.compactionCount > 0) {
+    metricRows.push({
+      icon: <Layers size={13} />,
+      label: 'Compactions',
+      value: <span className="text-fg-secondary tabular-nums">{summary.compactionCount}</span>,
     });
   }
 

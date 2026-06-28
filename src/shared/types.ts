@@ -198,9 +198,42 @@ export interface Task {
   /** Per-task agent override set at task creation. When non-null, wins over the swimlane's `agent_override` and the project default for the task's entire lifetime - column moves cannot change the agent. Set only via the New Task dialog's Advanced section; the ContextBar popover does not edit this. */
   agent_override: string | null;
   attachment_count: number;
+  /** Serialized `TaskDetailViewState` (JSON) persisting the task-detail dialog's layout across restarts. null until the user changes the layout once. */
+  detail_view_state: string | null;
   archived_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * Per-task detail-dialog layout, persisted as a JSON blob in
+ * `tasks.detail_view_state` and hydrated back into the session store on task
+ * load so reopening a task restores its layout across app restarts. Every
+ * field is optional: an absent field falls back to its in-memory default.
+ * Mirrors the per-task-keyed fields of `task-changes-panel-slice.ts`.
+ *
+ * Dialog "maximized" is intentionally NOT here: the task-detail window's
+ * maximize is window-manager state (`toggleMaximizeWindow`) already persisted in
+ * `AppConfig.workspaceByProject`, and the session-store `maximizedTasks` set
+ * only ever holds the create-dialog sentinels, never a real task id.
+ */
+export interface TaskDetailViewState {
+  /** Terminal / right-panel split ratio (0.25-0.75). */
+  dividerRatio?: number;
+  /** Changes side panel open. */
+  changesOpen?: boolean;
+  /** Browser side panel open. */
+  browserOpen?: boolean;
+  /** Changes panel split-vs-expanded mode. */
+  changesViewMode?: 'split' | 'expanded';
+  /** Selected diff file path in the Changes panel. */
+  changesSelectedFile?: string;
+  /** Reviewed (viewed) diff file paths. */
+  changesViewedFiles?: string[];
+  /** Live diff scope (working / staged / branch). */
+  changesScope?: GitDiffScope;
+  /** Manually-set file-tree width (px) in the Changes panel. */
+  changesFileTreeWidth?: number;
 }
 
 export interface TaskAttachment {
@@ -418,6 +451,8 @@ export interface SessionRecord {
   files_changed: number | null;
   /** JSON-encoded `PerToolStat[]`. NULL for sessions captured before this column existed. */
   tool_breakdown: string | null;
+  /** Context compactions during this record's CLI run (PreCompact hooks). Per-run; lifetime = SUM across the task's records. Defaults to 0. */
+  compaction_count: number;
 }
 
 /**
@@ -463,6 +498,8 @@ export interface SessionSummary {
   modelDisplayName: string;
   durationMs: number;
   toolCallCount: number;
+  /** Lifetime context compactions across the task's sessions (SUM of per-run counts). */
+  compactionCount: number;
   linesAdded: number;
   linesRemoved: number;
   filesChanged: number;
@@ -919,11 +956,31 @@ export interface SessionUsage {
   /** Agent-reported session ID (from status.json). Used for stale ID recovery. */
   sessionId?: string;
   /**
+   * Absolute path to the agent's own cumulative transcript (Claude's session
+   * JSONL, surfaced from status.json `transcript_path`). The authoritative
+   * source for lifetime token totals, since the statusLine `context_window`
+   * counts above are a current-context snapshot, not cumulative. Absent for
+   * agents / CLI versions that do not report it.
+   */
+  transcriptPath?: string;
+  /**
    * Optional plan/usage windows reported by the agent (e.g. Claude's 5h session and 7d weekly).
    * Adapters declare each window self-describingly so the renderer can map without knowing
    * provider-specific bucket names. Adapters that don't report rate limits leave this undefined.
    */
   rateLimits?: RateLimitWindow[];
+}
+
+/**
+ * Cumulative lifetime token usage for a session, parsed from the agent's own
+ * transcript. Unlike the `SessionUsage.contextWindow` snapshot (current context
+ * occupancy), these strictly increase across a session's turns and across
+ * `--resume` restarts, so they are the authoritative source for the per-task
+ * lifetime rollup. Produced by `AgentAdapter.transcriptUsage`.
+ */
+export interface TranscriptUsage {
+  inputTokens: number;
+  outputTokens: number;
 }
 
 // === Usage Time Period Stats ===
@@ -2659,6 +2716,8 @@ export interface ElectronAPI {
     setRuntimeOverride: (input: TaskSetRuntimeOverrideInput, projectId?: string | null) => Promise<TaskSetRuntimeOverrideResult>;
     /** On-demand authoritative branch->PR resolve + link for a task (works without a live session). */
     resolvePr: (taskId: string, projectId?: string | null) => Promise<TaskResolvePrResult>;
+    /** Persist the task-detail dialog's layout blob (debounced from the renderer) so it restores across restarts. Pass null to clear. */
+    setDetailViewState: (taskId: string, state: TaskDetailViewState | null, projectId?: string | null) => Promise<void>;
     onAutoMoved: (callback: (taskId: string, targetSwimlaneId: string, taskTitle: string, projectId?: string) => void) => () => void;
     onCreatedByAgent: (callback: (taskId: string, taskTitle: string, columnName: string, projectId?: string) => void) => () => void;
     onUpdatedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;

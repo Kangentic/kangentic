@@ -49,6 +49,7 @@ export const IPC = {
   TASK_GET_SPAWN_PROGRESS: 'task:getSpawnProgress',
   TASK_SET_RUNTIME_OVERRIDE: 'task:setRuntimeOverride',
   TASK_RESOLVE_PR: 'task:resolvePr',
+  TASK_SET_DETAIL_VIEW_STATE: 'task:setDetailViewState',
 
   // Attachments
   ATTACHMENT_LIST: 'attachment:list',

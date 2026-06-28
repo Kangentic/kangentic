@@ -72,6 +72,7 @@ const api: ElectronAPI = {
     switchBranch: (input, projectId) => ipcRenderer.invoke(IPC.TASK_SWITCH_BRANCH, input, projectId),
     setRuntimeOverride: (input, projectId) => ipcRenderer.invoke(IPC.TASK_SET_RUNTIME_OVERRIDE, input, projectId),
     resolvePr: (taskId, projectId) => ipcRenderer.invoke(IPC.TASK_RESOLVE_PR, taskId, projectId),
+    setDetailViewState: (taskId, state, projectId) => ipcRenderer.invoke(IPC.TASK_SET_DETAIL_VIEW_STATE, taskId, state, projectId),
     onAutoMoved: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, taskId: string, targetSwimlaneId: string, taskTitle: string, projectId?: string) =>
         callback(taskId, targetSwimlaneId, taskTitle, projectId);

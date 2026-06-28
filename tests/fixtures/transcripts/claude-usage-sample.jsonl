@@ -1,0 +1,7 @@
+{"type":"user","uuid":"u1","timestamp":"2026-04-01T10:00:00Z","message":{"role":"user","content":"add a feature"}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-04-01T10:00:05Z","message":{"id":"msg_01ABC","model":"claude-opus-4","role":"assistant","content":[{"type":"text","text":"working"}],"usage":{"input_tokens":100,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"output_tokens":50}}}
+{"type":"assistant","uuid":"a1b","timestamp":"2026-04-01T10:00:06Z","message":{"id":"msg_01ABC","model":"claude-opus-4","role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Read","input":{}}],"usage":{"input_tokens":100,"cache_creation_input_tokens":20,"cache_read_input_tokens":30,"output_tokens":50}}}
+{"type":"system","subtype":"compact_boundary","uuid":"s1","timestamp":"2026-04-01T10:05:00Z","compactMetadata":{"trigger":"auto","preTokens":150000}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-04-01T10:06:00Z","message":{"id":"msg_02DEF","model":"claude-opus-4","role":"assistant","content":[{"type":"text","text":"done"}],"usage":{"input_tokens":200,"cache_creation_input_tokens":0,"cache_read_input_tokens":1000,"output_tokens":80}}}
+this line is not valid json and must be skipped
+{"type":"assistant","uuid":"a3","timestamp":"2026-04-01T10:07:00Z","message":{"id":"msg_03GHI","model":"claude-opus-4","role":"assistant","content":[{"type":"text","text":"no usage here"}]}}

@@ -5,6 +5,7 @@ import { TaskRepository } from './db/repositories/task-repository';
 import { UsageHistoryRepository } from './db/repositories/usage-history-repository';
 import { markRecordSuspended, markRecordExited } from './transition-engine/session-lifecycle';
 import { captureSessionMetrics } from './ipc/handlers/session-metrics';
+import { stopMetricsSnapshotTimer } from './ipc/handlers/metrics-snapshot-timer';
 import type { SessionManager } from './pty/session-manager';
 import type { BoardConfigManager } from './config/board-config-manager';
 import type { DiffWatcher } from './git/diff-watcher';
@@ -40,6 +41,8 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
   // Clear pending timers that could fire during shutdown
   dependencies.clearPendingTimers();
   dependencies.stopUpdaterTimers();
+  // Stop the periodic metrics snapshot so no tick races the sync shutdown writes.
+  stopMetricsSnapshotTimer();
 
   try {
     // Detach any CDP debuggers attached to embedded Browser panes. Synchronous
