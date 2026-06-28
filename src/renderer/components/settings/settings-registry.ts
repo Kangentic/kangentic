@@ -94,7 +94,6 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
 
   // ── MCP Server ──
   { id: 'mcpServer.enabled', tabId: 'mcpServer', label: 'Kangentic MCP Server', description: 'Give agents tools to interact with your board', scope: 'global', keywords: ['mcp', 'tools', 'create task', 'agent', 'board', 'query', 'session', 'stats'] },
-  { id: 'mcpServer.maxTaskCreateCount', tabId: 'mcpServer', label: 'Max Tasks Per Session', description: 'Cap how many tasks an agent can create through MCP before it must stop. Resets when Kangentic restarts.', scope: 'global', keywords: ['rate limit', 'cap', 'flood', 'create task', 'mcp', 'max'] },
 
   // ── Behavior > Session Limits ──
   { id: 'agent.maxConcurrentSessions', tabId: 'behavior', label: 'Max Concurrent Sessions', description: 'Limit how many agents can run at the same time', scope: 'global', section: 'Session Limits', keywords: ['parallel', 'limit'] },

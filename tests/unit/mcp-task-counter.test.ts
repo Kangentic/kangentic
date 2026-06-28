@@ -9,39 +9,32 @@ vi.mock('../../src/main/agent/commands', () => ({ commandHandlers: {} }));
 
 import { makeTaskCounter } from '../../src/main/agent/mcp-http/handler-helpers';
 
-describe('makeTaskCounter (settings-driven, live ceiling)', () => {
-  it('enforces the ceiling and reads it fresh on every reservation', () => {
-    let max = 2;
-    const counter = makeTaskCounter(() => max);
-
-    expect(counter.tryReserve()).toBe(true);  // 1
-    expect(counter.tryReserve()).toBe(true);  // 2
-    expect(counter.tryReserve()).toBe(false); // 3 - at ceiling
-
-    // Raising the configured ceiling lets more reservations through WITHOUT
-    // resetting the accumulated count: the thunk is read live on each call, so a
-    // settings change takes effect mid-launch.
-    max = 4;
-    expect(counter.tryReserve()).toBe(true);  // 3
-    expect(counter.tryReserve()).toBe(true);  // 4
-    expect(counter.tryReserve()).toBe(false); // 5 - at the new ceiling
+// The runaway-loop ceiling is a fixed internal constant (MAX_TASK_CREATE_PER_LAUNCH
+// in handler-helpers.ts), not a user-tunable setting. limit() reports it.
+describe('makeTaskCounter (fixed runaway-loop ceiling)', () => {
+  it('reports a high fixed ceiling via limit()', () => {
+    const counter = makeTaskCounter();
+    expect(counter.limit()).toBeGreaterThanOrEqual(500);
   });
 
-  it('blocks further reservations when the ceiling is lowered below the current count', () => {
-    let max = 5;
-    const counter = makeTaskCounter(() => max);
-    expect(counter.tryReserve()).toBe(true); // 1
-    expect(counter.tryReserve()).toBe(true); // 2
+  it('reserves up to the ceiling, then refuses', () => {
+    const counter = makeTaskCounter();
+    const ceiling = counter.limit();
 
-    max = 1; // now below the accumulated count of 2
+    for (let reserved = 0; reserved < ceiling; reserved++) {
+      expect(counter.tryReserve()).toBe(true);
+    }
+    // The ceiling is reached: the next reservation is refused.
+    expect(counter.tryReserve()).toBe(false);
+    // And stays refused (the count does not roll over).
     expect(counter.tryReserve()).toBe(false);
   });
 
-  it('exposes the current ceiling live via limit()', () => {
-    let max = 7;
-    const counter = makeTaskCounter(() => max);
-    expect(counter.limit()).toBe(7);
-    max = 9;
-    expect(counter.limit()).toBe(9);
+  it('each counter accumulates independently of others', () => {
+    const first = makeTaskCounter();
+    const second = makeTaskCounter();
+    expect(first.tryReserve()).toBe(true);
+    // A reservation on one counter does not advance the other.
+    expect(second.tryReserve()).toBe(true);
   });
 });

@@ -165,7 +165,6 @@ IPC channels for shortcuts are in the Board Config group: `boardConfig:getShortc
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `mcpServer.enabled` | boolean | `true` | Allow agents to create and query tasks via MCP tools. When disabled, no kangentic MCP server is injected into sessions. See [MCP Server](mcp-server.md). |
-| `mcpServer.maxTaskCreateCount` | number | `50` | Maximum tasks an agent may create via `kangentic_create_task` per app launch before the tool returns a rate-limit error. Read live (a change applies without restart); the accumulated count resets when Kangentic restarts. Configurable in Settings -> MCP Server. |
 
 ### notifications.*
 

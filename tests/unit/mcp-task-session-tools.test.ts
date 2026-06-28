@@ -73,15 +73,20 @@ vi.mock('../../src/main/agent/mcp-http/handler-helpers', () => ({
   // Identity stub: the real sanitizer is unit-tested elsewhere; here we
   // only need the routing-check message to embed names verbatim.
   sanitizeProjectName: (name: string) => name,
-  makeTaskCounter: (getMaxTaskCreateCount: () => number) => {
+  makeTaskCounter: () => {
     let count = 0;
+    // Arbitrary high ceiling so the routing tests' creations are never throttled.
+    // It mirrors MAX_TASK_CREATE_PER_LAUNCH in handler-helpers.ts but need not stay
+    // in lockstep: the exhaustion tests below use their own decoupled counters, and
+    // the real ceiling is verified in mcp-task-counter.test.ts.
+    const ceiling = 500;
     return {
       tryReserve: vi.fn(() => {
-        if (count >= getMaxTaskCreateCount()) return false;
+        if (count >= ceiling) return false;
         count++;
         return true;
       }),
-      limit: () => getMaxTaskCreateCount(),
+      limit: () => ceiling,
     };
   },
   PROJECT_SELECTOR_DESCRIPTION: 'optional project selector',
@@ -205,7 +210,7 @@ describe('create_task rate-limit wiring', () => {
     const result = await server.getHandler('kangentic_create_task')({ title: 'One too many' });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('Rate limit reached');
+    expect(result.content[0].text).toContain('Task-creation limit reached');
     expect(result.content[0].text).toContain(String(MAX_TASKS));
     // callHandler must NOT be called after a failed tryReserve.
     expect(mockCallHandler).not.toHaveBeenCalled();
@@ -216,7 +221,7 @@ describe('create_task rate-limit wiring', () => {
     // REPORTED_LIMIT=7 - deliberately mismatched values. If task-tools.ts were
     // changed to interpolate a captured constant (e.g. the accumulated count at
     // exhaustion time, or any frozen number) instead of calling taskCounter.limit()
-    // live, the error text would say "maximum 3 tasks per session" and the
+    // live, the error text would say "maximum of 3 tasks" and the
     // toContain('7') assertion below would fail.
     //
     // Red-green: temporarily change the rate-limit error string in task-tools.ts
@@ -244,12 +249,12 @@ describe('create_task rate-limit wiring', () => {
     const result = await decoupledServer.getHandler('kangentic_create_task')({ title: 'Overflow' });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('Rate limit reached');
+    expect(result.content[0].text).toContain('Task-creation limit reached');
     // Must contain the live limit() value ('7'), not the exhaustion count ('3').
     expect(result.content[0].text).toContain(String(REPORTED_LIMIT));
     // Defensive: '3' must NOT appear; if it does, the code read the count at
     // exhaustion instead of calling limit() live. (Message is
-    // "Rate limit reached: maximum 7 tasks per session." which contains no '3'.)
+    // "...maximum of 7 tasks since the app launched..." which contains no '3'.)
     expect(result.content[0].text).not.toContain(String(EXHAUST_AT));
   });
 });

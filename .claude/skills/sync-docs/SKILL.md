@@ -259,7 +259,7 @@ Each entry has a one-line rationale so future edits know what the entry was prot
   WHY: shared agent helpers (auto-name.ts, prompt-xml.ts, agent-detector.ts, bridge-utils.ts, hook-utils.ts, exec-version.ts) back multiple feature docs (configuration.md, agent-integration.md, cross-platform.md). Small directory; safe to glob.
 
 - `src/main/agent/mcp-http/**`
-  WHY: MCP tool registrations (task-tools.ts, session-tools.ts, search-tools.ts, project-tools.ts) are enumerated in mcp-server.md. Adding a new tool is a docs-affecting event.
+  WHY: MCP tool registrations (task-tools.ts, session-tools.ts, search-tools.ts, project-tools.ts, diagnostics-tools.ts, browser-tools.ts) are enumerated in mcp-server.md. Adding a new tool is a docs-affecting event. The settings panel renders the same tools from `src/shared/mcp-tool-manifest.ts` (`MCP_TOOL_MANIFEST`); `tests/unit/mcp-tool-list-parity.test.ts` asserts every registered tool is in both the manifest and mcp-server.md (see `.claude/rules/mcp-tool-list-parity.md`).
 
 - `src/main/agent/commands/**`
   WHY: MCP command implementations (column-resolver.ts, handoff-commands.ts, task-commands.ts, backlog-commands.ts, search-commands.ts, etc.) are cited in mcp-server.md component table and architecture.md board-integration section. Adding or renaming a command file is a docs-affecting event. Small directory (13 files); safe to glob.

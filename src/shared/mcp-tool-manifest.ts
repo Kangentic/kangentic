@@ -1,0 +1,102 @@
+/**
+ * Single source of truth for the user-facing MCP tool catalogue.
+ *
+ * The Kangentic MCP server registers tools across the `*-tools.ts` files in
+ * `src/main/agent/mcp-http/`. Two surfaces enumerate those tools for humans:
+ * the Settings -> MCP Server "Available Tools" list (`McpServerTab.tsx`) and
+ * `docs/mcp-server.md`. Before this manifest existed both hardcoded their own
+ * copies and drifted: the panel listed 10 of 46 registered tools.
+ *
+ * This manifest is the one list both the panel and the parity test read, so
+ * the catalogue cannot silently drift from the registrations again. Every
+ * registered tool MUST have an entry here, and every entry MUST name a real
+ * registered tool. `tests/unit/mcp-tool-list-parity.test.ts` enforces both
+ * directions plus presence in `docs/mcp-server.md`; the convention is
+ * documented in `.claude/rules/mcp-tool-list-parity.md`.
+ *
+ * The panel renders every entry as a pill, grouped by `category` in
+ * `MCP_TOOL_CATEGORIES` order, so the complete tool catalogue is visible
+ * (the dev-leaning diagnostics group sorts last under its own header). The
+ * array below is ordered to mirror that grouping; `category`, not array
+ * position, is what drives the panel grouping.
+ */
+
+export type McpToolCategoryId = 'tasks' | 'board' | 'sessions' | 'browser' | 'diagnostics';
+
+export interface McpToolManifestEntry {
+  /** Registered tool name. MUST match a registerTool('...') literal under src/main/agent/mcp-http/*-tools.ts. */
+  name: string;
+  /** User-facing label shown in the settings panel, e.g. 'Create Task'. */
+  label: string;
+  /** One-line user-facing blurb. */
+  blurb: string;
+  /** Grouping for the panel and docs. */
+  category: McpToolCategoryId;
+}
+
+/** Categories in panel render order. The diagnostics group sorts last under its own header. */
+export const MCP_TOOL_CATEGORIES: { id: McpToolCategoryId; label: string }[] = [
+  { id: 'tasks', label: 'Tasks' },
+  { id: 'board', label: 'Board' },
+  { id: 'sessions', label: 'Sessions' },
+  { id: 'browser', label: 'Browser Automation' },
+  { id: 'diagnostics', label: 'Diagnostics' },
+];
+
+export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
+  // ── Tasks (task-tools.ts) - operations on individual tasks ──
+  { name: 'kangentic_create_task', label: 'Create Task', blurb: 'add a task to any board column or the backlog', category: 'tasks' },
+  { name: 'kangentic_list_tasks', label: 'List Tasks', blurb: 'browse tasks, optionally filtered by column', category: 'tasks' },
+  { name: 'kangentic_search_tasks', label: 'Search Tasks', blurb: 'keyword search across board and backlog tasks', category: 'tasks' },
+  { name: 'kangentic_find_task', label: 'Find Task', blurb: 'look up a task by ID, branch, title, or PR number', category: 'tasks' },
+  { name: 'kangentic_get_current_task', label: 'Current Task', blurb: 'resolve the task for the current directory or branch', category: 'tasks' },
+  { name: 'kangentic_get_task_stats', label: 'Task Stats', blurb: 'token usage, cost, duration, and lines changed per task', category: 'tasks' },
+  { name: 'kangentic_update_task', label: 'Update Task', blurb: 'edit title, description, PR info, agent, priority, labels, base branch, and worktree', category: 'tasks' },
+  { name: 'kangentic_move_task', label: 'Move Task', blurb: 'move a task between columns, running the same lifecycle as a drag', category: 'tasks' },
+  { name: 'kangentic_link_pr', label: 'Link PR', blurb: 'resolve and attach a task pull request via the gh CLI', category: 'tasks' },
+  { name: 'kangentic_delete_task', label: 'Delete Task', blurb: 'permanently remove a task, its attachments, and session records', category: 'tasks' },
+
+  // ── Board (columns from task-tools.ts, backlog from session-tools.ts, projects/search from project-tools.ts + search-tools.ts) ──
+  { name: 'kangentic_list_columns', label: 'List Columns', blurb: 'see every board column with its task counts', category: 'board' },
+  { name: 'kangentic_get_column_detail', label: 'Column Detail', blurb: 'automation, permission mode, and config for a column', category: 'board' },
+  { name: 'kangentic_update_column', label: 'Update Column', blurb: 'rename, recolor, and configure a column automation', category: 'board' },
+  { name: 'kangentic_board_summary', label: 'Board Summary', blurb: 'counts, active sessions, and aggregate cost across the board', category: 'board' },
+  { name: 'kangentic_list_backlog', label: 'List Backlog', blurb: 'see items staged in the backlog', category: 'board' },
+  { name: 'kangentic_promote_backlog', label: 'Promote Backlog', blurb: 'move backlog items onto the board as tasks', category: 'board' },
+  { name: 'kangentic_update_backlog_item', label: 'Update Backlog Item', blurb: 'edit a backlog item title, description, priority, or labels', category: 'board' },
+  { name: 'kangentic_delete_backlog_item', label: 'Delete Backlog Item', blurb: 'permanently remove a backlog item and its attachments', category: 'board' },
+  { name: 'kangentic_list_projects', label: 'List Projects', blurb: 'every Kangentic project registered on this machine', category: 'board' },
+  { name: 'kangentic_search_everything', label: 'Search Everything', blurb: 'unified search across tasks, backlog, sessions, and projects', category: 'board' },
+
+  // ── Sessions (session-tools.ts) - per-task session history, transcripts, and handoff ──
+  { name: 'kangentic_list_sessions', label: 'List Sessions', blurb: 'session records for a task with timings, cost, and exit info', category: 'sessions' },
+  { name: 'kangentic_get_session_history', label: 'Session History', blurb: 'read the native agent session transcript file for a task', category: 'sessions' },
+  { name: 'kangentic_get_session_files', label: 'Session Files', blurb: 'absolute paths to a session activity, status, and history files', category: 'sessions' },
+  { name: 'kangentic_get_session_events', label: 'Session Events', blurb: 'parsed activity events from a session log', category: 'sessions' },
+  { name: 'kangentic_get_handoff_context', label: 'Handoff Context', blurb: 'the most recent cross-agent handoff record for a task', category: 'sessions' },
+  { name: 'kangentic_get_transcript', label: 'Get Transcript', blurb: 'read what the agent on another task or project said', category: 'sessions' },
+
+  // ── Browser Automation (browser-tools.ts) ──
+  { name: 'kangentic_browser_list_panes', label: 'List Browser Panes', blurb: 'open embedded Browser panes and their URLs', category: 'browser' },
+  { name: 'kangentic_browser_navigate', label: 'Navigate', blurb: 'point a task Browser pane at a URL', category: 'browser' },
+  { name: 'kangentic_browser_screenshot', label: 'Screenshot', blurb: 'capture the Browser pane as an image', category: 'browser' },
+  { name: 'kangentic_browser_screenshot_element', label: 'Screenshot Element', blurb: 'capture a single element in the Browser pane', category: 'browser' },
+  { name: 'kangentic_browser_query_dom', label: 'Query DOM', blurb: 'get the HTML and box of an element', category: 'browser' },
+  { name: 'kangentic_browser_query_all', label: 'Query All', blurb: 'measure every element matching a selector', category: 'browser' },
+  { name: 'kangentic_browser_bounding_box', label: 'Bounding Box', blurb: 'the CDP box model of an element', category: 'browser' },
+  { name: 'kangentic_browser_console', label: 'Browser Console', blurb: 'read recent console messages from the pane', category: 'browser' },
+  { name: 'kangentic_browser_wait', label: 'Wait', blurb: 'wait for an element or text to appear', category: 'browser' },
+  { name: 'kangentic_browser_click', label: 'Click', blurb: 'click an element or a point in the pane', category: 'browser' },
+  { name: 'kangentic_browser_type', label: 'Type', blurb: 'type text into the Browser pane', category: 'browser' },
+  { name: 'kangentic_browser_keypress', label: 'Keypress', blurb: 'send a key or chord to the pane', category: 'browser' },
+  { name: 'kangentic_browser_drag', label: 'Drag', blurb: 'drag from one element to another', category: 'browser' },
+  { name: 'kangentic_browser_eval', label: 'Eval', blurb: 'evaluate JavaScript in the page (off by default)', category: 'browser' },
+
+  // ── Diagnostics (diagnostics-tools.ts; query_db from session-tools.ts) - dev-leaning, rendered last ──
+  { name: 'kangentic_query_db', label: 'Query Database', blurb: 'run a read-only SQL query against the project database', category: 'diagnostics' },
+  { name: 'kangentic_tail_logs', label: 'Tail Logs', blurb: 'read recent lines from the Kangentic console log', category: 'diagnostics' },
+  { name: 'kangentic_get_recent_crashes', label: 'Recent Crashes', blurb: 'list recent crash records with source-mapped stacks', category: 'diagnostics' },
+  { name: 'kangentic_get_process_metrics', label: 'Process Metrics', blurb: 'memory and CPU per Electron process', category: 'diagnostics' },
+  { name: 'kangentic_get_ipc_log', label: 'IPC Log', blurb: 'recent IPC traffic with timings and errors', category: 'diagnostics' },
+  { name: 'kangentic_list_worktrees', label: 'List Worktrees', blurb: 'enumerate worktrees with branch and dirty state', category: 'diagnostics' },
+];

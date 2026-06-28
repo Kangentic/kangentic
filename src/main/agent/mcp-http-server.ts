@@ -67,11 +67,10 @@ export interface McpHttpServerHandle {
 export async function startMcpHttpServer(
   buildContext: ProjectContextFactory,
   getBrowserAutomationConfig: AutomationConfigReader,
-  getMaxTaskCreateCount: () => number,
 ): Promise<McpHttpServerHandle> {
   const token = randomBytes(32).toString('hex');
   const expectedTokenBuffer = Buffer.from(token, 'utf-8');
-  const taskCounter = makeTaskCounter(getMaxTaskCreateCount);
+  const taskCounter = makeTaskCounter();
 
   const httpServer: Server = createServer((req, res) => {
     handleHttpRequest(req, res, expectedTokenBuffer, buildContext, taskCounter, getBrowserAutomationConfig)

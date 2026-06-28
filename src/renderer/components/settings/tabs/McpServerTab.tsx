@@ -1,7 +1,7 @@
 import { Plug } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/types';
-import { DEFAULT_CONFIG } from '../../../../shared/types';
-import { INPUT_CLASS, SectionHeader, SettingRow, SettingToggleRow, useScopedUpdate } from '../shared';
+import { MCP_TOOL_CATEGORIES, MCP_TOOL_MANIFEST } from '../../../../shared/mcp-tool-manifest';
+import { SectionHeader, SettingToggleRow, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
 export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
@@ -17,35 +17,28 @@ export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
       />
 
       <div className={enabled ? '' : 'opacity-40 pointer-events-none'}>
-        <SettingRow {...settingProps('mcpServer.maxTaskCreateCount')}>
-          <input
-            type="number"
-            value={globalConfig.mcpServer?.maxTaskCreateCount ?? DEFAULT_CONFIG.mcpServer.maxTaskCreateCount}
-            onChange={(event) => {
-              if (event.target.value === '') return;
-              const value = Number(event.target.value);
-              if (Number.isNaN(value)) return;
-              updateGlobal({ mcpServer: { maxTaskCreateCount: Math.max(1, Math.min(500, Math.floor(value))) } });
-            }}
-            min={1}
-            max={500}
-            className={INPUT_CLASS}
-          />
-        </SettingRow>
-
         <SectionHeader label="Available Tools" searchIds={['mcpServer.enabled']} />
-        <ul className="list-disc list-inside text-sm text-fg-muted space-y-1 ml-1">
-          <li><strong className="text-fg-secondary">Create Task</strong> - add tasks to any column from within an agent session</li>
-          <li><strong className="text-fg-secondary">Update Task</strong> - edit title and description of existing tasks</li>
-          <li><strong className="text-fg-secondary">List Columns</strong> - see all board columns with task counts</li>
-          <li><strong className="text-fg-secondary">List Tasks</strong> - browse tasks, optionally filtered by column</li>
-          <li><strong className="text-fg-secondary">Search Tasks</strong> - find tasks by keyword across titles and descriptions</li>
-          <li><strong className="text-fg-secondary">Find Task</strong> - look up tasks by branch name, title, or PR number</li>
-          <li><strong className="text-fg-secondary">Board Summary</strong> - overview of task counts, active sessions, and costs</li>
-          <li><strong className="text-fg-secondary">Task Stats</strong> - token usage, cost, and duration for individual or all tasks</li>
-          <li><strong className="text-fg-secondary">Session History</strong> - timeline of sessions for a task</li>
-          <li><strong className="text-fg-secondary">Column Detail</strong> - automation settings, permission mode, and configuration</li>
-        </ul>
+        {MCP_TOOL_CATEGORIES.map((category) => {
+          const tools = MCP_TOOL_MANIFEST.filter((tool) => tool.category === category.id);
+          if (tools.length === 0) return null;
+          return (
+            <div key={category.id} className="mt-3 first:mt-1">
+              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-fg-faint mb-1">{category.label}</h4>
+              <ul className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-1.5 ml-1">
+                {tools.map((tool) => (
+                  <li
+                    key={tool.name}
+                    data-testid="mcp-tool-pill"
+                    title={`${tool.label} - ${tool.blurb}`}
+                    className="truncate rounded-md border border-edge/50 bg-surface-hover/30 px-2.5 py-1 text-xs text-fg-secondary"
+                  >
+                    {tool.label}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
 
         <SectionHeader label="How It Works" searchIds={['mcpServer.enabled']} />
         <p className="text-sm text-fg-muted leading-relaxed">

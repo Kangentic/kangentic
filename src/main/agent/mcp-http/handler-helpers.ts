@@ -31,32 +31,40 @@ export const PROJECT_SELECTOR_DESCRIPTION =
   'Optional project name (case-insensitive exact) or UUID to target a different project than the active one. Set it whenever the user\'s request names another registered project; omit for the active project. See the server instructions ("PROJECT ROUTING RULE") for how mentions are phrased, and kangentic_list_projects for valid names.';
 
 /**
+ * Internal runaway-loop safeguard: the maximum number of tasks one MCP
+ * server launch will create before `kangentic_create_task` starts refusing.
+ * This is a circuit breaker against a misbehaving agent looping on task
+ * creation, NOT a user-tunable quota. It is intentionally high (a heavy
+ * dogfooding day stays well under it) and resets on app restart.
+ */
+const MAX_TASK_CREATE_PER_LAUNCH = 500;
+
+/**
  * Atomic create_task rate-limit counter shared across all requests served
  * by one server-launch. Encapsulated as a getter+mutator pair so the
  * check-and-increment is impossible to race in the JS event loop.
  */
 export interface TaskCounter {
-  /** Reserve one slot. Returns false if the rate-limit ceiling is reached. */
+  /** Reserve one slot. Returns false if the runaway-loop ceiling is reached. */
   tryReserve(): boolean;
-  /** Current configured ceiling, read live. Used to build the rate-limit error message. */
+  /** The fixed ceiling. Used to build the limit-reached error message. */
   limit(): number;
 }
 
 /**
- * Build an in-memory TaskCounter enforcing a per-launch ceiling. The ceiling
- * is read live through `getMaxTaskCreateCount` on every reservation, so a
- * settings change to the cap takes effect without restarting the app (the
- * accumulated count still persists for the app launch and resets on restart).
+ * Build an in-memory TaskCounter enforcing the `MAX_TASK_CREATE_PER_LAUNCH`
+ * runaway-loop safeguard. The accumulated count persists for the app launch
+ * and resets on restart.
  */
-export function makeTaskCounter(getMaxTaskCreateCount: () => number): TaskCounter {
+export function makeTaskCounter(): TaskCounter {
   let count = 0;
   return {
     tryReserve: () => {
-      if (count >= getMaxTaskCreateCount()) return false;
+      if (count >= MAX_TASK_CREATE_PER_LAUNCH) return false;
       count++;
       return true;
     },
-    limit: () => getMaxTaskCreateCount(),
+    limit: () => MAX_TASK_CREATE_PER_LAUNCH,
   };
 }
 

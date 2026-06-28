@@ -95,7 +95,7 @@ export function registerTaskTools(
       // No await between the check and the increment, so this can't race.
       if (!taskCounter.tryReserve()) {
         return Promise.resolve({
-          content: [{ type: 'text' as const, text: `Rate limit reached: maximum ${taskCounter.limit()} tasks per session.` }],
+          content: [{ type: 'text' as const, text: `Task-creation limit reached: this Kangentic MCP server already created its maximum of ${taskCounter.limit()} tasks since the app launched (a runaway-loop safeguard). Restart Kangentic to reset.` }],
           isError: true,
         });
       }

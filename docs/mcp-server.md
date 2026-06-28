@@ -94,7 +94,7 @@ If the target column has `auto_spawn` enabled, creating a task there will also s
 
 **Cross-project routing guard:** when `project` is omitted (so the task would default to the active project) but the title or description names a *different* registered project, the tool refuses with a routing-check error instead of creating the task. No task is created and no rate-limit slot is consumed. Re-run with `project: "<that project>"` to file it there, or with `project: "<active project>"` to confirm the active project. This catches the common cross-project triage case (filing a bug about one project from another) when the routing cue is only implied by the task text.
 
-Rate limit: capped at the Settings -> MCP Server "Max Tasks Per Session" value (`mcpServer.maxTaskCreateCount`, default 50) per app launch, shared across board and backlog. Exceeding the cap returns a clear error and creates nothing. The value is read live, so a change applies without restarting; the accumulated count resets on restart.
+Runaway-loop safeguard: a single Kangentic launch can create at most 500 tasks via this tool (a high internal circuit breaker against a misbehaving agent, shared across board and backlog, not a user-tunable setting). Hitting it returns a clear error and creates nothing; the accumulated count resets when Kangentic restarts.
 
 ### kangentic_list_columns
 
@@ -446,12 +446,12 @@ Targeting: every tool takes an optional `sessionId` or `taskId`; omit both to us
 
 Gating: the global **Agent Browser** settings tab controls the family, read live per request. `browserAutomation.enabled` is the master switch: when off, the entire `kangentic_browser_*` family is not registered, so the tools never appear in `tools/list` and the instructions omit their guidance section (they would be unusable anyway, and advertising them is wasted context). When `enabled` is on, the sub-capability gates apply: `allowInteraction` gates click/type/keypress/drag (off = observe-only); `allowNavigation` gates navigate; `allowEval` gates eval (off by default); `restrictNavigationToLocalhost` confines navigation to localhost/private hosts (off by default). With `enabled` on, each tool returns an actionable `{ kind, detail }` error when one of those sub-capabilities is gated off or no driveable pane exists.
 
-Tool categories:
-- **Discovery:** `list_panes`
-- **Navigate:** `navigate` - point the pane at an http(s) URL
-- **Observe:** `screenshot`, `screenshot_element`, `query_dom`, `query_all`, `bounding_box`, `console`, `wait`
-- **Interact:** `click`, `type`, `keypress`, `drag`
-- **Eval:** `eval` - evaluate a JavaScript expression in the loaded page; gated by `browserAutomation.allowEval`
+Tool categories (14 tools):
+- **Discovery:** `kangentic_browser_list_panes` - list open Browser panes and their URLs
+- **Navigate:** `kangentic_browser_navigate` - point the pane at an http(s) URL
+- **Observe:** `kangentic_browser_screenshot`, `kangentic_browser_screenshot_element`, `kangentic_browser_query_dom`, `kangentic_browser_query_all`, `kangentic_browser_bounding_box`, `kangentic_browser_console`, `kangentic_browser_wait`
+- **Interact:** `kangentic_browser_click`, `kangentic_browser_type`, `kangentic_browser_keypress`, `kangentic_browser_drag`
+- **Eval:** `kangentic_browser_eval` - evaluate a JavaScript expression in the loaded page; gated by `browserAutomation.allowEval`
 
 Cookie isolation is per worktree (`persist:kngbrowser-<hash(worktreePath)>`) so concurrent worktrees' dev environments never share a `localhost` cookie jar. See [embedded-browser.md](embedded-browser.md).
 
@@ -497,7 +497,7 @@ The `.claude/settings.json` file includes a wildcard permission entry (`mcp__kan
 - **Per-launch token** - every Kangentic launch generates a fresh 32-byte random `X-Kangentic-Token`. Clients without the token get `401`. Comparison is constant-time (`timingSafeEqual`) so a local timing oracle cannot byte-by-byte recover the token.
 - **DNS rebinding protection** - the Streamable HTTP transport enforces a host allowlist (`127.0.0.1`, `localhost`, `[::1]`) on top of the loopback bind.
 - **Project routing via URL path** - the URL embeds the project ID (`/mcp/<projectId>`). A stale `mcp.json` for a different project cannot be reused against the current launch.
-- **Rate limiting** - task creations are capped per app launch at the configurable Settings -> MCP Server "Max Tasks Per Session" value (`mcpServer.maxTaskCreateCount`, default 50), enforced atomically by the shared `TaskCounter`.
+- **Runaway-loop safeguard** - task creations are capped at a fixed 500 per app launch, enforced atomically by the shared `TaskCounter`. This is an internal circuit breaker against a looping agent, not a user-tunable knob; the count resets on restart.
 - **Input validation** - Zod schemas enforce title (200 chars) and description (10000 chars) limits at the protocol level; the command handlers validate again.
 - **Column safety** - `kangentic_create_task` defaults to the To Do column; creating in an auto_spawn column intentionally triggers agent spawn.
 - **Destructive operations are explicit** - `kangentic_delete_task`, `kangentic_delete_backlog_item`, and `kangentic_move_task` mutate the board. Agents must invoke them by name; there is no implicit fallback.
