@@ -195,9 +195,9 @@ export function TaskDetailHeader({
   const browserCombo = useFormattedCombo('taskDetail.toggleBrowser');
   const changesCombo = useFormattedCombo('taskDetail.toggleChanges');
 
-  // Quick-access pills, highest priority collapses LAST. The title wins the space
-  // fight first (useHeaderPillOverflow reserves its full width); these compete for
-  // whatever is left. Among the built-in defaults the order is Browser -> PR ->
+  // Quick-access pills, highest priority collapses LAST. The title is reserved only
+  // up to a ~50ch floor (useHeaderPillOverflow); these compete for whatever is left
+  // above the floor. Among the built-in defaults the order is Browser -> PR ->
   // Changes -> Project -> Commands (Browser drops first). Custom header shortcuts
   // rank LOWEST (priority 10), so they fold BEFORE any built-in default - an
   // unbounded number of shortcuts can never bury the defaults. A folded header
@@ -283,11 +283,13 @@ export function TaskDetailHeader({
       <PriorityBadge priority={task.priority ?? 0} />
       </div>
 
-      {/* Title - wins the space fight: the overflow calc reserves its FULL natural
-          width (so pills fold first), and it only truncates once every pill has
-          folded. The hard min-w-[64px] keeps it from fully vanishing in a tiny
-          tiled pane. The inner span is content-sized, so its scrollWidth is the
-          title's natural width (read by useHeaderPillOverflow). */}
+      {/* Title - the overflow calc reserves only a ~50ch floor (not the full
+          width), so quick-action pills reclaim the space above the floor. Because
+          this h2 is flex-1, on a wide window the title shows in FULL and only
+          truncates toward the floor once the pills need the room. The hard
+          min-w-[64px] keeps it from fully vanishing in a tiny tiled pane. The
+          inner span is content-sized, so its scrollWidth is the title's natural
+          width (read by useHeaderPillOverflow). */}
       <h2
         className="text-base font-semibold text-fg truncate flex-1 min-w-[64px] flex items-center gap-2"
         title={task.title}

@@ -50,8 +50,19 @@ function capitalize(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+// Long by default: build past ~260 chars so the title overflows the header at any
+// window size - even maximized (~1920px is ~240 chars wide) - and ALWAYS truncates.
+// That is the common mode the header's title-floor / pill-overflow behavior is built
+// for, so a seeded task exercises it without hand-crafting a long title each time.
 function loremTitle(): string {
-  return capitalize(loremWords(randomInt(3, 6)));
+  const words: string[] = [];
+  let length = 0;
+  while (length < 260) {
+    const word = LOREM_WORDS[randomInt(0, LOREM_WORDS.length - 1)];
+    words.push(word);
+    length += word.length + 1;
+  }
+  return capitalize(words.join(' '));
 }
 
 // A short-circuit directive appended to every seeded description. Without it the

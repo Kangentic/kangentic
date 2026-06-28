@@ -140,8 +140,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // The branch picker can fold into the kebab; this drives the kebab-anchored
   // fallback dropdown ("Switch branch").
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
-  // Refs for the measured "priority-plus" header overflow (title wins; pills fold
-  // into the kebab as the window narrows). Mirrors the task-detail header.
+  // Refs for the measured "priority-plus" header overflow (the title keeps a ~50ch
+  // floor; pills reclaim the space above it and fold into the kebab as the window
+  // narrows). Mirrors the task-detail header.
   const headerRef = useRef<HTMLDivElement>(null);
   const leadingRef = useRef<HTMLDivElement>(null);
   const trailingRef = useRef<HTMLDivElement>(null);
@@ -454,8 +455,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden" data-testid="command-terminal-window">
-      {/* Header. Priority-plus layout: the title wins the space fight; the pills
-          fold into the kebab as the window narrows (useHeaderPillOverflow). */}
+      {/* Header. Priority-plus layout: the title keeps a ~50ch floor; the pills
+          reclaim the space above it and fold into the kebab as the window narrows
+          (useHeaderPillOverflow). */}
       <div ref={headerRef} className="flex items-center gap-3 px-4 py-2.5 border-b border-edge flex-shrink-0 select-none min-w-0">
         {/* Leading cluster: Stop (protected, measured as one unit). */}
         <div ref={leadingRef} className="flex items-center flex-shrink-0">
@@ -472,15 +474,17 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
           </button>
         </div>
 
-        {/* Title - reserves its full natural width so pills fold first; it is also
-            the drag handle (double-click toggles maximize). */}
+        {/* Title - the overflow calc reserves only a ~50ch floor (not the full
+            width), so pills reclaim the space above it; this is also the drag
+            handle (double-click toggles maximize). */}
         <div
           className="flex-1 min-w-[64px] truncate cursor-grab active:cursor-grabbing"
           onPointerDown={titleBarPointerDown}
           onDoubleClick={handleToggleMaximized}
         >
           {/* Inline span so its scrollWidth measures the TEXT width (not the
-              flex-grown div), which useHeaderPillOverflow reserves for the title. */}
+              flex-grown div); useHeaderPillOverflow reserves up to a ~50ch floor
+              of that width for the title and lets the pills reclaim the rest. */}
           <span
             ref={titleSpanRef}
             className="text-base font-semibold text-fg truncate"
