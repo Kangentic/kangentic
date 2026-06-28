@@ -61,6 +61,7 @@ function makeMocks(usageBySessionId: Record<string, SessionUsage> = {}): Mocks {
     getUsageCache: vi.fn(() => usageBySessionId),
     getToolCallCount: vi.fn(() => 7),
     getToolBreakdown: vi.fn(() => []),
+    getCompactionCount: vi.fn(() => 0),
   } as unknown as SessionManager;
 
   const sessionRepo = { updateMetrics } as unknown as SessionRepository;
@@ -101,6 +102,7 @@ describe('captureSessionMetrics history write', () => {
       toolCallCount: 7,
       modelId: 'claude-opus-4',
       modelDisplayName: 'Claude Opus 4',
+      compactionCount: 0,
     });
   });
 

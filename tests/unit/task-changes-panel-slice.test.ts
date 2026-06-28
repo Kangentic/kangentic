@@ -7,7 +7,17 @@
  * browser, Electron, or ipcRenderer binding is required.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+// The slice imports `useProjectStore` (to stamp the project id on its debounced
+// detail-view-state saves). project-store imports session-store, which eagerly
+// creates its store from the slices - so importing the slice DIRECTLY as the
+// module-graph entry (as this isolated unit test does) forms a TDZ cycle
+// (session-store's create() runs before this slice's export is defined). The app
+// is unaffected (it enters via session-store, which defines all slices before
+// create()); mocking project-store here keeps the slice a leaf for the test.
+vi.mock('../../src/renderer/stores/project-store', () => ({
+  useProjectStore: { getState: () => ({ currentProject: null }) },
+}));
 import { createTaskChangesPanelSlice } from '../../src/renderer/stores/session-store/task-changes-panel-slice';
 import type { TaskChangesPanelSlice } from '../../src/renderer/stores/session-store/task-changes-panel-slice';
 
