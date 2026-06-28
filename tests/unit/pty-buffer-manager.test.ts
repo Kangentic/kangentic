@@ -471,5 +471,43 @@ describe('PtyBufferManager', () => {
       vi.advanceTimersByTime(20);
       vi.useRealTimers();
     });
+
+    it('filters out non-restorable params from a combined DECSET, tracking only restorable ones', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      // One DECSET with restorable mouse-tracking modes 1000, 1002 and non-restorable
+      // display mode 1049 (alt-screen) mixed in between them. The per-param guard
+      // `if (!RESTORABLE_DEC_PRIVATE_MODES.has(privateMode)) continue` inside
+      // updateDecPrivateModes must skip 1049 while tracking the others.
+      // Would fail (producing '\x1b[?1000;1002;1049h') if the guard were removed.
+      manager.onData(SESSION, '\x1b[?1000;1049;1002h');
+
+      expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('\x1b[?1000;1002h');
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('re-asserts the same mode prefix on repeated getScrollback() calls (idempotent)', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[?1h');
+      manager.onData(SESSION, 'some output');
+
+      // First call establishes the prefix.
+      const firstPrefix = modePrefixOf(manager.getScrollback(SESSION));
+      expect(firstPrefix).toBe('\x1b[?1h');
+
+      // Second call must produce the same prefix. Would fail if getScrollback
+      // mutated decPrivateModes after reading (e.g. cleared it as a "reset on
+      // read" refactor), which would make the second call return an empty prefix.
+      const secondPrefix = modePrefixOf(manager.getScrollback(SESSION));
+      expect(secondPrefix).toBe('\x1b[?1h');
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
   });
 });
