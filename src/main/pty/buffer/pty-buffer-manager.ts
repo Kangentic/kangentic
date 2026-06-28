@@ -34,6 +34,54 @@ function surrogateSafeFlushEnd(buffer: string, max: number): number {
   return max;
 }
 
+// DEC private input/reporting modes to re-assert on a scrollback replay. These
+// are invisible to restore: they change what xterm SENDS on later input, not
+// what it draws, so the replayed frame is unchanged. Display modes (alt-screen
+// 1049/47, origin 6, autowrap 7, cursor 25, ...) are excluded on purpose. #313.
+// Note: re-asserting 1004 (focus reporting) means the post-replay xterm.focus()
+// in useTerminal's afterWrite now emits a benign \x1b[I (FocusIn) to the PTY,
+// which Claude handles as a normal focus event.
+const RESTORABLE_DEC_PRIVATE_MODES = new Set<number>([
+  1,                 // DECCKM application cursor keys (the arrow-key bug)
+  1000, 1002, 1003,  // mouse tracking
+  1004,              // focus reporting
+  1006, 1015, 1016,  // mouse encodings
+  2004,              // bracketed paste
+]);
+
+// Upper bound on a partial mode sequence carried across a PTY chunk boundary.
+// Larger than the longest combined restorable DECSET (all modes in one set is
+// ~45 chars: `\x1b[?1;1000;1002;1003;1004;1006;1015;1016;2004`), so a real split
+// is always preserved while a lone trailing ESC cannot grow modeParseCarry
+// without limit. Adding a mode to RESTORABLE_DEC_PRIVATE_MODES that pushes the
+// combined set past this must bump it too.
+const MODE_CARRY_MAX_LENGTH = 64;
+
+function updateDecPrivateModes(activeModes: Set<number>, text: string): void {
+  // One alternation matches a DECSET/DECRST set (\x1b[?<params>h|l) OR a full
+  // reset (RIS \x1bc / DECSTR \x1b[!p) that returns every private mode to its
+  // default. matchAll yields matches in stream order, so an interleaved
+  // set-then-reset resolves correctly. A reset match has no capture groups.
+  for (const match of text.matchAll(/\x1b\[\?([\d;]+)([hl])|\x1bc|\x1b\[!p/g)) {
+    if (match[1] === undefined) {
+      for (const privateMode of RESTORABLE_DEC_PRIVATE_MODES) activeModes.delete(privateMode);
+      continue;
+    }
+    const isSet = match[2] === 'h';
+    for (const parameter of match[1].split(';')) {
+      const privateMode = Number(parameter);
+      if (!RESTORABLE_DEC_PRIVATE_MODES.has(privateMode)) continue;
+      if (isSet) activeModes.add(privateMode); else activeModes.delete(privateMode);
+    }
+  }
+}
+
+function buildDecPrivateModePrefix(activeModes: Set<number>): string {
+  if (activeModes.size === 0) return '';
+  const sortedModes = Array.from(activeModes).sort((first, second) => first - second);
+  return `\x1b[?${sortedModes.join(';')}h`;
+}
+
 interface PtyBufferManagerCallbacks {
   onFlush(sessionId: string, data: string): void;
 }
@@ -51,6 +99,13 @@ interface BufferState {
    *  if not found yet. Set once and cached. Used by getScrollback() to strip
    *  shell command noise that precedes the agent TUI's first draw. */
   tuiStartIndex: number;
+  /** Sticky DEC private input/reporting modes (DECCKM etc.) currently active,
+   *  tracked from the live stream so getScrollback() can re-assert them after
+   *  xterm.reset() wipes them on replay. Survives scrollback trimming. #313. */
+  decPrivateModes: Set<number>;
+  /** Trailing partial escape sequence stitched onto the next chunk so a mode
+   *  set split across two PTY chunks is parsed whole. Bounded in onData(). */
+  modeParseCarry: string;
 }
 
 /**
@@ -75,12 +130,39 @@ export class PtyBufferManager {
       lastCols: initialCols,
       initialized: false,
       tuiStartIndex: previousScrollback ? 0 : -1,
+      // Start empty even on carry-over: the new process re-emits its own modes.
+      decPrivateModes: new Set<number>(),
+      modeParseCarry: '',
     });
   }
 
   onData(sessionId: string, data: string): void {
     const state = this.buffers.get(sessionId);
     if (!state) return;
+
+    // Track sticky DEC private input modes (DECCKM, mouse, paste) from the live
+    // stream so the scrollback replay can re-assert them after xterm.reset()
+    // wipes them - the original mode-set bytes usually scroll out of the 512KB
+    // window (#313). modeParseCarry stitches a set split across two PTY chunks,
+    // bounded by MODE_CARRY_MAX_LENGTH so a lone ESC cannot grow it. Skip the
+    // scan for ESC-free bulk output unless a partial set is pending. Parse
+    // `combined` only; append the original `data` below so the carry never
+    // duplicates bytes into buffer/scrollback.
+    if (state.modeParseCarry || data.includes('\x1b')) {
+      const combined = state.modeParseCarry + data;
+      updateDecPrivateModes(state.decPrivateModes, combined);
+      // A carry can only be a partial sequence at the very END of `combined`,
+      // and it is bounded to MODE_CARRY_MAX_LENGTH, so scan just the trailing
+      // window - a full-chunk scan here is redundant on the hot path. The `!?`
+      // admits a partial DECSTR (\x1b[!) split at \x1b[! | p, matching the
+      // DECSTR arm of updateDecPrivateModes so the soft reset is not lost.
+      const trailingWindow = combined.slice(-(MODE_CARRY_MAX_LENGTH + 1));
+      const partialEscapeMatch = trailingWindow.match(/\x1b(?:\[[\d?;]*!?)?$/);
+      state.modeParseCarry =
+        partialEscapeMatch && partialEscapeMatch[0].length <= MODE_CARRY_MAX_LENGTH
+          ? partialEscapeMatch[0]
+          : '';
+    }
 
     state.buffer += data;
     state.scrollback += data;
@@ -183,7 +265,7 @@ export class PtyBufferManager {
       }
     }
 
-    return '\x1b[0m' + scrollback;
+    return buildDecPrivateModePrefix(state.decPrivateModes) + '\x1b[0m' + scrollback;
   }
 
   /**

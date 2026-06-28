@@ -279,4 +279,197 @@ describe('PtyBufferManager', () => {
       vi.useRealTimers();
     });
   });
+
+  describe('DEC private mode restoration (#313)', () => {
+    // The mode prefix getScrollback() prepends ends at the \x1b[0m reset, which
+    // buildDecPrivateModePrefix() never emits, so the first \x1b[0m is the
+    // boundary between the re-asserted modes and the (raw) scrollback body.
+    function modePrefixOf(scrollback: string): string {
+      return scrollback.slice(0, scrollback.indexOf('\x1b[0m'));
+    }
+
+    it('re-asserts application cursor keys mode after the original set is trimmed out', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      // DECCKM on, then enough plain output to push past the 768KB write-path
+      // trim threshold so the original \x1b[?1h is sliced out of the body -
+      // the empirically-confirmed root cause for a long-running session.
+      const SCROLLBACK_TRIM_THRESHOLD = (512 + 256) * 1024;
+      manager.onData(SESSION, '\x1b[?1h');
+      manager.onData(SESSION, '\n'.repeat(SCROLLBACK_TRIM_THRESHOLD + 32 * 1024));
+
+      const scrollback = manager.getScrollback(SESSION);
+      const prefix = '\x1b[?1h\x1b[0m';
+      // The mode is re-asserted up front...
+      expect(scrollback.startsWith(prefix)).toBe(true);
+      // ...and the trimmed body no longer carries it, so the prefix is load-bearing.
+      expect(scrollback.slice(prefix.length).includes('\x1b[?1h')).toBe(false);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('drops a mode that was later reset (DECRST 1l)', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[?1h');
+      manager.onData(SESSION, 'some output');
+      manager.onData(SESSION, '\x1b[?1l');
+
+      // Set then reset -> no mode re-asserted in the prefix.
+      expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('');
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('restores a mode set split across two PTY chunks', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      // \x1b[?2004h (bracketed paste) arriving as two chunks across a boundary.
+      manager.onData(SESSION, '\x1b[?20');
+      manager.onData(SESSION, '04h');
+
+      expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('\x1b[?2004h');
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('does not re-assert display modes (alt-screen 1049)', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[?1049h');
+      manager.onData(SESSION, 'tui frame');
+
+      // 1049 is a display mode, excluded from the restore set -> empty prefix.
+      expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('');
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('honors a full reset (RIS) by dropping tracked modes', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[?1h');
+      manager.onData(SESSION, '\x1bc');
+
+      // RIS resets every private mode -> no mode re-asserted in the prefix.
+      expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('');
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('adds no mode prefix when no input modes were set', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, 'plain output with no mode sequences');
+
+      // No DEC private mode prefix: the result starts directly with the \x1b[0m reset.
+      expect(manager.getScrollback(SESSION).startsWith('\x1b[0m')).toBe(true);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('coalesces multiple modes set individually (in non-sorted order) into one sorted DECSET', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      // Send three restorable modes in a deliberately non-ascending insertion order.
+      manager.onData(SESSION, '\x1b[?2004h');
+      manager.onData(SESSION, '\x1b[?1h');
+      manager.onData(SESSION, '\x1b[?1000h');
+
+      // buildDecPrivateModePrefix must sort numerically and emit ONE combined DECSET.
+      // Would fail if modes came out in insertion order (\x1b[?2004;1;1000h) or as
+      // three separate sequences (\x1b[?2004h\x1b[?1h\x1b[?1000h).
+      expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('\x1b[?1;1000;2004h');
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('parses a single multi-param DECSET chunk into all modes and re-asserts them sorted', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      // One combined DECSET with params in non-sorted order (1, 2004, 1000).
+      manager.onData(SESSION, '\x1b[?1;2004;1000h');
+
+      // updateDecPrivateModes splits on ';' and registers each param; the prefix
+      // must contain all three, sorted. Would fail if multi-param splitting was broken.
+      expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('\x1b[?1;1000;2004h');
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('honors a soft reset (DECSTR \\x1b[!p) by dropping tracked modes', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[?1h');
+      manager.onData(SESSION, '\x1b[!p');
+
+      // DECSTR resets every private mode -> no mode re-asserted in the prefix.
+      // Mirrors the RIS (\x1bc) test; independently red-greens the |\x1b\[!p
+      // arm of the updateDecPrivateModes regex.
+      expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('');
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('detects a DECSTR soft reset split across two PTY chunks (\\x1b[! | p)', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[?1h');
+      // DECSTR arriving in two pieces: first chunk ends with \x1b[! (partial),
+      // second chunk is p. The carry regex /\x1b(?:\[[\d?;]*!?)?$/ must carry
+      // the \x1b[! partial so the two pieces are stitched into \x1b[!p and the
+      // soft reset fires. Without the !? in the carry regex, \x1b[! is not
+      // carried, combined on chunk 2 is just 'p', no reset fires, and mode 1
+      // persists - this test would assert '' but see '\x1b[?1h'.
+      manager.onData(SESSION, '\x1b[!');
+      manager.onData(SESSION, 'p');
+
+      expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('');
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('does not duplicate carry bytes into the scrollback body', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      // Bracketed paste mode (\x1b[?2004h) split across two chunks: \x1b[?20 then 04h.
+      // onData carries \x1b[?20 and appends only the original `data` to scrollback,
+      // so the body accumulates \x1b[?20 + 04h = \x1b[?2004h (clean).
+      // If onData used `combined` instead of `data` for scrollback, the body would
+      // become \x1b[?20 + \x1b[?2004h = '\x1b[?20\x1b[?2004h' (duplicated carry).
+      manager.onData(SESSION, '\x1b[?20');
+      manager.onData(SESSION, '04h');
+
+      const scrollback = manager.getScrollback(SESSION);
+
+      // Prefix is \x1b[?2004h, then \x1b[0m, then the body which must be clean.
+      expect(scrollback).toContain('\x1b[0m\x1b[?2004h');
+      // Carry prefix must NOT appear duplicated in the body.
+      expect(scrollback).not.toContain('\x1b[?20\x1b[?2004h');
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+  });
 });
