@@ -332,7 +332,13 @@ export class SessionTelemetry {
 
     const state = this.activityEngine.getOrCreateState(sessionId);
 
-    if (state.activity === 'thinking') {
+    // Keep a genuinely-thinking session warm for the stale-thinking watchdog,
+    // but NOT once the agent reported waiting-for-input (`idleHintPending`).
+    // After an idle_hint, status.json churn is parked-TUI statusline noise, not
+    // proof of work; letting it refresh `lastSignalAt` here would re-blind the
+    // (now `signal`-anchored) stale-thinking net exactly as PTY repaints did,
+    // pinning a stuck `turnActive` past 180s (task #294).
+    if (state.activity === 'thinking' && !state.idleHintPending) {
       this.activityEngine.markThinkingSignal(sessionId);
     }
 
@@ -350,7 +356,17 @@ export class SessionTelemetry {
     // turn's output: frozen while parked, growing only on real generation. The
     // 1-second grace prevents races between a status update and an idle event
     // landing in the same tick.
-    if (previousUsage && state.activity === 'idle') {
+    //
+    // Provenance gate (`!state.idleAuthoritative`): even output-only growth is
+    // not always real generation. A parked Claude session ticks
+    // `total_output_tokens` upward on background, non-turn housekeeping
+    // (compaction/summarization) with NO turn-start hook, which would override a
+    // fresh, hook-derived idle and pin a parked agent ACTIVE (task #294). So the
+    // heartbeat may only force-think when the current idle is NOT
+    // hook-authoritative - preserving its real job (waking a fallback/watchdog
+    // idle whose agent is actually generating) while ignoring housekeeping on a
+    // session the agent explicitly told us was done.
+    if (previousUsage && state.activity === 'idle' && !state.idleAuthoritative) {
       const previousOutputTokens = previousUsage.contextWindow.totalOutputTokens;
       const currentOutputTokens = usage.contextWindow.totalOutputTokens;
       const idleStart = state.idleTimestamp;

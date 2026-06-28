@@ -330,6 +330,25 @@ export interface SessionEngineState {
   /** Wall-clock ms of the most recent idle transition (used by idle-timeout sweep). */
   idleTimestamp: number | null;
   /**
+   * Provenance of the CURRENT idle: true iff this idle was entered via a
+   * genuine hook turn-end (a non-permission `Idle` hook, an `idle_hint` that
+   * cleared `turnActive`, or an `Interrupted`/`TurnFailed`) - "the agent told
+   * us the turn ended". False when idle was entered via a fallback (a watchdog
+   * hatch resetting a stuck holder, or `forceIdle`), or for a brand-new
+   * never-started session.
+   *
+   * Read by the status-file heartbeat recovery
+   * (`SessionTelemetry.processStatusUpdate`): output-token growth while idle may
+   * only force-think when the idle was NOT hook-authoritative. This stops
+   * background non-turn housekeeping (compaction/summarization output emitted
+   * with no turn-start hook) from re-activating a parked pure-hooks agent, while
+   * preserving the net's real job of recovering a fallback idle whose agent is
+   * actually generating. Re-assigned (to true or false, not merely cleared) at
+   * each turn-ending, force-idle, and watchdog-hatch entry; only meaningful
+   * while `activity === 'idle'`.
+   */
+  idleAuthoritative: boolean;
+  /**
    * Pending stability-window idle. When non-null, an idle transition
    * is scheduled to commit at this wall-clock ms. A thinking signal
    * arriving before then cancels it.

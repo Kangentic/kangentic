@@ -26,13 +26,18 @@ interface DecisionLog {
   idleTimeouts: string[];
 }
 
-function makeTelemetry(log: DecisionLog, notRunning: Set<string>): SessionTelemetry {
+function makeTelemetry(
+  log: DecisionLog,
+  notRunning: Set<string>,
+  engineOverrides: Partial<NonNullable<SessionTelemetryOptions['activityEngineOptions']>> = {},
+): SessionTelemetry {
   const options: SessionTelemetryOptions = {
     disableBgShellWatcher: true,
     activityEngineOptions: {
       bgShellEscapeHatchMs: 600_000,
       staleThinkingTimeoutMs: 600_000,
       idleStabilityWindowMs: 0,
+      ...engineOverrides,
     },
   };
   return new SessionTelemetry(
@@ -185,6 +190,73 @@ describe('SessionTelemetry activity decisions', () => {
       telemetry.processStatusUpdate('s1', usage(100, 50)); // markThinkingSignal branch
       expect(telemetry.getActivityCache()['s1']).toBe('thinking');
       expect(log.activityChanges).toHaveLength(0);
+    });
+
+    // Task #294: a parked Claude session ticks total_output_tokens upward on
+    // background housekeeping (compaction/summarization) with NO turn-start hook.
+    // When the idle was hook-AUTHORITATIVE (a real Idle/Stop or idle_hint that
+    // ended the turn), that output growth must NOT force-think it back to active -
+    // the agent told us it is parked. (The fresh-initSession idle in the tests
+    // above is NON-authoritative, which is why it correctly recovers; this is the
+    // provenance distinction.)
+    //
+    // Red-green: drop the `!state.idleAuthoritative` guard in processStatusUpdate
+    // and this goes red (the second status update force-thinks the parked agent).
+    it('does NOT recover when output grows but the idle is hook-authoritative (parked agent)', () => {
+      telemetry.initSession('s1');
+      telemetry.ingestEvents('s1', [{ ts: Date.now(), type: EventType.Prompt }]); // thinking
+      telemetry.ingestEvents('s1', [{ ts: Date.now(), type: EventType.Idle }]); // hook-authoritative idle
+      expect(telemetry.getActivityCache()['s1']).toBe('idle');
+      telemetry.processStatusUpdate('s1', usage(602813, 1273)); // seed previousUsage
+      vi.advanceTimersByTime(1_500); // idle for >1s, past the grace
+      telemetry.processStatusUpdate('s1', usage(610402, 1400)); // output grew (housekeeping)
+      expect(telemetry.getActivityCache()['s1']).toBe('idle');
+    });
+
+    // The guard is provenance-scoped, not a blanket suppression: a FALLBACK idle
+    // (here the stale-thinking watchdog reclaimed a stuck turn) still recovers
+    // when output grows, since the engine only GUESSED the turn ended. This pins
+    // that the heartbeat's real job (waking a non-authoritative idle whose agent
+    // is actually generating) survives the fix.
+    it('STILL recovers when output grows on a non-authoritative (watchdog) idle', () => {
+      const localLog: DecisionLog = { activityChanges: [], events: [], suspends: [], idleTimeouts: [] };
+      const localTelemetry = makeTelemetry(localLog, new Set(), { staleThinkingTimeoutMs: 1_000 });
+      localTelemetry.initSession('s1');
+      localTelemetry.ingestEvents('s1', [{ ts: Date.now(), type: EventType.Prompt }]); // thinking
+      vi.advanceTimersByTime(1_100); // stale-thinking watchdog reclaims -> fallback idle
+      expect(localTelemetry.getActivityCache()['s1']).toBe('idle');
+      localTelemetry.processStatusUpdate('s1', usage(100, 50)); // seed previousUsage
+      vi.advanceTimersByTime(1_500);
+      localTelemetry.processStatusUpdate('s1', usage(100, 120)); // output grew: real generation
+      expect(localTelemetry.getActivityCache()['s1']).toBe('thinking');
+      localTelemetry.dispose();
+    });
+
+    // Task #294 part 2: once idle_hint is pending, status.json churn is parked-TUI
+    // statusline noise, not proof of work - the heartbeat must NOT keep refreshing
+    // lastSignalAt, or it re-blinds the stale-thinking net and pins a stuck turn.
+    //
+    // Red-green: drop the `&& !state.idleHintPending` guard on the markThinkingSignal
+    // call and this goes red (the mid-window heartbeat re-arms the watchdog, so the
+    // stuck turn never idles within the window).
+    it('heartbeat does NOT keep a stuck turnActive warm once idle_hint is pending (part 2)', () => {
+      const localLog: DecisionLog = { activityChanges: [], events: [], suspends: [], idleTimeouts: [] };
+      const localTelemetry = makeTelemetry(localLog, new Set(), { staleThinkingTimeoutMs: 1_000 });
+      const now = Date.now();
+      localTelemetry.initSession('s1');
+      localTelemetry.ingestEvents('s1', [{ ts: now, type: EventType.Prompt }]); // thinking
+      localTelemetry.ingestEvents('s1', [{ ts: now, type: EventType.ToolStart, tool: 'Bash', toolId: 't1' }]);
+      localTelemetry.ingestEvents('s1', [{ ts: now, type: EventType.IdleHint, detail: 'Claude is waiting for your input' }]);
+      localTelemetry.ingestEvents('s1', [{ ts: now, type: EventType.ToolEnd, tool: 'Bash', toolId: 't1' }]);
+      // Stuck: turnActive true, counters zero, idle_hint pending; lastSignalAt
+      // frozen at the ToolEnd, the stale-thinking timer armed for 1000ms.
+      expect(localTelemetry.getActivityCache()['s1']).toBe('thinking');
+
+      vi.advanceTimersByTime(600); // a heartbeat lands BEFORE the stale window
+      localTelemetry.processStatusUpdate('s1', usage(100, 50));
+      vi.advanceTimersByTime(600); // total 1200ms > the 1000ms stale window
+      expect(localTelemetry.getActivityCache()['s1']).toBe('idle');
+      localTelemetry.dispose();
     });
   });
 

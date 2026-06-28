@@ -278,6 +278,8 @@ When only ANONYMOUS bg shells (`anonymousBackgroundShellCount`, no shell_id) hol
 
 Held by `turnActive` alone (no tools, no subagent, no bg shells) for 180 seconds. The matching Idle/Stop hook never arrived. Emits synthetic `Idle/Timeout`, clears `turnActive`. Bypasses the stability window (the 180s already debounced any flicker). Anchored to the FRESHER of `lastSignalAt` and `lastPtyOutputAt` (`anchor: 'signal-or-pty-output'`, resolved in `watchdogBaseTime`). `lastSignalAt` is refreshed by every non-log-only event - including `tool_end` (a `PostToolUse` hook is proof of liveness), so a foreground tool longer than 180s that ends while the turn continues gets a fresh window instead of being force-idled the instant it ends (task #229; pinned by `session-016-false-idle-after-long-foreground-tool`). `lastPtyOutputAt` is refreshed by `markPtyOutput` (called unconditionally on every PTY chunk by the spawn flow), so a single heavy generation turn that streams output for >180s with no nested hook event and a silent status heartbeat is not force-idled either (task #246; pinned by `session-019-false-idle-tool-less-streaming-gap`). A genuinely-finished turn sits at a quiet prompt with no PTY data (a blinking cursor is xterm-rendered terminal state, not a PTY chunk), so the anchor freezes and the safety net still fires at the threshold.
 
+**Exception while an `idle_hint` is pending (`idleHintAnchor: 'signal'`).** A parked Claude TUI keeps repainting its statusline (rate-limit / context meter, spinner) = real PTY bytes, so the `signal-or-pty-output` anchor stays fresh forever and the net never fires - the safety net is blinded by the same parked-TUI behavior. Once the agent reports waiting-for-input (`idleHintPending`), those repaints are noise, not liveness, so the hold narrows its anchor to `signal` (`lastSignalAt` only, ignoring `lastPtyOutputAt`); paired with the heartbeat no longer refreshing `lastSignalAt` while `idleHintPending` (see [Heartbeat recovery and idle provenance](#heartbeat-recovery-and-idle-provenance)), `lastSignalAt` freezes at the last genuine hook and the 180s net self-heals a stuck `turnActive` from any cause (task #294). A live long-generation turn never fires `idle_hint`, so it keeps the `signal-or-pty-output` anchor and the PTY keeps it alive (#246).
+
 ### 4. Stuck-pending-tools watchdog (5 min)
 
 Held by `pendingToolCount > 0` alone for 5 minutes. Common cause: user pressed Ctrl+C, the agent killed the bash, but `PostToolUseFailure` didn't propagate. Without this hatch the engine would be stuck in `thinking` forever - the stale-thinking watchdog requires `pendingToolCount === 0` to fire, the bg-shell holds require bg shells, and the Idle clamp only works when Idle actually fires.
@@ -306,6 +308,19 @@ Append to the table in `buildWatchdogHolds()`:
 ```
 
 The predicates partition the state space, so `findActiveWatchdogHold` returns the first match. Each hold declares its timer anchor explicitly via the `anchor` field, and `watchdogBaseTime` (plus `scheduleTimer`'s `bgShellHoldSince` maintenance) dispatches on it; a new `WatchdogAnchor` kind is a compile-time error rather than a silent fall-through. The `trigger` string is only the audit-log label and the key for the compensation-counter tally. The two bg-shell holds share both `trigger: 'timer:bg-shell-hatch'` and `anchor: 'bg-shell-hold-since'`, so they behave as the same hold class with different thresholds. If a new hold's predicate could overlap an existing one, mind the table order.
+
+## Heartbeat recovery and idle provenance
+
+For a pure-`hooks` agent (Claude) the `PtyActivityTracker` never fires, so the status-file heartbeat is the ONLY force-thinking path. `SessionTelemetry.processStatusUpdate` runs on every `status.json` change: if the engine is idle and the agent's cumulative **OUTPUT** tokens (`contextWindow.totalOutputTokens`) grew while idle for >1s, it calls `forceThinking` - the agent silently resumed generating. Output only, never input: Claude's `totalInputTokens` is current context-window occupancy (cache + input) that climbs while parked at the prompt with no generation, so summing it would false-flip a correct idle to thinking on a parked session (#295 / #297, fixed by the output-only compare in #298).
+
+Output-only is necessary but not sufficient. A parked session still ticks `total_output_tokens` upward on background, non-turn housekeeping (compaction / summarization) emitted with NO turn-start hook, and the heartbeat read that as "resumed generating" and pinned a parked agent ACTIVE (task #294). So the engine records **idle provenance** on `SessionEngineState.idleAuthoritative`:
+
+- **Authoritative** (`true`): the idle was entered via a genuine hook turn-end - a non-permission `Idle` hook, an `idle_hint` that cleared `turnActive`, or `Interrupted`/`TurnFailed`. "The agent told us the turn ended." Set at those source sites in `processEvent` (the synthetic watchdog `Idle/Timeout` is excluded).
+- **Fallback** (`false`): the idle was entered via a watchdog hatch resetting a stuck holder, via `forceIdle`, or it is a brand-new never-started session. "We only guessed the turn ended."
+
+The heartbeat may force-think ONLY on a non-authoritative idle (`!state.idleAuthoritative`). This kills the housekeeping-re-activates-a-parked-agent class while preserving the net's real job - recovering a fallback idle whose agent is actually generating (a dropped turn-start hook leaves a non-authoritative idle, so the net still fires). The trade is a rare, self-correcting false-IDLE (a fully-hook-dropped new turn after an authoritative idle shows idle until any hook lands) for eliminating the common false-ACTIVE pin. Pinned by the real-capture fixture `tests/fixtures/replay/session-020-false-active-parked-housekeeping` (asserts `forceThinking: 0` across the parked output growth) and the provenance unit tests.
+
+While `idleHintPending`, the heartbeat also stops calling `markThinkingSignal` (it would otherwise refresh `lastSignalAt` on every parked-TUI statusline write and re-blind the stale-thinking watchdog); see [the stale-thinking watchdog's `idleHintAnchor`](#3-stale-thinking-watchdog-180s).
 
 ## Ctrl+C user-interrupt synthesis (3s)
 
@@ -449,6 +464,7 @@ interface ActivityEngineOptions {
   bgShellEscapeHatchMs?: number;     // default 5 * 60_000 (stuck-pending-tools hatch AND named bg-shell cap)
   bgShellOnlyGraceMs?: number;       // default 30_000 (anonymous bg-shell sole-holder grace)
   staleThinkingTimeoutMs?: number;   // default 180_000
+  staleAfterIdleHintMs?: number;     // default 180_000 (stuck-subagent / stuck-pending-tools grace while idle_hint pending)
   idleStabilityWindowMs?: number;    // default 400
   now?: () => number;                // testability
 }

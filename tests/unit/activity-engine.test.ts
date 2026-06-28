@@ -2009,6 +2009,145 @@ describe('ActivityEngine', () => {
     });
   });
 
+  // Task #294: a parked Claude session falsely flipped idle -> active because
+  // the status-file heartbeat force-thinked it on background housekeeping output
+  // growth, overriding a fresh hook-derived idle. The engine now records idle
+  // provenance so the telemetry heartbeat can defer to a hook-authoritative idle
+  // (the suppression itself lives in SessionTelemetry.processStatusUpdate; these
+  // tests pin the field the engine exposes for it).
+  describe('idle provenance (idleAuthoritative)', () => {
+    it('a fresh session is a NON-authoritative idle (heartbeat may wake it)', () => {
+      engine.initSession(SESSION_ID);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getState(SESSION_ID)?.idleAuthoritative).toBe(false);
+    });
+
+    it('a hook Idle marks the idle hook-authoritative (set immediately, before the stability commit)', () => {
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      // The provenance flag is set the instant the hook clears the turn, even
+      // while the idle transition is still deferred by the stability window.
+      expect(engine.getState(SESSION_ID)?.idleAuthoritative).toBe(true);
+      vi.advanceTimersByTime(TEST_STABILITY_WINDOW_MS + 50);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getState(SESSION_ID)?.idleAuthoritative).toBe(true);
+    });
+
+    it('an idle_hint that ends the turn marks the idle hook-authoritative', () => {
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt)); // thinking, nothing else holds
+      engine.processEvent(SESSION_ID, event(EventType.IdleHint, { detail: 'Claude is waiting for your input' }));
+      expect(engine.getState(SESSION_ID)?.idleAuthoritative).toBe(true);
+    });
+
+    it('a watchdog hatch resets to a FALLBACK idle, overriding a prior hook-authoritative idle', () => {
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.Idle)); // hook-authoritative idle
+      vi.advanceTimersByTime(TEST_STABILITY_WINDOW_MS + 50);
+      expect(engine.getState(SESSION_ID)?.idleAuthoritative).toBe(true);
+      // A new turn starts but its Stop hook is dropped; the stale-thinking
+      // watchdog reclaims it. That reclaimed idle is a fallback, so the heartbeat
+      // stays free to recover a session that is actually generating.
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      vi.advanceTimersByTime(TEST_STALE_TIMEOUT_MS + 100);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getState(SESSION_ID)?.idleAuthoritative).toBe(false);
+    });
+
+    it('forceIdle is a FALLBACK idle (not authoritative)', () => {
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      vi.advanceTimersByTime(TEST_STABILITY_WINDOW_MS + 50);
+      expect(engine.getState(SESSION_ID)?.idleAuthoritative).toBe(true);
+      engine.forceIdle(SESSION_ID);
+      expect(engine.getState(SESSION_ID)?.idleAuthoritative).toBe(false);
+    });
+
+    it('a synthetic-style Idle/Timeout does NOT mark the idle hook-authoritative (only a real Stop does)', () => {
+      // The engine's own synthetic watchdog idle carries detail = Timeout. If it
+      // ever re-enters processEvent it must stay a FALLBACK so the heartbeat can
+      // still wake a session that is actually generating. (RED if the
+      // isSyntheticWatchdogTimeout exclusion is removed: idleAuthoritative would
+      // be set true by the plain TURN_ENDING_EVENTS branch instead.)
+      //
+      // Contrast: a plain Idle (no detail) IS hook-authoritative, because it is
+      // the real agent Stop hook.
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Timeout }));
+      expect(engine.getState(SESSION_ID)?.idleAuthoritative).toBe(false);
+
+      // Contrast path: a plain Idle (the real Stop hook) DOES mark authoritative.
+      engine.deleteSession(SESSION_ID);
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      expect(engine.getState(SESSION_ID)?.idleAuthoritative).toBe(true);
+    });
+  });
+
+  // Task #294 part 2 (defense-in-depth): once the agent reports waiting-for-input
+  // (idle_hint), parked-TUI statusline repaints (PTY bytes) must stop deferring
+  // the stale-thinking net, so a stuck turnActive self-heals at 180s. A live
+  // long-generation turn never idle-hints, so it keeps the PTY anchor (#246).
+  describe('stale-thinking ignores PTY repaints once idle_hint is pending', () => {
+    // The blind-spot shape: turnActive stuck true, all counters zero, AND
+    // idleHintPending true. Arises when idle_hint fires while a tool is still
+    // pending (idleHintEndsTurn is a no-op) and the tool then drains without a
+    // Stop hook - exactly the stuck turn parked-TUI repaints would pin forever.
+    function driveToStuckTurnWithIdleHint(target: ActivityEngine): void {
+      target.initSession(SESSION_ID);
+      target.processEvent(SESSION_ID, event(EventType.Prompt));
+      target.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Bash', toolId: 't1' }));
+      target.processEvent(SESSION_ID, event(EventType.IdleHint, { detail: 'Claude is waiting for your input' }));
+      // The tool is still pending, so idle_hint cannot end the turn: it is a
+      // no-op on turnActive but leaves idleHintPending set.
+      expect(target.getState(SESSION_ID)?.turnActive).toBe(true);
+      expect(target.getState(SESSION_ID)?.idleHintPending).toBe(true);
+      target.processEvent(SESSION_ID, event(EventType.ToolEnd, { tool: 'Bash', toolId: 't1' }));
+      expect(target.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(target.getState(SESSION_ID)?.pendingToolCount).toBe(0);
+      expect(target.getState(SESSION_ID)?.idleHintPending).toBe(true);
+    }
+
+    it('fires the stale-thinking net despite continuous PTY repaints (anchor narrows to signal)', () => {
+      const { engine: localEngine } = makeEngine();
+      driveToStuckTurnWithIdleHint(localEngine);
+
+      // Statusline repaints stream PTY bytes more frequently than the stale
+      // window. RED before the idleHintAnchor change: signal-or-pty-output keeps
+      // deferring it (staleThinking 0, stuck thinking forever).
+      const stepMs = 200;
+      for (let elapsed = 0; elapsed < TEST_STALE_TIMEOUT_MS + 400; elapsed += stepMs) {
+        vi.advanceTimersByTime(stepMs);
+        localEngine.markPtyOutput(SESSION_ID);
+      }
+      expect(localEngine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(localEngine.getState(SESSION_ID)?.compensationCounters.staleThinking).toBe(1);
+      localEngine.dispose();
+    });
+
+    it('control: without an idle_hint, PTY repaints still defer the net (#246 preserved)', () => {
+      const { engine: localEngine } = makeEngine();
+      localEngine.initSession(SESSION_ID);
+      localEngine.processEvent(SESSION_ID, event(EventType.Prompt));
+      // A live long-generation turn, no idle_hint. The PTY anchor keeps it alive.
+      const stepMs = 200;
+      for (let elapsed = 0; elapsed < TEST_STALE_TIMEOUT_MS * 2; elapsed += stepMs) {
+        vi.advanceTimersByTime(stepMs);
+        localEngine.markPtyOutput(SESSION_ID);
+      }
+      expect(localEngine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(localEngine.getState(SESSION_ID)?.compensationCounters.staleThinking).toBe(0);
+      localEngine.dispose();
+    });
+  });
+
   describe('180s stale-thinking watchdog (hook loss safety net)', () => {
     beforeEach(() => {
       engine.initSession(SESSION_ID);

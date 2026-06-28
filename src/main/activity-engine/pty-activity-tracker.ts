@@ -8,8 +8,8 @@ import type { ActivityState } from '../../shared/types';
  * active work (character-by-character streaming with <100ms gaps between
  * chunks), then go completely silent when idle. A 3-second threshold is
  * fast enough to feel responsive while comfortably exceeding intra-work
- * gaps. The stale-thinking watchdog (45s) is the safety net for any
- * edge cases.
+ * gaps. The stale-thinking watchdog (180s, DEFAULT_STALE_THINKING_TIMEOUT_MS)
+ * is the safety net for any edge cases.
  */
 const PTY_SILENCE_THRESHOLD_MS = 3_000;
 

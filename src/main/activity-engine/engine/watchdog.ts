@@ -16,8 +16,10 @@ import type { SessionEngineState, TransitionTrigger } from './shapes';
  *   alive even when hooks and the status heartbeat are silent, whether the
  *   turn is held by a foreground tool (stuck-pending-tools), a subagent
  *   (stuck-subagent), or tool-less generation (stale-thinking).
- * - `signal`: `lastSignalAt` only. Currently unused by any hold (kept as a
- *   building block for a future hold that must ignore PTY output).
+ * - `signal`: `lastSignalAt` only. Used by stale-thinking as its
+ *   `idleHintAnchor` (active while `idleHintPending`): once the agent reports
+ *   waiting-for-input, parked-TUI statusline repaints stream PTY bytes that
+ *   must NOT defer the 180s net, so it ignores `lastPtyOutputAt`.
  */
 export type WatchdogAnchor =
   | 'bg-shell-hold-since'
@@ -66,6 +68,17 @@ export interface WatchdogHold {
    * by `scheduleTimer`'s `bgShellHoldSince` stamp/clear maintenance.
    */
   anchor: WatchdogAnchor;
+  /**
+   * Optional anchor used INSTEAD of `anchor` while `state.idleHintPending` is
+   * set (parallel to `idleHintThresholdMs` for the threshold). Only stale-thinking
+   * sets it (`'signal'`): once the agent reports waiting-for-input, parked-TUI
+   * statusline repaints (PTY bytes) must stop deferring the 180s net, so the
+   * hold ignores `lastPtyOutputAt` and anchors to `lastSignalAt` alone. A live
+   * long-generation turn never fires `idle_hint`, so its anchor stays
+   * `signal-or-pty-output` and the PTY anchor still defers it (#246). Undefined
+   * holds always use `anchor`.
+   */
+  idleHintAnchor?: WatchdogAnchor;
   /** Mutates state to clear the stuck holder. Called once threshold fires. */
   reset(state: SessionEngineState): void;
   /**
@@ -222,6 +235,16 @@ export function buildWatchdogHolds(config: WatchdogConfig): readonly WatchdogHol
       // silence detector), so the anchor freezes and the safety net still fires
       // at the threshold. A blinking cursor is xterm-rendered terminal state,
       // not PTY data, so it never calls `markPtyOutput` and cannot defer it.
+      //
+      // Exception: once the agent reports waiting-for-input (`idleHintPending`),
+      // even genuine statusline-repaint PTY bytes are noise, not liveness - a
+      // parked Claude TUI repaints its rate-limit/context meter forever, which
+      // is exactly what kept this net blinded past 180s (task #294). So while an
+      // idle_hint is pending the anchor narrows to `signal` (lastSignalAt only),
+      // ignoring `lastPtyOutputAt`; with the heartbeat's `markThinkingSignal`
+      // gated off under the same condition, lastSignalAt freezes at the last
+      // genuine hook and the net self-heals. A live long-generation turn never
+      // idle-hints, so it keeps the PTY anchor (#246).
       predicate: (state) =>
         state.turnActive
         && state.pendingToolCount === 0
@@ -231,6 +254,7 @@ export function buildWatchdogHolds(config: WatchdogConfig): readonly WatchdogHol
       thresholdMs: config.staleThinkingTimeoutMs,
       trigger: 'timer:stale-thinking',
       anchor: 'signal-or-pty-output',
+      idleHintAnchor: 'signal',
       reset: (state) => {
         state.turnActive = false;
       },

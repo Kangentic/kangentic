@@ -1,0 +1,5 @@
+{
+  "sessionId": "00000000-0000-0000-0000-000000000000",
+  "capturedAt": "2026-06-27",
+  "note": "Real capture of task #294 false-ACTIVE-on-parked (session 81bd89cb, sanitized). The agent finished its turn (TaskUpdate -> task_completed) and parked: a hook-authoritative idle landed (then idle_hint 'Claude is waiting for your input'), but status.json output kept ticking up while parked (1273 -> 1893, background compaction/summarization housekeeping with no turn-start hook). Pre-fix the OUTPUT-only heartbeat recovery read that as 'resumed generating' and force-thinked the parked agent ACTIVE, then the parked-TUI statusline repaints (pty-chunks) kept the stale-thinking watchdog blinded so it pinned active 32m+. The fix records idle provenance and suppresses heartbeat force-thinking on a hook-authoritative idle. status-deltas reconstructed from the captured endpoints (output 1273 at capture #1 -> 1893 final; input 602813 -> 627127); pty-chunks downsampled to the parked statusline repaint cadence."
+}

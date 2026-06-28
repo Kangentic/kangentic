@@ -1,0 +1,5 @@
+{"ts":1782597260846,"type":"tool_start","tool":"TaskUpdate","toolId":"toolu_taskupdate00000000000001"}
+{"ts":1782597261031,"type":"task_completed"}
+{"ts":1782597261211,"type":"tool_end","tool":"TaskUpdate","toolId":"toolu_taskupdate00000000000001"}
+{"ts":1782597281479,"type":"idle"}
+{"ts":1782597341676,"type":"idle_hint","detail":"Claude is waiting for your input"}

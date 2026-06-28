@@ -114,11 +114,14 @@ function mergeStreams(bundle: TraceBundle): TimedItem[] {
 
 /**
  * Mirrors `SessionTelemetry.processStatusUpdate`: status updates that
- * see the engine in 'thinking' reset lastSignalAt; status updates that
- * see the engine 'idle' for >1s with OUTPUT-token growth force-recover to
- * thinking. Output only, never input: Claude's input total is context-window
- * occupancy that climbs while parked with no generation (see the production
- * comment). If the production rule changes, update this function.
+ * see the engine in 'thinking' reset lastSignalAt (unless an idle_hint is
+ * pending - then the heartbeat is parked-TUI churn, not liveness); status
+ * updates that see the engine 'idle' for >1s with OUTPUT-token growth
+ * force-recover to thinking, but ONLY when the idle is not hook-authoritative
+ * (background housekeeping must not re-wake a parked agent). Output only, never
+ * input: Claude's input total is context-window occupancy that climbs while
+ * parked with no generation (see the production comment). If the production rule
+ * changes, update this function.
  */
 function applyStatusDelta(
   engine: ActivityEngine,
@@ -129,10 +132,12 @@ function applyStatusDelta(
   const state = engine.getState(sessionId);
   if (!state) return;
   if (state.activity === 'thinking') {
-    engine.markThinkingSignal(sessionId);
+    if (!state.idleHintPending) {
+      engine.markThinkingSignal(sessionId);
+    }
     return;
   }
-  if (state.activity === 'idle' && previous) {
+  if (state.activity === 'idle' && !state.idleAuthoritative && previous) {
     const idleStart = state.idleTimestamp;
     if (current.outputTokens > previous.outputTokens && idleStart && Date.now() - idleStart > 1000) {
       engine.forceThinking(sessionId);
@@ -393,6 +398,46 @@ describe('ActivityEngine trace-bundle replay', () => {
     });
 
     it('settles idle after the real turn ends (clean Stop)', () => {
+      expect(result.finalActivity).toBe('idle');
+    });
+  });
+
+  // Real capture of task #294 (session 81bd89cb): the agent finished its turn
+  // and parked (TaskUpdate -> task_completed -> hook-authoritative idle ->
+  // idle_hint), but status.json OUTPUT kept ticking up while parked (1273 ->
+  // 1893 - background compaction/summarization housekeeping with no turn-start
+  // hook). Pre-fix the output-only heartbeat recovery read that growth as
+  // "resumed generating" and force-thinked the parked agent ACTIVE. The fix
+  // records idle provenance (the idle hook is authoritative) and suppresses
+  // heartbeat force-thinking on a hook-authoritative idle, so the parked agent
+  // stays idle through the housekeeping growth.
+  describe('session-020-false-active-parked-housekeeping', () => {
+    let result: ReplayResult;
+    beforeEach(() => {
+      const bundle = loadTraceBundle(
+        path.join(FIXTURES_DIR, 'session-020-false-active-parked-housekeeping'),
+      );
+      result = replayBundle(bundle);
+    });
+
+    it('does not force-think a hook-authoritative parked idle when output grows (housekeeping)', () => {
+      // The reliable signal: pre-fix this is >= 1 (the first parked status delta
+      // with output 1400 > 1273 force-thinks); post-fix it is 0 (idleAuthoritative
+      // suppresses the heartbeat recovery).
+      expect(result.compensationCounters.forceThinking).toBe(0);
+    });
+
+    it('records no idle -> thinking force-thinking transition while parked', () => {
+      const falseActiveFlips = result.transitions.filter(
+        (transition) =>
+          transition.from === 'idle'
+          && transition.to === 'thinking'
+          && transition.trigger === 'force-thinking',
+      );
+      expect(falseActiveFlips).toEqual([]);
+    });
+
+    it('settles idle (the agent is genuinely parked waiting for input)', () => {
       expect(result.finalActivity).toBe('idle');
     });
   });

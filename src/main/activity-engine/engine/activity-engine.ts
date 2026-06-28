@@ -256,6 +256,18 @@ export class ActivityEngine {
         || state.subagentDepth === 0
       ) {
         state.turnActive = false;
+        // The agent told us the turn ended (a real Idle / Interrupted /
+        // TurnFailed hook), so the resulting idle is hook-authoritative - the
+        // heartbeat recovery must NOT later force-think it on background
+        // housekeeping output. Exclude the engine's OWN synthetic watchdog idle
+        // (detail=Timeout): if it ever re-enters here it must stay a fallback,
+        // matching the `idleAuthoritative = false` set in onTick's watchdog
+        // branch.
+        const isSyntheticWatchdogTimeout =
+          event.type === EventType.Idle && event.detail === IdleReason.Timeout;
+        if (!isSyntheticWatchdogTimeout) {
+          state.idleAuthoritative = true;
+        }
       }
     } else if (event.type === EventType.IdleHint) {
       // The agent reported it is waiting for input. Record it so the
@@ -273,6 +285,10 @@ export class ActivityEngine {
         // through the normal stability window - instead of waiting out the 180s
         // stale-thinking watchdog because the Stop/Idle hook was dropped.
         state.turnActive = false;
+        // The agent reported it is waiting for input AND nothing else holds the
+        // turn, so this idle is hook-authoritative (same provenance as a real
+        // Idle hook): the heartbeat recovery must not force-think it.
+        state.idleAuthoritative = true;
       }
     }
 
@@ -382,6 +398,9 @@ export class ActivityEngine {
     state.currentTool = null;
     state.pendingIdleAt = null;
     state.idleHintPending = false;
+    // PTY-silence / shutdown idle is a fallback, not a hook turn-end: leave the
+    // heartbeat recovery free to wake a session that resumes generating.
+    state.idleAuthoritative = false;
     state.compensationCounters.forceIdle += 1;
     const delta = formatCounterDelta(before, snapshotCounters(state));
     this.commitTransition(sessionId, state, 'idle', 'force-idle', delta);
@@ -687,16 +706,27 @@ export class ActivityEngine {
    *   stale-thinking): the FRESHER of `lastSignalAt` and `lastPtyOutputAt` -
    *   streaming TUI output keeps a genuinely-running turn from being
    *   force-idled even when hooks and the status heartbeat are both silent.
-   * - `signal`: `lastSignalAt` only. Currently unused by any hold.
+   * - `signal`: `lastSignalAt` only. Used by stale-thinking as its
+   *   `idleHintAnchor`: once the agent reports waiting-for-input, parked-TUI
+   *   statusline repaints (PTY bytes) must stop deferring the 180s net, so it
+   *   ignores `lastPtyOutputAt`.
    *
-   * `fallback` is returned when the relevant anchor(s) are null.
+   * A hold's `idleHintAnchor` (when set) replaces `anchor` while
+   * `state.idleHintPending` is true. `fallback` is returned when the relevant
+   * anchor(s) are null.
    */
   private watchdogBaseTime(
     state: SessionEngineState,
     hold: WatchdogHold,
     fallback: number,
   ): number {
-    switch (hold.anchor) {
+    // While an idle_hint is pending, a hold may switch to a stricter anchor
+    // (stale-thinking -> `signal`) so statusline PTY repaints stop deferring it.
+    // Mirrors `effectiveThreshold`'s idle_hint short-grace selection.
+    const anchor = state.idleHintPending && hold.idleHintAnchor !== undefined
+      ? hold.idleHintAnchor
+      : hold.anchor;
+    switch (anchor) {
       case 'bg-shell-hold-since':
         return state.bgShellHoldSince ?? fallback;
       case 'signal-or-pty-output': {
@@ -808,6 +838,12 @@ export class ActivityEngine {
       const before = snapshotCounters(state);
       this.emitSyntheticIdleTimeout(sessionId);
       hold.reset(state);
+      // A watchdog hatch GUESSED the turn ended (a holder was stuck past its
+      // threshold); it is never a hook-authoritative idle. Set false here so it
+      // persists through a deferred (stability-window) commit too - both the
+      // immediate and the deferred watchdog idle stay fallbacks, keeping the
+      // heartbeat recovery free to wake a session that is actually generating.
+      state.idleAuthoritative = false;
       // Tally the compensation. The trigger label is the canonical
       // discriminator so future watchdogs added to the table are
       // counted automatically as long as their trigger key matches.
