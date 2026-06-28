@@ -76,7 +76,7 @@ vi.mock('../../src/main/shutdown-state', () => ({
 }));
 
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: vi.fn() }));
-vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({ captureSessionMetrics: vi.fn() }));
+vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({ captureSessionMetrics: vi.fn(), refineTranscriptTokens: vi.fn() }));
 vi.mock('../../src/main/agent/shared', () => ({ interpolateTemplate: vi.fn((t: string) => t) }));
 vi.mock('node:fs', () => ({ default: { existsSync: vi.fn(() => false) } }));
 

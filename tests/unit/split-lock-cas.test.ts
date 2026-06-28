@@ -94,6 +94,7 @@ vi.mock('../../src/main/agent/shared', () => ({
 
 vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({
   captureSessionMetrics: vi.fn(),
+  refineTranscriptTokens: vi.fn(),
 }));
 
 // The backlog handler exposes abortBacklogPromotion, imported by task-move.

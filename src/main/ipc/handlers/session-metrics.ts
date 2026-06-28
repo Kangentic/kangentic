@@ -111,26 +111,33 @@ export function refineTranscriptTokens(
   sessionId: string,
   recordId: string,
 ): void {
-  const agentName = sessionManager.getSessionAgentName(sessionId);
-  const adapter = agentName ? agentRegistry.get(agentName) : undefined;
-  if (!adapter?.transcriptUsage) return;
+  // Fully best-effort: the synchronous prelude (manager/registry/repo reads)
+  // must never throw into the caller (suspend / move / reconcile run this right
+  // before marking the record suspended), so the whole body is guarded.
+  try {
+    const agentName = sessionManager.getSessionAgentName(sessionId);
+    const adapter = agentName ? agentRegistry.get(agentName) : undefined;
+    if (!adapter?.transcriptUsage) return;
 
-  const transcriptPath = sessionManager.getUsageCache()[sessionId]?.transcriptPath ?? null;
-  const record = sessionRepo.findByAnyId(recordId);
-  const agentSessionId = record?.agent_session_id ?? null;
-  const cwd = record?.cwd ?? null;
-  if (!transcriptPath && !(agentSessionId && cwd)) return;
+    const transcriptPath = sessionManager.getUsageCache()[sessionId]?.transcriptPath ?? null;
+    const record = sessionRepo.findByAnyId(recordId);
+    const agentSessionId = record?.agent_session_id ?? null;
+    const cwd = record?.cwd ?? null;
+    if (!transcriptPath && !(agentSessionId && cwd)) return;
 
-  void adapter
-    .transcriptUsage({ transcriptPath, agentSessionId, cwd })
-    .then((transcriptUsage) => {
-      if (!transcriptUsage) return;
-      sessionRepo.updateTranscriptTokens(recordId, {
-        totalInputTokens: transcriptUsage.inputTokens,
-        totalOutputTokens: transcriptUsage.outputTokens,
+    void adapter
+      .transcriptUsage({ transcriptPath, agentSessionId, cwd })
+      .then((transcriptUsage) => {
+        if (!transcriptUsage) return;
+        sessionRepo.updateTranscriptTokens(recordId, {
+          totalInputTokens: transcriptUsage.inputTokens,
+          totalOutputTokens: transcriptUsage.outputTokens,
+        });
+      })
+      .catch(() => {
+        // Best-effort: leave the snapshot tokens in place.
       });
-    })
-    .catch(() => {
-      // Best-effort: leave the snapshot tokens in place.
-    });
+  } catch {
+    // Best-effort: never break the calling suspend/move/reconcile flow.
+  }
 }

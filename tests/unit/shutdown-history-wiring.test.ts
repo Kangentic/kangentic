@@ -71,6 +71,7 @@ vi.mock('../../src/main/db/repositories/usage-history-repository', () => ({
 const mockCaptureSessionMetrics = vi.fn();
 vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({
   captureSessionMetrics: (...args: unknown[]) => mockCaptureSessionMetrics(...args),
+  refineTranscriptTokens: vi.fn(),
 }));
 
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({

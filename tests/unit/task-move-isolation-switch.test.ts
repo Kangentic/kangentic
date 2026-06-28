@@ -87,7 +87,7 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 }));
 
 vi.mock('../../src/main/ipc/handlers/backlog', () => ({ abortBacklogPromotion: vi.fn() }));
-vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({ captureSessionMetrics: vi.fn() }));
+vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({ captureSessionMetrics: vi.fn(), refineTranscriptTokens: vi.fn() }));
 
 vi.mock('../../src/main/agent/shared', () => ({
   interpolateTemplate: vi.fn((template: string) => template),

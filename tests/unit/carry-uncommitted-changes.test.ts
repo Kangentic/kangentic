@@ -58,7 +58,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   cleanupTaskResources: vi.fn(),
 }));
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: vi.fn() }));
-vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({ captureSessionMetrics: vi.fn() }));
+vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({ captureSessionMetrics: vi.fn(), refineTranscriptTokens: vi.fn() }));
 
 import fs from 'node:fs';
 import { carryUncommittedChanges } from '../../src/main/ipc/handlers/task-branch';
