@@ -2089,6 +2089,42 @@ describe('ActivityEngine', () => {
       engine.processEvent(SESSION_ID, event(EventType.Idle));
       expect(engine.getState(SESSION_ID)?.idleAuthoritative).toBe(true);
     });
+
+    it('Interrupted marks the idle hook-authoritative (bypassed turn; heartbeat must not re-wake on compaction)', () => {
+      // After a user Ctrl+C, the turn ends via Interrupted which routes through
+      // applyInterruptedBypass. The resulting idle must be hook-authoritative so
+      // the heartbeat does not false-think the session when background compaction
+      // ticks output tokens while Claude shuts down.
+      //
+      // RED if idleAuthoritative=true is omitted from the TURN_ENDING_EVENTS block
+      // for Interrupted (e.g. the assignment is narrowed to event.type===Idle only):
+      // idleAuthoritative would stay false, and processStatusUpdate would later
+      // force-think a user-stopped session on any output growth.
+      //
+      // Note: applyInterruptedBypass clears counters but does NOT touch
+      // idleAuthoritative, so the value set in the TURN_ENDING_EVENTS block persists.
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.Interrupted));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getState(SESSION_ID)?.idleAuthoritative).toBe(true);
+    });
+
+    it('TurnFailed marks the idle hook-authoritative (service-error abort; heartbeat must not re-wake on compaction)', () => {
+      // A rate-limit / overload abort arrives as TurnFailed (Claude StopFailure
+      // hook). Same provenance as Interrupted: the agent explicitly ended the turn
+      // via a hook, so the resulting idle is authoritative. Background compaction
+      // that ticks output tokens post-failure must NOT re-wake the session.
+      //
+      // RED if idleAuthoritative=true is omitted from the TurnFailed branch: stays
+      // false, and a post-failure status update with growing output tokens would
+      // wrongly force-think the failed session as active.
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.TurnFailed, { detail: 'rate_limit' }));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getState(SESSION_ID)?.idleAuthoritative).toBe(true);
+    });
   });
 
   // Task #294 part 2 (defense-in-depth): once the agent reports waiting-for-input
