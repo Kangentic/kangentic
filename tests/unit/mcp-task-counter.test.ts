@@ -7,19 +7,23 @@ import { describe, it, expect, vi } from 'vitest';
 // the whole handler-helpers module and so cannot cover makeTaskCounter itself).
 vi.mock('../../src/main/agent/commands', () => ({ commandHandlers: {} }));
 
-import { makeTaskCounter } from '../../src/main/agent/mcp-http/handler-helpers';
+import { makeTaskCounter, DEFAULT_MAX_TASK_CREATE_PER_LAUNCH } from '../../src/main/agent/mcp-http/handler-helpers';
+import { DEFAULT_CONFIG } from '../../src/shared/types';
 
-// The runaway-loop ceiling is a fixed internal constant (MAX_TASK_CREATE_PER_LAUNCH
-// in handler-helpers.ts), not a user-tunable setting. limit() reports it.
-describe('makeTaskCounter (fixed runaway-loop ceiling)', () => {
-  it('reports a high fixed ceiling via limit()', () => {
+// The runaway-loop ceiling is user-configurable (mcpServer.maxTaskCreatePerLaunch),
+// with DEFAULT_MAX_TASK_CREATE_PER_LAUNCH as the fallback default used when no
+// configured value is available at startup. limit() reports whichever ceiling the
+// counter was built with.
+describe('makeTaskCounter (configurable runaway-loop ceiling)', () => {
+  it('reports the default ceiling via limit() when none is supplied', () => {
     const counter = makeTaskCounter();
-    expect(counter.limit()).toBeGreaterThanOrEqual(500);
+    expect(counter.limit()).toBe(DEFAULT_MAX_TASK_CREATE_PER_LAUNCH);
   });
 
-  it('reserves up to the ceiling, then refuses', () => {
-    const counter = makeTaskCounter();
-    const ceiling = counter.limit();
+  it('honors a configured ceiling: reserves up to it, then refuses', () => {
+    const ceiling = 3;
+    const counter = makeTaskCounter(ceiling);
+    expect(counter.limit()).toBe(ceiling);
 
     for (let reserved = 0; reserved < ceiling; reserved++) {
       expect(counter.tryReserve()).toBe(true);
@@ -36,5 +40,25 @@ describe('makeTaskCounter (fixed runaway-loop ceiling)', () => {
     expect(first.tryReserve()).toBe(true);
     // A reservation on one counter does not advance the other.
     expect(second.tryReserve()).toBe(true);
+  });
+
+  // The fallback default MUST be derived from DEFAULT_CONFIG, not a second
+  // hardcoded literal, so the shipped default and the startup fallback can never
+  // drift apart (the design intent documented in handler-helpers.ts).
+  //
+  // Red-green: change DEFAULT_MAX_TASK_CREATE_PER_LAUNCH in handler-helpers.ts
+  // from `DEFAULT_CONFIG.mcpServer.maxTaskCreatePerLaunch` to a bare literal that
+  // differs from the config default (e.g. `500`) and this fails.
+  it('derives the default ceiling from DEFAULT_CONFIG (no drift)', () => {
+    expect(DEFAULT_MAX_TASK_CREATE_PER_LAUNCH).toBe(DEFAULT_CONFIG.mcpServer.maxTaskCreatePerLaunch);
+  });
+
+  // A ceiling of 0 (which the UI guard forbids, but which a hand-edited config
+  // file could still supply) must refuse every reservation rather than allowing
+  // one through off-by-one.
+  it('refuses all reservations when built with a ceiling of 0', () => {
+    const counter = makeTaskCounter(0);
+    expect(counter.limit()).toBe(0);
+    expect(counter.tryReserve()).toBe(false);
   });
 });

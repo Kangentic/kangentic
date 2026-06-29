@@ -723,6 +723,7 @@ app.whenReady().then(async () => {
   // from before the toggle was flipped off can never grant access at
   // runtime.
   try {
+    const mcpTaskCreateLimit = getOptionalIpcContext()?.configManager.load().mcpServer?.maxTaskCreatePerLaunch;
     mcpServerHandle = await startMcpHttpServer(
       (projectId) => {
         const ctx = getOptionalIpcContext();
@@ -732,6 +733,7 @@ app.whenReady().then(async () => {
         return createRequestResolver(ctx, projectId);
       },
       () => readBrowserAutomationConfig(getOptionalIpcContext()?.configManager ?? windowConfigManager),
+      mcpTaskCreateLimit,
     );
   } catch (err) {
     console.error('[APP] Failed to start MCP HTTP server:', err);

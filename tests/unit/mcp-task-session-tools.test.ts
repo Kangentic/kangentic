@@ -76,9 +76,10 @@ vi.mock('../../src/main/agent/mcp-http/handler-helpers', () => ({
   makeTaskCounter: () => {
     let count = 0;
     // Arbitrary high ceiling so the routing tests' creations are never throttled.
-    // It mirrors MAX_TASK_CREATE_PER_LAUNCH in handler-helpers.ts but need not stay
-    // in lockstep: the exhaustion tests below use their own decoupled counters, and
-    // the real ceiling is verified in mcp-task-counter.test.ts.
+    // It is decoupled from the real DEFAULT_MAX_TASK_CREATE_PER_LAUNCH in
+    // handler-helpers.ts and need not stay in lockstep: the exhaustion tests below
+    // use their own counters, and the configurable ceiling is verified in
+    // mcp-task-counter.test.ts.
     const ceiling = 500;
     return {
       tryReserve: vi.fn(() => {

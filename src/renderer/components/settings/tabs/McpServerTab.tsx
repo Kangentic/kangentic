@@ -1,7 +1,8 @@
 import { Plug } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/types';
+import { DEFAULT_CONFIG } from '../../../../shared/types';
 import { MCP_TOOL_CATEGORIES, MCP_TOOL_MANIFEST } from '../../../../shared/mcp-tool-manifest';
-import { SectionHeader, SettingToggleRow, useScopedUpdate } from '../shared';
+import { INPUT_CLASS, SectionHeader, SettingRow, SettingToggleRow, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
 export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
@@ -17,6 +18,22 @@ export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
       />
 
       <div className={enabled ? '' : 'opacity-40 pointer-events-none'}>
+        <SectionHeader label="Safeguards" searchIds={['mcpServer.maxTaskCreatePerLaunch']} />
+        <SettingRow {...settingProps('mcpServer.maxTaskCreatePerLaunch')}>
+          <input
+            type="number"
+            value={globalConfig.mcpServer?.maxTaskCreatePerLaunch ?? DEFAULT_CONFIG.mcpServer.maxTaskCreatePerLaunch}
+            onChange={(event) => {
+              if (event.target.value === '') return;
+              const value = Number(event.target.value);
+              if (Number.isInteger(value) && value >= 1) updateGlobal({ mcpServer: { maxTaskCreatePerLaunch: value } });
+            }}
+            min={1}
+            step={1}
+            className={INPUT_CLASS}
+          />
+        </SettingRow>
+
         <SectionHeader label="Available Tools" searchIds={['mcpServer.enabled']} />
         {MCP_TOOL_CATEGORIES.map((category) => {
           const tools = MCP_TOOL_MANIFEST.filter((tool) => tool.category === category.id);
