@@ -42,6 +42,9 @@
 /warp.cmd
 /warp.ps1
 
+# Superpowers scratch files (progress ledgers, briefs, diffs, reports)
+.superpowers/
+
 # Build output
 dist/
 
