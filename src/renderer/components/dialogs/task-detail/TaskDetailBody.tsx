@@ -45,6 +45,8 @@ interface TaskDetailBodyProps {
   resumeError?: string;
   onResetSession?: () => void;
   browserOpen: boolean;
+  /** Whether the description peek is open (only relevant when hasSessionContext is true). */
+  descriptionPeekOpen?: boolean;
 }
 
 export function TaskDetailBody({
@@ -70,6 +72,7 @@ export function TaskDetailBody({
   resumeError,
   onResetSession,
   browserOpen,
+  descriptionPeekOpen = false,
 }: TaskDetailBodyProps) {
   const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
   const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
@@ -121,8 +124,8 @@ export function TaskDetailBody({
   );
 
   // Description view mode with attachment thumbnails (non-archived, non-session)
-  const descriptionBar = !isArchived && (task.description || savedAttachments.length > 0 || hasLabelsOrPriority) && !hasSessionContext && (
-    <div className="px-4 py-3 border-b border-edge flex-shrink-0 space-y-2">
+  const descriptionBar = !isArchived && (task.description || savedAttachments.length > 0 || hasLabelsOrPriority) && (!hasSessionContext || descriptionPeekOpen) && (
+    <div className={`px-4 py-3 border-b border-edge flex-shrink-0 space-y-2${hasSessionContext ? ' max-h-[25vh] overflow-y-auto' : ''}`}>
       {task.description && (
         <MarkdownRenderer content={task.description} />
       )}
