@@ -240,6 +240,15 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     defaultCombo: 'Mod+Shift+G',
     rebindable: true,
   },
+  {
+    id: 'taskDetail.toggleDescription',
+    label: 'Toggle Description Peek',
+    description: 'Show or hide the description strip above the terminal in the task detail dialog.',
+    group: 'Task Detail',
+    scope: 'task-dialog',
+    defaultCombo: 'Mod+Shift+I',
+    rebindable: true,
+  },
   // Changes panel review navigation. Next/prev change steps through the diff
   // hunks and rolls into the adjacent file at a file's first/last change (F7 /
   // Shift+F7 is the VS Code / JetBrains diff-nav convention, offered as an alt).
