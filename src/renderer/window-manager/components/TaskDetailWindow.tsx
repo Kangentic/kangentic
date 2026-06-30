@@ -121,6 +121,7 @@ export function TaskDetailWindow({
   const [modelOverride, setModelOverride] = useState(task.model_override ?? '');
   const [effortOverride, setEffortOverride] = useState(task.effort_override ?? '');
   const [isEditing, setIsEditing] = useState(!!initialEdit);
+  const [descriptionPeekOpen, setDescriptionPeekOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const changesOpen = useSessionStore((s) => s.changesOpenTasks.has(task.id));
   const toggleChangesOpen = useSessionStore((s) => s.toggleChangesOpen);
@@ -187,6 +188,14 @@ export function TaskDetailWindow({
   });
 
   const hasSessionContext = sessionState.hasSessionContext || actions.toggling;
+
+  const hasDescriptionContent = !!(
+    task.description
+    || attachments.savedAttachments.length > 0
+    || (task.priority ?? 0) > 0
+    || (task.labels ?? []).length > 0
+  );
+  const canShowDescription = hasSessionContext && hasDescriptionContent;
 
   // Unsaved-changes detection for edit mode: any editable field differing from
   // the persisted task counts as dirty (mirrors handleCancel's reverts).
@@ -263,6 +272,11 @@ export function TaskDetailWindow({
       snapWindow(windowId, action.geometry);
     }
   }, [windowId, maximizeWindow, dockWindow, snapWindow, untileWindow, popToFloat, useStore]);
+
+  const handleToggleDescription = useCallback(
+    () => setDescriptionPeekOpen((open) => !open),
+    [],
+  );
 
   const handleToggleBrowser = useCallback(() => {
     if (!browserOpen && changesOpen) toggleChangesOpen(task.id);
@@ -359,6 +373,7 @@ export function TaskDetailWindow({
   });
   useKeybinding('taskDetail.toggleBrowser', handleToggleBrowser, { capture: true, enabled: isFocused && canShowBrowser });
   useKeybinding('taskDetail.toggleChanges', handleToggleChanges, { capture: true, enabled: isFocused && sessionState.canShowChanges });
+  useKeybinding('taskDetail.toggleDescription', handleToggleDescription, { capture: true, enabled: isFocused && canShowDescription });
   useKeybinding('window.snapLeft', () => handleSnapDirection('left'), { capture: true, enabled: isFocused });
   useKeybinding('window.snapRight', () => handleSnapDirection('right'), { capture: true, enabled: isFocused });
   useKeybinding('window.snapUp', () => handleSnapDirection('up'), { capture: true, enabled: isFocused });
@@ -451,6 +466,9 @@ export function TaskDetailWindow({
       canShowBrowser={canShowBrowser}
       browserOpen={browserOpen}
       onToggleBrowser={handleToggleBrowser}
+      canShowDescription={canShowDescription}
+      descriptionPeekOpen={descriptionPeekOpen}
+      onToggleDescription={handleToggleDescription}
       isMaximized={isMaximized}
       onToggleMaximized={handleToggleMaximized}
       onUndock={isTiled ? handleUndock : undefined}
@@ -597,6 +615,7 @@ export function TaskDetailWindow({
               resumeError={actions.resumeError}
               onResetSession={actions.handleResetSession}
               browserOpen={browserOpen}
+              descriptionPeekOpen={descriptionPeekOpen}
             />
           )}
         </div>
