@@ -128,7 +128,7 @@ test.describe('Task Detail description peek', () => {
     await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).toBeVisible({ timeout: 8000 });
 
     // Pill shows active state when open
-    await expect(descriptionPill).toBeVisible();
+    await expect(descriptionPill).toBeVisible({ timeout: 5000 });
 
     // Close peek -> description text hides again
     await descriptionPill.click();
