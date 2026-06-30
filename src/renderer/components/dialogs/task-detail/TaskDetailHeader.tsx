@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, Circle, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2 } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, Circle, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, AlignLeft } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
@@ -133,6 +133,9 @@ interface TaskDetailHeaderProps {
   canShowBrowser: boolean;
   browserOpen: boolean;
   onToggleBrowser: () => void;
+  canShowDescription?: boolean;
+  descriptionPeekOpen?: boolean;
+  onToggleDescription?: () => void;
   isMaximized: boolean;
   onToggleMaximized: () => void;
   /** When provided (the window is tiled), render a "pop out" control that floats
@@ -175,6 +178,9 @@ export function TaskDetailHeader({
   canShowBrowser,
   browserOpen,
   onToggleBrowser,
+  canShowDescription = false,
+  descriptionPeekOpen = false,
+  onToggleDescription,
   isMaximized,
   onToggleMaximized,
   onUndock,
@@ -194,6 +200,7 @@ export function TaskDetailHeader({
   const closeCombo = useFormattedCombo('panel.close');
   const browserCombo = useFormattedCombo('taskDetail.toggleBrowser');
   const changesCombo = useFormattedCombo('taskDetail.toggleChanges');
+  const descriptionCombo = useFormattedCombo('taskDetail.toggleDescription');
 
   // Quick-access pills, highest priority collapses LAST. The title is reserved only
   // up to a ~50ch floor (useHeaderPillOverflow); these compete for whatever is left
@@ -205,6 +212,7 @@ export function TaskDetailHeader({
   const pillSpecs = useMemo<HeaderPillSpec[]>(() => {
     const specs: HeaderPillSpec[] = [];
     if (!isEditing) specs.push({ id: 'commands', priority: 50 });
+    if (canShowDescription) specs.push({ id: 'description', priority: 45 });
     if (task.worktree_path || projectPath) specs.push({ id: 'folder', priority: 40 });
     if (canShowChanges) specs.push({ id: 'changes', priority: 30 });
     if (task.pr_url) specs.push({ id: 'pr', priority: 25 });
@@ -213,7 +221,7 @@ export function TaskDetailHeader({
       specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
     }
     return specs;
-  }, [isEditing, task.worktree_path, task.pr_url, projectPath, canShowChanges, canShowBrowser, headerShortcuts]);
+  }, [isEditing, task.worktree_path, task.pr_url, projectPath, canShowChanges, canShowBrowser, headerShortcuts, canShowDescription]);
 
   const hiddenPillIds = useHeaderPillOverflow(headerRef, leadingRef, trailingRef, titleSpanRef, pillsRef, pillSpecs);
   const showPill = (id: string) => !hiddenPillIds.has(id);
@@ -336,6 +344,26 @@ export function TaskDetailHeader({
                   onClose={() => setShowCommandPalette(false)}
                 />
               )}
+            </div>
+          )}
+
+          {/* Description peek toggle */}
+          {showPill('description') && canShowDescription && onToggleDescription && (
+            <div data-pill-id="description" className="flex-shrink-0">
+              <Pill
+                shape="square"
+                onClick={onToggleDescription}
+                className={`flex-shrink-0 transition-colors border ${
+                  descriptionPeekOpen
+                    ? 'bg-accent/15 text-accent-fg border-accent/30'
+                    : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
+                }`}
+                title={`${descriptionPeekOpen ? 'Hide' : 'Show'} description (${descriptionCombo})`}
+                data-testid="description-peek-toggle"
+              >
+                <AlignLeft size={14} />
+                Description
+              </Pill>
             </div>
           )}
 
@@ -472,6 +500,9 @@ export function TaskDetailHeader({
               canShowBrowser={canShowBrowser}
               browserOpen={browserOpen}
               onToggleBrowser={onToggleBrowser}
+              canShowDescription={canShowDescription}
+              descriptionPeekOpen={descriptionPeekOpen}
+              onToggleDescription={onToggleDescription}
             />
           )}
         </KebabMenu>
@@ -538,6 +569,9 @@ interface TaskDetailKebabItemsProps {
   canShowBrowser: boolean;
   browserOpen: boolean;
   onToggleBrowser: () => void;
+  canShowDescription?: boolean;
+  descriptionPeekOpen?: boolean;
+  onToggleDescription?: () => void;
 }
 
 function TaskDetailKebabItems({
@@ -564,6 +598,9 @@ function TaskDetailKebabItems({
   canShowBrowser,
   browserOpen,
   onToggleBrowser,
+  canShowDescription = false,
+  descriptionPeekOpen = false,
+  onToggleDescription,
 }: TaskDetailKebabItemsProps) {
   const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
   const [showCommandsSubmenu, setShowCommandsSubmenu] = useState(false);
@@ -640,6 +677,15 @@ function TaskDetailKebabItems({
           icon={<GitCompare size={14} />}
           label={changesOpen ? 'Hide changes' : 'Show changes'}
           onClick={() => { closeAll(); onToggleChanges(); }}
+        />
+      )}
+
+      {/* Description peek */}
+      {canShowDescription && onToggleDescription && (
+        <KebabMenuItem
+          icon={<AlignLeft size={14} />}
+          label={descriptionPeekOpen ? 'Hide description' : 'Show description'}
+          onClick={() => { closeAll(); onToggleDescription(); }}
         />
       )}
 
