@@ -246,7 +246,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     description: 'Show or hide the description strip above the terminal in the task detail dialog.',
     group: 'Task Detail',
     scope: 'task-dialog',
-    defaultCombo: 'Mod+Shift+I',
+    defaultCombo: 'Mod+Shift+K',
     rebindable: true,
   },
   // Changes panel review navigation. Next/prev change steps through the diff

@@ -42,7 +42,7 @@ In `src/shared/keybindings.ts`, find the closing `},` of the `taskDetail.toggleC
     description: 'Show or hide the description strip above the terminal in the task detail dialog.',
     group: 'Task Detail',
     scope: 'task-dialog',
-    defaultCombo: 'Mod+Shift+I',
+    defaultCombo: 'Mod+Shift+K',
     rebindable: true,
   },
 ```
@@ -152,7 +152,7 @@ const preConfig = `
       id: '${TASK_ID}',
       title: 'Description Peek Task',
       description: '${TASK_DESCRIPTION}',
-      swimlane_id: laneIds['In Progress'],
+      swimlane_id: laneIds['Executing'],
       position: 0,
       agent: 'claude',
       session_id: '${SESSION_ID}',
@@ -177,7 +177,7 @@ test.beforeAll(async () => {
   const result = await launchWithState(preConfig);
   browser = result.browser;
   page = result.page;
-  await page.locator('[data-swimlane-name="In Progress"]').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('[data-swimlane-name="Executing"]').waitFor({ state: 'visible', timeout: 10000 });
 });
 
 test.afterAll(async () => {
@@ -188,7 +188,7 @@ test.describe('Task Detail description peek', () => {
   test('pill toggles description strip on and off', async () => {
     // Open the task detail dialog
     const card = page
-      .locator('[data-swimlane-name="In Progress"]')
+      .locator('[data-swimlane-name="Executing"]')
       .locator('text=Description Peek Task')
       .first();
     await card.click();
@@ -222,7 +222,7 @@ test.describe('Task Detail description peek', () => {
   test('kebab menu item toggles description strip', async () => {
     // Open the task detail dialog fresh for this test (cross-test state isolation)
     const card = page
-      .locator('[data-swimlane-name="In Progress"]')
+      .locator('[data-swimlane-name="Executing"]')
       .locator('text=Description Peek Task')
       .first();
     await card.click();
@@ -670,7 +670,7 @@ Expected: zero errors.
 npx vitest run tests/unit/keybindings-registry.test.ts
 ```
 
-Expected: all tests PASS. This confirms `taskDetail.toggleDescription` is registered, has a canonical combo (`Mod+Shift+I`), and that the `useKeybinding` call in `TaskDetailWindow` references a known id.
+Expected: all tests PASS. This confirms `taskDetail.toggleDescription` is registered, has a canonical combo (`Mod+Shift+K`), and that the `useKeybinding` call in `TaskDetailWindow` references a known id.
 
 - [ ] **Step 3: Run the UI test suite one more time**
 
