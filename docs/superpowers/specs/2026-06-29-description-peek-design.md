@@ -56,7 +56,7 @@ New entry in `src/shared/keybindings.ts`:
   description: 'Show or hide the description strip above the terminal in the task detail dialog.',
   group: 'Task Detail',
   scope: 'task-dialog',
-  defaultCombo: 'Mod+Shift+I',
+  defaultCombo: 'Mod+Shift+K',
   rebindable: true,
 }
 ```
@@ -82,7 +82,7 @@ Pill JSX (mirrors Changes/Browser pattern):
 
 - Icon: `AlignLeft` (Lucide - reads as "content/text", distinct from existing pills)
 - Active class: `bg-accent/15 text-accent-fg border-accent/30`
-- Title attribute: includes the formatted `Mod+Shift+I` combo via `useFormattedCombo`
+- Title attribute: includes the formatted `Mod+Shift+K` combo via `useFormattedCombo`
 - `data-testid="description-peek-toggle"`
 
 Kebab item added to `TaskDetailKebabItems` between Changes and Browser items:
@@ -158,7 +158,7 @@ bar. The `preparing` branch already renders `{descriptionBar}`, so the peek work
 - [ ] Peek is height-capped at 25vh and scrollable when content is tall
 - [ ] Pill only appears when there is content to show (description, attachments, labels, or priority)
 - [ ] Pill collapses into kebab overflow on narrow windows (automatic via pill overflow system)
-- [ ] Keybinding `Mod+Shift+I` toggles the peek when the task dialog is focused
+- [ ] Keybinding `Mod+Shift+K` toggles the peek when the task dialog is focused
 - [ ] Kebab menu item mirrors the pill action
 - [ ] No change to archived, queued, suspended, or changes-only body branches
 
