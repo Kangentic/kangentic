@@ -240,6 +240,29 @@ describe('updateUsage - latestRateLimits snapshot', () => {
     expect(snapshot!.rateLimits).toEqual([]);
     expect(snapshot!.sourceSessionId).toBe('sess-empty');
   });
+
+  it('does not clobber an existing snapshot when a later report carries a truthy but empty rateLimits array', () => {
+    // `data.rateLimits` of `[]` is still truthy (arrays are always truthy in
+    // JS regardless of length), so `if (data.rateLimits)` in updateUsage runs
+    // the merge path even when the report is effectively empty. This differs
+    // from the "no rateLimits when the snapshot is null" case above: here a
+    // snapshot ALREADY EXISTS, so the store's own `merged !== s.latestRateLimits`
+    // guard must hold end to end - mergeRateLimitSnapshot(current, { rateLimits:
+    // [], ... }) has no window to compare against and returns `current`
+    // unchanged, so the empty report must not reset the two populated windows
+    // to an empty array or allocate a new snapshot object.
+    useSessionStore.getState().updateUsage('sess-seed', makeUsage(makeRateLimits(60, 25)));
+    const snapshotBefore = useSessionStore.getState().latestRateLimits;
+    expect(snapshotBefore).not.toBeNull();
+
+    useSessionStore.getState().updateUsage('sess-seed', { ...makeUsage(), rateLimits: [] });
+
+    const snapshotAfter = useSessionStore.getState().latestRateLimits;
+    expect(snapshotAfter).toBe(snapshotBefore);
+    expect(snapshotAfter!.rateLimits).toHaveLength(2);
+    expect(snapshotAfter!.rateLimits[0].usedPercentage).toBe(60);
+    expect(snapshotAfter!.rateLimits[1].usedPercentage).toBe(25);
+  });
 });
 
 // ---------------------------------------------------------------------------
