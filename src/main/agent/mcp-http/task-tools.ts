@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
 import { callHandler, runHandler, withProject, detectCrossProjectMention, sanitizeProjectName, PROJECT_SELECTOR_DESCRIPTION, type TaskCounter } from './handler-helpers';
+import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
 import type { BoardHit, BacklogHit, SearchScope } from '../commands/search-commands';
 
@@ -66,6 +67,7 @@ export function registerTaskTools(
         })).optional().describe('File attachments. Always include here any local files the user referenced in the prompt by absolute path - reading a file for context does not replace attaching it. Each entry needs `filePath` (absolute) and may override the display `filename`. Skip only when the user explicitly said the file is "for context only, don\'t attach."'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: MUTATING_ANNOTATIONS,
     },
     async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, project }) => withProject(resolver, project, (ctx, resolved) => {
       // Routing guardrail: when the caller defaulted to the active
@@ -121,6 +123,7 @@ export function registerTaskTools(
       inputSchema: z.object({
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ project }) => withProject(resolver, project, async (ctx) => {
       const response = await runHandler('list_columns', {}, ctx);
@@ -145,6 +148,7 @@ export function registerTaskTools(
         column: z.string().optional().describe('Filter by column name. If omitted, returns all tasks.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ column, project }) => withProject(resolver, project, async (ctx) => {
       const response = await runHandler('list_tasks', { column: column ?? null }, ctx);
@@ -177,6 +181,7 @@ export function registerTaskTools(
         status: z.enum(['active', 'completed', 'all']).optional().describe('Filter board hits by status. "active" = on the board, "completed" = in Done/archived. Ignored for backlog hits. Defaults to "all".'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ query, scope, status, project }) => withProject(resolver, project, async (ctx) => {
       const effectiveScope: SearchScope = scope ?? 'both';
@@ -251,6 +256,7 @@ export function registerTaskTools(
         sortBy: z.enum(['tokens', 'cost', 'duration', 'toolCalls', 'linesChanged']).optional().describe('Sort results by this metric (descending). Defaults to "tokens". Only applies when querying multiple tasks.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ taskId, query, sortBy, project }) => withProject(resolver, project, (ctx) => callHandler('get_task_stats', {
       taskId: taskId ?? null,
@@ -272,6 +278,7 @@ export function registerTaskTools(
         prNumber: z.number().optional().describe('Pull request number to search for. Board-only.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ displayId, id, branch, title, prNumber, project }) => {
       if (displayId === undefined && !id && !branch && !title && prNumber === undefined) {
@@ -303,6 +310,7 @@ export function registerTaskTools(
         cwd: z.string().optional().describe('Absolute working directory path. The tool extracts the worktree slug from .kangentic/worktrees/<slug> and matches against tasks.worktree_path.'),
         branch: z.string().optional().describe('Current git branch name. Exact (case-insensitive) match against tasks.branch_name.'),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ cwd, branch }) => {
       if (!cwd && !branch) {
@@ -324,6 +332,7 @@ export function registerTaskTools(
       inputSchema: z.object({
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ project }) => withProject(resolver, project, (ctx) => callHandler('board_summary', {}, ctx, 'Failed to get board summary')),
   );
@@ -337,6 +346,7 @@ export function registerTaskTools(
         column: z.string().describe('Column name (case-insensitive).'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ column, project }) => withProject(resolver, project, (ctx) => callHandler('get_column_detail', { column }, ctx, 'Failed to get column detail')),
   );
@@ -359,6 +369,7 @@ export function registerTaskTools(
         useWorktree: z.boolean().optional().describe('Whether the task uses an isolated git worktree.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: MUTATING_ANNOTATIONS,
     },
     async ({ taskId, title, description, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, project }) => {
       if (
@@ -391,6 +402,7 @@ export function registerTaskTools(
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: MUTATING_ANNOTATIONS,
     },
     async ({ taskId, project }) => withProject(resolver, project, (ctx) => callHandler('link_pr', { taskId }, ctx, 'Failed to resolve PR')),
   );
@@ -405,6 +417,7 @@ export function registerTaskTools(
         column: z.string().describe('Target column name (case-insensitive, e.g. "Review", "In Progress", "Done").'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: MUTATING_ANNOTATIONS,
     },
     async ({ taskId, column, project }) => withProject(resolver, project, (ctx) => callHandler('move_task', { taskId, column }, ctx, 'Failed to move task')),
   );
@@ -430,6 +443,7 @@ export function registerTaskTools(
         planExitTargetColumn: z.string().nullable().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning. Null to disable.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: MUTATING_ANNOTATIONS,
     },
     async ({ column, name, description, color, icon, autoSpawn, autoCommand, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, planExitTargetColumn, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
       column,
@@ -457,6 +471,7 @@ export function registerTaskTools(
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: MUTATING_ANNOTATIONS,
     },
     async ({ taskId, project }) => withProject(resolver, project, (ctx) => callHandler('delete_task', { taskId }, ctx, 'Failed to delete task')),
   );

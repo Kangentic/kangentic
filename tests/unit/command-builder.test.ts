@@ -1481,6 +1481,128 @@ describe('Merged Settings -- MCP Server via --mcp-config', () => {
 
 });
 
+describe('Merged Settings - kangentic MCP allow-rule injection', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-allow-'));
+    fs.mkdirSync(path.join(tmpDir, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, '.claude', 'settings.json'), '{}');
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** Build a session and return its written merged settings.json object. */
+  function buildAndReadSettings(
+    sessionId: string,
+    options: Record<string, unknown>,
+  ): { allow?: string[]; deny?: string[] } | undefined {
+    const builder = new CommandBuilder();
+    const statusOutput = path.join(tmpDir, '.kangentic', 'sessions', sessionId, 'status.json');
+    fs.mkdirSync(path.dirname(statusOutput), { recursive: true });
+    builder.buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: `${sessionId}-task`,
+      cwd: tmpDir,
+      permissionMode: 'default',
+      sessionId,
+      statusOutputPath: statusOutput,
+      ...options,
+    });
+    const settingsPath = path.join(tmpDir, '.kangentic', 'sessions', sessionId, 'settings.json');
+    const merged = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    return merged.permissions;
+  }
+
+  it('injects mcp__kangentic into permissions.allow when the MCP server is attached', () => {
+    const permissions = buildAndReadSettings('inject-basic', {
+      mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project',
+      mcpServerToken: 'deadbeef-test-token',
+    });
+    expect(permissions?.allow).toContain('mcp__kangentic');
+  });
+
+  it('does not duplicate the rule when project settings already carry it', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.claude', 'settings.json'),
+      JSON.stringify({ permissions: { allow: ['mcp__kangentic', 'Read'] } }),
+    );
+    const permissions = buildAndReadSettings('inject-dedup', {
+      mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project',
+      mcpServerToken: 'deadbeef-test-token',
+    });
+    const occurrences = (permissions?.allow ?? []).filter((rule) => rule === 'mcp__kangentic');
+    expect(occurrences).toHaveLength(1);
+    // The pre-existing user entry is preserved alongside the (deduped) rule.
+    expect(permissions?.allow).toContain('Read');
+    expect(permissions?.allow).toHaveLength(2);
+  });
+
+  it('does not inject when the MCP server is disabled, even with url and token set', () => {
+    const permissions = buildAndReadSettings('inject-disabled', {
+      mcpServerEnabled: false,
+      mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project',
+      mcpServerToken: 'deadbeef-test-token',
+    });
+    // Base settings had no permissions, and the gate did not fire, so no key.
+    expect(permissions).toBeUndefined();
+    // The gate is shared with the mcp.json write, so that is absent too.
+    const sessionMcpPath = path.join(tmpDir, '.kangentic', 'sessions', 'inject-disabled', 'mcp.json');
+    expect(fs.existsSync(sessionMcpPath)).toBe(false);
+  });
+
+  it('does not inject when mcpServerUrl/Token are missing', () => {
+    const permissions = buildAndReadSettings('inject-nourl', {});
+    expect(permissions?.allow ?? []).not.toContain('mcp__kangentic');
+  });
+
+  it('preserves user allow entries (project + local) and deny alongside the injection', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.claude', 'settings.json'),
+      JSON.stringify({ permissions: { allow: ['Read'], deny: ['WebFetch'] } }),
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, '.claude', 'settings.local.json'),
+      JSON.stringify({ permissions: { allow: ['Bash(test:*)'] } }),
+    );
+    const permissions = buildAndReadSettings('inject-preserve', {
+      mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project',
+      mcpServerToken: 'deadbeef-test-token',
+    });
+    expect(permissions?.allow).toEqual(
+      expect.arrayContaining(['Read', 'Bash(test:*)', 'mcp__kangentic']),
+    );
+    expect(permissions?.allow).toHaveLength(3);
+    expect(permissions?.deny).toEqual(['WebFetch']);
+  });
+
+  it('stays idempotent across a resume (exactly one rule)', () => {
+    const first = new CommandBuilder();
+    const statusOutput = path.join(tmpDir, '.kangentic', 'sessions', 'inject-resume', 'status.json');
+    fs.mkdirSync(path.dirname(statusOutput), { recursive: true });
+    const spawnOptions = {
+      cliPath: '/usr/bin/claude',
+      taskId: 'inject-resume-task',
+      cwd: tmpDir,
+      permissionMode: 'default' as const,
+      sessionId: 'inject-resume',
+      statusOutputPath: statusOutput,
+      mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project',
+      mcpServerToken: 'deadbeef-test-token',
+    };
+    first.buildClaudeCommand(spawnOptions);
+    // Resume against the same session dir: settings are regenerated from base.
+    new CommandBuilder().buildClaudeCommand({ ...spawnOptions, resume: true });
+
+    const settingsPath = path.join(tmpDir, '.kangentic', 'sessions', 'inject-resume', 'settings.json');
+    const merged = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    const occurrences = (merged.permissions?.allow ?? []).filter((rule: string) => rule === 'mcp__kangentic');
+    expect(occurrences).toHaveLength(1);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // UNC Path Support (Windows network shares like \\server\share)
 // Pure string transforms - run on all platforms, no platform guard needed.

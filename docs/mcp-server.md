@@ -30,7 +30,8 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 | Session Tools | `src/main/agent/mcp-http/session-tools.ts` | Session inspection, backlog, read-only SQL (`kangentic_list_sessions`, `kangentic_get_transcript`, `kangentic_get_session_files`, `kangentic_get_session_events`, `kangentic_query_db`, `kangentic_list_backlog`, etc.). |
 | Project Tools | `src/main/agent/mcp-http/project-tools.ts` | Multi-project discovery (`kangentic_list_projects`). |
 | Search Tools | `src/main/agent/mcp-http/search-tools.ts` | Cross-project unified search (`kangentic_search_everything`). The board-scoped `kangentic_search_tasks` lives in `task-tools.ts`. |
-| Diagnostics Tools | `src/main/agent/mcp-http/diagnostics-tools.ts` | Read-only product tools backing crash records, persistent console logs, process metrics, IPC traffic recordings, and worktree state. Annotated `readOnlyHint: true, idempotentHint: true` per the MCP spec. |
+| Diagnostics Tools | `src/main/agent/mcp-http/diagnostics-tools.ts` | Read-only product tools backing crash records, persistent console logs, process metrics, IPC traffic recordings, and worktree state. |
+| Tool Annotations | `src/main/agent/mcp-http/annotations.ts` | Shared `READ_ONLY_ANNOTATIONS` / `MUTATING_ANNOTATIONS` MCP tool-annotation constants. Every tool in every `*-tools.ts` file declares one of these (see the Tool annotations note below). |
 | Browser Tools | `src/main/agent/mcp-http/browser-tools.ts` | Shipped `kangentic_browser_*` MCP tool family driving the embedded Browser pane via in-process CDP (no HTTP bridge, no lockfile). Gated by the global `browserAutomation.*` policy. |
 | Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, inventory, search, analytics, backlog, handoff, inspect (`get_transcript`, `query_db`), and session-files (`get_session_files`, `get_session_events`) commands. |
 | Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers. |
@@ -43,7 +44,7 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 
 Claude Code supports a `--mcp-config` flag that accepts a path to a JSON file containing MCP server definitions. Kangentic uses this to deliver its MCP server config without modifying `.mcp.json` (which may be tracked in git). When Kangentic spawns a session:
 
-1. `CommandBuilder.createMergedSettings()` writes the kangentic MCP server config to `.kangentic/sessions/<sessionId>/mcp.json`. The entry is an HTTP MCP server pointing at the per-launch URL `http://127.0.0.1:<port>/mcp/<projectId>` with the `X-Kangentic-Token` header containing the per-launch token.
+1. `CommandBuilder.createMergedSettings()` writes the kangentic MCP server config to `.kangentic/sessions/<sessionId>/mcp.json`. The entry is an HTTP MCP server pointing at the per-launch URL `http://127.0.0.1:<port>/mcp/<projectId>` with the `X-Kangentic-Token` header containing the per-launch token. In the same gated block it also appends `mcp__kangentic` to the merged settings' `permissions.allow` (append-if-absent) so the spawned agent does not prompt for kangentic tools in default mode (see Permissions).
 2. `CommandBuilder.buildClaudeCommand()` adds `--mcp-config <path>` to the CLI command
 3. `ensureMcpServerTrust()` adds "kangentic" to `enabledMcpjsonServers` in `~/.claude.json`
 4. Claude Code starts, reads both `.mcp.json` (user servers) and the `--mcp-config` file (kangentic), and connects to the in-process HTTP MCP server over loopback. No child process is spawned for kangentic itself.
@@ -73,6 +74,16 @@ List every Kangentic project registered on this machine. Use the returned name o
 No parameters. Returns each project's `name`, `id`, `path`, `lastOpened` timestamp, and an `isActive` flag marking the project the MCP client is bound to.
 
 ## Available Tools
+
+**Tool annotations.** Every registered tool declares MCP `annotations` from the shared constants
+in `src/main/agent/mcp-http/annotations.ts`: read-only tools carry
+`readOnlyHint: true, idempotentHint: true`; mutating tools (`create` / `update` / `delete` /
+`move` / `promote` / `link`) carry `readOnlyHint: false, idempotentHint: false`. This is
+load-bearing for plan mode: Claude Code auto-approves read-only-annotated tools without a
+permission prompt while planning, so the plan-mode auto-approval surface is exactly the read-only
+set. Mutating tools still prompt in plan mode by design (allow rules do not punch through the
+plan-mode gate). The `tests/unit/mcp-tool-list-parity.test.ts` guard fails the build if a tool is
+registered without one of the two shared annotation constants.
 
 ### kangentic_create_task
 
@@ -489,7 +500,12 @@ Config key: `mcpServer.enabled` (boolean, default `true`)
 
 ### Permissions
 
-The `.claude/settings.json` file includes a wildcard permission entry (`mcp__kangentic`) that pre-approves all kangentic MCP tools at once. Agents can use any kangentic tool without prompting for approval. This avoids maintaining a separate permission entry for each individual tool name.
+Agents Kangentic spawns never see a permission prompt for Kangentic's own tools. Two layers cover the two axes (which mode, which project):
+
+1. **Auto-allow injection (all projects, default / acceptEdits mode).** Whenever the MCP server is attached, `CommandBuilder.createMergedSettings()` appends `mcp__kangentic` to `permissions.allow` in the per-session merged `settings.json` (`.kangentic/sessions/<sessionId>/settings.json`). This is gated on the same condition as the session `mcp.json` write and is append-if-absent, so a committed project rule or a Claude "always allow" grant is not duplicated. It lives only in the regenerated per-session settings, never written back to the user's own settings files, and an explicit user `deny` of `mcp__kangentic` still wins (deny outranks allow). So the no-prompt behavior holds for every project, not just ones that committed a rule.
+2. **Read-only annotations (all projects, plan mode).** Allow rules do not punch through plan mode. Plan-mode auto-approval comes from the tools' `readOnlyHint` annotations (see the Tool annotations note under Available Tools): read-only tools run without a prompt while planning; mutating tools still prompt, by design.
+
+The committed `.claude/settings.json` `mcp__kangentic` entry remains for humans running `claude` outside Kangentic; inside Kangentic the injection makes it redundant but harmless (deduped).
 
 ## Security
 
@@ -501,6 +517,7 @@ The `.claude/settings.json` file includes a wildcard permission entry (`mcp__kan
 - **Input validation** - Zod schemas enforce title (200 chars) and description (10000 chars) limits at the protocol level; the command handlers validate again.
 - **Column safety** - `kangentic_create_task` defaults to the To Do column; creating in an auto_spawn column intentionally triggers agent spawn.
 - **Destructive operations are explicit** - `kangentic_delete_task`, `kangentic_delete_backlog_item`, and `kangentic_move_task` mutate the board. Agents must invoke them by name; there is no implicit fallback.
+- **Honest mutating annotations** - mutating tools carry `readOnlyHint: false`, so the plan-mode auto-approval surface is exactly the read-only set. Deletes, moves, and creates always prompt while planning, even though the auto-allow injection pre-approves them in default mode.
 
 ## Build
 

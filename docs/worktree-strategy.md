@@ -123,8 +123,9 @@ All sessions (main repo and worktree) use a unified approach. For each session, 
 2. Deep-merge `.claude/settings.local.json` from project root (gitignored, personal)
 3. For worktrees: merge permissions from the worktree's `.claude/settings.local.json` (captures "always allow" grants -- hooks are skipped since they may be stale leftovers from before the unified approach)
 4. Inject bridge commands into appropriate hook points
-5. Write merged file to session directory
-6. Pass `--settings <mergedSettingsPath>` to the CLI
+5. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode
+6. Write merged file to session directory
+7. Pass `--settings <mergedSettingsPath>` to the CLI
 
 All Kangentic artifacts stay in `.kangentic/` -- nothing is written to `.claude/settings.local.json`. When users hit "always allow" on a permission prompt, Claude writes to `settings.local.json` in the CWD (worktree or project root). These grants are read back on session resume (step 3) so they persist across restarts.
 

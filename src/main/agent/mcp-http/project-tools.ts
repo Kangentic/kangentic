@@ -9,6 +9,7 @@
  */
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
+import { READ_ONLY_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
 
 export function registerProjectTools(server: McpServer, resolver: RequestResolver): void {
@@ -17,6 +18,7 @@ export function registerProjectTools(server: McpServer, resolver: RequestResolve
     {
       description: 'List every Kangentic project registered on this machine. Returns name, id, on-disk path, and last-opened timestamp for each project, plus an isActive flag marking the project the MCP client is bound to. Use the returned name or id as the `project` argument on any other kangentic_* tool to route that call to a different project.',
       inputSchema: z.object({}),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async () => {
       const projects = resolver.listProjects();

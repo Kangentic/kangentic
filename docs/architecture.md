@@ -602,7 +602,8 @@ For each session, a merged settings file is created at `.kangentic/sessions/<ses
 2. Read `.claude/settings.local.json` (gitignored local settings)
 3. Deep-merge hooks from both
 4. Inject Kangentic bridge commands into hook points
-5. Write merged file, pass to CLI via `--settings`
+5. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode
+6. Write merged file, pass to CLI via `--settings`
 
 ## Session Recovery
 

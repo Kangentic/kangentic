@@ -26,6 +26,7 @@ import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { MCP_TOOL_MANIFEST } from '../../src/shared/mcp-tool-manifest';
+import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from '../../src/main/agent/mcp-http/annotations';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const MCP_HTTP_DIR = path.join(REPO_ROOT, 'src/main/agent/mcp-http');
@@ -39,24 +40,75 @@ function collectToolFiles(): string[] {
     .map((entry) => path.join(MCP_HTTP_DIR, entry.name));
 }
 
-/**
- * Collect every registerTool('<name>', ...) literal. The name literal sits on
- * the line AFTER `registerTool(`, so we scan whole-file content (JS `\s`
- * matches the newline) rather than line-by-line.
- */
-function collectRegisteredToolNames(): Set<string> {
-  const names = new Set<string>();
-  const pattern = /registerTool\(\s*(['"])([^'"]+)\1/g;
-  for (const filePath of collectToolFiles()) {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    for (const match of content.matchAll(pattern)) {
-      names.add(match[2]);
-    }
-  }
-  return names;
+const SHARED_ANNOTATION_TOKENS = ['READ_ONLY_ANNOTATIONS', 'MUTATING_ANNOTATIONS'] as const;
+type SharedAnnotationToken = (typeof SHARED_ANNOTATION_TOKENS)[number];
+
+interface ToolRegistration {
+  name: string;
+  file: string;
+  /** Which shared annotation constant the registration declares, or null if none/inline. */
+  annotation: SharedAnnotationToken | null;
 }
 
-const registeredNames = collectRegisteredToolNames();
+/**
+ * Slice every registerTool('<name>', ...) call into its own segment (from one
+ * `registerTool(` to the next, or - for the last in a file - the enclosing
+ * function's closing brace) and record which shared annotation
+ * constant that segment declares. The name literal sits on the line AFTER
+ * `registerTool(`, so we scan whole-file content (JS `\s` matches the newline)
+ * rather than line-by-line. Attributing the annotation to a specific
+ * registration (vs a per-file count) lets a failure name the offending tool
+ * and requires the exact shared-constant tokens, which cannot plausibly appear
+ * in prose.
+ */
+function collectToolRegistrations(): ToolRegistration[] {
+  const registrations: ToolRegistration[] = [];
+  const namePattern = /registerTool\(\s*(['"])([^'"]+)\1/g;
+  const annotationPattern = /annotations:\s*(READ_ONLY_ANNOTATIONS|MUTATING_ANNOTATIONS)\b/;
+  for (const filePath of collectToolFiles()) {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const fileName = path.basename(filePath);
+    const matches = [...content.matchAll(namePattern)];
+    for (let index = 0; index < matches.length; index += 1) {
+      const start = matches[index].index ?? 0;
+      // Bound the segment at the NEXT registerTool( call. For the last
+      // registration in a file, bound at the enclosing register*Tools
+      // function's closing brace (the first top-level `}`) rather than EOF, so
+      // trailing top-level helper functions can never be scanned as part of
+      // this tool's segment and false-match an `annotations:` token in their
+      // code or prose - which would mask a deleted or flipped annotation on the
+      // final tool.
+      let end: number;
+      if (index + 1 < matches.length) {
+        end = matches[index + 1].index ?? content.length;
+      } else {
+        const functionCloseOffset = content.slice(start).search(/\n}/);
+        end = functionCloseOffset === -1 ? content.length : start + functionCloseOffset;
+      }
+      const segment = content.slice(start, end);
+      const annotationMatch = segment.match(annotationPattern);
+      registrations.push({
+        name: matches[index][2],
+        file: fileName,
+        annotation: annotationMatch ? (annotationMatch[1] as SharedAnnotationToken) : null,
+      });
+    }
+  }
+  return registrations;
+}
+
+/** Tool-name prefixes that unambiguously denote a board/backlog mutation. */
+const MUTATING_NAME_PREFIXES = [
+  'kangentic_create_',
+  'kangentic_update_',
+  'kangentic_delete_',
+  'kangentic_move_',
+  'kangentic_promote_',
+  'kangentic_link_',
+];
+
+const toolRegistrations = collectToolRegistrations();
+const registeredNames = new Set(toolRegistrations.map((registration) => registration.name));
 const manifestNames = new Set(MCP_TOOL_MANIFEST.map((entry) => entry.name));
 
 describe('mcp tool-list parity', () => {
@@ -96,6 +148,72 @@ describe('mcp tool-list parity', () => {
       undocumented,
       `These tools are not documented in docs/mcp-server.md (the exhaustive reference). Add a `
         + `description for each:\n${undocumented.join('\n')}`,
+    ).toEqual([]);
+  });
+});
+
+/**
+ * Annotation parity guard (see .claude/rules/mcp-tool-list-parity.md).
+ *
+ * Every registered tool must declare `annotations:` using one of the two
+ * shared constants in src/main/agent/mcp-http/annotations.ts. `readOnlyHint`
+ * is load-bearing: Claude Code auto-approves read-only-annotated tools in plan
+ * mode (no permission prompt), so a tool with no annotation prompts on every
+ * call, and a mutation dishonestly marked read-only would be silently
+ * auto-approved. These checks keep the classification present, honest, and
+ * sourced from the single shared audit point.
+ */
+describe('mcp tool annotation parity', () => {
+  it('every registered tool declares annotations via a shared constant', () => {
+    const unannotated = toolRegistrations
+      .filter((registration) => registration.annotation === null)
+      .map((registration) => `${registration.file}: ${registration.name}`)
+      .sort();
+    expect(
+      unannotated,
+      `These tools are registered without \`annotations:\` referencing a shared constant. Add `
+        + `\`annotations: READ_ONLY_ANNOTATIONS\` or \`annotations: MUTATING_ANNOTATIONS\` (imported `
+        + `from src/main/agent/mcp-http/annotations.ts) to each registration. An unannotated tool `
+        + `prompts for permission on every call in plan mode:\n${unannotated.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('the shared annotation constants carry the spec-correct values', () => {
+    // Guards the hole the source regex cannot see: someone editing the
+    // constant values in annotations.ts (e.g. flipping readOnlyHint).
+    expect(READ_ONLY_ANNOTATIONS).toEqual({ readOnlyHint: true, idempotentHint: true });
+    expect(MUTATING_ANNOTATIONS).toEqual({ readOnlyHint: false, idempotentHint: false });
+  });
+
+  it('no *-tools.ts file redefines the shared annotation constants locally', () => {
+    // The consts were duplicated in browser-tools.ts and diagnostics-tools.ts
+    // before they were hoisted; a local shadow would silently diverge from the
+    // audited source, so forbid it.
+    const shadowPattern = /const\s+(READ_ONLY|MUTATING)_ANNOTATIONS\s*=/;
+    const offenders = collectToolFiles()
+      .filter((filePath) => shadowPattern.test(fs.readFileSync(filePath, 'utf-8')))
+      .map((filePath) => path.basename(filePath))
+      .sort();
+    expect(
+      offenders,
+      `These files redefine READ_ONLY_ANNOTATIONS / MUTATING_ANNOTATIONS locally. Import them from `
+        + `src/main/agent/mcp-http/annotations.ts instead:\n${offenders.join('\n')}`,
+    ).toEqual([]);
+  });
+
+  it('tools named with a mutating verb are annotated MUTATING_ANNOTATIONS', () => {
+    // The worst failure mode is a mutation marked read-only (auto-approved in
+    // plan mode). Prefix-anchored and one-directional: a create/update/delete/
+    // move/promote/link tool must be mutating; read-only tools are unconstrained.
+    const dishonest = toolRegistrations
+      .filter((registration) => MUTATING_NAME_PREFIXES.some((prefix) => registration.name.startsWith(prefix)))
+      .filter((registration) => registration.annotation !== 'MUTATING_ANNOTATIONS')
+      .map((registration) => `${registration.file}: ${registration.name} (is ${registration.annotation ?? 'unannotated'})`)
+      .sort();
+    expect(
+      dishonest,
+      `These tools have a mutating-verb name but are not annotated MUTATING_ANNOTATIONS. A mutation `
+        + `marked read-only is silently auto-approved in plan mode:\n${dishonest.join('\n')}`,
     ).toEqual([]);
   });
 });

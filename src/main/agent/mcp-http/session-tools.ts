@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
 import { callHandler, runHandler, withProject, PROJECT_SELECTOR_DESCRIPTION } from './handler-helpers';
+import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import { TRANSCRIPT_TAIL_MAX, TRANSCRIPT_CHAR_BUDGET_MAX } from '../../../shared/transcript-format';
 import type { RequestResolver } from './project-resolver';
 
@@ -31,6 +32,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ taskId, project }) => withProject(resolver, project, (ctx) => callHandler('list_sessions', { taskId }, ctx, 'Failed to list sessions')),
   );
@@ -44,6 +46,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ taskId, project }) => withProject(resolver, project, async (ctx) => {
       const result = await runHandler('get_session_history', { taskId }, ctx);
@@ -64,6 +67,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
         query: z.string().optional().describe('Search keyword to filter items by title, description, or labels (case-insensitive).'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ priority, query, project }) => withProject(resolver, project, (ctx) => callHandler('list_backlog', {
       priority: priority ?? null,
@@ -81,6 +85,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
         column: z.string().optional().describe('Target column name. Defaults to the To Do column.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: MUTATING_ANNOTATIONS,
     },
     async ({ itemIds, column, project }) => withProject(resolver, project, (ctx) => callHandler('promote_backlog', {
       itemIds,
@@ -104,6 +109,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
         ])).optional().describe('Full replacement label set. Strings, or {name, color} objects to also set the label color.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: MUTATING_ANNOTATIONS,
     },
     async ({ itemId, title, description, priority, labels, project }) => withProject(resolver, project, (ctx) => callHandler('update_backlog_item', {
       itemId,
@@ -123,6 +129,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
         itemId: z.string().describe('Backlog item UUID to delete.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: MUTATING_ANNOTATIONS,
     },
     async ({ itemId, project }) => withProject(resolver, project, (ctx) => callHandler('delete_backlog_item', { itemId }, ctx, 'Failed to delete backlog item')),
   );
@@ -136,6 +143,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ taskId, project }) => withProject(resolver, project, (ctx) => callHandler('get_handoff_context', {
       taskId: taskId ?? null,
@@ -158,6 +166,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
         maxChars: z.number().int().min(1000).max(TRANSCRIPT_CHAR_BUDGET_MAX).optional().describe('Override the default ~50k-char output cap (hard ceiling 500000). Use to pull a long transcript in full. Applies to structured and raw.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ taskId, sessionId, sessionIndex, format, view, tail, search, maxChars, project }) => withProject(resolver, project, (ctx) => callHandler('get_transcript', {
       taskId: taskId ?? null,
@@ -182,6 +191,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
         sessionIndex: z.number().int().min(0).optional().describe('When taskId is given, which session to pick: 0 = newest (default), 1 = previous, etc. Sessions are ordered started_at DESC.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ taskId, sessionId, sessionIndex, project }) => withProject(resolver, project, async (ctx) => {
       const result = await runHandler('get_session_files', { taskId, sessionId, sessionIndex }, ctx);
@@ -206,6 +216,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
         eventTypes: z.array(z.string()).optional().describe('Only return events whose hook_event_name or type matches one of these (e.g. ["PreToolUse", "Stop", "Notification"]).'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ taskId, sessionId, sessionIndex, tail, since, eventTypes, project }) => withProject(resolver, project, async (ctx) => {
       const result = await runHandler('get_session_events', { taskId, sessionId, sessionIndex, tail, since, eventTypes }, ctx);
@@ -225,6 +236,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
         sql: z.string().describe('SQL query to execute. Must be a SELECT, PRAGMA, or WITH statement. Examples: "SELECT * FROM session_transcripts", "SELECT name, sql FROM sqlite_master WHERE type=\'table\'", "PRAGMA table_info(sessions)"'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ sql, project }) => withProject(resolver, project, (ctx) => callHandler('query_db', { sql }, ctx, 'Query error')),
   );
