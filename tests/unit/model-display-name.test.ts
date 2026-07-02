@@ -4,6 +4,7 @@ import {
   humanizeClaudeModelId,
   configuredModelFromClaudeCommand,
 } from '../../src/main/agent/adapters/claude/model-display-name';
+import { CommandBuilder } from '../../src/main/agent/adapters/claude';
 
 describe('parseModelFromClaudeCommand', () => {
   it('extracts an unquoted model id from a built command', () => {
@@ -77,5 +78,54 @@ describe('configuredModelFromClaudeCommand', () => {
 
   it('returns null when no model is present', () => {
     expect(configuredModelFromClaudeCommand('claude --resume abc')).toBeNull();
+  });
+});
+
+describe('configuredModelFromClaudeCommand (real CommandBuilder wiring)', () => {
+  // The fixtures above are hand-typed strings that assume `--model <id>` is
+  // emitted with a literal space, and that quoteArg leaves a plain model id
+  // unquoted. Both are true today, but that assumption lives in a DIFFERENT
+  // file (command-builder.ts) than the parser (model-display-name.ts) - a
+  // refactor of the flag emission (e.g. to `--model=<id>`) would not be
+  // caught by the fixture-string tests above, since they never call the real
+  // command builder. These tests drive the REAL buildClaudeCommand() output
+  // (with PowerShell-style quoting) through the REAL parser, to lock the
+  // coupling between the two.
+  it('extracts the model from a real buildClaudeCommand() PowerShell-quoted command', () => {
+    const builder = new CommandBuilder();
+    const command = builder.buildClaudeCommand({
+      cliPath: 'C:\\Program Files\\nodejs\\claude.cmd',
+      taskId: 'task-1',
+      cwd: 'C:\\Users\\dev\\project',
+      permissionMode: 'default',
+      model: 'claude-opus-4-8',
+      effort: 'xhigh',
+      nonInteractive: true,
+      // Deliberately mentions "--model" in the prompt to prove the real
+      // end-of-options `--` marker (not just the fixture strings above)
+      // shields the parser from a prompt-text decoy.
+      prompt: '<task><title>Fix the --model flag parsing regex</title></task>',
+      shell: 'powershell',
+    });
+
+    expect(configuredModelFromClaudeCommand(command)).toEqual({
+      id: 'claude-opus-4-8',
+      displayName: 'Opus 4.8',
+    });
+  });
+
+  it('returns null for a real buildClaudeCommand() with no model option set', () => {
+    const builder = new CommandBuilder();
+    const command = builder.buildClaudeCommand({
+      cliPath: 'C:\\Program Files\\nodejs\\claude.cmd',
+      taskId: 'task-2',
+      cwd: 'C:\\Users\\dev\\project',
+      permissionMode: 'default',
+      nonInteractive: true,
+      prompt: '<task><title>Some other task</title></task>',
+      shell: 'powershell',
+    });
+
+    expect(configuredModelFromClaudeCommand(command)).toBeNull();
   });
 });
