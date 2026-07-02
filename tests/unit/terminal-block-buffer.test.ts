@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Terminal, IBufferCell, IBufferLine } from '@xterm/xterm';
-import type { SelectionRange } from '../../src/renderer/utils/terminal-blocks';
+import type { SelectionRange, BlockRange } from '../../src/renderer/utils/terminal-blocks';
 
 // Spy on `cleanSelectionLines` while keeping every other export (including the
 // constants `classifyLine` uses) real, so `cleanTerminalSelection` can be
@@ -14,7 +14,12 @@ vi.mock('../../src/renderer/utils/terminal-blocks', async (importOriginal) => {
 });
 
 import { cleanSelectionLines, MIN_BOX_RUN_CELLS, MAX_BOX_RUN_START_COLUMN } from '../../src/renderer/utils/terminal-blocks';
-import { createBufferLineSource, cleanTerminalSelection } from '../../src/renderer/utils/terminal-block-buffer';
+import {
+  createBufferLineSource,
+  cleanTerminalSelection,
+  pixelToBufferRow,
+  getBlockPixelBounds,
+} from '../../src/renderer/utils/terminal-block-buffer';
 
 // This module (`terminal-block-buffer.ts`) is the only place that reads real
 // xterm cell attributes; `terminal-blocks.test.ts` covers the pure detector
@@ -216,6 +221,139 @@ describe('createBufferLineSource - width-0 (wide-char trailing) cells', () => {
     // Excluding the width-0 cell would drop the run one cell short of
     // MIN_BOX_RUN_CELLS, so bgRun would be null instead of detected.
     expect(facts.bgRun).toEqual({ key: 'rgb:555', startColumn: 0, endColumn: MIN_BOX_RUN_CELLS });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pixelToBufferRow / getBlockPixelBounds - the hit-test/highlight geometry
+// layer. Neither needs a real DOM: `readCellDimensions` reads xterm's private
+// `_core._renderService.dimensions.css.cell`, and `getScreenRect` reads
+// `terminal.element.querySelector('.xterm-screen').getBoundingClientRect()`,
+// both of which are plain fakeable shapes. The UI-tier spec
+// (terminal-block-copy.spec.ts) exercises this code path through a real
+// mounted xterm, but only ever with a block fully inside the viewport near
+// the top of a freshly-painted terminal - it never observes a block that
+// straddles a scroll boundary. These tests cover the scroll-clamping
+// contract documented on both functions directly.
+// ---------------------------------------------------------------------------
+
+interface GeometryTerminalOptions {
+  cols?: number;
+  rows?: number;
+  viewportY?: number;
+  bufferLength?: number;
+  cellWidth?: number;
+  cellHeight?: number;
+  /** When false, simulates the render service not being ready yet. */
+  hasDimensions?: boolean;
+  /** When null, simulates `.xterm-screen` not being present in the DOM yet. */
+  screenRect?: { left: number; top: number; right: number; bottom: number } | null;
+}
+
+function makeGeometryTerminal(options: GeometryTerminalOptions = {}): Terminal {
+  const {
+    cols = 80,
+    rows = 24,
+    viewportY = 0,
+    bufferLength = rows,
+    cellWidth = 8,
+    cellHeight = 16,
+    hasDimensions = true,
+    screenRect = { left: 0, top: 0, right: cols * cellWidth, bottom: rows * cellHeight },
+  } = options;
+
+  const terminal = {
+    cols,
+    rows,
+    buffer: { active: { viewportY, length: bufferLength } },
+    _core: hasDimensions
+      ? { _renderService: { dimensions: { css: { cell: { width: cellWidth, height: cellHeight } } } } }
+      : undefined,
+    element:
+      screenRect === null
+        ? null
+        : {
+            querySelector: (selector: string) =>
+              selector === '.xterm-screen' ? { getBoundingClientRect: () => screenRect as DOMRect } : null,
+          },
+  };
+  return terminal as unknown as Terminal;
+}
+
+describe('pixelToBufferRow', () => {
+  it('returns null for a point outside the terminal screen rect on any side', () => {
+    const terminal = makeGeometryTerminal({ screenRect: { left: 0, top: 0, right: 640, bottom: 384 } });
+    expect(pixelToBufferRow(terminal, -5, 100)).toBeNull(); // left of rect
+    expect(pixelToBufferRow(terminal, 700, 100)).toBeNull(); // right of rect
+    expect(pixelToBufferRow(terminal, 100, -5)).toBeNull(); // above rect
+    expect(pixelToBufferRow(terminal, 100, 500)).toBeNull(); // below rect
+  });
+
+  it('returns null when the render service has no cell dimensions yet', () => {
+    const terminal = makeGeometryTerminal({ hasDimensions: false });
+    expect(pixelToBufferRow(terminal, 10, 10)).toBeNull();
+  });
+
+  it('returns null when .xterm-screen is not present', () => {
+    const terminal = makeGeometryTerminal({ screenRect: null });
+    expect(pixelToBufferRow(terminal, 10, 10)).toBeNull();
+  });
+
+  it('maps a client point to the absolute buffer row, honoring the scroll offset', () => {
+    // Row 3 within the viewport (y between 3*16=48 and 4*16=64), with the
+    // buffer scrolled down 5 rows: absolute row = viewportY(5) + 3 = 8.
+    const terminal = makeGeometryTerminal({ viewportY: 5, cellHeight: 16, bufferLength: 100 });
+    expect(pixelToBufferRow(terminal, 100, 3 * 16 + 4)).toBe(8);
+  });
+
+  it('clamps the absolute row to the buffer length when the viewport extends past the scrollback', () => {
+    // The terminal has 24 rows of screen space but only 5 lines of real
+    // buffer content (a freshly-spawned session). Clicking near the bottom of
+    // the empty screen space must clamp to the last real row, not report a
+    // row that does not exist.
+    const terminal = makeGeometryTerminal({ rows: 24, bufferLength: 5, cellHeight: 16, viewportY: 0 });
+    expect(pixelToBufferRow(terminal, 10, 20 * 16 + 4)).toBe(4);
+  });
+});
+
+describe('getBlockPixelBounds', () => {
+  function range(startY: number, endY: number): BlockRange {
+    return { kind: 'text', startY, endY };
+  }
+
+  it('returns null when the render service has no cell dimensions yet', () => {
+    const terminal = makeGeometryTerminal({ hasDimensions: false });
+    expect(getBlockPixelBounds(terminal, range(0, 2))).toBeNull();
+  });
+
+  it('computes a full-width rectangle for a block entirely inside the viewport', () => {
+    const terminal = makeGeometryTerminal({ cols: 80, rows: 24, viewportY: 10, cellWidth: 8, cellHeight: 16 });
+    const bounds = getBlockPixelBounds(terminal, range(12, 14));
+    expect(bounds).toEqual({ top: 2 * 16, left: 0, width: 80 * 8, height: 3 * 16 });
+  });
+
+  it('returns null when the block is entirely scrolled above the viewport', () => {
+    const terminal = makeGeometryTerminal({ rows: 24, viewportY: 20 });
+    expect(getBlockPixelBounds(terminal, range(5, 15))).toBeNull();
+  });
+
+  it('returns null when the block is entirely scrolled below the viewport', () => {
+    const terminal = makeGeometryTerminal({ rows: 24, viewportY: 0 });
+    expect(getBlockPixelBounds(terminal, range(30, 35))).toBeNull();
+  });
+
+  it('clamps the top edge to the viewport when the block starts above it but extends into it', () => {
+    const terminal = makeGeometryTerminal({ rows: 24, viewportY: 10, cellHeight: 16 });
+    // startY=5 is 5 rows above the viewport; endY=15 is 5 rows into it.
+    const bounds = getBlockPixelBounds(terminal, range(5, 15));
+    expect(bounds).toEqual({ top: 0, left: 0, width: 80 * 8, height: 6 * 16 });
+  });
+
+  it('clamps the bottom edge to the last screen row when the block extends past the viewport', () => {
+    const terminal = makeGeometryTerminal({ rows: 24, viewportY: 0, cellHeight: 16 });
+    // maxRow = 23; startY=20 is inside, endY=30 runs past it.
+    const bounds = getBlockPixelBounds(terminal, range(20, 30));
+    expect(bounds).toEqual({ top: 20 * 16, left: 0, width: 80 * 8, height: 4 * 16 });
   });
 });
 
