@@ -1654,7 +1654,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   boardLayout: 'horizontal',
   cardDensity: 'default',
   columnWidth: 'default',
-  showTaskNumbers: false,
+  showTaskNumbers: true,
   terminalPanelVisible: true,
   animationsEnabled: true,
   statusBarVisible: true,
@@ -2186,6 +2186,15 @@ export interface AgentParser {
    * event that lifts the shimmer overlay in the renderer.
    */
   detectFirstOutput(data: string): boolean;
+  /**
+   * Optional: extract the configured model from a spawned command so the board
+   * card can show a friendly model name immediately, before the agent reports
+   * its own via status.json / stream telemetry. Returns `{ id, displayName }`
+   * (e.g. `claude-opus-4-8` -> "Opus 4.8"), or null when no explicit model is
+   * encoded. The agent's live telemetry overrides the seeded value, so a later
+   * `/model` change stays accurate. See `AgentAdapter.configuredModelFromCommand`.
+   */
+  configuredModelFromCommand?(command: string): { id: string; displayName: string } | null;
   /** How this agent exposes runtime state (activity detection + session ID capture). */
   runtime: AdapterRuntimeStrategy;
   /**

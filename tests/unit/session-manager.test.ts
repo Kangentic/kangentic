@@ -39,7 +39,7 @@ import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapt
 
 const claudeAdapter = new ClaudeAdapter();
 import { EventType } from '../../src/shared/types';
-import type { ActivityState, SessionEvent } from '../../src/shared/types';
+import type { SessionEvent } from '../../src/shared/types';
 
 let tmpDir: string;
 
@@ -1107,6 +1107,55 @@ describe('Statusline repaint kick', () => {
     expect(resizeCalls).toContainEqual([150, 40]);
     // Must NOT clobber the open terminal back to the spawn default.
     expect(resizeCalls).not.toContainEqual([120, 30]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 11c. Model name seeding (background card shows model before status.json)
+// ---------------------------------------------------------------------------
+
+describe('Model name seeding', () => {
+  let manager: SessionManager;
+
+  beforeEach(() => {
+    manager = new SessionManager();
+  });
+
+  afterEach(async () => {
+    manager.killAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  // A background (never-opened) Claude session may never write status.json, so
+  // the card would sit on "Starting agent..." indefinitely. We seed the model
+  // display name from the spawn command's --model flag so the card shows the
+  // model immediately; the agent's own status.json later overrides it.
+  it('seeds the usage model display name from the spawn command --model', async () => {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: 'task-seed',
+      command: 'claude --model claude-opus-4-8 --effort xhigh',
+      cwd: tmpDir,
+      agentParser: claudeAdapter,
+    });
+
+    const usage = manager.getUsageCache()[session.id];
+    expect(usage?.model.displayName).toBe('Opus 4.8');
+    expect(usage?.model.id).toBe('claude-opus-4-8');
+  });
+
+  it('does not seed when the command encodes no model (agent default)', async () => {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: 'task-noseed',
+      command: 'claude --resume abc-123 --effort xhigh',
+      cwd: tmpDir,
+      agentParser: claudeAdapter,
+    });
+
+    expect(manager.getUsageCache()[session.id]).toBeUndefined();
   });
 });
 

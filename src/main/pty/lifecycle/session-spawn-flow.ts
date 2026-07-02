@@ -294,6 +294,24 @@ export async function performSpawn(
   };
   attachAdapter(session, adapterContext);
 
+  // Eagerly seed the card's model name from the spawn command so a background
+  // (never-opened) session shows its model (e.g. "Opus 4.8") IMMEDIATELY,
+  // instead of a "Starting agent..." spinner while it waits for status.json -
+  // which a background PTY may never write on its own (it only paints its
+  // statusline in a foreground/tall terminal). The agent's own telemetry
+  // overrides this via a full usage replace, so a later in-session /model
+  // change is reflected accurately. Only agents that encode a model on the
+  // command (Claude --model) and implement the hook seed; others are unaffected.
+  // `input.command` is the raw pre-shell-adaptation command; the parser reads the
+  // model only from the flag region (before the end-of-options `--`), never the
+  // prompt, so the input shape is stable regardless of the target shell.
+  const configuredModel = input.agentParser?.configuredModelFromCommand?.(input.command);
+  if (configuredModel) {
+    context.telemetry.setSessionUsage(id, {
+      model: { id: configuredModel.id, displayName: configuredModel.displayName },
+    });
+  }
+
   // Batched data output (~60Hz hot path). Fans out to:
   //   - PtyBufferManager: ring buffer + IPC batching for focused sessions.
   //   - TranscriptWriter: raw bytes to DB (skipped for transient sessions).

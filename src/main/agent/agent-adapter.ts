@@ -170,6 +170,21 @@ export interface AgentAdapter {
   detectFirstOutput(data: string): boolean;
 
   /**
+   * Optional: extract the configured model from a spawned command so the
+   * board card can show a friendly model name IMMEDIATELY, before the agent
+   * reports its own via status.json / stream telemetry. Returns the model id
+   * and a human display name (e.g. `claude-opus-4-8` -> "Opus 4.8"), or null
+   * when the command encodes no explicit model (the agent will use its own
+   * default, which only its live telemetry can reveal).
+   *
+   * The seeded value is a placeholder: once the agent reports real usage it
+   * overrides this, so a later in-session `/model` change is reflected
+   * accurately. Each adapter owns its own command syntax and model-naming
+   * scheme, so this stays out of the shared spawn/renderer code.
+   */
+  configuredModelFromCommand?(command: string): { id: string; displayName: string } | null;
+
+  /**
    * Return the sequence of strings to write to the PTY for a graceful exit.
    * Called by SessionManager.suspend() before force-killing the PTY.
    * Ctrl+C (\x03) interrupts in-progress work; the exit command triggers

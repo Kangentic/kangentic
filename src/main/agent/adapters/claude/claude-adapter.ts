@@ -10,6 +10,7 @@ import { removeHooks as removeClaudeHooks } from './hook-manager';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
+import { configuredModelFromClaudeCommand } from './model-display-name';
 import type {
   AgentAdapter,
   AgentInfo,
@@ -145,6 +146,10 @@ export class ClaudeAdapter implements AgentAdapter {
     // the TUI draws the startup banner, keeping the shell command hidden
     // behind the shimmer overlay.
     return data.includes('\x1b[?25l');
+  }
+
+  configuredModelFromCommand(command: string): { id: string; displayName: string } | null {
+    return configuredModelFromClaudeCommand(command);
   }
 
   async locateSessionHistoryFile(agentSessionId: string, cwd: string): Promise<string | null> {

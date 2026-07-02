@@ -66,7 +66,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `boardLayout` | `'horizontal'` \| `'vertical'` | `'horizontal'` | Board scroll direction. Global-only. |
 | `cardDensity` | `'compact'` \| `'default'` \| `'comfortable'` | `'default'` | Amount of detail shown on task cards. Global-only. |
 | `columnWidth` | `'narrow'` \| `'default'` \| `'wide'` | `'default'` | Width of board columns. Global-only. |
-| `showTaskNumbers` | boolean | `false` | Show each task's `#N` (`display_id`) as a muted badge in the board card header. Opt-in; matches the number shown in the task detail header. Global-only. |
+| `showTaskNumbers` | boolean | `true` | Show each task's `#N` (`display_id`) as a muted badge in the board card header. On by default; matches the number shown in the task detail header. Global-only. |
 | `terminalPanelVisible` | boolean | `true` | Show the terminal panel below the board. Global-only. |
 | `animationsEnabled` | boolean | `true` | Enable CSS keyframe animations (idle pulse, dialog fades, status bar pulses). Global-only. |
 | `statusBarVisible` | boolean | `true` | Show the status bar at the bottom of the window. Global-only. |
