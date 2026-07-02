@@ -47,6 +47,7 @@ import { useLayerStore } from '../../window-manager';
 import type { ManagedWindow } from '../../window-manager';
 import type { AgentCommand } from '../../../shared/types';
 import { useCommandTerminalLayer } from './command-terminal-context';
+import { PanelErrorBoundary } from '../PanelErrorBoundary';
 
 const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
 
@@ -714,19 +715,21 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
         {/* Changes panel */}
         {changesOpen && projectPath && (
           <div className="w-1/2 min-h-0 border-l border-edge">
-            <Suspense
-              fallback={
-                <div className="flex items-center justify-center h-full">
-                  <Loader2 size={20} className="animate-spin text-fg-muted" />
-                </div>
-              }
-            >
-              <ChangesPanel
-                entityId={COMMAND_TERMINAL_ENTITY_ID}
-                projectPath={projectPath}
-                baseBranch="HEAD"
-              />
-            </Suspense>
+            <PanelErrorBoundary label="Changes panel">
+              <Suspense
+                fallback={
+                  <div className="flex items-center justify-center h-full">
+                    <Loader2 size={20} className="animate-spin text-fg-muted" />
+                  </div>
+                }
+              >
+                <ChangesPanel
+                  entityId={COMMAND_TERMINAL_ENTITY_ID}
+                  projectPath={projectPath}
+                  baseBranch="HEAD"
+                />
+              </Suspense>
+            </PanelErrorBoundary>
           </div>
         )}
       </div>

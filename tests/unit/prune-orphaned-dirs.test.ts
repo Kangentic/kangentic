@@ -7,9 +7,13 @@ import path from 'node:path';
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────
 
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const mockExistsSync = vi.fn((): boolean => true);
 const mockReaddir = vi.fn((): Promise<{ name: string; isDirectory: () => boolean }[]> => Promise.resolve([]));
 const mockRm = vi.fn((): Promise<void> => Promise.resolve());
+// Default to an old mtime so every existing deletion-asserting test still
+// sweeps. Computed at call time because these suites use fake timers.
+const mockStat = vi.fn((): Promise<{ mtimeMs: number }> => Promise.resolve({ mtimeMs: Date.now() - ONE_DAY_MS }));
 
 vi.mock('node:fs', () => ({
   default: {
@@ -22,6 +26,7 @@ vi.mock('node:fs', () => ({
     promises: {
       readdir: (...args: unknown[]) => mockReaddir(...args),
       rm: (...args: unknown[]) => mockRm(...args),
+      stat: (...args: unknown[]) => mockStat(...args),
     },
   },
 }));
@@ -139,6 +144,7 @@ describe('pruneStaleResources -- async background cleanup', () => {
     mockExistsSync.mockReturnValue(true);
     mockReaddir.mockResolvedValue([]);
     mockRm.mockResolvedValue(undefined);
+    mockStat.mockImplementation(() => Promise.resolve({ mtimeMs: Date.now() - ONE_DAY_MS }));
   });
 
   afterEach(() => {
@@ -293,6 +299,102 @@ describe('pruneStaleResources -- async background cleanup', () => {
     await runWithTimers();
 
     expect(mockRm).not.toHaveBeenCalled();
+  });
+
+  it('preserves an unreferenced session directory modified within the grace period (cold-open spawn race regression)', async () => {
+    // A recovery/auto-spawn writes sessions/<uuid>/ (settings.json + mcp.json)
+    // before the id is visible in the DB or PTY registry. A concurrent sweep at
+    // cold open sees it as orphaned. The grace period keeps freshly modified
+    // dirs alive so the sweep can never race a spawn path in flight.
+    const taskRepo = makeMockTaskRepo([]);
+    const sessionRepo = makeMockSessionRepo();
+    const sessionMgr = makeMockSessionManager();
+
+    mockStat.mockImplementation((dirPath: string) =>
+      Promise.resolve({
+        mtimeMs: String(dirPath).includes('freshly-spawned-uuid') ? Date.now() : Date.now() - ONE_DAY_MS,
+      }),
+    );
+    setupReaddir({
+      [SESSIONS_DIR]: [dirEntry('freshly-spawned-uuid'), dirEntry('stale-session-uuid')],
+    });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await runWithTimers();
+
+    // The genuinely-stale dir is removed...
+    expect(mockRm).toHaveBeenCalledWith(
+      path.join(SESSIONS_DIR, 'stale-session-uuid'),
+      expect.objectContaining({ recursive: true, force: true }),
+    );
+    // ...but the freshly written dir is never touched.
+    expect(mockRm).not.toHaveBeenCalledWith(
+      path.join(SESSIONS_DIR, 'freshly-spawned-uuid'),
+      expect.anything(),
+    );
+    logSpy.mockRestore();
+  });
+
+  it('still deletes an unreferenced session directory older than the grace period', async () => {
+    const taskRepo = makeMockTaskRepo([]);
+    const sessionRepo = makeMockSessionRepo();
+    const sessionMgr = makeMockSessionManager();
+
+    // mtime defaults to one day old (beforeEach), so this orphan is past the grace period.
+    setupReaddir({
+      [SESSIONS_DIR]: [dirEntry('old-orphan-uuid')],
+    });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await runWithTimers();
+
+    expect(mockRm).toHaveBeenCalledWith(
+      path.join(SESSIONS_DIR, 'old-orphan-uuid'),
+      expect.objectContaining({ recursive: true, force: true }),
+    );
+    logSpy.mockRestore();
+  });
+
+  it('skips a directory whose stat fails (removed between readdir and stat) and keeps sweeping the rest of the batch', async () => {
+    // A single-entry batch would pass this test identically whether the catch
+    // block does `continue` (correct) or aborts the whole sweep (a
+    // regression), since there'd be nothing left afterward to prove the loop
+    // kept going. Put a genuine, stat-resolvable orphan AFTER the
+    // stat-failing entry so an early return/break would leave it un-removed
+    // and fail the second assertion below.
+    const taskRepo = makeMockTaskRepo([]);
+    const sessionRepo = makeMockSessionRepo();
+    const sessionMgr = makeMockSessionManager();
+
+    mockStat.mockImplementation((dirPath: string) =>
+      String(dirPath).includes('vanished-uuid')
+        ? Promise.reject(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+        : Promise.resolve({ mtimeMs: Date.now() - ONE_DAY_MS }),
+    );
+    setupReaddir({
+      [SESSIONS_DIR]: [dirEntry('vanished-uuid'), dirEntry('surviving-orphan-uuid')],
+    });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await runWithTimers();
+
+    // The vanished dir is never removed and the failure is logged...
+    expect(mockRm).not.toHaveBeenCalledWith(
+      path.join(SESSIONS_DIR, 'vanished-uuid'),
+      expect.anything(),
+    );
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('stat failed'));
+    // ...but the sweep keeps going and still removes the later genuine orphan.
+    expect(mockRm).toHaveBeenCalledWith(
+      path.join(SESSIONS_DIR, 'surviving-orphan-uuid'),
+      expect.objectContaining({ recursive: true, force: true }),
+    );
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 
   it('retries rm on EPERM then succeeds', async () => {

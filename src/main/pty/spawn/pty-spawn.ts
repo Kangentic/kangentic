@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
-import { isUncPath } from '../../../shared/paths';
+import { isUncPath, isCmdShell } from '../../../shared/paths';
 import { trackEvent, sanitizeErrorMessage } from '../../analytics/analytics';
 
 /** Shell executable + args, split from a user-facing shell spec. */
@@ -75,13 +75,20 @@ export function buildSpawnEnv(
  * Resolution of the spawn working directory.
  *
  * - `effectiveCwd` is what should be passed to node-pty.
- * - `uncPushdPrefix`, when non-null, is a shell command the caller must
- *   write into the PTY before the user command so cmd.exe can reach the
- *   real UNC path via a mapped drive letter (cmd.exe refuses UNC cwds).
+ * - `cwdFixupCommand`, when non-null, is a shell command the caller must
+ *   write into the PTY before the user command so the session lands in the
+ *   real project directory. Two mutually-exclusive Windows quirks produce it:
+ *     1. cmd.exe + UNC cwd: cmd cannot use a UNC path as its cwd, so
+ *        `effectiveCwd` is REPLACED with home and the fixup is
+ *        `pushd "<unc>"` (maps the UNC path to a temporary drive letter).
+ *     2. PowerShell + bracketed cwd: `effectiveCwd` is LEFT UNCHANGED (the
+ *        Win32 process cwd is valid) and the fixup is
+ *        `Set-Location -LiteralPath '<cwd>'` to correct PowerShell's
+ *        provider location. See `resolveSpawnCwd` for the quirk details.
  */
 export interface SpawnCwdResolution {
   effectiveCwd: string;
-  uncPushdPrefix: string | null;
+  cwdFixupCommand: string | null;
 }
 
 /**
@@ -92,9 +99,20 @@ export interface SpawnCwdResolution {
  *    session with exit code -1. Emits a diagnostic analytics event.
  *  - cmd.exe cannot use a UNC path as its cwd (it prints
  *    "UNC paths are not supported" and defaults to C:\Windows). When
- *    we detect this, keep the cwd as home and return a `pushd "<unc>"`
- *    prefix that the caller must write before the user command.
- *    PowerShell and Git Bash handle UNC cwds natively, so no prefix.
+ *    we detect this, REPLACE the cwd with home and return a `pushd "<unc>"`
+ *    fixup that the caller must write before the user command.
+ *    PowerShell and Git Bash handle UNC cwds natively, so no fixup.
+ *  - Windows PowerShell 5.1 (`powershell.exe`, the default Windows shell)
+ *    treats `[` / `]` in its startup path as wildcard characters: launched
+ *    with a valid Win32 cwd like `D:\[foo]\bar` its path provider fails to
+ *    resolve the location and silently falls back to `$PSHOME`
+ *    (`C:\Windows\System32\WindowsPowerShell\v1.0`), so the agent CLI it
+ *    spawns runs against the wrong workspace. node-pty's `cwd` is still a
+ *    valid Win32 directory, so we LEAVE `effectiveCwd` unchanged and return
+ *    a `Set-Location -LiteralPath '<cwd>'` fixup that corrects the provider
+ *    location. Applied to the whole PowerShell family (powershell + pwsh):
+ *    the fixup is harmless in pwsh 7, and full shell paths make edition
+ *    detection by name unreliable.
  */
 export function resolveSpawnCwd(input: {
   requestedCwd: string;
@@ -111,17 +129,22 @@ export function resolveSpawnCwd(input: {
     });
   }
 
-  let uncPushdPrefix: string | null = null;
-  if (
-    input.platform === 'win32'
-    && isUncPath(effectiveCwd)
-    && input.shellName.toLowerCase().includes('cmd')
-  ) {
-    uncPushdPrefix = `pushd "${effectiveCwd}"`;
-    effectiveCwd = os.homedir();
+  const lowerShellName = input.shellName.toLowerCase();
+  let cwdFixupCommand: string | null = null;
+  if (input.platform === 'win32') {
+    if (isUncPath(effectiveCwd) && isCmdShell(input.shellName)) {
+      cwdFixupCommand = `pushd "${effectiveCwd}"`;
+      effectiveCwd = os.homedir();
+    } else if (
+      (lowerShellName.includes('powershell') || lowerShellName.includes('pwsh'))
+      && /[[\]]/.test(effectiveCwd)
+    ) {
+      const escapedCwd = effectiveCwd.replace(/'/g, "''");
+      cwdFixupCommand = `Set-Location -LiteralPath '${escapedCwd}'`;
+    }
   }
 
-  return { effectiveCwd, uncPushdPrefix };
+  return { effectiveCwd, cwdFixupCommand };
 }
 
 /**

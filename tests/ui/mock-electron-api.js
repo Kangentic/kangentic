@@ -1310,8 +1310,22 @@
       getUsage: async function (/* projectId */) {
         return {};
       },
-      onData: function () {
-        return noop;
+      onData: function (callback) {
+        // Tests can push live PTY data via window.__mockFireSessionData(sessionId, data),
+        // which routes through the incoming-write-queue into the mounted xterm instance.
+        if (!window.__mockDataListeners) window.__mockDataListeners = [];
+        window.__mockDataListeners.push(callback);
+        if (!window.__mockFireSessionData) {
+          window.__mockFireSessionData = function (sessionId, data) {
+            var listeners = (window.__mockDataListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](sessionId, data); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockDataListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
       },
       ackData: function () {
         // No-op in the headless mock: backpressure pause/resume has no PTY here.
@@ -2319,6 +2333,12 @@
 
     clipboard: {
       readImage: function () { return Promise.resolve('/tmp/kangentic-clipboard/pasted-image-1234567890.png'); },
+      // Call log for test assertions. Reset with window.electronAPI.clipboard.__writeTextCalls.length = 0.
+      __writeTextCalls: [],
+      writeText: function (text) {
+        window.electronAPI.clipboard.__writeTextCalls.push(text);
+        return Promise.resolve();
+      },
     },
 
     search: {

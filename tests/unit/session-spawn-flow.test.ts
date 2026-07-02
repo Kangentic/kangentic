@@ -1,7 +1,7 @@
 /**
  * Tests for the caller-owned session ID branch in performSpawn.
  *
- * Scope: lines 207-247 of session-spawn-flow.ts — the new
+ * Scope: lines 207-247 of session-spawn-flow.ts - the new
  * `hasKnownAgentSessionId` flag wired into sessionIdManager.init(), and
  * the sessionHistoryReader.attach() short-circuit for adapters that
  * declare both supportsCallerSessionId and runtime.sessionHistory.
@@ -41,22 +41,24 @@ vi.mock('../../src/main/shutdown-state', () => ({
   isShuttingDown: () => false,
 }));
 
-// Stub spawn env/cwd helpers — return safe defaults, no real fs access.
+// Stub spawn env/cwd helpers - return safe defaults, no real fs access.
+// resolveSpawnCwd is a vi.fn() so write-order tests can override the fixup
+// command per-call via mockReturnValueOnce.
 vi.mock('../../src/main/pty/spawn/pty-spawn', () => ({
   resolveShellArgs: (shell: string) => ({ exe: shell, args: [] }),
   buildSpawnEnv: (env: Record<string, string> | undefined) => ({ ...env }),
-  resolveSpawnCwd: ({ requestedCwd }: { requestedCwd: string }) => ({
+  resolveSpawnCwd: vi.fn(({ requestedCwd }: { requestedCwd: string }) => ({
     effectiveCwd: requestedCwd,
-    uncPushdPrefix: null,
-  }),
+    cwdFixupCommand: null,
+  })),
 }));
 
-// Stub spawn-failure-handler — never used in happy-path tests.
+// Stub spawn-failure-handler - never used in happy-path tests.
 vi.mock('../../src/main/pty/spawn/spawn-failure-handler', () => ({
   handleSpawnFailure: vi.fn(),
 }));
 
-// Stub adapter lifecycle hooks — no-ops for these tests.
+// Stub adapter lifecycle hooks - no-ops for these tests.
 vi.mock('../../src/main/pty/lifecycle/adapter-lifecycle', () => ({
   attachAdapter: vi.fn(),
   disposeAdapterAttachment: vi.fn(),
@@ -73,14 +75,19 @@ vi.mock('../../src/main/pr/pr-registry', () => ({
   detectPR: vi.fn(() => null),
 }));
 
-// Stub shell path adaptation.
+// Stub shell path adaptation. adaptCommandForShell is a vi.fn() (default:
+// identity) so the cwd-fixup-order tests can override it per-call via
+// mockImplementationOnce to prove the fixup command bypasses it (see
+// "writes the fixup command RAW" below).
 vi.mock('../../src/shared/paths', () => ({
-  adaptCommandForShell: (cmd: string) => cmd,
+  adaptCommandForShell: vi.fn((cmd: string) => cmd),
 }));
 
 // ---- Import under test (after all vi.mock hoisting) ----
 import { performSpawn } from '../../src/main/pty/lifecycle/session-spawn-flow';
 import { SessionRegistry } from '../../src/main/pty/session-registry';
+import { resolveSpawnCwd } from '../../src/main/pty/spawn/pty-spawn';
+import { adaptCommandForShell } from '../../src/shared/paths';
 import * as ptyModule from 'node-pty';
 
 // ---- Helpers ----
@@ -431,6 +438,129 @@ describe('performSpawn - caller-owned session ID wiring', () => {
     expect(warnMessage).toContain('[session-history] attach failed');
     // The session ID in the warning is the first 8 chars of input.id.
     expect(warnMessage).toContain(input.id!.slice(0, 8));
+  });
+});
+
+describe('performSpawn - Windows cwd fixup write order', () => {
+  // When resolveSpawnCwd returns a cwdFixupCommand (cmd.exe UNC pushd or
+  // PowerShell bracket Set-Location), performSpawn must write the fixup RAW
+  // into the PTY first, then write the initial command 200ms later so the
+  // session lands in the real project directory. The writes are setTimeout-
+  // based (100ms initial, 200ms fixup-to-command), so drive with fake timers.
+  //
+  // Red-green: drop the cwdFixupCommand write in session-spawn-flow.ts and the
+  // first-write assertion goes red; require input.command for the fixup write
+  // and the fixup-alone test goes red.
+  //
+  // Tier: Unit - pure mock collaborators, no PTY, no OS, no IPC.
+
+  const ptySpawnMock = ptyModule.spawn as ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('writes the fixup command first, then the initial command', async () => {
+    vi.mocked(resolveSpawnCwd).mockReturnValueOnce({
+      effectiveCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      cwdFixupCommand: "Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'",
+    });
+
+    const context = makeContext();
+    const input = makeInput({ command: 'claude --resume abc' });
+
+    await performSpawn(input, context);
+
+    const writeMock = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+
+    // Nothing written until the 100ms initial delay elapses.
+    expect(writeMock).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(100);
+    // Only the fixup so far - the command waits another 200ms.
+    expect(writeMock).toHaveBeenCalledTimes(1);
+    expect(writeMock.mock.calls[0][0]).toBe("Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'\r");
+
+    vi.advanceTimersByTime(200);
+    expect(writeMock).toHaveBeenCalledTimes(2);
+    expect(writeMock.mock.calls[1][0]).toBe('claude --resume abc\r');
+  });
+
+  it('writes the fixup alone when there is no initial command', async () => {
+    vi.mocked(resolveSpawnCwd).mockReturnValueOnce({
+      effectiveCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      cwdFixupCommand: "Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'",
+    });
+
+    const context = makeContext();
+    const input = makeInput({ command: '' });
+
+    await performSpawn(input, context);
+
+    const writeMock = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+
+    vi.advanceTimersByTime(100);
+    expect(writeMock).toHaveBeenCalledTimes(1);
+    expect(writeMock.mock.calls[0][0]).toBe("Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'\r");
+
+    // No command was scheduled, so advancing further writes nothing more.
+    vi.advanceTimersByTime(200);
+    expect(writeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes only the command (no fixup) when cwdFixupCommand is null', async () => {
+    // Default mock returns cwdFixupCommand: null - the common non-Windows /
+    // bracket-free case. The command is written directly, with no fixup and no
+    // 200ms stagger.
+    const context = makeContext();
+    const input = makeInput({ command: 'echo hi' });
+
+    await performSpawn(input, context);
+
+    const writeMock = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+
+    vi.advanceTimersByTime(100);
+    expect(writeMock).toHaveBeenCalledTimes(1);
+    expect(writeMock.mock.calls[0][0]).toBe('echo hi\r');
+  });
+
+  it('writes the fixup command RAW, bypassing adaptCommandForShell (only the initial command is adapted)', async () => {
+    // The default adaptCommandForShell mock is identity, so it cannot tell
+    // "written raw" apart from "routed through adaptCommandForShell and
+    // happened to come back unchanged" - a regression that started routing
+    // cwdFixupCommand through adaptCommandForShell (e.g. picking up
+    // PowerShell's `& ` call-operator prefix, which would break the
+    // `Set-Location` syntax) would slip past every other test in this
+    // describe block. Override the mock with a non-identity transform for
+    // this one call so the two paths are distinguishable.
+    vi.mocked(resolveSpawnCwd).mockReturnValueOnce({
+      effectiveCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      cwdFixupCommand: "Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'",
+    });
+    vi.mocked(adaptCommandForShell).mockImplementationOnce((cmd: string) => `ADAPTED:${cmd}`);
+
+    const context = makeContext();
+    const input = makeInput({ command: 'claude --resume abc' });
+
+    await performSpawn(input, context);
+
+    const writeMock = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+
+    vi.advanceTimersByTime(100);
+    vi.advanceTimersByTime(200);
+
+    expect(writeMock).toHaveBeenCalledTimes(2);
+    // The fixup must never pass through adaptCommandForShell, so no
+    // "ADAPTED:" marker even though the override would add one to anything
+    // routed through it.
+    expect(writeMock.mock.calls[0][0]).toBe("Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'\r");
+    // The initial command DOES go through adaptCommandForShell.
+    expect(writeMock.mock.calls[1][0]).toBe('ADAPTED:claude --resume abc\r');
   });
 });
 

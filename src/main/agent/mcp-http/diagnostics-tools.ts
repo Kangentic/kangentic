@@ -6,6 +6,7 @@ import { getProcessMetrics } from '../../diagnostics/process-metrics';
 import { enumerateWorktrees } from '../../git/worktree-list';
 import type { CrashRecord, IpcLogEntry, LogEntry } from '../../../shared/types';
 import { PROJECT_SELECTOR_DESCRIPTION } from './handler-helpers';
+import { READ_ONLY_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
 
 /**
@@ -17,18 +18,10 @@ import type { RequestResolver } from './project-resolver';
  * inspection bridge over these same on-disk artifacts plus screenshot,
  * DOM, and UI-driving capabilities; they are excluded from production
  * builds at compile time. See `src/devtools/mcp/preview-tools.ts`.
- */
-
-/**
+ *
  * Every tool here is a pure read of on-disk artifacts or a synchronous
- * snapshot. `readOnlyHint` lets the LLM treat these as safe to call
- * speculatively (parallel reads, retries on transient errors). MCP spec:
- * https://modelcontextprotocol.io/specification/server/tools
+ * snapshot, so all carry `READ_ONLY_ANNOTATIONS` (see ./annotations).
  */
-const READ_ONLY_ANNOTATIONS = {
-  readOnlyHint: true,
-  idempotentHint: true,
-} as const;
 
 export function registerDiagnosticsTools(server: McpServer, resolver: RequestResolver): void {
   // --- kangentic_tail_logs ---

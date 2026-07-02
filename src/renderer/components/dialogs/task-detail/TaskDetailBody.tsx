@@ -17,6 +17,7 @@ import { MarkdownRenderer } from '../../MarkdownRenderer';
 import type { Task, SessionDisplayState } from '../../../../shared/types';
 import { useSessionStore } from '../../../stores/session-store';
 import { useTaskSplitResize } from '../../../hooks/useTaskSplitResize';
+import { PanelErrorBoundary } from '../../PanelErrorBoundary';
 
 const ChangesPanel = lazy(() => import('./changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
 
@@ -155,25 +156,27 @@ export function TaskDetailBody({
   }
 
   const changesContent = (
-    <Suspense
-      fallback={
-        <div className="flex items-center justify-center h-full">
-          <Loader2 size={20} className="animate-spin text-fg-muted" />
-        </div>
-      }
-    >
-      <ChangesPanel
-        entityId={task.id}
-        isFocused={isFocused}
-        scrollKey={task.id}
-        projectPath={projectPath}
-        worktreePath={task.worktree_path ?? undefined}
-        baseBranch={task.base_branch || defaultBaseBranch || 'main'}
-        panelMode={changesViewMode}
-        onExpand={handleChangesExpand}
-        onCollapse={handleChangesCollapse}
-      />
-    </Suspense>
+    <PanelErrorBoundary label="Changes panel">
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center h-full">
+            <Loader2 size={20} className="animate-spin text-fg-muted" />
+          </div>
+        }
+      >
+        <ChangesPanel
+          entityId={task.id}
+          isFocused={isFocused}
+          scrollKey={task.id}
+          projectPath={projectPath}
+          worktreePath={task.worktree_path ?? undefined}
+          baseBranch={task.base_branch || defaultBaseBranch || 'main'}
+          panelMode={changesViewMode}
+          onExpand={handleChangesExpand}
+          onCollapse={handleChangesCollapse}
+        />
+      </Suspense>
+    </PanelErrorBoundary>
   );
 
   // The diff panel for the suspended / changes-only layouts (never the Browser

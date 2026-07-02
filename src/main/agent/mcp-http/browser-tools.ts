@@ -31,6 +31,7 @@ import {
   captureElementClip,
 } from '../../browser/cdp/screenshot';
 import { driverToolResult, screenshotToolResult, errorToolResult } from './tool-result';
+import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 
 /**
  * The user-facing `kangentic_browser_*` MCP tool family. Drives the embedded
@@ -44,9 +45,6 @@ import { driverToolResult, screenshotToolResult, errorToolResult } from './tool-
  * a `{ kind, detail }` error envelope. Capability tiers: observe (screenshot,
  * query, console, wait), interact (click/type/keypress/drag), navigate, eval.
  */
-
-const READ_ONLY_ANNOTATIONS = { readOnlyHint: true, idempotentHint: true } as const;
-const MUTATING_ANNOTATIONS = { readOnlyHint: false, idempotentHint: false } as const;
 
 const SESSION_DESC =
   'Optional Kangentic sessionId of the task whose Browser pane to target. Omit to use the single open pane (errors if more than one is open). Use kangentic_browser_list_panes to discover panes.';

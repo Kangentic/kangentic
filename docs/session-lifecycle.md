@@ -325,6 +325,26 @@ Terminal paste operations use xterm.js's built-in `terminal.paste()` method, whi
 
 This ensures consistent behavior across keyboard shortcuts and context menu paste.
 
+## Terminal Copy Strategy
+
+Terminal copy operations write to the OS clipboard through the main process
+(`clipboard:writeText`), which is synchronous and focus- and permission-independent.
+`navigator.clipboard.writeText()` is deliberately not used: it rejects with `NotAllowedError`
+when the document lacks focus, which is exactly the state during a native context-menu click and
+when a TUI app emits its copy sequence. The copy paths are:
+
+- **Ctrl+C with a selection / Ctrl+Shift+C** - the custom key handler reads the xterm selection,
+  cleans soft-wraps, and writes it via the IPC.
+- **Context menu Copy** - the native menu dispatches a `terminal-copy` event; the handler writes
+  the selection via the same IPC.
+- **OSC 52** - a TUI app (e.g. Claude Code's copy-on-select) copies by emitting
+  `ESC]52;c;<base64>BEL`. A write-only OSC 52 handler decodes the payload and writes it via the
+  IPC. Read requests (`Pd` is `?`) are ignored so a TUI can never read the user's clipboard back
+  out of the terminal.
+- **Scrollback replay** - recorded scrollback may contain OSC 52 sequences from an earlier copy;
+  the replay path strips them so restoring a session (dialog reopen, resize, respawn) never
+  clobbers the user's current clipboard.
+
 ## See Also
 
 - [Configuration](configuration.md) -- permission modes and session limits

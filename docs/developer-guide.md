@@ -141,7 +141,7 @@ src/
       project-store.ts     # Project CRUD
       toast-store.ts       # Notification queue
     utils/
-      terminal-clipboard.ts # Terminal copy/paste with bracketed paste support
+      terminal-clipboard.ts # Terminal copy/paste (OSC 52 write handler, bracketed paste)
   shared/                  # Shared between main and renderer
     abort-utils.ts         # AbortSignal type guard for stale spawn prevention
     types.ts               # All TypeScript interfaces

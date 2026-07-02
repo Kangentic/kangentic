@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '../addons/fit-addon';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { cleanSelection, enableTerminalClipboard } from '../utils/terminal-clipboard';
+import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
 import { noteTerminalFocus } from '../utils/dictation-target';
@@ -245,7 +245,8 @@ export function useTerminal(options: UseTerminalOptions) {
           };
           if (scrollback && xtermRef.current) {
             // Chunked so a 512KB replay doesn't parse in one synchronous write.
-            writeChunkedToTerminal(xtermRef.current, scrollback, afterWrite);
+            // Strip OSC 52 so replaying recorded output never clobbers the live clipboard.
+            writeChunkedToTerminal(xtermRef.current, stripOsc52Sequences(scrollback), afterWrite);
           } else {
             afterWrite();
           }
@@ -308,12 +309,9 @@ export function useTerminal(options: UseTerminalOptions) {
     };
     const handleCopy = (e: Event) => {
       if (!isInside(e)) return;
-      const term = xtermRef.current!;
-      const selection = term.getSelection();
-      if (selection) {
-        const cleaned = cleanSelection(selection, term.cols);
-        if (cleaned) navigator.clipboard.writeText(cleaned);
-      }
+      // Write via the main process (focus-independent). The native context menu's
+      // Menu.popup steals document focus, so navigator.clipboard.writeText would reject.
+      copySelectionToClipboard(xtermRef.current!);
     };
     const handleSelectAll = (e: Event) => {
       if (!isInside(e)) return;
@@ -444,7 +442,8 @@ export function useTerminal(options: UseTerminalOptions) {
         if (scrollback && xtermRef.current) {
           // Chunked so a 512KB replay (tab/window switch, resize) doesn't parse
           // in one synchronous write that stalls the renderer mid-drag.
-          writeChunkedToTerminal(xtermRef.current, scrollback, afterWrite);
+          // Strip OSC 52 so replaying recorded output never clobbers the live clipboard.
+          writeChunkedToTerminal(xtermRef.current, stripOsc52Sequences(scrollback), afterWrite);
         } else {
           afterWrite();
         }

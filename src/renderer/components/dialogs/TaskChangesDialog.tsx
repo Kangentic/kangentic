@@ -3,6 +3,7 @@ import { GitCompare, Loader2 } from 'lucide-react';
 import { BaseDialog } from './BaseDialog';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
+import { PanelErrorBoundary } from '../PanelErrorBoundary';
 import type { Task } from '../../../shared/types';
 
 const ChangesPanel = lazy(() =>
@@ -40,22 +41,24 @@ export function TaskChangesDialog({ task, onClose }: TaskChangesDialogProps) {
             No changes on this branch
           </div>
         ) : (
-          <Suspense
-            fallback={
-              <div className="flex items-center justify-center h-full">
-                <Loader2 size={20} className="animate-spin text-fg-muted" />
-              </div>
-            }
-          >
-            <ChangesPanel
-              entityId={`dialog-${task.id}`}
-              scrollKey={task.id}
-              projectPath={projectPath}
-              worktreePath={task.worktree_path}
-              baseBranch={task.base_branch || defaultBaseBranch || 'main'}
-              emptyMessage="No changes on this branch"
-            />
-          </Suspense>
+          <PanelErrorBoundary label="Changes panel">
+            <Suspense
+              fallback={
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 size={20} className="animate-spin text-fg-muted" />
+                </div>
+              }
+            >
+              <ChangesPanel
+                entityId={`dialog-${task.id}`}
+                scrollKey={task.id}
+                projectPath={projectPath}
+                worktreePath={task.worktree_path}
+                baseBranch={task.base_branch || defaultBaseBranch || 'main'}
+                emptyMessage="No changes on this branch"
+              />
+            </Suspense>
+          </PanelErrorBoundary>
         )}
       </div>
     </BaseDialog>

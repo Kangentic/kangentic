@@ -15,7 +15,7 @@
       "color": "#8b5cf6",
       "autoSpawn": true,
       "permissionMode": "plan",
-      "modelOverride": "claude-opus-4-8",
+      "modelOverride": "claude-fable-5",
       "effortOverride": "xhigh",
       "planExitTarget": "Executing"
     },

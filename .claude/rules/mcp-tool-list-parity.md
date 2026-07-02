@@ -45,9 +45,15 @@ are intentionally not part of this surface.
   `-tools.ts` suffix, so a brand-new registration file is auto-covered) and asserts (a) every
   registered tool has a manifest entry; (b) every manifest entry names a real registered tool
   (catches a rename/removal); (c) every manifest tool appears in
-  `docs/mcp-server.md`. Runs in CI via `npm run test:unit`. Because the rule is path-scoped, a
-  brand-new `*-tools.ts` file does not pre-load this rule (the read-trigger gap); the CI test is the
-  real guarantee.
+  `docs/mcp-server.md`. It additionally asserts (d) every registration declares `annotations:` via
+  one of the two shared constants in `src/main/agent/mcp-http/annotations.ts`
+  (`READ_ONLY_ANNOTATIONS` / `MUTATING_ANNOTATIONS`), that those constants keep their spec-correct
+  values, that no `*-tools.ts` redefines them locally, and that any tool named with a mutating verb
+  (`create` / `update` / `delete` / `move` / `promote` / `link`) is annotated mutating - so a tool
+  can never ship unannotated (which would prompt on every plan-mode call) or with a mutation
+  dishonestly marked read-only (which would be silently auto-approved in plan mode). Runs in CI via
+  `npm run test:unit`. Because the rule is path-scoped, a brand-new `*-tools.ts` file does not
+  pre-load this rule (the read-trigger gap); the CI test is the real guarantee.
 - **Review:** `/code-review` flags a new `registerTool` call site without a matching manifest entry,
   and the `doc-auditor` agent reports a tool missing from `docs/mcp-server.md`.
 

@@ -23,10 +23,24 @@ import type { CommandOptions } from '../../agent-adapter';
  */
 const STATUS_LINE_REFRESH_INTERVAL_SECONDS = 10;
 
+/**
+ * Allow rule injected into every spawned session's merged settings whenever
+ * the kangentic MCP server is attached. The bare server-scope form
+ * pre-approves every mcp__kangentic__* tool so agents Kangentic spawns never
+ * see a permission prompt for Kangentic's own in-process tools in default /
+ * acceptEdits mode, regardless of the project's committed settings.
+ *
+ * Allow rules cover default mode only. Plan mode does NOT honor allow rules;
+ * plan-mode auto-approval of the read-only tools comes from their
+ * `readOnlyHint` annotations (see src/main/agent/mcp-http/annotations.ts).
+ */
+const KANGENTIC_MCP_ALLOW_RULE = 'mcp__kangentic';
+
 /** Subset of Claude Code settings.json that we read/write. */
 interface ClaudeSettings {
   statusLine?: { type: string; command: string; refreshInterval?: number };
   hooks?: Record<string, ClaudeHookEntry[]>;
+  permissions?: { allow?: string[]; deny?: string[] };
   [key: string]: unknown; // preserve unknown keys from user's settings
 }
 
@@ -208,10 +222,7 @@ export class CommandBuilder {
       const raw = fs.readFileSync(localSettingsPath, 'utf-8');
       const localSettings: ClaudeSettings = JSON.parse(raw);
       const { hooks: localHooks, permissions: localPerms, ...localRest } = localSettings;
-      const mergedPerms = mergePermissions(
-        baseSettings.permissions as { allow?: string[]; deny?: string[] } | undefined,
-        localPerms as { allow?: string[]; deny?: string[] } | undefined,
-      );
+      const mergedPerms = mergePermissions(baseSettings.permissions, localPerms);
       baseSettings = {
         ...baseSettings,
         ...localRest,
@@ -252,12 +263,9 @@ export class CommandBuilder {
       try {
         const raw = fs.readFileSync(wtLocalPath, 'utf-8');
         const wtLocal: ClaudeSettings = JSON.parse(raw);
-        const wtPerms = wtLocal.permissions as { allow?: string[]; deny?: string[] } | undefined;
+        const wtPerms = wtLocal.permissions;
         if (wtPerms) {
-          const mergedPerms = mergePermissions(
-            baseSettings.permissions as { allow?: string[]; deny?: string[] } | undefined,
-            wtPerms,
-          );
+          const mergedPerms = mergePermissions(baseSettings.permissions, wtPerms);
           if (mergedPerms) {
             baseSettings = { ...baseSettings, permissions: mergedPerms };
           }
@@ -335,6 +343,22 @@ export class CommandBuilder {
       const mcpConfigPath = path.join(sessionDir, 'mcp.json');
       fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
       this.lastMcpConfigPath = mcpConfigPath;
+
+      // Pre-approve kangentic's own tools so a spawned agent never sees a
+      // permission prompt for them in default / acceptEdits mode. Gated on
+      // the SAME condition as the mcp.json write above (server actually
+      // attached), so the rule is never injected when the server is absent.
+      // This lives only in the per-session merged settings, which are
+      // regenerated from base sources on every spawn and resume, never
+      // written back to the user's own settings files. Append-if-absent so a
+      // committed project rule or a Claude "always allow" grant merged
+      // earlier is not duplicated. `deny` is untouched: an explicit user deny
+      // of mcp__kangentic still wins (Claude Code deny outranks allow).
+      const permissions = merged.permissions ?? {};
+      const allowEntries = permissions.allow ?? [];
+      if (!allowEntries.includes(KANGENTIC_MCP_ALLOW_RULE)) {
+        merged.permissions = { ...permissions, allow: [...allowEntries, KANGENTIC_MCP_ALLOW_RULE] };
+      }
     }
 
     // Write merged settings to <sessionDir>/settings.json (used with --settings flag)

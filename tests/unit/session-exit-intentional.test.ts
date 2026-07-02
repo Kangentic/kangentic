@@ -57,7 +57,7 @@ vi.mock('../../src/main/pty/spawn/pty-spawn', () => ({
   buildSpawnEnv: (env: Record<string, string> | undefined) => ({ ...env }),
   resolveSpawnCwd: ({ requestedCwd }: { requestedCwd: string }) => ({
     effectiveCwd: requestedCwd,
-    uncPushdPrefix: null,
+    cwdFixupCommand: null,
   }),
 }));
 

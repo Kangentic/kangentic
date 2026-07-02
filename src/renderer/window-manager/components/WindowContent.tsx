@@ -14,6 +14,7 @@
 import { Suspense, lazy } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
+import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
 import { WindowTitleBar } from './WindowTitleBar';
 import { TaskDetailWindow } from './TaskDetailWindow';
 import type { ManagedWindow } from '../store/types';
@@ -41,19 +42,21 @@ export function WindowContent({
 }: WindowContentProps) {
   if (managedWindow.kind === 'command-terminal') {
     return (
-      <Suspense
-        fallback={
-          <div className="flex h-full w-full items-center justify-center">
-            <Loader2 size={20} className="animate-spin text-fg-muted" />
-          </div>
-        }
-      >
-        <CommandTerminalWindow
-          managedWindow={managedWindow}
-          isMaximized={isMaximized}
-          titleBarPointerDown={titleBarPointerDown}
-        />
-      </Suspense>
+      <PanelErrorBoundary label="Command Terminal">
+        <Suspense
+          fallback={
+            <div className="flex h-full w-full items-center justify-center">
+              <Loader2 size={20} className="animate-spin text-fg-muted" />
+            </div>
+          }
+        >
+          <CommandTerminalWindow
+            managedWindow={managedWindow}
+            isMaximized={isMaximized}
+            titleBarPointerDown={titleBarPointerDown}
+          />
+        </Suspense>
+      </PanelErrorBoundary>
     );
   }
 

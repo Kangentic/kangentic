@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
 import { PROJECT_SELECTOR_DESCRIPTION, type McpToolResult } from './handler-helpers';
+import { READ_ONLY_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
 import { runSearchEverything } from '../../search/search-core';
 import type { SearchHit, Project } from '../../../shared/types';
@@ -37,6 +38,7 @@ export function registerSearchTools(
         scope: z.enum(['current', 'all']).optional().describe('"current" (default) searches only the active or `project`-routed project. "all" widens to every registered project on this machine and additionally surfaces project-name hits so an agent can discover routing targets. Ignored (forced to "current") when `project` is set.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
+      annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ query, scope, project }): Promise<McpToolResult> => {
       const resolved = resolver.resolveProject(project);
