@@ -34,6 +34,21 @@ const TASK_ID = 'task-desc-peek';
 const SESSION_ID = 'sess-desc-peek';
 const TASK_DESCRIPTION = 'Implement the OAuth login flow with PKCE';
 
+// Second fixture task: a running session (hasSessionContext === true) but no
+// description, attachments, labels, or priority (hasDescriptionContent ===
+// false). Proves canShowDescription requires BOTH conditions, not just a
+// running session.
+const EMPTY_TASK_ID = 'task-desc-peek-empty';
+const EMPTY_SESSION_ID = 'sess-desc-peek-empty';
+
+// Third fixture task: hasDescriptionContent is true (non-empty description),
+// but the session is SUSPENDED, so displayState.kind === 'suspended'. Proves
+// canShowDescription also excludes the suspended state (mirroring
+// canShowBrowser), since the suspended body branch renders a resume prompt
+// and never consumes descriptionPeekOpen.
+const SUSPENDED_TASK_ID = 'task-desc-peek-suspended';
+const SUSPENDED_SESSION_ID = 'sess-desc-peek-suspended';
+
 const preConfig = `
   window.__mockPreConfigure(function (state) {
     var ts = new Date().toISOString();
@@ -78,6 +93,72 @@ const preConfig = `
       session_id: '${SESSION_ID}',
       worktree_path: '/mock/worktrees/desc-peek',
       branch_name: 'feature/desc-peek',
+      pr_number: null,
+      pr_url: null,
+      base_branch: 'main',
+      archived_at: null,
+      created_at: ts,
+      updated_at: ts,
+    });
+
+    // Running session so hasSessionContext is true, but no description,
+    // attachments, labels, or priority, so hasDescriptionContent is false.
+    state.sessions.push({
+      id: '${EMPTY_SESSION_ID}',
+      taskId: '${EMPTY_TASK_ID}',
+      projectId: '${PROJECT_ID}',
+      pid: 9998,
+      status: 'running',
+      shell: 'bash',
+      cwd: '/mock/desc-peek-test',
+      startedAt: ts,
+      exitCode: null,
+    });
+
+    state.tasks.push({
+      id: '${EMPTY_TASK_ID}',
+      title: 'No Description Task',
+      description: '',
+      swimlane_id: laneIds['Executing'],
+      position: 1,
+      agent: 'claude',
+      session_id: '${EMPTY_SESSION_ID}',
+      worktree_path: '/mock/worktrees/desc-peek-empty',
+      branch_name: 'feature/desc-peek-empty',
+      pr_number: null,
+      pr_url: null,
+      base_branch: 'main',
+      archived_at: null,
+      created_at: ts,
+      updated_at: ts,
+    });
+
+    // Suspended session (user-paused) so hasSessionContext is true
+    // (displayState.kind === 'suspended' is not 'none'/'exited'), and the
+    // task has a description, so hasDescriptionContent is true too - but
+    // the fix must still exclude the suspended kind.
+    state.sessions.push({
+      id: '${SUSPENDED_SESSION_ID}',
+      taskId: '${SUSPENDED_TASK_ID}',
+      projectId: '${PROJECT_ID}',
+      pid: null,
+      status: 'suspended',
+      shell: 'bash',
+      cwd: '/mock/desc-peek-test',
+      startedAt: ts,
+      exitCode: null,
+    });
+
+    state.tasks.push({
+      id: '${SUSPENDED_TASK_ID}',
+      title: 'Suspended Description Task',
+      description: 'A description that should stay hidden while suspended',
+      swimlane_id: laneIds['Executing'],
+      position: 2,
+      agent: 'claude',
+      session_id: '${SUSPENDED_SESSION_ID}',
+      worktree_path: '/mock/worktrees/desc-peek-suspended',
+      branch_name: 'feature/desc-peek-suspended',
       pr_number: null,
       pr_url: null,
       base_branch: 'main',
@@ -163,6 +244,97 @@ test.describe('Task Detail description peek', () => {
     await expect(page.locator('text=Hide description')).toBeVisible({ timeout: 5000 });
     await page.locator('text=Hide description').click();
     await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).not.toBeVisible({ timeout: 8000 });
+
+    // Close the dialog
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('pill and kebab item are absent when there is no description content', async () => {
+    // Open the task detail dialog for the task with a running session but no
+    // description, attachments, labels, or priority (canShowDescription is
+    // hasSessionContext && hasDescriptionContent - this task satisfies only
+    // the first half).
+    const card = page
+      .locator('[data-swimlane-name="Executing"]')
+      .locator('text=No Description Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    // Give the header time to render before asserting a negative (no element
+    // ever appears rather than "hasn't appeared yet").
+    await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
+
+    // No description peek pill in the header.
+    await expect(page.locator('[data-testid="description-peek-toggle"]')).toHaveCount(0);
+
+    // No "Show description" item in the kebab menu either.
+    await dialog.locator('[title="Actions"]').click();
+    await expect(page.locator('text=Show description')).toHaveCount(0);
+
+    // Close the dialog
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('Mod+Shift+K toggles the description strip', async () => {
+    // Open the task detail dialog fresh for this test (cross-test state
+    // isolation) on the task that has description content.
+    const card = page
+      .locator('[data-swimlane-name="Executing"]')
+      .locator('text=Description Peek Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    // Description not visible initially
+    await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).not.toBeVisible();
+
+    // Newly opened windows are focused, so the keybinding fires without an
+    // explicit focus step (mirrors browser-empty-state.spec.ts's Mod+Shift+B
+    // pattern). The suite runs headless Chromium on Linux CI + Windows local,
+    // so Control+Shift+K is the correct (non-mac) combo for taskDetail.toggleDescription.
+    await page.keyboard.press('Control+Shift+K');
+    await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).toBeVisible({ timeout: 8000 });
+
+    // Press again -> toggles hidden.
+    await page.keyboard.press('Control+Shift+K');
+    await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).not.toBeVisible({ timeout: 8000 });
+
+    // Close the dialog
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('pill and kebab item are absent when the session is suspended', async () => {
+    // Open the task detail dialog for the task with a non-empty description
+    // (hasDescriptionContent is true) but a SUSPENDED session (displayState.kind
+    // === 'suspended'). canShowDescription must exclude the suspended state
+    // even though the task has content to peek at.
+    const card = page
+      .locator('[data-swimlane-name="Executing"]')
+      .locator('text=Suspended Description Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    // Give the header time to render before asserting a negative (no element
+    // ever appears rather than "hasn't appeared yet").
+    await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
+
+    // No description peek pill in the header, despite the task having a description.
+    await expect(page.locator('[data-testid="description-peek-toggle"]')).toHaveCount(0);
+
+    // No "Show description" item in the kebab menu either.
+    await dialog.locator('[title="Actions"]').click();
+    await expect(page.locator('text=Show description')).toHaveCount(0);
 
     // Close the dialog
     await page.keyboard.press('Control+Shift+W');

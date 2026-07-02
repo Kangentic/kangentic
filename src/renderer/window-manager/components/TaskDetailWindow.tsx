@@ -195,7 +195,14 @@ export function TaskDetailWindow({
     || (task.priority ?? 0) > 0
     || (task.labels ?? []).length > 0
   );
-  const canShowDescription = hasSessionContext && hasDescriptionContent;
+  // Mirror canShowBrowser's exclusions: the queued and suspended body branches
+  // render a placeholder / resume prompt and never consume descriptionPeekOpen,
+  // so the pill, kebab item, and hotkey must not appear in those states (they
+  // would toggle state with no visible effect).
+  const canShowDescription = hasSessionContext
+    && hasDescriptionContent
+    && sessionState.displayState.kind !== 'queued'
+    && sessionState.displayState.kind !== 'suspended';
 
   // Unsaved-changes detection for edit mode: any editable field differing from
   // the persisted task counts as dirty (mirrors handleCancel's reverts).

@@ -123,7 +123,8 @@ export function TaskDetailBody({
     />
   );
 
-  // Description view mode with attachment thumbnails (non-archived, non-session)
+  // Description view mode with attachment thumbnails. Shown in the non-archived,
+  // non-session view, and also during an active session when descriptionPeekOpen is true.
   const descriptionBar = !isArchived && (task.description || savedAttachments.length > 0 || hasLabelsOrPriority) && (!hasSessionContext || descriptionPeekOpen) && (
     <div className={`px-4 py-3 border-b border-edge flex-shrink-0 space-y-2${hasSessionContext ? ' max-h-[25vh] overflow-y-auto' : ''}`}>
       {task.description && (
