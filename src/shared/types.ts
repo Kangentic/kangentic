@@ -1418,12 +1418,6 @@ export interface AppConfig {
 
   mcpServer: {
     enabled: boolean;
-    /**
-     * Runaway-loop safeguard: the maximum number of tasks an agent can create
-     * through the MCP server per app launch. The count resets on restart; a
-     * changed value takes effect on the next launch.
-     */
-    maxTaskCreatePerLaunch: number;
   };
 
   contextBar: {
@@ -1702,7 +1696,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   },
   mcpServer: {
     enabled: true,
-    maxTaskCreatePerLaunch: 50,
   },
   contextBar: {
     showShell: true,

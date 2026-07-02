@@ -94,7 +94,7 @@ If the target column has `auto_spawn` enabled, creating a task there will also s
 
 **Cross-project routing guard:** when `project` is omitted (so the task would default to the active project) but the title or description names a *different* registered project, the tool refuses with a routing-check error instead of creating the task. No task is created and no rate-limit slot is consumed. Re-run with `project: "<that project>"` to file it there, or with `project: "<active project>"` to confirm the active project. This catches the common cross-project triage case (filing a bug about one project from another) when the routing cue is only implied by the task text.
 
-Runaway-loop safeguard: a single Kangentic launch can create a limited number of tasks via this tool (a circuit breaker against a misbehaving agent, shared across board and backlog). The cap is configurable in Settings -> MCP Server (the "Task Creation Limit", default 50). Hitting it returns a clear error and creates nothing; the accumulated count resets when Kangentic restarts.
+Runaway-loop safeguard: a single Kangentic launch can create at most 500 tasks via this tool (a high internal circuit breaker against a misbehaving agent, shared across board and backlog, not a user-tunable setting). Hitting it returns a clear error and creates nothing; the accumulated count resets when Kangentic restarts.
 
 ### kangentic_list_columns
 
@@ -497,7 +497,7 @@ The `.claude/settings.json` file includes a wildcard permission entry (`mcp__kan
 - **Per-launch token** - every Kangentic launch generates a fresh 32-byte random `X-Kangentic-Token`. Clients without the token get `401`. Comparison is constant-time (`timingSafeEqual`) so a local timing oracle cannot byte-by-byte recover the token.
 - **DNS rebinding protection** - the Streamable HTTP transport enforces a host allowlist (`127.0.0.1`, `localhost`, `[::1]`) on top of the loopback bind.
 - **Project routing via URL path** - the URL embeds the project ID (`/mcp/<projectId>`). A stale `mcp.json` for a different project cannot be reused against the current launch.
-- **Runaway-loop safeguard** - task creations are capped per app launch, enforced atomically by the shared `TaskCounter`. The cap is configurable in Settings -> MCP Server (the "Task Creation Limit", default 50); it is a circuit breaker against a looping agent, and the count resets on restart.
+- **Runaway-loop safeguard** - task creations are capped at a fixed 500 per app launch, enforced atomically by the shared `TaskCounter`. This is an internal circuit breaker against a looping agent, not a user-tunable knob; the count resets on restart.
 - **Input validation** - Zod schemas enforce title (200 chars) and description (10000 chars) limits at the protocol level; the command handlers validate again.
 - **Column safety** - `kangentic_create_task` defaults to the To Do column; creating in an auto_spawn column intentionally triggers agent spawn.
 - **Destructive operations are explicit** - `kangentic_delete_task`, `kangentic_delete_backlog_item`, and `kangentic_move_task` mutate the board. Agents must invoke them by name; there is no implicit fallback.

@@ -1,7 +1,6 @@
 import { commandHandlers } from '../commands';
 import type { CommandContext, CommandResponse } from '../commands';
 import type { RequestResolver, ResolvedProject } from './project-resolver';
-import { DEFAULT_CONFIG } from '../../../shared/types';
 
 /**
  * Shape of an MCP tool result: JSON-serialisable content blocks plus an
@@ -32,16 +31,13 @@ export const PROJECT_SELECTOR_DESCRIPTION =
   'Optional project name (case-insensitive exact) or UUID to target a different project than the active one. Set it whenever the user\'s request names another registered project; omit for the active project. See the server instructions ("PROJECT ROUTING RULE") for how mentions are phrased, and kangentic_list_projects for valid names.';
 
 /**
- * Default runaway-loop safeguard: the maximum number of tasks one MCP
+ * Internal runaway-loop safeguard: the maximum number of tasks one MCP
  * server launch will create before `kangentic_create_task` starts refusing.
  * This is a circuit breaker against a misbehaving agent looping on task
- * creation. It is user-configurable via the `mcpServer.maxTaskCreatePerLaunch`
- * setting (Settings -> MCP Server); this constant is the fallback default used
- * when no configured value is available at startup. It derives from
- * `DEFAULT_CONFIG.mcpServer.maxTaskCreatePerLaunch` so the shipped default and
- * this fallback can never drift. The accumulated count resets on app restart.
+ * creation, NOT a user-tunable quota. It is intentionally high (a heavy
+ * dogfooding day stays well under it) and resets on app restart.
  */
-export const DEFAULT_MAX_TASK_CREATE_PER_LAUNCH = DEFAULT_CONFIG.mcpServer.maxTaskCreatePerLaunch;
+const MAX_TASK_CREATE_PER_LAUNCH = 500;
 
 /**
  * Atomic create_task rate-limit counter shared across all requests served
@@ -51,18 +47,17 @@ export const DEFAULT_MAX_TASK_CREATE_PER_LAUNCH = DEFAULT_CONFIG.mcpServer.maxTa
 export interface TaskCounter {
   /** Reserve one slot. Returns false if the runaway-loop ceiling is reached. */
   tryReserve(): boolean;
-  /** The configured ceiling. Used to build the limit-reached error message. */
+  /** The ceiling. Used to build the limit-reached error message. */
   limit(): number;
 }
 
 /**
- * Build an in-memory TaskCounter enforcing the per-launch runaway-loop
- * safeguard. `maxPerLaunch` is the ceiling, defaulting to
- * `DEFAULT_MAX_TASK_CREATE_PER_LAUNCH` when not supplied (e.g. if no configured
- * value is available at startup). The accumulated count persists for the app
- * launch and resets on restart.
+ * Build an in-memory TaskCounter enforcing the `MAX_TASK_CREATE_PER_LAUNCH`
+ * runaway-loop safeguard. The accumulated count persists for the app launch
+ * and resets on restart. `maxPerLaunch` exists only so unit tests can drive a
+ * small ceiling without looping 500 times; production always uses the default.
  */
-export function makeTaskCounter(maxPerLaunch: number = DEFAULT_MAX_TASK_CREATE_PER_LAUNCH): TaskCounter {
+export function makeTaskCounter(maxPerLaunch: number = MAX_TASK_CREATE_PER_LAUNCH): TaskCounter {
   let count = 0;
   return {
     tryReserve: () => {
