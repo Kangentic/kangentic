@@ -355,7 +355,22 @@ export async function pruneOrphanedDirectories(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Remove unreferenced subdirectories with retry on EPERM. */
+/**
+ * Grace period for the orphan-directory sweep. Spawn paths (prepare-spawn
+ * session dirs, worktree creation) write directories to disk BEFORE the owning
+ * id becomes visible in the DB or PTY registry, so a freshly created directory
+ * can look orphaned to a concurrent sweep at cold project open. The sweep runs
+ * once per cold open and genuine orphans are typically days old, so a generous
+ * window costs nothing: a too-young true orphan simply survives until the next
+ * cold open.
+ */
+const ORPHAN_DIRECTORY_GRACE_PERIOD_MS = 10 * 60 * 1000;
+
+/**
+ * Remove unreferenced subdirectories with retry on EPERM. Skips directories
+ * modified within the grace period so the sweep never races a concurrent spawn
+ * path that creates directories before registering their ids.
+ */
 async function pruneDirectory(
   parentDir: string,
   isReferenced: (dirPath: string, name: string) => boolean,
@@ -373,6 +388,22 @@ async function pruneDirectory(
     if (!entry.isDirectory()) continue;
     const dirPath = path.join(parentDir, entry.name);
     if (isReferenced(dirPath, entry.name)) continue;
+
+    let modifiedAtMs: number;
+    try {
+      modifiedAtMs = (await fs.promises.stat(dirPath)).mtimeMs;
+    } catch (error) {
+      const statError = error as NodeJS.ErrnoException;
+      console.warn(
+        `[RESOURCE_CLEANUP] Skipping orphaned ${label} directory (stat failed): ${entry.name} `
+        + `(code=${statError.code ?? 'unknown'} errno=${statError.errno ?? '?'} syscall=${statError.syscall ?? '?'}): ${statError.message}`
+      );
+      continue;
+    }
+    if (Date.now() - modifiedAtMs < ORPHAN_DIRECTORY_GRACE_PERIOD_MS) {
+      console.log(`[RESOURCE_CLEANUP] Skipping recently modified ${label} directory (grace period): ${entry.name}`);
+      continue;
+    }
 
     console.log(`[RESOURCE_CLEANUP] Removing orphaned ${label} directory: ${entry.name}`);
 

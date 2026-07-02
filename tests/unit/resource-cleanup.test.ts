@@ -4,10 +4,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockExistsSync, mockRm, mockReaddir, mockExecFile } = vi.hoisted(() => ({
+const { mockExistsSync, mockRm, mockReaddir, mockStat, mockExecFile } = vi.hoisted(() => ({
   mockExistsSync: vi.fn((): boolean => false),
   mockRm: vi.fn(async () => {}),
   mockReaddir: vi.fn(async () => []),
+  // Default to an old mtime so orphan sweeps proceed. Computed at call time
+  // because the relevant block uses fake timers.
+  mockStat: vi.fn(async () => ({ mtimeMs: Date.now() - 24 * 60 * 60 * 1000 })),
   mockExecFile: vi.fn(),
 }));
 
@@ -17,6 +20,7 @@ vi.mock('node:fs', () => ({
     promises: {
       rm: mockRm,
       readdir: mockReaddir,
+      stat: mockStat,
     },
   },
 }));
@@ -710,6 +714,7 @@ describe('pruneOrphanedDirectories -- pruneDirectory warn-and-continue', () => {
     mockExistsSync.mockReturnValue(false);
     mockRm.mockResolvedValue(undefined);
     mockReaddir.mockResolvedValue([]);
+    mockStat.mockImplementation(async () => ({ mtimeMs: Date.now() - 24 * 60 * 60 * 1000 }));
     setupExecFile(() => '');
   });
 
