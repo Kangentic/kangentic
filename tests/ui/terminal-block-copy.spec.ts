@@ -240,10 +240,23 @@ test.describe('terminal block copy', () => {
         return page.evaluate(() => window.__clipboardWrites as string[]);
       }, { timeout: 3000 }).toContain(QUOTE_LINES.join('\n'));
 
-      // Moving the pointer off the terminal hides the button and highlight.
-      // `steps` forces intermediate moves so the boundary-crossing (mouseleave)
-      // actually fires (a single teleporting move dispatches nothing en route).
-      await page.mouse.move(5, 5, { steps: 10 });
+      // Moving the pointer to a blank row (below the fixture content) hides the
+      // button and highlight. The move stays INSIDE the terminal, so mousemove
+      // fires reliably on every platform (exiting the element does not on the CI
+      // Linux runner); a blank row has no block, so handleMove hides it.
+      const blankPoint = await page.evaluate(() => {
+        const screen = document.querySelector('[data-testid="command-terminal-window"] .xterm-screen');
+        const rect = screen!.getBoundingClientRect();
+        const x = Math.round(rect.left + rect.width * 0.3);
+        for (let i = 59; i >= 1; i -= 1) {
+          const y = Math.round(rect.top + (rect.height * i) / 60);
+          const result = window.__kangenticTerminalBlockHitTest!(x, y);
+          if (result.isTerminal && result.blockKind === null) return { x, y };
+        }
+        return null;
+      });
+      expect(blankPoint).not.toBeNull();
+      await page.mouse.move(blankPoint!.x, blankPoint!.y, { steps: 10 });
       await expect(button).toBeHidden({ timeout: 3000 });
       await expect(highlight).toBeHidden({ timeout: 3000 });
 
