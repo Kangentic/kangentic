@@ -17,6 +17,7 @@ function captureKeyHandler(options: { hover: boolean; release?: boolean }): {
   let handler: KeyEventHandler | null = null;
   const terminal = {
     attachCustomKeyEventHandler: (keyEventHandler: KeyEventHandler) => { handler = keyEventHandler; },
+    parser: { registerOscHandler: () => ({ dispose() { /* noop */ } }) },
     hasSelection: () => false,
     getSelection: () => '',
     cols: 80,

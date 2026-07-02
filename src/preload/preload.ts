@@ -405,6 +405,7 @@ const api: ElectronAPI = {
 
   clipboard: {
     readImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE),
+    writeText: (text) => ipcRenderer.invoke(IPC.CLIPBOARD_WRITE_TEXT, text),
   },
 
   browser: {

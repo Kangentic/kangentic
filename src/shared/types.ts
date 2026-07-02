@@ -3059,6 +3059,7 @@ export interface ElectronAPI {
   // Clipboard
   clipboard: {
     readImage: () => Promise<string | null>;
+    writeText: (text: string) => Promise<void>;
   };
 
   // Browser pane: embedded webview capture-and-send

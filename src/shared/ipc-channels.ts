@@ -228,6 +228,7 @@ export const IPC = {
 
   // Clipboard
   CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
+  CLIPBOARD_WRITE_TEXT: 'clipboard:writeText',
 
   // Browser pane: embedded webview capture-and-send
   BROWSER_CAPTURE_SEND: 'browser:captureSend',

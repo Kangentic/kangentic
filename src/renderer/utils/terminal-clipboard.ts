@@ -1,5 +1,66 @@
 import { Terminal } from '@xterm/xterm';
 
+// ---------------------------------------------------------------------------
+// OSC 52 clipboard sequence handling
+// ---------------------------------------------------------------------------
+
+/**
+ * Cap on the base64 payload of an OSC 52 write (~768KB of decoded text). Guards
+ * against a malicious or runaway TUI streaming an enormous clipboard payload.
+ */
+const OSC52_MAX_BASE64_LENGTH = 1024 * 1024;
+
+/**
+ * Decode the data portion of an OSC 52 sequence ("<Pc>;<Pd>").
+ *
+ * Returns the decoded UTF-8 text for a write, or null for:
+ * - a read request (`Pd === '?'`) - deliberately unsupported, so a TUI app can
+ *   never READ the user's clipboard back out of the terminal,
+ * - a missing separator, an empty payload, or an oversized payload,
+ * - malformed base64.
+ *
+ * Pc (the clipboard selection: 'c', 'p', 's', combos, or empty) is ignored;
+ * every write targets the system clipboard.
+ */
+export function decodeOsc52Payload(data: string): string | null {
+  const separator = data.indexOf(';');
+  if (separator === -1) return null;
+  const payload = data.slice(separator + 1);
+  if (!payload || payload === '?') return null;
+  if (payload.length > OSC52_MAX_BASE64_LENGTH) return null;
+  try {
+    const binary = atob(payload);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const text = new TextDecoder().decode(bytes);
+    return text || null;
+  } catch {
+    return null; // malformed base64
+  }
+}
+
+/**
+ * Matches complete OSC 52 sequences terminated by BEL, ESC\ (ST), C1 ST, or a
+ * bare ESC that introduces the NEXT escape sequence. The bare-ESC case matters
+ * because xterm's parser ends (and dispatches) an OSC string on any of
+ * [0x9c, 0x1b, 0x18, 0x1a, 0x07] (EscapeSequenceParser transition table), so an
+ * OSC 52 write followed directly by e.g. a CSI (`ESC[0m`) instead of a proper
+ * BEL/ST is still dispatched on replay. The trailing `(?=\x1b)` alternative
+ * matches that boundary with a zero-width lookahead, so the following escape
+ * sequence is left intact for the terminal to interpret.
+ */
+const OSC52_SEQUENCE_RE = /\x1b\]52;[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c|(?=\x1b))/g;
+
+/**
+ * Remove OSC 52 sequences from recorded scrollback before replaying it into a
+ * live terminal, so replaying a session that once copied text does not clobber
+ * the user's CURRENT clipboard. Base64 never contains BEL/ESC/C1-ST, so the
+ * payload match cannot over-run its terminator.
+ */
+export function stripOsc52Sequences(text: string): string {
+  if (!text.includes('\x1b]52;')) return text; // fast path for the common replay
+  return text.replace(OSC52_SEQUENCE_RE, '');
+}
+
 /**
  * Clean a terminal selection string:
  * 1. Unwrap soft line breaks (lines that fill exactly `cols` are joined)
@@ -25,6 +86,21 @@ export function cleanSelection(raw: string, cols: number): string {
   if (current) result.push(current.trimEnd());
 
   return result.join('\n').trim();
+}
+
+/**
+ * Copy the terminal's current selection to the system clipboard, cleaning soft
+ * wraps first. Writes via the main process (window.electronAPI.clipboard.writeText),
+ * which is focus- and permission-independent, rather than navigator.clipboard.writeText,
+ * which rejects with NotAllowedError when the document lacks focus - exactly the state
+ * during a native context-menu copy (Menu.popup steals document focus). Best-effort: a
+ * failed write is swallowed. No-op when there is no selection.
+ */
+export function copySelectionToClipboard(terminal: Terminal): void {
+  const selection = terminal.getSelection();
+  if (!selection) return;
+  const cleaned = cleanSelection(selection, terminal.cols);
+  if (cleaned) window.electronAPI.clipboard.writeText(cleaned).catch(() => { /* best-effort */ });
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +212,10 @@ async function handlePaste(
 /**
  * Enable clipboard copy support for an xterm.js Terminal instance.
  *
+ * - OSC 52 write sequences (ESC]52;c;<base64>BEL) from a TUI app write the system
+ *   clipboard. This is how Claude Code's TUI copies a mouse selection; without a
+ *   handler xterm silently drops the sequence. Write-only: read requests (Pd '?')
+ *   are ignored so a TUI can never read the user's clipboard.
  * - Ctrl+C copies selected text instead of sending SIGINT (when a selection exists)
  * - Ctrl+Shift+C always copies the selection
  * - Ctrl+V / Cmd+V pastes text or image from clipboard
@@ -163,6 +243,22 @@ export function enableTerminalClipboard(
   sessionId?: string,
   releaseEscapeWhenPointerOutside?: boolean,
 ): void {
+  // OSC 52 clipboard writes (write-only). Claude Code's TUI copies a selection by
+  // emitting ESC]52;c;<base64>BEL alongside a fire-and-forget PowerShell Set-Clipboard;
+  // without this handler the OSC channel is silently dropped and copy fails entirely on
+  // machines where the PowerShell path fails. Read requests (Pd === '?') are deliberately
+  // never answered - answering would let any TUI app silently read the user's clipboard.
+  // The write routes through the main process (window.electronAPI.clipboard.writeText),
+  // which is focus- and permission-independent unlike navigator.clipboard.writeText.
+  // Disposed automatically with the terminal.
+  terminal.parser.registerOscHandler(52, (data) => {
+    const text = decodeOsc52Payload(data);
+    if (text) {
+      window.electronAPI.clipboard.writeText(text).catch(() => { /* best-effort */ });
+    }
+    return true; // consume the sequence either way
+  });
+
   terminal.attachCustomKeyEventHandler((event) => {
     if (event.type !== 'keydown') return true;
 
@@ -185,11 +281,7 @@ export function enableTerminalClipboard(
       ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'C');
 
     if (isCopy) {
-      const selection = terminal.getSelection();
-      if (selection) {
-        const cleaned = cleanSelection(selection, terminal.cols);
-        if (cleaned) navigator.clipboard.writeText(cleaned);
-      }
+      copySelectionToClipboard(terminal);
       return false;
     }
 

@@ -307,10 +307,11 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 |---------|---------|---------|
 | `app:getVersion` | invoke | Get Electron app version string |
 
-### Clipboard (1 channel)
+### Clipboard (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `clipboard:readImage` | invoke | Read the native clipboard image, save it to a temp file, returns file path or null |
+| `clipboard:writeText` | invoke | Write text to the native clipboard (focus-independent; used by terminal copy and the OSC 52 handler) |
 
 ### Browser pane (8 channels)
 | Channel | Pattern | Purpose |

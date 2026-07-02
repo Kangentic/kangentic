@@ -541,6 +541,17 @@ export function registerSystemHandlers(context: IpcContext): void {
     return filePath;
   });
 
+  // Write text to the clipboard natively in the main process rather than via the web
+  // `navigator.clipboard.writeText()`. Electron's clipboard module is synchronous and
+  // focus- and permission-independent, whereas the web API rejects with NotAllowedError
+  // when the document does not hold focus - exactly the state during a native context-menu
+  // click (Menu.popup steals focus) and the case a TUI app's OSC 52 copy sequence hits.
+  // Same rationale as CLIPBOARD_READ_IMAGE above.
+  ipcMain.handle(IPC.CLIPBOARD_WRITE_TEXT, (_event, text: string): void => {
+    if (typeof text !== 'string' || text.length === 0) return;
+    clipboard.writeText(text);
+  });
+
   // === Handoffs ===
   ipcMain.handle(IPC.HANDOFF_LIST, (_, taskId: string): HandoffRecord[] => {
     const projectId = context.currentProjectId;
