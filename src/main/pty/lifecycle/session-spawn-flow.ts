@@ -69,14 +69,15 @@ export interface SpawnFlowContext {
  *      (so the new session inherits them), remove from caches.
  *   3. Scrollback carry-over: the previous session's raw scrollback
  *      is preserved so resumes show unbroken history.
- *   4. Shell resolution + env + UNC-safe cwd (see spawn/pty-spawn.ts).
+ *   4. Shell resolution + env + cwd fixup resolution (see spawn/pty-spawn.ts).
  *   5. pty.spawn() with structured failure handling (a failed spawn
  *      still registers a placeholder so the renderer doesn't crash).
  *   6. Module initialization: buffer, session files, usage tracker,
  *      status file reader, session-ID capture, adapter attachment.
  *   7. Attach PTY handlers (see pty-data-handler, pty-exit-handler).
- *   8. Emit session-changed and optionally send an initial command
- *      (with Windows UNC `pushd` workaround for cmd.exe).
+ *   8. Emit session-changed, write any Windows cwd fixup (cmd.exe UNC
+ *      `pushd` / PowerShell bracket `Set-Location`), and optionally send
+ *      the initial command.
  *
  * All state lives in the SpawnFlowContext; this function is stateless
  * and can be unit-tested with mocks.
@@ -151,8 +152,8 @@ export async function performSpawn(
   }
   const cleanEnv = buildSpawnEnv(spawnEnv);
 
-  // Validate cwd + apply Windows UNC fallback for cmd.exe. See pty-spawn.ts.
-  const { effectiveCwd, uncPushdPrefix } = resolveSpawnCwd({
+  // Validate cwd + resolve any Windows cwd fixup command. See pty-spawn.ts.
+  const { effectiveCwd, cwdFixupCommand } = resolveSpawnCwd({
     requestedCwd: input.cwd,
     shellName,
     platform: process.platform,
@@ -441,16 +442,25 @@ export async function performSpawn(
 
   context.emit('session-changed', id, toSession(session));
 
-  // If there's a command to run, send it after a brief delay
-  if (input.command) {
+  // After a brief delay, write any Windows cwd fixup (so the session lands
+  // in the real project directory) and then the initial command. The fixup
+  // is written even when there is no command so a bare shell also lands
+  // correctly. It is written RAW (not through adaptCommandForShell, which
+  // would add a spurious `& ` prefix): cmd.exe `pushd "<unc>"` maps the UNC
+  // path to a temporary drive letter, PowerShell `Set-Location -LiteralPath`
+  // corrects its wildcard-mangled provider location for bracketed paths.
+  if (input.command || cwdFixupCommand) {
     setTimeout(() => {
-      const cmd = adaptCommandForShell(input.command!, shellName);
-      if (uncPushdPrefix) {
-        // pushd maps UNC path to a temporary drive letter, then run the command
-        ptyProcess.write(uncPushdPrefix + '\r');
-        setTimeout(() => ptyProcess.write(cmd + '\r'), 200);
-      } else {
-        ptyProcess.write(cmd + '\r');
+      if (cwdFixupCommand) {
+        ptyProcess.write(cwdFixupCommand + '\r');
+      }
+      if (input.command) {
+        const cmd = adaptCommandForShell(input.command, shellName);
+        if (cwdFixupCommand) {
+          setTimeout(() => ptyProcess.write(cmd + '\r'), 200);
+        } else {
+          ptyProcess.write(cmd + '\r');
+        }
       }
     }, 100);
   }

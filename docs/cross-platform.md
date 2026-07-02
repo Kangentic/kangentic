@@ -38,6 +38,17 @@ Adaptations applied during the spawn flow (`src/main/pty/lifecycle/session-spawn
 | cmd | (none) | Standard execution |
 | Git Bash | `--login` | Paths may use `/c/...` format |
 
+### Spawn-time cwd fixups (Windows)
+
+`resolveSpawnCwd()` (`src/main/pty/spawn/pty-spawn.ts`) passes the working directory to node-pty via its `cwd` option, but two Windows shells mishandle certain valid directories at startup. In those cases it returns a `cwdFixupCommand` that the spawn flow writes into the PTY (raw, before the agent command) so the session lands in the real project directory:
+
+| Shell + cwd | Fixup written first | effectiveCwd |
+|-------------|--------------------|--------------|
+| cmd.exe + UNC path (`\\server\share\...`) | `pushd "<unc>"` (maps the UNC path to a temporary drive letter; cmd refuses UNC cwds) | Replaced with home |
+| PowerShell/pwsh + bracketed path (`D:\[foo]\bar`) | `Set-Location -LiteralPath '<cwd>'` | Left unchanged |
+
+The PowerShell case fixes a Windows PowerShell 5.1 quirk: it treats `[` / `]` in its startup path as wildcard characters, fails to resolve the location, and silently falls back to `$PSHOME` (`C:\Windows\System32\WindowsPowerShell\v1.0`). node-pty's `cwd` is still a valid Win32 directory, so only PowerShell's provider location needs correcting. Applied to the whole PowerShell family (the extra `Set-Location` is harmless in pwsh 7).
+
 ## Path Handling
 
 - `toForwardSlash()` -- normalizes backslashes to forward slashes for cross-platform CLI commands

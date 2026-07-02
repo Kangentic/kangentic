@@ -103,7 +103,7 @@ describe('resolveSpawnCwd', () => {
       platform: 'linux',
     });
     expect(result.effectiveCwd).toBe(existing);
-    expect(result.uncPushdPrefix).toBeNull();
+    expect(result.cwdFixupCommand).toBeNull();
   });
 
   it('falls back to home when cwd does not exist', () => {
@@ -116,7 +116,7 @@ describe('resolveSpawnCwd', () => {
     expect(result.effectiveCwd).toBe(os.homedir());
   });
 
-  it('emits a pushd prefix for UNC paths under cmd.exe on Windows', () => {
+  it('emits a pushd fixup for UNC paths under cmd.exe on Windows', () => {
     vi.spyOn(fs, 'existsSync').mockReturnValue(true);
     const result = resolveSpawnCwd({
       requestedCwd: '\\\\server\\share\\project',
@@ -124,10 +124,10 @@ describe('resolveSpawnCwd', () => {
       platform: 'win32',
     });
     expect(result.effectiveCwd).toBe(os.homedir());
-    expect(result.uncPushdPrefix).toBe('pushd "\\\\server\\share\\project"');
+    expect(result.cwdFixupCommand).toBe('pushd "\\\\server\\share\\project"');
   });
 
-  it('does NOT emit a pushd prefix for UNC paths under PowerShell', () => {
+  it('does NOT emit a pushd fixup for UNC paths under PowerShell', () => {
     vi.spyOn(fs, 'existsSync').mockReturnValue(true);
     const result = resolveSpawnCwd({
       requestedCwd: '\\\\server\\share\\project',
@@ -135,17 +135,167 @@ describe('resolveSpawnCwd', () => {
       platform: 'win32',
     });
     expect(result.effectiveCwd).toBe('\\\\server\\share\\project');
-    expect(result.uncPushdPrefix).toBeNull();
+    expect(result.cwdFixupCommand).toBeNull();
   });
 
-  it('does NOT emit a pushd prefix on non-Windows platforms', () => {
+  it('does NOT emit a pushd fixup on non-Windows platforms', () => {
     vi.spyOn(fs, 'existsSync').mockReturnValue(true);
     const result = resolveSpawnCwd({
       requestedCwd: '\\\\server\\share\\project',
       shellName: 'cmd.exe',
       platform: 'linux',
     });
-    expect(result.uncPushdPrefix).toBeNull();
+    expect(result.cwdFixupCommand).toBeNull();
+  });
+
+  // Windows PowerShell 5.1 treats `[` / `]` in its startup path as wildcards
+  // and falls back to $PSHOME, so the agent CLI runs in the wrong folder. The
+  // Win32 cwd is still valid, so effectiveCwd is left unchanged and a
+  // Set-Location -LiteralPath fixup corrects the provider location.
+  it('emits a Set-Location fixup for bracketed paths under powershell on Windows', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      shellName: 'powershell',
+      platform: 'win32',
+    });
+    expect(result.effectiveCwd).toBe('C:\\Users\\dev\\[foo]\\bar');
+    expect(result.cwdFixupCommand).toBe("Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'");
+  });
+
+  it('emits the Set-Location fixup for pwsh too (family-wide)', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      shellName: 'pwsh',
+      platform: 'win32',
+    });
+    expect(result.cwdFixupCommand).toBe("Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'");
+  });
+
+  it('matches a full PowerShell 7 exe path (powershell substring in the folder name)', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      shellName: 'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+      platform: 'win32',
+    });
+    expect(result.cwdFixupCommand).toBe("Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'");
+  });
+
+  it('doubles single quotes inside a bracketed path for the fixup', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: "C:\\Users\\dev\\[o'brien]\\bar",
+      shellName: 'powershell',
+      platform: 'win32',
+    });
+    expect(result.cwdFixupCommand).toBe("Set-Location -LiteralPath 'C:\\Users\\dev\\[o''brien]\\bar'");
+  });
+
+  it('emits the Set-Location fixup for a bracketed UNC path under PowerShell', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: '\\\\server\\share\\[x]',
+      shellName: 'powershell',
+      platform: 'win32',
+    });
+    expect(result.effectiveCwd).toBe('\\\\server\\share\\[x]');
+    expect(result.cwdFixupCommand).toBe("Set-Location -LiteralPath '\\\\server\\share\\[x]'");
+  });
+
+  it('does NOT emit a fixup for a nonexistent bracketed cwd (falls back to home)', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(false);
+    // Mock homedir to a bracket-free placeholder so the assertion is hermetic
+    // and does not depend on the host's real home directory.
+    vi.spyOn(os, 'homedir').mockReturnValue('C:\\Users\\dev');
+    const result = resolveSpawnCwd({
+      requestedCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      shellName: 'powershell',
+      platform: 'win32',
+    });
+    expect(result.effectiveCwd).toBe(os.homedir());
+    expect(result.cwdFixupCommand).toBeNull();
+  });
+
+  it('does NOT emit a fixup for bracketed paths under cmd.exe (cmd is bracket-safe)', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      shellName: 'cmd.exe',
+      platform: 'win32',
+    });
+    expect(result.cwdFixupCommand).toBeNull();
+  });
+
+  // A bracketed UNC path under cmd.exe must still take the UNC pushd branch
+  // (which precedes the PowerShell bracket branch), not the Set-Location one:
+  // cmd cannot use a UNC cwd, and cmd handles brackets fine. This pins the
+  // branch precedence so a future reorder can't silently emit Set-Location.
+  it('emits the pushd fixup (not Set-Location) for a bracketed UNC path under cmd.exe', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: '\\\\server\\share\\[x]',
+      shellName: 'cmd.exe',
+      platform: 'win32',
+    });
+    expect(result.effectiveCwd).toBe(os.homedir());
+    expect(result.cwdFixupCommand).toBe('pushd "\\\\server\\share\\[x]"');
+  });
+
+  // The cmd branch matches on the basename (via isCmdShell), NOT a raw
+  // substring: a shell whose PATH merely contains "cmd" (e.g. Cmder's
+  // cmder.exe) must not be misclassified as cmd.exe and have its cwd
+  // force-replaced with home plus a spurious pushd written into the PTY.
+  it('does NOT emit a pushd fixup for a non-cmd shell whose path contains "cmd" (e.g. cmder)', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: '\\\\server\\share\\project',
+      shellName: 'C:\\tools\\cmder\\cmder.exe',
+      platform: 'win32',
+    });
+    expect(result.effectiveCwd).toBe('\\\\server\\share\\project');
+    expect(result.cwdFixupCommand).toBeNull();
+  });
+
+  it('does NOT emit a fixup for bracketed paths under bash', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      shellName: '/bin/bash',
+      platform: 'win32',
+    });
+    expect(result.cwdFixupCommand).toBeNull();
+  });
+
+  it('does NOT emit a fixup for bracketed paths under WSL', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      shellName: 'wsl -d Ubuntu',
+      platform: 'win32',
+    });
+    expect(result.cwdFixupCommand).toBeNull();
+  });
+
+  it('does NOT emit a fixup for a plain (bracket-free) path under PowerShell', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: 'C:\\Users\\dev\\project',
+      shellName: 'powershell',
+      platform: 'win32',
+    });
+    expect(result.cwdFixupCommand).toBeNull();
+  });
+
+  it('does NOT emit a Set-Location fixup for bracketed paths on non-Windows', () => {
+    vi.spyOn(fs, 'existsSync').mockReturnValue(true);
+    const result = resolveSpawnCwd({
+      requestedCwd: '/home/dev/[foo]/bar',
+      shellName: 'pwsh',
+      platform: 'linux',
+    });
+    expect(result.cwdFixupCommand).toBeNull();
   });
 });
 
