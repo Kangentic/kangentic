@@ -77,13 +77,16 @@ No parameters. Returns each project's `name`, `id`, `path`, `lastOpened` timesta
 
 **Tool annotations.** Every registered tool declares MCP `annotations` from the shared constants
 in `src/main/agent/mcp-http/annotations.ts`: read-only tools carry
-`readOnlyHint: true, idempotentHint: true`; mutating tools (`create` / `update` / `delete` /
-`move` / `promote` / `link`) carry `readOnlyHint: false, idempotentHint: false`. This is
-load-bearing for plan mode: Claude Code auto-approves read-only-annotated tools without a
-permission prompt while planning, so the plan-mode auto-approval surface is exactly the read-only
-set. Mutating tools still prompt in plan mode by design (allow rules do not punch through the
-plan-mode gate). The `tests/unit/mcp-tool-list-parity.test.ts` guard fails the build if a tool is
-registered without one of the two shared annotation constants.
+`readOnlyHint: true, idempotentHint: true`; mutating tools carry
+`readOnlyHint: false, idempotentHint: false`. Mutating covers both the board/backlog writers
+(`create` / `update` / `delete` / `move` / `promote` / `link`) and the `kangentic_browser_*` tools
+that change the loaded page (navigate, click, type, keypress, drag, eval). This is load-bearing for
+plan mode: Claude Code auto-approves read-only-annotated tools without a permission prompt while
+planning, so the plan-mode auto-approval surface is exactly the read-only set. Mutating tools still
+prompt in plan mode by design (allow rules do not punch through the plan-mode gate). The
+`tests/unit/mcp-tool-list-parity.test.ts` guard fails the build if a tool is registered without one
+of the two shared annotation constants, and separately checks the board/backlog verb prefixes and
+the browser capability tiers are annotated mutating.
 
 ### kangentic_create_task
 

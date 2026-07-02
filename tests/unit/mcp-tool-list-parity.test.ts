@@ -217,3 +217,89 @@ describe('mcp tool annotation parity', () => {
     ).toEqual([]);
   });
 });
+
+/**
+ * Browser-tool capability-tier annotation parity.
+ *
+ * The "mutating verb" check above only recognizes the
+ * kangentic_create_/update_/delete_/move_/promote_/link_ board-mutation
+ * prefixes, so it structurally cannot see the kangentic_browser_* family:
+ * none of navigate/click/type/keypress/drag/eval start with a recognized
+ * verb, yet every one of them mutates the user's loaded page (a click, a
+ * keystroke, a navigation, arbitrary eval). A future edit that flipped one of
+ * these to READ_ONLY_ANNOTATIONS would pass every existing assertion in this
+ * file and be silently auto-approved in plan mode - exactly the worst failure
+ * mode the annotation system exists to prevent.
+ *
+ * browser-tools.ts documents four capability tiers ("observe (screenshot,
+ * query, console, wait), interact (click/type/keypress/drag), navigate,
+ * eval") and every tool passes its tier as the first argument to the shared
+ * `drive(<capability>, ...)` gate (see .claude/rules/browser-automation-driver.md,
+ * "every CDP-driving tool routes through withGuest and declares its
+ * capability tier"). That capability string is an independent,
+ * architecturally load-bearing signal - withGuest uses it to gate
+ * interaction, unrelated to the MCP `annotations:` field - so deriving the
+ * expected annotation from it (rather than hand-listing tool names) keeps
+ * this check honest and self-maintaining as tools are renamed or added.
+ * The one non-`drive`-calling tool, kangentic_browser_list_panes, is a pure
+ * registry read (discovery), so it is expected read-only too.
+ */
+describe('mcp browser tool capability-tier annotation parity', () => {
+  const BROWSER_TOOLS_PATH = path.join(MCP_HTTP_DIR, 'browser-tools.ts');
+
+  interface BrowserToolCapability {
+    name: string;
+    /** The capability literal passed to drive(), or 'discovery' for the one tool with no drive() call. */
+    capability: string;
+    annotation: SharedAnnotationToken | null;
+  }
+
+  function collectBrowserToolCapabilities(): BrowserToolCapability[] {
+    const content = fs.readFileSync(BROWSER_TOOLS_PATH, 'utf-8');
+    const namePattern = /registerTool\(\s*(['"])([^'"]+)\1/g;
+    const annotationPattern = /annotations:\s*(READ_ONLY_ANNOTATIONS|MUTATING_ANNOTATIONS)\b/;
+    const capabilityPattern = /\bdrive(?:<[^>]*>)?\(\s*(['"])([^'"]+)\1/;
+    const matches = [...content.matchAll(namePattern)];
+    const results: BrowserToolCapability[] = [];
+    for (let index = 0; index < matches.length; index += 1) {
+      const start = matches[index].index ?? 0;
+      const end = index + 1 < matches.length ? (matches[index + 1].index ?? content.length) : content.length;
+      const segment = content.slice(start, end);
+      const annotationMatch = segment.match(annotationPattern);
+      const capabilityMatch = segment.match(capabilityPattern);
+      results.push({
+        name: matches[index][2],
+        capability: capabilityMatch ? capabilityMatch[2] : 'discovery',
+        annotation: annotationMatch ? (annotationMatch[1] as SharedAnnotationToken) : null,
+      });
+    }
+    return results;
+  }
+
+  it('finds the browser tools (regex did not silently miss the file)', () => {
+    // Guards the check below: if this regresses to 0, every filter() in the
+    // next test would vacuously pass and hide a real annotation flip.
+    expect(collectBrowserToolCapabilities().length).toBeGreaterThan(0);
+  });
+
+  it('every browser tool is annotated per its documented capability tier', () => {
+    const capabilities = collectBrowserToolCapabilities();
+    const mismatched = capabilities
+      .filter((tool) => {
+        const expectedAnnotation: SharedAnnotationToken =
+          tool.capability === 'observe' || tool.capability === 'discovery'
+            ? 'READ_ONLY_ANNOTATIONS'
+            : 'MUTATING_ANNOTATIONS';
+        return tool.annotation !== expectedAnnotation;
+      })
+      .map((tool) => `${tool.name} (capability=${tool.capability}, annotation=${tool.annotation ?? 'unannotated'})`)
+      .sort();
+    expect(
+      mismatched,
+      `These kangentic_browser_* tools are annotated inconsistently with their capability tier. `
+        + `observe/discovery tools (no page side effects) must be READ_ONLY_ANNOTATIONS; `
+        + `interact/navigate/eval tools (mutate the user's loaded page) must be `
+        + `MUTATING_ANNOTATIONS:\n${mismatched.join('\n')}`,
+    ).toEqual([]);
+  });
+});
