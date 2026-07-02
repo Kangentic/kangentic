@@ -186,7 +186,7 @@ Flags:
 
 ### Worktree Dev
 
-In worktrees, `dev.js` bypasses `vite.config.mts` and creates an inline Vite config. This avoids pattern-matching issues where `.kangentic/**` in the watch ignore would match the worktree's own path.
+In worktrees, `dev.js` bypasses `vite.config.mts` and creates an inline Vite config. This avoids pattern-matching issues where `.kangentic/**` in the watch ignore would match the worktree's own path. It also gives worktree servers an isolated Vite dep cache (`<worktree>/.kangentic/vite-cache`; `vite.config.mts` uses `.kangentic/vite-cache-tests` when loaded from a worktree, e.g. Playwright's webServer), because the worktree's `node_modules` is a junction to the main repo's, and sharing the default `node_modules/.vite` would let a worktree server boot invalidate the running main server's cache and break its dynamic imports.
 
 `scripts/worktree-preview.js` creates a `node_modules` junction/symlink from the worktree to the repo root, then opens a native terminal running the dev server.
 

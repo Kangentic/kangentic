@@ -80,6 +80,29 @@ async function start() {
   console.time('[dev] vite createServer');
   const { createServer } = await import('vite');
   const isWorktree = projectDir.replace(/\\/g, '/').includes('.kangentic/worktrees/');
+
+  // Per-server Vite dep cache. Computed BEFORE createServer, which creates the
+  // directory during boot, so the cold-cache message below stays accurate (the
+  // old placement checked existsSync AFTER createServer had already made it).
+  //
+  // Worktree servers must NOT use the default <root>/node_modules/.vite: a
+  // worktree's node_modules is a junction to the main repo's (see
+  // src/main/git/node-modules-link.ts), so that default cacheDir physically IS
+  // the main `npm start` server's live cache. The worktree branch below resolves
+  // a different config than vite.config.mts (configFile:false, different root,
+  // preserveSymlinks), so every preview boot would invalidate and rewrite that
+  // shared cache under the running main server, whose in-memory `?v=<hash>`
+  // module URLs then no longer match disk. The first lazy island opened after a
+  // clobber (the Changes panel) failed with "Failed to fetch dynamically imported
+  // module", which the browser caches for the document lifetime. .kangentic/ is
+  // gitignored, covered by the worktree watch ignorePatterns, and removed by the
+  // ephemeral cleanup() on exit. Guarded by
+  // tests/unit/renderer-optimize-deps-parity.test.ts.
+  const viteCacheDir = isWorktree
+    ? path.join(projectDir, '.kangentic', 'vite-cache')
+    : path.join(projectDir, 'node_modules', '.vite');
+  const coldCache = !fs.existsSync(viteCacheDir);
+
   if (isWorktree) {
     // Bypass vite.config.mts entirely. The config's watch.ignored pattern
     // (**/.kangentic/**) matches every file in the worktree (since the worktree
@@ -100,6 +123,9 @@ async function start() {
     viteServer = await createServer({
       configFile: false,
       root: projectDir,
+      // Isolated dep cache; see the viteCacheDir comment above. Never let a
+      // worktree server share node_modules/.vite with the main checkout.
+      cacheDir: viteCacheDir,
       plugins: [tailwindcss(), react()],
       resolve: {
         alias: { '@shared': '/src/shared' },
@@ -130,8 +156,6 @@ async function start() {
   //    optimizer to complete before Electron loads the page, preventing
   //    the renderer from blocking on mid-load re-optimization.
   console.time('[dev] esbuild');
-  const viteCacheDir = path.join(projectDir, 'node_modules', '.vite');
-  const coldCache = !fs.existsSync(viteCacheDir);
   await Promise.all([
     esbuild.build({
       ...esbuildCommon,
