@@ -9,6 +9,7 @@ import type {
 import type { TaskChangesPanelSlice } from './task-changes-panel-slice';
 import type { UsagePeriodSlice } from './usage-period-slice';
 import type { TransientSessionSlice } from './transient-session-slice';
+import type { RateLimitSnapshot } from '../../utils/rate-limit-window';
 
 /**
  * The "core" session store state: every key that lives on the main
@@ -53,17 +54,21 @@ export interface CoreSessionSlice {
   scrollToEventKey: string | null;
   sessionUsage: Record<string, SessionUsage>;
   /**
-   * Most recent rate-limit snapshot observed across any session. Rate
-   * limits are an account-wide value, but each session only sees its
-   * own status.json updates, so per-session entries drift apart. The
-   * renderer keeps one shared snapshot so every ContextBar agrees.
+   * Shared account-wide rate-limit snapshot. Rate limits are an account-wide
+   * value, but each session only sees its own status.json updates, and a
+   * session whose CLI has not refreshed its rate-limit info reports a stale
+   * cached value. So the renderer keeps ONE snapshot that every ContextBar
+   * reads, merged MONOTONICALLY per window by `mergeRateLimitSnapshot`: within
+   * a fixed window (same `resetsAt`) `usedPercentage` only rises, so a lower
+   * same-window report is stale and is rejected instead of flip-flopping every
+   * bar; a genuine rollover (resetsAt advanced) is taken wholesale. Provenance
+   * (`capturedAt` / `sourceSessionId`) reflects the last report that actually
+   * changed the merged result, so the tooltip's "Updated ..." time can lag an
+   * identical repeat report - the deliberate price of preserving the snapshot's
+   * object reference so a no-op report does not re-render every ContextBar.
    * Null until the first usage payload with `rateLimits` arrives.
    */
-  latestRateLimits: {
-    rateLimits: NonNullable<SessionUsage['rateLimits']>;
-    capturedAt: number;
-    sourceSessionId: string;
-  } | null;
+  latestRateLimits: RateLimitSnapshot | null;
   /** Tracks sessions whose PTY has activated the alternate screen buffer (TUI ready). */
   sessionFirstOutput: Record<string, boolean>;
   sessionActivity: Record<string, ActivityState>;

@@ -8,6 +8,7 @@ import { buildSessionByTaskId } from './session-store/session-index';
 import { createTaskChangesPanelSlice } from './session-store/task-changes-panel-slice';
 import { createUsagePeriodSlice } from './session-store/usage-period-slice';
 import { createTransientSessionSlice, transientKey, type TransientSessionEntry } from './session-store/transient-session-slice';
+import { mergeRateLimitSnapshot } from '../utils/rate-limit-window';
 
 const MAX_EVENTS_PER_SESSION = 500;
 
@@ -348,20 +349,27 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
     // empty cache. An empty cache would evict every entry, which is the
     // exact failure mode we're guarding against.
     //
-    // latestRateLimits: seed from any cached entry with rateLimits when we
-    // don't already have one. IPC-delivered updates that arrived during the
-    // async gap have already populated the store's snapshot, so we leave
-    // those alone. Without this seed the global snapshot would stay null
-    // until the next status update, leaving a noticeable gap on app start.
+    // latestRateLimits: fold every cached entry with rateLimits through the
+    // monotonic per-window merge (order-independent for realistic inputs, where
+    // a genuine rollover advances resetsAt by a whole window, far past the merge
+    // epsilon; the epsilon relation is not strictly transitive at the boundary).
+    // This both seeds the snapshot on first sync and, on a re-sync, only ever
+    // raises it: an IPC-delivered update that arrived during the async gap has
+    // already populated the store, and the merge rejects any same-window cached
+    // value that is not fresher, so a stale entry can never regress it. Without
+    // this
+    // fold the global snapshot would stay null until the next status update,
+    // leaving a noticeable gap on app start. Reference identity is preserved
+    // when nothing changed, so a no-op re-sync does not re-render ContextBars.
     let nextLatestRateLimits = currentState.latestRateLimits;
-    if (!nextLatestRateLimits && cachedUsage) {
+    if (cachedUsage) {
       for (const [sessionId, usage] of Object.entries(cachedUsage)) {
         if (usage.rateLimits) {
-          nextLatestRateLimits = {
+          nextLatestRateLimits = mergeRateLimitSnapshot(nextLatestRateLimits, {
             rateLimits: usage.rateLimits,
             capturedAt: Date.now(),
             sourceSessionId: sessionId,
-          };
+          });
         }
       }
     }
@@ -593,11 +601,17 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
         sessionUsage: { ...s.sessionUsage, [sessionId]: data },
       };
       if (data.rateLimits) {
-        next.latestRateLimits = {
+        // Merge monotonically per window rather than overwriting: a sibling
+        // session carrying a stale cached report must not clobber a fresher
+        // one, which is what made the pill flip-flop every ~5s.
+        const merged = mergeRateLimitSnapshot(s.latestRateLimits, {
           rateLimits: data.rateLimits,
           capturedAt: Date.now(),
           sourceSessionId: sessionId,
-        };
+        });
+        if (merged !== s.latestRateLimits) {
+          next.latestRateLimits = merged;
+        }
       }
       return next;
     });
@@ -646,11 +660,16 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
       for (const [sessionId, data] of entries) {
         merged[sessionId] = data;
         if (data.rateLimits) {
-          latestRateLimits = {
+          // Fold each entry through the monotonic per-window merge, so the
+          // result is order-independent for realistic inputs (a genuine rollover
+          // advances resetsAt by a whole window, far past the merge epsilon): a
+          // stale entry iterated last cannot clobber a fresher one from earlier
+          // in the batch.
+          latestRateLimits = mergeRateLimitSnapshot(latestRateLimits, {
             rateLimits: data.rateLimits,
             capturedAt: Date.now(),
             sourceSessionId: sessionId,
-          };
+          });
         }
       }
       const next: Partial<SessionStore> = { sessionUsage: merged };

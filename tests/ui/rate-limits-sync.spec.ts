@@ -3,14 +3,15 @@
  *
  * Rate limits are an account-wide value, but each session only sees its own
  * status.json updates. The renderer keeps a single `latestRateLimits`
- * snapshot in the session store and every `ContextBar` reads from it, so
- * an idle agent never shows stale numbers while a sibling agent shows
- * fresh ones.
+ * snapshot in the session store, merged MONOTONICALLY per window, and every
+ * `ContextBar` reads from it, so an idle agent never shows stale numbers while
+ * a sibling agent shows fresh ones.
  *
- * This spec sets up two sessions with different rateLimits in the initial
- * usage cache and asserts that the displayed percentages on a session's
- * ContextBar match the *fresher* snapshot (the one populated last during
- * sync), regardless of which session's row is in view.
+ * This spec sets up two sessions with different rateLimits (sharing the same
+ * `resetsAt`, so they describe the same fixed windows) in the initial usage
+ * cache and asserts that the displayed percentages on a session's ContextBar
+ * match the per-window MAXIMUM (the fresher snapshot), regardless of which
+ * session's row is in view and regardless of iteration order.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -49,9 +50,11 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
 
 /**
  * Pre-configure two tasks, each backed by its own session, and seed the
- * usage cache with different rateLimits for each. The "fresh" entry is
- * pushed last so it wins under the renderer's seeding rule (last entry
- * with rateLimits in `cachedUsage` becomes the snapshot).
+ * usage cache with different rateLimits for each. The two entries share the
+ * same `resetsAt` (same fixed windows), so the monotonic per-window merge keeps
+ * the higher "fresh" values (73/41) as the snapshot regardless of iteration
+ * order. The `getUsage` map below inserts the fresh entry FIRST specifically to
+ * prove order independence (last-writer-wins would have shown the stale 18/4).
  */
 function makePreConfig(): string {
   return `
@@ -138,26 +141,30 @@ function makePreConfig(): string {
       return { currentProjectId: '${PROJECT_ID}' };
     });
 
-    // Seed two distinct rateLimits snapshots. The fresh entry is iterated
-    // last by Object.entries (insertion order), so it wins under the
-    // renderer's seed rule in syncSessions.
+    // Seed two distinct rateLimits snapshots that share the same resetsAt (same
+    // fixed windows). The FRESH entry (73/41) is inserted FIRST and the stale
+    // entry (18/4) LAST: the monotonic per-window merge still keeps 73/41, which
+    // last-writer-wins would not have. Both entries anchor to a single captured
+    // nowSeconds so the two windows line up exactly (well within the merge's
+    // reset epsilon).
     window.electronAPI.sessions.getUsage = async function () {
+      var nowSeconds = Math.floor(Date.now() / 1000);
       var baseUsage = {
         model: { id: 'claude-sonnet', displayName: 'Claude Sonnet' },
         contextWindow: { usedPercentage: 25, usedTokens: 1500, cacheTokens: 0, totalInputTokens: 1000, totalOutputTokens: 500, contextWindowSize: 200000 },
         cost: { totalCostUsd: 0.01, totalDurationMs: 5000 },
       };
       var result = {};
-      result['${SESSION_STALE_ID}'] = Object.assign({}, baseUsage, {
-        rateLimits: [
-          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsAt: Math.floor(Date.now() / 1000) + 3600, windowDurationSeconds: 5 * 60 * 60 },
-          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 4, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
-        ],
-      });
       result['${SESSION_FRESH_ID}'] = Object.assign({}, baseUsage, {
         rateLimits: [
-          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 73, resetsAt: Math.floor(Date.now() / 1000) + 3600, windowDurationSeconds: 5 * 60 * 60 },
-          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 41, resetsAt: Math.floor(Date.now() / 1000) + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
+          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 73, resetsAt: nowSeconds + 3600, windowDurationSeconds: 5 * 60 * 60 },
+          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 41, resetsAt: nowSeconds + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
+        ],
+      });
+      result['${SESSION_STALE_ID}'] = Object.assign({}, baseUsage, {
+        rateLimits: [
+          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsAt: nowSeconds + 3600, windowDurationSeconds: 5 * 60 * 60 },
+          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 4, resetsAt: nowSeconds + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
         ],
       });
       return result;
@@ -256,10 +263,10 @@ test.describe('Rate limits cross-session sync', () => {
     const titleAttr = await pill.getAttribute('title');
     expect(titleAttr).toBeTruthy();
     expect(titleAttr).toMatch(/Updated /);
-    // The fresh task is what populated the snapshot last (sourceSessionId
-    // points at SESSION_FRESH_ID). Its agent is 'claude' so the "via" suffix
-    // resolves to 'Claude'. This asserts the snapshot's sourceSessionId is
-    // wired through to the tooltip.
+    // The fresh task is what set the per-window maximum (sourceSessionId points
+    // at SESSION_FRESH_ID; the stale entry was rejected by the merge). Its agent
+    // is 'claude' so the "via" suffix resolves to 'Claude'. This asserts the
+    // snapshot's sourceSessionId is wired through to the tooltip.
     expect(titleAttr).toContain('via Claude');
 
     await page.locator('[data-testid="task-detail-close"]').click();
