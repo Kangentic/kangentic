@@ -28,6 +28,7 @@ import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { restoreShellEnv } from './shell-env';
 import { isFirstPartyPermissionAllowed } from './permission-policy';
+import { probeTerminalBlock, buildCopyBlockDispatchScript } from './terminal-context-menu';
 import { MIN_ZOOM, MAX_ZOOM } from '../shared/zoom-steps';
 
 initStartupTimer(PROCESS_START);
@@ -349,6 +350,86 @@ function getCwdArg(): string | null {
 // Re-export for external consumers (e.g. updater module)
 export { resolveIconPath } from './window-utils';
 
+// Build and show the standard (non-image) right-click context menu. First probes
+// the renderer for a copyable terminal block under the cursor; when one is found,
+// prepends a "Copy Block" item that copies the block's clean content (no CLI
+// quote bar / indentation). The probe is bounded (see probeTerminalBlock), so a
+// slow or absent renderer just yields the menu without the extra item.
+async function showTerminalAwareContextMenu(
+  wc: Electron.WebContents,
+  params: Electron.ContextMenuParams,
+): Promise<void> {
+  const { x, y } = params;
+  const probe = await probeTerminalBlock((script) => wc.executeJavaScript(script), x, y);
+
+  const template: Electron.MenuItemConstructorOptions[] = [];
+
+  if (probe.blockKind) {
+    template.push(
+      {
+        label: 'Copy Block',
+        click: () => { void wc.executeJavaScript(buildCopyBlockDispatchScript(x, y)).catch(() => { /* renderer gone */ }); },
+      },
+      { type: 'separator' },
+    );
+  }
+
+  template.push(
+    {
+      label: 'Copy',
+      accelerator: 'CmdOrCtrl+C',
+      enabled: params.editFlags.canCopy || true,
+      click: () => {
+        wc.executeJavaScript(`
+          (function() {
+            var el = document.elementFromPoint(${x}, ${y});
+            if (el && el.closest('.xterm')) {
+              window.dispatchEvent(new CustomEvent('terminal-copy', { detail: { x: ${x}, y: ${y} } }));
+            } else {
+              document.execCommand('copy');
+            }
+          })()
+        `);
+      },
+    },
+    {
+      label: 'Paste',
+      accelerator: 'CmdOrCtrl+V',
+      enabled: params.editFlags.canPaste,
+      click: () => {
+        wc.executeJavaScript(`
+          (function() {
+            var el = document.elementFromPoint(${x}, ${y});
+            if (el && el.closest('.xterm')) {
+              window.dispatchEvent(new CustomEvent('terminal-paste', { detail: { x: ${x}, y: ${y} } }));
+            }
+          })()
+        `);
+        wc.paste();
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Select All',
+      accelerator: 'CmdOrCtrl+A',
+      click: () => {
+        wc.executeJavaScript(`
+          (function() {
+            var el = document.elementFromPoint(${x}, ${y});
+            if (el && el.closest('.xterm')) {
+              window.dispatchEvent(new CustomEvent('terminal-select-all', { detail: { x: ${x}, y: ${y} } }));
+            } else {
+              document.execCommand('selectAll');
+            }
+          })()
+        `);
+      },
+    },
+  );
+
+  Menu.buildFromTemplate(template).popup();
+}
+
 const createWindow = () => {
   phase('createWindow');
   const isTest = process.env.NODE_ENV === 'test';
@@ -457,8 +538,6 @@ const createWindow = () => {
   // hook can respond.
   const wc = mainWindow.webContents;
   mainWindow.webContents.on('context-menu', (_event, params) => {
-    const { x, y } = params;
-
     if (params.mediaType === 'image' && params.hasImageContents) {
       const imageMenu = Menu.buildFromTemplate([
         {
@@ -489,59 +568,10 @@ const createWindow = () => {
       return;
     }
 
-    const menu = Menu.buildFromTemplate([
-      {
-        label: 'Copy',
-        accelerator: 'CmdOrCtrl+C',
-        enabled: params.editFlags.canCopy || true,
-        click: () => {
-          wc.executeJavaScript(`
-            (function() {
-              var el = document.elementFromPoint(${x}, ${y});
-              if (el && el.closest('.xterm')) {
-                window.dispatchEvent(new CustomEvent('terminal-copy', { detail: { x: ${x}, y: ${y} } }));
-              } else {
-                document.execCommand('copy');
-              }
-            })()
-          `);
-        },
-      },
-      {
-        label: 'Paste',
-        accelerator: 'CmdOrCtrl+V',
-        enabled: params.editFlags.canPaste,
-        click: () => {
-          wc.executeJavaScript(`
-            (function() {
-              var el = document.elementFromPoint(${x}, ${y});
-              if (el && el.closest('.xterm')) {
-                window.dispatchEvent(new CustomEvent('terminal-paste', { detail: { x: ${x}, y: ${y} } }));
-              }
-            })()
-          `);
-          wc.paste();
-        },
-      },
-      { type: 'separator' },
-      {
-        label: 'Select All',
-        accelerator: 'CmdOrCtrl+A',
-        click: () => {
-          wc.executeJavaScript(`
-            (function() {
-              var el = document.elementFromPoint(${x}, ${y});
-              if (el && el.closest('.xterm')) {
-                window.dispatchEvent(new CustomEvent('terminal-select-all', { detail: { x: ${x}, y: ${y} } }));
-              } else {
-                document.execCommand('selectAll');
-              }
-            })()
-          `);
-        },
-      },
-    ]);
-    menu.popup();
+    // Probe the renderer for a copyable block under the cursor, then build the
+    // menu (with a "Copy Block" item when a quote/code block was hit). The probe
+    // is bounded, so the worst case is a menu that opens without the item.
+    void showTerminalAwareContextMenu(wc, params);
   });
 
   // Track renderer crashes (OOM, GPU process gone, etc.)

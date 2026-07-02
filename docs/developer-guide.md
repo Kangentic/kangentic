@@ -142,6 +142,9 @@ src/
       toast-store.ts       # Notification queue
     utils/
       terminal-clipboard.ts # Terminal copy/paste (OSC 52 write handler, bracketed paste)
+      terminal-blocks.ts     # Pure quote/code block detection + clean extraction (DOM-free)
+      terminal-block-buffer.ts # Bridges a live xterm buffer to terminal-blocks (cell attrs, hit test)
+      terminal-registry.ts   # Registry of mounted terminals + block hit-test window global
   shared/                  # Shared between main and renderer
     abort-utils.ts         # AbortSignal type guard for stale spawn prevention
     types.ts               # All TypeScript interfaces

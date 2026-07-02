@@ -33,6 +33,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `agent.cliPaths`, `agent.maxConcurrentSessions`, `agent.queueOverflow`, `agent.autoResumeSessionsOnRestart`
 - `terminal.panelHeight`, `terminal.showPreview`
 - `autoFocusIdleSession`
+- `terminalBlockCopy`
 - `skipBoardConfigConfirm`
 - `windowLightDismiss`
 - `contextBar.*` (all context bar visibility toggles)
@@ -78,6 +79,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 | `diffFlatList` | boolean | `false` | Show changed files as a flat list of full paths instead of a nested directory tree. Global-only. |
 | `skipDeleteConfirm` | boolean | `false` | Skip confirmation dialog on task delete. Written by the delete dialog's "don't ask again" checkbox. No longer surfaced in the Settings panel. |
 | `autoFocusIdleSession` | boolean | `false` | Auto-switch to session tab when agent goes idle. Idle tabs are always highlighted regardless of this setting. |
+| `terminalBlockCopy` | boolean | `true` | Show the hover highlight, copy button, click-to-copy, and right-click "Copy Block" affordance over quote / code / message blocks in the terminal. Turn off to remove it. Global-only. |
 | `windowLightDismiss` | `'off'` \| `'single'` \| `'focused'` \| `'all'` | `'single'` | Click-outside (light-dismiss) policy for modeless task-detail windows. `off` disables; `single` closes the lone window (any state); `focused` closes the focused window (any state); `all` closes every window. Closing a window does not kill its session. Global-only. |
 | `restoreWindowPosition` | boolean | `true` | Remember window size and position between launches. Global-only. |
 | `hasCompletedFirstRun` | boolean | `false` | Whether the user has completed first-run onboarding. Auto-set, not shown in UI. |

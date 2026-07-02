@@ -7,8 +7,8 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
   return (
     <>
       <SectionHeader
-        label="Session Limits"
-        searchIds={['agent.maxConcurrentSessions', 'agent.queueOverflow']}
+        label="Sessions"
+        searchIds={['agent.maxConcurrentSessions', 'agent.queueOverflow', 'autoFocusIdleSession', 'agent.autoResumeSessionsOnRestart']}
       />
       <SettingRow {...settingProps('agent.maxConcurrentSessions')}>
         <input
@@ -38,10 +38,19 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
         checked={globalConfig.agent.autoResumeSessionsOnRestart}
         onChange={(value) => updateGlobal({ agent: { autoResumeSessionsOnRestart: value } })}
       />
+
+      <SectionHeader label="Board" searchIds={['skipBoardConfigConfirm']} />
       <SettingToggleRow
         {...settingProps('skipBoardConfigConfirm')}
         checked={globalConfig.skipBoardConfigConfirm}
         onChange={(value) => updateGlobal({ skipBoardConfigConfirm: value })}
+      />
+
+      <SectionHeader label="Terminal" searchIds={['terminalBlockCopy']} />
+      <SettingToggleRow
+        {...settingProps('terminalBlockCopy')}
+        checked={globalConfig.terminalBlockCopy}
+        onChange={(value) => updateGlobal({ terminalBlockCopy: value })}
       />
 
       <SectionHeader label="Task Windows" searchIds={['windowLightDismiss']} />

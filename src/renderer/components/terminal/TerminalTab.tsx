@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTerminal } from '../../hooks/useTerminal';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from './FileDropOverlay';
+import { TerminalBlockCopyButton } from './TerminalBlockCopyButton';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { LaunchOverlay } from '../LaunchOverlay';
@@ -61,7 +62,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   // PTY output from accumulating in xterm behind the overlay.
   const [terminalReady, setTerminalReady] = useState(() => hasFirstOutput || hasUsage);
 
-  const { terminalRef, initTerminal, fit, flushResize, focus, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
+  const { terminalRef, initTerminal, fit, flushResize, focus, reloadScrollback, scrollbackPending, suppressDataRef, getTerminal } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
@@ -73,6 +74,9 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
 
   // Sync suppressDataRef with overlay state: suppress all PTY data while overlay is showing.
   suppressDataRef.current = !terminalReady;
+
+  // Relative wrapper that hosts the xterm div and the block-copy overlay.
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const initialized = useRef(false);
 
@@ -270,8 +274,9 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   const fileDrop = useTerminalFileDrop(sessionId, focus, sessionShell);
 
   return (
-    <div className="h-full w-full bg-surface relative">
+    <div ref={containerRef} className="h-full w-full bg-surface relative">
       <div ref={terminalRef} className="h-full w-full" />
+      <TerminalBlockCopyButton containerRef={containerRef} getTerminal={getTerminal} />
       <FileDropOverlay {...fileDrop} />
       {/* Placeholder overlay while Claude CLI is loading (before first usage report).
           Stays visible until scrollback replay + clear are both done.

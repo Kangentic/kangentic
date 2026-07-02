@@ -95,14 +95,17 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── MCP Server ──
   { id: 'mcpServer.enabled', tabId: 'mcpServer', label: 'Kangentic MCP Server', description: 'Give agents tools to interact with your board', scope: 'global', keywords: ['mcp', 'tools', 'create task', 'agent', 'board', 'query', 'session', 'stats'] },
 
-  // ── Behavior > Session Limits ──
-  { id: 'agent.maxConcurrentSessions', tabId: 'behavior', label: 'Max Concurrent Sessions', description: 'Limit how many agents can run at the same time', scope: 'global', section: 'Session Limits', keywords: ['parallel', 'limit'] },
-  { id: 'agent.queueOverflow', tabId: 'behavior', label: 'When Max Sessions Reached', description: 'How new agent requests are handled when all slots are in use', scope: 'global', section: 'Session Limits', keywords: ['overflow', 'queue', 'reject'] },
+  // ── Behavior > Sessions ──
+  { id: 'agent.maxConcurrentSessions', tabId: 'behavior', label: 'Max Concurrent Sessions', description: 'Limit how many agents can run at the same time', scope: 'global', section: 'Sessions', keywords: ['parallel', 'limit'] },
+  { id: 'agent.queueOverflow', tabId: 'behavior', label: 'When Max Sessions Reached', description: 'How new agent requests are handled when all slots are in use', scope: 'global', section: 'Sessions', keywords: ['overflow', 'queue', 'reject', 'limit'] },
+  { id: 'autoFocusIdleSession', tabId: 'behavior', label: 'Auto-Focus Idle Sessions', description: 'Automatically switch the bottom panel to idle sessions. Idle tabs are always highlighted regardless of this setting.', scope: 'global', section: 'Sessions', keywords: ['switch', 'panel', 'attention'] },
+  { id: 'agent.autoResumeSessionsOnRestart', tabId: 'behavior', label: 'Auto-Resume Agents on Restart', description: 'When a project opens, resume any agent sessions that were running at last close. When off, those sessions stay paused until you click Resume on each task. Turn off if resuming many agents at once slows your machine.', scope: 'global', section: 'Sessions', keywords: ['resume', 'restart', 'startup', 'suspend', 'pause', 'stampede', 'auto', 'sessions', 'agents'] },
 
-  // ── Behavior ──
-  { id: 'autoFocusIdleSession', tabId: 'behavior', label: 'Auto-Focus Idle Sessions', description: 'Automatically switch the bottom panel to idle sessions. Idle tabs are always highlighted regardless of this setting.', scope: 'global', keywords: ['switch', 'panel', 'attention'] },
-  { id: 'agent.autoResumeSessionsOnRestart', tabId: 'behavior', label: 'Auto-Resume Agents on Restart', description: 'When a project opens, resume any agent sessions that were running at last close. When off, those sessions stay paused until you click Resume on each task. Turn off if resuming many agents at once slows your machine.', scope: 'global', keywords: ['resume', 'restart', 'startup', 'suspend', 'pause', 'stampede', 'auto', 'sessions', 'agents'] },
-  { id: 'skipBoardConfigConfirm', tabId: 'behavior', label: 'Auto-Apply Board Config Changes', description: 'When a kangentic.json board change is detected (from a teammate or your own pulled-back commit), apply it immediately instead of showing the confirmation dialog.', scope: 'global', keywords: ['board config', 'kangentic.json', 'reconcile', 'reconciliation', 'apply', 'confirm', 'dialog', 'pull', 'auto'] },
+  // ── Behavior > Board ──
+  { id: 'skipBoardConfigConfirm', tabId: 'behavior', label: 'Auto-Apply Board Config Changes', description: 'When a kangentic.json board change is detected (from a teammate or your own pulled-back commit), apply it immediately instead of showing the confirmation dialog.', scope: 'global', section: 'Board', keywords: ['board config', 'kangentic.json', 'reconcile', 'reconciliation', 'apply', 'confirm', 'dialog', 'pull', 'auto'] },
+
+  // ── Behavior > Terminal ──
+  { id: 'terminalBlockCopy', tabId: 'behavior', label: 'Copyable Blocks', description: 'Hover a quote, code, or message block in the terminal to highlight it and copy its clean content (via the copy button, a click, or the right-click menu). Turn off to remove the highlight and copy affordances.', scope: 'global', section: 'Terminal', keywords: ['copy', 'block', 'code', 'quote', 'message', 'clipboard', 'highlight', 'hover', 'terminal', 'output'] },
 
   // ── Behavior > Task Windows ──
   { id: 'windowLightDismiss', tabId: 'behavior', label: 'Close on Outside Click', description: 'Click empty space outside a task window (anything but a button or the terminal panel) to dismiss it. Closing keeps the agent running and hands its terminal back to the panel; reopening the task reattaches.', scope: 'global', section: 'Task Windows', keywords: ['dismiss', 'click outside', 'window', 'peek', 'close', 'light dismiss', 'task window'] },

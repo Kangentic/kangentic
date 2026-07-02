@@ -31,6 +31,7 @@ import { useTerminal } from '../../hooks/useTerminal';
 import { useKeybinding, useFormattedCombo } from '../../hooks/useKeybinding';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from '../terminal/FileDropOverlay';
+import { TerminalBlockCopyButton } from '../terminal/TerminalBlockCopyButton';
 import { ContextBar } from '../terminal/ContextBar';
 import { useSessionStore } from '../../stores/session-store';
 import { transientKey } from '../../stores/session-store/transient-session-slice';
@@ -137,6 +138,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
 
   const maximizeCombo = useFormattedCombo('panel.maximize');
   const spawnedRef = useRef(false);
+  const terminalPaneRef = useRef<HTMLDivElement>(null);
   const commandButtonRef = useRef<HTMLDivElement>(null);
   // The branch picker can fold into the kebab; this drives the kebab-anchored
   // fallback dropdown ("Switch branch").
@@ -299,7 +301,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     ),
   );
 
-  const { terminalRef, initTerminal, fit, flushResize, focus } = useTerminal({
+  const { terminalRef, initTerminal, fit, flushResize, focus, getTerminal } = useTerminal({
     sessionId: effectiveSessionId,
     fontFamily: config.terminal.fontFamily,
     fontSize: config.terminal.fontSize,
@@ -702,7 +704,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             to the terminal's column width, so it overflows the window and fit() reads
             the stale (too-wide) size and never reduces columns. overflow-hidden clips
             the brief pre-fit overflow. Mirrors the Changes panel sibling. */}
-        <div className={`${changesOpen ? 'w-1/2' : 'flex-1'} relative min-w-0 overflow-hidden`} style={{ backgroundColor: '#18181b' }}>
+        <div ref={terminalPaneRef} className={`${changesOpen ? 'w-1/2' : 'flex-1'} relative min-w-0 overflow-hidden`} style={{ backgroundColor: '#18181b' }}>
           {!terminalReady && <LaunchOverlay label="Starting Command Terminal..." />}
           <FileDropOverlay {...fileDrop} />
           <div
@@ -710,6 +712,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             className="h-full"
             data-testid="command-bar-terminal"
           />
+          <TerminalBlockCopyButton containerRef={terminalPaneRef} getTerminal={getTerminal} />
         </div>
 
         {/* Changes panel */}

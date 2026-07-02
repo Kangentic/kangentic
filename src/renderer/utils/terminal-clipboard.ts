@@ -1,4 +1,5 @@
 import { Terminal } from '@xterm/xterm';
+import { cleanTerminalSelection } from './terminal-block-buffer';
 
 // ---------------------------------------------------------------------------
 // OSC 52 clipboard sequence handling
@@ -97,9 +98,9 @@ export function cleanSelection(raw: string, cols: number): string {
  * failed write is swallowed. No-op when there is no selection.
  */
 export function copySelectionToClipboard(terminal: Terminal): void {
-  const selection = terminal.getSelection();
-  if (!selection) return;
-  const cleaned = cleanSelection(selection, terminal.cols);
+  // Strip quote-bar decoration via the buffer when possible; fall back to the
+  // legacy string clean when the selection can't be read from the buffer.
+  const cleaned = cleanTerminalSelection(terminal, () => cleanSelection(terminal.getSelection(), terminal.cols));
   if (cleaned) window.electronAPI.clipboard.writeText(cleaned).catch(() => { /* best-effort */ });
 }
 

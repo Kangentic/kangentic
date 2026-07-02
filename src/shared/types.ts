@@ -1571,6 +1571,9 @@ export interface AppConfig {
   skipDeleteConfirm: boolean;
   skipBoardConfigConfirm: boolean;
   autoFocusIdleSession: boolean;
+  /** Show the hover highlight, copy button, click-to-copy, and right-click "Copy Block"
+   *  affordance over quote / code / message blocks in the terminal. Default `true`. */
+  terminalBlockCopy: boolean;
   /** Click-outside dismiss policy for modeless task-detail windows. Default `single`. */
   windowLightDismiss: WindowLightDismiss;
   /** Task IDs that have already been offered an auto-rename suggestion. Persisted so a
@@ -1745,6 +1748,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   skipDeleteConfirm: false,
   skipBoardConfigConfirm: false,
   autoFocusIdleSession: false,
+  terminalBlockCopy: true,
   windowLightDismiss: 'single',
   autoNameAskedTaskIds: [],
   autoNameRateLimitPerHour: 60,

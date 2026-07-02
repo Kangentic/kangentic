@@ -119,6 +119,21 @@ The leftmost tab shows an activity log - structured events from all sessions. Th
 
 Press **Ctrl+V** (Cmd+V on macOS) in the terminal to paste. Text on the clipboard is pasted directly. If the clipboard contains an image (and no text), the image is saved to a temporary file and the file path is written to the PTY, allowing Claude Code to pick it up as a vision input. Paths are automatically quoted for the active shell (PowerShell, bash, cmd, WSL, etc.).
 
+### Copying Output Blocks
+
+Copying agent output by hand tends to grab CLI decoration - the quote bar, list bullets, and leading indentation - so the pasted text needs cleanup. Kangentic detects the block under the cursor and copies just its content:
+
+- **Hover a block** to see a full-width highlight over the region that will be copied, with a copy button at its top-right corner (GitHub-style). Click the button, or click anywhere on the highlighted block, to copy. (Block clicks still pass through to the agent, so any interactive terminal actions keep working.)
+- **Right-click a block** and choose **Copy Block**.
+
+Detection covers message text, quote blocks (the colored left bar), and code / content boxes (a shaded background). A text message groups its consecutive lines - including the blank lines between its paragraphs - into one block, while an agent's de-emphasized status lines (its "thinking" indicators) are left out. The left bar, a leading bullet, and the CLI indentation are stripped; interior blank lines and relative indentation are preserved.
+
+A normal **Ctrl+C** copy of a selection also strips the quote bar from any decorated lines it spans, so a selection mixing plain text and quoted lines pastes cleanly.
+
+Because detection reads what is on screen, a long line that the agent wrapped across several terminal rows is copied with a line break at each wrap point.
+
+Turn the whole affordance off under Settings > Behavior > Terminal (the "Copyable Blocks" toggle, a global setting) if you would rather the terminal have no hover highlight or copy controls.
+
 ### File Drop to Terminal
 
 Drag files from your file manager onto the terminal to insert their file paths into the active session. Paths containing spaces are automatically quoted. Multiple files are inserted as a space-separated list. A visual overlay appears when files are dragged over the terminal area.
@@ -415,6 +430,8 @@ These are global-only settings that apply to the entire app.
 | Auto-Focus Idle Sessions | Automatically switch the bottom panel to idle sessions. Idle tabs are always highlighted regardless of this setting. |
 | Auto-Resume Agents on Restart | When a project opens, resume any agent sessions that were running at last close. When off, those sessions stay paused until you click Resume on each task. Turn off if resuming many agents at once slows your machine. |
 | Auto-Apply Board Config Changes | When a kangentic.json board change is detected (from a teammate or a pulled-back commit), apply it immediately instead of showing the confirmation dialog. |
+| Copyable Blocks | Hover a quote, code, or message block in the terminal to highlight it and copy its clean content (copy button, click, or right-click menu). Turn off to remove the highlight and copy affordances. |
+| Close on Outside Click | Click-outside (light-dismiss) policy for modeless task-detail windows. Closing a window does not kill its session. |
 
 ### MCP Server
 
@@ -608,7 +625,7 @@ Windows (modeless task-detail windows):
 
 Terminal:
 
-- **Mod+C** / **Mod+Shift+C** - Copy selected text (with no selection, Ctrl+C cancels the running command)
+- **Mod+C** / **Mod+Shift+C** - Copy selected text, stripping quote-bar decoration from any decorated lines (with no selection, Ctrl+C cancels the running command)
 - **Mod+V** / **Mod+Shift+V** - Paste text or an image into the terminal
 - Standard OS shortcuts for the rest of terminal editing
 
