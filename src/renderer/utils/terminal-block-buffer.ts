@@ -226,9 +226,9 @@ export function getBlockPixelBounds(terminal: Terminal, range: BlockRange): Bloc
  * with `terminal-clipboard.ts`.
  */
 export function cleanTerminalSelection(terminal: Terminal, fallback: () => string): string {
-  const range = terminal.getSelectionPosition();
-  if (!range) return fallback();
   try {
+    const range = terminal.getSelectionPosition();
+    if (!range) return fallback();
     return cleanSelectionLines(createBufferLineSource(terminal), range);
   } catch {
     return fallback();
