@@ -75,15 +75,19 @@ vi.mock('../../src/main/pr/pr-registry', () => ({
   detectPR: vi.fn(() => null),
 }));
 
-// Stub shell path adaptation.
+// Stub shell path adaptation. adaptCommandForShell is a vi.fn() (default:
+// identity) so the cwd-fixup-order tests can override it per-call via
+// mockImplementationOnce to prove the fixup command bypasses it (see
+// "writes the fixup command RAW" below).
 vi.mock('../../src/shared/paths', () => ({
-  adaptCommandForShell: (cmd: string) => cmd,
+  adaptCommandForShell: vi.fn((cmd: string) => cmd),
 }));
 
 // ---- Import under test (after all vi.mock hoisting) ----
 import { performSpawn } from '../../src/main/pty/lifecycle/session-spawn-flow';
 import { SessionRegistry } from '../../src/main/pty/session-registry';
 import { resolveSpawnCwd } from '../../src/main/pty/spawn/pty-spawn';
+import { adaptCommandForShell } from '../../src/shared/paths';
 import * as ptyModule from 'node-pty';
 
 // ---- Helpers ----
@@ -523,6 +527,40 @@ describe('performSpawn - Windows cwd fixup write order', () => {
     vi.advanceTimersByTime(100);
     expect(writeMock).toHaveBeenCalledTimes(1);
     expect(writeMock.mock.calls[0][0]).toBe('echo hi\r');
+  });
+
+  it('writes the fixup command RAW, bypassing adaptCommandForShell (only the initial command is adapted)', async () => {
+    // The default adaptCommandForShell mock is identity, so it cannot tell
+    // "written raw" apart from "routed through adaptCommandForShell and
+    // happened to come back unchanged" - a regression that started routing
+    // cwdFixupCommand through adaptCommandForShell (e.g. picking up
+    // PowerShell's `& ` call-operator prefix, which would break the
+    // `Set-Location` syntax) would slip past every other test in this
+    // describe block. Override the mock with a non-identity transform for
+    // this one call so the two paths are distinguishable.
+    vi.mocked(resolveSpawnCwd).mockReturnValueOnce({
+      effectiveCwd: 'C:\\Users\\dev\\[foo]\\bar',
+      cwdFixupCommand: "Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'",
+    });
+    vi.mocked(adaptCommandForShell).mockImplementationOnce((cmd: string) => `ADAPTED:${cmd}`);
+
+    const context = makeContext();
+    const input = makeInput({ command: 'claude --resume abc' });
+
+    await performSpawn(input, context);
+
+    const writeMock = ptySpawnMock.mock.results[0]?.value.write as ReturnType<typeof vi.fn>;
+
+    vi.advanceTimersByTime(100);
+    vi.advanceTimersByTime(200);
+
+    expect(writeMock).toHaveBeenCalledTimes(2);
+    // The fixup must never pass through adaptCommandForShell, so no
+    // "ADAPTED:" marker even though the override would add one to anything
+    // routed through it.
+    expect(writeMock.mock.calls[0][0]).toBe("Set-Location -LiteralPath 'C:\\Users\\dev\\[foo]\\bar'\r");
+    // The initial command DOES go through adaptCommandForShell.
+    expect(writeMock.mock.calls[1][0]).toBe('ADAPTED:claude --resume abc\r');
   });
 });
 
