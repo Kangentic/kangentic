@@ -179,6 +179,22 @@ describe('worktree vite cache isolation', () => {
     ).toBe(true);
   });
 
+  it('scripts/dev.js keeps the non-worktree branch on the default node_modules/.vite cache', () => {
+    // The worktree isolation above only guards the isWorktree branch. Nothing
+    // else pins the OTHER side of that ternary: if a future refactor collapsed
+    // it to always resolve .kangentic/vite-cache, the main `npm start` server
+    // would start writing into an isolated cache too (silently defeating the
+    // whole point, since the isolation only matters relative to the shared
+    // default) and the two assertions above would keep passing unchanged.
+    const source = fs.readFileSync(path.join(REPO_ROOT, 'scripts', 'dev.js'), 'utf-8');
+    expect(
+      /:\s*path\.join\(projectDir,\s*['"]node_modules['"],\s*['"]\.vite['"]\)/.test(source),
+      'scripts/dev.js must keep the non-worktree viteCacheDir branch at '
+        + "path.join(projectDir, 'node_modules', '.vite') (Vite's own default), "
+        + 'so the main dev server never gets routed into the worktree-only cache',
+    ).toBe(true);
+  });
+
   it('vite.config.mts isolates worktree-started servers (Playwright webServer) the same way', () => {
     const source = fs.readFileSync(path.join(REPO_ROOT, 'vite.config.mts'), 'utf-8');
     expect(
