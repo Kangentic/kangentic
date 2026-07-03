@@ -1,9 +1,11 @@
 /**
- * UI tests for the description peek pill in the task detail header.
+ * UI tests for the description peek in the task detail header.
  *
- * Opens a dialog on a task with an active session and a description, verifies
- * the "Description" pill appears, toggles the description strip on/off, and
- * confirms the kebab menu item does the same.
+ * Opens a dialog on a task with an active session and a description, toggles
+ * the description strip on/off via the kebab menu item ("Show description" /
+ * "Hide description") and the Mod+Shift+K hotkey, and confirms the affordance
+ * is absent when the task has no description content or the session is
+ * suspended/queued.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -16,12 +18,7 @@ const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}
 async function launchWithState(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
-  // Wide viewport so the task-detail window (a fraction of the viewport) has a
-  // roomy header: the Description pill is the FIRST built-in to fold into the
-  // kebab when the header is tight, and these tests assert the PILL itself, so
-  // the header must have room for every quick-action pill (Commands, Description,
-  // Folder, Changes, Browser) at once.
-  const context = await browser.newContext({ viewport: { width: 2560, height: 1080 } });
+  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   const page = await context.newPage();
 
   await page.addInitScript({ path: MOCK_SCRIPT });
@@ -232,40 +229,6 @@ test.afterAll(async () => {
 });
 
 test.describe('Task Detail description peek', () => {
-  test('pill toggles description strip on and off', async () => {
-    // Open the task detail dialog
-    const card = page
-      .locator('[data-swimlane-name="Executing"]')
-      .locator('text=Description Peek Task')
-      .first();
-    await card.click();
-
-    const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 5000 });
-
-    // Description peek pill is visible (task has a description and a running session)
-    const descriptionPill = page.locator('[data-testid="description-peek-toggle"]');
-    await expect(descriptionPill).toBeVisible({ timeout: 8000 });
-
-    // Description text is not yet visible (peek is closed by default)
-    await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).not.toBeVisible();
-
-    // Open peek -> description text appears
-    await descriptionPill.click();
-    await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).toBeVisible({ timeout: 8000 });
-
-    // Pill shows active state when open
-    await expect(descriptionPill).toBeVisible({ timeout: 5000 });
-
-    // Close peek -> description text hides again
-    await descriptionPill.click();
-    await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).not.toBeVisible({ timeout: 8000 });
-
-    // Close the dialog
-    await page.keyboard.press('Control+Shift+W');
-    await expect(dialog).not.toBeVisible({ timeout: 8000 });
-  });
-
   test('kebab menu item toggles description strip', async () => {
     // Open the task detail dialog fresh for this test (cross-test state isolation)
     const card = page
@@ -296,7 +259,7 @@ test.describe('Task Detail description peek', () => {
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
-  test('pill and kebab item are absent when there is no description content', async () => {
+  test('kebab item is absent when there is no description content', async () => {
     // Open the task detail dialog for the task with a running session but no
     // description, attachments, labels, or priority (canShowDescription is
     // hasSessionContext && hasDescriptionContent - this task satisfies only
@@ -314,10 +277,7 @@ test.describe('Task Detail description peek', () => {
     // ever appears rather than "hasn't appeared yet").
     await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
 
-    // No description peek pill in the header.
-    await expect(page.locator('[data-testid="description-peek-toggle"]')).toHaveCount(0);
-
-    // No "Show description" item in the kebab menu either.
+    // No "Show description" item in the kebab menu.
     await dialog.locator('[title="Actions"]').click();
     await expect(page.locator('text=Show description')).toHaveCount(0);
 
@@ -357,7 +317,7 @@ test.describe('Task Detail description peek', () => {
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
-  test('pill and kebab item are absent when the session is suspended', async () => {
+  test('kebab item is absent when the session is suspended', async () => {
     // Open the task detail dialog for the task with a non-empty description
     // (hasDescriptionContent is true) but a SUSPENDED session (displayState.kind
     // === 'suspended'). canShowDescription must exclude the suspended state
@@ -375,10 +335,7 @@ test.describe('Task Detail description peek', () => {
     // ever appears rather than "hasn't appeared yet").
     await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
 
-    // No description peek pill in the header, despite the task having a description.
-    await expect(page.locator('[data-testid="description-peek-toggle"]')).toHaveCount(0);
-
-    // No "Show description" item in the kebab menu either.
+    // No "Show description" item in the kebab menu, despite the task having a description.
     await dialog.locator('[title="Actions"]').click();
     await expect(page.locator('text=Show description')).toHaveCount(0);
 
@@ -387,7 +344,7 @@ test.describe('Task Detail description peek', () => {
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
-  test('pill and kebab item are absent when the session is queued', async () => {
+  test('kebab item is absent when the session is queued', async () => {
     // Open the task detail dialog for the task with a non-empty description
     // (hasDescriptionContent is true) but a QUEUED session (displayState.kind
     // === 'queued'). canShowDescription has two separate exclusion clauses
@@ -407,10 +364,7 @@ test.describe('Task Detail description peek', () => {
     // ever appears rather than "hasn't appeared yet").
     await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
 
-    // No description peek pill in the header, despite the task having a description.
-    await expect(page.locator('[data-testid="description-peek-toggle"]')).toHaveCount(0);
-
-    // No "Show description" item in the kebab menu either.
+    // No "Show description" item in the kebab menu, despite the task having a description.
     await dialog.locator('[title="Actions"]').click();
     await expect(page.locator('text=Show description')).toHaveCount(0);
 
@@ -457,14 +411,16 @@ test.describe('Task Detail description peek', () => {
     );
     const probedTextarea = dialog.locator(`.xterm-helper-textarea[data-remount-probe="${PROBE_VALUE}"]`);
 
-    // Open the peek - description appears, probed node must still be the same one.
-    const descriptionPill = page.locator('[data-testid="description-peek-toggle"]');
-    await descriptionPill.click();
+    // Open the peek via the kebab menu item - description appears, probed
+    // node must still be the same one.
+    await dialog.locator('[title="Actions"]').click();
+    await page.locator('text=Show description').click();
     await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).toBeVisible({ timeout: 8000 });
     await expect(probedTextarea).toHaveCount(1);
 
-    // Close the peek - description hides, probed node still unchanged.
-    await descriptionPill.click();
+    // Close the peek via the kebab menu item - description hides, probed node still unchanged.
+    await dialog.locator('[title="Actions"]').click();
+    await page.locator('text=Hide description').click();
     await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).not.toBeVisible({ timeout: 8000 });
     await expect(probedTextarea).toHaveCount(1);
 

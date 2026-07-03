@@ -200,23 +200,17 @@ export function TaskDetailHeader({
   const closeCombo = useFormattedCombo('panel.close');
   const browserCombo = useFormattedCombo('taskDetail.toggleBrowser');
   const changesCombo = useFormattedCombo('taskDetail.toggleChanges');
-  const descriptionCombo = useFormattedCombo('taskDetail.toggleDescription');
 
   // Quick-access pills, highest priority collapses LAST. The title is reserved only
   // up to a ~50ch floor (useHeaderPillOverflow); these compete for whatever is left
-  // above the floor. Among the built-in defaults the order is Description -> Browser ->
-  // PR -> Changes -> Project -> Commands (Description drops first): the description peek
-  // is a secondary affordance, so it yields the header before the core Browser / Changes /
-  // PR actions and stays reachable in the kebab (and via its hotkey). Custom header shortcuts
+  // above the floor. Among the built-in defaults the order is Browser -> PR ->
+  // Changes -> Project -> Commands (Browser drops first). Custom header shortcuts
   // rank LOWEST (priority 10), so they fold BEFORE any built-in default - an
   // unbounded number of shortcuts can never bury the defaults. A folded header
   // shortcut that is not already a menu shortcut folds into the kebab.
   const pillSpecs = useMemo<HeaderPillSpec[]>(() => {
     const specs: HeaderPillSpec[] = [];
     if (!isEditing) specs.push({ id: 'commands', priority: 50 });
-    // Lowest built-in priority (just above custom shortcuts at 10) so the peek folds
-    // into the kebab first and never displaces the Browser / Changes / PR pills.
-    if (canShowDescription) specs.push({ id: 'description', priority: 15 });
     if (task.worktree_path || projectPath) specs.push({ id: 'folder', priority: 40 });
     if (canShowChanges) specs.push({ id: 'changes', priority: 30 });
     if (task.pr_url) specs.push({ id: 'pr', priority: 25 });
@@ -225,7 +219,7 @@ export function TaskDetailHeader({
       specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
     }
     return specs;
-  }, [isEditing, task.worktree_path, task.pr_url, projectPath, canShowChanges, canShowBrowser, headerShortcuts, canShowDescription]);
+  }, [isEditing, task.worktree_path, task.pr_url, projectPath, canShowChanges, canShowBrowser, headerShortcuts]);
 
   const hiddenPillIds = useHeaderPillOverflow(headerRef, leadingRef, trailingRef, titleSpanRef, pillsRef, pillSpecs);
   const showPill = (id: string) => !hiddenPillIds.has(id);
@@ -348,26 +342,6 @@ export function TaskDetailHeader({
                   onClose={() => setShowCommandPalette(false)}
                 />
               )}
-            </div>
-          )}
-
-          {/* Description peek toggle */}
-          {showPill('description') && canShowDescription && onToggleDescription && (
-            <div data-pill-id="description" className="flex-shrink-0">
-              <Pill
-                shape="square"
-                onClick={onToggleDescription}
-                className={`flex-shrink-0 transition-colors border ${
-                  descriptionPeekOpen
-                    ? 'bg-accent/15 text-accent-fg border-accent/30'
-                    : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
-                }`}
-                title={`${descriptionPeekOpen ? 'Hide' : 'Show'} description (${descriptionCombo})`}
-                data-testid="description-peek-toggle"
-              >
-                <AlignLeft size={14} />
-                Description
-              </Pill>
             </div>
           )}
 
