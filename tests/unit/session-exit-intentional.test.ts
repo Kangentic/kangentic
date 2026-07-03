@@ -148,6 +148,7 @@ function makeContext(): SpawnFlowContext {
     },
     getTranscriptWriter: vi.fn(() => null),
     getShell: vi.fn().mockResolvedValue('/bin/bash'),
+    takePendingResize: vi.fn(() => undefined),
     emit: vi.fn(),
   } as unknown as SpawnFlowContext;
 }

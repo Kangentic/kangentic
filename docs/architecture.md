@@ -497,6 +497,7 @@ Shell-specific adaptations:
 | MAX_SCROLLBACK | 512 KB | Terminal history per session |
 | MAX_EVENTS | 500 | Activity log cap per session |
 | Flush interval | 16 ms | Output batching (~60fps) |
+| Repaint-settle max wait | 400 ms | Ceiling for the post-resize repaint wait before sampling scrollback |
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
 | Graceful shutdown | 2000 ms | `suspendAll()` timeout (exists in code but NOT used during app quit; synchronous shutdown kills PTYs immediately) |
@@ -622,6 +623,7 @@ On project open (`src/main/transition-engine/session-startup/`):
 
 - **WebGL xterm** -- attempts WebGL renderer first, falls back to canvas on context loss
 - **Resize debouncing** -- PTY resize calls debounced at 200ms, suppressed during panel drag
+- **Repaint-settled scrollback** - after a width-changing resize, `getScrollback` waits for the agent TUI's async repaint to land before sampling, so a restored terminal never replays a stale narrow frame (see [session-lifecycle](session-lifecycle.md))
 - **Activity log** -- plain DOM list instead of xterm. Events flow through JSONL files, not terminal output.
 - **Terminal ownership handoff** -- one xterm instance per session at a time prevents duplicate resize calls that corrupt TUI output
 - **Output batching** -- 16ms flush interval prevents per-character IPC overhead

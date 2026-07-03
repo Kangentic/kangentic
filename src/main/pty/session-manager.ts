@@ -70,6 +70,17 @@ export class SessionManager extends EventEmitter {
    */
   private writeQueues = new Map<string, WriteQueue>();
   /**
+   * Terminal dimensions from a resize that arrived before the session's PTY
+   * existed (the renderer mounted and fit its container before the auto-resume
+   * spawn landed, or while the session was queued/suspended awaiting spawn).
+   * performSpawn consumes this so the PTY spawns at the real fitted size
+   * instead of the 120x30 default, so no post-spawn corrective resize (and its
+   * stale-width repaint window) is needed. Keyed by session id, independent of
+   * the registry so it survives the registry.delete during a respawn. Consumed
+   * at spawn (takePendingResize) or dropped on kill.
+   */
+  private pendingResizes = new Map<string, { cols: number; rows: number }>();
+  /**
    * Per-session output backpressure: pauses a session's PTY when the renderer
    * falls behind on its emitted bytes, resuming as the renderer acks. Only
    * tracks sessions actively emitting to the renderer (focused); reset on focus
@@ -430,6 +441,11 @@ export class SessionManager extends EventEmitter {
       sessionQueue: this.sessionQueue,
       getTranscriptWriter: () => this.transcriptWriter,
       getShell: () => this.getShell(),
+      takePendingResize: (sessionId) => {
+        const dims = this.pendingResizes.get(sessionId);
+        this.pendingResizes.delete(sessionId);
+        return dims;
+      },
       emit: (event, ...args) => this.emit(event, ...args),
     });
   }
@@ -489,7 +505,6 @@ export class SessionManager extends EventEmitter {
 
   resize(sessionId: string, cols: number, rows: number): { colsChanged: boolean } {
     const session = this.registry.get(sessionId);
-    if (!session?.pty) return { colsChanged: false };
 
     // Guard against NaN/Infinity from layout edge cases (e.g. getComputedStyle
     // returning "" during unmount, yielding parseInt -> NaN)
@@ -498,6 +513,20 @@ export class SessionManager extends EventEmitter {
     // Clamp to valid dimensions (node-pty throws on 0 or negative)
     const clampedCols = Math.max(2, Math.floor(cols));
     const clampedRows = Math.max(1, Math.floor(rows));
+
+    if (!session?.pty) {
+      // The PTY does not exist yet. A resize can beat the auto-resume spawn (the
+      // renderer mounts and fits before the main-process spawn lands), or arrive
+      // while a session is queued/suspended awaiting (re)spawn. Stash the dims so
+      // performSpawn spawns the PTY at the real size instead of the default,
+      // closing the stale-width race at the source. Never stash for an
+      // exited/killed session - it is not coming back, and xterm never re-sends
+      // unchanged dims, so a resurrected 120x30 would stick forever.
+      if (session && (session.status === 'queued' || session.status === 'suspended')) {
+        this.pendingResizes.set(sessionId, { cols: clampedCols, rows: clampedRows });
+      }
+      return { colsChanged: false };
+    }
 
     const colsChanged = this.bufferManager.onResize(sessionId, clampedCols);
     session.pty.resize(clampedCols, clampedRows);
@@ -562,6 +591,9 @@ export class SessionManager extends EventEmitter {
     // status='suspended' (a hard reset is 'exited', not resumable), so this
     // orthogonal marker carries the intent.
     if (session) session.intentionalExit = true;
+    // Drop any queued pre-spawn resize: a killed session will not respawn to
+    // consume it, and a stale entry keyed by this id must not survive.
+    this.pendingResizes.delete(sessionId);
     // Release backpressure BEFORE nulling the PTY so a paused session is
     // resumed (lets any buffered output flush) and its accounting entry is
     // dropped immediately, rather than waiting for the async onExit handler.
@@ -713,7 +745,12 @@ export class SessionManager extends EventEmitter {
     this.sessionQueue.notifySlotFreed();
   }
 
-  getScrollback(sessionId: string): string {
+  async getScrollback(sessionId: string): Promise<string> {
+    // If a width-changing resize just fired, wait for the agent TUI's async
+    // repaint to land before sampling, so the replay shows the frame at the
+    // fitted width rather than the stale pre-resize one. No-op for sessions
+    // with no pending width change (see PtyBufferManager.waitForResizeRepaint).
+    await this.bufferManager.waitForResizeRepaint(sessionId);
     return this.bufferManager.getScrollback(sessionId);
   }
 

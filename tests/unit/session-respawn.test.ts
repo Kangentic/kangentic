@@ -164,7 +164,7 @@ describe('Session respawn (column transition)', () => {
     const { session: second } = await spawnForTask('task-6');
 
     // Non-resume respawn preserves scrollback across column transitions
-    const scrollback = manager.getScrollback(second.id);
+    const scrollback = await manager.getScrollback(second.id);
     expect(scrollback).toContain('previous output');
   });
 
@@ -178,7 +178,7 @@ describe('Session respawn (column transition)', () => {
 
     // Resume spawns preserve scrollback so terminal scroll history is
     // available. Claude CLI's TUI overwrites the viewport without corrupting it.
-    const scrollback = manager.getScrollback(second.id);
+    const scrollback = await manager.getScrollback(second.id);
     expect(scrollback).toContain('previous output');
   });
 
@@ -190,7 +190,7 @@ describe('Session respawn (column transition)', () => {
     await spawnForTask('task-7');
 
     // Old session ID returns empty scrollback (session removed from map)
-    expect(manager.getScrollback(first.id)).toBe('');
+    expect(await manager.getScrollback(first.id)).toBe('');
   });
 
   it('old PTY is killed during respawn', async () => {

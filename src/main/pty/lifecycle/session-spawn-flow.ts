@@ -51,6 +51,12 @@ export interface SpawnFlowContext {
   sessionQueue: SessionQueue;
   getTranscriptWriter: () => TranscriptWriter | null;
   getShell: () => Promise<string>;
+  /**
+   * Consume any resize that arrived before this session's PTY existed (see
+   * SessionManager.pendingResizes). Returns the stashed dims and clears the
+   * entry, or undefined if none. Lets the spawn use the real fitted size.
+   */
+  takePendingResize: (sessionId: string) => { cols: number; rows: number } | undefined;
   emit: (event: string, ...args: unknown[]) => void;
 }
 
@@ -156,12 +162,22 @@ export async function performSpawn(
     platform: process.platform,
   });
 
+  // Spawn at the real fitted dimensions if a resize arrived before the PTY
+  // existed (auto-resume / queued / suspended-resume race). Otherwise the
+  // default: a background session that is never opened keeps this size, and an
+  // opened one is resized to its container on mount. Spawning at the fitted
+  // size means that mount-time resize is a no-op, avoiding the stale-width
+  // repaint window entirely.
+  const pendingResize = context.takePendingResize(id);
+  const spawnCols = pendingResize?.cols ?? DEFAULT_PTY_COLS;
+  const spawnRows = pendingResize?.rows ?? DEFAULT_PTY_ROWS;
+
   let ptyProcess: pty.IPty;
   try {
     ptyProcess = pty.spawn(shellExe, shellArgs, {
       name: 'xterm-256color',
-      cols: DEFAULT_PTY_COLS,
-      rows: DEFAULT_PTY_ROWS,
+      cols: spawnCols,
+      rows: spawnRows,
       cwd: effectiveCwd,
       env: cleanEnv,
     });
@@ -201,8 +217,12 @@ export async function performSpawn(
 
   context.registry.set(id, session);
 
-  // Initialize extracted modules for this session
-  context.bufferManager.initSession(id, previousScrollback, 0);
+  // Initialize extracted modules for this session. Seed the buffer manager with
+  // the ACTUAL spawn cols so the first renderer resize reports colsChanged
+  // truthfully: an unchanged width (PTY spawned at the fitted size) reports
+  // false and skips the repaint-settle, while the cold-launch 120-to-fitted
+  // change reports true and arms it. See PtyBufferManager.onResize.
+  context.bufferManager.initSession(id, previousScrollback, spawnCols);
   context.sessionFiles.register({
     sessionId: id,
     statusOutputPath: input.statusOutputPath || null,
