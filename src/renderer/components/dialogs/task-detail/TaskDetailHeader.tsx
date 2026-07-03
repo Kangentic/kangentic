@@ -214,9 +214,12 @@ export function TaskDetailHeader({
     if (!isEditing) specs.push({ id: 'commands', priority: 50 });
     if (task.worktree_path || projectPath) specs.push({ id: 'folder', priority: 40 });
     if (canShowChanges) specs.push({ id: 'changes', priority: 30 });
-    if (canShowGraph) specs.push({ id: 'graph', priority: 28 });
     if (task.pr_url) specs.push({ id: 'pr', priority: 25 });
     if (canShowBrowser) specs.push({ id: 'browser', priority: 20 });
+    // Graph is the newest, most niche pane: give it the lowest built-in priority
+    // (below Browser) so it folds into the kebab FIRST when the header narrows,
+    // never displacing a pre-existing pill that tests and users rely on being visible.
+    if (canShowGraph) specs.push({ id: 'graph', priority: 15 });
     for (const action of headerShortcuts) {
       specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
     }
