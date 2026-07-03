@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { launchPage, createProject } from './helpers';
 import type { Browser, Page } from '@playwright/test';
-import { MCP_TOOL_MANIFEST } from '../../src/shared/mcp-tool-manifest';
+import { MCP_TOOL_MANIFEST, mcpToolDocsUrl } from '../../src/shared/mcp-tool-manifest';
 
 let browser: Browser;
 let page: Page;
@@ -318,6 +318,26 @@ test.describe('Settings Panel', () => {
     await expect(page.getByText('Tail Logs', { exact: true })).toBeVisible();
     await expect(page.getByText('Query Database', { exact: true })).toBeVisible();
     await expect(page.getByText('List Worktrees', { exact: true })).toBeVisible();
+
+    // Each pill deep-links to its docs section. Patch the mock's no-op openExternal
+    // to record the URL, click one pill, and assert it opened the derived docs URL.
+    await page.evaluate(() => {
+      window.__openedExternalUrls = [];
+      window.electronAPI.shell.openExternal = async function (url: string) {
+        window.__openedExternalUrls?.push(url);
+      };
+    });
+    await page.getByTestId('mcp-tool-pill').filter({ hasText: 'Create Task' }).click();
+    await expect
+      .poll(() => page.evaluate(() => window.__openedExternalUrls))
+      .toEqual([mcpToolDocsUrl('kangentic_create_task')]);
+    // Restore the mock's default no-op so this patch does not leak into later tests
+    // on the shared page (matches mock-electron-api.js shell.openExternal).
+    await page.evaluate(() => {
+      window.electronAPI.shell.openExternal = async function () {
+        return;
+      };
+    });
 
     // How It Works section
     await expect(page.getByText('How It Works')).toBeVisible();

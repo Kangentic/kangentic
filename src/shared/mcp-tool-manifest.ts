@@ -19,6 +19,11 @@
  * (the dev-leaning diagnostics group sorts last under its own header). The
  * array below is ordered to mirror that grouping; `category`, not array
  * position, is what drives the panel grouping.
+ *
+ * Each panel pill deep-links to its entry on the live docs page
+ * (`MCP_SERVER_DOCS_URL`) via `mcpToolDocsUrl(tool.name)`; the docs page uses
+ * one anchor per tool named after the registered tool, so the link is derived
+ * from `name` with no per-tool hardcoding.
  */
 
 export type McpToolCategoryId = 'tasks' | 'board' | 'sessions' | 'browser' | 'diagnostics';
@@ -100,3 +105,11 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_get_ipc_log', label: 'IPC Log', blurb: 'recent IPC traffic with timings and errors', category: 'diagnostics' },
   { name: 'kangentic_list_worktrees', label: 'List Worktrees', blurb: 'enumerate worktrees with branch and dirty state', category: 'diagnostics' },
 ];
+
+/** Live docs reference for the MCP server. Each tool's heading anchor is its registered name. */
+export const MCP_SERVER_DOCS_URL = 'https://kangentic.com/mcp-server/';
+
+/** Deep link to a tool's entry on the docs page. Anchor = manifest/registered tool name. */
+export function mcpToolDocsUrl(toolName: string): string {
+  return `${MCP_SERVER_DOCS_URL}#${toolName}`;
+}
