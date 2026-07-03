@@ -17,7 +17,7 @@ import { requiresUserInteraction } from '../shared/activity-state';
 import { bumpHmrGeneration } from './utils/hmr-generation';
 import { clearSnapPreviewDom } from './window-manager';
 import { setRebindCaptureActive } from './utils/rebind-state';
-import { useWindowStore } from './window-manager/store/window-store';
+import { useWindowStore, commandWindowManager } from './window-manager/store/window-store';
 import {
   autoNameTimers,
   scheduleAutoNameSuggestion,
@@ -703,5 +703,6 @@ if (import.meta.env.DEV) {
     project: useProjectStore,
     session: useSessionStore,
     window: useWindowStore,
+    commandWindow: commandWindowManager.store,
   };
 }

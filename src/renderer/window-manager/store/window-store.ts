@@ -177,6 +177,12 @@ interface OpenWindowInput {
   initialEdit?: boolean;
   /** The task is already Done/archived at open time (so it must NOT auto-close). */
   openedDone?: boolean;
+  /** Stamp the opened window to paint flat (no entrance animation). Used by
+   *  programmatic population restores (the command layer's per-project
+   *  reconcile) so a rebuilt window matches the flat presentation of a
+   *  workspace-restored one. A plain user open leaves it unset so the entrance
+   *  plays. Transient, never persisted (mirrors `deserializeWorkspace`). */
+  skipEnterAnimation?: boolean;
 }
 
 export interface WindowStoreState {
@@ -313,6 +319,9 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
         title: input.title,
         initialEdit: input.initialEdit,
         openedDone: input.openedDone,
+        // Only set when true so a plain open leaves the property absent (a
+        // freshly opened window keeps its entrance animation).
+        ...(input.skipEnterAnimation ? { skipEnterAnimation: true } : {}),
       };
 
       set((current) => ({

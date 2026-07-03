@@ -3,6 +3,7 @@ import { useProjectStore } from '../stores/project-store';
 import { useSessionStore } from '../stores/session-store';
 import { useToastStore } from '../stores/toast-store';
 import { useKeybinding } from './useKeybinding';
+import { reconcileCommandTerminalWindows } from '../components/command-bar/CommandTerminalLayer';
 
 /** Preserved across HMR so the command bar overlay stays mounted during
  *  hot module replacement instead of resetting to closed. */
@@ -17,7 +18,9 @@ if (import.meta.hot) {
   });
 }
 
-/** Tracks the latest isOpen value so dispose() can snapshot it. */
+/** Tracks the latest isOpen value. Read by the HMR dispose() snapshot AND by
+ *  `open()`'s reconcile gate (`!_lastIsOpen` stands in for "layer currently
+ *  unmounted"), so it must stay in sync with the real open state. */
 let _lastIsOpen = hmrCommandBarOpen;
 
 /**
@@ -50,6 +53,15 @@ export function useCommandBar() {
       });
       return;
     }
+    // Reconcile the singleton window population to THIS project's live transient
+    // sessions BEFORE the layer mounts, so a carried-over window can never mount
+    // (and spawn) under the wrong project. Skipped when the layer is already open:
+    // the population was reconciled at open time, and a mid-open reconcile could
+    // transiently empty the store under the live hide-on-empty bridge.
+    // `skipWhenEmpty` defers the empty-store case to `useEnsureCommandWindow`, which
+    // restores the saved layout blob first; reconciling an empty store here would
+    // open default-geometry windows and defeat that restore.
+    if (!_lastIsOpen) reconcileCommandTerminalWindows({ skipWhenEmpty: true });
     setIsOpen(true);
   }, []);
 
@@ -60,12 +72,13 @@ export function useCommandBar() {
   // Consume pending-open flag set by notification clicks for transient sessions.
   // Runs after currentProjectId settles, so cross-project notification clicks
   // (which call openProject first) reopen the overlay on the correct project.
+  // Route through open() so the population reconciles for the target project.
   useEffect(() => {
     if (!pendingOpenCommandTerminal) return;
     if (!currentProjectId) return;
     useSessionStore.getState().setPendingOpenCommandTerminal(false);
-    setIsOpen(true);
-  }, [pendingOpenCommandTerminal, currentProjectId]);
+    open();
+  }, [pendingOpenCommandTerminal, currentProjectId, open]);
 
   useKeybinding('commandBar.toggle', () => {
     if (isOpen) close();

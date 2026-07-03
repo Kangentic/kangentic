@@ -276,6 +276,222 @@ function multiTerminalPreConfig(): string {
   `;
 }
 
+const RECONCILE_PROJECT_ID = 'proj-cmd-restart';
+const HARD_RELOAD_PROJECT_ID = 'proj-cmd-hard-reload';
+
+/**
+ * Init-script fragment that decorates the DEFAULT mock spawnTransient (which
+ * returns unique ids and pushes into the real sessions array) to tally spawns
+ * per project on `window.__transientSpawnsByProject`. Lets a test assert exactly
+ * how many fresh PTYs a project got. page.goto in the shared-browser beforeEach
+ * re-runs it, resetting the tally per test.
+ */
+function spawnCounterSource(): string {
+  return `
+    var __originalSpawnTransient = window.electronAPI.sessions.spawnTransient;
+    window.__transientSpawnsByProject = {};
+    window.electronAPI.sessions.spawnTransient = async function (input) {
+      window.__transientSpawnsByProject[input.projectId] =
+        (window.__transientSpawnsByProject[input.projectId] || 0) + 1;
+      return __originalSpawnTransient(input);
+    };
+  `;
+}
+
+/** A version-1 serialized command workspace with two floating windows (slot-1,
+ *  slot-2), as `serializeWorkspace` would produce. `taskId` is the on-disk field
+ *  that carries the slot anchor. */
+function twoWindowBlobSource(): string {
+  return `{
+    version: 1,
+    windows: [
+      { taskId: 'slot-1', title: 'Command Terminal', geometry: { x: 0.1, y: 0.1, w: 0.4, h: 0.6 }, restoreGeometry: null, state: 'floating' },
+      { taskId: 'slot-2', title: 'Command Terminal', geometry: { x: 0.5, y: 0.1, w: 0.4, h: 0.6 }, restoreGeometry: null, state: 'floating' }
+    ],
+    tileTree: null,
+    tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+    focusedTaskId: 'slot-1'
+  }`;
+}
+
+/** twoProjectPreConfig plus the spawn counter, for the cross-project repro tests. */
+function twoProjectSpawnCountingPreConfig(): string {
+  return `
+    ${twoProjectPreConfig()}
+    ${spawnCounterSource()}
+  `;
+}
+
+/** One project with a persisted 2-window layout blob but NO live sessions: the
+ *  app-restart path. On first open the blob restores two windows and reconcile
+ *  trims to one (no live session to keep the second). */
+function restartBlobPreConfig(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.projects.push({
+        id: '${RECONCILE_PROJECT_ID}',
+        name: 'Restart Project',
+        path: '/mock/restart-project',
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: ts,
+        created_at: ts,
+      });
+      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        state.swimlanes.push(Object.assign({}, s, { id: 'lane-restart-' + i, position: i, created_at: ts }));
+      });
+      return { currentProjectId: '${RECONCILE_PROJECT_ID}' };
+    });
+    window.electronAPI.config.set({ commandTerminalWorkspace: ${twoWindowBlobSource()} });
+    ${spawnCounterSource()}
+  `;
+}
+
+/** One project with the same 2-window blob PLUS two surviving running transient
+ *  PTYs: the hard-reload path. syncSessions re-pairs the survivors to slot-1 /
+ *  slot-2 at boot, so on first open both windows restore and reattach. */
+function hardReloadPreConfig(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.projects.push({
+        id: '${HARD_RELOAD_PROJECT_ID}',
+        name: 'Hard Reload Project',
+        path: '/mock/hard-reload-project',
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: ts,
+        created_at: ts,
+      });
+      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        state.swimlanes.push(Object.assign({}, s, { id: 'lane-hr-' + i, position: i, created_at: ts }));
+      });
+      state.sessions.push({
+        id: 'hr-sess-1', taskId: 'hr-sess-1', projectId: '${HARD_RELOAD_PROJECT_ID}', pid: 3001,
+        status: 'running', shell: 'bash', cwd: '/mock/hard-reload-project', startedAt: ts,
+        exitCode: null, resuming: false, transient: true,
+      });
+      state.sessions.push({
+        id: 'hr-sess-2', taskId: 'hr-sess-2', projectId: '${HARD_RELOAD_PROJECT_ID}', pid: 3002,
+        status: 'running', shell: 'bash', cwd: '/mock/hard-reload-project', startedAt: ts,
+        exitCode: null, resuming: false, transient: true,
+      });
+      return { currentProjectId: '${HARD_RELOAD_PROJECT_ID}' };
+    });
+    window.electronAPI.config.set({ commandTerminalWorkspace: ${twoWindowBlobSource()} });
+    ${spawnCounterSource()}
+  `;
+}
+
+/** Transient-session entries (slot + sessionId) tracked for a project. */
+async function transientEntriesFor(page: Page, projectId: string): Promise<Array<{ slot: string; sessionId: string }>> {
+  return page.evaluate((projectId) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { session?: { getState: () => { transientSessions: Record<string, { projectId: string; slot: string; sessionId: string }> } } };
+    }).__zustandStores;
+    const map = stores?.session?.getState().transientSessions ?? {};
+    return Object.values(map)
+      .filter((entry) => entry.projectId === projectId)
+      .map((entry) => ({ slot: entry.slot, sessionId: entry.sessionId }));
+  }, projectId);
+}
+
+/** Count of fresh spawnTransient calls recorded for a project. */
+async function spawnCountFor(page: Page, projectId: string): Promise<number> {
+  return page.evaluate((projectId) => {
+    const counts = (window as unknown as { __transientSpawnsByProject?: Record<string, number> }).__transientSpawnsByProject ?? {};
+    return counts[projectId] ?? 0;
+  }, projectId);
+}
+
+/** Slot anchors of the command-terminal windows currently in the singleton store, sorted. */
+async function commandWindowAnchors(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores?: { commandWindow?: { getState: () => { windows: Record<string, { anchor: string }> } } };
+    }).__zustandStores;
+    const windows = stores?.commandWindow?.getState().windows ?? {};
+    return Object.values(windows).map((managedWindow) => managedWindow.anchor).sort();
+  });
+}
+
+/** Fractional geometry, keyed by slot anchor, for every command-terminal window in
+ *  the singleton store. Used to verify a restored window carries the PERSISTED
+ *  blob geometry (not a freshly-opened default rect) - a population-count
+ *  assertion alone cannot distinguish "restored from the blob" from "reconciled
+ *  open at the default size", which is exactly the bug this covers. */
+async function commandWindowGeometryBySlot(
+  page: Page,
+): Promise<Record<string, { x: number; y: number; w: number; h: number }>> {
+  return page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores?: {
+        commandWindow?: {
+          getState: () => {
+            windows: Record<string, { anchor: string; geometry: { x: number; y: number; w: number; h: number } }>;
+          };
+        };
+      };
+    }).__zustandStores;
+    const windows = stores?.commandWindow?.getState().windows ?? {};
+    const bySlot: Record<string, { x: number; y: number; w: number; h: number }> = {};
+    for (const managedWindow of Object.values(windows)) {
+      bySlot[managedWindow.anchor] = managedWindow.geometry;
+    }
+    return bySlot;
+  });
+}
+
+/** Numeric tolerance for fractional geometry comparisons. Per the cross-platform
+ *  rule, never compare a freshly-measured/derived float with zero tolerance. */
+const GEOMETRY_TOLERANCE = 0.001;
+
+/** Assert `actual` geometry is within GEOMETRY_TOLERANCE of `expected` on every axis. */
+function expectGeometryNear(
+  actual: { x: number; y: number; w: number; h: number } | undefined,
+  expected: { x: number; y: number; w: number; h: number },
+): void {
+  expect(actual, 'expected a geometry entry for this slot').toBeDefined();
+  if (!actual) return;
+  expect(Math.abs(actual.x - expected.x)).toBeLessThanOrEqual(GEOMETRY_TOLERANCE);
+  expect(Math.abs(actual.y - expected.y)).toBeLessThanOrEqual(GEOMETRY_TOLERANCE);
+  expect(Math.abs(actual.w - expected.w)).toBeLessThanOrEqual(GEOMETRY_TOLERANCE);
+  expect(Math.abs(actual.h - expected.h)).toBeLessThanOrEqual(GEOMETRY_TOLERANCE);
+}
+
+/** The two window geometries seeded by `twoWindowBlobSource()`, keyed by slot. A
+ *  restored window that carries these values (rather than the centered default
+ *  from `defaultWindowGeometry`) proves the saved blob geometry survived the
+ *  first-open reconcile, not just that a window count matched. */
+const HARD_RELOAD_BLOB_GEOMETRY: Record<string, { x: number; y: number; w: number; h: number }> = {
+  'slot-1': { x: 0.1, y: 0.1, w: 0.4, h: 0.6 },
+  'slot-2': { x: 0.5, y: 0.1, w: 0.4, h: 0.6 },
+};
+
+/** Of the given session ids, which are present and still running in the session store. */
+async function runningSessionIds(page: Page, sessionIds: string[]): Promise<string[]> {
+  return page.evaluate((ids) => {
+    const stores = (window as unknown as {
+      __zustandStores?: { session?: { getState: () => { sessions: Array<{ id: string; status: string }> } } };
+    }).__zustandStores;
+    const sessions = stores?.session?.getState().sessions ?? [];
+    return sessions.filter((session) => ids.includes(session.id) && session.status === 'running').map((session) => session.id);
+  }, sessionIds);
+}
+
+/** The active project's id (null when none). Used to wait for a project switch to
+ *  settle before opening the layer, since open() reconciles against the current
+ *  project the instant it runs. */
+async function activeProjectId(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores?: { project?: { getState: () => { currentProject: { id: string } | null } } };
+    }).__zustandStores;
+    return stores?.project?.getState().currentProject?.id ?? null;
+  });
+}
+
 test.describe('Command Terminal', () => {
   // ---------------------------------------------------------------------------
   // TitleBar Button - these two tests use different base preconfigs so each
@@ -830,6 +1046,186 @@ test.describe('Command Terminal', () => {
         // At cap (4 windows) - the centered `+` is gone.
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(4);
         await expect(page.getByTestId('quick-session-icon')).toHaveAttribute('data-plus', 'false', { timeout: 3000 });
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Window population reconciliation (per project) - the headline bug fix: the
+  // GLOBAL window store's population is reconciled to the CURRENT project's live
+  // transient sessions on open, so a window count carried from one project never
+  // spawns that many fresh PTYs in the next.
+  // ---------------------------------------------------------------------------
+  test.describe('Window population reconciliation (per project)', () => {
+    let reconcileBrowser: Browser;
+    let reconcilePage: Page;
+
+    test.beforeAll(async () => {
+      ({ browser: reconcileBrowser, page: reconcilePage } = await launchSharedBrowser(
+        twoProjectSpawnCountingPreConfig(),
+      ));
+    });
+
+    test.afterAll(async () => {
+      await reconcileBrowser?.close();
+    });
+
+    test.beforeEach(async () => {
+      await reconcilePage.goto(VITE_URL);
+      await reconcilePage.waitForLoadState('load');
+      await reconcilePage.waitForSelector('text=Kangentic', { timeout: 15000 });
+      await reconcilePage.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+    });
+
+    test('two terminals in project A collapse to one fresh terminal in project B', async () => {
+      const page = reconcilePage;
+
+      // Two terminals in Project A (2 windows, 2 tracked A sessions).
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+      await page.getByTestId('quick-session-button').click();
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+      await expect
+        .poll(async () => (await transientEntriesFor(page, PROJECT_A_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
+        .toBe(2);
+
+      // Hide the layer, then switch to Project B (wait for the switch to settle).
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
+      await page.locator('[role="button"]:has-text("Project Beta")').click();
+      await expect.poll(() => activeProjectId(page), { timeout: 5000, intervals: [100, 200, 500] }).toBe(PROJECT_B_ID);
+
+      // Open in Project B: reconcile trims the 2 carried windows to 1, which
+      // spawns exactly one fresh PTY for B.
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+      await expect
+        .poll(() => spawnCountFor(page, PROJECT_B_ID), { timeout: 5000, intervals: [100, 200, 500] })
+        .toBe(1);
+      await expect
+        .poll(async () => (await transientEntriesFor(page, PROJECT_B_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
+        .toBe(1);
+
+      // A's two sessions were never touched: both still tracked and running.
+      const aEntries = await transientEntriesFor(page, PROJECT_A_ID);
+      expect(aEntries).toHaveLength(2);
+      const aSessionIds = aEntries.map((entry) => entry.sessionId).sort();
+      const stillRunning = await runningSessionIds(page, aSessionIds);
+      expect(stillRunning.sort()).toEqual(aSessionIds);
+
+      // Exactly one window, on a slot with a live B session; B never got a 2nd spawn.
+      const anchors = await commandWindowAnchors(page);
+      expect(anchors).toHaveLength(1);
+      const bSlots = (await transientEntriesFor(page, PROJECT_B_ID)).map((entry) => entry.slot);
+      expect(bSlots).toContain(anchors[0]);
+      expect(await spawnCountFor(page, PROJECT_B_ID)).toBe(1);
+    });
+
+    test('returning to a project reopens a window per live session and reattaches without spawning', async () => {
+      const page = reconcilePage;
+
+      // Two terminals in Project A; capture their session ids.
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+      await page.getByTestId('quick-session-button').click();
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+      await expect
+        .poll(async () => (await transientEntriesFor(page, PROJECT_A_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
+        .toBe(2);
+      const originalASessionIds = (await transientEntriesFor(page, PROJECT_A_ID)).map((entry) => entry.sessionId).sort();
+
+      // Hide, switch to B, open (spawns B's one terminal), hide again.
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
+      await page.locator('[role="button"]:has-text("Project Beta")').click();
+      await expect.poll(() => activeProjectId(page), { timeout: 5000, intervals: [100, 200, 500] }).toBe(PROJECT_B_ID);
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
+
+      // Switch back to A and reopen: both windows return and reattach, no new spawns.
+      await page.locator('[role="button"]:has-text("Project Alpha")').click();
+      await expect.poll(() => activeProjectId(page), { timeout: 5000, intervals: [100, 200, 500] }).toBe(PROJECT_A_ID);
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+      await expect.poll(() => commandWindowAnchors(page), { timeout: 5000, intervals: [100, 200, 500] }).toEqual(['slot-1', 'slot-2']);
+
+      // The two A entries carry the ORIGINAL session ids (reattach, not respawn),
+      // and A never got a spawn beyond the initial two.
+      await expect
+        .poll(async () => (await transientEntriesFor(page, PROJECT_A_ID)).map((entry) => entry.sessionId).sort().join(','), { timeout: 5000, intervals: [100, 200, 500] })
+        .toBe(originalASessionIds.join(','));
+      expect(await spawnCountFor(page, PROJECT_A_ID)).toBe(2);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Window population reconciliation (restart and hard reload) - the app-restart
+  // path restores the GLOBAL geometry blob, then reconciles the population to the
+  // project's live sessions before the layer mounts.
+  // ---------------------------------------------------------------------------
+  test.describe('Window population reconciliation (restart and hard reload)', () => {
+    test('a persisted multi-window layout is trimmed to one window on first open', async () => {
+      const { browser, page } = await launchWithState(restartBlobPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // The seeded 2-window blob is in global config BEFORE opening, so a trim
+        // to one window proves reconcile ran (not merely an empty layout).
+        await expect
+          .poll(() => page.evaluate(() => {
+            const stores = (window as unknown as {
+              __zustandStores?: { config?: { getState: () => { globalConfig: { commandTerminalWorkspace: { windows?: unknown[] } | null } } } };
+            }).__zustandStores;
+            return stores?.config?.getState().globalConfig.commandTerminalWorkspace?.windows?.length ?? 0;
+          }), { timeout: 5000, intervals: [100, 200, 500] })
+          .toBe(2);
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect
+          .poll(() => spawnCountFor(page, RECONCILE_PROJECT_ID), { timeout: 5000, intervals: [100, 200, 500] })
+          .toBe(1);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a hard reload with surviving PTYs restores a window per survivor and reattaches', async () => {
+      const { browser, page } = await launchWithState(hardReloadPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // syncSessions re-pairs the two surviving transient PTYs to slot-1 /
+        // slot-2 at boot; wait for that before opening (avoids the boot race).
+        await expect
+          .poll(async () => (await transientEntriesFor(page, HARD_RELOAD_PROJECT_ID)).length, { timeout: 8000, intervals: [100, 200, 500] })
+          .toBe(2);
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+        // Both reattached: no fresh spawns for the project.
+        expect(await spawnCountFor(page, HARD_RELOAD_PROJECT_ID)).toBe(0);
+
+        // Regression guard: a count/spawn match alone does not prove the SAVED
+        // geometry blob was restored - a reconcile that pre-populated the empty
+        // store with default-geometry windows (before `useEnsureCommandWindow` got
+        // a chance to `applyWorkspace`) also reattaches both slots with 0 spawns,
+        // just at the wrong (centered default) rects. Wait for both slots to be
+        // present (store update can lag a tick behind the DOM count above), then
+        // assert each restored slot carries the persisted blob geometry.
+        await expect
+          .poll(async () => Object.keys(await commandWindowGeometryBySlot(page)).sort(), {
+            timeout: 5000,
+            intervals: [100, 200, 500],
+          })
+          .toEqual(['slot-1', 'slot-2']);
+        const geometryBySlot = await commandWindowGeometryBySlot(page);
+        expectGeometryNear(geometryBySlot['slot-1'], HARD_RELOAD_BLOB_GEOMETRY['slot-1']);
+        expectGeometryNear(geometryBySlot['slot-2'], HARD_RELOAD_BLOB_GEOMETRY['slot-2']);
       } finally {
         await browser.close();
       }
