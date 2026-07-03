@@ -7,7 +7,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { getProgressColor } from '../../utils/color-lerp';
 import { windowElapsedPercentage } from '../../utils/rate-limit-window';
-import { formatTokenCount } from '../../utils/format-tokens';
+import { formatTokenCount, isContextWindowTrusted } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
 import { formatDateTime, formatTime } from '../../lib/datetime';
 import { agentDisplayName } from '../../utils/agent-display-name';
@@ -255,6 +255,14 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   const cacheTokens = usage.contextWindow.cacheTokens ?? 0;
   const { contextWindowSize } = usage.contextWindow;
 
+  // Render the context fraction/bar/percent ONLY when the window is trustworthy:
+  // a positive size (0 is the "unknown size" sentinel) AND usedTokens within it
+  // (usedTokens > window is physically impossible, so the window is wrong).
+  // Numerator and denominator both come from this one `usage.contextWindow`, so
+  // a trustworthy pairing renders and an untrustworthy one degrades to the model
+  // name only - we never render a percentage whose parts disagree.
+  const windowTrusted = isContextWindowTrusted(contextWindowSize, usedTokens);
+
   const barTooltip = `${formatTokenCount(cacheTokens)} cached (system) \u00b7 ${formatTokenCount(Math.max(0, usedTokens - cacheTokens))} conversation`;
 
   // Determine which elements are visible. The settings toggles are the
@@ -417,6 +425,13 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           When only the fraction is enabled (bar off), it renders as a minimal
           pill so the toggle stays meaningful. */}
       {(() => {
+        // No bar/fraction/percent when the window is untrusted (unknown size, or
+        // an impossible usedTokens > window): show the model name only, never a
+        // bar against a bad denominator. The hidden sentinel keeps the state
+        // queryable for tests without adding a visible element.
+        if (!windowTrusted) {
+          return <span data-context-window="unknown" className="hidden" />;
+        }
         // Shared so the bar-embedded fraction and the bare-fraction pill render
         // the identical "used / total" string from one source.
         const fractionLabel = `${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowSize)}`;

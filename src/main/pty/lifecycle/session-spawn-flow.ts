@@ -280,6 +280,10 @@ export async function performSpawn(
       cwd: effectiveCwd,
       hook: callerOwnedSessionHistory,
       agentName: session.agentName,
+      // On a resume the transcript already exists and its tail is PRE-suspend
+      // (stale) occupancy - start at EOF so only fresh post-resume entries
+      // produce usage. The spawn-time model seed still shows the model name.
+      startAtEnd: input.resuming === true,
     }).catch((err) => {
       console.warn(`[session-history] attach failed for session=${id.slice(0, 8)}:`, err);
     });

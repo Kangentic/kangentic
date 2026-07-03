@@ -111,6 +111,146 @@ describe('UsageAccumulator.setSessionUsage - merge behavior', () => {
       2,
     );
   });
+
+  it('pairs a seeded 1M window with fresh transcript tokens into a real percentage', () => {
+    // The resume seed sets the authoritative window; the transcript fallback then
+    // supplies tokens with no window of its own.
+    usage.setSessionUsage('resume-session', {
+      contextWindow: { contextWindowSize: 1_000_000 },
+    } as Partial<SessionUsage>);
+    const merged = usage.setSessionUsage('resume-session', {
+      contextWindow: { usedTokens: 650_398, totalInputTokens: 650_398 },
+    } as Partial<SessionUsage>);
+    expect(merged.contextWindow.contextWindowSize).toBe(1_000_000);
+    expect(merged.contextWindow.usedPercentage).toBeCloseTo((650_398 / 1_000_000) * 100, 2);
+  });
+
+  it('degrades to the 0-sentinel when usedTokens exceeds the window (impossible pairing)', () => {
+    // A stale 200K window (wrong for a 1M account) paired with 650,398 fresh
+    // tokens would be 325%. The window is wrong, not the tokens: degrade to the
+    // 0 "unknown size" sentinel (model-only), NEVER clamp to 100.
+    usage.setSessionUsage('bad-session', {
+      contextWindow: { contextWindowSize: 200_000 },
+    } as Partial<SessionUsage>);
+    const merged = usage.setSessionUsage('bad-session', {
+      contextWindow: { usedTokens: 650_398, totalInputTokens: 650_398 },
+    } as Partial<SessionUsage>);
+    expect(merged.contextWindow.contextWindowSize).toBe(0);
+    expect(merged.contextWindow.usedPercentage).toBe(0);
+    // Tokens are preserved (they are not the wrong part).
+    expect(merged.contextWindow.usedTokens).toBe(650_398);
+  });
+
+  it('the degrade is sticky: a later token-only merge still sees the 0 window', () => {
+    usage.setSessionUsage('bad-session', {
+      contextWindow: { contextWindowSize: 200_000 },
+    } as Partial<SessionUsage>);
+    usage.setSessionUsage('bad-session', {
+      contextWindow: { usedTokens: 650_398 },
+    } as Partial<SessionUsage>);
+    const later = usage.setSessionUsage('bad-session', {
+      contextWindow: { usedTokens: 660_000 },
+    } as Partial<SessionUsage>);
+    expect(later.contextWindow.contextWindowSize).toBe(0);
+    expect(later.contextWindow.usedPercentage).toBe(0);
+  });
+
+  it('fills a missing window from the known account window for the model (background transcript fallback)', () => {
+    // A status.json from ANY session of this model teaches the accumulator the
+    // account+model window.
+    usage.recordKnownWindow('claude-opus-4-8', 1_000_000);
+    // A different, background session of the same model has only the transcript
+    // fallback: tokens + model, NO window. It must pair with the known window.
+    const merged = usage.setSessionUsage('background-session', {
+      contextWindow: { usedTokens: 357_527, totalInputTokens: 357_527 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+    expect(merged.contextWindow.contextWindowSize).toBe(1_000_000);
+    expect(merged.contextWindow.usedPercentage).toBeCloseTo((357_527 / 1_000_000) * 100, 2);
+  });
+
+  it('RETROACTIVELY fills and returns an already-cached background session when the window is learned later', () => {
+    // The exact live gap: an idle background Opus session emitted tokens with NO
+    // window (its statusLine never painted), so its card showed the model name
+    // only. When a SIBLING Opus session paints and teaches the 1M window, the
+    // idle session must be back-filled and re-emitted - not left on the model
+    // name until it happens to emit usage again.
+    const before = usage.setSessionUsage('background-session', {
+      contextWindow: { usedTokens: 175_422, totalInputTokens: 175_422 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+    expect(before.contextWindow.contextWindowSize).toBe(0);
+
+    const refilled = usage.recordKnownWindow('claude-opus-4-8', 1_000_000);
+    expect(refilled).toContain('background-session');
+
+    const after = usage.getSessionUsage('background-session')!;
+    expect(after.contextWindow.contextWindowSize).toBe(1_000_000);
+    expect(after.contextWindow.usedPercentage).toBeCloseTo((175_422 / 1_000_000) * 100, 2);
+  });
+
+  it('does NOT retroactively fill a cached session whose tokens exceed the learned window', () => {
+    usage.setSessionUsage('background-session', {
+      contextWindow: { usedTokens: 650_398 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+    const refilled = usage.recordKnownWindow('claude-opus-4-8', 200_000);
+    expect(refilled).not.toContain('background-session');
+    expect(usage.getSessionUsage('background-session')!.contextWindow.contextWindowSize).toBe(0);
+  });
+
+  it('keys the known window by base model id ([1m] variant shares the value)', () => {
+    usage.recordKnownWindow('claude-opus-4-8[1m]', 1_000_000);
+    const merged = usage.setSessionUsage('s', {
+      contextWindow: { usedTokens: 100_000 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+    expect(merged.contextWindow.contextWindowSize).toBe(1_000_000);
+  });
+
+  it('shows the model only (no fill) when no known window exists for the model', () => {
+    const merged = usage.setSessionUsage('s', {
+      contextWindow: { usedTokens: 100_000 },
+      model: { id: 'claude-quasar-9', displayName: 'Quasar 9' },
+    } as Partial<SessionUsage>);
+    expect(merged.contextWindow.contextWindowSize).toBe(0);
+    expect(merged.contextWindow.usedPercentage).toBe(0);
+  });
+
+  it('a filled window that is too small still degrades to the sentinel (never > 100%)', () => {
+    // If the only known window for a model is wrong-and-too-small, the
+    // impossibility guard still fires - the fill never produces an impossible %.
+    usage.recordKnownWindow('claude-opus-4-8', 200_000);
+    const merged = usage.setSessionUsage('s', {
+      contextWindow: { usedTokens: 650_398 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+    expect(merged.contextWindow.contextWindowSize).toBe(0);
+    expect(merged.contextWindow.usedPercentage).toBe(0);
+  });
+
+  it('replaceSessionUsage bypasses the impossibility guard (status.json is self-consistent and already clamped)', () => {
+    // The status.json path replaces the whole payload with Claude's own numbers.
+    // Its used_percentage is clamped upstream, and its usedTokens include output
+    // tokens which can legitimately brush the window near full - so replace never
+    // second-guesses it.
+    const authoritative: SessionUsage = {
+      contextWindow: {
+        usedPercentage: 92,
+        usedTokens: 184_000,
+        cacheTokens: 100_000,
+        totalInputTokens: 184_000,
+        totalOutputTokens: 2_000,
+        contextWindowSize: 200_000,
+      },
+      cost: { totalCostUsd: 1.5, totalDurationMs: 1000 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    };
+    usage.replaceSessionUsage('status-session', authoritative);
+    const cached = usage.getSessionUsage('status-session');
+    expect(cached?.contextWindow.contextWindowSize).toBe(200_000);
+    expect(cached?.contextWindow.usedPercentage).toBe(92);
+  });
 });
 
 describe('UsageAccumulator - per-tool aggregation', () => {

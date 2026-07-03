@@ -190,4 +190,54 @@ test.describe('Cursor ContextBar model pill', () => {
       await browser.close();
     }
   });
+
+  test('shows no percent/fraction/bar and the hidden unknown-window sentinel when contextWindowSize is 0', async () => {
+    const { browser, page } = await launchWithState(CURSOR_INTERACTIVE_PRECONFIG);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      // Scope to the bottom-panel ContextBar (unique via the `.min-h-8`
+      // container class it always carries - see context-bar-popover.spec.ts
+      // and task-activity-indicators.spec.ts, which use the same selector to
+      // disambiguate it from TaskCard's own board-card usage-bar).
+      const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
+      await expect(contextBar).toBeVisible({ timeout: 10000 });
+
+      // Same store-driven update path as the "resolves model pill" test
+      // above: contextWindowSize: 0 is the "unknown size" sentinel, so
+      // windowTrusted is false and the fraction/bar/percent must not render.
+      await page.evaluate(
+        (sessionId: string) => {
+          const stores = (window as unknown as {
+            __zustandStores?: {
+              session: { getState: () => { updateUsage: (id: string, data: unknown) => void } };
+            };
+          }).__zustandStores;
+          stores?.session.getState().updateUsage(sessionId, {
+            model: { id: 'auto', displayName: 'Auto' },
+            contextWindow: {
+              usedPercentage: 0,
+              usedTokens: 0,
+              cacheTokens: 0,
+              totalInputTokens: 0,
+              totalOutputTokens: 0,
+              contextWindowSize: 0,
+            },
+            cost: { totalCostUsd: 0, totalDurationMs: 0 },
+          });
+        },
+        SESSION_ID,
+      );
+
+      await expect.poll(async () => contextBar.textContent(), { timeout: 5000 }).toMatch(/Auto/);
+
+      // Hidden sentinel present (ContextBar renders it as a child span); no
+      // percent or fraction text anywhere in the bar.
+      await expect(contextBar.locator('[data-context-window="unknown"]')).toHaveCount(1);
+      await expect(contextBar).not.toContainText('%');
+      await expect(contextBar).not.toContainText('/');
+    } finally {
+      await browser.close();
+    }
+  });
 });

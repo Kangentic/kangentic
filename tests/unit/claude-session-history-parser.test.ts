@@ -1,30 +1,33 @@
 /**
- * Tests for `ClaudeSessionHistoryParser` - the background-session fallback
- * that derives a LIVE model + context % from Claude Code's native transcript
- * JSONL when status.json never flows (a never-painted background session).
+ * Tests for `ClaudeSessionHistoryParser` - the background-session fallback that
+ * derives a LIVE model + token occupancy from Claude Code's native transcript
+ * JSONL until status.json flows. It emits token counts + the model ONLY: it
+ * never guesses a context-window size or percentage from the model id (a plain
+ * `claude-opus-4-8` runs a 1M window on a 1M-entitled account and 200K
+ * elsewhere). The authoritative window comes from status.json, live or seeded on
+ * resume; the accumulator computes the percentage.
  *
  * Distinct from `parseClaudeTranscriptUsage` (claude-transcript-usage.test.ts),
  * which sums a CUMULATIVE lifetime total. This parser reports the CURRENT
- * context occupancy from the latest assistant message, so it uses latest-wins
- * semantics and emits a sparse SessionUsage safe for the merge pipeline.
+ * context occupancy from the latest assistant message (latest-wins).
  *
- * Cross-checked against a pinned fixture
- * (tests/fixtures/transcripts/claude-live-context-sample.jsonl).
+ * Cross-checked against pinned fixtures under tests/fixtures/transcripts/.
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  ClaudeSessionHistoryParser,
-  resolveClaudeContextWindowSize,
-} from '../../src/main/agent/adapters/claude/session-history-parser';
+import { ClaudeSessionHistoryParser } from '../../src/main/agent/adapters/claude/session-history-parser';
 import { claudeProjectSlug } from '../../src/main/agent/adapters/claude/transcript-parser';
+import { UsageAccumulator } from '../../src/main/activity-engine/usage-accumulator';
 import type { SessionUsage } from '../../src/shared/types';
 
 const FIXTURE_PATH = path.join(
   __dirname, '..', 'fixtures', 'transcripts', 'claude-live-context-sample.jsonl',
+);
+const STALE_OCCUPANCY_FIXTURE = path.join(
+  __dirname, '..', 'fixtures', 'transcripts', 'claude-resume-stale-occupancy.jsonl',
 );
 
 /** Build one assistant JSONL line with the given fields. */
@@ -52,6 +55,13 @@ function assistantLine(options: {
   return JSON.stringify(raw);
 }
 
+/** The set of contextWindow keys the parser must NEVER emit (window is not derivable from an id). */
+function assertNoWindowKeys(usage: SessionUsage): void {
+  const contextWindow = (usage as unknown as { contextWindow: Record<string, unknown> }).contextWindow;
+  expect(Object.prototype.hasOwnProperty.call(contextWindow, 'contextWindowSize')).toBe(false);
+  expect(Object.prototype.hasOwnProperty.call(contextWindow, 'usedPercentage')).toBe(false);
+}
+
 describe('ClaudeSessionHistoryParser.parse', () => {
   it('picks the latest qualifying assistant entry across a full fixture chunk, skipping sidechain/synthetic/malformed lines', () => {
     const content = fs.readFileSync(FIXTURE_PATH, 'utf-8');
@@ -65,16 +75,16 @@ describe('ClaudeSessionHistoryParser.parse', () => {
     expect(usage.contextWindow.totalInputTokens).toBe(800);
     expect(usage.contextWindow.cacheTokens).toBe(300);
     expect(usage.contextWindow.totalOutputTokens).toBe(40);
-    expect(usage.contextWindow.contextWindowSize).toBe(200_000);
-    expect(usage.contextWindow.usedPercentage).toBeCloseTo(0.4, 5);
     expect(usage.model.id).toBe('claude-opus-4-8');
     expect(usage.model.displayName).toBe('Opus 4.8');
+    // Tokens + model only: NEVER a window or percentage (not derivable from an id).
+    assertNoWindowKeys(usage);
     // Fallback never sets activity or events - those stay hooks-owned.
     expect(result.events).toEqual([]);
     expect(result.activity).toBeNull();
   });
 
-  it('emits a SPARSE usage object (no cost / rateLimits / effort keys) so the merge never clobbers base values', () => {
+  it('emits a SPARSE usage object (no window / percentage / cost / rateLimits / effort keys) so the merge never clobbers base values', () => {
     const result = ClaudeSessionHistoryParser.parse(
       assistantLine({ model: 'claude-opus-4-8', input: 1000 }), 'append',
     );
@@ -85,6 +95,10 @@ describe('ClaudeSessionHistoryParser.parse', () => {
     expect(Object.prototype.hasOwnProperty.call(record, 'transcriptPath')).toBe(false);
     const contextWindow = record.contextWindow as Record<string, unknown>;
     expect(Object.prototype.hasOwnProperty.call(contextWindow, 'effort')).toBe(false);
+    // The window and percentage are deliberately omitted so a cached authoritative
+    // window (live or seeded on resume) survives the merge.
+    expect(Object.prototype.hasOwnProperty.call(contextWindow, 'contextWindowSize')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(contextWindow, 'usedPercentage')).toBe(false);
   });
 
   it('skips a trailing isSidechain assistant entry (subagent context is not the main thread)', () => {
@@ -126,7 +140,7 @@ describe('ClaudeSessionHistoryParser.parse', () => {
     expect(result.activity).toBeNull();
   });
 
-  it('drops the context percentage after a compaction (post-compaction chunk reports a smaller window occupancy)', () => {
+  it('reports shrinking occupancy after a compaction (post-compaction chunk carries a smaller context)', () => {
     const before = ClaudeSessionHistoryParser.parse(
       assistantLine({ model: 'claude-opus-4-8', input: 100_000 }), 'append',
     ).usage as SessionUsage;
@@ -137,57 +151,58 @@ describe('ClaudeSessionHistoryParser.parse', () => {
       ].join('\n'),
       'append',
     ).usage as SessionUsage;
-    expect(before.contextWindow.usedPercentage).toBeCloseTo(50, 5);
-    expect(after.contextWindow.usedPercentage).toBeCloseTo(10, 5);
-    expect(after.contextWindow.usedPercentage).toBeLessThan(before.contextWindow.usedPercentage);
+    expect(before.contextWindow.usedTokens).toBe(100_000);
+    expect(after.contextWindow.usedTokens).toBe(20_000);
+    expect(after.contextWindow.usedTokens).toBeLessThan(before.contextWindow.usedTokens);
   });
 
-  it('resolves the 1M window for a bracketed [1m] variant', () => {
+  it('emits the humanized 1M display name for a bracketed [1m] variant but still no window', () => {
     const usage = ClaudeSessionHistoryParser.parse(
       assistantLine({ model: 'claude-opus-4-8[1m]', input: 100_000 }), 'append',
     ).usage as SessionUsage;
-    expect(usage.contextWindow.contextWindowSize).toBe(1_000_000);
-    expect(usage.contextWindow.usedPercentage).toBeCloseTo(10, 5);
+    expect(usage.contextWindow.usedTokens).toBe(100_000);
     expect(usage.model.displayName).toBe('Opus 4.8 (1M)');
+    assertNoWindowKeys(usage);
   });
 
-  it('matches a dated-snapshot model id by family prefix', () => {
+  it('emits tokens + display name for a dated-snapshot model id, still no window', () => {
     const usage = ClaudeSessionHistoryParser.parse(
       assistantLine({ model: 'claude-opus-4-8-20260115', input: 20_000 }), 'append',
     ).usage as SessionUsage;
-    expect(usage.contextWindow.contextWindowSize).toBe(200_000);
-    expect(usage.contextWindow.usedPercentage).toBeCloseTo(10, 5);
+    expect(usage.contextWindow.usedTokens).toBe(20_000);
+    assertNoWindowKeys(usage);
   });
 
-  it('degrades to the 0-sentinel window for an unknown model but still sets the display name', () => {
+  it('emits tokens + a display name for an unrecognized model id, never a window', () => {
     const usage = ClaudeSessionHistoryParser.parse(
       assistantLine({ model: 'claude-quasar-9', input: 1000 }), 'append',
     ).usage as SessionUsage;
-    expect(usage.contextWindow.contextWindowSize).toBe(0);
-    // 0 window -> percentage stays 0 (card shows model name, no bar).
-    expect(usage.contextWindow.usedPercentage).toBe(0);
+    expect(usage.contextWindow.usedTokens).toBe(1000);
     expect(usage.model.id).toBe('claude-quasar-9');
     expect(usage.model.displayName).toBe('Quasar 9');
-  });
-});
-
-describe('resolveClaudeContextWindowSize', () => {
-  it('returns 200K for standard recognized families (Claude Code default window)', () => {
-    expect(resolveClaudeContextWindowSize('claude-opus-4-8')).toBe(200_000);
-    expect(resolveClaudeContextWindowSize('claude-sonnet-5')).toBe(200_000);
-    expect(resolveClaudeContextWindowSize('claude-haiku-4-5')).toBe(200_000);
-    expect(resolveClaudeContextWindowSize('claude-fable-5')).toBe(200_000);
-    expect(resolveClaudeContextWindowSize('claude-opus-4-7')).toBe(200_000);
+    assertNoWindowKeys(usage);
   });
 
-  it('returns 1M for a bracketed [1m] variant', () => {
-    expect(resolveClaudeContextWindowSize('claude-opus-4-8[1m]')).toBe(1_000_000);
-    expect(resolveClaudeContextWindowSize('claude-sonnet-5[1m]')).toBe(1_000_000);
-  });
+  it('INCIDENT LOCK: a stale 650,398-token resume entry on plain claude-opus-4-8 never yields >100% (no window guess)', () => {
+    // Reproduces #286: the last pre-suspend assistant entry (input 2 +
+    // cache_creation 446 + cache_read 649,950 = 650,398) on a plain
+    // claude-opus-4-8 id. The old parser divided by a guessed 200K window and
+    // rendered 325%. It must now emit tokens only, and running that through the
+    // real accumulator on a base with no known window must degrade to the
+    // 0-sentinel (model-only), never a percentage.
+    const content = fs.readFileSync(STALE_OCCUPANCY_FIXTURE, 'utf-8');
+    const usage = ClaudeSessionHistoryParser.parse(content, 'append').usage as SessionUsage;
+    expect(usage.contextWindow.usedTokens).toBe(650_398);
+    expect(usage.model.id).toBe('claude-opus-4-8');
+    assertNoWindowKeys(usage);
 
-  it('returns null (0-sentinel caller) for an unrecognized model family', () => {
-    expect(resolveClaudeContextWindowSize('claude-quasar-9')).toBeNull();
-    expect(resolveClaudeContextWindowSize('gpt-5')).toBeNull();
+    const accumulator = new UsageAccumulator();
+    const merged = accumulator.setSessionUsage('incident-session', usage as unknown as Partial<SessionUsage>);
+    expect(merged.contextWindow.usedTokens).toBe(650_398);
+    // No window was ever known, so it stays at the 0 sentinel and the percentage
+    // stays 0 - the card shows the model name only, never 325%.
+    expect(merged.contextWindow.contextWindowSize).toBe(0);
+    expect(merged.contextWindow.usedPercentage).toBe(0);
   });
 });
 

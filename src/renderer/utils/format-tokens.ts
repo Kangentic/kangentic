@@ -11,3 +11,17 @@ export function formatTokenCount(n: number): string {
   const v = (n / 1_000_000).toFixed(1);
   return `${v.endsWith('.0') ? v.slice(0, -2) : v}M`;
 }
+
+/**
+ * A context-window pairing is trustworthy only when the reported window size is
+ * positive (0 is the "unknown size" sentinel) AND the used-token count fits
+ * within it (usedTokens > window is physically impossible, so the window is
+ * wrong, never the tokens). TaskCard and ContextBar both gate their
+ * fraction/bar/percent on this single predicate so the two board surfaces
+ * cannot drift apart on what counts as trustworthy. The main-process
+ * UsageAccumulator.setSessionUsage enforces the same invariant on the merge
+ * path, where the 0 sentinel originates.
+ */
+export function isContextWindowTrusted(contextWindowSize: number, usedTokens: number): boolean {
+  return contextWindowSize > 0 && usedTokens <= contextWindowSize;
+}

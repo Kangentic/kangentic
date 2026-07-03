@@ -1076,11 +1076,15 @@ describe('Transcript-fallback handoff', () => {
     // Let the fire-and-forget eager attach (awaits the mocked locate) settle.
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(priv.sessionHistoryReader.isAttached(session.id)).toBe(true);
-    // The fallback populated the card model + context % from the transcript.
+    // The fallback populated the card model + token occupancy from the
+    // transcript, but NO window (it is not derivable from a model id): window
+    // stays the 0 "unknown size" sentinel and the percentage stays 0, so the
+    // card shows the model name only until status.json flows.
     const fallbackUsage = manager.getUsageCache()[session.id];
     expect(fallbackUsage?.model.displayName).toBe('Opus 4.8');
     expect(fallbackUsage?.contextWindow.usedTokens).toBe(5000);
-    expect(fallbackUsage?.contextWindow.contextWindowSize).toBe(200_000);
+    expect(fallbackUsage?.contextWindow.contextWindowSize).toBe(0);
+    expect(fallbackUsage?.contextWindow.usedPercentage).toBe(0);
 
     // status.json now flows (Claude painted / card opened). Trigger the read;
     // onFirstStatus must detach the fallback reader.
@@ -1101,6 +1105,55 @@ describe('Transcript-fallback handoff', () => {
     priv.statusFileReader.handleStatusChange(session.id);
 
     expect(priv.sessionHistoryReader.isAttached(session.id)).toBe(false);
+  });
+
+  // On a RESUME the transcript already holds the PRE-suspend conversation, whose
+  // last entry is stale occupancy (Claude prunes/recomputes context on resume).
+  // The eager attach passes startAtEnd, so the fallback starts at EOF and must
+  // NOT surface that stale entry - the exact #286 failure (a 650k pre-suspend
+  // snapshot rendered as an impossible percentage). Regression guard.
+  it('does not surface stale pre-suspend occupancy on a resume (fallback starts at EOF)', async () => {
+    const historyFile = path.join(tmpDir, 'resume-stale-transcript.jsonl');
+    fs.writeFileSync(
+      historyFile,
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          id: 'stale',
+          model: 'claude-opus-4-8',
+          usage: {
+            input_tokens: 2,
+            cache_creation_input_tokens: 446,
+            cache_read_input_tokens: 649_950,
+            output_tokens: 318,
+          },
+        },
+      }) + '\n',
+    );
+    vi.spyOn(ClaudeSessionHistoryParser, 'locate').mockResolvedValue(historyFile);
+    const adapter = new ClaudeAdapter();
+
+    const statusPath = path.join(tmpDir, 'resume-stale-status.json');
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: 'task-resume-stale',
+      command: '',
+      cwd: tmpDir,
+      agentSessionId: 'resume-stale-uuid',
+      statusOutputPath: statusPath,
+      agentParser: adapter,
+      resuming: true,
+    });
+
+    // Let the fire-and-forget eager attach (awaits the mocked locate) settle.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    // The stale 650,398-token pre-suspend entry is behind the EOF cursor, so it
+    // never reaches the usage cache. No stale tokens, and certainly no >100%.
+    const usage = manager.getUsageCache()[session.id];
+    expect(usage?.contextWindow.usedTokens ?? 0).not.toBe(650_398);
+    expect(usage?.contextWindow.usedTokens ?? 0).toBe(0);
   });
 
   // The sibling test above never sets `session_id` in status.json, so

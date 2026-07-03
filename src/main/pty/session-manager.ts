@@ -185,6 +185,14 @@ export class SessionManager extends EventEmitter {
         // could arrive after that handoff.
         const historyHook = session.agentParser?.runtime?.sessionHistory;
         if (historyHook && !this.statusFileReader.hasReceivedStatus(sessionId)) {
+          // No startAtEnd here: this attach only ever runs when the agent id was
+          // NOT known at spawn time - either a fresh Codex/Gemini capture (a
+          // brand-new transcript whose early entries we want) or a
+          // stale-session-id recovery (also a fresh file, under the newly
+          // captured id). Reading from the start is correct in both. The
+          // resumed-existing-file EOF case never reaches here: it is held by the
+          // idempotent spawn-time attach (which passes startAtEnd), so this path
+          // never re-parses pre-resume content.
           this.sessionHistoryReader.attach({
             sessionId,
             agentSessionId: agentReportedId,

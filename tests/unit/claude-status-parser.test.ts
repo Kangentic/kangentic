@@ -82,6 +82,29 @@ describe('ClaudeStatusParser', () => {
       expect(usage!.model.effort).toBeUndefined();
     });
 
+    it('ROOT CAUSE A: a plain claude-opus-4-8 id reports a 1M window (status.json is authoritative, not the id)', () => {
+      // Real machine evidence (#286): a 1M-entitled account runs plain
+      // claude-opus-4-8 (no [1m] suffix) at a 1,000,000 window. The window is
+      // NOT derivable from the model id - only status.json knows it. This locks
+      // that the parser reports Claude's own context_window_size verbatim.
+      const raw = JSON.stringify({
+        context_window: {
+          current_usage: { input_tokens: 2, output_tokens: 459, cache_creation_input_tokens: 896, cache_read_input_tokens: 91_887 },
+          used_percentage: 9,
+          total_input_tokens: 92_785,
+          total_output_tokens: 459,
+          context_window_size: 1_000_000,
+        },
+        cost: { total_cost_usd: 0, total_duration_ms: 0 },
+        model: { id: 'claude-opus-4-8', display_name: 'Opus 4.8' },
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.model.id).toBe('claude-opus-4-8');
+      expect(usage!.contextWindow.contextWindowSize).toBe(1_000_000);
+      expect(usage!.contextWindow.usedPercentage).toBe(9);
+    });
+
     it('extracts effort.level into model.effort', () => {
       const raw = JSON.stringify({
         context_window: { used_percentage: 11, context_window_size: 1_000_000 },

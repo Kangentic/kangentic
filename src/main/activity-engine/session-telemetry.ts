@@ -330,6 +330,14 @@ export class SessionTelemetry {
     this.usage.replaceSessionUsage(sessionId, usage);
     this.callbacks.onUsageChange(sessionId, usage);
 
+    // status.json is authoritative: teach the accumulator this model's window,
+    // and re-emit any sibling background session it back-fills (an idle card of
+    // the same model, whose own statusLine never painted, that was waiting to
+    // learn the window). See UsageAccumulator.recordKnownWindow.
+    this.reemitBackfilled(
+      this.usage.recordKnownWindow(usage.model.id, usage.contextWindow.contextWindowSize),
+    );
+
     const state = this.activityEngine.getOrCreateState(sessionId);
 
     // Keep a genuinely-thinking session warm for the stale-thinking watchdog,
@@ -578,6 +586,21 @@ export class SessionTelemetry {
     // processStatusUpdate).
     merged.toolCallCount = this.usage.getToolCallCount(sessionId);
     this.callbacks.onUsageChange(sessionId, merged);
+  }
+
+  /**
+   * Push a fresh usage snapshot to the renderer for each session whose window
+   * was just back-filled from a newly-learned account+model window. Stamps the
+   * live tool-call count like the other emit paths so snapshot reads stay
+   * consistent.
+   */
+  private reemitBackfilled(sessionIds: string[]): void {
+    for (const sessionId of sessionIds) {
+      const usage = this.usage.getSessionUsage(sessionId);
+      if (!usage) continue;
+      usage.toolCallCount = this.usage.getToolCallCount(sessionId);
+      this.callbacks.onUsageChange(sessionId, usage);
+    }
   }
 
   // ==== Event ingest (the main pipeline) ====

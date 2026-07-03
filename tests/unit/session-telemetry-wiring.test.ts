@@ -566,3 +566,150 @@ describe('SessionTelemetry: onNamedShellLikelyExited -> BackgroundShellEnd + mar
     expect(stateAfterDrain?.activity).toBe('idle');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gap 3: processStatusUpdate -> reemitBackfilled wiring (retroactive
+// back-fill must RE-EMIT a sibling session, not just mutate its cache)
+// ---------------------------------------------------------------------------
+
+describe('SessionTelemetry: processStatusUpdate -> reemitBackfilled wiring', () => {
+  // Exercises the reemitBackfilled closure end-to-end. A background session
+  // (session-a) is seeded via the Claude transcript-fallback shape: tokens +
+  // model, but NO context-window size (its own statusLine never painted, so
+  // its usage caches with contextWindowSize 0). When a SIBLING session
+  // (session-b) of the SAME model reports a live status.json, the accumulator
+  // learns the model's window and RETROACTIVELY back-fills session-a's cached
+  // usage in place. That alone is not enough - the renderer only repaints on
+  // a fresh onUsageChange callback, so processStatusUpdate must explicitly
+  // re-emit session-a's now-filled usage, not merely mutate the cache.
+  //
+  // Red-green: commenting out the `this.reemitBackfilled(...)` call in
+  // processStatusUpdate (session-telemetry.ts) leaves the accumulator's cache
+  // correctly back-filled (UsageAccumulator.recordKnownWindow still runs) but
+  // session-a's onUsageChange is never re-fired, so assertion (b) below - a
+  // second onUsageChange for 'session-a' carrying the filled window - never
+  // lands. This is the exact case tests/unit/usage-accumulator.test.ts cannot
+  // catch: it calls the accumulator directly and never observes whether a
+  // callback fires.
+
+  let probe: MockProcessTreeProbe;
+  let rootPids: Map<string, number>;
+  let log: CallbackLog;
+  let usageChanges: Array<{ sessionId: string; usage: SessionUsage }>;
+  let telemetry: SessionTelemetry;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    probe = new MockProcessTreeProbe();
+    rootPids = new Map();
+    log = { activityChanges: [], events: [] };
+    usageChanges = [];
+    const baseCallbacks = makeCallbacks(log);
+    telemetry = new SessionTelemetry(
+      {
+        ...baseCallbacks,
+        onUsageChange: (sessionId, usage) => {
+          usageChanges.push({ sessionId, usage });
+        },
+        getSessionRootPid: (sessionId) => rootPids.get(sessionId),
+      },
+      {
+        processTreeProbe: probe,
+        disableBgShellWatcher: false,
+        activityEngineOptions: {
+          bgShellEscapeHatchMs: 60_000,
+          staleThinkingTimeoutMs: 60_000,
+          idleStabilityWindowMs: 0,
+        },
+      },
+    );
+  });
+
+  afterEach(() => {
+    telemetry.dispose();
+    vi.useRealTimers();
+  });
+
+  it('re-emits a sibling background session usage with the newly-learned window when a live status.json arrives', () => {
+    // Session A: a background session whose only telemetry so far is the
+    // Claude transcript fallback (tokens + model, no window). Seeded via
+    // setSessionUsage, which mirrors how the transcript-fallback reader
+    // ingests parsed usage.
+    telemetry.setSessionUsage('session-a', {
+      contextWindow: { usedTokens: 357_527, totalInputTokens: 357_527 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+
+    const seedEmit = usageChanges.filter((entry) => entry.sessionId === 'session-a');
+    expect(seedEmit).toHaveLength(1);
+    expect(seedEmit[0].usage.contextWindow.contextWindowSize).toBe(0);
+
+    // Reset the log so the assertions below are precise about the RE-emit
+    // triggered by session-b's status update, not the seed emit above.
+    usageChanges.length = 0;
+
+    // Session B: a DIFFERENT session of the same model whose live status.json
+    // arrives, teaching the accumulator the account+model window.
+    const statusUpdate: SessionUsage = {
+      contextWindow: {
+        usedPercentage: 40,
+        usedTokens: 400_000,
+        cacheTokens: 0,
+        totalInputTokens: 400_000,
+        totalOutputTokens: 500,
+        contextWindowSize: 1_000_000,
+      },
+      cost: { totalCostUsd: 0.1, totalDurationMs: 1000 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    };
+    telemetry.processStatusUpdate('session-b', statusUpdate);
+
+    // (a) Session B receives its own onUsageChange via the direct emit path.
+    const sessionBChange = usageChanges.find((entry) => entry.sessionId === 'session-b');
+    expect(sessionBChange).toBeDefined();
+    expect(sessionBChange!.usage.contextWindow.contextWindowSize).toBe(1_000_000);
+
+    // (b) Session A - the SIBLING background session - receives a FRESH
+    // onUsageChange re-emit carrying the now-filled window. A silent cache
+    // mutation with no callback would fail this assertion.
+    const sessionAReemit = usageChanges.find((entry) => entry.sessionId === 'session-a');
+    expect(sessionAReemit).toBeDefined();
+    expect(sessionAReemit!.usage.contextWindow.contextWindowSize).toBe(1_000_000);
+    expect(sessionAReemit!.usage.contextWindow.usedPercentage).toBeCloseTo(
+      (357_527 / 1_000_000) * 100,
+      2,
+    );
+    // toolCallCount is stamped on the re-emitted payload, mirroring every
+    // other emit path (processStatusUpdate's own emit, setSessionUsage's
+    // emit) so snapshot reads stay consistent with the pushed callback.
+    expect(sessionAReemit!.usage.toolCallCount).toBe(0);
+  });
+
+  it('does NOT re-emit an unrelated session of a different model', () => {
+    // A sibling of a DIFFERENT model must be left untouched: no re-emit, no
+    // window fill. Guards against an overly-broad back-fill that ignores the
+    // model key.
+    telemetry.setSessionUsage('session-other-model', {
+      contextWindow: { usedTokens: 50_000, totalInputTokens: 50_000 },
+      model: { id: 'claude-sonnet-4-5', displayName: 'Sonnet 4.5' },
+    } as Partial<SessionUsage>);
+    usageChanges.length = 0;
+
+    const statusUpdate: SessionUsage = {
+      contextWindow: {
+        usedPercentage: 40,
+        usedTokens: 400_000,
+        cacheTokens: 0,
+        totalInputTokens: 400_000,
+        totalOutputTokens: 500,
+        contextWindowSize: 1_000_000,
+      },
+      cost: { totalCostUsd: 0.1, totalDurationMs: 1000 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    };
+    telemetry.processStatusUpdate('session-b', statusUpdate);
+
+    const unrelatedReemit = usageChanges.find((entry) => entry.sessionId === 'session-other-model');
+    expect(unrelatedReemit).toBeUndefined();
+  });
+});

@@ -316,6 +316,62 @@ describe('SessionHistoryReader', () => {
     expect(reader.isAttached('session-1')).toBe(true);
   });
 
+  it('startAtEnd skips pre-existing append-mode content (cursor starts at EOF)', async () => {
+    // A resume: the transcript already holds the PRE-suspend conversation, whose
+    // tail is stale occupancy. With startAtEnd the initial read must parse
+    // nothing - only entries appended after this attach should produce usage.
+    const filePath = path.join(tempDir, 'rollout.jsonl');
+    fs.writeFileSync(filePath, '{"stale":"pre-suspend-650k"}\n');
+
+    const parse = vi.fn(() => ({ usage: null, events: [], activity: null } satisfies SessionHistoryParseResult));
+
+    await reader.attach({
+      sessionId: 'session-resume',
+      agentSessionId: 'agent-uuid',
+      cwd: tempDir,
+      hook: { locate: async () => filePath, parse, isFullRewrite: false },
+      startAtEnd: true,
+    });
+
+    // The pre-existing bytes are behind the EOF cursor, so parse is never called
+    // for them (contrast the default-cursor test above, which reads them).
+    expect(parse).not.toHaveBeenCalled();
+    expect(callbacks.onFirstTelemetry).not.toHaveBeenCalled();
+    expect(reader.isAttached('session-resume')).toBe(true);
+  });
+
+  it('ignores startAtEnd for a full-rewrite hook (always reads the whole file)', async () => {
+    // Full-rewrite adapters (Gemini) rewrite the whole file each time, so the
+    // EOF cursor does not apply - the initial read must still parse everything.
+    const filePath = path.join(tempDir, 'session.json');
+    fs.writeFileSync(filePath, '{"model":"gemini"}');
+
+    const result: SessionHistoryParseResult = {
+      usage: {
+        contextWindow: {
+          usedPercentage: 10, usedTokens: 100, cacheTokens: 0,
+          totalInputTokens: 100, totalOutputTokens: 5, contextWindowSize: 1000,
+        },
+        cost: { totalCostUsd: 0, totalDurationMs: 0 },
+        model: { id: 'gemini', displayName: 'Gemini' },
+      },
+      events: [],
+      activity: null,
+    };
+    const parse = vi.fn(() => result);
+
+    await reader.attach({
+      sessionId: 'session-fullrewrite',
+      agentSessionId: 'agent-uuid',
+      cwd: tempDir,
+      hook: { locate: async () => filePath, parse, isFullRewrite: true },
+      startAtEnd: true,
+    });
+
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(callbacks.onUsageUpdate).toHaveBeenCalledWith('session-fullrewrite', result.usage);
+  });
+
   it('dispatches all signals to the right callbacks', async () => {
     const filePath = path.join(tempDir, 'session.json');
     fs.writeFileSync(filePath, '{}');
