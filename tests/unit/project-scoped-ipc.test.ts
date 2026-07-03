@@ -43,6 +43,7 @@ const ALLOWLIST_CHANNELS = new Set([
   // Task reads / project-agnostic
   'TASK_LIST',
   'TASK_LIST_ARCHIVED',
+  'TASK_LIST_ARCHIVED_PREVIEW',
   'TASK_GET_SPAWN_PROGRESS',
   'TASK_CANCEL_SPAWN', // aborts a global per-task controller; no project lookup
   // Session reads

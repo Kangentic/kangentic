@@ -11,7 +11,7 @@
  * the content reads its maximize state from the window store via its `windowId`.
  */
 
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
@@ -82,6 +82,21 @@ function TaskDetailContent({
     ?? state.archivedTasks.find((candidate) => candidate.id === managedWindow.anchor)
     ?? null,
   );
+
+  // Deep-archive self-heal: a window anchored to an archived task older than the
+  // board's newest-N preview misses both lists. Pull the full archive so it can
+  // resolve, and hold a viewer for the duration so hydration keeps the full list
+  // loaded until this window closes or the task resolves. Normal (non-archived)
+  // windows resolve from `tasks` immediately and never trigger this.
+  const anchorUnresolved = task === null;
+  useEffect(() => {
+    if (!anchorUnresolved) return;
+    useBoardStore.getState().acquireArchiveView();
+    if (!useBoardStore.getState().archivedFullyLoaded) {
+      void useBoardStore.getState().loadArchivedTasks().catch(() => {});
+    }
+    return () => { useBoardStore.getState().releaseArchiveView(); };
+  }, [anchorUnresolved]);
 
   if (!task) {
     return (

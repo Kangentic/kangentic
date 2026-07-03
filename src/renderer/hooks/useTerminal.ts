@@ -1,12 +1,13 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '../addons/fit-addon';
-import { WebglAddon } from '@xterm/addon-webgl';
+import { attachWebglRenderer } from '../utils/terminal-webgl';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
 import { registerTerminal } from '../utils/terminal-registry';
 import { pixelToBufferRow, extractBlockContentAt } from '../utils/terminal-block-buffer';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
+import { isBoardDragActive, onBoardDragEnd } from '../lib/session-update-coalescer';
 import { noteTerminalFocus } from '../utils/dictation-target';
 import '@xterm/xterm/css/xterm.css';
 
@@ -27,6 +28,15 @@ if (import.meta.hot) {
   import.meta.hot.dispose((data: Record<string, unknown>) => {
     data.savedScrollPositions = savedScrollPositions;
   });
+}
+
+// hmr-safe: a monotonic counter only used to mint a unique renderer-report key
+// for a session-less (transient) terminal; resetting it on HMR at worst reuses
+// a key for a terminal that has since disposed its report entry.
+let transientRendererKeyCounter = 0;
+function nextTransientRendererKey(): number {
+  transientRendererKeyCounter += 1;
+  return transientRendererKeyCounter;
 }
 
 /** Fixed dark terminal theme -- Claude Code's TUI is designed for dark backgrounds. */
@@ -104,6 +114,8 @@ export function useTerminal(options: UseTerminalOptions) {
   const writeBatcherRef = useRef<WriteBatcher | null>(null);
   /** Unregisters this terminal from the block-copy hit-test registry on unmount. */
   const unregisterTerminalRef = useRef<(() => void) | null>(null);
+  /** Tears down the WebGL renderer attachment (cancels retries, disposes addon). */
+  const disposeWebglRef = useRef<(() => void) | null>(null);
 
   const initTerminal = useCallback(() => {
     if (!terminalRef.current || xtermRef.current) return;
@@ -159,16 +171,11 @@ export function useTerminal(options: UseTerminalOptions) {
       isAtBottomRef.current = buffer.viewportY >= buffer.baseY;
     });
 
-    // Try WebGL renderer
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        webglAddon.dispose();
-      });
-      terminal.loadAddon(webglAddon);
-    } catch {
-      // WebGL not available, use canvas fallback
-    }
+    // Attach the WebGL renderer with context-loss recovery (retry + backoff,
+    // logged, renderer type tracked). Keyed by session id, or a stable transient
+    // key for a session-less pane so the devtools report can distinguish them.
+    const rendererKey = options.sessionId ?? `transient-${nextTransientRendererKey()}`;
+    disposeWebglRef.current = attachWebglRenderer(terminal, rendererKey);
 
     xtermRef.current = terminal;
     fitAddonRef.current = fitAddon;
@@ -286,6 +293,11 @@ export function useTerminal(options: UseTerminalOptions) {
       // server-side getScrollback() drains the pending buffer, so this is
       // defense-in-depth. Dropped slices are still acked inside the queue.
       shouldDrop: () => scrollbackPendingRef.current || suppressDataRef.current,
+      // While a board drag is active, HOLD (not drop) inbound writes so xterm
+      // parsing doesn't compete with the drag on the renderer thread. Held bytes
+      // are retained and resumed on drag end; the coalescer's 30s watchdog
+      // bounds the hold if a drag end is ever missed.
+      shouldHold: () => isBoardDragActive(),
       ack: (bytes) => window.electronAPI.sessions.ackData(sessionId, bytes),
     });
 
@@ -293,11 +305,15 @@ export function useTerminal(options: UseTerminalOptions) {
       if (incomingSessionId !== sessionId) return;
       queue.push(data);
     });
+    // Resume the held drain the moment a board drag ends (also via the
+    // coalescer's watchdog / window-blur backstops, which route through here).
+    const unsubscribeDragEnd = onBoardDragEnd(() => queue.kick());
 
     cleanupRef.current = cleanup;
     return () => {
       cleanup();
       cleanupRef.current = null;
+      unsubscribeDragEnd();
       queue.reset();
     };
   }, [options.sessionId]);
@@ -372,6 +388,10 @@ export function useTerminal(options: UseTerminalOptions) {
       }
       unregisterTerminalRef.current?.();
       unregisterTerminalRef.current = null;
+      // Tear down WebGL (cancel any pending re-init retry, drop the report entry)
+      // before disposing the terminal it is attached to.
+      disposeWebglRef.current?.();
+      disposeWebglRef.current = null;
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;

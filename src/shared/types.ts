@@ -2108,6 +2108,17 @@ export interface TaskUnarchiveInput {
   targetSwimlaneId: string;
 }
 
+/**
+ * Result of `tasks.listArchivedPreview(limit)`: the newest `limit` archived
+ * tasks plus the authoritative total archived count. The board hydrates from
+ * this small payload instead of the full archive (which can be many MB); the
+ * full list loads lazily only when the Completed dialog opens.
+ */
+export interface ArchivedTasksPreview {
+  totalCount: number;
+  tasks: Task[];
+}
+
 export interface TaskBulkDeleteFailure {
   id: string;
   error: string;
@@ -2727,6 +2738,12 @@ export interface ElectronAPI {
      */
     cancelSpawn: (taskId: string) => Promise<void>;
     listArchived: () => Promise<Task[]>;
+    /**
+     * The newest `limit` archived tasks plus the total archived count. Cheap
+     * hydration payload for the Done column's count + inline preview; the full
+     * archive loads lazily via `listArchived` when the Completed dialog opens.
+     */
+    listArchivedPreview: (limit: number) => Promise<ArchivedTasksPreview>;
     unarchive: (input: TaskUnarchiveInput, projectId?: string | null) => Promise<Task>;
     bulkDelete: (ids: string[], projectId?: string | null) => Promise<TaskBulkDeleteResult>;
     bulkUnarchive: (ids: string[], targetSwimlaneId: string, projectId?: string | null) => Promise<void>;
@@ -3301,6 +3318,20 @@ export interface ProcessMetrics {
  * renderer). Inbound entries leave `direction` absent so existing log
  * readers see no change; outbound pushes set `direction: 'out'`.
  */
+/**
+ * Placeholder substituted for an args/result payload whose serialized form
+ * exceeds the recorder's size cap. Keeps each JSONL line small (a single ~1.2MB
+ * `task:list-archived` result would otherwise be stringified in full on the main
+ * thread) while preserving enough signal to identify the oversized channel.
+ */
+export interface IpcPayloadTruncated {
+  truncated: true;
+  /** UTF-16 length of the full serialized payload (-1 when unserializable). */
+  serializedChars: number;
+  /** First ~2KB of the serialized JSON, enough to identify the payload shape. */
+  preview: string;
+}
+
 export interface IpcLogEntry {
   ts: string;
   channel: string;
@@ -3309,10 +3340,10 @@ export interface IpcLogEntry {
    * invocation; `'out'` means a main -> renderer `webContents.send` push.
    */
   direction?: 'in' | 'out';
-  /** Either the captured args array or a redaction placeholder. */
-  args: unknown[] | { redacted: true; channel: string };
-  /** Either the captured result or a redaction placeholder. Omitted on error. */
-  result?: unknown | { redacted: true; channel: string };
+  /** Captured args array, a redaction placeholder, or an over-cap truncation marker. */
+  args: unknown[] | { redacted: true; channel: string } | IpcPayloadTruncated;
+  /** Captured result, a redaction placeholder, or an over-cap truncation marker. Omitted on error. */
+  result?: unknown | { redacted: true; channel: string } | IpcPayloadTruncated;
   /** Handler round-trip time in ms. Always `0` for outbound pushes (no round trip to measure). */
   durationMs: number;
   /**

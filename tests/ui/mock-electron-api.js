@@ -849,6 +849,19 @@
       listArchived: async function () {
         return withAttachmentCounts(archivedTasks);
       },
+      listArchivedPreview: async function (limit) {
+        // Mirror the repo: newest-first by archived_at, then LIMIT. Sorting a
+        // copy so seeds with more than `limit` archived tasks pick the correct
+        // preview subset (the same rows the real SELECT ... ORDER BY DESC would).
+        var boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+        var sorted = archivedTasks.slice().sort(function (a, b) {
+          return String(b.archived_at || '').localeCompare(String(a.archived_at || ''));
+        });
+        return {
+          totalCount: archivedTasks.length,
+          tasks: withAttachmentCounts(sorted.slice(0, boundedLimit)),
+        };
+      },
       onAutoMoved: function () {
         return noop;
       },
@@ -2483,6 +2496,7 @@
     var watched = [
       ['tasks', 'list'],
       ['tasks', 'listArchived'],
+      ['tasks', 'listArchivedPreview'],
       ['swimlanes', 'list'],
       ['backlog', 'list'],
       ['config', 'get'],

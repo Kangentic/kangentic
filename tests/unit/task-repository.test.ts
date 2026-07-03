@@ -47,6 +47,9 @@ function createSqlTracker() {
       }),
       get: vi.fn((...args: unknown[]) => {
         entry.args = args;
+        // COUNT(*) queries expect a { count } row; everything else models a
+        // "not found" lookup, matching real better-sqlite3 semantics.
+        if (/COUNT\(\*\)/i.test(sql)) return { count: 0 };
         return undefined;
       }),
       all: vi.fn((...args: unknown[]) => {
@@ -164,6 +167,46 @@ describe('TaskRepository SQL contracts', () => {
       );
       // No statement should contain archived_at when using listAllInSwimlane
       expect(allTasksStatements).toHaveLength(0);
+    });
+  });
+
+  describe('listArchivedPreview', () => {
+    it('counts all archived tasks and limits the returned rows', () => {
+      const result = repo.listArchivedPreview(15);
+
+      // Returns the { totalCount, tasks } shape (mock get() yields count 0,
+      // all() yields []).
+      expect(result).toEqual({ totalCount: 0, tasks: [] });
+
+      const countStatement = tracker.statements.find((s) => /COUNT\(\*\)/i.test(s.sql));
+      expect(countStatement).toBeDefined();
+      expect(countStatement!.sql).toContain('archived_at IS NOT NULL');
+    });
+
+    it('orders newest-first and applies a LIMIT binding', () => {
+      repo.listArchivedPreview(15);
+
+      const previewStatement = tracker.statements.find((s) =>
+        s.sql.includes('archived_at IS NOT NULL') && s.sql.includes('LIMIT ?'),
+      );
+      expect(previewStatement).toBeDefined();
+      expect(previewStatement!.sql).toContain('ORDER BY t.archived_at DESC');
+      expect(previewStatement!.args).toEqual([15]);
+    });
+
+    it('clamps the limit to [1, 100] and floors fractional values', () => {
+      const limitBindingFor = (requested: number): number => {
+        tracker = createSqlTracker();
+        repo = new TaskRepository(tracker.db);
+        repo.listArchivedPreview(requested);
+        const statement = tracker.statements.find((s) => s.sql.includes('LIMIT ?'));
+        return statement!.args[0] as number;
+      };
+
+      expect(limitBindingFor(500)).toBe(100); // over cap
+      expect(limitBindingFor(0)).toBe(1); // under floor
+      expect(limitBindingFor(-5)).toBe(1); // negative floor
+      expect(limitBindingFor(15.9)).toBe(15); // floored
     });
   });
 });

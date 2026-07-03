@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
-import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput } from '../../../shared/types';
+import type { Task, TaskCreateInput, TaskUpdateInput, TaskMoveInput, ArchivedTasksPreview } from '../../../shared/types';
 
 /** Raw row from SQLite - labels stored as JSON string. */
 interface TaskRow extends Omit<Task, 'labels'> {
@@ -210,6 +210,24 @@ export class TaskRepository {
       WHERE t.archived_at IS NOT NULL
       ORDER BY t.archived_at DESC`).all() as TaskRow[];
     return rows.map(rowToTask);
+  }
+
+  /**
+   * The newest `limit` archived tasks plus the total archived count. Lets the
+   * board hydrate the Done column's count + inline preview without fetching the
+   * whole archive (which can be many MB once hundreds of tasks accumulate). The
+   * full list is fetched via `listArchived` only when the Completed dialog opens.
+   */
+  listArchivedPreview(limit: number): ArchivedTasksPreview {
+    const boundedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    const { count } = this.db
+      .prepare('SELECT COUNT(*) AS count FROM tasks WHERE archived_at IS NOT NULL')
+      .get() as { count: number };
+    const rows = this.db.prepare(`${TaskRepository.SELECT_WITH_COUNT}
+      WHERE t.archived_at IS NOT NULL
+      ORDER BY t.archived_at DESC
+      LIMIT ?`).all(boundedLimit) as TaskRow[];
+    return { totalCount: count, tasks: rows.map(rowToTask) };
   }
 
   /**

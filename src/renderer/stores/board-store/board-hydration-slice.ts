@@ -1,7 +1,8 @@
 import { type StateCreator } from 'zustand';
 import type { ShortcutConfig } from '../../../shared/types';
 import type { BoardStore } from './types';
-import { applyStructuralSharing } from './structural-sharing';
+import { applyStructuralSharing, applySwimlaneStructuralSharing } from './structural-sharing';
+import { ARCHIVED_PREVIEW_LIMIT } from './archived-tasks-slice';
 
 export interface BoardHydrationSlice {
   loading: boolean;
@@ -26,22 +27,37 @@ export const createBoardHydrationSlice: StateCreator<BoardStore, [], [], BoardHy
   loadBoard: async () => {
     set({ loading: true });
     try {
-      const [nextTasks, swimlanes, nextArchivedTasks] = await Promise.all([
+      // Hydrate from the cheap archived PREVIEW (newest N + total count) instead
+      // of the full archive, which can be many MB once hundreds of tasks pile up
+      // and was cloned on every agent-driven reload. The full list loads lazily
+      // only while an archive viewer is mounted (Completed dialog / deep-anchor
+      // detail window), tracked by archiveViewers.
+      const [nextTasks, nextSwimlanes, archivedPreview] = await Promise.all([
         window.electronAPI.tasks.list(),
         window.electronAPI.swimlanes.list(),
-        window.electronAPI.tasks.listArchived(),
+        window.electronAPI.tasks.listArchivedPreview(ARCHIVED_PREVIEW_LIMIT),
       ]);
-      // Reuse object references for unchanged tasks so React.memo on TaskCard
-      // can short-circuit. Every IPC roundtrip returns fresh JSON objects - if
-      // we set them directly, 100 cards all re-render on every agent event even
-      // when only one task actually changed.
+      // Reuse object references for unchanged tasks/swimlanes so React.memo can
+      // short-circuit. Every IPC roundtrip returns fresh JSON objects - if we
+      // set them directly, every card and column re-renders on every agent event
+      // even when only one row actually changed.
+      const keepFull = get().archiveViewers > 0 && get().archivedFullyLoaded;
       set((state) => ({
         tasks: applyStructuralSharing(state.tasks, nextTasks),
-        swimlanes,
-        archivedTasks: applyStructuralSharing(state.archivedTasks, nextArchivedTasks),
+        swimlanes: applySwimlaneStructuralSharing(state.swimlanes, nextSwimlanes),
+        // While a viewer holds the full archive, keep it (reconciled out-of-band
+        // below); otherwise downgrade to the preview.
+        archivedTasks: keepFull
+          ? state.archivedTasks
+          : applyStructuralSharing(state.archivedTasks, archivedPreview.tasks),
+        archivedFullyLoaded: keepFull,
+        archivedTotalCount: archivedPreview.totalCount,
         loading: false,
         hydrated: true,
       }));
+      // A mounted viewer still needs an authoritative full refresh (an agent may
+      // have archived a task); do it off the hydration critical path.
+      if (keepFull) void get().loadArchivedTasks().catch(() => {});
     } catch (error) {
       console.error('[board-store] Failed to load board:', error);
       set({ loading: false, hydrated: true });

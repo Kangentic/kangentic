@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useConfigStore } from '../../../stores/config-store';
+import { fetchGitBranches } from '../../../utils/git-branches';
 import { isValidGitBranchName } from '../../../../shared/git-utils';
 import { slugify, computeAutoBranchName } from '../../../../shared/slugify';
 import type { Task } from '../../../../shared/types';
@@ -20,7 +21,7 @@ export function useBranchConfig(task: Task, title: string, isInTodo: boolean) {
 
   useEffect(() => {
     if (isInTodo) {
-      window.electronAPI.git.listBranches()
+      fetchGitBranches()
         .then(branches => setKnownBranches(new Set(branches)))
         .catch(() => setKnownBranches(new Set()));
     }

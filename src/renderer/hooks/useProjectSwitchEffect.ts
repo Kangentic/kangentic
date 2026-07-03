@@ -85,6 +85,8 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           tasks: boardState.tasks,
           swimlanes: boardState.swimlanes,
           archivedTasks: boardState.archivedTasks,
+          archivedTotalCount: boardState.archivedTotalCount,
+          archivedFullyLoaded: boardState.archivedFullyLoaded,
           shortcuts: boardState.shortcuts,
         },
         backlog: backlogState.items,
@@ -133,6 +135,8 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           tasks: snapshot.board.tasks,
           swimlanes: snapshot.board.swimlanes,
           archivedTasks: snapshot.board.archivedTasks,
+          archivedTotalCount: snapshot.board.archivedTotalCount,
+          archivedFullyLoaded: snapshot.board.archivedFullyLoaded,
           shortcuts: snapshot.board.shortcuts,
           hydrated: true,
           loading: false,
@@ -199,6 +203,13 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         // Cold path: fire the IPC fan-out and reset stale per-project
         // view state. After loads resolve, mark the project as seen so
         // the next switch to it takes the warm path.
+        //
+        // Clear the archive state BEFORE loadBoard so a leftover
+        // archivedFullyLoaded:true from the previous project can neither keep
+        // the old archive visible nor make this project's first loadBoard
+        // fetch the full archive. archiveViewers is intentionally NOT reset:
+        // it is refcounted by live component mount/unmount, not by switches.
+        useBoardStore.setState({ archivedTasks: [], archivedTotalCount: 0, archivedFullyLoaded: false });
         const coldLoads = Promise.all([
           useBoardStore.getState().loadBoard(),
           useBacklogStore.getState().loadBacklog(),
@@ -296,7 +307,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         useSessionStore.getState().setSelectedPeriod(savedPeriod);
       }
     } else {
-      useBoardStore.setState({ tasks: [], swimlanes: [], archivedTasks: [] });
+      useBoardStore.setState({ tasks: [], swimlanes: [], archivedTasks: [], archivedTotalCount: 0, archivedFullyLoaded: false });
       useSessionStore.setState({
         activeSessionId: null,
         dialogSessionIds: [],

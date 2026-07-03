@@ -439,7 +439,7 @@ Live snapshot of memory + CPU usage per Electron process (main, renderer, GPU, u
 
 ### kangentic_get_ipc_log
 
-Read recent IPC traffic from `<projectRoot>/.kangentic/logs/ipc-<YYYY-MM-DD>.jsonl`. Each entry has `channel`, `args`, `result`, `durationMs`, and (on failure) `error`. Inbound `ipcMain.handle` invocations (renderer to main) leave `direction` absent; outbound `webContents.send` pushes (main to renderer, e.g. the `task:createdByAgent` board-invalidation events) set `direction: "out"`, and a push dropped because the window was destroyed carries an `error` with name `PushDropped`. Only available when `developer.recordIpcTraffic` is on. Channels carrying secrets (settings writes, MCP config, auth) are stored as `{ redacted: true, channel }`.
+Read recent IPC traffic from `<projectRoot>/.kangentic/logs/ipc-<YYYY-MM-DD>.jsonl`. Each entry has `channel`, `args`, `result`, `durationMs`, and (on failure) `error`. Inbound `ipcMain.handle` invocations (renderer to main) leave `direction` absent; outbound `webContents.send` pushes (main to renderer, e.g. the `task:createdByAgent` board-invalidation events) set `direction: "out"`, and a push dropped because the window was destroyed carries an `error` with name `PushDropped`. Only available when `developer.recordIpcTraffic` is on. Channels carrying secrets (settings writes, MCP config, auth) are stored as `{ redacted: true, channel }`. An oversized `args`/`result` payload (e.g. a large list) is stored as `{ truncated: true, serializedChars, preview }` instead of the full value, keeping each log line small.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

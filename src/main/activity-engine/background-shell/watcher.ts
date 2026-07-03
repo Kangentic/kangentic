@@ -246,6 +246,26 @@ const PID_CAPTURE_RETRY_CYCLES = 3;
  */
 export const NAMED_SHELL_QUIESCENT_RECLAIM_CYCLES = 30;
 
+/**
+ * Adaptive poll backoff. The full host-process enumeration (`listAllProcesses`,
+ * a ~200ms PowerShell CIM query on Windows) fires every cycle where any session
+ * "needs tree" - which, with several agents running tools, is nearly
+ * continuous. Under that sustained load the sweep burns CPU exactly when the
+ * machine is already saturated. So after a run of consecutive tree cycles the
+ * poll interval stretches (2s -> 4s -> 6s), and any background-shell lifecycle
+ * transition (a new capture, an observed deficit, a (re)registered session)
+ * snaps it back to the base cadence so detection latency stays tight when
+ * something is actually changing. Cost trade-off: Tier B natural-exit detection
+ * can lag up to one stretched interval before the 2-cycle deficit confirmation
+ * (which itself runs at base cadence once a deficit is seen), so worst-case
+ * ~8s vs ~4s today - well within the 5-min watchdog backstop. Multipliers are
+ * applied to `pollIntervalMs` so a test's small base interval scales too.
+ */
+export const POLL_BACKOFF_STAGE_ONE_TREE_CYCLES = 5;
+export const POLL_BACKOFF_STAGE_TWO_TREE_CYCLES = 15;
+const POLL_BACKOFF_STAGE_ONE_MULTIPLIER = 2;
+const POLL_BACKOFF_STAGE_TWO_MULTIPLIER = 3;
+
 export class BgShellWatcher {
   private readonly callbacks: BgShellWatcherCallbacks;
   private readonly probe: ProcessTreeProbe;
@@ -256,6 +276,9 @@ export class BgShellWatcher {
   private timer: NodeJS.Timeout | null = null;
   private polling = false;
   private disposed = false;
+  // Consecutive cycles that ran the full OS enumeration (reset by a skip cycle
+  // or any bg-shell lifecycle transition). Drives the adaptive poll backoff.
+  private consecutiveTreeCycles = 0;
 
   constructor(options: BgShellWatcherOptions) {
     this.callbacks = options.callbacks;
@@ -275,8 +298,11 @@ export class BgShellWatcher {
     if (!rootPid || rootPid <= 0) return;
     if (this.states.has(sessionId)) {
       this.states.get(sessionId)!.rootPid = rootPid;
+      // A resume is a transition too: watch the new tree at base cadence.
+      this.resetPollBackoff();
       return;
     }
+    this.resetPollBackoff();
     this.states.set(sessionId, {
       rootPid,
       // Anchored on the first cycle from the live probe.
@@ -307,6 +333,8 @@ export class BgShellWatcher {
     if (!state) return;
     if (!Number.isInteger(pid) || pid <= 0) return;
     state.trackedShellPids.set(shellId, pid);
+    // A newly-tracked shell PID is a transition: poll at base while it settles.
+    this.resetPollBackoff();
   }
 
   /**
@@ -325,6 +353,10 @@ export class BgShellWatcher {
     const state = this.states.get(sessionId);
     if (!state) return;
     if (state.trackedShellPids.has(shellId)) return;
+    // A new bg shell is the key transition: snap to base cadence so the
+    // PID_CAPTURE_RETRY_CYCLES budget operates on its designed ~2s window
+    // instead of a stretched interval.
+    this.resetPollBackoff();
     const memoPid = state.candidateForegroundShellPid;
     if (memoPid !== null && this.probe.isAlive(memoPid)) {
       state.trackedShellPids.set(shellId, memoPid);
@@ -358,20 +390,67 @@ export class BgShellWatcher {
     if (this.timer !== null) return;
     if (this.disposed) return;
     if (this.states.size === 0) return;
-    this.timer = setInterval(() => {
-      // Skip overlapping cycles - if last poll is still running, drop this tick.
-      if (this.polling) return;
-      this.cycle().catch(() => {
+    // A self-scheduling setTimeout chain (rather than a fixed setInterval) lets
+    // the next delay vary with the adaptive backoff. The chain never overlaps
+    // itself: the next tick is armed only after the current cycle resolves.
+    this.scheduleNextCycle(this.pollIntervalMs);
+  }
+
+  private scheduleNextCycle(delayMs: number): void {
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.runScheduledCycle();
+    }, delayMs);
+    this.timer.unref();
+  }
+
+  private async runScheduledCycle(): Promise<void> {
+    if (this.disposed || this.states.size === 0) return;
+    // Preserve the overlap-drop semantics for a concurrent pollNow() (tests):
+    // skip this scheduled cycle if one is already running, but still re-arm.
+    if (!this.polling) {
+      try {
+        await this.cycle();
+      } catch {
         // Probe failures are already handled inside cycle(); this catch
         // is just defense against unexpected throws.
-      });
-    }, this.pollIntervalMs);
-    this.timer.unref();
+      }
+    }
+    // A lifecycle transition during the await may have already armed a fresh
+    // base-delay timer (resetPollBackoff); don't double-arm over it.
+    if (this.disposed || this.states.size === 0 || this.timer !== null) return;
+    this.scheduleNextCycle(this.computeNextPollDelayMs());
+  }
+
+  private computeNextPollDelayMs(): number {
+    if (this.consecutiveTreeCycles >= POLL_BACKOFF_STAGE_TWO_TREE_CYCLES) {
+      return this.pollIntervalMs * POLL_BACKOFF_STAGE_TWO_MULTIPLIER;
+    }
+    if (this.consecutiveTreeCycles >= POLL_BACKOFF_STAGE_ONE_TREE_CYCLES) {
+      return this.pollIntervalMs * POLL_BACKOFF_STAGE_ONE_MULTIPLIER;
+    }
+    return this.pollIntervalMs;
+  }
+
+  /**
+   * Snap the poll cadence back to base on a bg-shell lifecycle transition. Zeroes
+   * the backoff counter, and if a stretched timer is currently armed, re-arms it
+   * at the base delay so a fresh transition is not left waiting out a 4-6s gap.
+   * When called mid-cycle (timer already consumed to null) it only zeroes the
+   * counter; runScheduledCycle then re-arms at base via computeNextPollDelayMs.
+   */
+  private resetPollBackoff(): void {
+    this.consecutiveTreeCycles = 0;
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+      this.scheduleNextCycle(this.pollIntervalMs);
+    }
   }
 
   private stopPolling(): void {
     if (this.timer !== null) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
     }
   }
@@ -400,9 +479,16 @@ export class BgShellWatcher {
         return state !== undefined && this.sessionNeedsTree(sessionId, state);
       });
       if (!anyNeedsTree) {
+        // A skip cycle costs nothing, so it resets the backoff: the moment work
+        // resumes we start from the base cadence again.
+        this.consecutiveTreeCycles = 0;
         for (const sessionId of sessionIds) this.skipCycleSession(sessionId);
         return;
       }
+
+      // A needy cycle ran the OS enumeration; count it toward the backoff. A
+      // probe that later times out to [] still cost a spawn, so it counts.
+      this.consecutiveTreeCycles += 1;
 
       // Single OS query shared across all sessions in this cycle.
       // Without this, each session's cycleSession would call
@@ -423,6 +509,15 @@ export class BgShellWatcher {
       for (const sessionId of sessionIds) {
         await this.cycleSession(sessionId, byParent, allProcessPids);
       }
+
+      // A live deficit is a state transition worth watching closely: snap back
+      // to the base cadence so the Tier B 2-cycle natural-exit confirmation runs
+      // at full resolution instead of a stretched interval.
+      const anyDeficit = sessionIds.some((sessionId) => {
+        const state = this.states.get(sessionId);
+        return state !== undefined && state.consecutiveDeficitCycles > 0;
+      });
+      if (anyDeficit) this.resetPollBackoff();
     } finally {
       this.polling = false;
     }

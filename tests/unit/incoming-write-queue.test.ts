@@ -101,6 +101,85 @@ describe('createIncomingWriteQueue', () => {
     // The buffered remainder is acked on reset.
     expect(ack).toHaveBeenCalledWith(4);
   });
+
+  it('holds buffered bytes without writing or acking while shouldHold is true', async () => {
+    const { term, writes } = fakeTerminal();
+    const ack = vi.fn();
+    let held = true;
+    const queue = createIncomingWriteQueue({
+      getTerminal: () => term,
+      shouldDrop: () => false,
+      shouldHold: () => held,
+      ack,
+      chunkSize: 4,
+    });
+    queue.push('abcdef');
+    await flush();
+    // Held: nothing written, nothing acked (so main backpressure throttles the PTY).
+    expect(writes).toEqual([]);
+    expect(ack).not.toHaveBeenCalled();
+
+    // Bytes pushed while held just accumulate.
+    queue.push('ghij');
+    await flush();
+    expect(writes).toEqual([]);
+
+    // Release + kick: the whole retained buffer drains in order and is acked.
+    held = false;
+    queue.kick();
+    await flush();
+    expect(writes.join('')).toBe('abcdefghij');
+    const totalAcked = ack.mock.calls.reduce((sum, call) => sum + call[0], 0);
+    expect(totalAcked).toBe(10);
+  });
+
+  it('kick is a no-op when the queue is empty', () => {
+    const { term, writes } = fakeTerminal();
+    const ack = vi.fn();
+    const queue = createIncomingWriteQueue({ getTerminal: () => term, shouldDrop: () => false, ack });
+    queue.kick();
+    expect(writes).toEqual([]);
+    expect(ack).not.toHaveBeenCalled();
+  });
+
+  it('resumes into the drop path if shouldDrop is true when the hold clears', async () => {
+    const { term, writes } = fakeTerminal();
+    const ack = vi.fn();
+    let held = true;
+    const queue = createIncomingWriteQueue({
+      getTerminal: () => term,
+      shouldDrop: () => true, // e.g. a scrollback replay took over during the hold
+      shouldHold: () => held,
+      ack,
+      chunkSize: 4,
+    });
+    queue.push('abcdef');
+    await flush();
+    expect(ack).not.toHaveBeenCalled(); // held, not dropped
+
+    held = false;
+    queue.kick();
+    await flush();
+    // Now drops-and-acks (no writes), releasing backpressure.
+    expect(writes).toEqual([]);
+    const totalAcked = ack.mock.calls.reduce((sum, call) => sum + call[0], 0);
+    expect(totalAcked).toBe(6);
+  });
+
+  it('reset while held still acks the retained bytes', () => {
+    const { term } = fakeTerminal();
+    const ack = vi.fn();
+    const queue = createIncomingWriteQueue({
+      getTerminal: () => term,
+      shouldDrop: () => false,
+      shouldHold: () => true,
+      ack,
+      chunkSize: 4,
+    });
+    queue.push('abcdef');
+    queue.reset();
+    expect(ack).toHaveBeenCalledWith(6);
+  });
 });
 
 describe('writeChunkedToTerminal', () => {

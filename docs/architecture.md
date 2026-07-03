@@ -65,7 +65,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `projectGroup:reorder` | invoke | Reorder groups by ID array |
 | `projectGroup:setCollapsed` | invoke | Toggle group collapsed state |
 
-### Tasks (21 channels)
+### Tasks (22 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |
@@ -75,6 +75,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `task:move` | invoke | Move task between swimlanes (triggers transitions) |
 | `task:cancelSpawn` | invoke | Abort an in-flight spawn for a task (e.g. while parked in the git queue or fetching); aborts the move's AbortController and rolls the move back |
 | `task:list-archived` | invoke | Fetch archived tasks |
+| `task:list-archived-preview` | invoke | Fetch the newest N archived tasks plus the total archived count (cheap hydration payload; the full list loads lazily via `task:list-archived`) |
 | `task:unarchive` | invoke | Restore archived task |
 | `task:bulk-delete` | invoke | Delete multiple archived tasks by ID array |
 | `task:bulk-delete-progress` | on | Event: progress payload during bulk task delete (completed/total/failures) |

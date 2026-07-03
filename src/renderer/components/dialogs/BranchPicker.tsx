@@ -3,6 +3,7 @@ import { GitBranch, Search, Loader2, ChevronDown } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
 import { Pill } from '../Pill';
+import { fetchGitBranches } from '../../utils/git-branches';
 
 interface BranchPickerProps {
   value: string;
@@ -73,7 +74,7 @@ export function BranchPicker({
   const fetchBranches = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await window.electronAPI.git.listBranches();
+      const result = await fetchGitBranches();
       setBranches(result);
     } catch {
       setBranches([]);

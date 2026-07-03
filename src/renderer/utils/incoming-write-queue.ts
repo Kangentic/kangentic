@@ -40,6 +40,12 @@ export interface IncomingWriteQueue {
   /** Append received PTY data; starts the paced drain loop if idle. */
   push(data: string): void;
   /**
+   * Resume a drain that was paused by `shouldHold`. Re-enters the loop when it
+   * is not already draining and the buffer is non-empty; a no-op otherwise.
+   * Call this on the signal that clears `shouldHold` (e.g. board drag end).
+   */
+  kick(): void;
+  /**
    * Drop buffered (not-yet-dispatched) bytes, acking them so backpressure is
    * released, and stop. Bytes already handed to `xterm.write` but awaiting its
    * callback are not covered here; the session-teardown path
@@ -53,6 +59,13 @@ export interface IncomingWriteQueueOptions {
   getTerminal: () => Terminal | null;
   /** True while incoming data must be discarded (scrollback replay / overlay). */
   shouldDrop: () => boolean;
+  /**
+   * True while the drain must PAUSE without discarding: the buffer is retained
+   * and no bytes are acked, so main-side backpressure naturally throttles the
+   * PTY at the source. Used to stop mid-drag xterm parsing (a board drag).
+   * Resume via `kick()`. Distinct from `shouldDrop`, which acks-and-discards.
+   */
+  shouldHold?: () => boolean;
   /** Report `bytes` consumed (written or dropped) to main's flow control. */
   ack: (bytes: number) => void;
   chunkSize?: number;
@@ -81,6 +94,14 @@ export function createIncomingWriteQueue(
       draining = false;
       return;
     }
+    if (options.shouldHold?.()) {
+      // Paused (e.g. a board drag): retain the buffer, ack nothing, and stop
+      // scheduling. Not routed through shouldDrop - dropping would discard live
+      // output. Un-acked bytes let main's backpressure pause the PTY at the
+      // source. Resume via kick() when the hold clears.
+      draining = false;
+      return;
+    }
     const end = safeSliceEnd(buffer, 0, chunkSize);
     const chunk = buffer.slice(0, end);
     buffer = buffer.slice(end);
@@ -106,6 +127,11 @@ export function createIncomingWriteQueue(
       if (data.length === 0) return;
       buffer += data;
       if (draining) return;
+      draining = true;
+      drain();
+    },
+    kick(): void {
+      if (draining || buffer.length === 0) return;
       draining = true;
       drain();
     },
