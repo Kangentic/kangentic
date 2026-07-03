@@ -272,7 +272,12 @@ describe('findBlockAt - live interactive prompt (AskUserQuestion)', () => {
   // hint row (where an Ink TUI leaves the caret, at the bottom of the widget).
   const TAB_HEADER = 5;
   const HINT_ROW = 15;
-  const build = (cursorRow: number | undefined = HINT_ROW) => makeSource([
+  // `cursorRow` defaults to HINT_ROW when omitted; pass `null` (not
+  // `undefined`) for "genuinely no cursor info" - a JS default parameter
+  // substitutes its default for an explicitly-passed `undefined` too, so
+  // `build(undefined)` would silently fall back to HINT_ROW instead of
+  // testing the no-cursor path.
+  const build = (cursorRow: number | null = HINT_ROW) => makeSource([
     plain('● The search-subsystem report is in, with two corrections.'), // 0 message bullet
     plain('  Waiting on the other two exploration reports.'),            // 1 message body
     plain(''),                                                            // 2 blank
@@ -289,7 +294,7 @@ describe('findBlockAt - live interactive prompt (AskUserQuestion)', () => {
     plain('  4. Type something.'),                                        // 13 option row
     plain(''),                                                            // 14 blank
     muted('Enter to select · Tab/Arrow keys to navigate · Esc to cancel'), // 15 hint row
-  ], 80, cursorRow);
+  ], 80, cursorRow ?? undefined);
 
   it('locates the region top at the tab header (scanning up from the cursor)', () => {
     expect(findPromptRegionTop(build())).toBe(TAB_HEADER);
@@ -324,7 +329,8 @@ describe('findBlockAt - live interactive prompt (AskUserQuestion)', () => {
   });
 
   it('still ends the message at the tab-header boundary without cursor info (glyph fallback)', () => {
-    const source = build(undefined); // no cursorRow -> no cursor-anchored region
+    const source = build(null); // genuinely no cursorRow -> no cursor-anchored region
+    expect(source.cursorRow).toBeUndefined(); // guards against the build(undefined) default-param footgun
     // The tab header is itself never copyable...
     expect(findBlockAt(source, TAB_HEADER)).toBeNull();
     // ...and it still bounds the message above it.
