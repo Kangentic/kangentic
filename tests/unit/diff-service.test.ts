@@ -532,6 +532,8 @@ describe('DiffService', () => {
         { filePath: 'file.css', expectedLanguage: 'css' },
         { filePath: 'file.html', expectedLanguage: 'html' },
         { filePath: 'file.md', expectedLanguage: 'markdown' },
+        { filePath: 'file.mdx', expectedLanguage: 'markdown' },
+        { filePath: 'file.markdown', expectedLanguage: 'markdown' },
         { filePath: 'file.yml', expectedLanguage: 'yaml' },
         { filePath: 'file.rs', expectedLanguage: 'rust' },
         { filePath: 'file.go', expectedLanguage: 'go' },

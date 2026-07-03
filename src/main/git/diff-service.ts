@@ -10,7 +10,7 @@ const EXTENSION_LANGUAGE_MAP: Record<string, string> = {
   '.css': 'css', '.scss': 'scss', '.less': 'less',
   '.html': 'html', '.htm': 'html',
   '.xml': 'xml', '.svg': 'xml',
-  '.md': 'markdown', '.mdx': 'markdown',
+  '.md': 'markdown', '.mdx': 'markdown', '.markdown': 'markdown',
   '.yml': 'yaml', '.yaml': 'yaml',
   '.py': 'python',
   '.rs': 'rust',

@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
 import type { DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
-import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Pilcrow, FoldVertical } from 'lucide-react';
+import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Pilcrow, FoldVertical, Eye } from 'lucide-react';
+import { MarkdownRenderer } from '../../../MarkdownRenderer';
 import { useConfigStore } from '../../../../stores/config-store';
 import { useKeybinding } from '../../../../hooks/useKeybinding';
 import { NAMED_THEMES } from '../../../../../shared/types';
@@ -94,6 +95,15 @@ export function DiffViewer({
   const themeBase = NAMED_THEMES.find((namedTheme) => namedTheme.id === theme)?.base ?? 'dark';
   const monacoTheme = themeBase === 'dark' ? 'vs-dark' : 'vs';
   const statusConfig = STATUS_LABELS[status];
+
+  // Markdown files can flip from the Monaco diff to a rendered preview of their
+  // NEW content. `language` is the server-derived signal (diff-service maps
+  // .md/.mdx/.markdown -> 'markdown'). The toggle is a transient per-view choice:
+  // the diff shows by default, and a non-markdown file never previews regardless
+  // of this (sticky, hidden) value.
+  const isMarkdown = language === 'markdown';
+  const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
+  const previewActive = isMarkdown && showMarkdownPreview;
 
   // Diff-rendering preferences are single global config keys (the toolbar
   // toggles and the Layout settings tab read and write the same keys), so the
@@ -361,14 +371,16 @@ export function DiffViewer({
     consumePendingReveal(false);
   }, [scrollMemoryKey, contentFilePath, binary, consumePendingReveal]);
 
-  // The binary placeholder unmounts the child DiffEditor, which disposes the
-  // editor before this parent effect runs. Drop the stale ref so nothing
-  // touches a disposed editor; onMount repopulates it on remount.
+  // The binary placeholder and the markdown preview both unmount the child
+  // DiffEditor, which disposes the editor before this parent effect runs. Drop
+  // the stale ref so nothing (the whitespace/collapse effects below, reachable
+  // from the Layout settings tab while previewing) touches a disposed editor;
+  // onMount repopulates it on remount.
   useEffect(() => {
-    if (binary) {
+    if (binary || previewActive) {
       diffEditorRef.current = null;
     }
-  }, [binary]);
+  }, [binary, previewActive]);
 
   // Apply whitespace changes to the live editor so a toolbar or settings toggle
   // takes effect immediately, not just on the next file open.
@@ -390,8 +402,8 @@ export function DiffViewer({
   // Keyboard navigation: next/prev change, rolling into the adjacent file at a
   // boundary. Gated on the window being focused; capture phase so it beats the
   // embedded terminal. Bound here because the diff editor owns the line changes.
-  useKeybinding('changes.nextChange', () => navigateChange('next'), { capture: true, enabled: isFocused });
-  useKeybinding('changes.prevChange', () => navigateChange('prev'), { capture: true, enabled: isFocused });
+  useKeybinding('changes.nextChange', () => navigateChange('next'), { capture: true, enabled: isFocused && !previewActive });
+  useKeybinding('changes.prevChange', () => navigateChange('prev'), { capture: true, enabled: isFocused && !previewActive });
 
   return (
     <div className="flex flex-col h-full">
@@ -402,64 +414,85 @@ export function DiffViewer({
         <span className={`text-xs ${statusConfig.colorClass} flex-shrink-0`}>{statusConfig.label}</span>
 
         <div className="ml-auto flex items-center gap-1">
-          {/* Next / previous change navigation */}
-          <button
-            onClick={() => navigateChange('prev')}
-            className={toolbarButtonClass(false)}
-            title="Previous change"
-            data-testid="diff-prev-change"
-          >
-            <ChevronUp size={16} />
-          </button>
-          <button
-            onClick={() => navigateChange('next')}
-            className={toolbarButtonClass(false)}
-            title="Next change"
-            data-testid="diff-next-change"
-          >
-            <ChevronDown size={16} />
-          </button>
+          {/* Markdown files toggle between the diff and a rendered preview of the
+              new content. Only shown for markdown; while previewing, the diff-only
+              controls below are hidden since they do not apply to a rendered view. */}
+          {isMarkdown && (
+            <button
+              onClick={() => setShowMarkdownPreview((value) => !value)}
+              className={toolbarButtonClass(previewActive)}
+              title={previewActive ? 'Show diff' : 'Preview rendered markdown'}
+              aria-pressed={previewActive}
+              data-testid="diff-markdown-preview"
+            >
+              <Eye size={16} />
+            </button>
+          )}
 
-          <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
+          {!previewActive && (
+            <>
+              {isMarkdown && <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />}
 
-          {/* Diff-rendering toggles (persisted as global Layout settings) */}
-          <button
-            onClick={() => updateConfig({ diffIgnoreWhitespace: !ignoreWhitespace })}
-            className={toolbarButtonClass(ignoreWhitespace)}
-            title="Ignore whitespace"
-            aria-pressed={ignoreWhitespace}
-            data-testid="diff-ignore-whitespace"
-          >
-            <Pilcrow size={16} />
-          </button>
-          <button
-            onClick={() => updateConfig({ diffCollapseUnchanged: !collapseUnchanged })}
-            className={toolbarButtonClass(collapseUnchanged)}
-            title="Collapse unchanged regions"
-            aria-pressed={collapseUnchanged}
-            data-testid="diff-collapse-unchanged"
-          >
-            <FoldVertical size={16} />
-          </button>
+              {/* Next / previous change navigation */}
+              <button
+                onClick={() => navigateChange('prev')}
+                className={toolbarButtonClass(false)}
+                title="Previous change"
+                data-testid="diff-prev-change"
+              >
+                <ChevronUp size={16} />
+              </button>
+              <button
+                onClick={() => navigateChange('next')}
+                className={toolbarButtonClass(false)}
+                title="Next change"
+                data-testid="diff-next-change"
+              >
+                <ChevronDown size={16} />
+              </button>
 
-          <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
+              <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
 
-          <button
-            onClick={() => onViewModeChange('split')}
-            className={toolbarButtonClass(viewMode === 'split')}
-            title="Side by side"
-            data-testid="diff-view-split"
-          >
-            <Columns2 size={16} />
-          </button>
-          <button
-            onClick={() => onViewModeChange('inline')}
-            className={toolbarButtonClass(viewMode === 'inline')}
-            title="Inline"
-            data-testid="diff-view-inline"
-          >
-            <Rows2 size={16} />
-          </button>
+              {/* Diff-rendering toggles (persisted as global Layout settings) */}
+              <button
+                onClick={() => updateConfig({ diffIgnoreWhitespace: !ignoreWhitespace })}
+                className={toolbarButtonClass(ignoreWhitespace)}
+                title="Ignore whitespace"
+                aria-pressed={ignoreWhitespace}
+                data-testid="diff-ignore-whitespace"
+              >
+                <Pilcrow size={16} />
+              </button>
+              <button
+                onClick={() => updateConfig({ diffCollapseUnchanged: !collapseUnchanged })}
+                className={toolbarButtonClass(collapseUnchanged)}
+                title="Collapse unchanged regions"
+                aria-pressed={collapseUnchanged}
+                data-testid="diff-collapse-unchanged"
+              >
+                <FoldVertical size={16} />
+              </button>
+
+              <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
+
+              <button
+                onClick={() => onViewModeChange('split')}
+                className={toolbarButtonClass(viewMode === 'split')}
+                title="Side by side"
+                data-testid="diff-view-split"
+              >
+                <Columns2 size={16} />
+              </button>
+              <button
+                onClick={() => onViewModeChange('inline')}
+                className={toolbarButtonClass(viewMode === 'inline')}
+                title="Inline"
+                data-testid="diff-view-inline"
+              >
+                <Rows2 size={16} />
+              </button>
+            </>
+          )}
           {trailingControls && (
             <>
               <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
@@ -481,6 +514,16 @@ export function DiffViewer({
           // be misread as "no changes" for the first real file).
           <div className="flex items-center justify-center h-full">
             <Loader2 size={20} className="animate-spin text-fg-muted" />
+          </div>
+        ) : previewActive ? (
+          // Rendered markdown preview of the new content (falls back to the old
+          // content for a deleted file). Reuses the shared MarkdownRenderer so the
+          // preview is theme-aware and routes links through shell.openExternal.
+          <div
+            data-testid="diff-markdown-preview-content"
+            className="h-full overflow-y-auto px-4 py-3"
+          >
+            <MarkdownRenderer content={modified || original} />
           </div>
         ) : (
           // On unmount (panel close, Changes<->Browser switch, file deselect),
