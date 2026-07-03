@@ -11,6 +11,7 @@ import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-na
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
 import { configuredModelFromClaudeCommand } from './model-display-name';
+import { ClaudeSessionHistoryParser } from './session-history-parser';
 import type {
   AgentAdapter,
   AgentInfo,
@@ -104,21 +105,38 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   // Claude uses caller-owned session IDs via --session-id, so no capture
-  // needed. Telemetry comes exclusively from the hook-driven statusFile
+  // needed. Authoritative telemetry comes from the hook-driven statusFile
   // pipeline (status.json + events.jsonl, written by Kangentic's injected
   // event-bridge.js / status-bridge.js into .kangentic/sessions/<sessionId>/
-  // and watched by StatusFileReader). Claude Code's native session log at
-  // ~/.claude/projects/<slug>/<sessionId>.jsonl is read on demand by
-  // transcript-parser.ts for the renderer's Transcript tab, but is not
-  // wired into the live telemetry pipeline - the hook output is richer
-  // (display_name, real context window, cost) and a second source would
-  // race against it.
+  // and watched by StatusFileReader). status.json is richer (display_name,
+  // real context window, cost, rate limits) and stays the source of truth.
+  //
+  // But Claude Code only runs its statusLine when its TUI paints the
+  // statusline, and a background (never-opened) session in the pwsh-wrapped
+  // PTY never does that first paint - so status.json never appears and the
+  // card is stuck on the spawn-time model placeholder. `sessionHistory`
+  // wires Claude's native session log at ~/.claude/projects/<slug>/<id>.jsonl
+  // (appended continuously, paint or not) into the live pipeline as a
+  // FALLBACK: ClaudeSessionHistoryParser derives a live model + context %
+  // from the latest assistant message. On the first status.json parse,
+  // SessionManager detaches this reader (StatusFileReader.onFirstStatus ->
+  // sessionHistoryReader.detach) so status.json's full-replace cleanly wins
+  // and the two sources never race. (The same transcript is also read on
+  // demand by transcript-parser.ts for the renderer's Transcript tab and
+  // lifetime-token refinement.)
   readonly runtime: AdapterRuntimeStrategy = {
     activity: ActivityDetection.hooks(),
     statusFile: {
       parseStatus: ClaudeStatusParser.parseStatus,
       parseEvent: ClaudeStatusParser.parseEvent,
       isFullRewrite: true,
+    },
+    // Background-session fallback - see the comment block above. Append-mode
+    // (isFullRewrite: false): the transcript is append-only JSONL.
+    sessionHistory: {
+      locate: ClaudeSessionHistoryParser.locate,
+      parse: ClaudeSessionHistoryParser.parse,
+      isFullRewrite: false,
     },
     // The bg-shell watcher stats this file for liveness when a named shell
     // has no captured OS PID (Incident B). Wrapped in an arrow so the optional

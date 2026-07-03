@@ -2306,22 +2306,29 @@ export interface AdapterRuntimeStrategy {
    * message events). Used by agents that persist conversation state
    * to a local file we can tail: Codex writes JSONL to
    * ~/.codex/sessions/..., Gemini writes JSON to ~/.gemini/tmp/...
-   * Omit entirely for agents without such files (Claude uses
-   * status.json + event-bridge hooks; Aider has no equivalent).
+   * Claude declares it too, but as a BACKGROUND-SESSION FALLBACK: its
+   * authoritative telemetry is the hook-driven `statusFile` pipeline,
+   * and the transcript reader is detached on the first status.json
+   * parse (via StatusFileReaderCallbacks.onFirstStatus). Omit entirely
+   * for agents with no such file (Aider has no equivalent).
    */
   readonly sessionHistory?: {
     /**
      * Given the agent-reported session ID (captured by the PTY
-     * scraper via runtime.sessionId.fromOutput), locate the session
+     * scraper via runtime.sessionId.fromOutput, or caller-owned at
+     * spawn for callerOwnedSessionId adapters), locate the session
      * history file on disk. Returns an absolute path, or null if the
-     * file cannot be found within the polling budget (~5 s) or if
+     * file cannot be found within the adapter's polling budget or if
      * the platform can't be supported (e.g. WSL from Windows).
      *
-     * Implementations should: compute the expected directory from
-     * cwd and the UTC date (Codex) or cwd basename (Gemini),
-     * readdirSync, filter by a filename regex embedding
-     * agentSessionId, poll every 500 ms for up to 5 s if not
-     * immediately present.
+     * Implementations compute the expected path from cwd + agent
+     * session id and poll for it to appear. The budget is
+     * adapter-chosen: Codex/Gemini use ~5 s (they locate after
+     * capturing the id from a running CLI), while Claude uses ~60 s
+     * (its attach fires at spawn, before the CLI has booted and
+     * persisted its first prompt entry). `locate` MUST confirm the
+     * file exists before returning it - SessionHistoryReader treats
+     * ENOENT on the initial read as "file disappeared" and detaches.
      */
     locate(options: {
       agentSessionId: string;

@@ -326,13 +326,14 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         {!isCompactDensity && (() => {
           switch (displayState.kind) {
             case 'running': {
-              // Footer model label comes only from the CLI's status.json (the
-              // human name, e.g. "Opus 4.8"). We deliberately do NOT fall back to
-              // the raw configured model id (e.g. "claude-opus-4-8") - a user
-              // doesn't know what that means. Until status.json reports, show the
-              // loading spinner; the spawn-time statusline kick + the settings'
-              // refreshInterval make the real name arrive within a moment, even
-              // for a background (never-opened) session.
+              // Footer model label is the human name (e.g. "Opus 4.8"). We
+              // deliberately do NOT fall back to the raw configured model id
+              // (e.g. "claude-opus-4-8") - a user doesn't know what that means.
+              // Until a name is known, show the loading spinner. The name (and
+              // live context %) arrives from status.json once the CLI paints,
+              // or - for a background (never-opened) session that never paints -
+              // from the transcript-watch fallback (Claude's runtime.sessionHistory),
+              // plus the spawn-time model seed as an immediate placeholder.
               const resolvedModelName = displayState.usage?.model.displayName || null;
               if (!resolvedModelName) {
                 const spinnerLabel = isResuming ? 'Resuming agent...' : 'Starting agent...';
