@@ -100,6 +100,10 @@ async function launch(): Promise<{ browser: Browser; page: Page }> {
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   const page = await context.newPage();
 
+  // The block-copy affordance ships OFF by default; this spec exercises it, so it
+  // opts in via the mock config override. Must run before the mock script builds
+  // its config object.
+  await page.addInitScript('window.__mockConfigOverrides = Object.assign({}, window.__mockConfigOverrides, { terminalBlockCopy: true });');
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(basePreConfigScript());
   await page.addInitScript(setupScript);
@@ -260,12 +264,69 @@ test.describe('terminal block copy', () => {
       await expect(button).toBeHidden({ timeout: 3000 });
       await expect(highlight).toBeHidden({ timeout: 3000 });
 
-      // Clicking the block body (not the button) also copies it.
+      // Clicking the block BODY (not the copy button) no longer copies: the copy
+      // button is the only click-to-copy affordance, so clicking a block - e.g. an
+      // interactive prompt option to answer it - never overwrites the clipboard.
+      // Re-hover, clear the recorder, click the body then the button, and assert
+      // ONLY the button's copy landed (a body-click copy would add an earlier entry).
+      await page.mouse.move(points.quote!.x, points.quote!.y, { steps: 5 });
+      await expect(button).toBeVisible({ timeout: 3000 });
       await page.evaluate(() => { window.__clipboardWrites = []; });
-      await page.mouse.click(points.quote!.x, points.quote!.y);
+      await page.mouse.click(points.quote!.x, points.quote!.y); // body click: must NOT copy
+      await button.click();                                     // button click: copies
       await expect.poll(async () => {
         return page.evaluate(() => window.__clipboardWrites as string[]);
-      }, { timeout: 3000 }).toContain(QUOTE_LINES.join('\n'));
+      }, { timeout: 3000 }).toEqual([QUOTE_LINES.join('\n')]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('hides the highlight while output grows the hovered block, until the pointer moves', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openTerminalWithFixture(page);
+
+      // Find the trailing text block at the bottom of the fixture. Appended PTY
+      // output lands at the cursor there, so this is the block that actually grows.
+      let trailing: { x: number; y: number } | null = null;
+      await expect.poll(async () => {
+        trailing = await page.evaluate(() => {
+          const screen = document.querySelector('[data-testid="command-terminal-window"] .xterm-screen');
+          if (!screen) return null;
+          const rect = screen.getBoundingClientRect();
+          const hitTest = window.__kangenticTerminalBlockHitTest;
+          if (!hitTest) return null;
+          const x = Math.round(rect.left + rect.width * 0.3);
+          let found: { x: number; y: number } | null = null;
+          for (let i = 1; i < 60; i += 1) {
+            const y = Math.round(rect.top + (rect.height * i) / 60);
+            if (hitTest(x, y).blockKind === 'text') found = { x, y }; // keep the lowest text hit
+          }
+          return found;
+        });
+        return trailing !== null;
+      }, { timeout: 8000 }).toBe(true);
+
+      // Hover it; the highlight and copy button appear.
+      await page.mouse.move(trailing!.x, trailing!.y, { steps: 5 });
+      const button = page.getByTestId('terminal-block-copy-button');
+      const highlight = page.getByTestId('terminal-block-copy-highlight');
+      await expect(button).toBeVisible({ timeout: 3000 });
+      await expect(highlight).toBeVisible({ timeout: 3000 });
+
+      // Stream more rows into that block. The re-derived block grows (endY moves),
+      // so the affordance hides rather than crawling to track the live output.
+      await page.evaluate((sessionId) => {
+        window.__mockFireSessionData?.(sessionId, 'extra one\r\nextra two\r\n');
+      }, TRANSIENT_SESSION_ID);
+      await expect(button).toBeHidden({ timeout: 3000 });
+      await expect(highlight).toBeHidden({ timeout: 3000 });
+
+      // It stays hidden until the pointer moves; moving back over the (now grown
+      // and settled) block shows it again.
+      await page.mouse.move(trailing!.x + 4, trailing!.y, { steps: 5 });
+      await expect(button).toBeVisible({ timeout: 3000 });
     } finally {
       await browser.close();
     }
@@ -310,5 +371,6 @@ test.describe('terminal block copy', () => {
 declare global {
   interface Window {
     __clipboardWrites: string[];
+    __mockFireSessionData?: (sessionId: string, data: string) => void;
   }
 }

@@ -44,6 +44,7 @@ import { ICON_REGISTRY } from '../../utils/swimlane-icons';
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { getIsHmrReload } from '../../utils/hmr-flag';
+import { useHmrGeneration } from '../../utils/hmr-generation';
 import { useLayerStore } from '../../window-manager';
 import type { ManagedWindow } from '../../window-manager';
 import type { AgentCommand } from '../../../shared/types';
@@ -122,6 +123,11 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   const windowCount = useStore((state) => Object.keys(state.windows).length);
   const isTiled = useStore((state) => state.windows[windowId]?.leafId != null);
   const { hideLayer } = useCommandTerminalLayer();
+  // Remount the block-copy overlay on each Fast Refresh so its xterm subscriptions
+  // (attached by terminal identity in ensureLive, which persists across HMR) re-bind with
+  // fresh closures. Inert in production, where hmrGeneration is a constant 0. Mirrors the
+  // <DndContext> key pattern (see hmr-patterns.md Pattern C).
+  const hmrGeneration = useHmrGeneration();
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
@@ -712,7 +718,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             className="h-full"
             data-testid="command-bar-terminal"
           />
-          <TerminalBlockCopyButton containerRef={terminalPaneRef} getTerminal={getTerminal} />
+          <TerminalBlockCopyButton key={hmrGeneration} containerRef={terminalPaneRef} getTerminal={getTerminal} />
         </div>
 
         {/* Changes panel */}

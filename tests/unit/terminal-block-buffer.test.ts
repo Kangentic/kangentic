@@ -94,10 +94,18 @@ function makeLine(row: FakeRowSpec, cols: number): IBufferLine {
   return line as unknown as IBufferLine;
 }
 
-function makeTerminal(rows: FakeRowSpec[], cols = 80, selection?: SelectionRange): Terminal {
+function makeTerminal(
+  rows: FakeRowSpec[],
+  cols = 80,
+  selection?: SelectionRange,
+  cursor?: { baseY: number; cursorY: number },
+): Terminal {
   const lines = rows.map((row) => makeLine(row, cols));
   const buffer = {
     length: lines.length,
+    // Omitted entirely when no cursor is supplied, so `baseY + cursorY` is NaN and
+    // `createBufferLineSource` must leave `cursorRow` undefined (the safe default).
+    ...(cursor ? { baseY: cursor.baseY, cursorY: cursor.cursorY } : {}),
     getLine: (y: number): IBufferLine | undefined => lines[y],
     getNullCell: (): IBufferCell => makeCell({ chars: ' ' }),
   };
@@ -181,6 +189,21 @@ describe('createBufferLineSource - hasDefaultFg (classifyLine)', () => {
     const terminal = makeTerminal([{ cells }], 20);
     const facts = createBufferLineSource(terminal).getLine(0)!;
     expect(facts.hasDefaultFg).toBe(false);
+  });
+});
+
+describe('createBufferLineSource - cursorRow (live-prompt anchor)', () => {
+  it('surfaces the absolute cursor row (baseY + cursorY)', () => {
+    const rows: FakeRowSpec[] = [];
+    for (let i = 0; i < 6; i += 1) rows.push(plainRow(`row ${i}`));
+    // baseY 2 + cursorY 3 => absolute row 5.
+    const terminal = makeTerminal(rows, 20, undefined, { baseY: 2, cursorY: 3 });
+    expect(createBufferLineSource(terminal).cursorRow).toBe(5);
+  });
+
+  it('leaves cursorRow undefined when the buffer exposes no cursor position (NaN-safe)', () => {
+    const terminal = makeTerminal([plainRow('a'), plainRow('b')], 20);
+    expect(createBufferLineSource(terminal).cursorRow).toBeUndefined();
   });
 });
 

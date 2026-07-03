@@ -7,6 +7,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { getIsHmrReload } from '../../utils/hmr-flag';
+import { useHmrGeneration } from '../../utils/hmr-generation';
 import { useTerminalOverlay } from '../../utils/task-progress';
 import { isManagerResizeInProgress } from '../../window-manager/terminal/manager-resize-gate';
 
@@ -273,10 +274,16 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
 
   const fileDrop = useTerminalFileDrop(sessionId, focus, sessionShell);
 
+  // Remount the block-copy overlay on each Fast Refresh so its xterm subscriptions
+  // (attached by terminal identity in ensureLive, which persists across HMR) re-bind with
+  // fresh closures. Inert in production, where hmrGeneration is a constant 0. Mirrors the
+  // <DndContext> key pattern (see hmr-patterns.md Pattern C).
+  const hmrGeneration = useHmrGeneration();
+
   return (
     <div ref={containerRef} className="h-full w-full bg-surface relative">
       <div ref={terminalRef} className="h-full w-full" />
-      <TerminalBlockCopyButton containerRef={containerRef} getTerminal={getTerminal} />
+      <TerminalBlockCopyButton key={hmrGeneration} containerRef={containerRef} getTerminal={getTerminal} />
       <FileDropOverlay {...fileDrop} />
       {/* Placeholder overlay while Claude CLI is loading (before first usage report).
           Stays visible until scrollback replay + clear are both done.

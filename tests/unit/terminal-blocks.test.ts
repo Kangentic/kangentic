@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
   findBlockAt,
+  findPromptRegionTop,
   extractBlockContent,
   cleanSelectionLines,
   BAR_GLYPHS,
   MIN_BOX_RUN_CELLS,
   MAX_BOX_RUN_START_COLUMN,
   MAX_MESSAGE_LOOKBACK_ROWS,
+  MAX_MESSAGE_INTERIOR_BLANK_ROWS,
+  PROMPT_REGION_LOOKBACK_ROWS,
   type BlockLineFacts,
   type BlockLineSource,
 } from '../../src/renderer/utils/terminal-blocks';
@@ -25,7 +28,7 @@ interface FakeLine {
 const ORANGE = 'rgb:14120791';
 const SHADE = 'rgb:3618615';
 
-function makeSource(lines: FakeLine[], cols = 80): BlockLineSource {
+function makeSource(lines: FakeLine[], cols = 80, cursorRow?: number): BlockLineSource {
   const facts: BlockLineFacts[] = lines.map((line) => ({
     isWrapped: line.isWrapped ?? false,
     quoteBar: line.quoteBar ?? null,
@@ -38,8 +41,20 @@ function makeSource(lines: FakeLine[], cols = 80): BlockLineSource {
   return {
     length: facts.length,
     cols,
+    cursorRow,
     getLine: (y) => facts[y],
   };
+}
+
+// A tab-header / submit bar row of an interactive prompt (default-fg text with
+// the widget's checkbox + confirm glyphs). Plain otherwise.
+function tabHeader(raw: string): FakeLine {
+  return { raw };
+}
+
+// A shaded, ❯-pointed selected option row of an interactive prompt.
+function selectedOption(raw: string): FakeLine {
+  return { raw, bgRun: { key: SHADE, startColumn: 0, endColumn: 80 } };
 }
 
 // A muted / "thinking" status row: undecorated, all non-default foreground.
@@ -246,6 +261,270 @@ describe('findBlockAt - text messages', () => {
     const source = makeSource([plain('prose'), box('  code'), quote(' quoted')]);
     expect(findBlockAt(source, 0)).toEqual({ kind: 'text', startY: 0, endY: 0 });
     expect(findBlockAt(source, 1)).toEqual({ kind: 'box', startY: 1, endY: 1 });
+  });
+});
+
+describe('findBlockAt - live interactive prompt (AskUserQuestion)', () => {
+  // The layout of Claude Code's AskUserQuestion widget as it sits in the buffer:
+  // an assistant message, a dim planning link, the tab-header / submit bar, the
+  // question paragraph, a ❯-pointed shaded selected option, dim description rows,
+  // plain option rows, and the keyboard-hint row. The cursor is parked at the
+  // hint row (where an Ink TUI leaves the caret, at the bottom of the widget).
+  const TAB_HEADER = 5;
+  const HINT_ROW = 15;
+  const build = (cursorRow: number | undefined = HINT_ROW) => makeSource([
+    plain('● The search-subsystem report is in, with two corrections.'), // 0 message bullet
+    plain('  Waiting on the other two exploration reports.'),            // 1 message body
+    plain(''),                                                            // 2 blank
+    muted('Planning: /mock/plan.md'),                                     // 3 dim planning link
+    plain(''),                                                            // 4 blank
+    tabHeader('← ☐ Model delivery ☐ Embed host ☐ Scope ☐ Backfill ✓ Submit →'), // 5 tab header
+    plain(''),                                                            // 6 blank
+    plain('How should the embedding model reach the machine?'),          // 7 question paragraph
+    selectedOption('❯ 1. Download on first use (Recommended)'),          // 8 selected (shaded) option
+    muted('   Reuse the dictation model downloader.'),                   // 9 dim description
+    plain('  2. Bundle in installer'),                                    // 10 option row
+    muted('   Ship model files via extraResources.'),                    // 11 dim description
+    plain('  3. Bundle small, download better'),                          // 12 option row
+    plain('  4. Type something.'),                                        // 13 option row
+    plain(''),                                                            // 14 blank
+    muted('Enter to select · Tab/Arrow keys to navigate · Esc to cancel'), // 15 hint row
+  ], 80, cursorRow);
+
+  it('locates the region top at the tab header (scanning up from the cursor)', () => {
+    expect(findPromptRegionTop(build())).toBe(TAB_HEADER);
+  });
+
+  it('returns null anywhere inside the widget (option rows, question, header, hint)', () => {
+    const source = build();
+    expect(findBlockAt(source, TAB_HEADER)).toBeNull();       // tab header
+    expect(findBlockAt(source, 7)).toBeNull();                // question paragraph
+    expect(findBlockAt(source, 8)).toBeNull();                // shaded selected option (box path)
+    expect(findBlockAt(source, 10)).toBeNull();               // plain option row (text path)
+    expect(findBlockAt(source, 12)).toBeNull();               // plain option row
+    expect(findBlockAt(source, HINT_ROW)).toBeNull();         // hint row
+  });
+
+  it('ends the assistant message above the prompt before the tab header', () => {
+    const range = findBlockAt(build(), 0);
+    expect(range?.kind).toBe('message');
+    expect(range?.startY).toBe(0);
+    expect(range?.endY).toBeLessThan(TAB_HEADER);
+  });
+
+  it('never returns a range that excludes its hit row', () => {
+    const source = build();
+    for (let y = 0; y < 16; y += 1) {
+      const range = findBlockAt(source, y);
+      if (range) {
+        expect(range.startY).toBeLessThanOrEqual(y);
+        expect(range.endY).toBeGreaterThanOrEqual(y);
+      }
+    }
+  });
+
+  it('still ends the message at the tab-header boundary without cursor info (glyph fallback)', () => {
+    const source = build(undefined); // no cursorRow -> no cursor-anchored region
+    // The tab header is itself never copyable...
+    expect(findBlockAt(source, TAB_HEADER)).toBeNull();
+    // ...and it still bounds the message above it.
+    const range = findBlockAt(source, 0);
+    expect(range?.kind).toBe('message');
+    expect(range?.endY).toBeLessThan(TAB_HEADER);
+  });
+});
+
+describe('findPromptRegionTop - seed and boundary rules', () => {
+  it('a ● between the cursor and a header cancels the region (a stale header in scrollback)', () => {
+    const source = makeSource([
+      tabHeader('☐ A ☐ B ✓ Submit'), // 0 old widget header in scrollback
+      plain('  some output'),          // 1
+      plain('● a newer message'),      // 2 boundary between cursor and the header
+      plain('  more output'),          // 3
+    ], 80, 3);
+    expect(findPromptRegionTop(source)).toBeNull();
+  });
+
+  it('a single checkbox row is not a seed (a TodoWrite line echoed in a message)', () => {
+    const source = makeSource([
+      plain('● message'),       // 0
+      plain('☐ fix the tests'), // 1 single checkbox - not a header
+      plain('  done'),          // 2
+    ], 80, 2);
+    expect(findPromptRegionTop(source)).toBeNull();
+    // The todo row keeps its normal classification (copyable, inside the message).
+    const range = findBlockAt(source, 1);
+    expect(range?.kind).toBe('message');
+    expect(range?.startY).toBe(0);
+  });
+
+  it('a check-only row is not a seed (vitest output, a checkmark table)', () => {
+    const source = makeSource([
+      plain('● message'),               // 0
+      plain('✓ passed a  ✓ passed b'),  // 1 two checks, zero checkboxes - not a header
+      plain('  trailing'),              // 2
+    ], 80, 2);
+    expect(findPromptRegionTop(source)).toBeNull();
+  });
+
+  it('does not stop the up-scan at the widget\'s own ❯ selected-option row', () => {
+    const source = makeSource([
+      tabHeader('☐ A ☐ B ✓ Submit'),          // 0 header (the seed)
+      plain('the question'),                    // 1
+      selectedOption('❯ 1. option'),            // 2 ❯ row between header and cursor
+      plain('  a description'),                 // 3
+    ], 80, 3);
+    expect(findPromptRegionTop(source)).toBe(0);
+  });
+
+  it('ignores a header seed beyond the lookback window', () => {
+    const lines: FakeLine[] = [tabHeader('☐ A ☐ B ✓ Submit')];
+    for (let i = 0; i < PROMPT_REGION_LOOKBACK_ROWS + 5; i += 1) lines.push(plain(`filler ${i}`));
+    const cursorRow = lines.length - 1;
+    expect(findPromptRegionTop(makeSource(lines, 80, cursorRow))).toBeNull();
+  });
+
+  it('returns null when the source carries no cursor position', () => {
+    const source = makeSource([tabHeader('☐ A ☐ B ✓ Submit'), plain('x')]);
+    expect(findPromptRegionTop(source)).toBeNull();
+  });
+});
+
+describe('isTabHeaderText - single-checkbox-plus-confirm disjunct', () => {
+  // isTabHeaderText returns true on `checkboxes >= 2 || (checkboxes >= 1 &&
+  // checks >= 1)`. Every other fixture in this file uses 2+ checkboxes, so this
+  // exercises the second disjunct in isolation via a single-option
+  // AskUserQuestion render ("☐ Confirm  ✓ Submit"): exactly one checkbox glyph
+  // plus one confirm glyph.
+  it('seeds the live-prompt region on a "1 checkbox + 1 confirm" header, and every row at/below it is suppressed', () => {
+    const source = makeSource([
+      plain('● Confirm this destructive action?'), // 0 message bullet
+      tabHeader('☐ Confirm  ✓ Submit'),             // 1 header: 1 checkbox + 1 confirm glyph
+      plain(''),                                     // 2 blank
+      plain('This will delete 3 files.'),            // 3 question text
+      muted('Enter to confirm · Esc to cancel'),     // 4 hint row (cursor)
+    ], 80, 4);
+
+    expect(findPromptRegionTop(source)).toBe(1);
+    // The header row itself, and every row at/below it, is inside the live widget.
+    expect(findBlockAt(source, 1)).toBeNull();
+    expect(findBlockAt(source, 3)).toBeNull();
+    expect(findBlockAt(source, 4)).toBeNull();
+  });
+});
+
+describe('findBlockAt - downLimit region-clamp on the quote / box / text expansion loops', () => {
+  // The quote, box, and text `expandDown` loops changed their downward bound
+  // from `source.length` to the region-aware `downLimit` (`regionTop - 1`). In
+  // every other fixture in this file the widget rows are already excluded by
+  // the earlier blanket `y >= regionTop` guard in `findBlockAt` before the
+  // loop-level bound is ever consulted, so these cases start the block ABOVE
+  // `regionTop` (where that guard does not apply) and give the loop's own
+  // matching condition a reason to want to keep going past the header -
+  // proving the `downLimit` clamp itself is load-bearing, not just the earlier
+  // guard.
+
+  it('quote: stops expansion at the widget boundary, not the buffer end', () => {
+    // Rows 3 and 4 (inside the "widget") coincidentally carry a matching
+    // quoteBar too, so the naive same-column/same-color loop condition alone
+    // would keep absorbing them; only the region-aware downLimit stops it at
+    // row 2.
+    const source = makeSource([
+      plain('intro'),                                                       // 0
+      quote(' one'),                                                        // 1 quote start (hit here)
+      quote(' two'),                                                        // 2
+      { raw: '☐ A ☐ B ✓ Submit', quoteBar: { column: 0, fgKey: ORANGE } },  // 3 tab header (regionTop seed)
+      quote(' widget row'),                                                 // 4 inside the widget
+      plain('the question'),                                                // 5
+      muted('hint'),                                                        // 6 cursor
+    ], 80, 6);
+
+    expect(findPromptRegionTop(source)).toBe(3);
+    const range = findBlockAt(source, 1);
+    expect(range).toEqual({ kind: 'quote', startY: 1, endY: 2, barColumn: 0 });
+    expect(range!.endY).toBeLessThan(3);
+  });
+
+  it('box: stops expansion at the widget boundary, not the buffer end', () => {
+    // Same shape as the quote case: rows 3 and 4 coincidentally carry a
+    // matching bgRun too, so only the downLimit clamp stops the box at row 2.
+    const source = makeSource([
+      plain('intro'),                                                                   // 0
+      box('  a'),                                                                       // 1 box start (hit here)
+      box('  b'),                                                                       // 2
+      { raw: '☐ A ☐ B ✓ Submit', bgRun: { key: SHADE, startColumn: 0, endColumn: 80 } }, // 3 tab header (regionTop seed)
+      box('  widget row', SHADE),                                                       // 4 inside the widget
+      plain('the question'),                                                            // 5
+      muted('hint'),                                                                     // 6 cursor
+    ], 80, 6);
+
+    expect(findPromptRegionTop(source)).toBe(3);
+    const range = findBlockAt(source, 1);
+    expect(range).toEqual({ kind: 'box', startY: 1, endY: 2 });
+    expect(range!.endY).toBeLessThan(3);
+  });
+
+  it('text: stops expansion at the widget boundary, not the buffer end', () => {
+    // A plain content row passes isContentRow just as readily as a normal
+    // paragraph line - the text accept function (isMergeableRow) does not
+    // check isTabHeaderText/isMessageBoundary at all, so only the downLimit
+    // clamp keeps this paragraph from merging the header (and the question
+    // line after it) into the same block.
+    const source = makeSource([
+      plain('a paragraph starting'),   // 0 text start (hit here)
+      tabHeader('☐ A ☐ B ✓ Submit'),   // 1 tab header (regionTop seed)
+      plain('the question'),            // 2
+      muted('hint'),                    // 3 cursor
+    ], 80, 3);
+
+    expect(findPromptRegionTop(source)).toBe(1);
+    const range = findBlockAt(source, 0);
+    expect(range).toEqual({ kind: 'text', startY: 0, endY: 0 });
+    expect(range!.endY).toBeLessThan(1);
+  });
+});
+
+describe('findBlockAt - blank-run cap (giant empty region during a live repaint)', () => {
+  // A streaming message whose spinner boundary transiently vanished, leaving a
+  // screenful of blank rows below the message and a dim tip row at the bottom.
+  const GULF = 20;
+  const build = () => {
+    const lines: FakeLine[] = [
+      plain('● I\'ll look at the screenshot and the PR.'), // 0 message bullet
+      plain('  Reading 1 file, running 1 command.'),       // 1 message body
+    ];
+    for (let i = 0; i < GULF; i += 1) lines.push(plain('')); // 2..21 blank gulf
+    lines.push(muted('Tip: Use /btw to ask a side question.')); // 22 dim tip row
+    return makeSource(lines);
+  };
+
+  it('caps a message block before a blank gulf larger than the cap', () => {
+    const range = findBlockAt(build(), 0);
+    expect(range?.kind).toBe('message');
+    expect(range?.startY).toBe(0);
+    // The block ends at the last content row, well before the gulf and the tip.
+    expect(range?.endY).toBe(1);
+    expect(range?.endY).toBeLessThanOrEqual(1 + MAX_MESSAGE_INTERIOR_BLANK_ROWS);
+  });
+
+  it('returns null in the blank gulf and on the tip row below it', () => {
+    const source = build();
+    expect(findBlockAt(source, 10)).toBeNull(); // deep in the gulf
+    expect(findBlockAt(source, 22)).toBeNull(); // the dim tip row
+  });
+
+  it('a text block below a large blank gap does not crawl up through it', () => {
+    const lines: FakeLine[] = [plain('top content')];
+    for (let i = 0; i < MAX_MESSAGE_INTERIOR_BLANK_ROWS + 2; i += 1) lines.push(plain('')); // gap larger than the cap
+    lines.push(plain('bottom content'));
+    const source = makeSource(lines);
+    const bottom = lines.length - 1;
+    const range = findBlockAt(source, bottom);
+    expect(range?.kind).toBe('text');
+    expect(range?.startY).toBe(bottom); // just the bottom row, not merged up through the gap
+    expect(range?.endY).toBe(bottom);
+    // And the top block is likewise isolated to itself.
+    expect(findBlockAt(source, 0)).toEqual({ kind: 'text', startY: 0, endY: 0 });
   });
 });
 

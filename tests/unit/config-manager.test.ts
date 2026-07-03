@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { DEFAULT_CONFIG } from '../../src/shared/types';
 
 let tmpDir: string;
 let configPath: string;
@@ -189,6 +190,22 @@ describe('Config Manager -- claude.* to agent.* namespace migration', () => {
 
     expect(config.agent.cliPaths).toEqual({ gemini: '/usr/bin/gemini' });
     expect(config.agent.maxConcurrentSessions).toBe(4);
+  });
+});
+
+describe('Config Manager -- terminalBlockCopy default', () => {
+  // The block-copy affordance ships OFF by default (it was flipped from an
+  // earlier opt-out default). Pin the literal so a revert to `true` fails here
+  // rather than only surfacing through the UI spec's explicit opt-in override.
+  it('DEFAULT_CONFIG.terminalBlockCopy is false', () => {
+    expect(DEFAULT_CONFIG.terminalBlockCopy).toBe(false);
+  });
+
+  it('a fresh config (no file on disk) resolves terminalBlockCopy to false', async () => {
+    const cm = await createConfigManager();
+    const config = cm.load();
+
+    expect(config.terminalBlockCopy).toBe(false);
   });
 });
 

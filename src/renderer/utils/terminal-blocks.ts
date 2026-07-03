@@ -57,6 +57,14 @@ export interface BlockLineSource {
   readonly length: number;
   /** Terminal width in columns. */
   readonly cols: number;
+  /**
+   * Absolute buffer row of the live cursor (`baseY + cursorY`), when known. Used
+   * to locate the live interactive-prompt region (a widget the user is answering,
+   * painted at / around the cursor at the bottom of the viewport) so it is never
+   * offered as copyable output. Undefined when the adapter cannot supply it (a
+   * test fake, or a partial buffer with no finite cursor position).
+   */
+  readonly cursorRow?: number;
   getLine(y: number): BlockLineFacts | undefined;
 }
 
@@ -105,21 +113,60 @@ const MESSAGE_BULLET = '●';
 const PROMPT_GLYPH = '❯';
 /** Star / spinner glyphs that lead a de-emphasized "thinking" status line ("✻ Cogitated for 16s"). */
 const THINKING_GLYPHS: ReadonlySet<string> = new Set(['✻', '✽', '✶', '✳', '✢', '✷', '✴', '✵', '❋', '✱', '✲', '✦', '✧', '⏺']);
+/**
+ * Checkbox glyphs an interactive prompt paints for each tab / option
+ * (U+2610 "☐" unchecked, U+2611 "☑" checked).
+ */
+const PROMPT_CHECKBOX_GLYPHS: ReadonlySet<string> = new Set(['☐', '☑']);
+/** Confirm glyphs (a "✓ Submit" tab, or a selected-checkbox variant). */
+const PROMPT_CHECK_GLYPHS: ReadonlySet<string> = new Set(['✓', '✔']);
+
+/** The first non-space glyph of a materialized row string, or '' when blank. */
+function firstGlyphOf(text: string): string {
+  return text.replace(/^\s+/, '').charAt(0);
+}
 
 /** The first non-space glyph of a row, or '' when blank. */
 function firstGlyph(line: BlockLineFacts | undefined): string {
   if (!line) return '';
-  return line.text().replace(/^\s+/, '').charAt(0);
+  return firstGlyphOf(line.text());
+}
+
+/**
+ * True when a materialized row string looks like an interactive prompt's
+ * tab-header / submit bar (Claude Code's AskUserQuestion widget paints
+ * "☐ Tab A  ☐ Tab B  ✓ Submit"). A generic glyph pattern, not an agent name:
+ * at least two checkbox glyphs, OR at least one checkbox plus a confirm glyph.
+ * A single checkbox (a TodoWrite line "☐ fix tests" echoed in the transcript,
+ * or a lone rendered checkbox) is NOT a header, so it never suppresses copy; a
+ * "✓ ... ✓" row (vitest output, a checkmark table) is not a header either.
+ */
+function isTabHeaderText(text: string): boolean {
+  let checkboxes = 0;
+  let checks = 0;
+  for (const glyph of text) {
+    if (PROMPT_CHECKBOX_GLYPHS.has(glyph)) checkboxes += 1;
+    else if (PROMPT_CHECK_GLYPHS.has(glyph)) checks += 1;
+  }
+  return checkboxes >= 2 || (checkboxes >= 1 && checks >= 1);
+}
+
+/** Row-level wrapper of {@link isTabHeaderText}. */
+function isTabHeaderRow(line: BlockLineFacts | undefined): boolean {
+  return !!line && isTabHeaderText(line.text());
 }
 
 function isThinkingRow(line: BlockLineFacts | undefined): boolean {
   return THINKING_GLYPHS.has(firstGlyph(line));
 }
 
-/** A row that bounds a message block: the next message's bullet, a thinking line, or a user prompt. */
+/** A row that bounds a message block: the next message's bullet, a thinking line, a user prompt, or a prompt tab-header. */
 function isMessageBoundary(line: BlockLineFacts | undefined): boolean {
-  const glyph = firstGlyph(line);
-  return glyph === MESSAGE_BULLET || glyph === PROMPT_GLYPH || THINKING_GLYPHS.has(glyph);
+  if (!line) return false;
+  const text = line.text();
+  const glyph = firstGlyphOf(text);
+  if (glyph === MESSAGE_BULLET || glyph === PROMPT_GLYPH || THINKING_GLYPHS.has(glyph)) return true;
+  return isTabHeaderText(text);
 }
 
 /**
@@ -134,15 +181,62 @@ function isMessageBoundary(line: BlockLineFacts | undefined): boolean {
  */
 export const MAX_MESSAGE_LOOKBACK_ROWS = 500;
 
-/** Scan up from a row to the bullet that owns it, stopping at a thinking line, a user prompt, or the lookback limit. */
+/**
+ * How far up from the cursor the live-prompt-region scan looks for a tab-header
+ * seed. A widget taller than this (a long wrapped question plus many options)
+ * simply is not recognized by the cursor path; the glyph-boundary fallback in
+ * `isMessageBoundary` / `findMessageStart` still stops message absorption.
+ */
+export const PROMPT_REGION_LOOKBACK_ROWS = 40;
+
+/**
+ * A run of more than this many consecutive blank rows ends a message / text
+ * block's expansion. Bounds the block against a screenful of blank rows that a
+ * live TUI transiently paints (a spinner boundary that vanishes mid-repaint),
+ * which would otherwise frame a giant empty region.
+ */
+export const MAX_MESSAGE_INTERIOR_BLANK_ROWS = 4;
+
+/** Scan up from a row to the bullet that owns it, stopping at a thinking line, a user prompt, a prompt tab-header, or the lookback limit. */
 function findMessageStart(source: BlockLineSource, y: number): number | null {
   const limit = Math.max(0, y - MAX_MESSAGE_LOOKBACK_ROWS);
   for (let currentRow = y; currentRow >= limit; currentRow -= 1) {
-    const glyph = firstGlyph(source.getLine(currentRow));
+    const line = source.getLine(currentRow);
+    const text = line ? line.text() : '';
+    const glyph = firstGlyphOf(text);
     if (glyph === MESSAGE_BULLET) return currentRow;
     if (glyph === PROMPT_GLYPH || THINKING_GLYPHS.has(glyph)) return null;
+    if (isTabHeaderText(text)) return null;
   }
   return null;
+}
+
+/**
+ * Find the top row of the live interactive-prompt region (the widget the user is
+ * currently answering, painted at / around the cursor), or null when there is no
+ * cursor info or no header within the lookback. Scans UP from the cursor row for
+ * the topmost tab-header seed, stopping at a message bullet or a thinking line.
+ *
+ * The stop set is deliberately narrower than {@link isMessageBoundary}: it
+ * excludes the prompt glyph `❯`, because the widget's own selected-option row
+ * starts with `❯` and sits between the cursor and the header, so stopping there
+ * would never reach the header. Every row at or below the returned top is the
+ * live widget and must not be offered as copyable output.
+ */
+export function findPromptRegionTop(source: BlockLineSource): number | null {
+  const cursorRow = source.cursorRow;
+  if (cursorRow == null || !Number.isFinite(cursorRow)) return null;
+  const start = Math.min(cursorRow, source.length - 1);
+  const limit = Math.max(0, start - PROMPT_REGION_LOOKBACK_ROWS);
+  let seedRow: number | null = null;
+  for (let currentRow = start; currentRow >= limit; currentRow -= 1) {
+    const line = source.getLine(currentRow);
+    const text = line ? line.text() : '';
+    const glyph = firstGlyphOf(text);
+    if (glyph === MESSAGE_BULLET || THINKING_GLYPHS.has(glyph)) break;
+    if (isTabHeaderText(text)) seedRow = currentRow;
+  }
+  return seedRow;
 }
 
 function isBlankRow(line: BlockLineFacts | undefined): boolean {
@@ -184,17 +278,40 @@ export function findBlockAt(source: BlockLineSource, y: number): BlockRange | nu
   // Thinking / status lines ("✻ Cogitated for 16s") are not copyable.
   if (isThinkingRow(line)) return null;
 
+  // A live interactive prompt (an AskUserQuestion widget: tab header, question,
+  // options, hint) is not output the user copies - it is a form they are
+  // answering. Every row at or below the region top is suppressed, so no hover
+  // highlight, click-to-copy, or right-click "Copy Block" ever lands on an option
+  // row, the question text, the shaded selection, or the tab header.
+  const regionTop = findPromptRegionTop(source);
+  if (regionTop != null && y >= regionTop) return null;
+
+  // A tab-header row is itself never copyable, even when the cursor-anchored
+  // region is unavailable (its active tab's default-fg label would otherwise pass
+  // isContentRow and become a one-row text block).
+  if (isTabHeaderRow(line)) return null;
+
+  // The region top (when known) is an exclusive ceiling on downward expansion (the last
+  // row a block may include): no block may grow into the live widget. Without a region it
+  // is the buffer end.
+  const downLimit = regionTop != null ? regionTop - 1 : source.length - 1;
+
   // Message / tool block, delimited by "●" bullets. A block runs from its bullet
-  // down to (but not including) the next bullet, a thinking line, or a user
-  // prompt - so the bullet's sub-lines ("Searched...", "⎿ Added 1 line") and any
-  // code / diff it emitted stay in the same block. Takes precedence over the
-  // box / quote / text paths so a code block inside a message is not split out.
+  // down to (but not including) the next bullet, a thinking line, a user prompt,
+  // or a prompt tab-header - so the bullet's sub-lines ("Searched...", "⎿ Added 1
+  // line") and any code / diff it emitted stay in the same block. Takes precedence
+  // over the box / quote / text paths so a code block inside a message is not split
+  // out. A run of > MAX_MESSAGE_INTERIOR_BLANK_ROWS blank rows also ends the block,
+  // so a transiently-vanishing boundary during a live repaint cannot make the block
+  // swallow a screenful of blank rows.
   const messageStart = findMessageStart(source, y);
   if (messageStart != null) {
-    let endY = messageStart;
-    while (endY + 1 < source.length && !isMessageBoundary(source.getLine(endY + 1))) endY += 1;
-    while (endY > messageStart && isBlankRow(source.getLine(endY))) endY -= 1;
-    return { kind: 'message', startY: messageStart, endY };
+    const endY = expandDown(source, messageStart, downLimit, (next) => !isMessageBoundary(next));
+    // If the trimmed block ends above the hover row (a blank gulf or trailing
+    // blanks moved endY up), the pointer is not inside this message - fall through
+    // to the other classifiers, which return null for the blank gulf and the muted
+    // tip row below it. This is what neutralizes the "giant empty region".
+    if (y <= endY) return { kind: 'message', startY: messageStart, endY };
   }
 
   if (line.quoteBar) {
@@ -209,7 +326,7 @@ export function findBlockAt(source: BlockLineSource, y: number): BlockRange | nu
         break;
       }
     }
-    while (endY + 1 < source.length) {
+    while (endY + 1 <= downLimit) {
       const next = source.getLine(endY + 1);
       if (next?.quoteBar && next.quoteBar.column === column && next.quoteBar.fgKey === fgKey) {
         endY += 1;
@@ -232,7 +349,7 @@ export function findBlockAt(source: BlockLineSource, y: number): BlockRange | nu
         break;
       }
     }
-    while (endY + 1 < source.length) {
+    while (endY + 1 <= downLimit) {
       const next = source.getLine(endY + 1);
       const current = source.getLine(endY);
       if (next?.bgRun && current?.bgRun && bgRunsContinue(next.bgRun, current.bgRun)) {
@@ -247,18 +364,76 @@ export function findBlockAt(source: BlockLineSource, y: number): BlockRange | nu
   if (isContentRow(line)) {
     // A text message merges consecutive content rows AND the blank lines between
     // them (so a multi-paragraph reply is one block), bounded by decorated blocks,
-    // muted / "thinking" lines, and the buffer edges. Blanks absorbed at the ends
-    // are then trimmed off.
-    let startY = y;
-    let endY = y;
-    while (startY - 1 >= 0 && isMergeableRow(source.getLine(startY - 1))) startY -= 1;
-    while (endY + 1 < source.length && isMergeableRow(source.getLine(endY + 1))) endY += 1;
-    while (startY < endY && isBlankRow(source.getLine(startY))) startY += 1;
-    while (endY > startY && isBlankRow(source.getLine(endY))) endY -= 1;
-    return { kind: 'text', startY, endY };
+    // muted / "thinking" lines, the live-widget region, and the buffer edges. The
+    // same blank-run cap as the message path applies in BOTH directions, so a
+    // content row below a large blank gap does not crawl up through the gap and
+    // rebuild a giant block. Blanks absorbed at the ends are then trimmed off.
+    const startY = expandUp(source, y, 0, (previous) => isMergeableRow(previous));
+    // expandDown already trims trailing blanks; only leading blanks remain to trim.
+    const endY = expandDown(source, y, downLimit, (next) => isMergeableRow(next));
+    let trimmedStart = startY;
+    while (trimmedStart < endY && isBlankRow(source.getLine(trimmedStart))) trimmedStart += 1;
+    return { kind: 'text', startY: trimmedStart, endY };
   }
 
   return null;
+}
+
+/**
+ * Expand a block downward from `startY` while `accept(row)` holds and the row
+ * stays within `downLimit`, stopping early at a run of more than
+ * MAX_MESSAGE_INTERIOR_BLANK_ROWS consecutive blank rows and trimming any
+ * trailing blanks. Returns the last row that belongs to the block.
+ */
+function expandDown(
+  source: BlockLineSource,
+  startY: number,
+  downLimit: number,
+  accept: (row: BlockLineFacts | undefined) => boolean,
+): number {
+  let endY = startY;
+  let blankRun = 0;
+  while (endY + 1 <= downLimit) {
+    const next = source.getLine(endY + 1);
+    if (!accept(next)) break;
+    if (isBlankRow(next)) {
+      blankRun += 1;
+      if (blankRun > MAX_MESSAGE_INTERIOR_BLANK_ROWS) break;
+    } else {
+      blankRun = 0;
+    }
+    endY += 1;
+  }
+  while (endY > startY && isBlankRow(source.getLine(endY))) endY -= 1;
+  return endY;
+}
+
+/**
+ * Expand a block upward from `startY` while `accept(row)` holds and the row stays
+ * at or above `upLimit`, stopping early at a run of more than
+ * MAX_MESSAGE_INTERIOR_BLANK_ROWS consecutive blank rows. Returns the first row
+ * that belongs to the block (leading blanks are trimmed by the caller).
+ */
+function expandUp(
+  source: BlockLineSource,
+  startY: number,
+  upLimit: number,
+  accept: (row: BlockLineFacts | undefined) => boolean,
+): number {
+  let currentStart = startY;
+  let blankRun = 0;
+  while (currentStart - 1 >= upLimit) {
+    const previous = source.getLine(currentStart - 1);
+    if (!accept(previous)) break;
+    if (isBlankRow(previous)) {
+      blankRun += 1;
+      if (blankRun > MAX_MESSAGE_INTERIOR_BLANK_ROWS) break;
+    } else {
+      blankRun = 0;
+    }
+    currentStart -= 1;
+  }
+  return currentStart;
 }
 
 function bgRunsContinue(

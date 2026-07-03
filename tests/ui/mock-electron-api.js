@@ -134,7 +134,7 @@
     skipDeleteConfirm: false,
     skipBoardConfigConfirm: false,
     autoFocusIdleSession: false,
-    terminalBlockCopy: true,
+    terminalBlockCopy: false,
     windowLightDismiss: 'single',
     autoNameAskedTaskIds: [],
     autoNameRateLimitPerHour: 60,

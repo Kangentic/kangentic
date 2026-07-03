@@ -1571,8 +1571,9 @@ export interface AppConfig {
   skipDeleteConfirm: boolean;
   skipBoardConfigConfirm: boolean;
   autoFocusIdleSession: boolean;
-  /** Show the hover highlight, copy button, click-to-copy, and right-click "Copy Block"
-   *  affordance over quote / code / message blocks in the terminal. Default `true`. */
+  /** Show the hover highlight, copy button, and right-click "Copy Block" affordance over
+   *  quote / code / message blocks in the terminal (never over a live interactive prompt or
+   *  still-streaming output). Default `false`. */
   terminalBlockCopy: boolean;
   /** Click-outside dismiss policy for modeless task-detail windows. Default `single`. */
   windowLightDismiss: WindowLightDismiss;
@@ -1748,7 +1749,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   skipDeleteConfirm: false,
   skipBoardConfigConfirm: false,
   autoFocusIdleSession: false,
-  terminalBlockCopy: true,
+  terminalBlockCopy: false,
   windowLightDismiss: 'single',
   autoNameAskedTaskIds: [],
   autoNameRateLimitPerHour: 60,

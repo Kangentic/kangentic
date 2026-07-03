@@ -106,9 +106,17 @@ export function createBufferLineSource(terminal: Terminal): BlockLineSource {
   const cols = terminal.cols;
   const reusableCell = buffer.getNullCell();
 
+  // Absolute row of the live cursor: `cursorY` is relative to `baseY` (0..rows-1),
+  // so `baseY + cursorY` is where an Ink-based TUI parks the caret - at / below the
+  // interactive widget it is painting. Only surfaced when finite (a partial buffer
+  // or a fake with no cursor position must not yield NaN).
+  const absoluteCursorRow = buffer.baseY + buffer.cursorY;
+  const cursorRow = Number.isFinite(absoluteCursorRow) ? absoluteCursorRow : undefined;
+
   return {
     length: buffer.length,
     cols,
+    cursorRow,
     getLine(y: number): BlockLineFacts | undefined {
       const line = buffer.getLine(y);
       if (!line) return undefined;
