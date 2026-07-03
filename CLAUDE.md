@@ -203,6 +203,7 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `text-formatting.md` - no em-dashes (U+2014) or `--` as punctuation in authored text.
 - `typescript-style.md` - TypeScript strict mode; no `any` types; full descriptive names.
 - `no-personal-info.md` - no usernames, emails, or machine paths in committed code (repo is public).
+- `no-superpowers-docs.md` - never commit Superpowers scratch or process docs (plans, specs, briefs); they are gitignored.
 
 **Path-scoped rules (load with their subsystem):**
 - `task-lifecycle-lock.md` - wrap per-task async mutation in `withTaskLock` (`src/main/ipc/`).

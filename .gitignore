@@ -42,8 +42,10 @@
 /warp.cmd
 /warp.ps1
 
-# Superpowers scratch files (progress ledgers, briefs, diffs, reports)
+# Superpowers scratch and process docs (ledgers, briefs, diffs, reports, plans, specs).
+# Process artifacts, not project docs. See .claude/rules/no-superpowers-docs.md.
 .superpowers/
+docs/superpowers/
 
 # Build output
 dist/
