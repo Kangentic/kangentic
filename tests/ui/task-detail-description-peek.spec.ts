@@ -49,6 +49,14 @@ const EMPTY_SESSION_ID = 'sess-desc-peek-empty';
 const SUSPENDED_TASK_ID = 'task-desc-peek-suspended';
 const SUSPENDED_SESSION_ID = 'sess-desc-peek-suspended';
 
+// Fourth fixture task: hasDescriptionContent is true, but the session is
+// QUEUED, so displayState.kind === 'queued'. canShowDescription's OTHER
+// exclusion clause (`!== 'queued'`) is a separate boolean branch from the
+// suspended one above and needs its own coverage - the queued body branch
+// renders QueuedPlaceholder and never consumes descriptionPeekOpen either.
+const QUEUED_TASK_ID = 'task-desc-peek-queued';
+const QUEUED_SESSION_ID = 'sess-desc-peek-queued';
+
 const preConfig = `
   window.__mockPreConfigure(function (state) {
     var ts = new Date().toISOString();
@@ -159,6 +167,39 @@ const preConfig = `
       session_id: '${SUSPENDED_SESSION_ID}',
       worktree_path: '/mock/worktrees/desc-peek-suspended',
       branch_name: 'feature/desc-peek-suspended',
+      pr_number: null,
+      pr_url: null,
+      base_branch: 'main',
+      archived_at: null,
+      created_at: ts,
+      updated_at: ts,
+    });
+
+    // Queued session (waiting for a concurrency slot) so hasSessionContext is
+    // true and the task has a description, but canShowDescription must still
+    // exclude the queued kind (a separate boolean clause from suspended).
+    state.sessions.push({
+      id: '${QUEUED_SESSION_ID}',
+      taskId: '${QUEUED_TASK_ID}',
+      projectId: '${PROJECT_ID}',
+      pid: null,
+      status: 'queued',
+      shell: 'bash',
+      cwd: '/mock/desc-peek-test',
+      startedAt: ts,
+      exitCode: null,
+    });
+
+    state.tasks.push({
+      id: '${QUEUED_TASK_ID}',
+      title: 'Queued Description Task',
+      description: 'A description that should stay hidden while queued',
+      swimlane_id: laneIds['Executing'],
+      position: 3,
+      agent: 'claude',
+      session_id: '${QUEUED_SESSION_ID}',
+      worktree_path: '/mock/worktrees/desc-peek-queued',
+      branch_name: 'feature/desc-peek-queued',
       pr_number: null,
       pr_url: null,
       base_branch: 'main',
@@ -335,6 +376,92 @@ test.describe('Task Detail description peek', () => {
     // No "Show description" item in the kebab menu either.
     await dialog.locator('[title="Actions"]').click();
     await expect(page.locator('text=Show description')).toHaveCount(0);
+
+    // Close the dialog
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('pill and kebab item are absent when the session is queued', async () => {
+    // Open the task detail dialog for the task with a non-empty description
+    // (hasDescriptionContent is true) but a QUEUED session (displayState.kind
+    // === 'queued'). canShowDescription has two separate exclusion clauses
+    // (`!== 'queued'` and `!== 'suspended'`) - the suspended clause is covered
+    // above, this covers the queued clause, which the queued body branch
+    // (QueuedPlaceholder) never consumes either.
+    const card = page
+      .locator('[data-swimlane-name="Executing"]')
+      .locator('text=Queued Description Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    // Give the header time to render before asserting a negative (no element
+    // ever appears rather than "hasn't appeared yet").
+    await expect(dialog.locator('[title="Actions"]')).toBeVisible({ timeout: 8000 });
+
+    // No description peek pill in the header, despite the task having a description.
+    await expect(page.locator('[data-testid="description-peek-toggle"]')).toHaveCount(0);
+
+    // No "Show description" item in the kebab menu either.
+    await dialog.locator('[title="Actions"]').click();
+    await expect(page.locator('text=Show description')).toHaveCount(0);
+
+    // Close the dialog
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('toggling the peek does not remount the terminal', async () => {
+    // Load-bearing acceptance criterion for this feature: the description
+    // strip must reveal/hide ABOVE the terminal without tearing the terminal
+    // down. TaskDetailBody renders `{descriptionBar}` as a sibling BEFORE the
+    // `<TerminalTab key={sessionId}>` container (not a wrapper around it), so
+    // toggling descriptionPeekOpen must never change the terminal's position
+    // or key in the tree. Proven here via DOM node identity: a custom probe
+    // attribute stamped on the live xterm textarea survives the toggle only
+    // if React reused the same node (no unmount/remount of TerminalTab).
+    const card = page
+      .locator('[data-swimlane-name="Executing"]')
+      .locator('text=Description Peek Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    // Lift the LaunchOverlay so xterm actually calls terminal.open() and
+    // .xterm-helper-textarea attaches (mirrors task-detail-maximize.spec.ts's
+    // maximize-focus-restore test, the established pattern for this mock).
+    await page.evaluate((sessionId) => {
+      const stores = (window as unknown as {
+        __zustandStores?: { session?: { getState: () => { markFirstOutput: (id: string) => void } } };
+      }).__zustandStores;
+      stores?.session?.getState().markFirstOutput(sessionId);
+    }, SESSION_ID);
+
+    const xtermTextarea = dialog.locator('.xterm-helper-textarea').first();
+    await xtermTextarea.waitFor({ state: 'attached', timeout: 8000 });
+
+    const PROBE_VALUE = 'peek-toggle-stability-probe';
+    await xtermTextarea.evaluate(
+      (el, probeValue) => el.setAttribute('data-remount-probe', probeValue),
+      PROBE_VALUE,
+    );
+    const probedTextarea = dialog.locator(`.xterm-helper-textarea[data-remount-probe="${PROBE_VALUE}"]`);
+
+    // Open the peek - description appears, probed node must still be the same one.
+    const descriptionPill = page.locator('[data-testid="description-peek-toggle"]');
+    await descriptionPill.click();
+    await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).toBeVisible({ timeout: 8000 });
+    await expect(probedTextarea).toHaveCount(1);
+
+    // Close the peek - description hides, probed node still unchanged.
+    await descriptionPill.click();
+    await expect(dialog.locator(`text=${TASK_DESCRIPTION}`)).not.toBeVisible({ timeout: 8000 });
+    await expect(probedTextarea).toHaveCount(1);
 
     // Close the dialog
     await page.keyboard.press('Control+Shift+W');
