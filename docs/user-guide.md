@@ -178,6 +178,12 @@ The Changes panel is available for all tasks, whether or not worktrees are enabl
 
 When the dialog is open, it claims the terminal session. The bottom panel releases it. When you close the dialog, the bottom panel reclaims the session.
 
+### Commit Graph Pane
+
+The Graph tab renders the task branch's commit history as a visual DAG: commit nodes down a vertical axis, lane columns for parallel branches, and edges connecting each commit to its parents. Each row shows the short SHA, subject, author, and relative time. The branch tip is marked `HEAD`, the fork point is labelled with the base branch, and a linked pull request's head commit is tagged with its PR number.
+
+Like the Changes panel, the graph is available whether or not a session is running (it reads git directly) and refreshes live as you commit or the branch's refs change. It shares the right-panel slot with the Changes and Browser panes, so opening one closes the others. History is capped at the most recent 200 commits, with a note when older commits are trimmed.
+
 ### Browser Pane
 
 Tasks can host an embedded browser inside the task detail dialog. Use it to preview your dev server, capture screenshots with annotations, and submit framed prompts back to the agent without leaving Kangentic. The pane uses a shared Electron webview partition so cookies and storage persist across all task browsers.
@@ -618,6 +624,7 @@ Task detail (whichever panel is open):
 - **Mod+Shift+W** - Close the command terminal, the task detail dialog, or a create dialog (New Task / New Backlog Task). Escape also closes any modal.
 - **Mod+Shift+B** - Toggle the browser pane inside the task detail dialog
 - **Mod+Shift+G** - Toggle the changes (diff) panel inside the task detail dialog
+- **Mod+Shift+L** - Toggle the commit graph pane inside the task detail dialog
 - **Middle-click the window header** - Close a modeless task-detail window (default `Mouse:Middle`; routes through the same unsaved-edits guard as the close button)
 
 Windows (modeless task-detail windows):

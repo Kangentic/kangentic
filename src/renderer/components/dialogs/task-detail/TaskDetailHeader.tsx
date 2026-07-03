@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, Circle, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2 } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, Circle, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, Waypoints } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
@@ -133,6 +133,9 @@ interface TaskDetailHeaderProps {
   canShowBrowser: boolean;
   browserOpen: boolean;
   onToggleBrowser: () => void;
+  canShowGraph: boolean;
+  graphOpen: boolean;
+  onToggleGraph: () => void;
   isMaximized: boolean;
   onToggleMaximized: () => void;
   /** When provided (the window is tiled), render a "pop out" control that floats
@@ -175,6 +178,9 @@ export function TaskDetailHeader({
   canShowBrowser,
   browserOpen,
   onToggleBrowser,
+  canShowGraph,
+  graphOpen,
+  onToggleGraph,
   isMaximized,
   onToggleMaximized,
   onUndock,
@@ -194,11 +200,12 @@ export function TaskDetailHeader({
   const closeCombo = useFormattedCombo('panel.close');
   const browserCombo = useFormattedCombo('taskDetail.toggleBrowser');
   const changesCombo = useFormattedCombo('taskDetail.toggleChanges');
+  const graphCombo = useFormattedCombo('taskDetail.toggleGraph');
 
   // Quick-access pills, highest priority collapses LAST. The title is reserved only
   // up to a ~50ch floor (useHeaderPillOverflow); these compete for whatever is left
   // above the floor. Among the built-in defaults the order is Browser -> PR ->
-  // Changes -> Project -> Commands (Browser drops first). Custom header shortcuts
+  // Graph -> Changes -> Project -> Commands (Browser drops first). Custom header shortcuts
   // rank LOWEST (priority 10), so they fold BEFORE any built-in default - an
   // unbounded number of shortcuts can never bury the defaults. A folded header
   // shortcut that is not already a menu shortcut folds into the kebab.
@@ -207,13 +214,14 @@ export function TaskDetailHeader({
     if (!isEditing) specs.push({ id: 'commands', priority: 50 });
     if (task.worktree_path || projectPath) specs.push({ id: 'folder', priority: 40 });
     if (canShowChanges) specs.push({ id: 'changes', priority: 30 });
+    if (canShowGraph) specs.push({ id: 'graph', priority: 28 });
     if (task.pr_url) specs.push({ id: 'pr', priority: 25 });
     if (canShowBrowser) specs.push({ id: 'browser', priority: 20 });
     for (const action of headerShortcuts) {
       specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
     }
     return specs;
-  }, [isEditing, task.worktree_path, task.pr_url, projectPath, canShowChanges, canShowBrowser, headerShortcuts]);
+  }, [isEditing, task.worktree_path, task.pr_url, projectPath, canShowChanges, canShowGraph, canShowBrowser, headerShortcuts]);
 
   const hiddenPillIds = useHeaderPillOverflow(headerRef, leadingRef, trailingRef, titleSpanRef, pillsRef, pillSpecs);
   const showPill = (id: string) => !hiddenPillIds.has(id);
@@ -396,6 +404,26 @@ export function TaskDetailHeader({
             </div>
           )}
 
+          {/* Commit graph toggle pill */}
+          {showPill('graph') && canShowGraph && (
+            <div data-pill-id="graph" className="flex-shrink-0">
+              <Pill
+                shape="square"
+                onClick={onToggleGraph}
+                className={`flex-shrink-0 transition-colors border ${
+                  graphOpen
+                    ? 'bg-accent/15 text-accent-fg border-accent/30'
+                    : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
+                }`}
+                title={`${graphOpen ? 'Hide' : 'Show'} commit graph (${graphCombo})`}
+                data-testid="graph-toggle"
+              >
+                <Waypoints size={14} />
+                Graph
+              </Pill>
+            </div>
+          )}
+
           {/* Browser toggle pill */}
           {showPill('browser') && canShowBrowser && (
             <div data-pill-id="browser" className="flex-shrink-0">
@@ -472,6 +500,9 @@ export function TaskDetailHeader({
               canShowBrowser={canShowBrowser}
               browserOpen={browserOpen}
               onToggleBrowser={onToggleBrowser}
+              canShowGraph={canShowGraph}
+              graphOpen={graphOpen}
+              onToggleGraph={onToggleGraph}
             />
           )}
         </KebabMenu>
@@ -538,6 +569,9 @@ interface TaskDetailKebabItemsProps {
   canShowBrowser: boolean;
   browserOpen: boolean;
   onToggleBrowser: () => void;
+  canShowGraph: boolean;
+  graphOpen: boolean;
+  onToggleGraph: () => void;
 }
 
 function TaskDetailKebabItems({
@@ -564,6 +598,9 @@ function TaskDetailKebabItems({
   canShowBrowser,
   browserOpen,
   onToggleBrowser,
+  canShowGraph,
+  graphOpen,
+  onToggleGraph,
 }: TaskDetailKebabItemsProps) {
   const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
   const [showCommandsSubmenu, setShowCommandsSubmenu] = useState(false);
@@ -640,6 +677,15 @@ function TaskDetailKebabItems({
           icon={<GitCompare size={14} />}
           label={changesOpen ? 'Hide changes' : 'Show changes'}
           onClick={() => { closeAll(); onToggleChanges(); }}
+        />
+      )}
+
+      {/* Commit graph (parity with the header Graph pill) */}
+      {canShowGraph && (
+        <KebabMenuItem
+          icon={<Waypoints size={14} />}
+          label={graphOpen ? 'Hide commit graph' : 'Show commit graph'}
+          onClick={() => { closeAll(); onToggleGraph(); }}
         />
       )}
 

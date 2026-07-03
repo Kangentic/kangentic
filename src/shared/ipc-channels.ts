@@ -160,6 +160,7 @@ export const IPC = {
   GIT_DIFF_CHANGED: 'git:diffChanged',
   GIT_CHECK_PENDING_CHANGES: 'git:checkPendingChanges',
   GIT_BRANCH_SUMMARY: 'git:branchSummary',
+  GIT_COMMIT_GRAPH: 'git:commitGraph',
 
   // Dialog
   DIALOG_SELECT_FOLDER: 'dialog:selectFolder',

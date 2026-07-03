@@ -295,6 +295,7 @@ const api: ElectronAPI = {
     unsubscribeDiff: (worktreePath) => ipcRenderer.send(IPC.GIT_DIFF_UNSUBSCRIBE, worktreePath),
     checkPendingChanges: (input) => ipcRenderer.invoke(IPC.GIT_CHECK_PENDING_CHANGES, input),
     branchSummary: (input) => ipcRenderer.invoke(IPC.GIT_BRANCH_SUMMARY, input),
+    commitGraph: (input) => ipcRenderer.invoke(IPC.GIT_COMMIT_GRAPH, input),
     onDiffChanged: (callback) => {
       const handler = () => callback();
       ipcRenderer.on(IPC.GIT_DIFF_CHANGED, handler);

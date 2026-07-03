@@ -4,9 +4,10 @@ import { IPC } from '../../../shared/ipc-channels';
 import { DiffService } from '../../git/diff-service';
 import { readWorktreeHead } from '../../git/worktree-head';
 import { getBranchSummary } from '../../git/branch-summary';
+import { getCommitGraph } from '../../git/commit-graph';
 import { fetchAllRemotesIfStale } from '../../git/fetch-throttle';
 import { countLocalOnlyCommits } from '../../git/local-only-commits';
-import type { GitBranchSummaryInput, GitDiffFilesInput, GitFileContentInput, GitPendingChangesInput, GitPendingChangesResult, PRState } from '../../../shared/types';
+import type { GitBranchSummaryInput, GitCommitGraphInput, GitDiffFilesInput, GitFileContentInput, GitPendingChangesInput, GitPendingChangesResult, PRState } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
 /**
@@ -133,6 +134,10 @@ export function registerGitDiffHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.GIT_BRANCH_SUMMARY, (_, input: GitBranchSummaryInput) => {
     return getBranchSummary(input);
+  });
+
+  ipcMain.handle(IPC.GIT_COMMIT_GRAPH, (_, input: GitCommitGraphInput) => {
+    return getCommitGraph(input);
   });
 
   ipcMain.on(IPC.GIT_DIFF_UNSUBSCRIBE, (_, worktreePath: string) => {

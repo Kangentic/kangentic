@@ -1972,6 +1972,15 @@
         }
         return { currentBranch: null, ahead: 0, behind: 0, lastCommit: null };
       },
+      commitGraph: async function () {
+        // Test hook: seed the commit-graph pane via window.__mockCommitGraph =
+        // { commits: [{ hash, shortHash, parents, authorName, authorTimestamp, subject }],
+        //   tipHash, baseHash, mergeBaseHash, currentBranch, truncated }.
+        if (typeof window !== 'undefined' && window.__mockCommitGraph) {
+          return window.__mockCommitGraph;
+        }
+        return { commits: [], tipHash: null, baseHash: null, mergeBaseHash: null, currentBranch: null, truncated: false };
+      },
     },
 
     dialog: {

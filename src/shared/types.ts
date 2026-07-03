@@ -224,6 +224,8 @@ export interface TaskDetailViewState {
   changesOpen?: boolean;
   /** Browser side panel open. */
   browserOpen?: boolean;
+  /** Commit graph side panel open. */
+  graphOpen?: boolean;
   /** Changes panel split-vs-expanded mode. */
   changesViewMode?: 'split' | 'expanded';
   /** Selected diff file path in the Changes panel. */
@@ -1088,6 +1090,57 @@ export interface GitBranchSummaryResult {
   behind: number;
   /** The HEAD tip commit, or null on an unborn branch / probe failure. */
   lastCommit: GitLastCommit | null;
+}
+
+/**
+ * Input for the commit-graph reader that powers the task-detail Graph pane.
+ * Local-only and cheap (no fetch / `gh` lookup), mirroring {@link
+ * GitBranchSummaryInput}: it runs on every pane open and fs.watch fire.
+ */
+export interface GitCommitGraphInput {
+  worktreePath?: string;
+  projectPath: string;
+  baseBranch: string;
+  /** Hard cap on commits returned (defaults to 200). Older history is truncated. */
+  maxCommits?: number;
+  /** Base-branch ancestors below the merge-base to include for context (defaults to 5). */
+  baseContextCount?: number;
+}
+
+/** One commit node in the graph, with the parent links that form the DAG edges. */
+export interface GitCommitGraphCommit {
+  /** Full 40-char commit hash (`git log --format=%H`). */
+  hash: string;
+  /** Abbreviated commit hash (`%h`). */
+  shortHash: string;
+  /** Full parent hashes (`%P`); empty for a root commit, 2+ for a merge. */
+  parents: string[];
+  /** Author name (`%an`). */
+  authorName: string;
+  /** Author date as a strict ISO 8601 string (`%aI`); the renderer formats it. */
+  authorTimestamp: string;
+  /** Commit subject, first line only (`%s`). */
+  subject: string;
+}
+
+/**
+ * Commit-graph result: topologically-ordered commits (newest first) plus the
+ * resolved anchor SHAs the renderer uses to mark the tip, base ref, and fork
+ * point. Fails SAFE: any git error yields an all-empty/null result so the pane
+ * simply shows an empty state rather than surfacing an error.
+ */
+export interface GitCommitGraphResult {
+  commits: GitCommitGraphCommit[];
+  /** HEAD commit (full hash), or null on probe failure / unborn branch. */
+  tipHash: string | null;
+  /** Resolved base ref commit (origin/<base> or <base>), or null if unresolved. */
+  baseHash: string | null;
+  /** merge-base(base, HEAD) - the fork point, or null if unresolved. */
+  mergeBaseHash: string | null;
+  /** Live HEAD branch, or null on a detached HEAD. */
+  currentBranch: string | null;
+  /** True when history exceeded `maxCommits` and the tail was dropped. */
+  truncated: boolean;
 }
 
 /**
@@ -2989,6 +3042,7 @@ export interface ElectronAPI {
     onDiffChanged: (callback: () => void) => () => void;
     checkPendingChanges: (input: GitPendingChangesInput) => Promise<GitPendingChangesResult>;
     branchSummary: (input: GitBranchSummaryInput) => Promise<GitBranchSummaryResult>;
+    commitGraph: (input: GitCommitGraphInput) => Promise<GitCommitGraphResult>;
   };
 
   // Dialog

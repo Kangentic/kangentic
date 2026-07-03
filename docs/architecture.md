@@ -270,7 +270,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `shell:showItemInFolder` | invoke | Reveal a file or directory in the native file manager (Explorer on Windows, Finder on macOS); the path is normalized to platform separators before dispatch |
 | `shell:exec` | invoke | Execute shell command |
 
-### Git (9 channels)
+### Git (10 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `git:detect` | invoke | Detect git installation (path, version, minimum version check) |
@@ -282,6 +282,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `git:diffChanged` | on | Debounced event fired when watched worktree files or git metadata change on disk |
 | `git:checkPendingChanges` | invoke | Check whether a path has uncommitted or unpushed changes |
 | `git:branchSummary` | invoke | Lightweight branch summary for the Changes panel header: current branch, ahead/behind commit counts vs the base branch, and the HEAD tip commit (hash, subject, timestamp). Cheap enough to run on every panel open and watcher fire |
+| `git:commitGraph` | invoke | Topo-ordered commit history (commits with parent links plus resolved tip / base / merge-base anchors) for the task-detail commit-graph pane. Local-only and fail-safe, like `git:branchSummary` |
 
 ### Dialog (1 channel)
 | Channel | Pattern | Purpose |

@@ -40,6 +40,8 @@ export interface TaskChangesPanelSlice {
   dividerRatio: Record<string, number>;
   /** Task IDs whose Browser pane is open (persists across dialog open/close). */
   browserOpenTasks: Set<string>;
+  /** Task IDs whose commit-graph pane is open (persists across dialog open/close). */
+  graphOpenTasks: Set<string>;
   /**
    * Entity IDs whose dialog is maximized (persists across dialog open/close).
    * Keyed by task ID for the task detail dialog, and by a non-task sentinel id
@@ -63,6 +65,7 @@ export interface TaskChangesPanelSlice {
   setChangesViewMode: (taskId: string, mode: 'split' | 'expanded') => void;
   setDividerRatio: (taskId: string, ratio: number) => void;
   toggleBrowserOpen: (taskId: string) => void;
+  toggleGraphOpen: (taskId: string) => void;
   toggleMaximized: (taskId: string) => void;
   /**
    * Seed the per-task detail-view fields above from each task's persisted
@@ -107,6 +110,7 @@ function buildDetailViewBlob(state: SessionStore, taskId: string): TaskDetailVie
   if (ratio !== undefined) blob.dividerRatio = ratio;
   if (state.changesOpenTasks.has(taskId)) blob.changesOpen = true;
   if (state.browserOpenTasks.has(taskId)) blob.browserOpen = true;
+  if (state.graphOpenTasks.has(taskId)) blob.graphOpen = true;
   const viewMode = state.changesViewMode[taskId];
   if (viewMode !== undefined) blob.changesViewMode = viewMode;
   const selectedFile = state.changesSelectedFile[taskId];
@@ -168,6 +172,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   changesViewMode: {},
   dividerRatio: {},
   browserOpenTasks: new Set<string>(),
+  graphOpenTasks: new Set<string>(),
   maximizedTasks: new Set<string>(),
   hydratedDetailViewTasks: new Set<string>(),
 
@@ -193,6 +198,17 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       next.add(taskId);
     }
     set({ browserOpenTasks: next });
+    scheduleDetailViewSave(taskId, get);
+  },
+
+  toggleGraphOpen: (taskId) => {
+    const next = new Set(get().graphOpenTasks);
+    if (next.has(taskId)) {
+      next.delete(taskId);
+    } else {
+      next.add(taskId);
+    }
+    set({ graphOpenTasks: next });
     scheduleDetailViewSave(taskId, get);
   },
 
@@ -278,6 +294,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
 
     const changesOpenTasks = new Set(get().changesOpenTasks);
     const browserOpenTasks = new Set(get().browserOpenTasks);
+    const graphOpenTasks = new Set(get().graphOpenTasks);
     const changesViewMode = { ...get().changesViewMode };
     const changesSelectedFile = { ...get().changesSelectedFile };
     const changesViewedFiles = { ...get().changesViewedFiles };
@@ -295,6 +312,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       if (blob.dividerRatio !== undefined) dividerRatio[task.id] = blob.dividerRatio;
       if (blob.changesOpen) changesOpenTasks.add(task.id);
       if (blob.browserOpen) browserOpenTasks.add(task.id);
+      if (blob.graphOpen) graphOpenTasks.add(task.id);
       if (blob.changesViewMode !== undefined) changesViewMode[task.id] = blob.changesViewMode;
       if (blob.changesSelectedFile !== undefined) changesSelectedFile[task.id] = blob.changesSelectedFile;
       if (blob.changesViewedFiles && blob.changesViewedFiles.length > 0) {
@@ -308,6 +326,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       hydratedDetailViewTasks,
       changesOpenTasks,
       browserOpenTasks,
+      graphOpenTasks,
       changesViewMode,
       changesSelectedFile,
       changesViewedFiles,
