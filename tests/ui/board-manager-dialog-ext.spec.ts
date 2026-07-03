@@ -590,6 +590,52 @@ test.describe('BoardManagerDialog extended', () => {
     await expect(overviewTab).toHaveAttribute('aria-selected', 'true');
   });
 
+  // ── Rail arrow-key navigation ─────────────────────────────────────────────
+  //
+  // ColumnRail's own onKeyDown (scoped to the `role="tablist"` wrapper, so it
+  // only fires while focus is somewhere inside the rail) walks the same
+  // [overview, ...columns] list as the Mod+PageDown/PageUp keybinding above,
+  // with wraparound - but is keyed to ArrowUp/ArrowDown and DOM focus rather
+  // than a document-level shortcut. It is explicitly suppressed while a drag
+  // handle is focused, so @dnd-kit's KeyboardSensor can own the arrows during
+  // a keyboard-initiated sort instead of the rail also reacting to them.
+
+  test('ArrowUp/ArrowDown navigate the rail with wraparound; suppressed when a drag handle is focused', async () => {
+    await openManagerByHeader('To Do');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+    const todoTab = dialog.locator('[data-testid="board-manager-tab"][data-tab-name="To Do"]');
+    const planningTab = dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Planning"]');
+    const overviewTab = dialog.locator('[data-testid="board-manager-tab-all"]');
+
+    // Clicking focuses the row's button (Chromium focuses on click), which is
+    // what puts DOM focus inside the rail for the keydown to bubble from.
+    await todoTab.click();
+    await expect(todoTab).toHaveAttribute('aria-selected', 'true');
+
+    // To Do is laneOrder[0]; navIds = [overview, To Do, Planning, ...].
+    await page.keyboard.press('ArrowDown');
+    await expect(planningTab).toHaveAttribute('aria-selected', 'true');
+
+    await page.keyboard.press('ArrowUp');
+    await expect(todoTab).toHaveAttribute('aria-selected', 'true');
+
+    // Wrap up past To Do lands on the overview entry.
+    await page.keyboard.press('ArrowUp');
+    await expect(overviewTab).toHaveAttribute('aria-selected', 'true');
+
+    // Re-select To Do, then focus Planning's drag handle. Arrow keys must be
+    // a no-op here - the guard blocks rail navigation while a handle is
+    // focused, and no drag was activated (that needs Space/Enter first), so
+    // the active tab must stay exactly where it was.
+    await todoTab.click();
+    const planningHandle = planningTab.locator('xpath=../*[@data-drag-handle]');
+    await planningHandle.focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(todoTab).toHaveAttribute('aria-selected', 'true');
+    await expect(planningTab).toHaveAttribute('aria-selected', 'false');
+  });
+
   // ── Drag-to-reorder ──────────────────────────────────────────────────────
   //
   // The rail reorders via @dnd-kit. To Do is pinned first (no handle, outside the
