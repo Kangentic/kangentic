@@ -16,7 +16,12 @@ const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}
 async function launchWithState(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  // Wide viewport so the task-detail window (a fraction of the viewport) has a
+  // roomy header: the Description pill is the FIRST built-in to fold into the
+  // kebab when the header is tight, and these tests assert the PILL itself, so
+  // the header must have room for every quick-action pill (Commands, Description,
+  // Folder, Changes, Browser) at once.
+  const context = await browser.newContext({ viewport: { width: 2560, height: 1080 } });
   const page = await context.newPage();
 
   await page.addInitScript({ path: MOCK_SCRIPT });

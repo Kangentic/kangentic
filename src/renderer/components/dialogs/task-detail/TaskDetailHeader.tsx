@@ -204,15 +204,19 @@ export function TaskDetailHeader({
 
   // Quick-access pills, highest priority collapses LAST. The title is reserved only
   // up to a ~50ch floor (useHeaderPillOverflow); these compete for whatever is left
-  // above the floor. Among the built-in defaults the order is Browser -> PR ->
-  // Changes -> Project -> Description -> Commands (Browser drops first). Custom header shortcuts
+  // above the floor. Among the built-in defaults the order is Description -> Browser ->
+  // PR -> Changes -> Project -> Commands (Description drops first): the description peek
+  // is a secondary affordance, so it yields the header before the core Browser / Changes /
+  // PR actions and stays reachable in the kebab (and via its hotkey). Custom header shortcuts
   // rank LOWEST (priority 10), so they fold BEFORE any built-in default - an
   // unbounded number of shortcuts can never bury the defaults. A folded header
   // shortcut that is not already a menu shortcut folds into the kebab.
   const pillSpecs = useMemo<HeaderPillSpec[]>(() => {
     const specs: HeaderPillSpec[] = [];
     if (!isEditing) specs.push({ id: 'commands', priority: 50 });
-    if (canShowDescription) specs.push({ id: 'description', priority: 45 });
+    // Lowest built-in priority (just above custom shortcuts at 10) so the peek folds
+    // into the kebab first and never displaces the Browser / Changes / PR pills.
+    if (canShowDescription) specs.push({ id: 'description', priority: 15 });
     if (task.worktree_path || projectPath) specs.push({ id: 'folder', priority: 40 });
     if (canShowChanges) specs.push({ id: 'changes', priority: 30 });
     if (task.pr_url) specs.push({ id: 'pr', priority: 25 });
