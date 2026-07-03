@@ -1,17 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Layers, Plus, Sliders, Bot, Zap, History,
+  Layers, Sliders, Bot, Zap, History,
   Trash2, RotateCcw, Palette, ChevronRight, X,
 } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
+import { useSessionStore } from '../../stores/session-store';
 import { useToastStore } from '../../stores/toast-store';
 import { BaseDialog } from './BaseDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { IconPickerDialog } from './IconPickerDialog';
 import { ModelCombobox } from './ModelCombobox';
+import { maximizedDialogLayout, MaximizeToggleButton } from './dialog-maximize';
+import { ColumnRail, ALL_COLUMNS_ID, type RailRow } from './board-manager/ColumnRail';
+import { ColumnsOverview, formatModelName, type OverviewRow } from './board-manager/ColumnsOverview';
+import { Pill } from '../Pill';
 import { ICON_REGISTRY, ROLE_DEFAULTS, getUsedIcons } from '../../utils/swimlane-icons';
 import { Select } from '../settings/shared';
 import { ToggleCard } from '../ToggleCard';
@@ -31,6 +36,9 @@ import {
   type SwimlaneCreateInput,
   type SwimlaneUpdateInput,
 } from '../../../shared/types';
+
+/** Sentinel entity id keying this dialog's maximize flag in the session store. */
+const BOARD_MANAGER_ENTITY_ID = 'board-manager-dialog';
 
 const PRESET_COLORS = [
   '#6b7280', '#ef4444', '#f43f5e', '#f97316',
@@ -80,6 +88,79 @@ export function hasOverride(_draft: Swimlane, _section: SectionId): boolean {
   return false;
 }
 
+/**
+ * Reconcile the local `laneOrder` against a fresh store snapshot when the store
+ * changes. When no local drag is in flight (`hasLocalReorder` false) the dialog
+ * adopts the store's position order, re-inserting any unsaved `new:` drafts just
+ * before Done (the historical behavior). When a local drag IS in flight it
+ * PRESERVES the user's order: it drops ids the store no longer has, keeps `new:`
+ * drafts in place, and appends any never-seen store ids (created elsewhere) just
+ * before Done. This is the risk-7 guard: without it, a store refresh (loadBoard
+ * HMR re-sync, config-watcher apply, another surface's reorder, or the save
+ * flow's own createSwimlane push) would re-sort by position and clobber the
+ * unsaved reorder.
+ */
+export function reconcileLaneOrder(
+  previousOrder: string[],
+  swimlanes: Swimlane[],
+  hasLocalReorder: boolean,
+): string[] {
+  const sorted = [...swimlanes].sort((a, b) => a.position - b.position).map((lane) => lane.id);
+  if (!hasLocalReorder) {
+    const newIds = previousOrder.filter((id) => id.startsWith(NEW_DRAFT_PREFIX));
+    if (newIds.length === 0) return sorted;
+    const result = [...sorted];
+    const doneIndex = result.findIndex((id) => swimlanes.find((lane) => lane.id === id)?.role === 'done');
+    const insertAt = doneIndex >= 0 ? doneIndex : result.length;
+    // Insert all drafts in one splice so their relative order is preserved. A
+    // per-draft splice at the fixed `insertAt` would land each one before the
+    // previous, silently reversing two or more newly-added columns.
+    const missingNewIds = newIds.filter((id) => !result.includes(id));
+    result.splice(insertAt, 0, ...missingNewIds);
+    return result;
+  }
+  const storeIds = new Set(sorted);
+  const kept = previousOrder.filter((id) => id.startsWith(NEW_DRAFT_PREFIX) || storeIds.has(id));
+  const known = new Set(kept);
+  const incoming = sorted.filter((id) => !known.has(id));
+  if (incoming.length === 0) return kept;
+  const result = [...kept];
+  const doneIndex = result.findIndex((id) => swimlanes.find((lane) => lane.id === id)?.role === 'done');
+  const insertAt = doneIndex >= 0 ? doneIndex : result.length;
+  result.splice(insertAt, 0, ...incoming);
+  return result;
+}
+
+/**
+ * The persisted column ids whose position differs from the store's
+ * position-sorted order. Empty when the order is unchanged, or when a
+ * create/delete is pending (a length mismatch, which carries its own dirty
+ * state). Unsaved `new:` drafts are ignored. Shared by `isOrderChanged` (the
+ * dirty gate) and the footer's affected-column summary so the two never drift.
+ */
+export function getReorderedColumnIds(laneOrder: string[], originals: Record<string, Swimlane>): Set<string> {
+  const moved = new Set<string>();
+  const persistedOrder = laneOrder.filter((id) => !isNewDraftId(id));
+  const originalOrder = Object.values(originals)
+    .sort((a, b) => a.position - b.position)
+    .map((lane) => lane.id);
+  if (persistedOrder.length !== originalOrder.length) return moved;
+  persistedOrder.forEach((id, index) => {
+    if (originalOrder[index] !== id) moved.add(id);
+  });
+  return moved;
+}
+
+/**
+ * True when the persisted columns' order in `laneOrder` differs from the store's
+ * position-sorted order. Unsaved `new:` drafts are ignored (their placement is
+ * handled by the create-then-reorder path on save). Gates the reorder IPC call
+ * in handleSave and the footer's modified-column summary.
+ */
+export function isOrderChanged(laneOrder: string[], originals: Record<string, Swimlane>): boolean {
+  return getReorderedColumnIds(laneOrder, originals).size > 0;
+}
+
 export function buildUpdateInput(draft: Swimlane, original: Swimlane): SwimlaneUpdateInput {
   const isTodoOrDone = original.role === 'todo' || original.role === 'done';
   const isPlanMode = draft.permission_mode === 'plan';
@@ -122,25 +203,6 @@ export function buildCreateInput(draft: Swimlane): SwimlaneCreateInput {
   };
 }
 
-/**
- * One-line description of a column's session behavior for the chosen target +
- * spawn strategy. Mirrors the matrix that `resolveForceFresh` encodes; it does
- * not re-derive the default (the Select values are always concrete here).
- */
-function describeSessionBehavior(
-  target: SessionTarget,
-  spawnStrategy: SessionSpawnStrategy,
-): string {
-  if (target === 'isolated') {
-    return spawnStrategy === 'always_spawn_new'
-      ? 'Runs this column on a fresh, isolated session each entry - a clean context independent of the main conversation (for example, a code review). Leaving the column resumes the main session. Pair with an Auto-command like /code-review.'
-      : 'Runs this column on its own isolated session, separate from the main conversation, and resumes that session on re-entry. Leaving the column resumes the main session.';
-  }
-  return spawnStrategy === 'always_spawn_new'
-    ? 'Restarts the main session from scratch each time a task enters this column, discarding its prior conversation.'
-    : 'Continues the task\'s main session, resuming it on entry (the default).';
-}
-
 function makeNewDraft(): Swimlane {
   const id = `${NEW_DRAFT_PREFIX}${crypto.randomUUID()}`;
   return {
@@ -171,18 +233,19 @@ function makeNewDraft(): Swimlane {
 // Local presentation helpers
 // ────────────────────────────────────────────────────────────────────────
 
-function SettingField({ label, description, hint, children }: {
+function SettingField({ label, description, hint, children, className = '' }: {
   label: string;
   description?: string;
   hint?: React.ReactNode;
   children: React.ReactNode;
+  /** Extra classes on the field wrapper (e.g. a grid col-span for full-width fields). */
+  className?: string;
 }) {
-  // Field block fills the section's content width so inputs don't look
-  // stranded against a wide empty gutter. `flex flex-col h-full` +
-  // `mt-auto` keeps inputs aligned to the bottom of their grid cell when
-  // descriptions in the same row vary in line count.
+  // Field block fills its grid cell. `flex flex-col h-full` + `mt-auto` keeps
+  // inputs aligned to the bottom of their cell when two fields in the same row
+  // have descriptions of differing line count.
   return (
-    <div className="flex flex-col h-full">
+    <div className={`flex flex-col h-full ${className}`}>
       <div className="flex items-center justify-between gap-2">
         <label className="text-sm font-medium text-fg-secondary">{label}</label>
         {hint}
@@ -190,7 +253,7 @@ function SettingField({ label, description, hint, children }: {
       {description && (
         <p className="text-xs text-fg-faint mt-0.5">{description}</p>
       )}
-      <div className={description ? 'mt-auto pt-2' : 'mt-2'}>{children}</div>
+      <div className={description ? 'mt-auto pt-1.5' : 'mt-1.5'}>{children}</div>
     </div>
   );
 }
@@ -209,11 +272,97 @@ function ResetHint({ onClick, title }: { onClick: () => void; title: string }) {
   );
 }
 
+/**
+ * Sticky section header inside the scrollable detail form. Sections are
+ * delineated softly: generous top spacing plus a single faint theme-aware
+ * hairline (`border-edge/50`), no filled band. The sticky background matches the
+ * dialog surface (`bg-surface-raised`, opaque so fields slide cleanly under when
+ * scrolling); `-mx-7 px-7` full-bleeds it and the hairline across the scroll
+ * container's padding. `first:` zeroes the rule/margin for General, which sits
+ * flush under the identity header. Keeps the `board-manager-section-<id>` testid.
+ */
+function SectionHeading({ section }: { section: typeof SECTIONS[number] }) {
+  const SectionIcon = section.icon;
+  return (
+    <div
+      data-testid={`board-manager-section-${section.id}`}
+      className="sticky top-0 z-10 -mx-7 mt-3 px-7 pt-3 pb-2 bg-surface-raised border-t border-edge/50 flex items-center gap-2 first:mt-0 first:border-t-0"
+    >
+      <SectionIcon size={13} strokeWidth={1.75} className="text-fg-faint" />
+      <span className="text-xs font-semibold uppercase tracking-wider text-fg-faint">{section.label}</span>
+    </div>
+  );
+}
+
+/** One-line inline explanation shown in place of a section's fields when it does not apply. */
+function DisabledSectionNotice({ reason }: { reason: string }) {
+  return <p className="text-xs text-fg-faint pt-3 pb-1 max-w-2xl">{reason}</p>;
+}
+
+/**
+ * Pinned identity header for the detail pane: large tinted column icon, name,
+ * role badge, board position, and the Delete control (named to its target).
+ */
+function DetailIdentityHeader({ draft, position, total, canDelete, onDelete }: {
+  draft: Swimlane;
+  position: number;
+  total: number;
+  canDelete: boolean;
+  onDelete: () => void;
+}) {
+  const Icon = draft.icon ? ICON_REGISTRY.get(draft.icon) : (draft.role ? ROLE_DEFAULTS[draft.role] : null);
+  const deleteLabel = `Delete "${draft.name || 'column'}"`;
+  // Single, lightweight identity row: small tinted icon + name + role badge +
+  // position, then the delete control. Keeps the header off the "heavy" look.
+  return (
+    <div className="flex items-center gap-2.5 px-7 py-2.5 border-b border-edge/60 flex-shrink-0">
+      {Icon ? (
+        <Icon size={18} strokeWidth={1.75} style={{ color: draft.color }} className="flex-shrink-0" />
+      ) : (
+        <span className="block w-4 h-4 rounded-full flex-shrink-0" style={{ backgroundColor: draft.color }} />
+      )}
+      <span className="text-sm font-semibold text-fg truncate">{draft.name || 'Untitled'}</span>
+      {draft.role && (
+        <Pill size="sm" className="bg-surface-hover/60 text-fg-faint flex-shrink-0">
+          {draft.role === 'todo' ? 'To Do' : 'Done'}
+        </Pill>
+      )}
+      <Pill size="sm" className="bg-surface-hover/60 text-fg-faint flex-shrink-0">{position} of {total}</Pill>
+      <div className="flex-1" />
+      {/* Always rendered (reserving its slot) so the header height and layout do
+          not shift when navigating between deletable columns and role-pinned
+          ones that cannot be deleted. Hidden (not just unmounted) for the latter. */}
+      <button
+        type="button"
+        onClick={canDelete ? onDelete : undefined}
+        data-testid="board-manager-delete"
+        aria-label={deleteLabel}
+        title={deleteLabel}
+        tabIndex={canDelete ? undefined : -1}
+        aria-hidden={canDelete ? undefined : true}
+        className={`p-1.5 rounded-full transition-colors flex-shrink-0 text-fg-faint ${
+          canDelete ? 'hover:text-red-400 hover:bg-red-500/10' : 'invisible pointer-events-none'
+        }`}
+      >
+        <Trash2 size={15} strokeWidth={1.75} />
+      </button>
+    </div>
+  );
+}
+
 // ────────────────────────────────────────────────────────────────────────
 // Main dialog
 // ────────────────────────────────────────────────────────────────────────
 
 const DIALOG_SELECT_CLASS = 'w-full appearance-none bg-surface-hover border border-edge-input rounded pl-3 pr-10 py-1.5 text-sm text-fg focus:outline-none focus:border-accent';
+
+// Responsive two-column form grid. Driven by a container query on the scroll
+// region (`@container`), so it lays out by the DETAIL PANE's width, not the
+// viewport: two columns when the pane is wide enough (maximized, even on a small
+// monitor), one column when it is narrow (windowed). Columns auto-size via 1fr.
+// Short single-line controls pair up; full-width fields carry `SECTION_FULL_SPAN`.
+const SECTION_GRID_CLASS = 'grid grid-cols-1 @[720px]:grid-cols-2 gap-x-6 gap-y-3 max-w-4xl pt-2';
+const SECTION_FULL_SPAN = '@[720px]:col-span-2';
 
 interface BoardManagerDialogProps {
   initialColumnId: string | null;
@@ -233,6 +382,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
   const globalPermissionMode = useConfigStore((s) => s.config.agent.permissionMode);
   const currentProject = useProjectStore((state) => state.currentProject);
+
+  // Maximize parity with the create dialogs: the flag lives in the session
+  // store's `maximizedTasks` set (keyed by a sentinel id) so it survives HMR.
+  const isMaximized = useSessionStore((s) => s.maximizedTasks.has(BOARD_MANAGER_ENTITY_ID));
+  const toggleMaximized = useSessionStore((s) => s.toggleMaximized);
+  const handleToggleMaximized = useCallback(() => toggleMaximized(BOARD_MANAGER_ENTITY_ID), [toggleMaximized]);
 
   // Live subscription to the store's agentList so the dialog stays in sync
   // with `useAgentCapabilityResolution` (which also reads from the store).
@@ -267,21 +422,21 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         newDraftIds: new Set([draft.id]),
         laneOrder: orderWithDraft,
         activeId: draft.id,
-        activeSection: 'general' as SectionId,
         autoFocusNameId: draft.id as string | null,
       };
     }
 
+    // Land on the requested column, or the "All columns" overview when none was
+    // specified (no current caller hits the null path; this is the safe default).
     const fallbackActiveId = initialColumnId && swimlanes.some((lane) => lane.id === initialColumnId)
       ? initialColumnId
-      : (baseOrder[0] ?? '');
+      : ALL_COLUMNS_ID;
     return {
       originals: baseOriginals,
       drafts: { ...baseOriginals },
       newDraftIds: new Set<string>(),
       laneOrder: baseOrder,
       activeId: fallbackActiveId,
-      activeSection: 'general' as SectionId,
       autoFocusNameId: null as string | null,
     };
     // Mount-only: this initializer must capture the props/store at first
@@ -294,7 +449,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   const [newDraftIds, setNewDraftIds] = useState<Set<string>>(initialState.newDraftIds);
   const [laneOrder, setLaneOrder] = useState<string[]>(initialState.laneOrder);
   const [activeId, setActiveId] = useState<string>(initialState.activeId);
-  const [activeSection, setActiveSection] = useState<SectionId>(initialState.activeSection);
+
+  // Set once the user drags a rail row. Tells the store-sync effect to preserve
+  // the local order instead of re-sorting from store positions. Never cleared
+  // while open (once local order equals store order, "preserve" is a no-op).
+  const hasLocalReorderRef = useRef(false);
 
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -356,21 +515,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     }
     setDrafts(nextDrafts);
 
-    setLaneOrder((previousOrder) => {
-      const sorted = [...swimlanes].sort((a, b) => a.position - b.position).map((lane) => lane.id);
-      // Preserve unsaved new drafts at their current relative positions.
-      const newIds = previousOrder.filter((id) => id.startsWith(NEW_DRAFT_PREFIX));
-      if (newIds.length === 0) return sorted;
-      const result = [...sorted];
-      // Insert each new draft just before the Done column to match the
-      // existing create-then-reorder behavior.
-      const doneIndex = result.findIndex((id) => swimlanes.find((lane) => lane.id === id)?.role === 'done');
-      const insertAt = doneIndex >= 0 ? doneIndex : result.length;
-      for (const newId of newIds) {
-        if (!result.includes(newId)) result.splice(insertAt, 0, newId);
-      }
-      return result;
-    });
+    setLaneOrder((previousOrder) => reconcileLaneOrder(previousOrder, swimlanes, hasLocalReorderRef.current));
   }, [swimlanes]);
 
   // ── Refresh agent capabilities ─────────────────────────────────────
@@ -401,7 +546,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       return result;
     });
     setActiveId(draft.id);
-    setActiveSection('general');
     setAutoFocusNameId(draft.id);
   }, [swimlanes]);
 
@@ -417,14 +561,13 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   useEffect(() => {
     if (!autoFocusNameId) return;
     if (activeId !== autoFocusNameId) return;
-    if (activeSection !== 'general') return;
     const handle = window.requestAnimationFrame(() => {
       nameInputRef.current?.focus();
       nameInputRef.current?.select();
       setAutoFocusNameId(null);
     });
     return () => window.cancelAnimationFrame(handle);
-  }, [autoFocusNameId, activeId, activeSection]);
+  }, [autoFocusNameId, activeId]);
 
   // ── Derived ────────────────────────────────────────────────────────
   const draft = drafts[activeId];
@@ -432,28 +575,78 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   const draftRole: SwimlaneRole | null = draft?.role ?? null;
   const isTodoOrDone = draftRole === 'todo' || draftRole === 'done';
 
-  // Agent / Automation / Handoff only apply when sessions actually run in
-  // the column. They are disabled (visible but greyed out and unclickable)
-  // for role-pinned To Do / Done columns and when Auto-spawn is off.
+  // Automation / Handoff only apply when sessions actually run in the column, so
+  // they collapse to a one-line inline explanation for role-pinned To Do / Done
+  // columns and when Auto-spawn is off. (The Agent section stays visible for a
+  // custom column even with Auto-spawn off; only its dependent fields hide.)
   const sessionsRunHere = !isTodoOrDone && draft?.auto_spawn === true;
-  const isSectionDisabled = useCallback(
-    (section: SectionId) => section !== 'general' && !sessionsRunHere,
-    [sessionsRunHere],
-  );
 
-  // If the active section becomes disabled (e.g. user toggled Auto-spawn off
-  // while sitting on Agent), bounce back to General automatically.
-  useEffect(() => {
-    if (isSectionDisabled(activeSection)) {
-      setActiveSection('general');
-    }
-  }, [isSectionDisabled, activeSection]);
+  const isOverview = activeId === ALL_COLUMNS_ID;
 
   const dirtyIds = useMemo(
     () => laneOrder.filter((id) => newDraftIds.has(id) || isDirty(drafts[id], originals[id])),
     [drafts, originals, laneOrder, newDraftIds],
   );
-  const hasDirty = dirtyIds.length > 0;
+  const orderDirty = useMemo(() => isOrderChanged(laneOrder, originals), [laneOrder, originals]);
+  const hasDirty = dirtyIds.length > 0 || orderDirty;
+
+  // Rows for the left rail. The inline override hints (agent / isolated) are
+  // suppressed for role-pinned To Do / Done columns, where they never apply.
+  const railRows: RailRow[] = useMemo(() => {
+    return laneOrder.flatMap((id) => {
+      const laneDraft = drafts[id];
+      if (!laneDraft) return [];
+      const applies = laneDraft.role !== 'todo' && laneDraft.role !== 'done';
+      const overrideName = laneDraft.agent_override;
+      const agentOverrideLabel = applies && overrideName
+        ? (agentList.find((agent) => agent.name === overrideName)?.displayName ?? overrideName)
+        : null;
+      return [{
+        id,
+        name: laneDraft.name,
+        tabName: originals[id]?.name ?? laneDraft.name,
+        color: laneDraft.color,
+        icon: laneDraft.icon,
+        role: laneDraft.role,
+        dirty: newDraftIds.has(id) || isDirty(laneDraft, originals[id]),
+        agentOverrideLabel,
+        isolated: applies && laneDraft.session_target === 'isolated',
+      }];
+    });
+  }, [laneOrder, drafts, originals, newDraftIds, agentList]);
+
+  // Rows for the "All columns" overview grid, read from drafts so unsaved edits show.
+  const overviewRows: OverviewRow[] = useMemo(() => {
+    return laneOrder.flatMap((id) => {
+      const laneDraft = drafts[id];
+      if (!laneDraft) return [];
+      const overrideName = laneDraft.agent_override;
+      // Show the effective agent: the override's display name, or the project
+      // default's (so it reads "Claude Code", not "Default"). Muted when default.
+      const agentLabel = overrideName
+        ? (agentList.find((agent) => agent.name === overrideName)?.displayName ?? overrideName)
+        : projectDefaultAgentLabel;
+      const modelOverride = laneDraft.model_override?.trim();
+      return [{
+        id,
+        name: laneDraft.name,
+        color: laneDraft.color,
+        icon: laneDraft.icon,
+        role: laneDraft.role,
+        dirty: newDraftIds.has(id) || isDirty(laneDraft, originals[id]),
+        autoSpawn: laneDraft.auto_spawn,
+        agentLabel,
+        agentIsDefault: !overrideName,
+        modelLabel: modelOverride ? formatModelName(modelOverride) : 'Default',
+        effortLabel: laneDraft.effort_override || 'Default',
+        permissionLabel: laneDraft.permission_mode
+          ? getPermissionLabel(DEFAULT_PERMISSIONS, laneDraft.permission_mode)
+          : 'Default',
+        isolated: laneDraft.session_target === 'isolated',
+        hasAutoCommand: !!laneDraft.auto_command?.trim(),
+      }];
+    });
+  }, [laneOrder, drafts, originals, newDraftIds, agentList, projectDefaultAgentLabel]);
 
   // Effective-agent resolution for the column manager: column draft's
   // override wins over the project default. (Tasks add a fourth tier in
@@ -525,7 +718,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     });
     if (invalid) {
       setActiveId(invalid);
-      setActiveSection('general');
       setAutoFocusNameId(invalid);
       useToastStore.getState().addToast({
         message: 'Name a column before saving.',
@@ -544,7 +736,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       }
     }
 
-    if (creates.length === 0 && updates.length === 0) {
+    if (creates.length === 0 && updates.length === 0 && !orderDirty) {
       onClose();
       return;
     }
@@ -638,11 +830,11 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       }
     }
 
-    // Reorder to honour the tab strip order, but only for ids that exist in
-    // the DB now. Temp ids of creates that failed (or were skipped after a
-    // failure above) are filtered out so we don't ask the IPC to reorder
-    // ids it has never seen.
-    if (savedCreates > 0) {
+    // Reorder to honour the rail order when the user created columns or dragged
+    // to reorder, but only for ids that exist in the DB now. Temp ids of creates
+    // that failed (or were skipped after a failure above) are filtered out so we
+    // don't ask the IPC to reorder ids it has never seen.
+    if (savedCreates > 0 || orderDirty) {
       try {
         const finalOrder = laneOrder
           .map((id) => idMap.get(id) ?? id)
@@ -670,12 +862,13 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     const parts: string[] = [];
     if (savedUpdates > 0) parts.push(`Saved ${savedUpdates} column${savedUpdates > 1 ? 's' : ''}`);
     if (savedCreates > 0) parts.push(`created ${savedCreates} column${savedCreates > 1 ? 's' : ''}`);
+    if (orderDirty) parts.push(parts.length === 0 ? 'Updated column order' : 'updated column order');
     useToastStore.getState().addToast({
       message: parts.join(' and '),
       variant: 'info',
     });
     onClose();
-  }, [saving, laneOrder, drafts, originals, newDraftIds, updateSwimlane, createSwimlane, reorderSwimlanes, onClose]);
+  }, [saving, laneOrder, drafts, originals, newDraftIds, orderDirty, updateSwimlane, createSwimlane, reorderSwimlanes, onClose]);
 
   // Cmd/Ctrl+S to save, via the central keybinding registry. Document-level,
   // bubble phase, preventDefault only - matching the original listener.
@@ -683,6 +876,34 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     target: 'document',
     stopPropagation: false,
   });
+
+  // Reorder handler for the rail: local-only until Save. Flags the store-sync
+  // effect to preserve this order (see hasLocalReorderRef above).
+  const handleRailReorder = useCallback((nextOrder: string[]) => {
+    hasLocalReorderRef.current = true;
+    setLaneOrder(nextOrder);
+  }, []);
+
+  // Cycle the selection across [overview, ...columns] with wraparound. Bound to
+  // Mod+PageDown / Mod+PageUp so it works regardless of where focus sits.
+  const cycleColumn = useCallback((delta: number) => {
+    setActiveId((current) => {
+      const navIds = [ALL_COLUMNS_ID, ...laneOrder];
+      const index = navIds.indexOf(current);
+      if (index < 0) return current;
+      return navIds[(index + delta + navIds.length) % navIds.length];
+    });
+  }, [laneOrder]);
+
+  useKeybinding('panel.maximize', handleToggleMaximized, { capture: true });
+  // Suppress column cycling while a nested modal (delete confirm, icon picker, or
+  // the discard-changes confirm) is open, mirroring the Escape guard below.
+  // Otherwise a cycle changes activeId behind the modal, and since the delete
+  // confirm names drafts[confirmDeleteId] while handleDeletePersisted deletes
+  // activeId, the confirmation can name one column and delete another.
+  const columnCycleEnabled = !confirmDeleteId && !showIconPicker && !showCancelConfirm;
+  useKeybinding('boardManager.nextColumn', () => cycleColumn(1), { target: 'document', stopPropagation: false, enabled: columnCycleEnabled });
+  useKeybinding('boardManager.prevColumn', () => cycleColumn(-1), { target: 'document', stopPropagation: false, enabled: columnCycleEnabled });
 
   // Escape-to-cancel stays a hand-written listener: it is a structural dialog
   // key with conditional dismissal (suppressed while a nested confirm or picker
@@ -714,7 +935,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     setActiveId((previous) => {
       if (previous !== id) return previous;
       const remaining = laneOrder.filter((entry) => entry !== id);
-      return remaining[0] ?? '';
+      // Fall back to the overview so an emptied selection degrades gracefully.
+      return remaining[0] ?? ALL_COLUMNS_ID;
     });
   }, [laneOrder]);
 
@@ -758,53 +980,58 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     }
   }, [activeId, newDraftIds, tasks, drafts, deleteSwimlane, removeDraftLocally]);
 
-  // ── Tab strip / section nav keyboard ─────────────────────────────
-  const handleTabStripKey = (event: React.KeyboardEvent) => {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
-    event.preventDefault();
-    const index = laneOrder.indexOf(activeId);
-    if (index < 0) return;
-    const delta = event.key === 'ArrowRight' ? 1 : -1;
-    const nextIndex = (index + delta + laneOrder.length) % laneOrder.length;
-    setActiveId(laneOrder[nextIndex]);
-  };
-
-  const handleSectionNavKey = (event: React.KeyboardEvent) => {
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-    event.preventDefault();
-    // Walk to the next *enabled* section in the requested direction.
-    const startIndex = SECTIONS.findIndex((entry) => entry.id === activeSection);
-    if (startIndex < 0) return;
-    const delta = event.key === 'ArrowDown' ? 1 : -1;
-    for (let step = 1; step <= SECTIONS.length; step += 1) {
-      const candidate = SECTIONS[(startIndex + delta * step + SECTIONS.length) % SECTIONS.length];
-      if (!isSectionDisabled(candidate.id)) {
-        setActiveSection(candidate.id);
-        return;
-      }
-    }
-  };
-
   // ── Rendering ─────────────────────────────────────────────────────
-  if (!draft) {
+  if (!isOverview && !draft) {
     // Defensive: store had no swimlanes at mount. Render nothing rather than crash.
     return null;
   }
 
-  const dirtyCount = dirtyIds.length;
+  // A single count of affected columns: those with field edits or a pending
+  // create, plus any whose position changed from a reorder. The user just wants
+  // "how many columns will change", not an order-vs-options breakdown.
+  const affectedIds = new Set(dirtyIds);
+  for (const movedId of getReorderedColumnIds(laneOrder, originals)) affectedIds.add(movedId);
+  const affectedCount = affectedIds.size;
+  const dirtySummary = affectedCount > 0 ? `${affectedCount} column${affectedCount === 1 ? '' : 's'} modified` : '';
+
+  // Windowed size. Width clears the two-column container-query threshold (~720px)
+  // without maximizing and fits the overview grid; shared by both views so
+  // toggling to the overview never resizes the dialog. A FIXED height (capped at
+  // 94vh on short screens) keeps the modal stable as the user navigates between
+  // columns of differing content height: the detail pane scrolls when a column is
+  // taller, and shorter columns show some empty space, rather than the whole
+  // modal resizing and re-centering (which reads as jank). `max-w-[95vw]` caps
+  // width on small screens, where the form falls back to a single column.
+  const windowedClass = 'w-[1180px] max-w-[95vw] h-[1236px] max-h-[94vh]';
+  const { dialogClassName, backdropPositionClass, backdropClassName, contentRadiusClass } =
+    maximizedDialogLayout(isMaximized, windowedClass);
+
+  const activePosition = laneOrder.indexOf(activeId) + 1;
+
+  // Disabled-section explanation strings (preserve the exact wording the old
+  // native tooltips used, now shown inline).
+  const disabledReasonFor = (label: string): string =>
+    isTodoOrDone
+      ? `Sessions don't run in ${draftRole === 'todo' ? 'To Do' : 'Done'} columns, so ${label} doesn't apply.`
+      : `Turn on Auto-spawn in the Agent section to enable ${label}.`;
 
   return (
     <>
     <BaseDialog
       onClose={onClose}
       testId="board-manager-dialog"
-      className="w-[880px] max-w-[95vw] max-h-[90vh]"
+      className={dialogClassName}
+      backdropPositionClass={backdropPositionClass}
+      backdropClassName={backdropClassName}
+      contentRadiusClass={contentRadiusClass}
+      onHeaderDoubleClick={handleToggleMaximized}
       preventBackdropClose
       onBackdropClick={requestCancel}
       header={
-        <div className="flex items-center gap-3 px-4 py-3">
+        <div className="flex items-center gap-3 px-4 py-2">
           <Layers size={14} className="text-fg-muted flex-shrink-0" />
           <h3 className="text-sm font-semibold text-fg flex-1 min-w-0">Edit Columns</h3>
+          <MaximizeToggleButton isMaximized={isMaximized} onToggle={handleToggleMaximized} />
           <button
             type="button"
             onClick={requestCancel}
@@ -817,164 +1044,62 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       }
       rawBody
       footer={
-        <div className="flex justify-end gap-3">
+        <div className="flex items-center gap-3">
+          <span data-testid="board-manager-dirty-summary" className="text-xs text-fg-faint mr-auto">
+            {dirtySummary}
+          </span>
           <button
             type="button"
             onClick={requestCancel}
-            className="px-4 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
+            className="px-6 py-1.5 min-w-[96px] text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={() => void handleSave()}
-            disabled={saving || dirtyCount === 0}
+            disabled={saving || !hasDirty}
             data-testid="board-manager-save"
-            className="px-4 py-1.5 text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
+            className="px-6 py-1.5 min-w-[96px] text-xs font-medium bg-accent-emphasis hover:bg-accent text-accent-on rounded transition-colors disabled:opacity-50"
           >
             {saving ? 'Saving...' : 'Save'}
           </button>
         </div>
       }
     >
-      <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-        {/* Tab strip */}
-        <div
-          onKeyDown={handleTabStripKey}
-          className="flex bg-surface/40 border-b border-edge overflow-x-auto flex-shrink-0"
-          role="tablist"
-        >
-          {laneOrder.map((id) => {
-            const tabDraft = drafts[id];
-            if (!tabDraft) return null;
-            const isActive = id === activeId;
-            const tabIsDirty = newDraftIds.has(id) || isDirty(tabDraft, originals[id]);
-            const Icon = tabDraft.icon ? ICON_REGISTRY.get(tabDraft.icon) : (tabDraft.role ? ROLE_DEFAULTS[tabDraft.role] : null);
-            return (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
-                data-testid="board-manager-tab"
-                data-tab-name={originals[id]?.name ?? tabDraft.name}
-                data-tab-id={id}
-                onClick={() => setActiveId(id)}
-                className={`relative flex items-center gap-2 px-3.5 py-3 text-xs whitespace-nowrap border-r border-edge/40 transition-colors ${
-                  isActive
-                    ? 'bg-surface text-fg font-medium'
-                    : 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover/30'
-                }`}
-              >
-                {Icon ? (
-                  <Icon size={13} strokeWidth={1.75} style={{ color: isActive ? tabDraft.color : undefined }} className={isActive ? '' : 'text-fg-faint'} />
-                ) : (
-                  <span
-                    className="w-2 h-2 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: tabDraft.color }}
-                  />
-                )}
-                <span className="truncate max-w-[140px]">{tabDraft.name || 'Untitled'}</span>
-                {tabIsDirty && (
-                  <span
-                    aria-label="unsaved changes"
-                    data-testid="board-manager-tab-dirty"
-                    className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0"
-                  />
-                )}
-                {isActive && (
-                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-accent" />
-                )}
-              </button>
-            );
-          })}
-          <div className="flex-1" />
-          <div className="flex items-center pr-3">
-            <button
-              type="button"
-              onClick={addNewDraft}
-              data-testid="board-manager-add-column"
-              className="flex items-center gap-1 px-2.5 py-1 text-xs text-fg-muted hover:text-fg bg-surface-hover/50 hover:bg-surface-hover border border-edge/60 hover:border-edge rounded-full transition-colors whitespace-nowrap"
-            >
-              <Plus size={12} />
-              Add column
-            </button>
-          </div>
-        </div>
+      <div className="flex flex-1 min-h-[540px] overflow-hidden">
+        <ColumnRail
+          rows={railRows}
+          activeId={activeId}
+          onSelect={setActiveId}
+          onSelectOverview={() => setActiveId(ALL_COLUMNS_ID)}
+          onReorder={handleRailReorder}
+          onAddColumn={addNewDraft}
+        />
 
-        {/* Body split */}
-        <div className="flex flex-1 min-h-[540px] overflow-hidden">
-          {/* Section nav */}
-          <div
-            onKeyDown={handleSectionNavKey}
-            role="tablist"
-            aria-orientation="vertical"
-            className="w-[170px] flex-shrink-0 py-3 px-2 bg-surface/40 border-r border-edge/60 flex flex-col"
-          >
-            <div className="text-[11px] uppercase tracking-wider text-fg-faint px-2 mb-1.5">Sections</div>
-            <div className="flex flex-col gap-0.5">
-              {SECTIONS.map((section) => {
-                const isActive = section.id === activeSection;
-                const isDisabled = isSectionDisabled(section.id);
-                const SectionIcon = section.icon;
-                const stateClasses = isDisabled
-                  ? 'text-fg-disabled cursor-not-allowed'
-                  : isActive
-                    ? 'bg-surface-hover/50 text-fg'
-                    : 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover/30';
-                const iconClass = isDisabled
-                  ? 'text-fg-disabled'
-                  : isActive ? 'text-fg-secondary' : 'text-fg-faint';
-                // Title (native tooltip) explains why a section is locked.
-                // Two reasons: role-pinned columns (To Do, Done) never run
-                // sessions, and Auto-spawn-off columns won't either until
-                // the user opts in. Tells the user how to unlock it when
-                // applicable. We avoid the HTML `disabled` attribute so
-                // the tooltip still surfaces on hover.
-                const disabledReason = isDisabled
-                  ? isTodoOrDone
-                    ? `Sessions don't run in ${draft.role === 'todo' ? 'To Do' : 'Done'} columns, so ${section.label} doesn't apply.`
-                    : `Turn on Auto-spawn in General to enable ${section.label}.`
-                  : undefined;
-                return (
-                  <button
-                    key={section.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={isActive}
-                    aria-disabled={isDisabled}
-                    title={disabledReason}
-                    data-testid={`board-manager-section-${section.id}`}
-                    onClick={isDisabled ? undefined : () => setActiveSection(section.id)}
-                    className={`flex items-center gap-2 w-full px-2 py-1.5 rounded text-xs transition-colors ${stateClasses}`}
-                  >
-                    <SectionIcon size={13} strokeWidth={1.75} className={iconClass} />
-                    <span className="flex-1 text-left">{section.label}</span>
-                  </button>
-                );
-              })}
-            </div>
+        {isOverview || !draft ? (
+          <ColumnsOverview rows={overviewRows} onSelect={setActiveId} />
+        ) : (
+          <div className="flex-1 min-w-0 flex flex-col min-h-0">
+            <DetailIdentityHeader
+              draft={draft}
+              position={activePosition}
+              total={laneOrder.length}
+              canDelete={!isTodoOrDone}
+              onDelete={isNewDraft ? handleDiscardNewDraft : () => setConfirmDeleteId(activeId)}
+            />
 
-            {!isTodoOrDone && (
-              <div className="mt-auto border-t border-edge/40 pt-2 px-0">
-                <button
-                  type="button"
-                  onClick={isNewDraft ? handleDiscardNewDraft : () => setConfirmDeleteId(activeId)}
-                  data-testid="board-manager-delete"
-                  className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors"
-                >
-                  <Trash2 size={13} strokeWidth={1.75} />
-                  <span className="flex-1 text-left">Delete column</span>
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Section body */}
-          <div className="flex-1 overflow-y-auto px-7 py-6 min-w-0">
-            {activeSection === 'general' && (
-              <div className="space-y-4">
-                <SettingField label="Name">
+            {/* One scrollable form with sticky section headers. `@container`
+                lets the section grids lay out by the pane width. A modest bottom
+                pad keeps the content off the boundary so sub-pixel rounding does
+                not summon a phantom 1px scrollbar. `scrollbar-gutter:stable`
+                reserves the scrollbar's width always, so switching between a
+                short column and a taller (scrolling) one never shifts the
+                content horizontally. */}
+            <div className="flex-1 overflow-y-auto px-7 pb-4 min-w-0 @container [scrollbar-gutter:stable]">
+              <SectionHeading section={SECTIONS[0]} />
+              <div className={SECTION_GRID_CLASS}>
+                <SettingField label="Name" className={SECTION_FULL_SPAN}>
                   <input
                     ref={nameInputRef}
                     type="text"
@@ -989,19 +1114,26 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
                 <SettingField
                   label="Description"
+                  className={SECTION_FULL_SPAN}
                   description="Shown when you hover the column header. Shared with your team via kangentic.json."
                 >
                   <textarea
                     value={draft.description ?? ''}
                     placeholder="What is this column for?"
                     onChange={(event) => updateDraft((current) => ({ ...current, description: event.target.value }))}
-                    rows={2}
+                    rows={1}
                     maxLength={1000}
                     data-testid="board-manager-description"
                     className="w-full bg-surface-hover border border-edge-input rounded px-3 py-1.5 text-sm text-fg placeholder-fg-faint focus:outline-none focus:border-accent resize-y"
                   />
                 </SettingField>
 
+                {/* Icon and Color pair on one row (a vertical divider between)
+                    when the pane is wide; they stack when it is narrow. `order`
+                    puts the filled Icon control first so the divider spacing is
+                    even (the color swatches under-fill their cell). */}
+                <div className={`${SECTION_FULL_SPAN} flex flex-col @[720px]:flex-row @[720px]:items-start gap-3 @[720px]:gap-6`}>
+                  <div className="@[720px]:flex-1 min-w-0 order-3">
                 <SettingField label="Color">
                   <div className="flex gap-2 flex-wrap items-center">
                     {PRESET_COLORS.map((presetColor) => {
@@ -1070,7 +1202,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     </div>
                   )}
                 </SettingField>
-
+                  </div>
+                  <div className="hidden @[720px]:block w-px self-stretch bg-edge/50 order-2" />
+                  <div className="@[720px]:flex-1 min-w-0 order-1">
                 <SettingField label="Icon">
                   <button
                     type="button"
@@ -1103,20 +1237,28 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     <ChevronRight size={14} className="text-fg-faint group-hover:text-fg-muted flex-shrink-0" />
                   </button>
                 </SettingField>
+                  </div>
+                </div>
 
-                {!isTodoOrDone && (
-                  <ToggleCard
-                    label="Auto-spawn"
-                    description="Start an agent automatically when a task enters this column."
-                    checked={draft.auto_spawn}
-                    onChange={(next) => updateDraft((current) => ({ ...current, auto_spawn: next }))}
-                  />
-                )}
               </div>
-            )}
 
-            {activeSection === 'agent' && (
-              <div className="space-y-4">
+              <SectionHeading section={SECTIONS[1]} />
+              {isTodoOrDone ? (
+                <DisabledSectionNotice reason={disabledReasonFor('Agent')} />
+              ) : (
+                <div className={SECTION_GRID_CLASS}>
+                  {/* Auto-spawn leads the section: it gates whether the agent
+                      config below is shown, so it comes first. Agent / Model and
+                      Effort / Permissions then pair up as two-column rows. */}
+                  <div className={SECTION_FULL_SPAN}>
+                    <ToggleCard
+                      label="Auto-spawn"
+                      description="Start an agent automatically when a task enters this column."
+                      checked={draft.auto_spawn}
+                      onChange={(next) => updateDraft((current) => ({ ...current, auto_spawn: next }))}
+                    />
+                  </div>
+                  {draft.auto_spawn && (<>
                   <SettingField
                     label="Agent"
                     description="Which agent CLI to run for sessions in this column."
@@ -1243,6 +1385,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   {draft.permission_mode === 'plan' && (
                     <SettingField
                       label="After Plan Mode"
+                      className={SECTION_FULL_SPAN}
                       description="Where the task goes when the agent exits Plan mode."
                     >
                       <Select
@@ -1262,16 +1405,16 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       </Select>
                     </SettingField>
                   )}
-              </div>
-            )}
+                  </>)}
+                </div>
+              )}
 
-            {activeSection === 'auto' && (
-              <div className="space-y-5">
-                <div>
-                  <div className="grid grid-cols-2 gap-4">
+              <SectionHeading section={SECTIONS[2]} />
+              {sessionsRunHere ? (
+                <div className={SECTION_GRID_CLASS}>
                     <SettingField
                       label="Session"
-                      description="Which session track a task runs on here."
+                      description="Share the task's main session, or run a separate isolated one for this column."
                     >
                       <Select
                         value={draft.session_target ?? 'main'}
@@ -1320,13 +1463,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                         <option value="always_spawn_new">Always spawn new</option>
                       </Select>
                     </SettingField>
-                  </div>
-                  <p className="text-xs text-fg-faint mt-2">
-                    {describeSessionBehavior(draft.session_target ?? 'main', draft.session_spawn_strategy ?? 'create_or_resume')}
-                  </p>
-                </div>
 
-                <SettingField label="Auto-command">
+                <SettingField label="Auto-command" className={SECTION_FULL_SPAN}>
                 <p className="text-xs text-fg-faint -mt-2 mb-2">
                   Runs in the agent on startup, the moment a task enters this column. Supports template variables.
                 </p>
@@ -1334,7 +1472,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   ref={autoCommandRef}
                   value={draft.auto_command ?? ''}
                   onChange={(event) => updateDraft((current) => ({ ...current, auto_command: event.target.value }))}
-                  rows={3}
+                  rows={1}
                   placeholder="/review {{title}}"
                   data-testid="auto-command-input"
                   className="w-full bg-surface-hover border border-edge-input rounded px-3 py-1.5 text-sm text-fg font-mono placeholder-fg-faint focus:outline-none focus:border-accent resize-y"
@@ -1368,38 +1506,30 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                   ))}
                 </div>
                 </SettingField>
-              </div>
-            )}
-
-            {activeSection === 'handoff' && (
-              <div className="space-y-5">
-                <ToggleCard
-                  label="Receive context from prior agent"
-                  description="On cross-agent moves into this column, hand the previous agent's conversation to the new one."
-                  checked={draft.handoff_context}
-                  onChange={(next) => updateDraft((current) => ({ ...current, handoff_context: next }))}
-                />
-
-                <div className="border-t border-edge/50 pt-4 max-w-md space-y-3">
-                  <div className="text-[11px] uppercase tracking-wider text-fg-faint">How it works</div>
-                  <p className="text-xs text-fg-muted leading-relaxed">
-                    When a task moves into this column and the agent assigned here is different from the one that ran in the previous column, Kangentic injects the previous session's transcript as the first message to the new agent.
-                  </p>
-                  <p className="text-xs text-fg-muted leading-relaxed">
-                    The new agent reads it like a continuation of the conversation and picks up with full awareness of what was already tried, decided, and produced. Without passthrough, every cross-agent move resets the new agent's working memory and it starts from the task description alone.
-                  </p>
-                  <p className="text-xs text-fg-faint leading-relaxed">
-                    Same-agent moves (e.g. Claude to Claude) always resume natively via the agent's own session id and ignore this setting.
-                  </p>
                 </div>
-              </div>
-            )}
+              ) : <DisabledSectionNotice reason={disabledReasonFor('Automation')} />}
+
+              <SectionHeading section={SECTIONS[3]} />
+              {sessionsRunHere ? (
+                <div className={SECTION_GRID_CLASS}>
+                  <div className={SECTION_FULL_SPAN}>
+                    <ToggleCard
+                      label="Receive context from prior agent"
+                      description="On cross-agent moves into this column, hand the previous agent's conversation to the new one."
+                      checked={draft.handoff_context}
+                      onChange={(next) => updateDraft((current) => ({ ...current, handoff_context: next }))}
+                      info={'When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session\'s transcript as the first message, so the new agent continues with full context instead of starting from the task description alone.\n\nSame-agent moves (e.g. Claude to Claude) resume natively via the agent\'s own session id and ignore this setting.'}
+                    />
+                  </div>
+                </div>
+              ) : <DisabledSectionNotice reason={disabledReasonFor('Handoff')} />}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </BaseDialog>
 
-      {showIconPicker && (
+      {showIconPicker && draft && (
         <IconPickerDialog
           selectedIcon={draft.icon}
           accentColor={draft.color}
@@ -1414,7 +1544,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
 
       {confirmDeleteId && (
         <ConfirmDialog
-          title="Delete column"
+          title={`Delete "${drafts[confirmDeleteId]?.name?.trim() || 'column'}"`}
           message={<>
             <p>Are you sure you want to delete this column?</p>
             <p className="text-fg-secondary bg-surface rounded px-3 py-2 truncate" title={drafts[confirmDeleteId]?.name}>
@@ -1436,15 +1566,24 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
           cancelLabel="Keep editing"
           message={
             <div className="space-y-2.5">
-              <p>Closing now will discard unsaved changes in:</p>
-              <ul className="space-y-1">
-                {dirtyIds.map((id) => (
-                  <li key={id} className="flex items-baseline gap-2">
-                    <span className="text-fg-faint">•</span>
-                    <span className="font-medium text-fg-secondary">{drafts[id]?.name?.trim() || 'Untitled column'}</span>
-                  </li>
-                ))}
-              </ul>
+              {dirtyIds.length > 0 && (
+                <>
+                  <p>Closing now will discard unsaved changes in:</p>
+                  <ul className="space-y-1">
+                    {dirtyIds.map((id) => (
+                      <li key={id} className="flex items-baseline gap-2">
+                        <span className="text-fg-faint">•</span>
+                        <span className="font-medium text-fg-secondary">{drafts[id]?.name?.trim() || 'Untitled column'}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {orderDirty && (
+                <p className="text-fg-secondary">
+                  {dirtyIds.length > 0 ? 'Column order changes will also be discarded.' : 'Your column order changes will be discarded.'}
+                </p>
+              )}
             </div>
           }
           onConfirm={() => {

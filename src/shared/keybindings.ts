@@ -191,6 +191,26 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     rebindable: false,
     hidden: true,
   },
+  {
+    id: 'boardManager.nextColumn',
+    label: 'Next Column',
+    description: 'Select the next column (or the overview) in the Edit Columns dialog. Fixed.',
+    group: 'General',
+    scope: 'dialog',
+    defaultCombo: 'Mod+PageDown',
+    rebindable: false,
+    hidden: true,
+  },
+  {
+    id: 'boardManager.prevColumn',
+    label: 'Previous Column',
+    description: 'Select the previous column (or the overview) in the Edit Columns dialog. Fixed.',
+    group: 'General',
+    scope: 'dialog',
+    defaultCombo: 'Mod+PageUp',
+    rebindable: false,
+    hidden: true,
+  },
 
   // ── Task Detail ──
   // Maximize / Close are the shared panel.* bindings: they act on whichever panel
@@ -198,7 +218,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   {
     id: 'panel.maximize',
     label: 'Maximize',
-    description: 'Maximize the open panel: the command terminal, the task detail dialog (view or edit mode), or a create dialog (New Task / New Backlog Task).',
+    description: 'Maximize the open panel: the command terminal, the task detail dialog (view or edit mode), a create dialog (New Task / New Backlog Task), or the Edit Columns dialog.',
     group: 'Task Detail',
     scope: 'panel',
     defaultCombo: 'Mod+Shift+M',

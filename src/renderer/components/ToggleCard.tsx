@@ -1,4 +1,5 @@
 import type React from 'react';
+import { Info } from 'lucide-react';
 
 interface ToggleCardProps {
   label: string;
@@ -9,6 +10,11 @@ interface ToggleCardProps {
   icon?: React.ReactNode;
   /** Override the announced label. Defaults to `label`. */
   ariaLabel?: string;
+  /**
+   * Optional longer explanation surfaced as a hover tooltip on an info icon
+   * beside the label, so a verbose "how it works" note need not occupy layout.
+   */
+  info?: string;
 }
 
 /**
@@ -42,7 +48,7 @@ export function ToggleIndicator({ checked, className = '' }: { checked: boolean;
  * Use this for any standalone boolean setting that has a label + description.
  * For dense lists of toggles, use `CompactToggleList` instead.
  */
-export function ToggleCard({ label, description, checked, onChange, icon, ariaLabel }: ToggleCardProps) {
+export function ToggleCard({ label, description, checked, onChange, icon, ariaLabel, info }: ToggleCardProps) {
   return (
     <button
       type="button"
@@ -54,7 +60,21 @@ export function ToggleCard({ label, description, checked, onChange, icon, ariaLa
     >
       {icon && <span className="flex-shrink-0 mt-0.5 text-fg-muted">{icon}</span>}
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-fg-secondary">{label}</div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm font-medium text-fg-secondary">{label}</span>
+          {info && (
+            // Non-interactive span (nesting a button inside the card button is
+            // invalid); stopPropagation keeps a click on the icon from toggling.
+            <span
+              title={info}
+              aria-hidden="true"
+              onClick={(event) => event.stopPropagation()}
+              className="flex-shrink-0 text-fg-faint hover:text-fg-tertiary cursor-help"
+            >
+              <Info size={13} />
+            </span>
+          )}
+        </div>
         <p className="text-xs text-fg-faint mt-0.5">{description}</p>
       </div>
       <ToggleIndicator checked={checked} className="mt-0.5" />

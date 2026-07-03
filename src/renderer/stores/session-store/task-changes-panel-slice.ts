@@ -43,8 +43,9 @@ export interface TaskChangesPanelSlice {
   /**
    * Entity IDs whose dialog is maximized (persists across dialog open/close).
    * Keyed by task ID for the task detail dialog, and by a non-task sentinel id
-   * for the command terminal ('command-terminal') and the create dialogs
-   * ('new-task-dialog', 'new-backlog-task-dialog').
+   * for the command terminal ('command-terminal'), the create dialogs
+   * ('new-task-dialog', 'new-backlog-task-dialog'), and the Edit Columns dialog
+   * ('board-manager-dialog').
    */
   maximizedTasks: Set<string>;
   /**
@@ -121,13 +122,13 @@ function buildDetailViewBlob(state: SessionStore, taskId: string): TaskDetailVie
 }
 
 /**
- * Non-task entity ids that share the Changes-panel setters (the create dialogs
- * and the Command Terminal) but have no `tasks` row to persist into. They must
- * not schedule a `detail_view_state` save: the DB UPDATE would be a no-op, and
- * the Command Terminal would otherwise emit a spurious IPC write on every Changes
- * interaction.
+ * Non-task entity ids that share the Changes-panel setters (the create dialogs,
+ * the Command Terminal, and the Edit Columns dialog) but have no `tasks` row to
+ * persist into. They must not schedule a `detail_view_state` save: the DB UPDATE
+ * would be a no-op, and the Command Terminal would otherwise emit a spurious IPC
+ * write on every Changes interaction.
  */
-const NON_TASK_DETAIL_VIEW_IDS = new Set(['new-task-dialog', 'new-backlog-task-dialog', 'command-terminal']);
+const NON_TASK_DETAIL_VIEW_IDS = new Set(['new-task-dialog', 'new-backlog-task-dialog', 'command-terminal', 'board-manager-dialog']);
 
 /**
  * Schedule a debounced persist of a task's detail-view layout. Captures the

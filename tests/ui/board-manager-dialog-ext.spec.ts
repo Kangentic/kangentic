@@ -5,14 +5,16 @@
  * 1. BaseDialog.onBackdropClick synchronous escape-hatch (fires immediately,
  *    does not call requestClose, works even with preventBackdropClose=true).
  * 2. Save fan-out partial-failure (one update succeeds, one rejects).
- * 3. Section-disabled tooltip text for To Do and for auto_spawn=false columns.
- * 4. Auto-bounce: toggling Auto-spawn off while on the Agent section bounces
- *    the active section back to General.
+ * 3. Section-disabled inline explanations for To Do and auto_spawn=false columns.
+ * 4. Toggling Auto-spawn expands / collapses the dependent sections in place.
  * 5. DoneSwimlane header button click opens manager with Done tab preselected.
  * 6. ViewToggle "Add column" while manager is already open increments the
  *    counter and adds a second new-draft tab.
  * 7. Discard confirm bullet rendering (1 dirty = 1 li, 3 dirty = 3 li each
  *    with the column name; untitled new drafts render as "Untitled column").
+ * 8. Delete control names its target - the delete button's aria-label/title
+ *    is `Delete "<column name>"`, and the confirm dialog it opens reuses the
+ *    same string as its title (was the static "Delete column").
  */
 import { test, expect } from '@playwright/test';
 import { launchPage, waitForBoard, createProject } from './helpers';
@@ -175,33 +177,31 @@ test.describe('BoardManagerDialog extended', () => {
     await dialog.waitFor({ state: 'detached', timeout: 2000 });
   });
 
-  // ── Gap 3: Section-disabled tooltip text ─────────────────────────────────
+  // ── Gap 3: Section-disabled inline explanations ──────────────────────────
   //
-  // Two branches:
-  // (a) Role-pinned column (To Do): tooltip says "Sessions don't run in To Do
-  //     columns, so Agent doesn't apply." (and similar for Automation/Handoff).
-  // (b) Custom column with auto_spawn=false: tooltip says "Turn on Auto-spawn
-  //     in General to enable Agent." (etc).
+  // Sections that do not apply collapse to a one-line inline explanation in the
+  // scrollable form (replacing the old greyed section-nav button + native
+  // tooltip). Two branches:
+  // (a) Role-pinned column (To Do): "Sessions don't run in To Do columns, so
+  //     Agent doesn't apply." (and similar for Automation/Handoff).
+  // (b) Custom column with auto_spawn=false: "Turn on Auto-spawn in General to
+  //     enable Agent." (etc). In both, the section's fields are absent.
 
-  test('section buttons carry correct aria-disabled and title on To Do tab', async () => {
+  test('To Do column collapses Agent/Automation/Handoff to inline explanations', async () => {
     await openManagerByHeader('To Do');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
-    const agentBtn = dialog.locator('[data-testid="board-manager-section-agent"]');
-    const autoBtn = dialog.locator('[data-testid="board-manager-section-auto"]');
-    const handoffBtn = dialog.locator('[data-testid="board-manager-section-handoff"]');
+    await expect(dialog.getByText("Sessions don't run in To Do columns, so Agent doesn't apply.")).toBeVisible();
+    await expect(dialog.getByText("Sessions don't run in To Do columns, so Automation doesn't apply.")).toBeVisible();
+    await expect(dialog.getByText("Sessions don't run in To Do columns, so Handoff doesn't apply.")).toBeVisible();
 
-    await expect(agentBtn).toHaveAttribute('aria-disabled', 'true');
-    await expect(autoBtn).toHaveAttribute('aria-disabled', 'true');
-    await expect(handoffBtn).toHaveAttribute('aria-disabled', 'true');
-
-    await expect(agentBtn).toHaveAttribute('title', "Sessions don't run in To Do columns, so Agent doesn't apply.");
-    await expect(autoBtn).toHaveAttribute('title', "Sessions don't run in To Do columns, so Automation doesn't apply.");
-    await expect(handoffBtn).toHaveAttribute('title', "Sessions don't run in To Do columns, so Handoff doesn't apply.");
+    // The collapsed sections render no fields.
+    await expect(dialog.locator('[data-testid="column-agent-override"]')).toHaveCount(0);
+    await expect(dialog.locator('[data-testid="column-session-target"]')).toHaveCount(0);
   });
 
-  test('section buttons carry correct aria-disabled and title when auto_spawn is off', async () => {
-    // Create a custom column with auto_spawn=false to test the other disabled branch.
+  test('auto_spawn-off column collapses the dependent sections with an Auto-spawn hint', async () => {
+    // Create a custom column with auto_spawn=false to test the other branch.
     await page.evaluate(async () => {
       await window.electronAPI.swimlanes.create({
         name: 'NoSpawnCol',
@@ -218,21 +218,12 @@ test.describe('BoardManagerDialog extended', () => {
       });
     });
 
-    // The board store needs to reload swimlanes. Navigate away and back or wait for store refresh.
-    // Easier: reload the swimlanes list via the store's loadBoard if exposed, but it isn't in the
-    // mock. Instead, open the manager and let it pick up the new column from the store sync.
-    // We open via store-level swimlanes since the board won't have the new column rendered yet.
-    // Wait briefly for Zustand store to receive the updated swimlane list:
+    // Force a board-store sync so the new column renders (the mock has no push).
     await page.evaluate(async () => {
-      // Force a store sync by re-fetching swimlanes and injecting into board store
-      const lanes = await window.electronAPI.swimlanes.list();
       const store = (window as unknown as { __zustandStores?: { board: { getState: () => { loadBoard: () => void } } } }).__zustandStores;
-      if (store?.board) {
-        store.board.getState().loadBoard();
-      }
+      if (store?.board) store.board.getState().loadBoard();
     });
 
-    // Give the board a moment to re-render the new swimlane
     await expect.poll(async () => {
       return page.locator('[data-swimlane-name="NoSpawnCol"]').isVisible();
     }, { timeout: 3000 }).toBe(true);
@@ -240,16 +231,15 @@ test.describe('BoardManagerDialog extended', () => {
     await openManagerByHeader('NoSpawnCol');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
-    const agentBtn = dialog.locator('[data-testid="board-manager-section-agent"]');
-    const autoBtn = dialog.locator('[data-testid="board-manager-section-auto"]');
-    const handoffBtn = dialog.locator('[data-testid="board-manager-section-handoff"]');
+    // Auto-spawn leads the Agent section: the toggle is present (off), its agent
+    // fields are hidden, and the downstream sections point back to it.
+    await expect(dialog.locator('[role="switch"][aria-label="Auto-spawn"]')).toBeVisible();
+    await expect(dialog.locator('[data-testid="column-agent-override"]')).toHaveCount(0);
+    await expect(dialog.getByText('Turn on Auto-spawn in the Agent section to enable Automation.')).toBeVisible();
+    await expect(dialog.getByText('Turn on Auto-spawn in the Agent section to enable Handoff.')).toBeVisible();
 
-    await expect(agentBtn).toHaveAttribute('aria-disabled', 'true');
-    await expect(agentBtn).toHaveAttribute('title', 'Turn on Auto-spawn in General to enable Agent.');
-    await expect(autoBtn).toHaveAttribute('title', 'Turn on Auto-spawn in General to enable Automation.');
-    await expect(handoffBtn).toHaveAttribute('title', 'Turn on Auto-spawn in General to enable Handoff.');
-
-    // Cleanup: delete the test column
+    // Close before cleanup, then delete the test column.
+    await closeManager();
     await page.evaluate(async () => {
       const lanes = await window.electronAPI.swimlanes.list();
       const lane = lanes.find((s) => s.name === 'NoSpawnCol');
@@ -257,57 +247,35 @@ test.describe('BoardManagerDialog extended', () => {
     });
   });
 
-  // ── Gap 4: Auto-bounce off disabled section ───────────────────────────────
+  // ── Gap 4: Auto-spawn toggle expands / collapses sections in place ────────
   //
-  // Open manager on a column with auto_spawn=true. Navigate to the Agent
-  // section. Then toggle Auto-spawn off via the General section toggle.
-  // After the toggle, the Agent section is now disabled, so the bounce
-  // useEffect must fire and return the active section to 'general'.
+  // Auto-spawn leads the Agent section and gates the agent-behavior config. The
+  // one-scroll form renders every section at once; toggling Auto-spawn off hides
+  // the agent fields (the toggle itself stays) and collapses Automation/Handoff
+  // to their inline explanations; toggling it back on restores the fields.
 
-  test('toggling auto_spawn off while on Agent section bounces back to General', async () => {
+  test('toggling Auto-spawn expands and collapses the dependent sections in place', async () => {
     await openManagerByHeader('Code Review'); // auto_spawn=true
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
-    // Navigate to Agent section
-    await dialog.locator('[data-testid="board-manager-section-agent"]').click();
-    await expect(dialog.locator('[data-testid="board-manager-section-agent"]')).toHaveAttribute('aria-selected', 'true');
+    // With Auto-spawn on, the Agent field is present and the Automation hint is absent.
+    await expect(dialog.locator('[data-testid="column-agent-override"]')).toBeVisible();
+    await expect(dialog.getByText('Turn on Auto-spawn in the Agent section to enable Automation.')).toHaveCount(0);
 
-    // Go back to General to toggle Auto-spawn off
-    await dialog.locator('[data-testid="board-manager-section-general"]').click();
-
-    // Toggle the Auto-spawn switch off
     const autoSpawnSwitch = dialog.locator('[role="switch"][aria-label="Auto-spawn"]');
     await expect(autoSpawnSwitch).toHaveAttribute('aria-checked', 'true');
     await autoSpawnSwitch.click();
     await expect(autoSpawnSwitch).toHaveAttribute('aria-checked', 'false');
 
-    // Now navigate back to Agent - it should be disabled
-    const agentBtn = dialog.locator('[data-testid="board-manager-section-agent"]');
-    await expect(agentBtn).toHaveAttribute('aria-disabled', 'true');
+    // The agent fields unmount (the toggle stays) and the downstream hint appears.
+    await expect(dialog.locator('[data-testid="column-agent-override"]')).toHaveCount(0);
+    await expect(autoSpawnSwitch).toBeVisible();
+    await expect(dialog.getByText('Turn on Auto-spawn in the Agent section to enable Automation.')).toBeVisible();
 
-    // Verify General is the active section (bounce should prevent leaving General)
-    const generalBtn = dialog.locator('[data-testid="board-manager-section-general"]');
-    await expect(generalBtn).toHaveAttribute('aria-selected', 'true');
-  });
-
-  test('switching to Agent then toggling auto_spawn off bounces back to General', async () => {
-    await openManagerByHeader('Code Review');
-    const dialog = page.locator('[data-testid="board-manager-dialog"]');
-
-    // Go to Agent
-    await dialog.locator('[data-testid="board-manager-section-agent"]').click();
-    await expect(dialog.locator('[data-testid="board-manager-section-agent"]')).toHaveAttribute('aria-selected', 'true');
-
-    // The Auto-spawn toggle lives in General. Navigate there and turn it off.
-    await dialog.locator('[data-testid="board-manager-section-general"]').click();
-    const autoSpawnSwitch = dialog.locator('[role="switch"][aria-label="Auto-spawn"]');
+    // Toggle back on: the field returns (net no change, so the dialog stays clean).
     await autoSpawnSwitch.click();
-    await expect(autoSpawnSwitch).toHaveAttribute('aria-checked', 'false');
-
-    // Agent section must now be aria-disabled
-    await expect(dialog.locator('[data-testid="board-manager-section-agent"]')).toHaveAttribute('aria-disabled', 'true');
-    // Active section must be General (bounced)
-    await expect(dialog.locator('[data-testid="board-manager-section-general"]')).toHaveAttribute('aria-selected', 'true');
+    await expect(autoSpawnSwitch).toHaveAttribute('aria-checked', 'true');
+    await expect(dialog.locator('[data-testid="column-agent-override"]')).toBeVisible();
   });
 
   // ── Gap 5: DoneSwimlane header button click ───────────────────────────────
@@ -382,7 +350,6 @@ test.describe('BoardManagerDialog extended', () => {
     await page.locator('[data-testid="board-manager-dialog"]').getByRole('button', { name: 'Cancel' }).click();
     await expect(page.locator('h3', { hasText: 'Discard unsaved changes?' })).toBeVisible({ timeout: 1500 });
 
-    const listItems = page.locator('[data-testid="board-manager-dialog"] ~ *').locator('li');
     // ConfirmDialog renders the bullet list in a separate modal; scope to all
     // visible <li>s in the confirm dialog. The ConfirmDialog is a sibling of
     // the manager's <> fragment in the DOM, so we locate it broadly.
@@ -448,6 +415,44 @@ test.describe('BoardManagerDialog extended', () => {
     await dialog.waitFor({ state: 'detached', timeout: 2000 });
   });
 
+  // ── Gap 8: Delete control names its target ────────────────────────────────
+  //
+  // DetailIdentityHeader's delete button carries an aria-label/title of
+  // `Delete "<column name>"`, and the ConfirmDialog it opens reuses that same
+  // string as its title (previously a static "Delete column").
+
+  test('delete control aria-label/title name the column; confirm dialog title matches', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+    const deleteButton = dialog.locator('[data-testid="board-manager-delete"]');
+    await expect(deleteButton).toHaveAttribute('aria-label', 'Delete "Code Review"');
+    await expect(deleteButton).toHaveAttribute('title', 'Delete "Code Review"');
+
+    await deleteButton.click();
+    await expect(page.locator('h3', { hasText: 'Delete "Code Review"' })).toBeVisible({ timeout: 1500 });
+
+    // Cancel out via Escape rather than a "Cancel" button click: the delete
+    // ConfirmDialog's own Cancel button shares its accessible name with the
+    // manager dialog's own footer Cancel button (both render underneath the
+    // confirm's z-[60] overlay), so a plain role/name locator would be
+    // ambiguous. Escape is unambiguous here: BoardManagerDialog's hand-rolled
+    // Escape listener is deliberately guarded off while confirmDeleteId is
+    // set (see the `!confirmDeleteId` check in BoardManagerDialog.tsx), and
+    // its own BaseDialog's Escape effect no-ops under preventBackdropClose,
+    // so only the ConfirmDialog's Escape handler fires, closing just the
+    // confirm and leaving the manager open with nothing deleted.
+    await page.keyboard.press('Escape');
+    await expect(page.locator('h3', { hasText: 'Delete "Code Review"' })).toBeHidden({ timeout: 1500 });
+    await expect(dialog).toBeVisible();
+
+    const stillExists = await page.evaluate(async () => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      return lanes.some((lane) => lane.name === 'Code Review');
+    });
+    expect(stillExists).toBe(true);
+  });
+
   // ── Session target + spawn strategy selects ──────────────────────────────
   //
   // The Automation tab exposes two Selects: "Session" (session_target: main /
@@ -459,8 +464,8 @@ test.describe('BoardManagerDialog extended', () => {
     await openManagerByHeader('Code Review');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
-    await dialog.locator('[data-testid="board-manager-section-auto"]').click();
-
+    // Code Review has auto_spawn=true, so the Automation section renders its
+    // fields inline in the one-scroll form (no section nav to click).
     const targetSelect = dialog.locator('[data-testid="column-session-target"]');
     const spawnSelect = dialog.locator('[data-testid="column-session-spawn-strategy"]');
     await expect(targetSelect).toBeVisible();
@@ -492,5 +497,177 @@ test.describe('BoardManagerDialog extended', () => {
       const lane = lanes.find((s) => s.name === 'Code Review');
       if (lane) await window.electronAPI.swimlanes.update({ id: lane.id, session_target: 'main', session_spawn_strategy: 'create_or_resume' });
     });
+  });
+
+  // ── Maximize parity ──────────────────────────────────────────────────────
+  //
+  // The dialog reuses the shared maximize pattern (maximizedDialogLayout +
+  // MaximizeToggleButton + panel.maximize). The toggle button's aria-label
+  // flips Maximize <-> Restore; Mod+Shift+M drives the same toggle.
+
+  test('maximize toggle flips via the header button and the panel.maximize hotkey', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    const maxBtn = dialog.locator('[data-testid="dialog-maximize"]');
+
+    await expect(maxBtn).toHaveAttribute('aria-label', 'Maximize dialog');
+    await maxBtn.click();
+    await expect(maxBtn).toHaveAttribute('aria-label', 'Restore dialog');
+
+    // Mod+Shift+M restores it (Mod = Ctrl on Windows/Linux, Cmd on macOS).
+    await page.keyboard.press('ControlOrMeta+Shift+M');
+    await expect(maxBtn).toHaveAttribute('aria-label', 'Maximize dialog');
+  });
+
+  // ── All-columns overview ─────────────────────────────────────────────────
+  //
+  // The rail's "All columns" entry swaps the detail pane for a grid, one row per
+  // column, read from DRAFTS so unsaved edits show. Clicking a row opens its
+  // detail. The overview entry itself does not carry the board-manager-tab id.
+
+  test('overview lists every column, reflects unsaved edits, and navigates on row click', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+    // Make an unsaved edit that the overview must reflect.
+    await dialog.locator('[data-testid="board-manager-name"]').fill('Reviewed');
+
+    const tabCount = await dialog.locator('[data-testid="board-manager-tab"]').count();
+    await dialog.locator('[data-testid="board-manager-tab-all"]').click();
+
+    const rows = dialog.locator('[data-testid="board-manager-overview-row"]');
+    await expect(rows).toHaveCount(tabCount);
+    await expect(rows.filter({ hasText: 'Reviewed' })).toBeVisible();
+
+    // Clicking the row opens that column's detail with the draft value intact.
+    await rows.filter({ hasText: 'Reviewed' }).click();
+    await expect(dialog.locator('[data-testid="board-manager-name"]')).toHaveValue('Reviewed');
+    // Dirty edit is discarded by afterEach.
+  });
+
+  // ── Footer dirty summary ─────────────────────────────────────────────────
+
+  test('footer summarises the number of modified columns', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    const summary = dialog.locator('[data-testid="board-manager-dirty-summary"]');
+
+    await expect(summary).toBeEmpty();
+
+    await dialog.locator('[data-testid="board-manager-name"]').fill('One');
+    await expect(summary).toHaveText('1 column modified');
+
+    await dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Tests"]').click();
+    await dialog.locator('[data-testid="board-manager-name"]').fill('Two');
+    await expect(summary).toHaveText('2 columns modified');
+    // Dirty edits are discarded by afterEach.
+  });
+
+  // ── Column-cycle keybinding ──────────────────────────────────────────────
+  //
+  // Mod+PageDown / Mod+PageUp cycle the selection across [overview, ...columns]
+  // with wraparound, regardless of focus.
+
+  test('Mod+PageDown / Mod+PageUp cycle the selected column with wraparound', async () => {
+    await openManagerByHeader('To Do');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+    const todoTab = dialog.locator('[data-testid="board-manager-tab"][data-tab-name="To Do"]');
+    const planningTab = dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Planning"]');
+    const overviewTab = dialog.locator('[data-testid="board-manager-tab-all"]');
+
+    await expect(todoTab).toHaveAttribute('aria-selected', 'true');
+
+    // To Do is laneOrder[0]; navIds = [overview, To Do, Planning, ...].
+    await page.keyboard.press('ControlOrMeta+PageDown');
+    await expect(planningTab).toHaveAttribute('aria-selected', 'true');
+
+    await page.keyboard.press('ControlOrMeta+PageUp');
+    await expect(todoTab).toHaveAttribute('aria-selected', 'true');
+
+    // Wrap up past To Do lands on the overview entry.
+    await page.keyboard.press('ControlOrMeta+PageUp');
+    await expect(overviewTab).toHaveAttribute('aria-selected', 'true');
+  });
+
+  // ── Drag-to-reorder ──────────────────────────────────────────────────────
+  //
+  // The rail reorders via @dnd-kit. To Do is pinned first (no handle, outside the
+  // SortableContext). Reorder is local until Save; the store-sync effect must
+  // preserve an unsaved reorder across a loadBoard() re-sync (the risk-7 fix).
+
+  test('To Do has no drag handle; custom columns do', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+    const todoBtn = dialog.locator('[data-testid="board-manager-tab"][data-tab-name="To Do"]');
+    const reviewBtn = dialog.locator('[data-testid="board-manager-tab"][data-tab-name="Code Review"]');
+    await expect(todoBtn.locator('xpath=../*[@data-drag-handle]')).toHaveCount(0);
+    await expect(reviewBtn.locator('xpath=../*[@data-drag-handle]')).toHaveCount(1);
+  });
+
+  // A single @dnd-kit drag of a rail row's handle, dropped `deltaRows` below its
+  // current slot. Mirrors the mouse-drag pattern in drag-and-drop.spec.ts (move
+  // >5px to fire the PointerSensor, step to the target, settle, release). The
+  // caller retries until the order changes, since a saturated event loop can
+  // starve the final collision compute.
+  async function dragRailRowDown(name: string, deltaRows: number) {
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    const handle = dialog
+      .locator(`[data-testid="board-manager-tab"][data-tab-name="${name}"]`)
+      .locator('xpath=../*[@data-drag-handle]');
+    const row = dialog.locator(`[data-testid="board-manager-tab"][data-tab-name="${name}"]`);
+    const handleBox = await handle.boundingBox();
+    const rowBox = await row.boundingBox();
+    if (!handleBox || !rowBox) return;
+    const startX = handleBox.x + handleBox.width / 2;
+    const startY = handleBox.y + handleBox.height / 2;
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX, startY + 8, { steps: 3 }); // activate (>5px)
+    await page.mouse.move(startX, startY + rowBox.height * deltaRows, { steps: 20 });
+    await page.waitForTimeout(200); // let dnd-kit process the final pointermove
+    await page.mouse.up();
+  }
+
+  test('drag reorder counts toward the modified summary and persists on save', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    const summary = dialog.locator('[data-testid="board-manager-dirty-summary"]');
+
+    const readOrder = () =>
+      dialog.locator('[data-testid="board-manager-tab"]').evaluateAll((els) =>
+        els.map((el) => el.getAttribute('data-tab-name')));
+    const orderBefore = await readOrder();
+
+    // Drag "Code Review" down two slots. Retry on a starved drop (mirrors the
+    // established DnD-under-load pattern).
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if ((await readOrder()).join(',') !== orderBefore.join(',')) break;
+      await dragRailRowDown('Code Review', 2);
+      await page.waitForTimeout(150);
+    }
+
+    await expect.poll(async () => (await readOrder()).join(',')).not.toBe(orderBefore.join(','));
+    // A reorder counts the moved columns toward the affected-column summary.
+    await expect(summary).toContainText('modified');
+    const orderAfterDrag = await readOrder();
+
+    // Save persists the new order (risk-7 preservation across the save flow's
+    // own store churn is covered deterministically by reconcileLaneOrder units).
+    await dialog.locator('[data-testid="board-manager-save"]').click();
+    await dialog.waitFor({ state: 'detached', timeout: 3000 });
+
+    const persisted = await page.evaluate(async () =>
+      (await window.electronAPI.swimlanes.list()).sort((a, b) => a.position - b.position).map((s) => s.name));
+    expect(persisted).toEqual(orderAfterDrag);
+
+    // Cleanup: restore the original persisted order.
+    await page.evaluate(async (names: (string | null)[]) => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      const byName = new Map(lanes.map((lane) => [lane.name, lane.id] as const));
+      const ids = names.map((name) => (name ? byName.get(name) : undefined)).filter((id): id is string => !!id);
+      if (ids.length === names.length) await window.electronAPI.swimlanes.reorder(ids);
+    }, orderBefore);
   });
 });
