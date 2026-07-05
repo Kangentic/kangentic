@@ -114,9 +114,12 @@ function mergeStreams(bundle: TraceBundle): TimedItem[] {
 
 /**
  * Mirrors `SessionTelemetry.processStatusUpdate`: status updates that
- * see the engine in 'thinking' reset lastSignalAt (unless an idle_hint is
- * pending - then the heartbeat is parked-TUI churn, not liveness); status
- * updates that see the engine 'idle' for >1s with OUTPUT-token growth
+ * see the engine in 'thinking' reset lastSignalAt ONLY on proof of work -
+ * OUTPUT tokens grew since the previous write AND no idle_hint is pending.
+ * Frozen-output churn is parked-TUI statusline noise (a resume-picker reload
+ * that parked with no hooks, task #331; or post-idle_hint housekeeping, task
+ * #294), not liveness, so it must not re-warm the stale-thinking anchor.
+ * Status updates that see the engine 'idle' for >1s with OUTPUT-token growth
  * force-recover to thinking, but ONLY when the idle is not hook-authoritative
  * (background housekeeping must not re-wake a parked agent). Output only, never
  * input: Claude's input total is context-window occupancy that climbs while
@@ -132,7 +135,7 @@ function applyStatusDelta(
   const state = engine.getState(sessionId);
   if (!state) return;
   if (state.activity === 'thinking') {
-    if (!state.idleHintPending) {
+    if (!state.idleHintPending && previous && current.outputTokens > previous.outputTokens) {
       engine.markThinkingSignal(sessionId);
     }
     return;
@@ -438,6 +441,67 @@ describe('ActivityEngine trace-bundle replay', () => {
     });
 
     it('settles idle (the agent is genuinely parked waiting for input)', () => {
+      expect(result.finalActivity).toBe('idle');
+    });
+  });
+
+  // Real capture of task #331 (session de06e459): the session was spawned with
+  // --resume, and the CLI ran its resume-picker context-reload turn - a
+  // CLI-INTERNAL turn that fires NO turn hooks (events.jsonl has only
+  // session_start source=resume, then nothing until the real user prompt ~10min
+  // later). While the reload summary generated, status.json output grew and the
+  // heartbeat correctly force-thinked (idle -> thinking, forceThinking: 1). Then
+  // the reload finished and Claude parked with NO Stop/idle_hint to clear
+  // turnActive. Pre-fix the parked-TUI statusline rewrote status.json every ~10s
+  // and each write re-warmed lastSignalAt (thinking && !idleHintPending ->
+  // markThinkingSignal), starving the 180s stale-thinking watchdog so the card
+  // pinned ACTIVE indefinitely. The fix gates keep-warm on OUTPUT-token growth:
+  // frozen-output churn (output stuck at 1144) stops re-warming, so once the
+  // parked-statusline PTY chunks fall silent for >180s the signal-or-pty-output
+  // anchor freezes and stale-thinking self-heals to idle. Pre-fix
+  // (keep-warm gated on !idleHintPending only) this replays staleThinking: 0
+  // (the churn re-warms lastSignalAt for the whole parked window).
+  describe('session-021-false-active-resume-picker', () => {
+    let result: ReplayResult;
+    beforeEach(() => {
+      const bundle = loadTraceBundle(
+        path.join(FIXTURES_DIR, 'session-021-false-active-resume-picker'),
+      );
+      result = replayBundle(bundle);
+    });
+
+    it('force-thinks once on the resume-summary output growth (the genuine flip is preserved)', () => {
+      // Guards against over-fixing: the heartbeat SHOULD wake the reload turn
+      // (real output growth); only the parked keep-warm afterwards is the bug.
+      expect(result.compensationCounters.forceThinking).toBe(1);
+    });
+
+    it('self-heals the parked turn to idle via the stale-thinking watchdog', () => {
+      // The reliable signal: post-fix this is 1 (frozen-output churn stops
+      // re-warming, so the 180s net fires during the quiet PTY gap); pre-fix it
+      // is 0 (the churn keeps lastSignalAt fresh and the net never fires).
+      expect(result.compensationCounters.staleThinking).toBe(1);
+    });
+
+    it('records exactly one thinking -> idle stale-thinking transition, with no re-flip after it', () => {
+      const staleIdles = result.transitions.filter(
+        (transition) =>
+          transition.from === 'thinking'
+          && transition.to === 'idle'
+          && transition.trigger === 'timer:stale-thinking',
+      );
+      expect(staleIdles).toHaveLength(1);
+      // Frozen-output churn after the heal must not force-think the healed idle
+      // back to active (idle branch compares output, which stayed at 1144).
+      const staleIdleTs = staleIdles[0].ts;
+      const laterForceThinks = result.transitions.filter(
+        (transition) =>
+          transition.trigger === 'force-thinking' && transition.ts > staleIdleTs,
+      );
+      expect(laterForceThinks).toEqual([]);
+    });
+
+    it('settles idle after the trailing real turn ends cleanly', () => {
       expect(result.finalActivity).toBe('idle');
     });
   });

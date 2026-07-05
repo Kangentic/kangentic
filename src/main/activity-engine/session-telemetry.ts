@@ -341,12 +341,27 @@ export class SessionTelemetry {
     const state = this.activityEngine.getOrCreateState(sessionId);
 
     // Keep a genuinely-thinking session warm for the stale-thinking watchdog,
-    // but NOT once the agent reported waiting-for-input (`idleHintPending`).
-    // After an idle_hint, status.json churn is parked-TUI statusline noise, not
-    // proof of work; letting it refresh `lastSignalAt` here would re-blind the
-    // (now `signal`-anchored) stale-thinking net exactly as PTY repaints did,
-    // pinning a stuck `turnActive` past 180s (task #294).
-    if (state.activity === 'thinking' && !state.idleHintPending) {
+    // but only on PROOF OF WORK: OUTPUT tokens grew since the last status write.
+    // Two conditions must both hold, and each closes a distinct false-active pin:
+    //   - NOT once the agent reported waiting-for-input (`idleHintPending`).
+    //     After an idle_hint, status.json churn is parked-TUI statusline noise;
+    //     refreshing `lastSignalAt` here would re-blind the (then `signal`-
+    //     anchored) stale-thinking net exactly as PTY repaints did (task #294).
+    //   - Output must have GROWN since the previous write. A `--resume`
+    //     resume-picker reload is a CLI-internal turn that fires NO turn hooks,
+    //     so it never gets an idle_hint: when it finishes and Claude parks, the
+    //     idle-hint gate alone cannot stop the parked statusline churn from
+    //     re-warming `lastSignalAt` forever, starving the 180s watchdog (task
+    //     #331). Gating on growth (the same output-only compare the heartbeat
+    //     recovery below uses, #298) makes frozen-output churn stop re-warming,
+    //     so `lastSignalAt` freezes at the last real generation and the
+    //     stale-thinking net self-heals to idle.
+    // First-ever write (no `previousUsage`) does not warm: hook events refresh
+    // `lastSignalAt` independently, so a genuinely-working turn loses nothing.
+    const outputGrew =
+      previousUsage !== undefined
+      && usage.contextWindow.totalOutputTokens > previousUsage.contextWindow.totalOutputTokens;
+    if (state.activity === 'thinking' && !state.idleHintPending && outputGrew) {
       this.activityEngine.markThinkingSignal(sessionId);
     }
 

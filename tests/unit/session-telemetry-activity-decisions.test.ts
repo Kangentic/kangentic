@@ -182,12 +182,13 @@ describe('SessionTelemetry activity decisions', () => {
       expect(telemetry.getActivityCache()['s1']).toBe('idle');
     });
 
-    it('keeps a thinking session warm without forcing a transition', () => {
+    it('keeps a thinking session warm without forcing a transition when output grows', () => {
       telemetry.initSession('s1');
       telemetry.ingestEvents('s1', [{ ts: Date.now(), type: EventType.Prompt }]);
       expect(telemetry.getActivityCache()['s1']).toBe('thinking');
+      telemetry.processStatusUpdate('s1', usage(100, 50)); // seed previousUsage
       log.activityChanges.length = 0;
-      telemetry.processStatusUpdate('s1', usage(100, 50)); // markThinkingSignal branch
+      telemetry.processStatusUpdate('s1', usage(120, 90)); // output grew: markThinkingSignal branch
       expect(telemetry.getActivityCache()['s1']).toBe('thinking');
       expect(log.activityChanges).toHaveLength(0);
     });
@@ -235,17 +236,23 @@ describe('SessionTelemetry activity decisions', () => {
     // Task #294 part 2: once idle_hint is pending, status.json churn is parked-TUI
     // statusline noise, not proof of work - the heartbeat must NOT keep refreshing
     // lastSignalAt, or it re-blinds the stale-thinking net and pins a stuck turn.
+    // This holds EVEN WHEN output grows (background compaction/summarization ticks
+    // total_output_tokens up while parked, #294's real housekeeping: 1273 -> 1400),
+    // so a `previousUsage` is seeded and the mid-window write GROWS output - making
+    // the `!idleHintPending` guard the only thing that keeps this idle (the #331
+    // growth gate alone would not, since output grew).
     //
     // Red-green: drop the `&& !state.idleHintPending` guard on the markThinkingSignal
-    // call and this goes red (the mid-window heartbeat re-arms the watchdog, so the
-    // stuck turn never idles within the window).
-    it('heartbeat does NOT keep a stuck turnActive warm once idle_hint is pending (part 2)', () => {
+    // call and this goes red (the growing-output heartbeat re-arms the watchdog, so
+    // the stuck turn never idles within the window).
+    it('heartbeat does NOT keep a stuck turnActive warm once idle_hint is pending, even as output grows (part 2)', () => {
       const localLog: DecisionLog = { activityChanges: [], events: [], suspends: [], idleTimeouts: [] };
       const localTelemetry = makeTelemetry(localLog, new Set(), { staleThinkingTimeoutMs: 1_000 });
       const now = Date.now();
       localTelemetry.initSession('s1');
       localTelemetry.ingestEvents('s1', [{ ts: now, type: EventType.Prompt }]); // thinking
       localTelemetry.ingestEvents('s1', [{ ts: now, type: EventType.ToolStart, tool: 'Bash', toolId: 't1' }]);
+      localTelemetry.processStatusUpdate('s1', usage(602813, 1273)); // seed previousUsage (real #294 endpoint)
       localTelemetry.ingestEvents('s1', [{ ts: now, type: EventType.IdleHint, detail: 'Claude is waiting for your input' }]);
       localTelemetry.ingestEvents('s1', [{ ts: now, type: EventType.ToolEnd, tool: 'Bash', toolId: 't1' }]);
       // Stuck: turnActive true, counters zero, idle_hint pending; lastSignalAt
@@ -253,9 +260,57 @@ describe('SessionTelemetry activity decisions', () => {
       expect(localTelemetry.getActivityCache()['s1']).toBe('thinking');
 
       vi.advanceTimersByTime(600); // a heartbeat lands BEFORE the stale window
-      localTelemetry.processStatusUpdate('s1', usage(100, 50));
+      localTelemetry.processStatusUpdate('s1', usage(610402, 1400)); // output GREW (housekeeping)
       vi.advanceTimersByTime(600); // total 1200ms > the 1000ms stale window
       expect(localTelemetry.getActivityCache()['s1']).toBe('idle');
+      localTelemetry.dispose();
+    });
+
+    // Task #331: a `--resume` resume-picker reload force-thinks on real output
+    // growth, then finishes and parks with NO idle_hint (a CLI-internal turn fires
+    // no turn hooks). The parked statusline keeps rewriting status.json with FROZEN
+    // output. That churn is not proof of work, so it must NOT keep re-warming
+    // lastSignalAt - otherwise the 180s stale-thinking net is starved and the card
+    // pins ACTIVE forever. Gating keep-warm on output GROWTH lets the frozen churn
+    // stop re-warming so the net self-heals to idle.
+    //
+    // Red-green: revert the keep-warm gate to `!state.idleHintPending` only (drop
+    // the `&& outputGrew` condition) and this goes red - the frozen-output churn
+    // re-arms the watchdog (no idle_hint here to gate it), so the stuck turn never
+    // idles within the window.
+    it('heartbeat does NOT keep a force-thinked turn warm when output freezes after a resume-picker park (#331)', () => {
+      const localLog: DecisionLog = { activityChanges: [], events: [], suspends: [], idleTimeouts: [] };
+      const localTelemetry = makeTelemetry(localLog, new Set(), { staleThinkingTimeoutMs: 1_000 });
+      localTelemetry.initSession('s1'); // non-authoritative idle (resume)
+      localTelemetry.processStatusUpdate('s1', usage(216810, 0)); // seed previousUsage (transcript-fallback baseline)
+      vi.advanceTimersByTime(1_500); // idle for >1s
+      localTelemetry.processStatusUpdate('s1', usage(216810, 1144)); // output grew: reload force-thinks
+      expect(localTelemetry.getActivityCache()['s1']).toBe('thinking');
+      // Reload finished, Claude parks: statusline churn with FROZEN output and NO
+      // idle_hint (a CLI-internal resume turn fires none).
+      vi.advanceTimersByTime(600); // a heartbeat lands BEFORE the stale window
+      localTelemetry.processStatusUpdate('s1', usage(216810, 1144)); // frozen output: must not re-warm
+      vi.advanceTimersByTime(600); // total 1200ms > the 1000ms stale window
+      expect(localTelemetry.getActivityCache()['s1']).toBe('idle');
+      localTelemetry.dispose();
+    });
+
+    // Task #331 companion: the growth gate must not over-fire. While the resume
+    // reload is genuinely still generating (output keeps growing), the heartbeat
+    // SHOULD keep re-warming lastSignalAt, so the turn stays thinking past the
+    // original watchdog deadline. This pins that the fix preserves live generation.
+    it('heartbeat DOES keep a force-thinked turn warm while output keeps growing (#331)', () => {
+      const localLog: DecisionLog = { activityChanges: [], events: [], suspends: [], idleTimeouts: [] };
+      const localTelemetry = makeTelemetry(localLog, new Set(), { staleThinkingTimeoutMs: 1_000 });
+      localTelemetry.initSession('s1');
+      localTelemetry.processStatusUpdate('s1', usage(216810, 0)); // seed previousUsage
+      vi.advanceTimersByTime(1_500);
+      localTelemetry.processStatusUpdate('s1', usage(216810, 1144)); // force-think
+      expect(localTelemetry.getActivityCache()['s1']).toBe('thinking');
+      vi.advanceTimersByTime(600); // before the original 1000ms deadline
+      localTelemetry.processStatusUpdate('s1', usage(216810, 1600)); // output GREW: real generation
+      vi.advanceTimersByTime(600); // past the ORIGINAL deadline (would fire without the re-warm)
+      expect(localTelemetry.getActivityCache()['s1']).toBe('thinking');
       localTelemetry.dispose();
     });
   });
