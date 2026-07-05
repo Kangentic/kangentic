@@ -313,6 +313,32 @@ describe('SessionTelemetry activity decisions', () => {
       expect(localTelemetry.getActivityCache()['s1']).toBe('thinking');
       localTelemetry.dispose();
     });
+
+    // The `outputGrew` gate requires `previousUsage !== undefined` before
+    // comparing output totals at all. This is not just a null-safety nicety:
+    // a plausible-looking regression (falling back to a `?? 0` baseline
+    // instead of requiring a real previous write) would silently treat ANY
+    // output-token count on the very FIRST status write as "growth",
+    // re-warming a session before it has ever established a baseline. Pin
+    // that the first-ever write for an already-thinking session does not
+    // push the stale-thinking deadline out, no matter how large its output
+    // token count is.
+    //
+    // Red-green: replace `previousUsage !== undefined` with
+    // `(previousUsage?.contextWindow.totalOutputTokens ?? 0)` and this goes
+    // red - the first write (baseline 0 -> 5000) reads as growth, re-arms the
+    // 1000ms watchdog at t=600, and the session is still thinking at t=1100.
+    it('does not warm on the very first status write, even with a large output-token count', () => {
+      const localLog: DecisionLog = { activityChanges: [], events: [], suspends: [], idleTimeouts: [] };
+      const localTelemetry = makeTelemetry(localLog, new Set(), { staleThinkingTimeoutMs: 1_000 });
+      localTelemetry.initSession('s1');
+      localTelemetry.ingestEvents('s1', [{ ts: Date.now(), type: EventType.Prompt }]); // thinking, arms the 1000ms stale-thinking watchdog
+      vi.advanceTimersByTime(600);
+      localTelemetry.processStatusUpdate('s1', usage(0, 5000)); // first-ever write: no previousUsage baseline yet
+      vi.advanceTimersByTime(500); // total 1100ms since the Prompt event > the 1000ms stale window
+      expect(localTelemetry.getActivityCache()['s1']).toBe('idle');
+      localTelemetry.dispose();
+    });
   });
 
   describe('checkIdleTimeouts sweep', () => {
