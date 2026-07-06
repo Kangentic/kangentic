@@ -29,7 +29,7 @@
   let memoryStatus = {
     indexingEnabled: true,
     semantic: 'disabled',
-    model: { id: 'mxbai-xsmall', displayName: 'mxbai xsmall', tier: 'fast', approxSizeMb: 24, dimensions: 384, state: 'absent' },
+    model: { id: 'bge-base', displayName: 'bge base', tier: 'accurate', approxSizeMb: 110, dimensions: 768, state: 'absent' },
   };
   let similarConversations = [];
   // Conversation viewer fixtures. `transcriptSeeds` maps a sessionId to a

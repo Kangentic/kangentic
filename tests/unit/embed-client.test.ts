@@ -22,7 +22,7 @@ import type { EmbeddingModelDef } from '../../src/shared/embedding-models';
 
 const TEST_MODEL: EmbeddingModelDef = {
   id: 'test-model',
-  tier: 'fast',
+  tier: 'balanced',
   hfId: 'Xenova/test-model',
   displayName: 'Test',
   dimensions: 384,

@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, type ReactNode } from 'react';
+import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
 import { X, Trash2, Pencil, Loader2, Circle, FolderGit2, FolderGit, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare, AlignLeft } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
@@ -13,7 +13,6 @@ import { CommandSearchList } from './CommandSearchList';
 import { useHeaderPillOverflow, type HeaderPillSpec } from './useHeaderPillOverflow';
 import { MaximizeToggleButton } from '../dialog-maximize';
 import { PriorityBadge } from '../../backlog/PriorityBadge';
-import { useConfigStore } from '../../../stores/config-store';
 import { useToastStore } from '../../../stores/toast-store';
 import { useProjectStore } from '../../../stores/project-store';
 import { useSessionStore } from '../../../stores/session-store';
@@ -216,11 +215,31 @@ export function TaskDetailHeader({
   const pillsRef = useRef<HTMLDivElement>(null);
   const titleSpanRef = useRef<HTMLSpanElement>(null);
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
-  const defaultBaseBranch = useConfigStore((s) => s.config.git.defaultBaseBranch);
-  const worktreeBaseBranch = task.base_branch || defaultBaseBranch || null;
   const closeCombo = useFormattedCombo('panel.close');
   const browserCombo = useFormattedCombo('taskDetail.toggleBrowser');
   const changesCombo = useFormattedCombo('taskDetail.toggleChanges');
+
+  // Conversation availability, for disabling the pill/kebab item rather than
+  // letting a click resolve to nothing. A live session (any state, not just
+  // running) means history is already known synchronously; otherwise a
+  // session may still exist from a prior run, so check once per task.
+  const liveSessionId = useSessionStore((state) => state._sessionByTaskId.get(task.id)?.id ?? null);
+  const [historicalConversationAvailable, setHistoricalConversationAvailable] = useState(false);
+  useEffect(() => {
+    if (liveSessionId) {
+      setHistoricalConversationAvailable(false);
+      return;
+    }
+    let cancelled = false;
+    setHistoricalConversationAvailable(false);
+    const projectId = useProjectStore.getState().currentProject?.id ?? null;
+    window.electronAPI.transcripts
+      .listSessions(task.id, projectId)
+      .then((list) => { if (!cancelled) setHistoricalConversationAvailable(list.length > 0); })
+      .catch(() => { if (!cancelled) setHistoricalConversationAvailable(false); });
+    return () => { cancelled = true; };
+  }, [task.id, liveSessionId]);
+  const conversationAvailable = Boolean(liveSessionId) || historicalConversationAvailable;
 
   // Quick-access pills, highest priority collapses LAST. The title is reserved only
   // up to a ~50ch floor (useHeaderPillOverflow); these compete for whatever is left
@@ -342,17 +361,16 @@ export function TaskDetailHeader({
       {!isArchived && (
         <div ref={pillsRef} className="flex items-center gap-3 flex-shrink-0">
           {/* Open folder pill - icon-only. The FolderGit2 (worktree) vs FolderGit
-              (no worktree) glyph signals worktree-vs-project at a glance; the type
-              and base branch live in the tooltip. (Commands is kebab-only - it is a
-              menu, not a one-tap toggle, so it does not earn a header slot.) */}
+              (no worktree) glyph signals worktree-vs-project at a glance; the
+              tooltip names the action, not the branch it's based on (that's a
+              Changes-panel concern). (Commands is kebab-only - it is a menu,
+              not a one-tap toggle, so it does not earn a header slot.) */}
           {showPill('folder') && (task.worktree_path || projectPath) && (
             <div data-pill-id="folder" className="flex-shrink-0">
               <HeaderActionButton
                 icon={task.worktree_path ? FolderGit2 : FolderGit}
                 onClick={() => window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!)}
-                title={task.worktree_path
-                  ? `Worktree${worktreeBaseBranch ? ` from ${worktreeBaseBranch}` : ''}`
-                  : 'Project'}
+                title={task.worktree_path ? 'Open Worktree' : 'Open Folder'}
                 ariaLabel={task.worktree_path ? 'Open worktree folder' : 'Open project folder'}
                 testId="branch-pill"
               />
@@ -400,13 +418,15 @@ export function TaskDetailHeader({
           )}
 
           {/* Conversation pill - opens the read-only transcript viewer for this
-              task's newest session (also in the kebab as "View conversation"). */}
+              task's newest session (also in the kebab as "View conversation").
+              Disabled (muted) when the task has no session, live or historical. */}
           {showPill('conversation') && (
             <div data-pill-id="conversation" className="flex-shrink-0">
               <HeaderActionButton
                 icon={MessageSquare}
                 onClick={() => void openTaskConversation(task.id)}
-                title="View conversation"
+                disabled={!conversationAvailable}
+                title={conversationAvailable ? 'View conversation' : 'No conversation history for this task yet'}
                 ariaLabel="View conversation"
                 testId="conversation-pill"
               />
@@ -469,6 +489,7 @@ export function TaskDetailHeader({
               canShowDescription={canShowDescription}
               descriptionPeekOpen={descriptionPeekOpen}
               onToggleDescription={onToggleDescription}
+              conversationAvailable={conversationAvailable}
             />
           )}
         </KebabMenu>
@@ -538,6 +559,9 @@ interface TaskDetailKebabItemsProps {
   canShowDescription?: boolean;
   descriptionPeekOpen?: boolean;
   onToggleDescription?: () => void;
+  /** Whether this task has any session (live or historical) to view. Disables
+   *  the "View conversation" item rather than letting it resolve to nothing. */
+  conversationAvailable: boolean;
 }
 
 function TaskDetailKebabItems({
@@ -561,6 +585,7 @@ function TaskDetailKebabItems({
   canShowChanges,
   changesOpen,
   onToggleChanges,
+  conversationAvailable,
   canShowBrowser,
   browserOpen,
   onToggleBrowser,
@@ -628,11 +653,13 @@ function TaskDetailKebabItems({
         onClick={() => { closeAll(); setIsEditing(true); }}
       />
 
-      {/* View conversation - opens the structured transcript viewer */}
+      {/* View conversation - opens the structured transcript viewer. Disabled
+          (muted) when the task has no session, live or historical. */}
       <KebabMenuItem
         icon={<MessageSquare size={14} />}
         label="View conversation"
         onClick={() => { closeAll(); void openTaskConversation(task.id); }}
+        disabled={!conversationAvailable}
         data-testid="view-conversation-btn"
       />
 

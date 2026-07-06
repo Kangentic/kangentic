@@ -34,7 +34,7 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
   // Default off when unset (matches DEFAULT_CONFIG.memory.semanticEnabled).
   const semanticEnabled = globalConfig.memory?.semanticEnabled ?? false;
   // Default model when unset (matches DEFAULT_CONFIG.memory.embeddingModel).
-  const embeddingModelId = globalConfig.memory?.embeddingModel ?? 'mxbai-xsmall';
+  const embeddingModelId = globalConfig.memory?.embeddingModel ?? 'bge-base';
   // Default acceleration when unset (matches DEFAULT_CONFIG.memory.acceleration).
   const acceleration = globalConfig.memory?.acceleration ?? 'auto';
 

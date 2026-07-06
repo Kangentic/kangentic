@@ -1597,7 +1597,7 @@ export interface AppConfig {
      *  turning it on triggers the one-time local model download. */
     semanticEnabled?: boolean;
     /** Selected embedding model id (see src/shared/embedding-models.ts). Default
-     *  'mxbai-xsmall'. Switching re-embeds the index in the background. */
+     *  'bge-base'. Switching re-embeds the index in the background. */
     embeddingModel?: string;
     /** Which hardware the embedding model runs on. 'auto' (default) prefers a GPU
      *  execution provider (DirectML on Windows, WebGPU elsewhere) and falls back to
@@ -1850,7 +1850,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   memory: {
     indexingEnabled: true,
     semanticEnabled: false,
-    embeddingModel: 'mxbai-xsmall',
+    embeddingModel: 'bge-base',
     acceleration: 'auto',
   },
   dictation: {
@@ -3328,7 +3328,7 @@ export type MemoryModelState = 'absent' | 'downloading' | 'ready' | 'error';
 export interface MemoryModelStatus {
   id: string;
   displayName: string;
-  tier: 'fast' | 'balanced' | 'accurate';
+  tier: 'balanced' | 'accurate' | 'max';
   approxSizeMb: number;
   dimensions: number;
   state: MemoryModelState;

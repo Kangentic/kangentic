@@ -14,6 +14,9 @@ interface HeaderActionButtonProps {
   label?: string;
   /** Toggle buttons (changes / browser): accent styling when on. */
   active?: boolean;
+  /** Muted, non-interactive styling for when the action has nothing to act on
+   *  (e.g. no conversation history yet). `title` should still explain why. */
+  disabled?: boolean;
   testId?: string;
 }
 
@@ -21,10 +24,13 @@ interface HeaderActionButtonProps {
  *  every folder / changes / browser / conversation / shortcut glyph at once. */
 const ICON_SIZE = 16;
 
-/** Rest vs. toggled-on styling. Every variant carries `border` (transparent at
- *  rest) so an active toggle's accent border does not shift the pill 1px. */
+/** Rest vs. toggled-on vs. disabled styling. Every variant carries `border`
+ *  (transparent at rest) so an active toggle's accent border does not shift
+ *  the pill 1px. Disabled drops all hover styling and dims further than rest
+ *  so it reads as non-interactive at a glance, not just a duller version of rest. */
 const REST = 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent';
 const ACTIVE = 'bg-accent/15 text-accent-fg border-accent/30';
+const DISABLED = 'bg-surface-hover/20 text-fg-faint/50 border-transparent cursor-not-allowed';
 
 /**
  * Shared header action button: an icon-forward square {@link Pill} used across
@@ -41,13 +47,15 @@ export function HeaderActionButton({
   ariaLabel,
   label,
   active,
+  disabled,
   testId,
 }: HeaderActionButtonProps) {
   return (
     <Pill
       shape="square"
       onClick={onClick}
-      className={`flex-shrink-0 border transition-colors ${active ? ACTIVE : REST}`}
+      disabled={disabled}
+      className={`flex-shrink-0 border transition-colors ${disabled ? DISABLED : active ? ACTIVE : REST}`}
       title={title}
       aria-label={ariaLabel}
       data-testid={testId}

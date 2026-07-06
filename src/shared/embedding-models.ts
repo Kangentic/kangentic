@@ -6,10 +6,21 @@
  *
  * All models are ONNX (q8) sentence encoders that run keyless + offline via
  * transformers.js (onnxruntime); files are fetched once by our own downloader
- * into the persistent model cache. Selection is by MTEB-informed tier:
- *   fast     - mxbai-embed-xsmall-v1 (24M, 384d): tiny; mean pooling, no prefix.
- *   balanced - bge-small-en-v1.5 (34M, 384d): stronger retrieval; CLS pooling + query prefix.
- *   accurate - bge-base-en-v1.5 (110M, 768d): best quality, 768d; CLS pooling + query prefix.
+ * into the persistent model cache. Selection is by MTEB-informed tier, all
+ * three from the bge-*-en-v1.5 family (same CLS pooling, same query prefix -
+ * only size/dimensions/accuracy scale):
+ *   balanced - bge-small-en-v1.5 (34M, 384d).
+ *   accurate - bge-base-en-v1.5 (110M, 768d).
+ *   max      - bge-large-en-v1.5 (335M, 1024d): highest MTEB retrieval score.
+ *
+ * A prior 'fast' tier (mxbai-embed-xsmall-v1, mean-pooled, no query prefix)
+ * was removed: measured against our pipeline it scored short keyword queries
+ * (e.g. a single word like "space") BELOW its own noise floor against a
+ * genuinely relevant passage, i.e. worse than unrelated text - a real
+ * semantic-search miss a user hit directly, not a tuning artifact. Symmetric,
+ * un-prefixed, sub-30M models are not accurate enough for this product's
+ * query shapes; every tier now uses the same well-behaved family instead of
+ * trading correctness for a smaller download.
  *
  * Each model carries its OWN pooling (`mean` vs `cls`), query prefix, and
  * anisotropy `noiseFloor` here so the worker and the search filter read one
@@ -20,7 +31,7 @@
  * worker.
  */
 
-export type EmbeddingTier = 'fast' | 'balanced' | 'accurate';
+export type EmbeddingTier = 'balanced' | 'accurate' | 'max';
 
 export interface EmbeddingModelDef {
   /** Stable id persisted in config + as the chunk model-tag base. */
@@ -29,9 +40,9 @@ export interface EmbeddingModelDef {
   /** transformers.js model id (the on-disk subdir under the cache). */
   hfId: string;
   /**
-   * Quality label shown in the SELECTION dropdown, using the same vocabulary as
-   * the dictation Mode dropdown ('Best accuracy' | 'Balanced' | 'Fastest'). The
-   * concrete model name + size live in the status card, not the dropdown.
+   * Quality label shown in the SELECTION dropdown ('Balanced' | 'Accurate' |
+   * 'Best accuracy'). The concrete model name + size live in the status card,
+   * not the dropdown.
    */
   tierLabel: string;
   /** Plain model name for the status card (the card appends the size). */
@@ -88,13 +99,30 @@ export interface EmbeddingModelDef {
 // bge-* v1.5 retrieval query instruction (documented on the model cards).
 const BGE_QUERY_PREFIX = 'Represent this sentence for searching relevant passages: ';
 
-// Best-first, matching the dictation Mode dropdown's ordering.
+// Best-first.
 export const EMBEDDING_MODELS: EmbeddingModelDef[] = [
+  {
+    id: 'bge-large',
+    tier: 'max',
+    hfId: 'Xenova/bge-large-en-v1.5',
+    tierLabel: 'Best accuracy',
+    displayName: 'bge large',
+    dimensions: 1024,
+    dtype: 'q8',
+    pooling: 'cls',
+    approxSizeMb: 337,
+    license: 'MIT',
+    queryPrefix: BGE_QUERY_PREFIX,
+    // Measured: unrelated-pair p90 ~0.39, genuine matches ~0.67-0.71 (q8, CLS, prefixed).
+    noiseFloor: 0.42,
+    modelTag: 'bge-large@q8-cls',
+    blurb: 'Highest quality. Largest download and most storage (1024-dim vectors).',
+  },
   {
     id: 'bge-base',
     tier: 'accurate',
     hfId: 'Xenova/bge-base-en-v1.5',
-    tierLabel: 'Best accuracy',
+    tierLabel: 'Accurate',
     displayName: 'bge base',
     dimensions: 768,
     dtype: 'q8',
@@ -106,7 +134,7 @@ export const EMBEDDING_MODELS: EmbeddingModelDef[] = [
     noiseFloor: 0.44,
     // `-cls` suffix: bge now CLS-pools (was mean); the bump re-embeds stale indexes.
     modelTag: 'bge-base@q8-cls',
-    blurb: 'Best quality. Larger download and more storage (768-dim vectors).',
+    blurb: 'Strong quality. Balanced download and storage (768-dim vectors).',
   },
   {
     id: 'bge-small',
@@ -125,29 +153,11 @@ export const EMBEDDING_MODELS: EmbeddingModelDef[] = [
     noiseFloor: 0.52,
     // `-cls` suffix: bge now CLS-pools (was mean); the bump re-embeds stale indexes.
     modelTag: 'bge-small@q8-cls',
-    blurb: 'Stronger retrieval quality at nearly the same size and dimensions.',
-  },
-  {
-    id: 'mxbai-xsmall',
-    tier: 'fast',
-    hfId: 'mixedbread-ai/mxbai-embed-xsmall-v1',
-    tierLabel: 'Fastest',
-    displayName: 'mxbai xsmall',
-    dimensions: 384,
-    dtype: 'q8',
-    pooling: 'mean',
-    approxSizeMb: 24,
-    license: 'Apache-2.0',
-    queryPrefix: '',
-    // Measured: mxbai is far less anisotropic (unrelated-pair p90 ~0.16), genuine
-    // matches ~0.56-0.71 (q8, mean pooling, no prefix).
-    noiseFloor: 0.20,
-    modelTag: 'mxbai-xsmall@q8',
     blurb: 'Smallest and fastest. Good for quick on-device recall.',
   },
 ];
 
-export const DEFAULT_EMBEDDING_MODEL_ID = 'mxbai-xsmall';
+export const DEFAULT_EMBEDDING_MODEL_ID = 'bge-base';
 
 /** Resolve a config-selected model id to its definition, falling back to the
  *  default when the id is missing or unknown. */

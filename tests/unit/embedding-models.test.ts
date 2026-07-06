@@ -27,19 +27,19 @@ describe('embedding-models registry', () => {
       expect(model.noiseFloor).toBeLessThan(1);
       expect(model.license).toBeTruthy();
       expect(model.modelTag).toBeTruthy();
-      expect(['fast', 'balanced', 'accurate']).toContain(model.tier);
-      // Dropdown label uses the dictation Mode vocabulary; the model name is
-      // carried separately for the status card, not baked into the label.
-      expect(['Fastest', 'Balanced', 'Best accuracy']).toContain(model.tierLabel);
+      expect(['balanced', 'accurate', 'max']).toContain(model.tier);
+      // Dropdown label; the model name is carried separately for the status
+      // card, not baked into the label.
+      expect(['Balanced', 'Accurate', 'Best accuracy']).toContain(model.tierLabel);
       expect(model.tierLabel).not.toContain(model.displayName);
     }
   });
 
-  it('is ordered best-first (matching the dictation Mode dropdown)', () => {
+  it('is ordered best-first', () => {
     expect(EMBEDDING_MODELS.map((model) => model.tierLabel)).toEqual([
       'Best accuracy',
+      'Accurate',
       'Balanced',
-      'Fastest',
     ]);
   });
 
@@ -52,22 +52,20 @@ describe('embedding-models registry', () => {
 
   it('covers all three tiers exactly once', () => {
     const tiers = EMBEDDING_MODELS.map((model) => model.tier).sort();
-    expect(tiers).toEqual(['accurate', 'balanced', 'fast']);
+    expect(tiers).toEqual(['accurate', 'balanced', 'max']);
   });
 
-  it('bge tiers use CLS pooling + a query prefix; mxbai uses mean + none', () => {
+  it('every model is CLS-pooled with a retrieval query prefix (the bge family)', () => {
     // The load-bearing invariant this registry exists to hold: bge was trained
     // for CLS pooling and a retrieval query instruction (mean-pooling it or
-    // dropping the prefix silently collapses its score separation), while mxbai
-    // is a symmetric mean-pooled model. If someone flips these, retrieval quietly
-    // degrades - so pin them here.
-    const byId = new Map(EMBEDDING_MODELS.map((model) => [model.id, model]));
-    expect(byId.get('bge-base')?.pooling).toBe('cls');
-    expect(byId.get('bge-small')?.pooling).toBe('cls');
-    expect(byId.get('mxbai-xsmall')?.pooling).toBe('mean');
-    expect(byId.get('bge-base')?.queryPrefix).toBeTruthy();
-    expect(byId.get('bge-small')?.queryPrefix).toBeTruthy();
-    expect(byId.get('mxbai-xsmall')?.queryPrefix).toBe('');
+    // dropping the prefix silently collapses its score separation). All three
+    // tiers are now bge-*-en-v1.5, so this must hold for every entry, not just
+    // pinned ids - a prior symmetric mean-pooled tier (mxbai) was removed after
+    // it scored a real short keyword query below its own noise floor.
+    for (const model of EMBEDDING_MODELS) {
+      expect(model.pooling).toBe('cls');
+      expect(model.queryPrefix).toBeTruthy();
+    }
   });
 
   it('the default id resolves to a real model', () => {

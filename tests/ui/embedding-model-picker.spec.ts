@@ -22,10 +22,10 @@ function makePreConfig(modelState: string, progress?: number): string {
     semantic: modelState === 'ready' ? 'hybrid' : 'downloading',
     activeBackend: modelState === 'ready' ? 'DirectML (GPU)' : undefined,
     model: {
-      id: 'mxbai-xsmall',
-      displayName: 'mxbai xsmall',
-      tier: 'fast',
-      approxSizeMb: 24,
+      id: 'bge-small',
+      displayName: 'bge small',
+      tier: 'balanced',
+      approxSizeMb: 34,
       dimensions: 384,
       state: modelState,
       progress,
@@ -62,7 +62,7 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   // Enable semantic search in config (the dropdown + card are gated on it) via
   // the same config.set + store-reload path the settings UI uses.
   await page.evaluate(() =>
-    window.electronAPI.config.set({ memory: { indexingEnabled: true, semanticEnabled: true, embeddingModel: 'mxbai-xsmall' } }),
+    window.electronAPI.config.set({ memory: { indexingEnabled: true, semanticEnabled: true, embeddingModel: 'bge-small' } }),
   );
   await page.evaluate(() => {
     const stores = (window as unknown as {
@@ -87,15 +87,15 @@ test.describe('Embedding model picker', () => {
 
       const select = page.getByTestId('embedding-model-select');
       await expect(select).toBeVisible();
-      // Three curated tiers, labeled with the dictation Mode dropdown's exact
-      // quality words (best-first) - the concrete model name is NOT in the label.
-      await expect(select.locator('option')).toHaveText(['Best accuracy', 'Balanced', 'Fastest']);
+      // Three curated tiers, all bge-*-en-v1.5 (best-first) - the concrete
+      // model name is NOT in the label.
+      await expect(select.locator('option')).toHaveText(['Best accuracy', 'Accurate', 'Balanced']);
 
       // The card carries the concrete model name + size + readiness.
       const card = page.getByTestId('embedding-model-card');
       await expect(card).toBeVisible();
-      await expect(card).toContainText('Model: mxbai xsmall');
-      await expect(card).toContainText('~24 MB');
+      await expect(card).toContainText('Model: bge small');
+      await expect(card).toContainText('~34 MB');
       await expect(page.getByTestId('embedding-model-ready')).toBeVisible();
     } finally {
       await browser.close();
