@@ -7,6 +7,7 @@ import { CompletedTasksDialog } from '../dialogs/CompletedTasksDialog';
 import { ConfirmDialog } from '../dialogs/ConfirmDialog';
 import { getSwimlaneIcon } from '../../utils/swimlane-icons';
 import { useBoardStore } from '../../stores/board-store';
+import { ARCHIVED_PREVIEW_LIMIT } from '../../stores/board-store/archived-tasks-slice';
 import { useConfigStore } from '../../stores/config-store';
 import { useColumnWidthClass } from './column-width';
 import { CountBadge } from '../CountBadge';
@@ -18,15 +19,15 @@ export interface DoneSwimlaneProps {
   dragHandleProps?: Record<string, unknown>;
 }
 
-/** Cap rendered cards in the inline preview list. */
-const MAX_RENDERED_PREVIEW = 15;
-
 export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }: DoneSwimlaneProps) {
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [showCompletedDialog, setShowCompletedDialog] = useState(false);
 
   const openBoardManager = useBoardStore((state) => state.openBoardManager);
   const archivedTasks = useBoardStore((state) => state.archivedTasks);
+  // Authoritative count for the header/badges. archivedTasks may hold only the
+  // newest-N preview, so its length is not the true archived total.
+  const archivedTotalCount = useBoardStore((state) => state.archivedTotalCount);
   const deleteArchivedTask = useBoardStore((state) => state.deleteArchivedTask);
   const recentlyArchivedId = useBoardStore((state) => state.recentlyArchivedId);
   const clearRecentlyArchived = useBoardStore((state) => state.clearRecentlyArchived);
@@ -65,7 +66,8 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
     data: droppableData,
   });
 
-  const filteredArchivedTasks = archivedTasks;
+  const hasArchived = archivedTotalCount > 0;
+  const previewTasks = archivedTasks.slice(0, ARCHIVED_PREVIEW_LIMIT);
 
 
   return (
@@ -159,23 +161,23 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
         {/* Section header */}
         <button
           type="button"
-          onClick={filteredArchivedTasks.length > 0 ? () => setShowCompletedDialog(true) : undefined}
-          disabled={filteredArchivedTasks.length === 0}
-          className={`py-2 px-2.5 flex-shrink-0 flex items-center justify-between rounded-md transition-colors w-full text-left border ${filteredArchivedTasks.length > 0 ? 'border-edge/30 bg-surface-hover/20 hover:bg-surface-hover/40 hover:border-edge/50 cursor-pointer group' : 'border-transparent'}`}
+          onClick={hasArchived ? () => setShowCompletedDialog(true) : undefined}
+          disabled={!hasArchived}
+          className={`py-2 px-2.5 flex-shrink-0 flex items-center justify-between rounded-md transition-colors w-full text-left border ${hasArchived ? 'border-edge/30 bg-surface-hover/20 hover:bg-surface-hover/40 hover:border-edge/50 cursor-pointer group' : 'border-transparent'}`}
           data-testid="expand-completed-btn"
         >
           <span className="flex items-center gap-1.5 text-sm font-medium text-fg-muted">
             <ClipboardList size={14} />
-            Completed ({filteredArchivedTasks.length})
+            Completed ({archivedTotalCount})
           </span>
-          {filteredArchivedTasks.length > 0 && (
+          {hasArchived && (
             <Maximize2 size={14} className="text-fg-disabled group-hover:text-fg-muted transition-colors" />
           )}
         </button>
 
         {/* Recent archived tasks - scrollable list with View All at the bottom */}
         <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
-          {filteredArchivedTasks.slice(0, MAX_RENDERED_PREVIEW).map((task) => {
+          {previewTasks.map((task) => {
             const isGrowingIn = recentlyArchivedId === task.id;
             return isGrowingIn ? (
               <div
@@ -194,11 +196,11 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
               />
             );
           })}
-          {filteredArchivedTasks.length === 0 && (
+          {!hasArchived && (
             <div className="text-xs text-fg-disabled text-center py-3">No completed tasks yet</div>
           )}
           {/* View all as last row in the list */}
-          {filteredArchivedTasks.length > 0 && (
+          {hasArchived && (
             <button
               type="button"
               onClick={() => setShowCompletedDialog(true)}
@@ -208,7 +210,7 @@ export const DoneSwimlane = React.memo(function DoneSwimlane({ swimlane, tasks }
               <Maximize2 size={14} />
               <span className="text-sm">View all</span>
               <span className="text-xs px-1.5 py-0.5 rounded-full font-medium bg-surface-hover/60 text-fg-secondary">
-                {filteredArchivedTasks.length}
+                {archivedTotalCount}
               </span>
             </button>
           )}

@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
-import { Search, ClipboardList } from 'lucide-react';
+import { Search, ClipboardList, Loader2 } from 'lucide-react';
 import { BaseDialog } from './BaseDialog';
 import { TaskChangesDialog } from './TaskChangesDialog';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -9,6 +9,7 @@ import { formatCost } from '../../utils/format-session';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
+import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import type { Task, SessionSummary } from '../../../shared/types';
 import { BulkToolbar } from './completed-tasks/BulkToolbar';
@@ -20,6 +21,7 @@ interface CompletedTasksDialogProps {
 
 export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
   const archivedTasks = useBoardStore((state) => state.archivedTasks);
+  const archivedTotalCount = useBoardStore((state) => state.archivedTotalCount);
   const swimlanes = useBoardStore((state) => state.swimlanes);
   const unarchiveTask = useBoardStore((state) => state.unarchiveTask);
   const deleteArchivedTask = useBoardStore((state) => state.deleteArchivedTask);
@@ -29,7 +31,10 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
   const skipDeleteConfirm = useConfigStore((state) => state.config.skipDeleteConfirm);
   const updateConfig = useConfigStore((state) => state.updateConfig);
 
+  const currentProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
+
   const [summaries, setSummaries] = useState<Record<string, SessionSummary>>({});
+  const [loadingFullArchive, setLoadingFullArchive] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [restorePopoverId, setRestorePopoverId] = useState<string | null>(null);
@@ -37,6 +42,28 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
   const [pendingBulkDelete, setPendingBulkDelete] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ position: { x: number; y: number }; task: Task } | null>(null);
   const [changesTask, setChangesTask] = useState<Task | null>(null);
+
+  // This dialog needs the FULL archive, not just the board's newest-N preview.
+  // Refcount a viewer for the whole mount so board hydration keeps the full
+  // list loaded (and reconciled) while the dialog is open.
+  useEffect(() => {
+    useBoardStore.getState().acquireArchiveView();
+    return () => { useBoardStore.getState().releaseArchiveView(); };
+  }, []);
+
+  // Lazily fetch the full archive when it isn't loaded yet. Keyed on project id
+  // so switching projects while the dialog is open reloads for the new project.
+  // The preview rows render immediately; the full list replaces them in well
+  // under a second.
+  useEffect(() => {
+    if (useBoardStore.getState().archivedFullyLoaded) return;
+    let cancelled = false;
+    setLoadingFullArchive(true);
+    useBoardStore.getState().loadArchivedTasks()
+      .catch(() => { /* keep the preview rows already on screen */ })
+      .finally(() => { if (!cancelled) setLoadingFullArchive(false); });
+    return () => { cancelled = true; };
+  }, [currentProjectId]);
 
   // Fetch summaries on mount
   useEffect(() => {
@@ -218,9 +245,13 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
         header={
           <div className="flex items-center gap-3 px-4 py-3">
             <ClipboardList size={18} className="text-fg-muted" />
-            <h3 className="text-base font-semibold text-fg flex-1">
-              Completed Tasks ({archivedTasks.length})
+            <h3 className="text-base font-semibold text-fg flex items-center gap-2">
+              Completed Tasks ({archivedTotalCount})
+              {loadingFullArchive && (
+                <Loader2 size={14} className="animate-spin text-fg-disabled" data-testid="archive-loading" />
+              )}
             </h3>
+            <div className="flex-1" />
             <div className="relative">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-disabled" />
               <input
@@ -237,8 +268,8 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
         footer={
           <div className="flex items-center gap-4 text-xs text-fg-muted tabular-nums bg-surface-inset/40 -mx-4 -my-3 px-4 py-3">
             <span>
-              {searchQuery.trim() && filteredRows.length !== archivedTasks.length
-                ? `${filteredRows.length} of ${archivedTasks.length} tasks`
+              {filteredRows.length !== archivedTotalCount
+                ? `${filteredRows.length} of ${archivedTotalCount} tasks`
                 : `${filteredRows.length} tasks`
               }
             </span>

@@ -1,6 +1,6 @@
-import { Plug } from 'lucide-react';
+import { ExternalLink, Plug } from 'lucide-react';
 import type { AppConfig } from '../../../../shared/types';
-import { MCP_TOOL_CATEGORIES, MCP_TOOL_MANIFEST } from '../../../../shared/mcp-tool-manifest';
+import { MCP_TOOL_CATEGORIES, MCP_TOOL_MANIFEST, mcpToolDocsUrl } from '../../../../shared/mcp-tool-manifest';
 import { SectionHeader, SettingToggleRow, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
@@ -26,13 +26,17 @@ export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
               <h4 className="text-[11px] font-semibold uppercase tracking-wider text-fg-faint mb-1">{category.label}</h4>
               <ul className="grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-1.5 ml-1">
                 {tools.map((tool) => (
-                  <li
-                    key={tool.name}
-                    data-testid="mcp-tool-pill"
-                    title={`${tool.label} - ${tool.blurb}`}
-                    className="truncate rounded-md border border-edge/50 bg-surface-hover/30 px-2.5 py-1 text-xs text-fg-secondary"
-                  >
-                    {tool.label}
+                  <li key={tool.name}>
+                    <button
+                      type="button"
+                      data-testid="mcp-tool-pill"
+                      title={`${tool.label} - ${tool.blurb}. Opens the docs page.`}
+                      onClick={() => void window.electronAPI.shell.openExternal(mcpToolDocsUrl(tool.name))}
+                      className="w-full flex items-center gap-1 rounded-md border border-edge/50 bg-surface-hover/30 px-2.5 py-1 text-xs text-fg-secondary hover:bg-surface-hover hover:text-fg hover:border-edge transition-colors cursor-pointer"
+                    >
+                      <span className="truncate">{tool.label}</span>
+                      <ExternalLink size={11} className="ml-auto shrink-0 opacity-60" />
+                    </button>
                   </li>
                 ))}
               </ul>

@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { applyStructuralSharing } from '../../src/renderer/stores/board-store/structural-sharing';
-import type { Task } from '../../src/shared/types';
+import {
+  applyStructuralSharing,
+  applySwimlaneStructuralSharing,
+} from '../../src/renderer/stores/board-store/structural-sharing';
+import type { Task, Swimlane } from '../../src/shared/types';
 
 /**
  * `applyStructuralSharing` is our narrow port of TanStack Query's default
@@ -178,5 +181,96 @@ describe('applyStructuralSharing', () => {
       [nextMalformed as unknown as Task],
     );
     expect(result[0]).toBe(previousMalformed);
+  });
+});
+
+function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {
+  return {
+    id: 'lane-1',
+    name: 'To Do',
+    description: null,
+    role: null,
+    position: 0,
+    color: '#888888',
+    icon: null,
+    is_archived: false,
+    is_ghost: false,
+    permission_mode: null,
+    auto_spawn: false,
+    auto_command: null,
+    plan_exit_target_id: null,
+    agent_override: null,
+    model_override: null,
+    effort_override: null,
+    handoff_context: false,
+    session_target: 'main',
+    session_spawn_strategy: 'create_or_resume',
+    created_at: '2026-04-17T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('applySwimlaneStructuralSharing', () => {
+  it('reuses the previous swimlane reference when fields are identical', () => {
+    const previous = makeSwimlane();
+    const next = makeSwimlane();
+    expect(previous).not.toBe(next);
+
+    const result = applySwimlaneStructuralSharing([previous], [next]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toBe(previous);
+  });
+
+  it('uses the next reference when any field changed', () => {
+    const previous = makeSwimlane({ name: 'Old', auto_command: null });
+    const next = makeSwimlane({ name: 'Old', auto_command: '/code-review' });
+
+    const result = applySwimlaneStructuralSharing([previous], [next]);
+
+    expect(result[0]).toBe(next);
+  });
+
+  it('reuses siblings while one swimlane changed', () => {
+    const previousA = makeSwimlane({ id: 'a', name: 'A' });
+    const previousB = makeSwimlane({ id: 'b', name: 'B-old' });
+    const nextA = makeSwimlane({ id: 'a', name: 'A' });
+    const nextB = makeSwimlane({ id: 'b', name: 'B-new' });
+
+    const result = applySwimlaneStructuralSharing([previousA, previousB], [nextA, nextB]);
+
+    expect(result[0]).toBe(previousA);
+    expect(result[1]).toBe(nextB);
+  });
+
+  it('returns the next array verbatim when previous is empty', () => {
+    const next = [makeSwimlane({ id: 'a' }), makeSwimlane({ id: 'b' })];
+    const result = applySwimlaneStructuralSharing([], next);
+    expect(result).toBe(next);
+  });
+
+  it('returns a new outer array reference even when every swimlane was reused', () => {
+    const previous = [makeSwimlane({ id: 'a' }), makeSwimlane({ id: 'b' })];
+    const next = [makeSwimlane({ id: 'a' }), makeSwimlane({ id: 'b' })];
+
+    const result = applySwimlaneStructuralSharing(previous, next);
+
+    expect(result).not.toBe(previous);
+    expect(result).not.toBe(next);
+    expect(result[0]).toBe(previous[0]);
+    expect(result[1]).toBe(previous[1]);
+  });
+
+  // Guard against silent drift: when a new field is added to the Swimlane
+  // interface, swimlaneContentsMatch must be updated to compare it, otherwise a
+  // stale reference is reused and the column memo misses the change.
+  //
+  // How to update when this fails: read the field list in
+  // `structural-sharing.ts` swimlaneContentsMatch, add the new field there, then
+  // update SWIMLANE_FIELD_COUNT below to match.
+  it('guards against Swimlane-interface field drift', () => {
+    const SWIMLANE_FIELD_COUNT = 20; // keep in sync with swimlaneContentsMatch
+    const sample = makeSwimlane();
+    expect(Object.keys(sample)).toHaveLength(SWIMLANE_FIELD_COUNT);
   });
 });

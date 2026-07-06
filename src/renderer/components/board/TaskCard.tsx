@@ -14,6 +14,7 @@ import { useBacklogStore } from '../../stores/backlog-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useTaskProgress } from '../../utils/task-progress';
+import { isContextWindowTrusted } from '../../utils/format-tokens';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { getProgressColor } from '../../utils/color-lerp';
 import { LabelPills } from '../Pill';
@@ -326,13 +327,14 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
         {!isCompactDensity && (() => {
           switch (displayState.kind) {
             case 'running': {
-              // Footer model label comes only from the CLI's status.json (the
-              // human name, e.g. "Opus 4.8"). We deliberately do NOT fall back to
-              // the raw configured model id (e.g. "claude-opus-4-8") - a user
-              // doesn't know what that means. Until status.json reports, show the
-              // loading spinner; the spawn-time statusline kick + the settings'
-              // refreshInterval make the real name arrive within a moment, even
-              // for a background (never-opened) session.
+              // Footer model label is the human name (e.g. "Opus 4.8"). We
+              // deliberately do NOT fall back to the raw configured model id
+              // (e.g. "claude-opus-4-8") - a user doesn't know what that means.
+              // Until a name is known, show the loading spinner. The name (and
+              // live context %) arrives from status.json once the CLI paints,
+              // or - for a background (never-opened) session that never paints -
+              // from the transcript-watch fallback (Claude's runtime.sessionHistory),
+              // plus the spawn-time model seed as an immediate placeholder.
               const resolvedModelName = displayState.usage?.model.displayName || null;
               if (!resolvedModelName) {
                 const spinnerLabel = isResuming ? 'Resuming agent...' : 'Starting agent...';
@@ -345,26 +347,26 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
                   </div>
                 );
               }
-              // Show just the model name (no progress bar) when EITHER:
-              //   - Usage hasn't streamed any token counts yet (boot window)
-              //   - The agent's context window size is unknown (unmapped
-              //     Gemini model: contextWindowSize is 0 as sentinel)
-              // Always render the full progress bar layout once the CLI has
-              // reported. Default to 0% with a placeholder label when usage
-              // data hasn't streamed yet -- the bar at zero is the graceful
-              // baseline, never a blank slot. Smoothly animates to real
-              // values via the inner bar's transition-all when tokens arrive.
-              // Active/idle state is already conveyed by the top-left
-              // status icon (spinner vs mail), so no dot or label here.
+              // Always render the full bar layout (model + percent + track) once
+              // the model name is known, so the card height is STABLE - the bar
+              // does not mount in later and shove the card taller (the boot-window
+              // jank). The bar sits at 0% until a TRUSTWORTHY window exists: a
+              // positive contextWindowSize (0 is the "unknown size" sentinel) AND
+              // usedTokens within it (usedTokens > window is impossible, so the
+              // window is wrong - never divide by a bad denominator). It animates
+              // to the real value when telemetry fills in. Gating pct on
+              // windowTrusted also guarantees the label is never > 100%.
               const usage = displayState.usage;
-              const hasTokens = !!usage && usage.contextWindow.totalInputTokens > 0;
-              const hasKnownWindow = !!usage && usage.contextWindow.contextWindowSize > 0;
-              const pct = usage && hasTokens && hasKnownWindow
-                ? Math.round(usage.contextWindow.usedPercentage)
-                : 0;
+              const windowTrusted = !!usage
+                && isContextWindowTrusted(usage.contextWindow.contextWindowSize, usage.contextWindow.usedTokens);
+              const pct = windowTrusted ? Math.round(usage?.contextWindow.usedPercentage ?? 0) : 0;
               const progressColor = getProgressColor(pct);
               return (
-                <div className="mt-2 pt-2 border-t border-edge" data-testid="usage-bar">
+                <div
+                  className="mt-2 pt-2 border-t border-edge"
+                  data-testid="usage-bar"
+                  data-context-window={windowTrusted ? undefined : 'unknown'}
+                >
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-xs text-fg-faint truncate">
                       {resolvedModelName}

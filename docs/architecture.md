@@ -65,7 +65,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `projectGroup:reorder` | invoke | Reorder groups by ID array |
 | `projectGroup:setCollapsed` | invoke | Toggle group collapsed state |
 
-### Tasks (21 channels)
+### Tasks (22 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |
@@ -75,6 +75,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `task:move` | invoke | Move task between swimlanes (triggers transitions) |
 | `task:cancelSpawn` | invoke | Abort an in-flight spawn for a task (e.g. while parked in the git queue or fetching); aborts the move's AbortController and rolls the move back |
 | `task:list-archived` | invoke | Fetch archived tasks |
+| `task:list-archived-preview` | invoke | Fetch the newest N archived tasks plus the total archived count (cheap hydration payload; the full list loads lazily via `task:list-archived`) |
 | `task:unarchive` | invoke | Restore archived task |
 | `task:bulk-delete` | invoke | Delete multiple archived tasks by ID array |
 | `task:bulk-delete-progress` | on | Event: progress payload during bulk task delete (completed/total/failures) |
@@ -270,7 +271,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `shell:showItemInFolder` | invoke | Reveal a file or directory in the native file manager (Explorer on Windows, Finder on macOS); the path is normalized to platform separators before dispatch |
 | `shell:exec` | invoke | Execute shell command |
 
-### Git (9 channels)
+### Git (10 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `git:detect` | invoke | Detect git installation (path, version, minimum version check) |
@@ -282,6 +283,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `git:diffChanged` | on | Debounced event fired when watched worktree files or git metadata change on disk |
 | `git:checkPendingChanges` | invoke | Check whether a path has uncommitted or unpushed changes |
 | `git:branchSummary` | invoke | Lightweight branch summary for the Changes panel header: current branch, ahead/behind commit counts vs the base branch, and the HEAD tip commit (hash, subject, timestamp). Cheap enough to run on every panel open and watcher fire |
+| `git:commitGraph` | invoke | Topo-ordered commit history (commits with parent links plus resolved tip / base / merge-base anchors) for the task-detail commit-graph pane. Local-only and fail-safe, like `git:branchSummary` |
 
 ### Dialog (1 channel)
 | Channel | Pattern | Purpose |
@@ -496,6 +498,7 @@ Shell-specific adaptations:
 | MAX_SCROLLBACK | 512 KB | Terminal history per session |
 | MAX_EVENTS | 500 | Activity log cap per session |
 | Flush interval | 16 ms | Output batching (~60fps) |
+| Repaint-settle max wait | 400 ms | Ceiling for the post-resize repaint wait before sampling scrollback |
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
 | Graceful shutdown | 2000 ms | `suspendAll()` timeout (exists in code but NOT used during app quit; synchronous shutdown kills PTYs immediately) |
@@ -621,6 +624,7 @@ On project open (`src/main/transition-engine/session-startup/`):
 
 - **WebGL xterm** -- attempts WebGL renderer first, falls back to canvas on context loss
 - **Resize debouncing** -- PTY resize calls debounced at 200ms, suppressed during panel drag
+- **Repaint-settled scrollback** - after a width-changing resize, `getScrollback` waits for the agent TUI's async repaint to land before sampling, so a restored terminal never replays a stale narrow frame (see [session-lifecycle](session-lifecycle.md))
 - **Activity log** -- plain DOM list instead of xterm. Events flow through JSONL files, not terminal output.
 - **Terminal ownership handoff** -- one xterm instance per session at a time prevents duplicate resize calls that corrupt TUI output
 - **Output batching** -- 16ms flush interval prevents per-character IPC overhead

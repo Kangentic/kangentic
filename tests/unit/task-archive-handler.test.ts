@@ -171,6 +171,7 @@ interface MockSwimlane {
 
 interface MockTaskRepo {
   listArchived: ReturnType<typeof vi.fn>;
+  listArchivedPreview: ReturnType<typeof vi.fn>;
   list: ReturnType<typeof vi.fn>;
   getById: ReturnType<typeof vi.fn>;
   unarchive: ReturnType<typeof vi.fn>;
@@ -236,6 +237,10 @@ function createMockTaskRepo(tasks: MockTask[]): MockTaskRepo {
   const taskMap = new Map(tasks.map((task) => [task.id, { ...task }]));
   return {
     listArchived: vi.fn(() => Array.from(taskMap.values())),
+    listArchivedPreview: vi.fn((limit: number) => {
+      const all = Array.from(taskMap.values());
+      return { totalCount: all.length, tasks: all.slice(0, Math.max(1, Math.min(100, Math.floor(limit)))) };
+    }),
     list: vi.fn((_swimlaneId?: string) => Array.from(taskMap.values())),
     getById: vi.fn((id: string) => taskMap.get(id) ?? null),
     unarchive: vi.fn((id: string, targetSwimlaneId: string, _position: number) => {
@@ -364,6 +369,31 @@ describe('task-archive handlers', () => {
       const result = await callHandler(IPC.TASK_LIST_ARCHIVED);
 
       expect(result).toEqual([]);
+    });
+  });
+
+  // =========================================================================
+  // TASK_LIST_ARCHIVED_PREVIEW
+  // =========================================================================
+
+  describe('TASK_LIST_ARCHIVED_PREVIEW', () => {
+    it('delegates to tasks.listArchivedPreview(limit) and returns the { totalCount, tasks } shape', async () => {
+      const preview = { totalCount: 42, tasks: [createMockTask('task-a')] };
+      taskRepo.listArchivedPreview.mockReturnValue(preview);
+
+      const result = await callHandler(IPC.TASK_LIST_ARCHIVED_PREVIEW, 15);
+
+      expect(taskRepo.listArchivedPreview).toHaveBeenCalledTimes(1);
+      expect(taskRepo.listArchivedPreview).toHaveBeenCalledWith(15);
+      expect(result).toEqual(preview);
+    });
+
+    it('forwards the requested limit to the repository', async () => {
+      taskRepo.listArchivedPreview.mockReturnValue({ totalCount: 0, tasks: [] });
+
+      await callHandler(IPC.TASK_LIST_ARCHIVED_PREVIEW, 5);
+
+      expect(taskRepo.listArchivedPreview).toHaveBeenCalledWith(5);
     });
   });
 

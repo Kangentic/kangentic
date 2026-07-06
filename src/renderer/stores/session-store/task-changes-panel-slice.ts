@@ -41,10 +41,17 @@ export interface TaskChangesPanelSlice {
   /** Task IDs whose Browser pane is open (persists across dialog open/close). */
   browserOpenTasks: Set<string>;
   /**
+   * Which view each task's Changes panel is showing: the file diffs ('files',
+   * the default) or the commit graph ('graph'). Keyed by task ID; persists
+   * across dialog open/close.
+   */
+  changesViewTab: Record<string, 'files' | 'graph'>;
+  /**
    * Entity IDs whose dialog is maximized (persists across dialog open/close).
    * Keyed by task ID for the task detail dialog, and by a non-task sentinel id
-   * for the command terminal ('command-terminal') and the create dialogs
-   * ('new-task-dialog', 'new-backlog-task-dialog').
+   * for the command terminal ('command-terminal'), the create dialogs
+   * ('new-task-dialog', 'new-backlog-task-dialog'), and the Edit Columns dialog
+   * ('board-manager-dialog').
    */
   maximizedTasks: Set<string>;
   /**
@@ -63,6 +70,7 @@ export interface TaskChangesPanelSlice {
   setChangesViewMode: (taskId: string, mode: 'split' | 'expanded') => void;
   setDividerRatio: (taskId: string, ratio: number) => void;
   toggleBrowserOpen: (taskId: string) => void;
+  setChangesViewTab: (taskId: string, tab: 'files' | 'graph') => void;
   toggleMaximized: (taskId: string) => void;
   /**
    * Seed the per-task detail-view fields above from each task's persisted
@@ -107,6 +115,7 @@ function buildDetailViewBlob(state: SessionStore, taskId: string): TaskDetailVie
   if (ratio !== undefined) blob.dividerRatio = ratio;
   if (state.changesOpenTasks.has(taskId)) blob.changesOpen = true;
   if (state.browserOpenTasks.has(taskId)) blob.browserOpen = true;
+  if (state.changesViewTab[taskId] === 'graph') blob.changesViewTab = 'graph';
   const viewMode = state.changesViewMode[taskId];
   if (viewMode !== undefined) blob.changesViewMode = viewMode;
   const selectedFile = state.changesSelectedFile[taskId];
@@ -121,13 +130,13 @@ function buildDetailViewBlob(state: SessionStore, taskId: string): TaskDetailVie
 }
 
 /**
- * Non-task entity ids that share the Changes-panel setters (the create dialogs
- * and the Command Terminal) but have no `tasks` row to persist into. They must
- * not schedule a `detail_view_state` save: the DB UPDATE would be a no-op, and
- * the Command Terminal would otherwise emit a spurious IPC write on every Changes
- * interaction.
+ * Non-task entity ids that share the Changes-panel setters (the create dialogs,
+ * the Command Terminal, and the Edit Columns dialog) but have no `tasks` row to
+ * persist into. They must not schedule a `detail_view_state` save: the DB UPDATE
+ * would be a no-op, and the Command Terminal would otherwise emit a spurious IPC
+ * write on every Changes interaction.
  */
-const NON_TASK_DETAIL_VIEW_IDS = new Set(['new-task-dialog', 'new-backlog-task-dialog', 'command-terminal']);
+const NON_TASK_DETAIL_VIEW_IDS = new Set(['new-task-dialog', 'new-backlog-task-dialog', 'command-terminal', 'board-manager-dialog']);
 
 /**
  * Schedule a debounced persist of a task's detail-view layout. Captures the
@@ -168,6 +177,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   changesViewMode: {},
   dividerRatio: {},
   browserOpenTasks: new Set<string>(),
+  changesViewTab: {},
   maximizedTasks: new Set<string>(),
   hydratedDetailViewTasks: new Set<string>(),
 
@@ -193,6 +203,11 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       next.add(taskId);
     }
     set({ browserOpenTasks: next });
+    scheduleDetailViewSave(taskId, get);
+  },
+
+  setChangesViewTab: (taskId, tab) => {
+    set({ changesViewTab: { ...get().changesViewTab, [taskId]: tab } });
     scheduleDetailViewSave(taskId, get);
   },
 
@@ -278,6 +293,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
 
     const changesOpenTasks = new Set(get().changesOpenTasks);
     const browserOpenTasks = new Set(get().browserOpenTasks);
+    const changesViewTab = { ...get().changesViewTab };
     const changesViewMode = { ...get().changesViewMode };
     const changesSelectedFile = { ...get().changesSelectedFile };
     const changesViewedFiles = { ...get().changesViewedFiles };
@@ -295,6 +311,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       if (blob.dividerRatio !== undefined) dividerRatio[task.id] = blob.dividerRatio;
       if (blob.changesOpen) changesOpenTasks.add(task.id);
       if (blob.browserOpen) browserOpenTasks.add(task.id);
+      if (blob.changesViewTab !== undefined) changesViewTab[task.id] = blob.changesViewTab;
       if (blob.changesViewMode !== undefined) changesViewMode[task.id] = blob.changesViewMode;
       if (blob.changesSelectedFile !== undefined) changesSelectedFile[task.id] = blob.changesSelectedFile;
       if (blob.changesViewedFiles && blob.changesViewedFiles.length > 0) {
@@ -308,6 +325,7 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       hydratedDetailViewTasks,
       changesOpenTasks,
       browserOpenTasks,
+      changesViewTab,
       changesViewMode,
       changesSelectedFile,
       changesViewedFiles,

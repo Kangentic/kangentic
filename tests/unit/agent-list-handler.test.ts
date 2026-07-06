@@ -64,6 +64,7 @@ type MockAdapter = {
   defaultPermission: string;
   detect: () => Promise<{ found: boolean; path: string | null; version: string | null }>;
   probeAuth?: () => Promise<boolean | null>;
+  discoverCapabilities?: (cliPath: string, forceRefresh?: boolean) => Promise<unknown>;
   invalidateDetectionCache: () => void;
 };
 
@@ -380,6 +381,20 @@ describe('AGENT_LIST IPC handler - caching', () => {
 
     expect(detect).toHaveBeenCalledTimes(2);
     expect(invalidateDetectionCache).toHaveBeenCalled();
+  });
+
+  it('threads forceRefresh into discoverCapabilities so adapter model caches are bypassed', async () => {
+    const discoverCapabilities = vi.fn(async () => ({ models: ['claude-opus-4-8'] }));
+    mockRegistryAdapters = [makeAdapter({ name: 'claude', discoverCapabilities })];
+
+    // A plain open builds with the flag unset (background-warm path).
+    await invokeAgentList();
+    expect(discoverCapabilities).toHaveBeenLastCalledWith('/usr/bin/claude', false);
+
+    // A forced rescan (dropdown open) reaches capability discovery so the
+    // Claude adapter can bypass its 12h /model picker TTL.
+    await invokeAgentList(true);
+    expect(discoverCapabilities).toHaveBeenLastCalledWith('/usr/bin/claude', true);
   });
 
   it('rebuilds after CONFIG_SET invalidates the cache on an agent-config change', async () => {

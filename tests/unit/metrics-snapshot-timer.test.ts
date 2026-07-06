@@ -28,9 +28,14 @@ import type { SessionManager } from '../../src/main/pty/session-manager';
 // are hoisted to the top of the file ahead of all imports).
 // ---------------------------------------------------------------------------
 
+// better-sqlite3's `db.transaction(fn)` returns a callable that runs `fn` inside
+// a transaction. The mock mirrors that: transaction(fn) => fn, so calling the
+// returned function synchronously runs the batch body.
+const makeMockDb = () => ({ transaction: (fn: () => void) => fn });
+
 const { mockCaptureSessionMetrics, mockGetProjectDb, mockGetLatestForTask } = vi.hoisted(() => ({
   mockCaptureSessionMetrics: vi.fn(),
-  mockGetProjectDb: vi.fn(() => ({})),
+  mockGetProjectDb: vi.fn(() => ({ transaction: (fn: () => void) => fn })),
   /** Shared getLatestForTask stub - re-configured per test in beforeEach. */
   mockGetLatestForTask: vi.fn(),
 }));
@@ -270,7 +275,7 @@ describe('snapshotRunningSessions filter', () => {
     // The first session throws; the second must still be processed.
     mockGetProjectDb
       .mockImplementationOnce(() => { throw new Error('DB unavailable'); })
-      .mockImplementation(() => ({}));
+      .mockImplementation(() => makeMockDb());
 
     const sessions = [
       makeSession({ id: 'session-a', taskId: 'task-a', projectId: 'proj-a', status: 'running' }),
@@ -305,6 +310,68 @@ describe('snapshotRunningSessions filter', () => {
     expect(mockCaptureSessionMetrics).toHaveBeenCalledTimes(2);
 
     vi.advanceTimersByTime(SNAPSHOT_INTERVAL_MS); // tick 3
+    expect(mockCaptureSessionMetrics).toHaveBeenCalledTimes(3);
+  });
+
+  it('isolates one session\'s getLatestForTask throw from its sibling in the same project transaction', () => {
+    // The fix: each session's body inside the shared per-project db.transaction
+    // is wrapped in its own try/catch, so one session's getLatestForTask throw
+    // must not roll back / skip its sibling's capture in the same batch. This is
+    // distinct from the "getProjectDb throws for one project" test above, which
+    // covers isolation ACROSS projects, not across sessions within one project's
+    // shared transaction.
+    mockGetLatestForTask.mockImplementation((taskId: string) => {
+      if (taskId === 'task-throws') {
+        throw new Error('DB read failed for task-throws');
+      }
+      return makeRunningRecord();
+    });
+
+    const sessions = [
+      makeSession({ id: 'session-throws', taskId: 'task-throws', projectId: 'proj-shared', status: 'running' }),
+      makeSession({ id: 'session-ok', taskId: 'task-ok', projectId: 'proj-shared', status: 'running' }),
+    ];
+    const manager = makeManagerStub(sessions);
+    startMetricsSnapshotTimer(manager);
+
+    vi.advanceTimersByTime(SNAPSHOT_INTERVAL_MS);
+
+    // session-throws's getLatestForTask threw; session-ok, in the same project's
+    // shared transaction, must still have been captured.
+    expect(mockCaptureSessionMetrics).toHaveBeenCalledTimes(1);
+    expect(mockCaptureSessionMetrics).toHaveBeenCalledWith(
+      manager,
+      expect.anything(),
+      expect.anything(),
+      'session-ok',
+      expect.any(String),
+      expect.any(String),
+      expect.any(String),
+    );
+  });
+
+  it('groups sessions by project: one getProjectDb + one transaction per project', () => {
+    // Each project's captures commit in a single transaction, so a project with
+    // multiple running sessions opens the DB once and runs one transaction.
+    let transactionCalls = 0;
+    mockGetProjectDb.mockImplementation(() => ({
+      transaction: (fn: () => void) => () => { transactionCalls += 1; fn(); },
+    }));
+
+    const sessions = [
+      makeSession({ id: 's-a1', taskId: 't-a1', projectId: 'proj-a', status: 'running' }),
+      makeSession({ id: 's-a2', taskId: 't-a2', projectId: 'proj-a', status: 'running' }),
+      makeSession({ id: 's-b1', taskId: 't-b1', projectId: 'proj-b', status: 'running' }),
+    ];
+    const manager = makeManagerStub(sessions);
+    startMetricsSnapshotTimer(manager);
+
+    vi.advanceTimersByTime(SNAPSHOT_INTERVAL_MS);
+
+    // Two distinct projects -> two getProjectDb opens, two transactions, but all
+    // three sessions captured.
+    expect(mockGetProjectDb).toHaveBeenCalledTimes(2);
+    expect(transactionCalls).toBe(2);
     expect(mockCaptureSessionMetrics).toHaveBeenCalledTimes(3);
   });
 });

@@ -67,6 +67,7 @@ describe('StatusFileReader', () => {
     callbacks = {
       onUsageParsed: vi.fn(),
       onEventsParsed: vi.fn(),
+      onFirstStatus: vi.fn(),
     };
     reader = new StatusFileReader(callbacks);
   });
@@ -310,6 +311,82 @@ describe('StatusFileReader', () => {
     // No file exists - should not throw.
     expect(() => privateReader.handleStatusChange('session-1')).not.toThrow();
     expect(callbacks.onUsageParsed).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // onFirstStatus / hasReceivedStatus - the transcript-fallback handoff signal
+  // ---------------------------------------------------------------------------
+
+  it('fires onFirstStatus exactly once across multiple status writes, after onUsageParsed', () => {
+    const statusPath = path.join(tempDir, 'status.json');
+    const parser = makeStubStatusFileHook({ parseStatus: () => makeUsage(1000) });
+    reader.attach({
+      sessionId: 'session-1',
+      statusOutputPath: statusPath,
+      eventsOutputPath: null,
+      statusFileHook: parser,
+    });
+    fs.writeFileSync(statusPath, '{"any":"content"}');
+
+    const privateReader = reader as unknown as { handleStatusChange(sessionId: string): void };
+    privateReader.handleStatusChange('session-1');
+    privateReader.handleStatusChange('session-1');
+    privateReader.handleStatusChange('session-1');
+
+    // Fires once, not once-per-parse.
+    expect(callbacks.onFirstStatus).toHaveBeenCalledTimes(1);
+    expect(callbacks.onFirstStatus).toHaveBeenCalledWith('session-1');
+    // Ordering is load-bearing: onUsageParsed must run before onFirstStatus so
+    // the detach cancels the re-attach that the usage's id-capture can trigger.
+    const usageOrder = (callbacks.onUsageParsed as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    const firstStatusOrder = (callbacks.onFirstStatus as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0];
+    expect(usageOrder).toBeLessThan(firstStatusOrder);
+  });
+
+  it('does not fire onFirstStatus when parseStatus returns null', () => {
+    const statusPath = path.join(tempDir, 'status.json');
+    reader.attach({
+      sessionId: 'session-1',
+      statusOutputPath: statusPath,
+      eventsOutputPath: null,
+      statusFileHook: makeStubStatusFileHook({ parseStatus: () => null }),
+    });
+    fs.writeFileSync(statusPath, 'invalid');
+
+    const privateReader = reader as unknown as { handleStatusChange(sessionId: string): void };
+    privateReader.handleStatusChange('session-1');
+
+    expect(callbacks.onFirstStatus).not.toHaveBeenCalled();
+    expect(reader.hasReceivedStatus('session-1')).toBe(false);
+  });
+
+  it('hasReceivedStatus flips true after the first parse and resets on re-attach', () => {
+    const statusPath = path.join(tempDir, 'status.json');
+    const parser = makeStubStatusFileHook({ parseStatus: () => makeUsage(1000) });
+    reader.attach({
+      sessionId: 'session-1',
+      statusOutputPath: statusPath,
+      eventsOutputPath: null,
+      statusFileHook: parser,
+    });
+    // Not received before any parse.
+    expect(reader.hasReceivedStatus('session-1')).toBe(false);
+
+    fs.writeFileSync(statusPath, '{"any":"content"}');
+    const privateReader = reader as unknown as { handleStatusChange(sessionId: string): void };
+    privateReader.handleStatusChange('session-1');
+    expect(reader.hasReceivedStatus('session-1')).toBe(true);
+
+    // Detach clears state; a fresh attach starts un-delivered.
+    reader.detach('session-1');
+    expect(reader.hasReceivedStatus('session-1')).toBe(false);
+    reader.attach({
+      sessionId: 'session-1',
+      statusOutputPath: statusPath,
+      eventsOutputPath: null,
+      statusFileHook: parser,
+    });
+    expect(reader.hasReceivedStatus('session-1')).toBe(false);
   });
 
   // ---------------------------------------------------------------------------

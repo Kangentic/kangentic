@@ -36,6 +36,7 @@ export const IPC = {
   TASK_MOVE: 'task:move',
   TASK_CANCEL_SPAWN: 'task:cancelSpawn',
   TASK_LIST_ARCHIVED: 'task:list-archived',
+  TASK_LIST_ARCHIVED_PREVIEW: 'task:list-archived-preview',
   TASK_UNARCHIVE: 'task:unarchive',
   TASK_BULK_DELETE: 'task:bulk-delete',
   TASK_BULK_DELETE_PROGRESS: 'task:bulk-delete-progress',
@@ -160,6 +161,7 @@ export const IPC = {
   GIT_DIFF_CHANGED: 'git:diffChanged',
   GIT_CHECK_PENDING_CHANGES: 'git:checkPendingChanges',
   GIT_BRANCH_SUMMARY: 'git:branchSummary',
+  GIT_COMMIT_GRAPH: 'git:commitGraph',
 
   // Dialog
   DIALOG_SELECT_FOLDER: 'dialog:selectFolder',

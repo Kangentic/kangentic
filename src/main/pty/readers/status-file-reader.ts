@@ -33,6 +33,15 @@ export interface StatusFileReaderCallbacks {
    * field that `parseEvent` does not surface.
    */
   onEventsParsed(sessionId: string, rawLines: string[], events: SessionEvent[]): void;
+  /**
+   * Fired once per attachment, immediately after the first successful
+   * `parseStatus` dispatch (i.e. status.json started flowing). Consumers use
+   * it to retire any fallback telemetry source now that the authoritative
+   * status pipeline is live - specifically, SessionManager detaches the
+   * transcript-based SessionHistoryReader for Claude so its merge can no
+   * longer overwrite fresher status data.
+   */
+  onFirstStatus(sessionId: string): void;
 }
 
 export interface StatusFileAttachOptions {
@@ -58,6 +67,8 @@ interface AttachedState {
   eventsOutputPath: string | null;
   eventsFileOffset: number;
   statusFileHook: StatusFileHook | null;
+  /** True once the first `parseStatus` dispatch fired `onFirstStatus`. */
+  firstStatusDelivered: boolean;
 }
 
 /**
@@ -106,6 +117,7 @@ export class StatusFileReader {
       eventsOutputPath,
       eventsFileOffset: 0,
       statusFileHook,
+      firstStatusDelivered: false,
     };
 
     // Delete stale status.json so the watcher doesn't emit cached data
@@ -221,6 +233,16 @@ export class StatusFileReader {
   }
 
   /**
+   * True if status.json has been parsed at least once for this attachment
+   * (i.e. `onFirstStatus` has fired). SessionManager uses this to avoid
+   * re-attaching the transcript-based fallback reader after the handoff.
+   * Returns false when the session is not attached.
+   */
+  hasReceivedStatus(sessionId: string): boolean {
+    return this.states.get(sessionId)?.firstStatusDelivered ?? false;
+  }
+
+  /**
    * Synchronously read any pending bytes from the events file and
    * dispatch them to the consumer. Called from the PTY onExit path
    * to catch `ToolEnd` events that were written just before exit
@@ -257,6 +279,15 @@ export class StatusFileReader {
       // matches the heartbeat path's wall clock.
       traceRecorder.recordStatusDelta(sessionId, usage);
       this.callbacks.onUsageParsed(sessionId, usage);
+      // First successful status parse: status.json is now flowing. Fire the
+      // handoff signal AFTER onUsageParsed - the latter's one-shot agent
+      // session-id capture (SessionTelemetry.processStatusUpdate) can trigger
+      // a transcript-reader re-attach via onAgentSessionId, and firing the
+      // detach after it cancels that in-flight attach cleanly.
+      if (!state.firstStatusDelivered) {
+        state.firstStatusDelivered = true;
+        this.callbacks.onFirstStatus(sessionId);
+      }
     } catch {
       // File may not exist yet, or be partially written - ignore.
     }

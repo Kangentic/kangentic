@@ -41,6 +41,17 @@ export interface SessionHistoryAttachOptions {
   hook: SessionHistoryHook;
   /** Optional agent name for diagnostic log messages. */
   agentName?: string;
+  /**
+   * Start tailing from END-OF-FILE instead of the start. Set for a RESUME of an
+   * append-mode history: the pre-existing content is the PRE-suspend
+   * conversation, whose last entry is STALE occupancy (Claude prunes/recomputes
+   * context on resume). Starting at EOF means only entries appended AFTER this
+   * resume produce usage, so the card shows honest post-resume tokens (or the
+   * spawn-time model seed alone until the first fresh entry) instead of a stale
+   * pre-suspend snapshot. Ignored for full-rewrite hooks (Gemini), which always
+   * read the whole file.
+   */
+  startAtEnd?: boolean;
 }
 
 interface WatcherState {
@@ -50,6 +61,15 @@ interface WatcherState {
   handoffDone: boolean;
   parse: SessionHistoryHook['parse'];
   isFullRewrite: boolean;
+  /** True when this watcher started at EOF (a resume). See attach options. */
+  startedAtEnd: boolean;
+  /**
+   * True when a resume (startAtEnd) watcher could not stat the file to find EOF
+   * at attach time (a transient race just after locate confirmed existence).
+   * The first change establishes the cursor at the then-current EOF instead of
+   * reading pre-existing (stale pre-suspend) content from byte 0.
+   */
+  deferEofInit: boolean;
 }
 
 /**
@@ -135,15 +155,39 @@ export class SessionHistoryReader {
         return;
       }
 
+      // For a resume of an append-mode history, start the cursor at EOF so the
+      // stale pre-suspend content is never parsed - only fresh appended entries
+      // produce usage. Full-rewrite hooks always read the whole file, so the
+      // flag does not apply to them.
+      const startAtEnd = options.startAtEnd === true && !hook.isFullRewrite;
+      let initialCursor = 0;
+      let deferEofInit = false;
+      if (startAtEnd) {
+        try {
+          initialCursor = fs.statSync(resolvedPath).size;
+        } catch (err) {
+          // Could not stat to find EOF (a transient lock / AV / rename race in
+          // the window between locate confirming existence and here). Reading
+          // from 0 would surface the stale pre-suspend tail this flag exists to
+          // suppress, so defer: leave the cursor at 0 but mark it so the first
+          // change re-anchors to the then-current EOF instead of reading byte 0.
+          console.warn(`[session-history] statSync failed for startAtEnd resume of session=${sessionId.slice(0, 8)} - deferring EOF cursor to first change:`, err);
+          initialCursor = 0;
+          deferEofInit = true;
+        }
+      }
+
       const state: WatcherState = {
         // Placeholder - the FileWatcher reference is assigned below so
         // its onChange callback can close over the same state object.
         watcher: null as unknown as FileWatcher,
         filePath: resolvedPath,
-        cursor: 0,
+        cursor: initialCursor,
         handoffDone: false,
         parse: hook.parse,
         isFullRewrite: hook.isFullRewrite,
+        startedAtEnd: startAtEnd,
+        deferEofInit,
       };
 
       state.watcher = new FileWatcher({
@@ -215,13 +259,24 @@ export class SessionHistoryReader {
         result = state.parse(content, 'full');
       } else {
         const stat = fs.statSync(state.filePath);
+        // A resume watcher whose attach-time stat failed: anchor the cursor at
+        // the current EOF now (the stat here succeeded) and skip this round, so
+        // pre-existing pre-suspend content is never read from byte 0. Only
+        // entries appended after this point produce usage.
+        if (state.deferEofInit) {
+          state.deferEofInit = false;
+          state.cursor = stat.size;
+          return;
+        }
         // Truncation guard: if the file shrank (log rotation, manual
-        // edit, or a same-name replacement), reset the cursor to 0 and
-        // re-read from the start rather than skipping content or
-        // reading garbage beyond EOF.
+        // edit, or a same-name replacement), re-read rather than skipping
+        // content or reading garbage beyond EOF. For a normal watcher reset
+        // to 0 (read from the start); for a resume watcher (started at EOF)
+        // reset to the NEW size so pre-resume content is never re-parsed.
         if (stat.size < state.cursor) {
-          console.warn(`[session-history] ${state.filePath} shrank from ${state.cursor} to ${stat.size} bytes for session=${sessionId.slice(0, 8)} - resetting cursor`);
-          state.cursor = 0;
+          const resetTo = state.startedAtEnd ? stat.size : 0;
+          console.warn(`[session-history] ${state.filePath} shrank from ${state.cursor} to ${stat.size} bytes for session=${sessionId.slice(0, 8)} - resetting cursor to ${resetTo}`);
+          state.cursor = resetTo;
         }
         if (stat.size <= state.cursor) return;
         const length = stat.size - state.cursor;

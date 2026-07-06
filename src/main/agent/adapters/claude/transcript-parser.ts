@@ -46,9 +46,11 @@ export function claudeProjectSlug(cwd: string): string {
  * entries (user prompts, assistant turns with text/thinking/tool_use blocks,
  * and tool results). Runs on demand from the renderer's Transcript tab.
  *
- * Telemetry (tokens, model, events) for Claude comes exclusively from the
- * hook-driven `statusFile` pipeline (status.json + events.jsonl), so this
- * file is the only consumer of the native session JSONL.
+ * Claude's authoritative live telemetry comes from the hook-driven
+ * `statusFile` pipeline (status.json + events.jsonl). The native session
+ * JSONL is a secondary source: read on demand here (Transcript tab,
+ * lifetime-token refinement) and tailed as a background-session fallback by
+ * `session-history-parser.ts` until status.json starts flowing.
  */
 export async function parseClaudeTranscript(filePath: string): Promise<TranscriptEntry[]> {
   let content: string;

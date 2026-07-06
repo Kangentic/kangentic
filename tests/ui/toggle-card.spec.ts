@@ -19,6 +19,10 @@
  * 8. BrowserAutomationTab master-switch gating - the four dependent toggles
  *    are wrapped in an opacity-40 + inert div when the master switch is off,
  *    and fully interactable when it is on.
+ * 9. Info icon variant (BoardManagerDialog Handoff toggle) - the optional
+ *    `info` prop renders an aria-hidden Info icon with a title tooltip beside
+ *    the label, a ToggleCard without `info` renders no such icon, and
+ *    clicking the icon does not flip the switch (stopPropagation).
  *
  * All tests are UI-tier (headless Chromium, no Electron, no PTY).
  * One shared browser+page across the whole file.
@@ -430,5 +434,82 @@ test.describe('BrowserAutomationTab master-switch gating', () => {
     await expect(page.getByRole('switch', { name: 'Allow Interaction' })).toBeVisible();
 
     await closeSettings();
+  });
+});
+
+// ── Gap 9: Info icon variant (BoardManagerDialog Handoff toggle) ─────────────
+//
+// ToggleCard's optional `info` prop renders an aria-hidden Info icon beside the
+// label, with the info text as its `title` tooltip. Clicking the icon must NOT
+// flip the switch (the icon's onClick calls stopPropagation). The Board
+// Manager's "Receive context from prior agent" toggle (Handoff section) is the
+// sole current usage; "Auto-spawn" in the same dialog has no `info` and is the
+// negative case.
+
+test.describe('ToggleCard info icon', () => {
+  async function openManagerByHeader(columnName: string) {
+    const column = page.locator(`[data-swimlane-name="${columnName}"]`);
+    await column.locator(`text=${columnName}`).click();
+    await expect(page.locator('[data-testid="board-manager-dialog"]')).toBeVisible({ timeout: 3000 });
+  }
+
+  async function closeManager() {
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+    const cancelBtn = dialog.getByRole('button', { name: 'Cancel' });
+    await cancelBtn.click();
+    // Accept any discard confirm that may appear (a test may have left a dirty draft).
+    const discardBtn = page.locator('button', { hasText: 'Discard' });
+    if (await discardBtn.isVisible({ timeout: 500 }).catch(() => false)) {
+      await discardBtn.click();
+    }
+    await dialog.waitFor({ state: 'detached', timeout: 2000 });
+  }
+
+  test('a ToggleCard with `info` renders an Info icon with the expected title', async () => {
+    await openManagerByHeader('Code Review'); // auto_spawn=true, so Handoff renders inline
+
+    const handoffSwitch = page.getByRole('switch', { name: 'Receive context from prior agent' });
+    await expect(handoffSwitch).toBeVisible();
+
+    // ToggleIndicator is also an aria-hidden span but carries no `title`, so
+    // span[title] uniquely selects the info icon within the switch button.
+    const infoSpan = handoffSwitch.locator('span[title]');
+    await expect(infoSpan).toHaveCount(1);
+    await expect(infoSpan).toHaveAttribute('title', /Kangentic injects the previous session's transcript as the first message/);
+    await expect(infoSpan.locator('svg')).toBeVisible();
+
+    await closeManager();
+  });
+
+  test('a ToggleCard without `info` renders no Info icon', async () => {
+    await openManagerByHeader('Code Review');
+
+    const autoSpawnSwitch = page.getByRole('switch', { name: 'Auto-spawn' });
+    await expect(autoSpawnSwitch).toBeVisible();
+    await expect(autoSpawnSwitch.locator('span[title]')).toHaveCount(0);
+
+    await closeManager();
+  });
+
+  test('clicking the info icon does not toggle the switch', async () => {
+    await openManagerByHeader('Code Review');
+
+    const handoffSwitch = page.getByRole('switch', { name: 'Receive context from prior agent' });
+    await expect(handoffSwitch).toHaveAttribute('aria-checked', 'false');
+
+    await handoffSwitch.locator('span[title]').click();
+
+    // stopPropagation on the icon's onClick must prevent the click from
+    // bubbling to the parent switch button.
+    await expect(handoffSwitch).toHaveAttribute('aria-checked', 'false');
+
+    // Sanity: clicking the label text (not the icon) still flips it, proving
+    // the switch itself is wired correctly and the prior click was a no-op
+    // specifically because of the icon, not some other reason.
+    await handoffSwitch.locator('text=Receive context from prior agent').first().click();
+    await expect(handoffSwitch).toHaveAttribute('aria-checked', 'true');
+
+    // Discard the dirty change on close (closeManager accepts the confirm).
+    await closeManager();
   });
 });

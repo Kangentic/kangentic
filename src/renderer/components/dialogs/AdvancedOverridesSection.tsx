@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { Info } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
+import { useConfigStore } from '../../stores/config-store';
 import { useAgentCapabilityResolution } from '../../hooks/useAgentCapabilityResolution';
+import { useModelContextWindows } from '../../hooks/useKnownModels';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import { ModelCombobox } from './ModelCombobox';
 import { DisclosureSection } from '../DisclosureSection';
@@ -72,6 +74,7 @@ export function AdvancedOverridesSection({
     availableAgents,
     showAgentPicker,
   } = useAgentCapabilityResolution(effectiveAgent);
+  const modelContextWindows = useModelContextWindows(effectiveAgent);
   const showEffortPicker = advancedEffortOptions.length > 0;
   const showAdvancedSection = showAgentPicker || showModelPicker || showEffortPicker;
 
@@ -120,6 +123,8 @@ export function AdvancedOverridesSection({
                   availableModels={advancedModelOptions}
                   placeholder="Use column default"
                   testId="task-model-override"
+                  onOpen={() => useConfigStore.getState().rescanModels()}
+                  contextWindows={modelContextWindows}
                 />
               </div>
             )}

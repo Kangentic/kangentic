@@ -224,6 +224,8 @@ export interface TaskDetailViewState {
   changesOpen?: boolean;
   /** Browser side panel open. */
   browserOpen?: boolean;
+  /** Which view the Changes panel is showing: the file diffs or the commit graph. */
+  changesViewTab?: 'files' | 'graph';
   /** Changes panel split-vs-expanded mode. */
   changesViewMode?: 'split' | 'expanded';
   /** Selected diff file path in the Changes panel. */
@@ -1091,6 +1093,57 @@ export interface GitBranchSummaryResult {
 }
 
 /**
+ * Input for the commit-graph reader that powers the task-detail Graph pane.
+ * Local-only and cheap (no fetch / `gh` lookup), mirroring {@link
+ * GitBranchSummaryInput}: it runs on every pane open and fs.watch fire.
+ */
+export interface GitCommitGraphInput {
+  worktreePath?: string;
+  projectPath: string;
+  baseBranch: string;
+  /** Hard cap on commits returned (defaults to 200). Older history is truncated. */
+  maxCommits?: number;
+  /** Base-branch ancestors below the merge-base to include for context (defaults to 5). */
+  baseContextCount?: number;
+}
+
+/** One commit node in the graph, with the parent links that form the DAG edges. */
+export interface GitCommitGraphCommit {
+  /** Full 40-char commit hash (`git log --format=%H`). */
+  hash: string;
+  /** Abbreviated commit hash (`%h`). */
+  shortHash: string;
+  /** Full parent hashes (`%P`); empty for a root commit, 2+ for a merge. */
+  parents: string[];
+  /** Author name (`%an`). */
+  authorName: string;
+  /** Author date as a strict ISO 8601 string (`%aI`); the renderer formats it. */
+  authorTimestamp: string;
+  /** Commit subject, first line only (`%s`). */
+  subject: string;
+}
+
+/**
+ * Commit-graph result: topologically-ordered commits (newest first) plus the
+ * resolved anchor SHAs the renderer uses to mark the tip, base ref, and fork
+ * point. Fails SAFE: any git error yields an all-empty/null result so the pane
+ * simply shows an empty state rather than surfacing an error.
+ */
+export interface GitCommitGraphResult {
+  commits: GitCommitGraphCommit[];
+  /** HEAD commit (full hash), or null on probe failure / unborn branch. */
+  tipHash: string | null;
+  /** Resolved base ref commit (origin/<base> or <base>), or null if unresolved. */
+  baseHash: string | null;
+  /** merge-base(base, HEAD) - the fork point, or null if unresolved. */
+  mergeBaseHash: string | null;
+  /** Live HEAD branch, or null on a detached HEAD. */
+  currentBranch: string | null;
+  /** True when history exceeded `maxCommits` and the tail was dropped. */
+  truncated: boolean;
+}
+
+/**
  * Which set of changes the Changes panel diffs:
  * - `working`: uncommitted working-tree edits (`git diff`, working vs index) -
  *   the small active subset you are editing right now.
@@ -1635,6 +1688,17 @@ export interface AppConfig {
    *  for the model dropdowns so they don't depend on re-walking JSONL every
    *  launch and they "discover" new models the user invokes in real time. */
   discoveredModelsByAgent: Record<string, string[]>;
+  /** Empirically-observed context-window size (in tokens) per model, learned
+   *  from a live session's `status.json` (`context_window.context_window_size`,
+   *  the account-accurate window Claude reports). Keyed by agent name, then by
+   *  BASE model id (the `[1m]`/dated suffix stripped, since the window is a
+   *  model+account constant). The window is NOT derivable from a model id alone
+   *  (a plain `claude-opus-4-8` runs 1M on a 1M-entitled account, 200K
+   *  elsewhere), so it is discovered from telemetry rather than hardcoded; the
+   *  model dropdowns render a context-size badge only for a model whose window
+   *  has actually been observed. Last-observation-wins so an entitlement change
+   *  re-baselines. */
+  discoveredContextWindowsByAgent: Record<string, Record<string, number>>;
   /** User keybinding overrides: registry action id -> canonical combo string
    *  (e.g. 'Mod+Shift+K'). Absent/empty means use the registry default. Global
    *  only (per-machine), like `developer.*`. See `src/shared/keybindings.ts`. */
@@ -1781,6 +1845,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   workspaceByProject: {},
   commandTerminalWorkspace: null,
   discoveredModelsByAgent: {},
+  discoveredContextWindowsByAgent: {},
   hotkeyOverrides: {},
   memory: {
     indexingEnabled: true,
@@ -2134,6 +2199,17 @@ export interface TaskUnarchiveInput {
   targetSwimlaneId: string;
 }
 
+/**
+ * Result of `tasks.listArchivedPreview(limit)`: the newest `limit` archived
+ * tasks plus the authoritative total archived count. The board hydrates from
+ * this small payload instead of the full archive (which can be many MB); the
+ * full list loads lazily only when the Completed dialog opens.
+ */
+export interface ArchivedTasksPreview {
+  totalCount: number;
+  tasks: Task[];
+}
+
 export interface TaskBulkDeleteFailure {
   id: string;
   error: string;
@@ -2333,22 +2409,29 @@ export interface AdapterRuntimeStrategy {
    * message events). Used by agents that persist conversation state
    * to a local file we can tail: Codex writes JSONL to
    * ~/.codex/sessions/..., Gemini writes JSON to ~/.gemini/tmp/...
-   * Omit entirely for agents without such files (Claude uses
-   * status.json + event-bridge hooks; Aider has no equivalent).
+   * Claude declares it too, but as a BACKGROUND-SESSION FALLBACK: its
+   * authoritative telemetry is the hook-driven `statusFile` pipeline,
+   * and the transcript reader is detached on the first status.json
+   * parse (via StatusFileReaderCallbacks.onFirstStatus). Omit entirely
+   * for agents with no such file (Aider has no equivalent).
    */
   readonly sessionHistory?: {
     /**
      * Given the agent-reported session ID (captured by the PTY
-     * scraper via runtime.sessionId.fromOutput), locate the session
+     * scraper via runtime.sessionId.fromOutput, or caller-owned at
+     * spawn for callerOwnedSessionId adapters), locate the session
      * history file on disk. Returns an absolute path, or null if the
-     * file cannot be found within the polling budget (~5 s) or if
+     * file cannot be found within the adapter's polling budget or if
      * the platform can't be supported (e.g. WSL from Windows).
      *
-     * Implementations should: compute the expected directory from
-     * cwd and the UTC date (Codex) or cwd basename (Gemini),
-     * readdirSync, filter by a filename regex embedding
-     * agentSessionId, poll every 500 ms for up to 5 s if not
-     * immediately present.
+     * Implementations compute the expected path from cwd + agent
+     * session id and poll for it to appear. The budget is
+     * adapter-chosen: Codex/Gemini use ~5 s (they locate after
+     * capturing the id from a running CLI), while Claude uses ~60 s
+     * (its attach fires at spawn, before the CLI has booted and
+     * persisted its first prompt entry). `locate` MUST confirm the
+     * file exists before returning it - SessionHistoryReader treats
+     * ENOENT on the initial read as "file disappeared" and detaches.
      */
     locate(options: {
       agentSessionId: string;
@@ -2746,6 +2829,12 @@ export interface ElectronAPI {
      */
     cancelSpawn: (taskId: string) => Promise<void>;
     listArchived: () => Promise<Task[]>;
+    /**
+     * The newest `limit` archived tasks plus the total archived count. Cheap
+     * hydration payload for the Done column's count + inline preview; the full
+     * archive loads lazily via `listArchived` when the Completed dialog opens.
+     */
+    listArchivedPreview: (limit: number) => Promise<ArchivedTasksPreview>;
     unarchive: (input: TaskUnarchiveInput, projectId?: string | null) => Promise<Task>;
     bulkDelete: (ids: string[], projectId?: string | null) => Promise<TaskBulkDeleteResult>;
     bulkUnarchive: (ids: string[], targetSwimlaneId: string, projectId?: string | null) => Promise<void>;
@@ -3008,6 +3097,7 @@ export interface ElectronAPI {
     onDiffChanged: (callback: () => void) => () => void;
     checkPendingChanges: (input: GitPendingChangesInput) => Promise<GitPendingChangesResult>;
     branchSummary: (input: GitBranchSummaryInput) => Promise<GitBranchSummaryResult>;
+    commitGraph: (input: GitCommitGraphInput) => Promise<GitCommitGraphResult>;
   };
 
   // Dialog
@@ -3478,6 +3568,20 @@ export interface ProcessMetrics {
  * renderer). Inbound entries leave `direction` absent so existing log
  * readers see no change; outbound pushes set `direction: 'out'`.
  */
+/**
+ * Placeholder substituted for an args/result payload whose serialized form
+ * exceeds the recorder's size cap. Keeps each JSONL line small (a single ~1.2MB
+ * `task:list-archived` result would otherwise be stringified in full on the main
+ * thread) while preserving enough signal to identify the oversized channel.
+ */
+export interface IpcPayloadTruncated {
+  truncated: true;
+  /** UTF-16 length of the full serialized payload (-1 when unserializable). */
+  serializedChars: number;
+  /** First ~2KB of the serialized JSON, enough to identify the payload shape. */
+  preview: string;
+}
+
 export interface IpcLogEntry {
   ts: string;
   channel: string;
@@ -3486,10 +3590,10 @@ export interface IpcLogEntry {
    * invocation; `'out'` means a main -> renderer `webContents.send` push.
    */
   direction?: 'in' | 'out';
-  /** Either the captured args array or a redaction placeholder. */
-  args: unknown[] | { redacted: true; channel: string };
-  /** Either the captured result or a redaction placeholder. Omitted on error. */
-  result?: unknown | { redacted: true; channel: string };
+  /** Captured args array, a redaction placeholder, or an over-cap truncation marker. */
+  args: unknown[] | { redacted: true; channel: string } | IpcPayloadTruncated;
+  /** Captured result, a redaction placeholder, or an over-cap truncation marker. Omitted on error. */
+  result?: unknown | { redacted: true; channel: string } | IpcPayloadTruncated;
   /** Handler round-trip time in ms. Always `0` for outbound pushes (no round trip to measure). */
   durationMs: number;
   /**

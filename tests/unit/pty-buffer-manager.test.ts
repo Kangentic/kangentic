@@ -102,63 +102,225 @@ describe('PtyBufferManager', () => {
     });
   });
 
-  describe('initial resize preserves carried-over scrollback', () => {
-    it('does not clear scrollback on the first resize after initSession', () => {
+  describe('resize reports width changes truthfully and preserves scrollback', () => {
+    it('reports colsChanged=true on the first resize to a new width (no initial-resize swallow)', () => {
       const onFlush = vi.fn();
       const manager = new PtyBufferManager({ onFlush });
-      // Simulate a resumed session with carried-over scrollback
-      manager.initSession(SESSION, 'previous session output', 0);
+      // Cold-launch shape: the PTY was spawned at 120, the buffer is seeded with
+      // that real width, and the renderer fits to ~190 on mount. The first
+      // resize must report the change truthfully so getScrollback's
+      // repaint-settle arms. A stale first-resize swallow used to hide this.
+      manager.initSession(SESSION, 'previous session output', 120);
 
-      // First resize (renderer establishing container dimensions) must NOT clear
-      const colsChanged = manager.onResize(SESSION, 120);
+      const colsChanged = manager.onResize(SESSION, 190);
+      expect(colsChanged).toBe(true);
+      // onResize never clears scrollback; carried-over history is preserved.
+      expect(manager.getScrollback(SESSION)).toContain('previous session output');
+    });
+
+    it('reports colsChanged=false when the first resize matches the seeded spawn width', () => {
+      const onFlush = vi.fn();
+      const manager = new PtyBufferManager({ onFlush });
+      // Pre-spawn-resize shape: the PTY was spawned AT the fitted width, so the
+      // renderer's follow-up resize is a no-op and must not arm a needless wait.
+      manager.initSession(SESSION, 'previous session output', 190);
+
+      const colsChanged = manager.onResize(SESSION, 190);
       expect(colsChanged).toBe(false);
       expect(manager.getScrollback(SESSION)).toContain('previous session output');
     });
 
-    it('preserves scrollback on second resize with different cols', () => {
+    it('preserves scrollback across a later width change', () => {
       const onFlush = vi.fn();
       const manager = new PtyBufferManager({ onFlush });
-      manager.initSession(SESSION, 'previous session output', 0);
-
-      // First resize: establishes dimensions
-      manager.onResize(SESSION, 120);
-
-      // Add some live data at the current width
+      manager.initSession(SESSION, 'previous session output', 120);
+      manager.onResize(SESSION, 190);
       manager.onData(SESSION, 'live data');
 
-      // Second resize: user resizes window to different width
-      // Scrollback is no longer cleared on resize (KISS read-time strip)
       const colsChanged = manager.onResize(SESSION, 200);
       expect(colsChanged).toBe(true);
       expect(manager.getScrollback(SESSION)).toContain('previous session output');
+      expect(manager.getScrollback(SESSION)).toContain('live data');
     });
 
-    it('does not clear scrollback on second resize with same cols', () => {
+    it('reports colsChanged=false on a same-width resize (rows-only change)', () => {
       const onFlush = vi.fn();
       const manager = new PtyBufferManager({ onFlush });
-      manager.initSession(SESSION, 'previous session output', 0);
-
-      // First resize
+      manager.initSession(SESSION, 'previous session output', 120);
       manager.onResize(SESSION, 120);
-      // Add live data
       manager.onData(SESSION, ' plus new data');
 
-      // Second resize with same cols (rows-only change)
       const colsChanged = manager.onResize(SESSION, 120);
       expect(colsChanged).toBe(false);
       expect(manager.getScrollback(SESSION)).toContain('previous session output');
       expect(manager.getScrollback(SESSION)).toContain('plus new data');
     });
 
-    it('fresh session with empty scrollback is unaffected by initial resize', () => {
+    it('fresh session seeded at spawn width reports no change on a matching resize', () => {
       const onFlush = vi.fn();
       const manager = new PtyBufferManager({ onFlush });
-      manager.initSession(SESSION, '', 0);
+      manager.initSession(SESSION, '', 120);
 
-      // First resize: cols change from 0 to 120 but scrollback is empty
       const colsChanged = manager.onResize(SESSION, 120);
       expect(colsChanged).toBe(false);
       expect(manager.getScrollback(SESSION)).toBe('');
+    });
+  });
+
+  describe('waitForResizeRepaint (repaint-settle before sampling)', () => {
+    // Build the precondition the settle keys on: a full-screen TUI frame (with a
+    // \x1b[2J clear) in the buffer, then a width change that stamps the pending
+    // repaint. Returns the manager so each test drives the settle from there.
+    function armWidthChange(tui = true): PtyBufferManager {
+      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      manager.initSession(SESSION, '', 120);
+      manager.onData(SESSION, tui ? '\x1b[2Jold frame at 120 cols' : 'plain shell output');
+      expect(manager.onResize(SESSION, 190)).toBe(true);
+      return manager;
+    }
+
+    it('defers sampling until the post-resize repaint lands and quiesces', async () => {
+      vi.useFakeTimers();
+      const manager = armWidthChange();
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      // No repaint yet: the settle is still pending.
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // The SIGWINCH repaint lands.
+      manager.onData(SESSION, '\x1b[2Jrepaint at 190 cols');
+
+      // Data just arrived: not yet quiesced.
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // Quiesce window elapses -> the settle resolves.
+      await vi.advanceTimersByTimeAsync(80);
+      await waitPromise;
+      expect(settled).toBe(true);
+
+      // The sample now includes the fitted-width repaint, not just the stale frame.
+      expect(manager.getScrollback(SESSION)).toContain('repaint at 190 cols');
+
+      vi.useRealTimers();
+    });
+
+    it('resolves at the max-wait ceiling when no repaint ever arrives', async () => {
+      vi.useFakeTimers();
+      const manager = armWidthChange();
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      // Well past a few polls but short of the ceiling: still waiting.
+      await vi.advanceTimersByTimeAsync(200);
+      expect(settled).toBe(false);
+
+      // Ceiling (400ms from entry) reached: resolves without a repaint.
+      await vi.advanceTimersByTimeAsync(200);
+      await waitPromise;
+      expect(settled).toBe(true);
+
+      vi.useRealTimers();
+    });
+
+    it('samples immediately when the pending resize is stale', async () => {
+      vi.useFakeTimers();
+      const manager = armWidthChange();
+
+      // Time passes beyond the stale window with no sample taken.
+      await vi.advanceTimersByTimeAsync(2001);
+
+      // No timers need to fire for the wait: it short-circuits.
+      await manager.waitForResizeRepaint(SESSION);
+
+      vi.useRealTimers();
+    });
+
+    it('samples immediately when the session has no full-screen TUI (no clear marker)', async () => {
+      vi.useFakeTimers();
+      const manager = armWidthChange(false);
+
+      await manager.waitForResizeRepaint(SESSION);
+
+      vi.useRealTimers();
+    });
+
+    it('resolves if the session is torn down mid-wait', async () => {
+      vi.useFakeTimers();
+      const manager = armWidthChange();
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // Killed: the session's buffer state is removed.
+      manager.removeSession(SESSION);
+
+      await vi.advanceTimersByTimeAsync(16);
+      await waitPromise;
+      expect(settled).toBe(true);
+
+      vi.useRealTimers();
+    });
+
+    it('does not arm a wait when the width did not change', async () => {
+      vi.useFakeTimers();
+      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      manager.initSession(SESSION, '', 120);
+      manager.onData(SESSION, '\x1b[2Jframe at 120 cols');
+      // Same-width resize: colsChanged false, no pending repaint stamped.
+      expect(manager.onResize(SESSION, 120)).toBe(false);
+
+      // No pending repaint -> short-circuits with no timers.
+      await manager.waitForResizeRepaint(SESSION);
+
+      vi.useRealTimers();
+    });
+
+    it('does not clobber a newer pending repaint stamped by a second resize mid-wait', async () => {
+      vi.useFakeTimers();
+      const manager = armWidthChange(); // onResize(190) stamps the first repaint; TUI marker present
+
+      // A first getScrollback wait anchors to the first resize's stamp.
+      const firstWait = manager.waitForResizeRepaint(SESSION);
+
+      // A second width-changing resize lands before the first wait resolves,
+      // re-stamping pendingRepaintAt for a fresh, not-yet-settled repaint.
+      await vi.advanceTimersByTimeAsync(50);
+      expect(manager.onResize(SESSION, 200)).toBe(true);
+
+      // The first wait reaches its ceiling (400ms from entry) and resolves. It
+      // must NOT null out the newer stamp it was never anchored to.
+      await vi.advanceTimersByTimeAsync(400);
+      await firstWait;
+
+      // A subsequent getScrollback must still defer for the second repaint,
+      // which never landed. If the first wait had clobbered the stamp, this
+      // read would short-circuit and sample the frame stale.
+      let secondSettled = false;
+      const secondWait = manager.waitForResizeRepaint(SESSION).then(() => {
+        secondSettled = true;
+      });
+      await vi.advanceTimersByTimeAsync(16);
+      expect(secondSettled).toBe(false);
+
+      // Let it resolve at its own ceiling so no timer leaks into the next test.
+      await vi.advanceTimersByTimeAsync(400);
+      await secondWait;
+
+      vi.useRealTimers();
     });
   });
 

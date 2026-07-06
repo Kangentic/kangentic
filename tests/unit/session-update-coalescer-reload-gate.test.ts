@@ -35,6 +35,8 @@ import {
   endBoardDrag,
   flushDragGateOnWindowBlur,
   resetCoalescerForHmr,
+  isBoardDragActive,
+  onBoardDragEnd,
 } from '../../src/renderer/lib/session-update-coalescer';
 
 beforeEach(() => {
@@ -210,5 +212,61 @@ describe('enqueueReload - stuck-gate recovery', () => {
     // The gate is not active, so a reload runs immediately as usual.
     enqueueReload('board', reload);
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The drag-active getter + drag-end subscription power the xterm write-queue
+ * pause: consumers read `isBoardDragActive()` to HOLD their work and subscribe
+ * via `onBoardDragEnd` to resume it.
+ */
+describe('board-drag signal for external consumers', () => {
+  it('isBoardDragActive tracks begin/end', () => {
+    expect(isBoardDragActive()).toBe(false);
+    beginBoardDrag();
+    expect(isBoardDragActive()).toBe(true);
+    endBoardDrag();
+    expect(isBoardDragActive()).toBe(false);
+  });
+
+  it('onBoardDragEnd fires on endBoardDrag, and unsubscribe stops delivery', () => {
+    const listener = vi.fn();
+    const unsubscribe = onBoardDragEnd(listener);
+
+    beginBoardDrag();
+    endBoardDrag();
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
+    beginBoardDrag();
+    endBoardDrag();
+    expect(listener).toHaveBeenCalledTimes(1); // no further deliveries
+  });
+
+  it('onBoardDragEnd also fires via the window-blur backstop', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const listener = vi.fn();
+    const unsubscribe = onBoardDragEnd(listener);
+
+    beginBoardDrag();
+    flushDragGateOnWindowBlur(); // routes through endBoardDrag
+    expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    warnSpy.mockRestore();
+  });
+
+  it('resetCoalescerForHmr notifies listeners and keeps subscriptions intact', () => {
+    const listener = vi.fn();
+    const unsubscribe = onBoardDragEnd(listener);
+
+    // HMR reset resumes any held consumer (e.g. a paused write queue)...
+    resetCoalescerForHmr();
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    // ...and does NOT drop the subscription: a later drag end still delivers.
+    beginBoardDrag();
+    endBoardDrag();
+    expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
   });
 });

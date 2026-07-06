@@ -19,6 +19,12 @@
  *       gone.ts       a deletion (D)
  *       newfile.ts    an untracked file (U)
  *       logo.png      a binary file -> binary detection ("cannot display diff")
+ *       notes.md      a rich markdown edit (M) -> the markdown preview toggle
+ *       changelog.markdown  a .markdown edit (M) -> the .markdown extension map,
+ *                     and a second markdown file so the preview toggle's per-file
+ *                     reset can be exercised by switching between the two
+ *       removed.md    a deleted markdown file (D) -> preview falls back to the
+ *                     old content instead of rendering blank
  *
  * Seeds MULTIPLE repos in one click (every active task worktree the renderer
  * passes, plus the project), all sharing one `seed-N` directory so a single
@@ -56,9 +62,9 @@ const BINARY_PNG = Buffer.from(
 );
 
 // Per-repo file counts for the toast summary (kept in sync with seedOneRepo).
-const COMMITTED_COUNT = 7;
+const COMMITTED_COUNT = 10;
 const STAGED_COUNT = 4;
-const WORKING_COUNT = 6;
+const WORKING_COUNT = 9;
 
 // Module state; resets when the main process restarts. Each click uses a fresh
 // index so re-clicks pile on a new, non-colliding directory of changes.
@@ -94,6 +100,80 @@ function bigFile(index: number, mutate: boolean): string {
   return lines.join('\n');
 }
 
+/** A rich markdown file (headings, list, external link, inline + fenced code, a
+ *  gfm table and a task list). With `mutate` it grows into the fuller working-tree
+ *  version, so toggling the diff viewer's eye icon shows a substantial render. */
+function notesMarkdown(index: number, mutate: boolean): string {
+  if (!mutate) {
+    return [
+      '# Project Notes',
+      '',
+      `Initial notes for config ${index}.`,
+      '',
+      '- first item',
+      '- second item',
+      '',
+    ].join('\n');
+  }
+  return [
+    '# Project Notes',
+    '',
+    `Updated notes for config ${index}. Toggle the eye icon to preview this rendered.`,
+    '',
+    '## Highlights',
+    '',
+    '- rendered **bold** and _italic_ text',
+    '- a [link home](https://kangentic.com) routed through the shell',
+    '- inline `code` plus a fenced block:',
+    '',
+    '```ts',
+    'export const answer = 42;',
+    '```',
+    '',
+    '## Status',
+    '',
+    '| Feature | State |',
+    '| --- | --- |',
+    '| Preview toggle | done |',
+    '| Deleted fallback | done |',
+    '',
+    '- [x] preview renders the new content',
+    '- [ ] still reading the raw diff',
+    '',
+  ].join('\n');
+}
+
+/** A `.markdown`-extension file, exercising the extension the preview feature
+ *  added to the language map. `mutate` prepends a new release section. */
+function changelogMarkdown(index: number, mutate: boolean): string {
+  const initial = ['## 0.1.0', '', `- initial release for config ${index}`, ''];
+  const header = ['# Changelog', ''];
+  if (!mutate) {
+    return [...header, ...initial].join('\n');
+  }
+  return [
+    ...header,
+    '## 0.2.0',
+    '',
+    '- add markdown preview toggle to the diff viewer',
+    '- fix the per-file reset and the deleted-file fallback',
+    '',
+    ...initial,
+  ].join('\n');
+}
+
+/** The last-committed content of the file deleted in the working tree, so its
+ *  preview has old content to fall back to. */
+function removedMarkdown(index: number): string {
+  return [
+    '# Deprecated Notes',
+    '',
+    `These notes for config ${index} are going away. Previewing a deleted markdown`,
+    'file should still render THIS old content, not a blank page.',
+    '',
+  ].join('\n');
+}
+
 /** Seed one repo with the full fixture under `seed-<index>/`. */
 async function seedOneRepo(repoPath: string, dir: string, index: number): Promise<void> {
   const absolute = (relative: string): string => path.join(repoPath, relative);
@@ -111,6 +191,9 @@ async function seedOneRepo(repoPath: string, dir: string, index: number): Promis
   await writeFile(`${dir}/staged-mod.ts`, `export const stagedMod${index} = ${index};\n`);
   await writeFile(`${dir}/staged-del.ts`, `export const stagedDel${index} = ${index};\n`);
   await writeFile(`${dir}/staged-old.ts`, `export const stagedRen${index} = ${index};\n`);
+  await writeFile(`${dir}/notes.md`, notesMarkdown(index, false));
+  await writeFile(`${dir}/changelog.markdown`, changelogMarkdown(index, false));
+  await writeFile(`${dir}/removed.md`, removedMarkdown(index));
   await runGit(repoPath, ['add', dir]);
   await runGit(repoPath, [...SEED_IDENTITY, 'commit', '-m', `test(seed): baseline files ${index}`]);
 
@@ -131,6 +214,9 @@ async function seedOneRepo(repoPath: string, dir: string, index: number): Promis
   await writeFile(`${dir}/newfile.ts`, `export const fresh${index} = ${index};\n`);                          // U
   await fs.promises.mkdir(path.dirname(absolute(`${dir}/logo.png`)), { recursive: true });
   await fs.promises.writeFile(absolute(`${dir}/logo.png`), BINARY_PNG);                                      // U: binary
+  await writeFile(`${dir}/notes.md`, notesMarkdown(index, true));                                            // M: markdown preview
+  await writeFile(`${dir}/changelog.markdown`, changelogMarkdown(index, true));                              // M: .markdown preview
+  await fs.promises.rm(absolute(`${dir}/removed.md`), { force: true });                                      // D: deleted markdown
 }
 
 /**

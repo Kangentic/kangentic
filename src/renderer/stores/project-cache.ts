@@ -49,6 +49,10 @@ interface ProjectSnapshot {
     tasks: Task[];
     swimlanes: Swimlane[];
     archivedTasks: Task[];
+    /** Total archived count (source of truth for badges); see archived-tasks-slice. */
+    archivedTotalCount: number;
+    /** Whether archivedTasks holds the full archive vs the newest-N preview. */
+    archivedFullyLoaded: boolean;
     /**
      * Per-project shortcut definitions (loaded from kangentic.json /
      * kangentic.local.json via `boardConfig.getShortcuts`). Consumed by

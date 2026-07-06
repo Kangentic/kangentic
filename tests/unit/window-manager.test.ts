@@ -114,6 +114,15 @@ describe('window-store actions', () => {
     expect(useWindowStore.getState().windows[id].skipEnterAnimation).toBeUndefined();
   });
 
+  it('stamps skipEnterAnimation when opened with the restore hint, so a programmatic restore paints flat', () => {
+    // A per-project reconcile (reconcileCommandTerminalWindows) opens windows with this hint so
+    // they match the flat presentation of a workspace-restored window instead of animating in.
+    const id = useWindowStore
+      .getState()
+      .openWindow({ anchor: 'slot-2', sessionId: null, title: 'Command Terminal', skipEnterAnimation: true });
+    expect(useWindowStore.getState().windows[id].skipEnterAnimation).toBe(true);
+  });
+
   it('focuses the existing window when re-opening the same task (one window per task)', () => {
     const first = useWindowStore.getState().openWindow({ anchor: 'task-a', sessionId: 'sess-a', title: 'A' });
     const second = useWindowStore.getState().openWindow({ anchor: 'task-a', sessionId: 'sess-a', title: 'A again' });

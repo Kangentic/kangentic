@@ -320,7 +320,12 @@ Output-only is necessary but not sufficient. A parked session still ticks `total
 
 The heartbeat may force-think ONLY on a non-authoritative idle (`!state.idleAuthoritative`). This kills the housekeeping-re-activates-a-parked-agent class while preserving the net's real job - recovering a fallback idle whose agent is actually generating (a dropped turn-start hook leaves a non-authoritative idle, so the net still fires). The trade is a rare, self-correcting false-IDLE (a fully-hook-dropped new turn after an authoritative idle shows idle until any hook lands) for eliminating the common false-ACTIVE pin. Pinned by the real-capture fixture `tests/fixtures/replay/session-020-false-active-parked-housekeeping` (asserts `forceThinking: 0` across the parked output growth) and the provenance unit tests.
 
-While `idleHintPending`, the heartbeat also stops calling `markThinkingSignal` (it would otherwise refresh `lastSignalAt` on every parked-TUI statusline write and re-blind the stale-thinking watchdog); see [the stale-thinking watchdog's `idleHintAnchor`](#3-stale-thinking-watchdog-180s).
+The heartbeat's `markThinkingSignal` keep-warm - which refreshes `lastSignalAt` so a genuinely-thinking session survives the 180s stale-thinking watchdog - fires only on **proof of work**: OUTPUT tokens grew since the previous status write, AND no `idle_hint` is pending. Each condition closes a distinct false-ACTIVE pin, both caused by parked-TUI statusline churn re-blinding the (`signal`-anchored) net:
+
+- **The `idle_hint` gate** stops the churn after a real turn ends - the agent reported waiting-for-input, so its repaints are noise (task #294).
+- **The growth gate** handles the case with NO `idle_hint` at all. A `--resume` resume-picker reload is a CLI-internal turn that fires no turn hooks, so when it finishes and Claude parks, no `idle_hint` ever arrives and the idle-hint gate cannot help; only frozen-output detection stops the churn from re-warming `lastSignalAt` forever and starving the watchdog (task #331). Live generation keeps re-warming because output keeps growing (and foreground streaming keeps `lastPtyOutputAt` fresh regardless, #246). Pinned by the real-capture fixture `tests/fixtures/replay/session-021-false-active-resume-picker` (asserts the stale-thinking net self-heals to idle) plus the `#331` unit tests in `session-telemetry-activity-decisions.test.ts`.
+
+See [the stale-thinking watchdog's `idleHintAnchor`](#3-stale-thinking-watchdog-180s).
 
 ## Ctrl+C user-interrupt synthesis (3s)
 

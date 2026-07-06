@@ -12,6 +12,7 @@ import { LabelPills } from '../../Pill';
 import { useConfigStore } from '../../../stores/config-store';
 import { useProjectStore } from '../../../stores/project-store';
 import { QueuedPlaceholder } from './QueuedPlaceholder';
+import { taskHasDescriptionContent } from './description-content';
 import { AttachmentThumbnails } from './AttachmentThumbnails';
 import type { AttachmentWithPreview } from './useAttachments';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
@@ -46,6 +47,8 @@ interface TaskDetailBodyProps {
   resumeError?: string;
   onResetSession?: () => void;
   browserOpen: boolean;
+  /** Whether the description peek is open (only relevant when hasSessionContext is true). */
+  descriptionPeekOpen?: boolean;
 }
 
 export function TaskDetailBody({
@@ -71,6 +74,7 @@ export function TaskDetailBody({
   resumeError,
   onResetSession,
   browserOpen,
+  descriptionPeekOpen = false,
 }: TaskDetailBodyProps) {
   const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
   const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
@@ -94,15 +98,21 @@ export function TaskDetailBody({
   // drew the eye to that unavoidable repaint (it read as a "flash"), so there is
   // none. The two panels are mutually exclusive: this is just which one (if any)
   // is showing.
-  const rightPanelPresent = changesOpen || browserOpen;
+  // The right panel is one of three mutually-exclusive views (Browser / Changes
+  // / Description peek); opening one closes the others (enforced in the toggle
+  // handlers). All three share the same draggable terminal split.
+  const rightPanelPresent = changesOpen || browserOpen || descriptionPeekOpen;
   const showBrowser = browserOpen;
-  const changesPresent = rightPanelPresent && !showBrowser;
+  const changesPresent = changesOpen && !browserOpen;
+  const showDescriptionPanel = descriptionPeekOpen && !browserOpen && !changesOpen;
   const changesExpanded = changesPresent && changesViewMode === 'expanded';
   const handleChangesExpand = () => setChangesViewMode(task.id, 'expanded');
   const handleChangesCollapse = () => setChangesViewMode(task.id, 'split');
   const taskLabels = task.labels ?? [];
   const taskPriority = task.priority ?? 0;
   const hasLabelsOrPriority = taskPriority > 0 || taskLabels.length > 0;
+  // Single source of truth shared with canShowDescription in TaskDetailWindow.
+  const hasDescriptionContent = taskHasDescriptionContent(task, savedAttachments.length);
 
   const labelsAndPriorityRow = hasLabelsOrPriority && (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -121,14 +131,33 @@ export function TaskDetailBody({
     />
   );
 
-  // Description view mode with attachment thumbnails (non-archived, non-session)
-  const descriptionBar = !isArchived && (task.description || savedAttachments.length > 0 || hasLabelsOrPriority) && !hasSessionContext && (
-    <div className="px-4 py-3 border-b border-edge flex-shrink-0 space-y-2">
+  // The renderable description body shared by the in-body strip, the side-panel
+  // peek, and the archived view; only the wrapper chrome differs per site.
+  const descriptionContent = (
+    <>
       {task.description && (
         <MarkdownRenderer content={task.description} />
       )}
       {labelsAndPriorityRow}
       {thumbnailStrip}
+    </>
+  );
+
+  // Description view mode with attachment thumbnails - the non-session, in-body
+  // view (no terminal to sit beside). During an active session the description
+  // instead rides the right-panel split as descriptionPanelContent below.
+  const descriptionBar = !isArchived && hasDescriptionContent && !hasSessionContext && (
+    <div className="px-4 py-3 border-b border-edge flex-shrink-0 space-y-2">
+      {descriptionContent}
+    </div>
+  );
+
+  // The description peek as a right-panel view (parity with Browser / Changes):
+  // a full-height, scrollable sibling of the terminal, resized by the shared
+  // split divider. Same content as descriptionBar, without the top-strip chrome.
+  const descriptionPanelContent = (
+    <div className="h-full overflow-y-auto px-4 py-3 space-y-2" data-testid="task-detail-description-panel">
+      {descriptionContent}
     </div>
   );
 
@@ -137,13 +166,9 @@ export function TaskDetailBody({
     return (
       <>
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {(task.description || savedAttachments.length > 0 || hasLabelsOrPriority) ? (
+          {hasDescriptionContent ? (
             <div className="px-4 py-4 space-y-3 max-h-[40vh] overflow-y-auto">
-              {task.description && (
-                <MarkdownRenderer content={task.description} />
-              )}
-              {labelsAndPriorityRow}
-              {thumbnailStrip}
+              {descriptionContent}
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center text-fg-disabled text-sm p-8 h-full">
@@ -176,6 +201,7 @@ export function TaskDetailBody({
           panelMode={changesViewMode}
           onExpand={handleChangesExpand}
           onCollapse={handleChangesCollapse}
+          task={task}
         />
       </Suspense>
     </PanelErrorBoundary>
@@ -192,13 +218,40 @@ export function TaskDetailBody({
     </div>
   );
 
+  // Draggable seam between the main pane (terminal / launch overlay) and the
+  // right panel. Shared by the active-terminal and preparing branches.
+  const splitDivider = (
+    <div
+      onMouseDown={onSplitResizeStart}
+      data-testid="task-detail-split-divider"
+      role="separator"
+      aria-orientation="vertical"
+      title="Drag to resize"
+      className="group relative z-10 w-1 -mx-0.5 flex-shrink-0 cursor-col-resize"
+    >
+      {/* Widened invisible hit zone for easier grabbing. */}
+      <span className="absolute inset-y-0 -inset-x-1" />
+      {/* Resting seam is the panel's border-edge. Highlight on hover, and
+          hold the highlight through the whole drag so the target split
+          stays visible while the panes resize underneath. */}
+      <span
+        className={`absolute inset-0 transition-colors ${
+          isSplitResizing ? 'bg-accent/60' : 'group-hover:bg-accent/40'
+        }`}
+      />
+    </div>
+  );
+  // While dragging, an overlay keeps mouse events flowing over the Electron
+  // <webview> (Browser pane) and the xterm canvas.
+  const resizeCaptureOverlay = isSplitResizing && <div className="fixed inset-0 z-50 cursor-col-resize" />;
+
   // Active terminal session
   if (sessionId && displayKind !== 'queued' && displayKind !== 'suspended') {
-    // Browser pane and changes panel are mutually exclusive; when either shares
-    // the row with the terminal, a draggable divider sets the per-task split.
+    // Browser, Changes, and the Description peek are mutually exclusive; when one
+    // shares the row with the terminal, a draggable divider sets the per-task split.
     const showDivider = rightPanelPresent && !changesExpanded;
-    // Browser pane (active-session only) or the diff panel - mutually exclusive,
-    // shown instantly with no reveal animation.
+    // The chosen right panel (Browser / Changes / Description) - shown instantly
+    // with no reveal animation.
     const rightPanelElement = rightPanelPresent && (
       <div className={`flex-1 min-h-0 min-w-0 overflow-hidden ${changesExpanded ? '' : 'border-l border-edge'}`}>
         <div className="h-full">
@@ -208,8 +261,10 @@ export function TaskDetailBody({
               taskId={task.id}
               cwd={task.worktree_path ?? projectPath}
             />
-          ) : (
+          ) : changesPresent ? (
             changesContent
+          ) : (
+            descriptionPanelContent
           )}
         </div>
       </div>
@@ -217,7 +272,6 @@ export function TaskDetailBody({
 
     return (
       <>
-        {descriptionBar}
         <div ref={splitContainerRef} className="flex-1 min-h-0 flex">
           {!changesExpanded && (
             <div
@@ -238,31 +292,9 @@ export function TaskDetailBody({
               </div>
             </div>
           )}
-          {showDivider && (
-            <div
-              onMouseDown={onSplitResizeStart}
-              data-testid="task-detail-split-divider"
-              role="separator"
-              aria-orientation="vertical"
-              title="Drag to resize"
-              className="group relative z-10 w-1 -mx-0.5 flex-shrink-0 cursor-col-resize"
-            >
-              {/* Widened invisible hit zone for easier grabbing. */}
-              <span className="absolute inset-y-0 -inset-x-1" />
-              {/* Resting seam is the panel's border-edge. Highlight on hover, and
-                  hold the highlight through the whole drag so the target split
-                  stays visible while the panes resize underneath. */}
-              <span
-                className={`absolute inset-0 transition-colors ${
-                  isSplitResizing ? 'bg-accent/60' : 'group-hover:bg-accent/40'
-                }`}
-              />
-            </div>
-          )}
+          {showDivider && splitDivider}
           {rightPanelElement}
-          {/* While dragging, an overlay keeps mouse events flowing over the
-              Electron <webview> (Browser pane) and the xterm canvas. */}
-          {isSplitResizing && <div className="fixed inset-0 z-50 cursor-col-resize" />}
+          {resizeCaptureOverlay}
         </div>
         <ContextBar sessionId={sessionId} agentFallback={projectDefaultAgent} />
       </>
@@ -279,11 +311,25 @@ export function TaskDetailBody({
   // card's launch treatment - a centered muted spinner + the spawn status
   // label - and keep PreSpawnContextBar pinned at the bottom.
   if (displayKind === 'preparing') {
+    // No session/PTY yet, so the only right panel that applies is the Description
+    // peek (Browser needs a live session; Changes is not offered here). It rides
+    // the same split so it survives the transition into the running terminal.
     return (
       <>
-        {descriptionBar}
-        <div className="flex-1 min-h-0 relative">
-          <LaunchOverlay label={spawnLabel ?? 'Starting agent...'} />
+        <div ref={splitContainerRef} className="flex-1 min-h-0 flex">
+          <div
+            className={`${showDescriptionPanel ? 'flex-shrink-0 flex-grow-0' : 'flex-1'} min-h-0 relative overflow-hidden`}
+            style={showDescriptionPanel ? { flexBasis: `${splitRatio * 100}%` } : undefined}
+          >
+            <LaunchOverlay label={spawnLabel ?? 'Starting agent...'} />
+          </div>
+          {showDescriptionPanel && splitDivider}
+          {showDescriptionPanel && (
+            <div className="flex-1 min-h-0 min-w-0 overflow-hidden border-l border-edge">
+              <div className="h-full">{descriptionPanelContent}</div>
+            </div>
+          )}
+          {resizeCaptureOverlay}
         </div>
         <PreSpawnContextBar taskId={task.id} />
       </>

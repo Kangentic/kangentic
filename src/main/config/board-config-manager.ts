@@ -335,32 +335,57 @@ export class BoardConfigManager {
     }, 500);
   }
 
-  private doWriteBack(): void {
-    if (!this.activeProjectId || !this.activeProjectPath) return;
+  /**
+   * Write a specific project's current DB state to its kangentic.json,
+   * regardless of which project is currently attached/active. Used by the MCP
+   * command path, where a tool call can target a project other than the one
+   * open in the UI (see mcp-http/project-resolver). Best-effort: never throws.
+   * Writes immediately (no debounce) because MCP tool calls are discrete, not
+   * the rapid successive edits a UI drag produces.
+   */
+  writeBackForProject(projectId: string, projectPath: string): void {
+    if (this.isEphemeral) return;
+    this.doWriteBack(projectId, projectPath);
+  }
+
+  private doWriteBack(
+    projectId: string | null = this.activeProjectId,
+    projectPath: string | null = this.activeProjectPath,
+  ): void {
+    if (!projectId || !projectPath) return;
+
+    // The watcher-suppression bookkeeping (isWritingBack / lastTeamContentHash)
+    // only applies to the active project, which is the one with live file
+    // watchers. A cross-project write (an MCP tool call against a non-active
+    // project) has no watcher attached here, so it must not set or clobber the
+    // active project's suppression state.
+    const isActive =
+      projectId === this.activeProjectId && projectPath === this.activeProjectPath;
 
     try {
-      const existingTeam = this.loadTeamConfig();
+      const existingTeam = this.loadTeamConfigForPath(projectPath);
       const boardConfig = buildBoardConfigFromDb({
-        projectId: this.activeProjectId,
+        projectId,
         existingTeamConfig: existingTeam,
         fingerprint: this.fingerprint,
       });
 
-      const teamFilePath = path.join(this.activeProjectPath, TEAM_FILE);
+      const teamFilePath = path.join(projectPath, TEAM_FILE);
 
       const fileCheck = contentMatchesFile(teamFilePath, boardConfig);
       if (fileCheck.matches) {
-        this.lastTeamContentHash = fileCheck.contentHash;
+        if (isActive) this.lastTeamContentHash = fileCheck.contentHash;
         return;
       }
 
-      this.isWritingBack = true;
-      this.lastTeamContentHash = atomicWriteJson(teamFilePath, boardConfig);
+      if (isActive) this.isWritingBack = true;
+      const contentHash = atomicWriteJson(teamFilePath, boardConfig);
+      if (isActive) this.lastTeamContentHash = contentHash;
     } catch (error) {
       console.warn('[BOARD_CONFIG] Write-back failed:', error);
     } finally {
       // Keep isWritingBack true for a bit to suppress watcher re-entry
-      if (this.isWritingBack) {
+      if (isActive && this.isWritingBack) {
         setTimeout(() => {
           this.isWritingBack = false;
         }, 1000);

@@ -16,7 +16,7 @@ import { ResizeManager } from './lifecycle/resize-manager';
 import { FirstOutputTracker } from './lifecycle/first-output-tracker';
 import { disposeAdapterAttachment, removeAdapterHooks } from './lifecycle/adapter-lifecycle';
 import { safeKillPty } from './lifecycle/pty-kill';
-import { performSpawn, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS } from './lifecycle/session-spawn-flow';
+import { performSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession } from './session-registry';
 import { createWriteQueue, type WriteQueue } from './write-queue';
 import { BackpressureController } from './buffer/backpressure-controller';
@@ -70,6 +70,17 @@ export class SessionManager extends EventEmitter {
    */
   private writeQueues = new Map<string, WriteQueue>();
   /**
+   * Terminal dimensions from a resize that arrived before the session's PTY
+   * existed (the renderer mounted and fit its container before the auto-resume
+   * spawn landed, or while the session was queued/suspended awaiting spawn).
+   * performSpawn consumes this so the PTY spawns at the real fitted size
+   * instead of the 120x30 default, so no post-spawn corrective resize (and its
+   * stale-width repaint window) is needed. Keyed by session id, independent of
+   * the registry so it survives the registry.delete during a respawn. Consumed
+   * at spawn (takePendingResize) or dropped on kill.
+   */
+  private pendingResizes = new Map<string, { cols: number; rows: number }>();
+  /**
    * Per-session output backpressure: pauses a session's PTY when the renderer
    * falls behind on its emitted bytes, resuming as the renderer acks. Only
    * tracks sessions actively emitting to the renderer (focused); reset on focus
@@ -112,18 +123,6 @@ export class SessionManager extends EventEmitter {
           : undefined;
         if (this.firstOutputTracker.consume(sessionId, data, detector)) {
           this.emit('first-output', sessionId);
-          // Statusline-based agents (Claude) only write status.json - the sole
-          // source of the board card's live model + context % - when their TUI
-          // paints. In the app's pwsh-wrapped PTY a background (never-opened)
-          // session never does that initial paint on its own, so status.json is
-          // never written and the card is stuck on the spawn-time model
-          // placeholder. Now that the CLI has started rendering (first output),
-          // nudge the PTY once to force a paint; the settings' refreshInterval
-          // then keeps status.json fresh. Gated on the statusFile capability so
-          // it stays scoped to agents that use the statusline pipeline.
-          if (session?.agentParser?.runtime?.statusFile) {
-            this.kickStatuslineRepaint(sessionId);
-          }
           // Clear the resuming flag once the resumed CLI has actually
           // produced output. This unblocks card / overlay labels for
           // adapters (Codex, Gemini) that don't emit a usage statusline.
@@ -182,8 +181,29 @@ export class SessionManager extends EventEmitter {
         // Hand off to the session-history reader if the adapter declares
         // a native history hook. Fire-and-forget - the reader logs any
         // failures and degrades gracefully to PtyActivityTracker.
+        //
+        // For Claude the transcript reader is a background-session FALLBACK,
+        // and processStatusUpdate's one-shot id capture routes back here. The
+        // guard skips a re-attach once status.json has been handed off. Note:
+        // on the normal Claude path this callback fires synchronously nested
+        // inside the FIRST onUsageParsed - before StatusFileReader sets
+        // firstStatusDelivered - so hasReceivedStatus is still false here and
+        // the guard does not fire. The no-race guarantee on that path instead
+        // comes from SessionHistoryReader.attach being idempotent (the eager
+        // spawn-time attach already holds the slot) plus the detach in
+        // onFirstStatus (fired right after onUsageParsed) cancelling any
+        // in-flight re-attach. The guard covers any path where an id capture
+        // could arrive after that handoff.
         const historyHook = session.agentParser?.runtime?.sessionHistory;
-        if (historyHook) {
+        if (historyHook && !this.statusFileReader.hasReceivedStatus(sessionId)) {
+          // No startAtEnd here: this attach only ever runs when the agent id was
+          // NOT known at spawn time - either a fresh Codex/Gemini capture (a
+          // brand-new transcript whose early entries we want) or a
+          // stale-session-id recovery (also a fresh file, under the newly
+          // captured id). Reading from the start is correct in both. The
+          // resumed-existing-file EOF case never reaches here: it is held by the
+          // idempotent spawn-time attach (which passes startAtEnd), so this path
+          // never re-parses pre-resume content.
           this.sessionHistoryReader.attach({
             sessionId,
             agentSessionId: agentReportedId,
@@ -245,6 +265,16 @@ export class SessionManager extends EventEmitter {
       onEventsParsed: (sessionId, rawLines, events) => {
         this.telemetry.captureHookSessionIds(sessionId, rawLines);
         this.telemetry.ingestEvents(sessionId, events);
+      },
+      onFirstStatus: (sessionId) => {
+        // status.json just started flowing - it is authoritative (full usage
+        // replace incl. Claude's own used_percentage, cost, rate limits). Stop
+        // the transcript-based fallback reader (Claude's runtime.sessionHistory)
+        // so its partial-merge can never overwrite fresher status data; detach
+        // also cancels any in-flight re-attach. No-op for adapters (Codex,
+        // Gemini) that never emit a parseable status, so onFirstStatus never
+        // fires for them.
+        this.sessionHistoryReader.detach(sessionId);
       },
     });
 
@@ -419,6 +449,11 @@ export class SessionManager extends EventEmitter {
       sessionQueue: this.sessionQueue,
       getTranscriptWriter: () => this.transcriptWriter,
       getShell: () => this.getShell(),
+      takePendingResize: (sessionId) => {
+        const dims = this.pendingResizes.get(sessionId);
+        this.pendingResizes.delete(sessionId);
+        return dims;
+      },
       emit: (event, ...args) => this.emit(event, ...args),
     });
   }
@@ -478,7 +513,6 @@ export class SessionManager extends EventEmitter {
 
   resize(sessionId: string, cols: number, rows: number): { colsChanged: boolean } {
     const session = this.registry.get(sessionId);
-    if (!session?.pty) return { colsChanged: false };
 
     // Guard against NaN/Infinity from layout edge cases (e.g. getComputedStyle
     // returning "" during unmount, yielding parseInt -> NaN)
@@ -488,51 +522,26 @@ export class SessionManager extends EventEmitter {
     const clampedCols = Math.max(2, Math.floor(cols));
     const clampedRows = Math.max(1, Math.floor(rows));
 
+    if (!session?.pty) {
+      // The PTY does not exist yet. A resize can beat the auto-resume spawn (the
+      // renderer mounts and fits before the main-process spawn lands), or arrive
+      // while a session is queued/suspended awaiting (re)spawn. Stash the dims so
+      // performSpawn spawns the PTY at the real size instead of the default,
+      // closing the stale-width race at the source. Never stash for an
+      // exited/killed session - it is not coming back, and xterm never re-sends
+      // unchanged dims, so a resurrected 120x30 would stick forever.
+      if (session && (session.status === 'queued' || session.status === 'suspended')) {
+        this.pendingResizes.set(sessionId, { cols: clampedCols, rows: clampedRows });
+      }
+      return { colsChanged: false };
+    }
+
     const colsChanged = this.bufferManager.onResize(sessionId, clampedCols);
     session.pty.resize(clampedCols, clampedRows);
     // Mark resize time so the dispatch can suppress idle->thinking
     // transitions during the redraw burst that follows.
     this.resizeManager.notifyResize(sessionId);
     return { colsChanged };
-  }
-
-  /**
-   * One-time SIGWINCH nudge to force a statusline-based agent's TUI to paint,
-   * called when the CLI first produces output.
-   *
-   * Why: Claude only runs its statusLine command - the sole source of the live
-   * model + context % (status.json) - when its TUI actually paints. In the app's
-   * pwsh-wrapped PTY, a background (never-opened) session never does that initial
-   * paint on its own, so status.json is never written and the board card never
-   * advances past the spawn-time model placeholder. (`refreshInterval` only
-   * SUPPLEMENTS an already-painting statusline; it cannot kick off the first
-   * paint.) A resize forces the paint - which is exactly why opening a task
-   * historically "fixed" it (the terminal mount resized the PTY). This does the
-   * same once, automatically, so background cards get the real model + % without
-   * being opened.
-   *
-   * Nudge rows down then back to the PTY's CURRENT size so it ends where it
-   * started; routing through resize() reuses the redraw-suppression grace
-   * window so the forced repaint is not misread as activity.
-   *
-   * Nudge relative to the live `pty.cols`/`pty.rows` (falling back to the spawn
-   * defaults) rather than the hardcoded defaults: a background session is still
-   * at the spawn size, but a session whose task is already open has had its PTY
-   * fit to the real terminal viewport, and forcing it back to the spawn default
-   * would leave the PTY mismatched with the displayed xterm (wrong wrapping)
-   * until the next renderer-driven resize.
-   */
-  private kickStatuslineRepaint(sessionId: string): void {
-    const session = this.registry.get(sessionId);
-    if (!session?.pty) return;
-    const cols = session.pty.cols || DEFAULT_PTY_COLS;
-    const rows = session.pty.rows || DEFAULT_PTY_ROWS;
-    this.resize(sessionId, cols, rows - 1);
-    setTimeout(() => {
-      if (this.registry.get(sessionId)?.pty) {
-        this.resize(sessionId, cols, rows);
-      }
-    }, 200);
   }
 
   /**
@@ -590,6 +599,9 @@ export class SessionManager extends EventEmitter {
     // status='suspended' (a hard reset is 'exited', not resumable), so this
     // orthogonal marker carries the intent.
     if (session) session.intentionalExit = true;
+    // Drop any queued pre-spawn resize: a killed session will not respawn to
+    // consume it, and a stale entry keyed by this id must not survive.
+    this.pendingResizes.delete(sessionId);
     // Release backpressure BEFORE nulling the PTY so a paused session is
     // resumed (lets any buffered output flush) and its accounting entry is
     // dropped immediately, rather than waiting for the async onExit handler.
@@ -741,7 +753,12 @@ export class SessionManager extends EventEmitter {
     this.sessionQueue.notifySlotFreed();
   }
 
-  getScrollback(sessionId: string): string {
+  async getScrollback(sessionId: string): Promise<string> {
+    // If a width-changing resize just fired, wait for the agent TUI's async
+    // repaint to land before sampling, so the replay shows the frame at the
+    // fitted width rather than the stale pre-resize one. No-op for sessions
+    // with no pending width change (see PtyBufferManager.waitForResizeRepaint).
+    await this.bufferManager.waitForResizeRepaint(sessionId);
     return this.bufferManager.getScrollback(sessionId);
   }
 

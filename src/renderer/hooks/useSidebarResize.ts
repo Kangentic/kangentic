@@ -7,7 +7,9 @@ const MAX_WIDTH = 400;
 const COLLAPSE_THRESHOLD = 200;
 const DEFAULT_WIDTH = MAX_WIDTH;
 export const COLLAPSED_STRIP_WIDTH = 36; // matches w-9 Tailwind class
-const DRAG_DEAD_ZONE = 1; // any movement at all starts a drag; 0 movement = click toggle
+// Movement below this many px is treated as a click (a no-op); at/past it a resize drag
+// begins. Matches the dnd-kit activationConstraint distance used across the app's sortables.
+const DRAG_ACTIVATION_DISTANCE = 5;
 
 export interface SidebarResizeState {
   open: boolean;
@@ -29,7 +31,6 @@ export function useSidebarResize(config: AppConfig): SidebarResizeState {
   openRef.current = open;
 
   const collapsedByDragRef = useRef(false);
-  const toggleRef = useRef<() => void>(() => {});
 
   // Sync from config on load
   useEffect(() => {
@@ -54,7 +55,6 @@ export function useSidebarResize(config: AppConfig): SidebarResizeState {
       return !prev;
     });
   }, []);
-  toggleRef.current = toggle;
 
   const onResizeStart = useCallback((event: React.MouseEvent) => {
     const startX = event.clientX;
@@ -64,14 +64,14 @@ export function useSidebarResize(config: AppConfig): SidebarResizeState {
     let didCollapse = false;
 
     startPanelDrag(event, {
-      // Cursor is set lazily below, only once the drag clears the dead zone, so a
-      // pure click never changes the cursor.
+      // Cursor is set lazily below, only once the drag clears the activation
+      // distance, so a pure click never changes the cursor.
       onMove: (moveEvent) => {
         const delta = Math.abs(moveEvent.clientX - startX);
 
-        // Don't start dragging until past the dead zone
+        // Don't start dragging until past the activation distance
         if (!isDragging) {
-          if (delta < DRAG_DEAD_ZONE) return;
+          if (delta < DRAG_ACTIVATION_DISTANCE) return;
           isDragging = true;
           setIsResizing(true);
           document.body.style.cursor = 'col-resize';
@@ -94,8 +94,9 @@ export function useSidebarResize(config: AppConfig): SidebarResizeState {
 
       onRelease: () => {
         if (!isDragging) {
-          // Pure click - toggle sidebar
-          toggleRef.current();
+          // A click (or a sub-threshold "dead drag") on the divider is intentionally
+          // inert. Collapsing happens only via the PROJECTS-panel chevron or by dragging
+          // the divider closed past COLLAPSE_THRESHOLD, never an accidental click here.
           return;
         }
 

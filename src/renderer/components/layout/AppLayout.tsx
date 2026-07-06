@@ -134,8 +134,10 @@ export function AppLayout() {
               </div>
             </div>
 
-            {/* Sidebar resize handle -- click to toggle, drag to resize */}
+            {/* Sidebar resize handle - drag to resize, drag past the threshold to collapse.
+                A plain click is a no-op (collapse is the PROJECTS-panel chevron only). */}
             <div
+              data-testid="sidebar-resize-handle"
               className="flex-shrink-0 cursor-col-resize transition-colors w-1 bg-edge hover:bg-fg-faint"
               onMouseDown={sidebar.onResizeStart}
             />

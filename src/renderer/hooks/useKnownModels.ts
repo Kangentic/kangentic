@@ -32,3 +32,21 @@ export function useKnownModels(agent: string | null): string[] {
     return Array.from(union).sort((a, b) => a.localeCompare(b));
   }, [agent, fromAgentList, fromCache]);
 }
+
+const EMPTY_WINDOWS: Record<string, number> = {};
+
+/**
+ * Empirically-observed context-window sizes for an agent's models, keyed by
+ * BASE model id (the `[1m]`/dated suffix stripped). Learned from live
+ * `status.json` telemetry (`rememberModelContextWindow`) and persisted across
+ * restarts. A model is present only once its window has actually been observed
+ * on a real session, so the dropdowns badge context size without hardcoding
+ * (the window is not derivable from a model id - see the store action). Reactive
+ * like `useKnownModels`: the badge appears the moment the window is learned.
+ */
+export function useModelContextWindows(agent: string | null): Record<string, number> {
+  const windows = useConfigStore(
+    useShallow((state) => (agent ? state.config.discoveredContextWindowsByAgent?.[agent] : undefined)),
+  );
+  return windows ?? EMPTY_WINDOWS;
+}

@@ -7,6 +7,7 @@ import { useToastStore } from '../toast-store';
 import { useProjectStore } from '../project-store';
 import { invalidateProject } from '../project-cache';
 import { applyStructuralSharing } from './structural-sharing';
+import { fetchArchivedReconcile } from './archived-tasks-slice';
 import type { BoardStore } from './types';
 
 /** Outcome of a moveTask call. `ok: false` means the IPC genuinely failed
@@ -154,12 +155,18 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
     // `tasks`, but we filter both defensively to match the prior behavior.
     const previousTasks = get().tasks;
     const previousArchivedTasks = get().archivedTasks;
+    const previousArchivedTotalCount = get().archivedTotalCount;
 
-    // Optimistic: remove the card from view immediately.
-    set((s) => ({
-      tasks: s.tasks.filter((t) => t.id !== id),
-      archivedTasks: s.archivedTasks.filter((t) => t.id !== id),
-    }));
+    // Optimistic: remove the card from view immediately. Decrement the archived
+    // count only when this id was actually an archived row.
+    set((s) => {
+      const wasArchived = s.archivedTasks.some((t) => t.id === id);
+      return {
+        tasks: s.tasks.filter((t) => t.id !== id),
+        archivedTasks: s.archivedTasks.filter((t) => t.id !== id),
+        archivedTotalCount: wasArchived ? Math.max(0, s.archivedTotalCount - 1) : s.archivedTotalCount,
+      };
+    });
 
     // Callers (TaskCard.handleContextDelete / useTaskActions.handleDelete)
     // already awaited killSession before invoking this, so the PTY is dead.
@@ -177,7 +184,7 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       // No loadBoard() reconcile (unlike unarchiveTask): backend withTaskLock
       // already serializes per-task ops, and same-task is the only meaningful
       // race surface for a hard delete. Matches deleteArchivedTask.
-      set({ tasks: previousTasks, archivedTasks: previousArchivedTasks });
+      set({ tasks: previousTasks, archivedTasks: previousArchivedTasks, archivedTotalCount: previousArchivedTotalCount });
       useToastStore.getState().addToast({
         message: `Failed to delete task: ${err instanceof Error ? err.message : 'Unknown error'}`,
         variant: 'error',
@@ -332,10 +339,12 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
         return { ok: true };
       }
 
-      // Reload tasks and archived tasks (sessions arrive via push-based session-changed events)
-      const [nextTasks, nextArchivedTasks] = await Promise.all([
+      // Reload tasks and archived tasks (sessions arrive via push-based
+      // session-changed events). A move to Done archives the task; the archived
+      // side reconciles via the preview unless a viewer holds the full list.
+      const [nextTasks, archivedReconcile] = await Promise.all([
         window.electronAPI.tasks.list(),
-        window.electronAPI.tasks.listArchived(),
+        fetchArchivedReconcile(get().archivedFullyLoaded),
       ]);
       if (moveGeneration !== thisGen) return { ok: true }; // Skip stale reload
       // A switch can also land during the list round-trip above.
@@ -349,7 +358,8 @@ export const createTaskSlice: StateCreator<BoardStore, [], [], TaskSlice> = (set
       // their memo and don't re-render on every drag drop.
       set((state) => ({
         tasks: applyStructuralSharing(state.tasks, nextTasks),
-        archivedTasks: applyStructuralSharing(state.archivedTasks, nextArchivedTasks),
+        archivedTasks: applyStructuralSharing(state.archivedTasks, archivedReconcile.tasks),
+        archivedTotalCount: archivedReconcile.totalCount,
       }));
 
       // Detect if the moved task now has a new/different session

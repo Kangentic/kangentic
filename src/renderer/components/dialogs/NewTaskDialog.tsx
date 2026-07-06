@@ -16,6 +16,7 @@ import { WorktreeChip } from './WorktreeChip';
 import { AdvancedOverridesSection } from './AdvancedOverridesSection';
 import { Select } from '../settings/shared';
 import { LabelInput } from '../LabelInput';
+import { fetchGitBranches } from '../../utils/git-branches';
 import { isValidGitBranchName } from '../../../shared/git-utils';
 import { slugify, computeAutoBranchName } from '../../../shared/slugify';
 import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
@@ -65,7 +66,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
     : '';
   const [knownBranches, setKnownBranches] = useState<Set<string>>(new Set());
   useEffect(() => {
-    window.electronAPI.git.listBranches()
+    fetchGitBranches()
       .then(branches => setKnownBranches(new Set(branches)))
       .catch(() => setKnownBranches(new Set()));
   }, []);

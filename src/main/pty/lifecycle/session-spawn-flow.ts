@@ -23,14 +23,11 @@ import { adaptCommandForShell } from '../../../shared/paths';
 
 /**
  * Default PTY dimensions a session is spawned at, before any renderer-driven
- * resize. Exported so the statusline-repaint kick in SessionManager has a
- * fallback size for a background session that has not been resized yet: the
- * kick nudges relative to the PTY's current size (resize to rows-1 then back
- * forces a SIGWINCH without changing the ending dimensions), and for a
- * never-resized session that current size is exactly this spawn default.
+ * resize. A background (never-opened) session keeps this size for its whole
+ * life; the terminal mount resizes to the real viewport when a card is opened.
  */
-export const DEFAULT_PTY_COLS = 120;
-export const DEFAULT_PTY_ROWS = 30;
+const DEFAULT_PTY_COLS = 120;
+const DEFAULT_PTY_ROWS = 30;
 
 /**
  * Collaborators that the spawn flow reads and mutates. Grouped into a
@@ -54,6 +51,12 @@ export interface SpawnFlowContext {
   sessionQueue: SessionQueue;
   getTranscriptWriter: () => TranscriptWriter | null;
   getShell: () => Promise<string>;
+  /**
+   * Consume any resize that arrived before this session's PTY existed (see
+   * SessionManager.pendingResizes). Returns the stashed dims and clears the
+   * entry, or undefined if none. Lets the spawn use the real fitted size.
+   */
+  takePendingResize: (sessionId: string) => { cols: number; rows: number } | undefined;
   emit: (event: string, ...args: unknown[]) => void;
 }
 
@@ -159,12 +162,22 @@ export async function performSpawn(
     platform: process.platform,
   });
 
+  // Spawn at the real fitted dimensions if a resize arrived before the PTY
+  // existed (auto-resume / queued / suspended-resume race). Otherwise the
+  // default: a background session that is never opened keeps this size, and an
+  // opened one is resized to its container on mount. Spawning at the fitted
+  // size means that mount-time resize is a no-op, avoiding the stale-width
+  // repaint window entirely.
+  const pendingResize = context.takePendingResize(id);
+  const spawnCols = pendingResize?.cols ?? DEFAULT_PTY_COLS;
+  const spawnRows = pendingResize?.rows ?? DEFAULT_PTY_ROWS;
+
   let ptyProcess: pty.IPty;
   try {
     ptyProcess = pty.spawn(shellExe, shellArgs, {
       name: 'xterm-256color',
-      cols: DEFAULT_PTY_COLS,
-      rows: DEFAULT_PTY_ROWS,
+      cols: spawnCols,
+      rows: spawnRows,
       cwd: effectiveCwd,
       env: cleanEnv,
     });
@@ -204,8 +217,12 @@ export async function performSpawn(
 
   context.registry.set(id, session);
 
-  // Initialize extracted modules for this session
-  context.bufferManager.initSession(id, previousScrollback, 0);
+  // Initialize extracted modules for this session. Seed the buffer manager with
+  // the ACTUAL spawn cols so the first renderer resize reports colsChanged
+  // truthfully: an unchanged width (PTY spawned at the fitted size) reports
+  // false and skips the repaint-settle, while the cold-launch 120-to-fitted
+  // change reports true and arms it. See PtyBufferManager.onResize.
+  context.bufferManager.initSession(id, previousScrollback, spawnCols);
   context.sessionFiles.register({
     sessionId: id,
     statusOutputPath: input.statusOutputPath || null,
@@ -269,6 +286,12 @@ export async function performSpawn(
   // the old record. Calling attach() directly skips that chain.
   // sessionHistoryReader.attach is idempotent; a later capture
   // pathway firing the full notify chain is harmless.
+  //
+  // No "status already flowed" guard is needed here (unlike the
+  // onAgentSessionId re-attach path in session-manager): this fires at
+  // spawn, and StatusFileReader.attach deletes any stale status.json first,
+  // so status.json cannot have flowed yet. For Claude this is the sole
+  // trigger that starts the transcript fallback for a background session.
   const callerOwnedSessionHistory = input.agentParser?.runtime?.sessionHistory;
   if (input.agentSessionId && callerOwnedSessionHistory) {
     context.sessionHistoryReader.attach({
@@ -277,6 +300,10 @@ export async function performSpawn(
       cwd: effectiveCwd,
       hook: callerOwnedSessionHistory,
       agentName: session.agentName,
+      // On a resume the transcript already exists and its tail is PRE-suspend
+      // (stale) occupancy - start at EOF so only fresh post-resume entries
+      // produce usage. The spawn-time model seed still shows the model name.
+      startAtEnd: input.resuming === true,
     }).catch((err) => {
       console.warn(`[session-history] attach failed for session=${id.slice(0, 8)}:`, err);
     });

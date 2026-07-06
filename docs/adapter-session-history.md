@@ -169,9 +169,29 @@ If a Gemini release breaks any of these, the parser will silently return null/em
 
 ## Claude
 
-Claude does **not** participate in the `sessionHistory` pipeline. Telemetry comes exclusively from the hook-driven `statusFile` pipeline (see "Claude status-file pipeline" below). Claude Code's own native session log at `~/.claude/projects/<projectSlug>/<sessionId>.jsonl` is read on demand by `src/main/agent/adapters/claude/transcript-parser.ts` for the renderer's Transcript tab, but is not wired into the live telemetry pipeline.
+Claude's **authoritative** live telemetry comes from the hook-driven `statusFile` pipeline (see "Claude status-file pipeline" below): it carries Claude Code's own `display_name`, the real `context_window_size` (including the 1M-context variant), `used_percentage`, cost, and rate limits, and it stays the source of truth whenever it is flowing.
 
-A previous version of this adapter ran a parallel `runtime.sessionHistory` parser against the same JSONL file for cumulative token counts. It was removed because the hook output is strictly richer (it carries Claude Code's own `display_name` and the real `context_window_size`, including the 1M-context variant), and a second source raced against it - the task card visibly flashed a raw model id and a different window size between messages. The hook pipeline alone now owns model identity, window size, token counts, and cost.
+Claude **also** declares a `runtime.sessionHistory` block, but as a **background-session fallback**, not a co-equal source. Claude Code only runs its statusLine command when its TUI paints (after an assistant message, `/compact`, a permission-mode change, or the `refreshInterval` timer), so a heavy resume can boot for a while before its first `status.json` write, and the board card would sit on the spawn-time model placeholder meanwhile. The transcript JSONL at `~/.claude/projects/<projectSlug>/<sessionId>.jsonl` is appended continuously regardless of painting, so `ClaudeSessionHistoryParser` (`src/main/agent/adapters/claude/session-history-parser.ts`) tails it to derive a live model + token occupancy until `status.json` starts flowing.
+
+The two sources never race: on the **first** successful `status.json` parse, `StatusFileReader` fires `onFirstStatus`, which detaches the transcript reader (see "Claude status-file pipeline" below), so `status.json`'s full usage replace cleanly supersedes the fallback's partial merge. If a background session is never opened, the fallback keeps the card current for its whole life.
+
+The same transcript JSONL is still read on demand by `transcript-parser.ts` for the renderer's Transcript tab and for lifetime-token refinement (`refineTranscriptTokens` on exit paths) - those are unchanged.
+
+### What the fallback parser reads
+
+`ClaudeSessionHistoryParser.parse(chunk, 'append')` (append mode; the transcript is append-only JSONL) keeps the **latest** qualifying assistant entry in the chunk - its per-message `usage` is the size of the prompt sent to the model on the most recent turn, i.e. the current context occupancy (distinct from `parseClaudeTranscriptUsage`, which sums a cumulative lifetime total and would over-report a live percentage).
+
+An entry qualifies when `type === 'assistant'`, `isSidechain !== true` (subagent turns carry the subagent's context, not the main thread's), `message.model` is a real id (not `<synthetic>`, which Claude writes for API-error notices), and the input side (`input_tokens + cache_creation_input_tokens + cache_read_input_tokens`) is positive. No `message.id` dedupe is needed (latest-wins is equivalent); no compaction special-casing is needed (the `compact_boundary` line is a skipped `system` entry, and the first post-compaction assistant entry naturally carries the shrunken context, so the percentage drops on its own).
+
+Fields depended on per assistant entry: `type`, `isSidechain`, `message.model`, and `message.usage.{input_tokens, cache_creation_input_tokens, cache_read_input_tokens, output_tokens}`. The parser emits token counts and the model ONLY - a **sparse** `SessionUsage` with no `contextWindowSize`, `usedPercentage`, cost, rate limits, effort, sessionId, or transcriptPath keys - so the shallow spread merge in `UsageAccumulator.setSessionUsage` never clobbers base values, and never sets `activity` or `events` (Claude's activity stays hooks-owned).
+
+**The window is never derived from the model id.** Claude Code's effective context window depends on the account/plan, not the id: a plain `claude-opus-4-8` runs a 1M window on a 1M-entitled account (Max / Team / Enterprise auto-upgrade Opus to 1M) and 200K elsewhere, with no `[1m]` suffix to distinguish them. So the parser emits no window at all. The **authoritative** window comes exclusively from `status.json`.
+
+The effective window is, however, an account+model CONSTANT (every real `status.json` on a 1M-entitled account reports 1M for that model), so `UsageAccumulator` remembers the window observed for each base model id (`recordKnownWindow`, fed from any live `status.json` in `SessionTelemetry.processStatusUpdate`). When a session's only telemetry is the transcript fallback (tokens + model, no window), `setSessionUsage` fills the window from that known account+model value, so a background/parked session whose own `statusLine` never painted - and thus never wrote `status.json` - still shows a correct percentage on the board without being opened. Learning the window also RETROACTIVELY back-fills and re-emits any already-cached background session of that model (an idle card that emitted before a sibling painted). When no window has ever been observed for the model this run, the merged window stays at the 0 "unknown size" sentinel and the card / ContextBar show the model name only, never a bar against a guess. `setSessionUsage` is the single place a percentage is computed, and it degrades to the 0 sentinel if `usedTokens` ever exceeds the window (physically impossible, so the window is wrong).
+
+**Resumes tail from EOF.** On a resume the transcript already holds the pre-suspend conversation, whose last entry is stale occupancy (Claude prunes / recomputes context on resume). The eager spawn-time attach passes `startAtEnd`, so the reader starts its byte cursor at end-of-file and only entries appended *after* the resume produce usage. Until a fresh entry appends, the card shows the spawn-time model seed alone.
+
+**Assumptions that could break on CLI upgrades:** the `~/.claude/projects/<slug>/<sessionId>.jsonl` location, and the assistant-entry shape (`type`, `isSidechain`, `message.model`, `message.usage.*`). A format change makes the parser return `usage: null` and the card falls back to the spawn-time model seed until `status.json` flows.
 
 The `<projectSlug>` is computed by `claudeProjectSlug()` (exported from `transcript-parser.ts`), reproducing Claude Code's own algorithm: replace every non-alphanumeric character (so `/`, `\`, `:`, `.`, `_`, spaces, and unicode all become `-`), one-for-one and not collapsed, so `C:\Users` produces `C--Users` (one dash from `:`, one from `\`). If the sanitized result exceeds 200 characters it is truncated to 200 and a `-<base36 hash>` suffix (a Java-style string hash of the original, un-sanitized path) is appended to disambiguate; paths whose sanitized form is at most 200 characters (the overwhelming case) carry no suffix.
 
@@ -195,6 +215,12 @@ readonly runtime: AdapterRuntimeStrategy = {
     parseEvent: ClaudeStatusParser.parseEvent,
     isFullRewrite: true,
   },
+  // Background-session fallback (see the "Claude" section above).
+  sessionHistory: {
+    locate: ClaudeSessionHistoryParser.locate,
+    parse: ClaudeSessionHistoryParser.parse,
+    isFullRewrite: false,
+  },
 };
 ```
 
@@ -207,6 +233,8 @@ readonly runtime: AdapterRuntimeStrategy = {
 | `isFullRewrite` | True for `status.json` (whole-file rewrite on every update). The events file is always append-only, tracked by a separate byte cursor regardless of this flag. |
 
 **File paths** (`status.json`, `events.jsonl` under `.kangentic/sessions/<sessionId>/`) are caller-supplied at spawn time on `SpawnSessionInput.statusOutputPath` / `eventsOutputPath`. They are runtime values, not static adapter metadata.
+
+**First-status handoff (`onFirstStatus`).** `StatusFileReaderCallbacks` carries an `onFirstStatus(sessionId)` primitive that fires once per attachment, immediately after the first successful `parseStatus` dispatch. SessionManager wires it to `sessionHistoryReader.detach(sessionId)`, retiring the transcript fallback the moment `status.json` starts flowing (see the "Claude" section). The ordering is load-bearing: `onFirstStatus` fires *after* `onUsageParsed`, so the detach also cancels any transcript re-attach that the usage path's one-shot agent-session-id capture can trigger. SessionManager additionally guards the `onAgentSessionId` re-attach with `statusFileReader.hasReceivedStatus(sessionId)`. This is capability-driven, not agent-named: adapters whose `parseStatus` returns null (Codex, Gemini) never fire `onFirstStatus`, so nothing changes for them.
 
 ## Resume mechanisms (the resume artifact is not always the history file)
 

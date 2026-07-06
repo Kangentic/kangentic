@@ -56,6 +56,7 @@ export function TaskChangesDialog({ task, onClose }: TaskChangesDialogProps) {
                 worktreePath={task.worktree_path}
                 baseBranch={task.base_branch || defaultBaseBranch || 'main'}
                 emptyMessage="No changes on this branch"
+                task={task}
               />
             </Suspense>
           </PanelErrorBoundary>

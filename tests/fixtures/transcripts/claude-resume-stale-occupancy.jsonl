@@ -1,0 +1,3 @@
+{"type":"user","message":{"role":"user","content":"continue"}}
+{"type":"assistant","message":{"id":"msg_stale_early","model":"claude-opus-4-8","usage":{"input_tokens":3,"cache_creation_input_tokens":1200,"cache_read_input_tokens":400000,"output_tokens":220}}}
+{"type":"assistant","message":{"id":"msg_stale_last","model":"claude-opus-4-8","usage":{"input_tokens":2,"cache_creation_input_tokens":446,"cache_read_input_tokens":649950,"output_tokens":318}}}

@@ -42,6 +42,11 @@
 /warp.cmd
 /warp.ps1
 
+# Superpowers scratch and process docs (ledgers, briefs, diffs, reports, plans, specs).
+# Process artifacts, not project docs - keep them out of the repo.
+.superpowers/
+docs/superpowers/
+
 # Build output
 dist/
 

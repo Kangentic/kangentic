@@ -4,7 +4,14 @@
  * spawning real children.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { BgShellWatcher, NAMED_SHELL_QUIESCENT_RECLAIM_CYCLES, type BgShellWatcherCallbacks, type OutputFileSample } from '../../src/main/activity-engine/background-shell/watcher';
+import {
+  BgShellWatcher,
+  NAMED_SHELL_QUIESCENT_RECLAIM_CYCLES,
+  POLL_BACKOFF_STAGE_ONE_TREE_CYCLES,
+  POLL_BACKOFF_STAGE_TWO_TREE_CYCLES,
+  type BgShellWatcherCallbacks,
+  type OutputFileSample,
+} from '../../src/main/activity-engine/background-shell/watcher';
 import type { ProcessInfo, ProcessTreeProbe } from '../../src/main/activity-engine/background-shell/process-tree';
 
 class MockProcessTreeProbe implements ProcessTreeProbe {
@@ -2453,6 +2460,131 @@ describe('BgShellWatcher', () => {
       watcher.registerSession('s1');
       watcher.dispose();
       await expect(watcher.pollNow()).resolves.toBeUndefined();
+    });
+  });
+
+  describe('adaptive poll backoff', () => {
+    // A "needy" session keeps `sessionNeedsTree` true every cycle (via a pending
+    // tool), with an empty tree so no shell-count deficit machinery engages.
+    function makeNeedySession(pollIntervalMs = 100) {
+      const harness = makeWatcher({ pollIntervalMs });
+      const { watcher, probe, rootPids, pendingTools } = harness;
+      rootPids.set('s1', 2000);
+      probe.alive.add(2000);
+      probe.trees.set(2000, []); // no shell-like descendants -> no deficit
+      pendingTools.set('s1', 1); // keeps the session needy every cycle
+      watcher.registerSession('s1');
+      return harness;
+    }
+
+    it('stretches the interval to 2x after stage-one consecutive tree cycles', async () => {
+      expect(POLL_BACKOFF_STAGE_ONE_TREE_CYCLES).toBe(5);
+      const { watcher, probe } = makeNeedySession();
+      probe.listAllCalls = 0;
+
+      // Five needy cycles at the 100ms base.
+      await vi.advanceTimersByTimeAsync(5 * 100);
+      expect(probe.listAllCalls).toBe(5);
+
+      // Now stretched to 2x (200ms): a single 100ms advance produces nothing...
+      await vi.advanceTimersByTimeAsync(100);
+      expect(probe.listAllCalls).toBe(5);
+      // ...but a further 100ms (200 total since the last cycle) fires one.
+      await vi.advanceTimersByTimeAsync(100);
+      expect(probe.listAllCalls).toBe(6);
+      watcher.dispose();
+    });
+
+    it('caps the interval at 3x after stage-two consecutive tree cycles', async () => {
+      expect(POLL_BACKOFF_STAGE_TWO_TREE_CYCLES).toBe(15);
+      const { watcher, probe } = makeNeedySession();
+      probe.listAllCalls = 0;
+
+      // Cycles 1-5 at 100ms (t=100..500), 5-15 at 200ms (t=500..2500). By
+      // t=2500 exactly 15 cycles have run; the next is armed at t=2800 (3x).
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(probe.listAllCalls).toBe(15);
+
+      // At 3x spacing (300ms), a 200ms advance yields nothing...
+      await vi.advanceTimersByTimeAsync(200);
+      expect(probe.listAllCalls).toBe(15);
+      // ...and the next 100ms (300 total) yields exactly one.
+      await vi.advanceTimersByTimeAsync(100);
+      expect(probe.listAllCalls).toBe(16);
+      watcher.dispose();
+    });
+
+    it('resets to the base cadence when a deficit is observed, and natural exit still fires', async () => {
+      const harness = makeWatcher({ pollIntervalMs: 100 });
+      const { watcher, probe, rootPids, shellCounts, log } = harness;
+      rootPids.set('s1', 1234);
+      probe.alive.add(1234);
+      probe.trees.set(1234, [
+        { pid: 5001, ppid: 1234, comm: 'bash' },
+        { pid: 5002, ppid: 1234, comm: 'sh' },
+      ]);
+      shellCounts.set('s1', 2); // needy every cycle; baseline anchors at 2
+      watcher.registerSession('s1');
+
+      // Reach the stretched (2x) state with a stable tree (no deficit).
+      await vi.advanceTimersByTimeAsync(5 * 100);
+      expect(probe.listAllCalls).toBeGreaterThanOrEqual(5);
+      expect(log.naturalExits).toHaveLength(0);
+
+      // One shell exits -> the next cycle observes a deficit.
+      probe.trees.set(1234, [{ pid: 5001, ppid: 1234, comm: 'bash' }]);
+
+      // Next cycle is armed at 2x (200ms): it observes deficit #1 and snaps the
+      // cadence back to base.
+      await vi.advanceTimersByTimeAsync(200);
+      expect(log.naturalExits).toHaveLength(0); // needs 2 deficit cycles
+
+      // Base cadence restored: a single 100ms advance fires deficit cycle #2,
+      // which reports the natural exit. If the reset had NOT happened the next
+      // cycle would still be 200ms out and this would fire nothing.
+      await vi.advanceTimersByTimeAsync(100);
+      expect(log.naturalExits).toEqual([{ sessionId: 's1', exitedCount: 1 }]);
+      watcher.dispose();
+    });
+
+    it('re-arms at base cadence when a new background shell is noted while stretched', async () => {
+      const { watcher, probe } = makeNeedySession();
+      probe.listAllCalls = 0;
+
+      // Reach the stretched (2x) state; next cycle would be armed 200ms out.
+      await vi.advanceTimersByTimeAsync(5 * 100);
+      expect(probe.listAllCalls).toBe(5);
+
+      // A new bg shell is a transition: it re-arms the timer at the base delay.
+      watcher.noteBackgroundShellStarted('s1', 'shell-a');
+
+      // A single 100ms advance now fires a cycle (base), not the stretched 200ms.
+      await vi.advanceTimersByTimeAsync(100);
+      expect(probe.listAllCalls).toBe(6);
+      watcher.dispose();
+    });
+
+    it('does not accrue backoff across cheap skip cycles', async () => {
+      // A session with no needy signal after its baseline anchors: cycle 1 is
+      // needy (to anchor), every cycle after is a cheap skip.
+      const harness = makeWatcher({ pollIntervalMs: 100 });
+      const { watcher, probe, rootPids, pendingTools } = harness;
+      rootPids.set('s1', 3000);
+      probe.alive.add(3000);
+      probe.trees.set(3000, []); // no shell-like descendants
+      watcher.registerSession('s1');
+
+      // Run many cycles: cycle 1 anchors (one listAllProcesses), the rest skip.
+      await vi.advanceTimersByTimeAsync(1000);
+      const callsAfterSkips = probe.listAllCalls;
+      expect(callsAfterSkips).toBe(1); // only the anchoring cycle enumerated
+
+      // Now make it needy. If skip cycles had accrued backoff we would already
+      // be stretched; instead the next five needy cycles run at the 100ms base.
+      pendingTools.set('s1', 1);
+      await vi.advanceTimersByTimeAsync(5 * 100);
+      expect(probe.listAllCalls).toBe(callsAfterSkips + 5);
+      watcher.dispose();
     });
   });
 });
