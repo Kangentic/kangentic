@@ -512,8 +512,8 @@ export async function runSearchEverything(input: SearchEverythingInput): Promise
         const sessionActive = liveSessionIdsFor(hit.projectId).has(hit.sessionId);
         hits.push(toConversationSearchHit(hit, sessionActive));
       }
-    } catch (err) {
-      console.warn('[search:everything] conversation scan failed:', err);
+    } catch (error) {
+      console.warn('[search:everything] conversation scan failed:', error);
     }
   })();
 

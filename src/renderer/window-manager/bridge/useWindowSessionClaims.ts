@@ -39,6 +39,9 @@ export function useWindowSessionClaims(): void {
     // respawn, but the anchor is durable.
     const ownedSessionIds: string[] = [];
     for (const managedWindow of Object.values(windows)) {
+      // Only task-detail windows claim a session by anchor (their anchor is a
+      // taskId). A conversation window's anchor is a session id - skip it.
+      if (managedWindow.kind !== 'task-detail') continue;
       const session = sessions.find((candidate) => candidate.taskId === managedWindow.anchor);
       if (session && !ownedSessionIds.includes(session.id)) ownedSessionIds.push(session.id);
     }

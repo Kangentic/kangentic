@@ -234,20 +234,20 @@ export function chunkTranscript(entries: TranscriptEntry[]): ChunkInput[] {
   // Merge a trailing sub-MIN chunk backward into its predecessor when the
   // combined size still fits, so we don't emit a tiny dangling chunk.
   if (chunks.length >= 2) {
-    const last = chunks[chunks.length - 1];
-    const prev = chunks[chunks.length - 2];
-    if (last.tokenEstimate < MIN_TOKENS && prev.tokenEstimate + last.tokenEstimate <= MAX_TOKENS) {
-      const mergedText = `${prev.text}\n${last.text}`;
+    const lastChunk = chunks[chunks.length - 1];
+    const previousChunk = chunks[chunks.length - 2];
+    if (lastChunk.tokenEstimate < MIN_TOKENS && previousChunk.tokenEstimate + lastChunk.tokenEstimate <= MAX_TOKENS) {
+      const mergedText = `${previousChunk.text}\n${lastChunk.text}`;
       chunks.splice(chunks.length - 2, 2, {
-        seq: prev.seq,
+        seq: previousChunk.seq,
         text: mergedText,
         contentHash: sha1(mergedText),
         tokenEstimate: estimateTokens(mergedText),
-        role: dominantRole([prev.role, last.role]),
-        tsStart: prev.tsStart,
-        tsEnd: last.tsEnd,
-        turnUuidStart: prev.turnUuidStart,
-        turnUuidEnd: last.turnUuidEnd,
+        role: dominantRole([previousChunk.role, lastChunk.role]),
+        tsStart: previousChunk.tsStart,
+        tsEnd: lastChunk.tsEnd,
+        turnUuidStart: previousChunk.turnUuidStart,
+        turnUuidEnd: lastChunk.turnUuidEnd,
       });
     }
   }

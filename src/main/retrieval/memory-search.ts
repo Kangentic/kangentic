@@ -150,17 +150,15 @@ export async function searchConversationMemory(
     const db = getDb(project.id);
     const taskTitles = new Map<string, string>();
     const sessionTypes = new Map<string, string>();
+    const titleStmt = db.prepare('SELECT title FROM tasks WHERE id = ?');
+    const sessionTypeStmt = db.prepare('SELECT session_type FROM sessions WHERE id = ?');
     for (const chunk of chunks.values()) {
       if (chunk.taskId && !taskTitles.has(chunk.taskId)) {
-        const row = db.prepare('SELECT title FROM tasks WHERE id = ?').get(chunk.taskId) as
-          | { title: string }
-          | undefined;
+        const row = titleStmt.get(chunk.taskId) as { title: string } | undefined;
         taskTitles.set(chunk.taskId, row?.title ?? '(unknown task)');
       }
       if (chunk.sessionId && !sessionTypes.has(chunk.sessionId)) {
-        const row = db.prepare('SELECT session_type FROM sessions WHERE id = ?').get(chunk.sessionId) as
-          | { session_type: string }
-          | undefined;
+        const row = sessionTypeStmt.get(chunk.sessionId) as { session_type: string } | undefined;
         sessionTypes.set(chunk.sessionId, row?.session_type ?? '');
       }
     }

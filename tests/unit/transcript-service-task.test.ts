@@ -235,8 +235,11 @@ describe('resolveTaskTranscript', () => {
       taskTitle: 'Wire the auth flow',
       // The older session's native history is gone, but it has an indexed
       // chunk to fall back to (source 'index', degraded for that session).
+      // Keyed by agent_session_id, matching resolveSessionTranscript's actual
+      // doc_id lookup (the indexer's document identity is the agent transcript,
+      // not the Kangentic session row).
       chunkRowsByDocId: {
-        'session-old': [{ id: 1, role: 'user', text: 'indexed only', turn_uuid_start: 'u-old', ts_start: 1 }],
+        'agent-old': [{ id: 1, role: 'user', text: 'indexed only', turn_uuid_start: 'u-old', ts_start: 1 }],
       },
     });
     getBySessionType.mockReturnValue({

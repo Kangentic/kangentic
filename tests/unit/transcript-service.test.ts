@@ -91,9 +91,14 @@ function makeFakeDb(options: {
           }
           throw new Error(`unexpected get SQL: ${sql}`);
         },
-        all: (..._args: unknown[]) => {
+        all: (...args: unknown[]) => {
           if (sql.includes('FROM memory_chunks WHERE corpus = ? AND doc_id = ?')) {
-            return chunkRows;
+            // Key on the ACTUAL bound doc_id argument, mirroring the real
+            // `WHERE corpus = ? AND doc_id = ?` filter, so a wrong doc_id
+            // (e.g. the session id instead of the agent_session_id) yields no
+            // rows rather than always returning the whole fixture.
+            const [, boundDocId] = args;
+            return chunkRows.filter((row) => row.doc_id === boundDocId);
           }
           throw new Error(`unexpected all SQL: ${sql}`);
         },
@@ -306,6 +311,42 @@ describe('resolveSessionTranscript', () => {
     expect(result!.sourcePath).toBe('/history/session-1.jsonl');
     expect(result!.entries).toEqual([
       { kind: 'user', uuid: 'u-9', ts: 5, text: 'still indexed' },
+    ]);
+  });
+
+  it('resolves the index fallback by the agent_session_id, not the Kangentic session id, when they differ', async () => {
+    // Chunks are indexed by the indexer under doc_id = agent_session_id (the
+    // native transcript's uuid), which is a DIFFERENT value from the
+    // Kangentic session record's own `id`. The fallback must query with
+    // agent_session_id, or every pruned/empty-history session degrades
+    // straight to 'none' even though its conversation is indexed.
+    const db = makeFakeDb({
+      sessionRecord: makeRecord({ id: 'kangentic-session-1', agent_session_id: 'native-agent-xyz' }),
+      taskRow: { title: 'Wire the auth flow' },
+      chunkRows: [
+        makeChunkRow({
+          id: 42,
+          doc_id: 'native-agent-xyz',
+          role: 'user',
+          text: 'indexed via native id',
+          turn_uuid_start: 'u-42',
+          ts_start: 7,
+        }),
+      ],
+    });
+    const parseTranscript = vi.fn(async () => ({ entries: [], sourcePath: '/history/native-agent-xyz.jsonl' }));
+    getBySessionType.mockReturnValue({
+      displayName: 'Claude Code',
+      parseTranscript,
+    } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+    const result = await resolveSessionTranscript(db, 'kangentic-session-1');
+
+    expect(result).not.toBeNull();
+    expect(result!.source).toBe('index');
+    expect(result!.degraded).toBe(true);
+    expect(result!.entries).toEqual([
+      { kind: 'user', uuid: 'u-42', ts: 7, text: 'indexed via native id' },
     ]);
   });
 

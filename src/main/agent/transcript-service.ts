@@ -70,9 +70,9 @@ function truncateEntries(entries: TranscriptEntry[]): TranscriptEntry[] {
 /** Reconstruct lossy display entries from indexed chunks when the native
  *  history file is gone. Block structure is not recoverable, so each chunk maps
  *  to a single-block entry of its recorded role. */
-function entriesFromIndex(db: Database.Database, sessionId: string): TranscriptEntry[] {
+function entriesFromIndex(db: Database.Database, docId: string): TranscriptEntry[] {
   const store = new RetrievalStore(db);
-  const chunks = store.getChunksForDoc('conversation', sessionId);
+  const chunks = store.getChunksForDoc('conversation', docId);
   return chunks.map((chunk) => {
     const uuid = chunk.turnUuidStart ?? `chunk-${chunk.id}`;
     const ts = chunk.tsStart ?? 0;
@@ -134,7 +134,7 @@ export async function resolveSessionTranscript(
       return { ...base, source: 'live', sourcePath, entries: truncateEntries(entries), degraded: false };
     }
     // Native file located but empty/pruned: try the index fallback.
-    const indexed = entriesFromIndex(db, record.id);
+    const indexed = entriesFromIndex(db, record.agent_session_id ?? record.id);
     if (indexed.length > 0) {
       return { ...base, source: 'index', sourcePath, entries: indexed, degraded: true };
     }
@@ -149,7 +149,7 @@ export async function resolveSessionTranscript(
   }
 
   // No structured parser, or no agent_session_id yet: index fallback, else none.
-  const indexed = entriesFromIndex(db, record.id);
+  const indexed = entriesFromIndex(db, record.agent_session_id ?? record.id);
   if (indexed.length > 0) {
     return { ...base, source: 'index', sourcePath: null, entries: indexed, degraded: true };
   }

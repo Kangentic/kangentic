@@ -114,7 +114,15 @@ export class ConversationIndexer {
   ): void {
     store.setIndexState({
       corpus: CORPUS,
-      docId: record.id,
+      // The index-state document identity MUST match the chunk document identity
+      // (agent_session_id), not the Kangentic session id. Suspend/resume mints a
+      // new session row over the SAME agent transcript; keying state on record.id
+      // would track it as a separate never-indexed document, and a first backfill
+      // sweep (DESC by started_at) would re-index the older session second and
+      // re-point chunk ownership back onto the stale suspended session. The
+      // sessionId column below stays record.id so the session-delete trigger and
+      // the ownership re-point track the live session.
+      docId: record.agent_session_id ?? record.id,
       sessionId: record.id,
       sourcePath: signature.path,
       sourceMtimeMs: signature.mtimeMs,
@@ -152,7 +160,10 @@ export class ConversationIndexer {
     }
 
     const signature = await this.sourceSignature(adapter, record);
-    const state = store.getIndexState(CORPUS, record.id);
+    // Key on the agent transcript (agent_session_id), consistent with the chunk
+    // document identity, so a resumed session's new row shares one index-state
+    // row with its prior sessions instead of being treated as never-indexed.
+    const state = store.getIndexState(CORPUS, record.agent_session_id ?? record.id);
     if (!needsIndex(state, signature)) return 'skipped';
 
     let parsed: ParsedTranscript;

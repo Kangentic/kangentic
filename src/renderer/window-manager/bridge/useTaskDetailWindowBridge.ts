@@ -39,7 +39,11 @@ export function useTaskDetailWindowBridge(): void {
     const windowStore = useWindowStore.getState();
 
     // Focus an existing window for this task instead of opening a duplicate.
-    const existing = Object.values(windowStore.windows).find((candidate) => candidate.anchor === detailTaskId);
+    // Scope to task-detail windows: a conversation window's anchor is a session
+    // id, not a taskId, and must never be matched here.
+    const existing = Object.values(windowStore.windows).find(
+      (candidate) => candidate.kind === 'task-detail' && candidate.anchor === detailTaskId,
+    );
     if (existing) {
       windowStore.focusWindow(existing.id);
       detailWindowIdRef.current = existing.id;

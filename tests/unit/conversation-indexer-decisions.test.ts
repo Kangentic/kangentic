@@ -356,3 +356,198 @@ describe('ConversationIndexer.indexSession', () => {
     expect(state.chunkInserts).toHaveLength(1);
   });
 });
+
+// --- Suspend/resume: two Kangentic session rows share one agent transcript --
+
+/**
+ * `makeFakeDb` above always answers the memory_chunks existing-chunk probe
+ * with an empty array (no session in that suite ever calls indexSession
+ * twice against overlapping content), so it cannot reproduce the ownership
+ * re-point bug: it never lets a second `indexSession` pass see the chunk row
+ * the first pass just wrote. This fake keeps a real in-memory
+ * `memory_chunks` table (shared across multiple `indexSession` calls) and
+ * multiple session rows keyed by their own id, so the test can drive the
+ * sweep's actual DESC (newest-first) visit order across two Kangentic
+ * session rows that resume the SAME agent_session_id, and observe which
+ * session ends up owning the resulting chunk.
+ */
+interface SharedFakeChunkRow {
+  id: number;
+  corpus: string;
+  docId: string;
+  seq: number;
+  sessionId: string | null;
+  taskId: string | null;
+  contentHash: string;
+}
+
+interface SharedFakeDbState {
+  sessionsById: Map<string, SessionRecord>;
+  indexStateRows: Map<string, Record<string, unknown>>;
+  chunks: SharedFakeChunkRow[];
+  nextChunkId: number;
+}
+
+function makeSharedFakeState(records: SessionRecord[]): SharedFakeDbState {
+  const sessionsById = new Map<string, SessionRecord>();
+  for (const record of records) sessionsById.set(record.id, record);
+  return { sessionsById, indexStateRows: new Map(), chunks: [], nextChunkId: 1 };
+}
+
+function makeSharedFakeDb(state: SharedFakeDbState): Database.Database {
+  return {
+    prepare(sql: string) {
+      return {
+        get: (...args: unknown[]) => {
+          if (sql.includes('FROM sessions WHERE id = ?')) {
+            // Mirrors SessionRepository.findByAnyId: WHERE id = ? OR
+            // agent_session_id = ?, newest started_at first.
+            const [lookupId] = args as [string];
+            const matches = [...state.sessionsById.values()].filter(
+              (record) => record.id === lookupId || record.agent_session_id === lookupId,
+            );
+            matches.sort((first, second) => second.started_at.localeCompare(first.started_at));
+            return matches[0];
+          }
+          if (sql.includes('FROM memory_index_state WHERE corpus')) {
+            const [corpus, docId] = args as [string, string];
+            return state.indexStateRows.get(`${corpus}::${docId}`);
+          }
+          throw new Error(`unexpected get SQL: ${sql}`);
+        },
+        all: (...args: unknown[]) => {
+          if (sql.includes('SELECT id, seq, content_hash FROM memory_chunks')) {
+            const [corpus, docId] = args as [string, string];
+            return state.chunks
+              .filter((chunk) => chunk.corpus === corpus && chunk.docId === docId)
+              .sort((first, second) => first.seq - second.seq)
+              .map((chunk) => ({ id: chunk.id, seq: chunk.seq, content_hash: chunk.contentHash }));
+          }
+          throw new Error(`unexpected all SQL: ${sql}`);
+        },
+        run: (...args: unknown[]) => {
+          if (sql.includes('INSERT INTO memory_index_state')) {
+            const [corpus, docId, sessionId, sourcePath, sourceMtimeMs, sourceSize, entryCount, chunkCount, status, indexedAt] = args;
+            state.indexStateRows.set(`${String(corpus)}::${String(docId)}`, {
+              corpus,
+              doc_id: docId,
+              session_id: sessionId,
+              source_path: sourcePath,
+              source_mtime_ms: sourceMtimeMs,
+              source_size: sourceSize,
+              entry_count: entryCount,
+              chunk_count: chunkCount,
+              status,
+              indexed_at: indexedAt,
+            });
+            return { changes: 1, lastInsertRowid: 0 };
+          }
+          if (sql.includes('INSERT INTO memory_chunks')) {
+            // Column order matches RetrievalStore.upsertDocument's insert:
+            // (corpus, doc_id, seq, session_id, task_id, agent_session_id,
+            //  role, text, content_hash, ...).
+            const corpus = String(args[0]);
+            const docId = String(args[1]);
+            const seq = Number(args[2]);
+            const sessionId = (args[3] as string | null) ?? null;
+            const taskId = (args[4] as string | null) ?? null;
+            const contentHash = String(args[8]);
+            const id = state.nextChunkId++;
+            state.chunks.push({ id, corpus, docId, seq, sessionId, taskId, contentHash });
+            return { changes: 1, lastInsertRowid: id };
+          }
+          if (sql.includes('DELETE FROM memory_chunks WHERE id IN')) {
+            const deletedIds = new Set(args.map((value) => Number(value)));
+            const remaining = state.chunks.filter((chunk) => !deletedIds.has(chunk.id));
+            const removedCount = state.chunks.length - remaining.length;
+            state.chunks = remaining;
+            return { changes: removedCount };
+          }
+          if (sql.includes('UPDATE memory_chunks SET session_id')) {
+            // The diff-upsert's ownership re-point over the untouched leading
+            // prefix: WHERE corpus = ? AND doc_id = ? AND seq < ?.
+            const [sessionId, taskId, corpus, docId, divergence] = args as [
+              string | null,
+              string | null,
+              string,
+              string,
+              number,
+            ];
+            for (const chunk of state.chunks) {
+              if (chunk.corpus === corpus && chunk.docId === docId && chunk.seq < divergence) {
+                chunk.sessionId = sessionId;
+                chunk.taskId = taskId;
+              }
+            }
+            return { changes: 0 };
+          }
+          throw new Error(`unexpected run SQL: ${sql}`);
+        },
+      };
+    },
+    transaction: (fn: () => unknown) => fn,
+  } as unknown as Database.Database;
+}
+
+describe('ConversationIndexer.indexSession - suspend/resume shares one agent transcript (regression #2)', () => {
+  it(
+    'keys index-state on agent_session_id, so a sweep visiting the newest ' +
+      'session first leaves chunk ownership on the newest session and no-ops the older one',
+    async () => {
+      const sharedAgentSessionId = 'agent-xyz';
+      // Same agent_session_id (same native history file), distinct Kangentic
+      // session rows: the suspended session and the resumed session that
+      // replaced it.
+      const sessionOlder = makeRecord({
+        id: 'session-suspended',
+        agent_session_id: sharedAgentSessionId,
+        started_at: '2026-06-01T10:00:00Z',
+      });
+      const sessionNewer = makeRecord({
+        id: 'session-resumed',
+        agent_session_id: sharedAgentSessionId,
+        started_at: '2026-06-01T11:00:00Z',
+      });
+
+      const state = makeSharedFakeState([sessionOlder, sessionNewer]);
+      const entries: TranscriptEntry[] = [{ kind: 'user', uuid: 'u1', ts: 10, text: 'hi' }];
+      // Both rows resume the SAME native history file, so the adapter parses
+      // to identical entries (and the chunker produces an identical content
+      // hash) regardless of which session row asks for it.
+      const parseTranscript = vi.fn(async () => ({ entries, sourcePath: null }));
+      const sharedDb = makeSharedFakeDb(state);
+      const indexer = new ConversationIndexer({
+        getDb: () => sharedDb,
+        getAdapter: () => ({ displayName: 'Claude', parseTranscript }),
+        stat: () => null,
+        now: () => fixedNow,
+        chunker: () => oneChunk,
+        chunkerVersion: 1,
+      });
+
+      // sweepProject visits `ORDER BY started_at DESC`: newest session first,
+      // then the older suspended one.
+      const outcomeForNewer = await indexer.indexSession('project-1', sessionNewer.id);
+      const outcomeForOlder = await indexer.indexSession('project-1', sessionOlder.id);
+
+      expect(outcomeForNewer).toBe('indexed');
+      // The older session's pass must be a no-op: by the time it runs, the
+      // shared doc's index-state already reflects an unchanged signature.
+      expect(outcomeForOlder).toBe('skipped');
+
+      // Exactly one chunk backs the shared transcript, owned by the NEWEST
+      // (live/resumed) session, never re-pointed onto the stale suspended one.
+      expect(state.chunks).toHaveLength(1);
+      expect(state.chunks[0].docId).toBe(sharedAgentSessionId);
+      expect(state.chunks[0].sessionId).toBe(sessionNewer.id);
+
+      // Exactly one index-state row backs the shared doc, not one per
+      // Kangentic session row.
+      expect(state.indexStateRows.size).toBe(1);
+      expect(state.indexStateRows.has(`conversation::${sharedAgentSessionId}`)).toBe(true);
+
+      // The parser only ran once: the second pass skipped before parsing.
+      expect(parseTranscript).toHaveBeenCalledOnce();
+    },
+  );
+});

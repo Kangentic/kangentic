@@ -164,6 +164,15 @@ const preservedSpawnProgress: Record<string, string> = import.meta.hot?.data?.sp
 // @ts-expect-error -- Vite handles import.meta.hot
 const preservedPendingCommandLabel: Record<string, string> = import.meta.hot?.data?.pendingCommandLabel ?? {};
 
+/** Conversation-viewer nav signals preserved across HMR. Without this, an HMR
+ *  that re-evaluates this module resets conversationSessionId to null;
+ *  useConversationWindowBridge keys on that field and treats null as "the user
+ *  closed it," silently closing an open Conversation window mid-edit. */
+// @ts-expect-error -- Vite handles import.meta.hot
+const preservedConversationSessionId: string | null = import.meta.hot?.data?.conversationSessionId ?? null;
+// @ts-expect-error -- Vite handles import.meta.hot
+const preservedScrollToTurnUuid: string | null = import.meta.hot?.data?.scrollToTurnUuid ?? null;
+
 // @ts-expect-error -- Vite handles import.meta.hot
 if (import.meta.hot) {
   // @ts-expect-error -- Vite handles import.meta.hot
@@ -175,6 +184,8 @@ if (import.meta.hot) {
     };
     data.spawnProgress = state.spawnProgress;
     data.pendingCommandLabel = state.pendingCommandLabel;
+    data.conversationSessionId = state.conversationSessionId;
+    data.scrollToTurnUuid = state.scrollToTurnUuid;
   });
 }
 
@@ -192,11 +203,13 @@ export function cancelSync(): void {
  * coupled and hard to split cleanly.
  *
  * HMR preservation: syncController (AbortController), the three
- * transient-session pointers, spawnProgress, and pendingCommandLabel
+ * transient-session pointers, spawnProgress, pendingCommandLabel, and the
+ * conversation-viewer nav signals (conversationSessionId, scrollToTurnUuid)
  * survive module replacement via `import.meta.hot.dispose`. Without
  * this, hot reload orphans live PTY processes, breaks in-flight
- * project switches, and strands "Initializing..." indicators on
- * task cards whose in-flight spawn-progress pushes arrived pre-reload.
+ * project switches, strands "Initializing..." indicators on
+ * task cards whose in-flight spawn-progress pushes arrived pre-reload, and
+ * silently closes an open Conversation window mid-edit.
  *
  * HMR re-sync: the `vite:afterUpdate` handler in App.tsx calls
  * `syncSessions()` after hot reload. Renaming syncSessions would
@@ -211,8 +224,10 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   dialogSessionIds: [],
   pendingDetailWindowsProjectId: null,
   scrollToEventKey: null,
-  conversationSessionId: null,
-  scrollToTurnUuid: null,
+  conversationSessionId: preservedConversationSessionId,
+  scrollToTurnUuid: preservedScrollToTurnUuid,
+  // hmr-safe: one-shot cross-project handoff, alive only during an async project
+  // switch; dropping it on a coincident HMR only skips an auto-open, no visible close.
   _pendingOpenConversation: null,
   _pendingScrollToTurnUuid: null,
   sessionUsage: {},
