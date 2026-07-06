@@ -40,6 +40,7 @@ import {
   useCopyDisplayId,
   useTaskSessionState,
   useTaskActions,
+  taskHasDescriptionContent,
 } from '../../components/dialogs/task-detail';
 import { useLayerStore } from '../context';
 import { registerWindowCloser, unregisterWindowCloser } from '../store/window-close-registry';
@@ -189,17 +190,20 @@ export function TaskDetailWindow({
 
   const hasSessionContext = sessionState.hasSessionContext || actions.toggling;
 
-  const hasDescriptionContent = !!(
-    task.description
-    || attachments.savedAttachments.length > 0
-    || (task.priority ?? 0) > 0
-    || (task.labels ?? []).length > 0
-  );
-  // Mirror canShowBrowser's exclusions: the queued and suspended body branches
-  // render a placeholder / resume prompt and never consume descriptionPeekOpen,
-  // so the pill, kebab item, and hotkey must not appear in those states (they
-  // would toggle state with no visible effect).
-  const canShowDescription = hasSessionContext
+  const hasDescriptionContent = taskHasDescriptionContent(task, attachments.savedAttachments.length);
+  // Gate the peek affordance (kebab item + hotkey) on the states whose body
+  // branch actually renders descriptionBar, so the toggle is never dead:
+  //   - Use the BASE sessionState.hasSessionContext (kind is not 'none'/'exited'),
+  //     NOT the toggling-boosted `hasSessionContext` above: an in-flight pause /
+  //     resume can leave `toggling` true while kind is 'none' (no session), and
+  //     that state falls through to the "suspended or toggling" body branch,
+  //     which never consumes descriptionPeekOpen.
+  //   - Exclude 'queued' and 'suspended' (their body branches render a
+  //     placeholder / resume prompt and also ignore the flag).
+  // Unlike canShowBrowser we do NOT require a live session?.id, because the
+  // pre-session 'preparing' branch renders descriptionBar too (the description
+  // is meaningful before the PTY exists), and preparing has no session yet.
+  const canShowDescription = sessionState.hasSessionContext
     && hasDescriptionContent
     && sessionState.displayState.kind !== 'queued'
     && sessionState.displayState.kind !== 'suspended';

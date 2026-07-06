@@ -11,6 +11,7 @@ import { LabelPills } from '../../Pill';
 import { useConfigStore } from '../../../stores/config-store';
 import { useProjectStore } from '../../../stores/project-store';
 import { QueuedPlaceholder } from './QueuedPlaceholder';
+import { taskHasDescriptionContent } from './description-content';
 import { AttachmentThumbnails } from './AttachmentThumbnails';
 import type { AttachmentWithPreview } from './useAttachments';
 import { MarkdownRenderer } from '../../MarkdownRenderer';
@@ -105,6 +106,8 @@ export function TaskDetailBody({
   const taskLabels = task.labels ?? [];
   const taskPriority = task.priority ?? 0;
   const hasLabelsOrPriority = taskPriority > 0 || taskLabels.length > 0;
+  // Single source of truth shared with canShowDescription in TaskDetailWindow.
+  const hasDescriptionContent = taskHasDescriptionContent(task, savedAttachments.length);
 
   const labelsAndPriorityRow = hasLabelsOrPriority && (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -125,7 +128,7 @@ export function TaskDetailBody({
 
   // Description view mode with attachment thumbnails. Shown in the non-archived,
   // non-session view, and also during an active session when descriptionPeekOpen is true.
-  const descriptionBar = !isArchived && (task.description || savedAttachments.length > 0 || hasLabelsOrPriority) && (!hasSessionContext || descriptionPeekOpen) && (
+  const descriptionBar = !isArchived && hasDescriptionContent && (!hasSessionContext || descriptionPeekOpen) && (
     <div className={`px-4 py-3 border-b border-edge flex-shrink-0 space-y-2${hasSessionContext ? ' max-h-[25vh] overflow-y-auto' : ''}`}>
       {task.description && (
         <MarkdownRenderer content={task.description} />
@@ -140,7 +143,7 @@ export function TaskDetailBody({
     return (
       <>
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {(task.description || savedAttachments.length > 0 || hasLabelsOrPriority) ? (
+          {hasDescriptionContent ? (
             <div className="px-4 py-4 space-y-3 max-h-[40vh] overflow-y-auto">
               {task.description && (
                 <MarkdownRenderer content={task.description} />

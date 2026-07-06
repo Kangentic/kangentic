@@ -257,7 +257,7 @@ ones (e.g. `board-config-parity.md`):
 2. **Decide loading, and keep always-on rules few.** Always-on rules (no frontmatter) load every
    session and cost context every session, so reserve them for universal, file-independent
    conventions (tool use, house style, security). Everything subsystem-specific gets `paths:`
-   frontmatter so it loads only when a matching file enters context. We run ~4 always-on; treat
+   frontmatter so it loads only when a matching file enters context. We run ~5 always-on; treat
    that as a soft ceiling.
 3. **Mind the read-trigger gap.** A path-scoped rule loads when a matching file is *read into
    context*, not when Claude *creates* a new file in that path. So (a) any convention that must
