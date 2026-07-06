@@ -623,3 +623,112 @@ test.describe('useAgentDrivenInvalidation - current project create renders the c
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Test: task:sessionResync push is a quiet reconcile (regression guard)
+//
+// `onSessionResync` fires after a column-model-change session restart to keep
+// the board store's task.session_id current. It follows the same
+// current-vs-background routing as its on*ByAgent siblings (scheduleBoardReload
+// vs invalidateProject), but is the DELIBERATE exception to "toast
+// unconditionally": a naive implementation that copied the sibling shape would
+// toast just like tasks.onCreatedByAgent/onUpdatedByAgent/onDeletedByAgent. The
+// no-toast behavior is documented directly above the listener in
+// useAgentDrivenInvalidation.ts and is the key thing this test pins.
+// ---------------------------------------------------------------------------
+
+test.describe('useAgentDrivenInvalidation - task:sessionResync is a quiet reconcile', () => {
+  /**
+   * Snapshot the current toast count without Playwright's own assertion
+   * retry. `expect(locator).toHaveCount(0)` auto-retries for up to the
+   * expect timeout (default ~5s), and the mock config's toast
+   * `durationSeconds` is 4, so a wrongly-raised toast would auto-dismiss
+   * itself WITHIN that retry window and the assertion would report a false
+   * pass once it disappeared. A single un-retried `.count()` read is the
+   * only way to correctly assert "no toast right now".
+   */
+  async function toastCountRightNow(page: Page): Promise<number> {
+    return page.getByTestId('toast').count();
+  }
+
+  test('same-project resync reloads the board and raises no toast', async () => {
+    const { browser, page } = await launch();
+
+    try {
+      await warmBothProjectsAndResetCounter(page);
+
+      // Alpha is current. Fire a session-resync push targeting Alpha.
+      await page.evaluate((currentProjectId) => {
+        (window as unknown as { __mockFireTaskSessionResync: (projectId?: string) => void })
+          .__mockFireTaskSessionResync(currentProjectId);
+      }, PROJECT_A_ID);
+
+      // The debounced loadBoard (250ms) refetches tasks/swimlanes for the active
+      // project. Poll instead of a fixed wait so this is stable across machine speed.
+      await expect
+        .poll(async () => {
+          const counts = await page.evaluate(() =>
+            (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
+          );
+          return (counts['tasks.list'] ?? 0) + (counts['swimlanes.list'] ?? 0);
+        }, { timeout: 3000 })
+        .toBeGreaterThan(0);
+
+      // Deliberately no toast: onSessionResync is a quiet board-consistency
+      // reconcile, not agent news, unlike its on*ByAgent siblings which always
+      // toast. This is the regression this test guards against. A single
+      // snapshot read (not a retrying locator assertion, see toastCountRightNow)
+      // right after the reload lands is the correct check here.
+      expect(await toastCountRightNow(page)).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('background-project resync invalidates that project cache, does not reload the active board, and raises no toast', async () => {
+    const { browser, page } = await launch();
+
+    try {
+      await warmBothProjectsAndResetCounter(page);
+
+      // Alpha is current. Fire a session-resync push targeting Beta (background).
+      await page.evaluate((backgroundProjectId) => {
+        (window as unknown as { __mockFireTaskSessionResync: (projectId?: string) => void })
+          .__mockFireTaskSessionResync(backgroundProjectId);
+      }, PROJECT_B_ID);
+
+      // Give any (incorrect) same-project reload a budget to fire, then assert
+      // Alpha's own board did NOT refetch and no toast appeared. (Intentional
+      // fixed wait - negative assertion; cannot poll for non-occurrence.)
+      await page.waitForTimeout(500);
+      const countsAfterPush = await page.evaluate(() =>
+        (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
+      );
+      expect(countsAfterPush['tasks.list'] ?? 0).toBe(0);
+      expect(countsAfterPush['swimlanes.list'] ?? 0).toBe(0);
+      expect(await toastCountRightNow(page)).toBe(0);
+
+      // Reset the counter, then switch to Beta. Because the push invalidated
+      // Beta's warm-switch cache, the switch must trigger a cold IPC fan-out.
+      await page.evaluate(() => {
+        (window as unknown as { __resetIpcCallCounts: () => void }).__resetIpcCallCounts();
+      });
+      await page.locator('[role="button"]:has-text("Inv Beta")').click();
+      await expect(page.locator('[data-swimlane-name="To Do"]')).toBeVisible({ timeout: 5000 });
+
+      await expect
+        .poll(async () => {
+          const counts = await page.evaluate(() =>
+            (window as unknown as { __getIpcCallCounts: () => Record<string, number> }).__getIpcCallCounts(),
+          );
+          return (counts['tasks.list'] ?? 0) + (counts['swimlanes.list'] ?? 0);
+        }, { timeout: 3000 })
+        .toBeGreaterThan(0);
+
+      // The Beta cold load must not have raised a toast either.
+      expect(await toastCountRightNow(page)).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+});

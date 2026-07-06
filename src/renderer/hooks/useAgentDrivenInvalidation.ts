@@ -18,6 +18,11 @@
  * policy reviewable in one place rather than spread across 100 lines
  * of repetitive IPC wiring in App.tsx.
  *
+ * `onSessionResync` is the deliberate exception to "toast unconditionally"
+ * below: it fires after a column-model-change restart to keep the board
+ * store's task.session_id current, which is a board-consistency reconcile
+ * the user already knows they triggered, not agent-driven news.
+ *
  * Not included here (and intentionally left in App.tsx):
  *   - `tasks.onAutoMoved`: agent-driven but tangled with notification
  *     policy (`shouldNotify`/`sendNotification`). Splitting its concerns
@@ -145,6 +150,25 @@ export function useAgentDrivenInvalidation(): void {
           message: `Task deleted by agent: "${taskTitle}"`,
           variant: 'info',
         });
+      }));
+    }
+
+    if (tasks?.onSessionResync) {
+      cleanups.push(tasks.onSessionResync((sessionResyncProjectId) => {
+        const activeProjectId = useProjectStore.getState().currentProject?.id;
+        const matchesActiveProject = !sessionResyncProjectId || sessionResyncProjectId === activeProjectId;
+        console.debug('[agent-push] task:sessionResync received', {
+          pushProjectId: sessionResyncProjectId,
+          activeProjectId,
+          action: matchesActiveProject ? 'reload' : 'invalidate-cache',
+        });
+        if (matchesActiveProject) {
+          scheduleBoardReload();
+        } else {
+          invalidateProject(sessionResyncProjectId);
+        }
+        // Deliberately no toast: this is a quiet board-consistency reconcile
+        // after the user's own column model-change restart, not agent news.
       }));
     }
 

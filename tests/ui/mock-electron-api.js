@@ -913,6 +913,22 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
+      onSessionResync: function (callback) {
+        // Tests can fire this via window.__mockFireTaskSessionResync(projectId).
+        if (!window.__mockTaskSessionResyncListeners) window.__mockTaskSessionResyncListeners = [];
+        window.__mockTaskSessionResyncListeners.push(callback);
+        if (!window.__mockFireTaskSessionResync) {
+          window.__mockFireTaskSessionResync = function (projectId) {
+            var listeners = (window.__mockTaskSessionResyncListeners || []).slice();
+            for (var i = 0; i < listeners.length; i++) { listeners[i](projectId); }
+          };
+        }
+        return function () {
+          var listeners = window.__mockTaskSessionResyncListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
       onSpawnProgress: function (callback) {
         // Tests can fire this via window.__mockFireSpawnProgress(taskId, label).
         if (!window.__mockSpawnProgressListeners) window.__mockSpawnProgressListeners = [];
