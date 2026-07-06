@@ -21,9 +21,12 @@ function RefBadge({ label, tone }: { label: string; tone: 'tip' | 'base' | 'pr' 
       ? 'border-active text-active'
       : tone === 'pr'
         ? 'border-edge text-fg-secondary'
-        : 'border-edge-faint text-fg-faint';
+        : 'border-edge-subtle text-fg-faint';
   return (
-    <span className={`shrink-0 rounded border px-1 py-px text-[11px] font-medium leading-none ${toneClass}`}>
+    <span
+      data-testid="commit-ref-badge"
+      className={`shrink-0 rounded border px-1 py-px text-[11px] font-medium leading-none ${toneClass}`}
+    >
       {label}
     </span>
   );
@@ -114,7 +117,7 @@ export function CommitGraphPanel({ projectPath, worktreePath, baseBranch, task }
               return (
                 <div
                   key={commit.hash}
-                  className="flex flex-col justify-center gap-0.5 border-b border-edge-faint px-3"
+                  className="flex flex-col justify-center gap-0.5 border-b border-edge-subtle px-3"
                   style={{ height: ROW_HEIGHT_PX }}
                   data-testid="commit-graph-row"
                 >
@@ -145,7 +148,7 @@ export function CommitGraphPanel({ projectPath, worktreePath, baseBranch, task }
         </div>
       </div>
       {result?.truncated && (
-        <div className="shrink-0 border-t border-edge-faint px-3 py-1.5 text-[11px] text-fg-faint">
+        <div className="shrink-0 border-t border-edge-subtle px-3 py-1.5 text-[11px] text-fg-faint">
           Showing latest {commits.length} commits.
         </div>
       )}

@@ -291,9 +291,13 @@ export function TaskDetailWindow({
     && !!sessionState.session?.id
     && sessionState.displayState.kind !== 'queued'
     && sessionState.displayState.kind !== 'suspended';
-  // The commit graph reads git directly, so it is available without a live
-  // session as long as there is a directory to read (the worktree or project).
-  const canShowGraph = !!(task.worktree_path || projectPath);
+  // The commit graph shares the Changes panel's right-panel slot and its
+  // lifecycle gate: hidden for archived / To Do / Done, where TaskDetailBody
+  // renders no side panel at all (an enabled toggle there would be a dead
+  // control - the archived branch returns before any side panel). Like Changes
+  // it needs no live session (it reads git directly), only a directory to read
+  // (the worktree or project).
+  const canShowGraph = sessionState.canShowChanges && !!(task.worktree_path || projectPath);
 
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
 

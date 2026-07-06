@@ -204,8 +204,9 @@ export function TaskDetailHeader({
 
   // Quick-access pills, highest priority collapses LAST. The title is reserved only
   // up to a ~50ch floor (useHeaderPillOverflow); these compete for whatever is left
-  // above the floor. Among the built-in defaults the order is Browser -> PR ->
-  // Graph -> Changes -> Project -> Commands (Browser drops first). Custom header shortcuts
+  // above the floor. Among the built-in defaults the fold order (lowest priority
+  // folds first) is Graph -> Browser -> PR -> Changes -> Project -> Commands
+  // (Graph drops first). Custom header shortcuts
   // rank LOWEST (priority 10), so they fold BEFORE any built-in default - an
   // unbounded number of shortcuts can never bury the defaults. A folded header
   // shortcut that is not already a menu shortcut folds into the kebab.

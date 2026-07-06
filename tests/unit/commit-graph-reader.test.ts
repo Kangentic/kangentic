@@ -133,6 +133,49 @@ describe('getCommitGraph', () => {
       expect(result.baseHash).toBe('localbasehash');
       expect(result.mergeBaseHash).toBe('localmergebasehash');
     });
+
+    it('BUG PIN (C1): abandons a candidate whose merge-base resolves but rev-parse rejects, and does not leak the stale mergeBaseHash when the fallback candidate also fails', async () => {
+      // Regression coverage for a real bug: the base-ref loop used to assign
+      // `mergeBaseHash` immediately after `merge-base` resolved, THEN call
+      // `rev-parse`. If rev-parse then threw (e.g. a concurrent `fetch --prune`
+      // removed the ref between the two calls), the candidate was abandoned via
+      // `continue` but `mergeBaseHash` was already set - so a later, wholly
+      // unresolved candidate loop still returned that stale hash as the trim
+      // arg's base, with a null baseRef. The fix assigns both outer refs only
+      // after BOTH calls for the SAME candidate succeed.
+      setDefaultWorktreeHead('feat/graph-pane', 'tiphash-c1');
+      const logStdout = line({
+        hash: 'e1'.repeat(10),
+        shortHash: 'e1e1e1e',
+        parents: '',
+        author: 'Dev',
+        timestamp: '2026-07-05T12:00:00Z',
+        subject: 'feat: HEAD-only attempt after both base candidates fail',
+      });
+      mockGit.raw
+        .mockResolvedValueOnce('originmergebasehash\n') // merge-base origin/main RESOLVES
+        .mockRejectedValueOnce(new Error('fatal: unknown revision origin/main')) // rev-parse origin/main REJECTS
+        .mockRejectedValueOnce(new Error('fatal: unknown revision main')) // merge-base main REJECTS (local candidate also abandoned)
+        .mockResolvedValueOnce(logStdout); // log attempt1 (HEAD only - baseRef/mergeBaseHash both left unresolved)
+
+      const result = await getCommitGraph({ projectPath: '/mock/project', baseBranch: 'main' });
+
+      // The origin candidate must be abandoned as a whole: baseHash/mergeBaseHash
+      // are null, NEVER the stale mergeBaseHash captured before rev-parse threw.
+      expect(result.mergeBaseHash).toBeNull();
+      expect(result.baseHash).toBeNull();
+
+      // The log-degrade chain still runs (with no --not trim arg and no baseRef,
+      // since both stayed unresolved) and still returns commits plus the
+      // resolved tipHash/currentBranch from readWorktreeHead.
+      const logArgs = mockGit.raw.mock.calls[3][0];
+      expect(logArgs).not.toContain('--not');
+      expect(logArgs).not.toContain('origin/main');
+      expect(logArgs).toContain('HEAD');
+      expect(result.commits).toHaveLength(1);
+      expect(result.tipHash).toBe('tiphash-c1');
+      expect(result.currentBranch).toBe('feat/graph-pane');
+    });
   });
 
   // ── 3-attempt degrade chain ───────────────────────────────────────────────

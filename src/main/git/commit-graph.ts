@@ -79,8 +79,15 @@ export async function getCommitGraph(input: GitCommitGraphInput): Promise<GitCom
     let mergeBaseHash: string | null = null;
     for (const candidate of [`origin/${input.baseBranch}`, input.baseBranch]) {
       try {
-        mergeBaseHash = (await git.raw(['merge-base', candidate, 'HEAD'])).trim();
-        baseHash = (await git.raw(['rev-parse', candidate])).trim();
+        // Assign the outer refs only after BOTH calls succeed. If merge-base
+        // resolves but the following rev-parse throws (e.g. a concurrent
+        // `fetch --prune` removes the ref between the two calls), the candidate
+        // is abandoned - it must not leave a stale mergeBaseHash behind that
+        // would then feed the trim arg and be returned with a null baseRef.
+        const candidateMergeBase = (await git.raw(['merge-base', candidate, 'HEAD'])).trim();
+        const candidateBaseHash = (await git.raw(['rev-parse', candidate])).trim();
+        mergeBaseHash = candidateMergeBase;
+        baseHash = candidateBaseHash;
         baseRef = candidate;
         break;
       } catch {
