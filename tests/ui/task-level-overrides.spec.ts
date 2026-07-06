@@ -479,3 +479,274 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
   });
 });
+
+/**
+ * Opening the Model dropdown fires a forced, on-demand agent-list rescan
+ * (config-store's `rescanModels()`) so a newly shipped model appears without a
+ * Kangentic restart. `rescanModels()` is throttled by a MODULE-SCOPE in-flight
+ * lock plus a 60s cooldown, so this block gets its OWN browser instance: every
+ * other test in this file also opens `task-model-override`, and reusing a
+ * shared page would mean an earlier test silently "spends" the cooldown before
+ * these assertions ever run (cross-test state leakage the cooldown itself
+ * would then hide, not just slow down).
+ */
+test.describe('NewTaskDialog Advanced - Model dropdown open triggers a rescan', () => {
+  let rescanBrowser: Browser;
+  let rescanPage: Page;
+
+  test.beforeAll(async () => {
+    await waitForViteReady();
+    rescanBrowser = await chromium.launch({ headless: true });
+    const context = await rescanBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+    rescanPage = await context.newPage();
+    await rescanPage.addInitScript({ path: MOCK_SCRIPT });
+    await rescanPage.goto(VITE_URL);
+    await rescanPage.waitForLoadState('load');
+    await rescanPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+    await createProject(rescanPage, `ModelRescan ${Date.now()}`);
+  });
+
+  test.afterAll(async () => {
+    await rescanBrowser?.close();
+  });
+
+  async function openDialog() {
+    const column = rescanPage.locator('[data-swimlane-name="To Do"]');
+    await column.locator('text=Add task').click();
+    await rescanPage.locator('input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    await rescanPage.locator('[data-testid="task-advanced-toggle"]').click();
+  }
+
+  /**
+   * Wrap window.electronAPI.agents.list to record every call's forceRefresh
+   * argument. Always wraps the PRISTINE mock implementation (cached in
+   * window.__originalAgentsListFn on first use), so re-instrumenting never
+   * compounds an earlier call's artificial delay.
+   *
+   * `delayMs`, when set, holds the mock's resolution back so a test can prove
+   * the dropdown paints BEFORE the rescan settles (rescanModels() is
+   * fire-and-forget and must never gate the render).
+   */
+  async function instrumentAgentListCalls(page: Page, delayMs = 0): Promise<void> {
+    await page.evaluate(({ delayMs }) => {
+      const api = window.electronAPI as unknown as {
+        agents: { list: (forceRefresh?: boolean) => Promise<unknown> };
+      };
+      const globalWindow = window as unknown as {
+        __originalAgentsListFn?: (forceRefresh?: boolean) => Promise<unknown>;
+      };
+      if (!globalWindow.__originalAgentsListFn) {
+        globalWindow.__originalAgentsListFn = api.agents.list.bind(api.agents);
+      }
+      const original = globalWindow.__originalAgentsListFn;
+      (window as Record<string, unknown>).__rescanAgentListCalls = {
+        callCount: 0,
+        forcedCallCount: 0,
+      };
+      api.agents.list = async function instrumentedList(forceRefresh?: boolean) {
+        const state = (window as Record<string, unknown>).__rescanAgentListCalls as {
+          callCount: number;
+          forcedCallCount: number;
+        };
+        state.callCount += 1;
+        if (forceRefresh === true) state.forcedCallCount += 1;
+        if (delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+        return original(forceRefresh);
+      };
+    }, { delayMs });
+  }
+
+  async function readAgentListCalls(page: Page): Promise<{ callCount: number; forcedCallCount: number }> {
+    return page.evaluate(() => {
+      const calls = (window as Record<string, unknown>).__rescanAgentListCalls as
+        | { callCount: number; forcedCallCount: number }
+        | undefined;
+      return calls ?? { callCount: 0, forcedCallCount: 0 };
+    });
+  }
+
+  test('focusing the model input fires a forced rescan without blocking the dropdown, and a reopen within the cooldown does not fire a second one', async () => {
+    await openDialog();
+
+    // Delay the mock's resolution well past any legitimate render time, so the
+    // visibility assertion below can only pass if the dropdown renders
+    // BEFORE the rescan settles.
+    await instrumentAgentListCalls(rescanPage, 1000);
+
+    const modelInput = rescanPage.locator('input[data-testid="task-model-override"]');
+    await modelInput.click();
+
+    const modelOptions = rescanPage.locator('[data-model-option]');
+    await expect(modelOptions.first()).toBeVisible({ timeout: 500 });
+
+    // The forced rescan call did fire; it just hasn't resolved yet.
+    await expect
+      .poll(async () => (await readAgentListCalls(rescanPage)).forcedCallCount, {
+        timeout: 3000,
+        intervals: [100, 100, 200, 300, 500],
+      })
+      .toBe(1);
+
+    // Close and reopen the dropdown via its own chevron toggle (not Escape):
+    // the form has no other field set (isDirty stays false), so Escape would
+    // route through NewTaskDialog's close guard and animate-close the WHOLE
+    // dialog, not just the suggestion popover. The chevron toggle is a plain
+    // mouse click scoped to ModelCombobox's own open/close state, so it
+    // exercises the cooldown in isolation from that unrelated close path.
+    const chevronToggle = rescanPage.locator('button[title="Close dropdown"]');
+    await chevronToggle.click();
+    await expect(modelOptions.first()).not.toBeVisible();
+
+    const reopenToggle = rescanPage.locator('button[title="Open dropdown"]');
+    await reopenToggle.click();
+    await expect(modelOptions.first()).toBeVisible();
+
+    // Intentional fixed wait: this asserts a NON-occurrence (no second forced
+    // call within the 60s cooldown window), which cannot be expressed as a
+    // poll condition.
+    await rescanPage.waitForTimeout(500);
+    const calls = await readAgentListCalls(rescanPage);
+    expect(calls.forcedCallCount).toBe(1);
+  });
+});
+
+/**
+ * The model-dropdown context-window badge is learned entirely from live
+ * telemetry (`rememberModelContextWindow`, fed by a real session's
+ * status.json) - never hardcoded per model. These specs seed
+ * `config.discoveredContextWindowsByAgent` directly via
+ * `window.__mockConfigOverrides`, which `mock-electron-api.js` merges into
+ * its config object at init (mirroring how the real store persists a
+ * learned window), so nothing here asserts a hardcoded context-size
+ * assumption - the seeded value IS the expectation. Own browser instance:
+ * the override must be injected before the mock script runs, so it cannot
+ * be layered onto the shared `page` without restarting the app.
+ */
+test.describe('NewTaskDialog Advanced - context-window badge (telemetry-learned)', () => {
+  let contextWindowBrowser: Browser;
+  let contextWindowPage: Page;
+
+  test.beforeAll(async () => {
+    await waitForViteReady();
+    contextWindowBrowser = await chromium.launch({ headless: true });
+    const context = await contextWindowBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+    contextWindowPage = await context.newPage();
+
+    await contextWindowPage.addInitScript(() => {
+      (window as Record<string, unknown>).__mockConfigOverrides = {
+        discoveredContextWindowsByAgent: {
+          claude: {
+            opus: 1_000_000,
+            sonnet: 200_000,
+            // haiku intentionally has no observed window: expect no badge.
+          },
+        },
+      };
+    });
+    await contextWindowPage.addInitScript({ path: MOCK_SCRIPT });
+    await contextWindowPage.goto(VITE_URL);
+    await contextWindowPage.waitForLoadState('load');
+    await contextWindowPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+    await createProject(contextWindowPage, `ContextWindowBadge ${Date.now()}`);
+  });
+
+  test.afterAll(async () => {
+    await contextWindowBrowser?.close();
+  });
+
+  test('badges rows with a learned context window and omits rows with none observed', async () => {
+    const column = contextWindowPage.locator('[data-swimlane-name="To Do"]');
+    await column.locator('text=Add task').click();
+    await contextWindowPage.locator('input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    await contextWindowPage.locator('[data-testid="task-advanced-toggle"]').click();
+    await contextWindowPage.locator('input[data-testid="task-model-override"]').click();
+
+    const opusRow = contextWindowPage.locator('[data-model-row]').filter({ hasText: 'opus' });
+    await expect(opusRow.locator('[data-model-context-window]')).toHaveText('1M');
+
+    const sonnetRow = contextWindowPage.locator('[data-model-row]').filter({ hasText: 'sonnet' });
+    await expect(sonnetRow.locator('[data-model-context-window]')).toHaveText('200K');
+
+    const haikuRow = contextWindowPage.locator('[data-model-row]').filter({ hasText: 'haiku' });
+    await expect(haikuRow.locator('[data-model-context-window]')).toHaveCount(0);
+
+    // Close the suggestion dropdown, then the dialog (nothing was edited, so
+    // this closes directly without the discard-confirm path).
+    await contextWindowPage.keyboard.press('Escape');
+    await contextWindowPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+});
+
+/**
+ * Companion to the block above: proves the suppression half of the badge
+ * rule. A row that already carries a selectable `[1m]` chip must NOT also
+ * show the context-window badge (no redundant double "1M"), while a
+ * sibling row with a learned window but no `[1m]` chip still badges
+ * normally. Own browser + own `__mockAgentListOverrides` fixture (the
+ * suffixed-id shape from the grouped-model-dropdown block above), seeded
+ * with a learned window for both rows.
+ */
+test.describe('NewTaskDialog Advanced - context-window badge suppressed by a 1M chip', () => {
+  let suppressedBrowser: Browser;
+  let suppressedPage: Page;
+
+  test.beforeAll(async () => {
+    await waitForViteReady();
+    suppressedBrowser = await chromium.launch({ headless: true });
+    const context = await suppressedBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+    suppressedPage = await context.newPage();
+
+    await suppressedPage.addInitScript(() => {
+      (window as Record<string, unknown>).__mockAgentListOverrides = {
+        claude: {
+          capabilities: {
+            effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+            supportsModelOverride: true,
+            models: [
+              'claude-haiku-4-5',
+              'claude-opus-4-8',
+              'claude-opus-4-8[1m]',
+            ],
+          },
+        },
+      };
+      (window as Record<string, unknown>).__mockConfigOverrides = {
+        discoveredContextWindowsByAgent: {
+          claude: {
+            'claude-opus-4-8': 1_000_000,
+            'claude-haiku-4-5': 200_000,
+          },
+        },
+      };
+    });
+    await suppressedPage.addInitScript({ path: MOCK_SCRIPT });
+    await suppressedPage.goto(VITE_URL);
+    await suppressedPage.waitForLoadState('load');
+    await suppressedPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+    await createProject(suppressedPage, `ContextWindowSuppressed ${Date.now()}`);
+  });
+
+  test.afterAll(async () => {
+    await suppressedBrowser?.close();
+  });
+
+  test('omits the badge on a row with a selectable 1M chip, but shows it on a row without one', async () => {
+    const column = suppressedPage.locator('[data-swimlane-name="To Do"]');
+    await column.locator('text=Add task').click();
+    await suppressedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    await suppressedPage.locator('[data-testid="task-advanced-toggle"]').click();
+    await suppressedPage.locator('input[data-testid="task-model-override"]').click();
+
+    const opusRow = suppressedPage.locator('[data-model-row]').filter({ hasText: 'claude-opus-4-8' });
+    await expect(opusRow.locator('[data-model-1m]')).toHaveCount(1);
+    await expect(opusRow.locator('[data-model-context-window]')).toHaveCount(0);
+
+    const haikuRow = suppressedPage.locator('[data-model-row]').filter({ hasText: 'claude-haiku-4-5' });
+    await expect(haikuRow.locator('[data-model-context-window]')).toHaveText('200K');
+
+    await suppressedPage.keyboard.press('Escape');
+    await suppressedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+});

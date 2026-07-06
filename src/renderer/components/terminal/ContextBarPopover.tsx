@@ -36,9 +36,12 @@ export function ContextBarPopover({
   /**
    * `oneMillionValue` carries the exact `<base>[1m]` model string for rows
    * whose base model has a known 1M context variant; it renders as an
-   * always-visible chip that selects that exact string.
+   * always-visible chip that selects that exact string. `contextLabel` is the
+   * telemetry-learned context-window size (e.g. "1M" / "200K"); it renders as a
+   * non-interactive size badge on rows that have no `oneMillionValue` chip, so
+   * the two never stack a redundant "1M".
    */
-  options: ReadonlyArray<{ value: string; label: string; hint?: string; oneMillionValue?: string | null }>;
+  options: ReadonlyArray<{ value: string; label: string; hint?: string; oneMillionValue?: string | null; contextLabel?: string | null }>;
   /**
    * Dated pinned builds demoted behind a collapsed "Pinned builds" disclosure
    * below the main list. Values are exact spawnable strings.
@@ -142,6 +145,15 @@ export function ContextBarPopover({
               <span className="flex-1 truncate">{option.label}</span>
               {option.hint && <span className="text-fg-faint text-xs flex-shrink-0">{option.hint}</span>}
             </button>
+            {oneMillionValue === null && option.contextLabel && (
+              <span
+                title={`${option.contextLabel} context window`}
+                className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-faint flex-shrink-0"
+                data-testid={testId ? `${testId}-option-context-${option.value}` : undefined}
+              >
+                {option.contextLabel}
+              </span>
+            )}
             {oneMillionValue !== null && (
               <button
                 type="button"

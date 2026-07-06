@@ -36,21 +36,24 @@ vi.mock('../../src/main/agent/shared/history-scan', async (importActual) => {
 
 // The /model picker probe spawns a real PTY - always mocked here. Its own
 // behavior is covered by tests/unit/claude-model-picker-probe.test.ts.
-// Discovery reads the non-blocking cache accessor (sync), not the probe.
+// Non-forced discovery reads the non-blocking cache accessor (sync); a forced
+// rescan (a dropdown opening) awaits the TTL-bypassing probe instead.
 vi.mock('../../src/main/agent/adapters/claude/model-picker-probe', () => ({
   getCachedModelPickerModels: vi.fn(),
+  probeModelPickerModels: vi.fn(),
 }));
 
 import { execFile, exec } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { discoverClaudeCapabilities } from '../../src/main/agent/adapters/claude/capability-discovery';
-import { getCachedModelPickerModels } from '../../src/main/agent/adapters/claude/model-picker-probe';
+import { getCachedModelPickerModels, probeModelPickerModels } from '../../src/main/agent/adapters/claude/model-picker-probe';
 import { listMostRecentDirs, listMostRecentFiles, readHeadBytes } from '../../src/main/agent/shared/history-scan';
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
 const probeMock = getCachedModelPickerModels as unknown as ReturnType<typeof vi.fn>;
+const probeFreshMock = probeModelPickerModels as unknown as ReturnType<typeof vi.fn>;
 const listDirsMock = listMostRecentDirs as unknown as ReturnType<typeof vi.fn>;
 const listFilesMock = listMostRecentFiles as unknown as ReturnType<typeof vi.fn>;
 const readHeadMock = readHeadBytes as unknown as ReturnType<typeof vi.fn>;
@@ -133,6 +136,10 @@ beforeEach(() => {
   // focused on the transcript walk alone.
   probeMock.mockReset();
   probeMock.mockReturnValue(undefined);
+  // Default: the forced (TTL-bypassing) probe resolves empty; only the
+  // forceRefresh tests wire a result into it.
+  probeFreshMock.mockReset();
+  probeFreshMock.mockResolvedValue(undefined);
 });
 
 describe('discoverClaudeCapabilities', () => {
@@ -423,6 +430,32 @@ Commands:
       const capabilities = await discoverClaudeCapabilities('/usr/bin/claude');
       expect(probeMock).not.toHaveBeenCalled();
       expect(capabilities.models).toBeUndefined();
+    });
+
+    it('awaits the TTL-bypassing probe on a forced rescan, surfacing a newly shipped model', async () => {
+      setHelpOutput(MODEL_HELP);
+      setSessionStore(null);
+      // The stale cache does not know the new model; only a fresh forced probe
+      // reports it. The forced path must await that probe, not read the cache.
+      probeMock.mockReturnValue(['claude-opus-4-8']);
+      probeFreshMock.mockResolvedValue(['claude-opus-4-8', 'claude-sonnet-5']);
+
+      const capabilities = await discoverClaudeCapabilities('/usr/bin/claude', true);
+      expect(probeFreshMock).toHaveBeenCalledWith('/usr/bin/claude', true);
+      expect(probeMock).not.toHaveBeenCalled();
+      // The just-shipped model appears without a restart.
+      expect(capabilities.models).toEqual(['claude-opus-4-8', 'claude-sonnet-5']);
+    });
+
+    it('reads the background-warmed cache (never the fresh probe) when not forced', async () => {
+      setHelpOutput(MODEL_HELP);
+      setSessionStore(null);
+      probeMock.mockReturnValue(['claude-opus-4-8']);
+
+      const capabilities = await discoverClaudeCapabilities('/usr/bin/claude');
+      expect(probeMock).toHaveBeenCalledWith('/usr/bin/claude');
+      expect(probeFreshMock).not.toHaveBeenCalled();
+      expect(capabilities.models).toEqual(['claude-opus-4-8']);
     });
   });
 });

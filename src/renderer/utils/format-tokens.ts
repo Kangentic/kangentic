@@ -1,3 +1,5 @@
+import { parseModelId, type ModelDisplayGroup } from '../../shared/model-id';
+
 /**
  * Format a token count for compact display.
  * e.g. 850 → "850", 1200 → "1.2k", 45300 → "45.3k", 200000 → "200k", 1200000 → "1.2M"
@@ -10,6 +12,47 @@ export function formatTokenCount(n: number): string {
   }
   const v = (n / 1_000_000).toFixed(1);
   return `${v.endsWith('.0') ? v.slice(0, -2) : v}M`;
+}
+
+/**
+ * Format a context-window size (in tokens) as a compact uppercase label for the
+ * model-dropdown badge, e.g. 1000000 → "1M", 200000 → "200K", 400000 → "400K".
+ * Uppercase K/M so it reads as a size label ("1M", "200K") and matches the
+ * existing 1M chip, distinct from the mixed-case running-token formatter above.
+ * Returns null for a non-positive (unknown) size so callers render no badge.
+ */
+export function formatContextWindow(tokens: number): string | null {
+  if (!Number.isFinite(tokens) || tokens <= 0) return null;
+  if (tokens < 1_000_000) {
+    const thousands = tokens / 1000;
+    const value = Number.isInteger(thousands) ? String(thousands) : thousands.toFixed(1);
+    return `${value}K`;
+  }
+  const millions = tokens / 1_000_000;
+  const value = Number.isInteger(millions) ? String(millions) : millions.toFixed(1);
+  return `${value}M`;
+}
+
+/**
+ * The context-size badge label for a model-dropdown row, or null when no badge
+ * should render. Shared by ModelCombobox and the ContextBar ModelEffortPicker so
+ * the rule stays identical across both surfaces:
+ *  - A row that is itself the `[1m]`-only variant (no separate bare alias)
+ *    carries a structurally-certain 1M window from its id string, so it badges
+ *    "1M" without waiting on telemetry.
+ *  - A row that offers a separate selectable `[1m]` chip suppresses the badge, so
+ *    the chip and a badge never stack a redundant "1M".
+ *  - Otherwise the badge is the telemetry-learned window for the row's base model
+ *    id (absent -> no badge; the window is discovered from telemetry, never
+ *    hardcoded).
+ */
+export function modelContextBadgeLabel(
+  group: ModelDisplayGroup,
+  contextWindows: Record<string, number>,
+): string | null {
+  if (group.primaryIsOneMillion) return '1M';
+  if (group.oneMillionId !== null) return null;
+  return formatContextWindow(contextWindows[parseModelId(group.primaryId).baseId] ?? 0);
 }
 
 /**

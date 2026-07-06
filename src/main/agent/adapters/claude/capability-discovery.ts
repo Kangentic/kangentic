@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile, exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import { getCachedModelPickerModels } from './model-picker-probe';
+import { getCachedModelPickerModels, probeModelPickerModels } from './model-picker-probe';
 import {
   listMostRecentDirs,
   listMostRecentFiles,
@@ -184,15 +184,26 @@ export async function discoverClaudeStaticCapabilities(cliPath: string): Promise
  * 2. The CLI's own `/model` picker, driven through a hidden short-lived PTY
  *    (see model-picker-probe.ts) - the only surface that enumerates a newly
  *    shipped model before the user has used it, and it works with every auth
- *    method. Read from a background-warmed cache so discovery never blocks on
- *    the PTY round trip; fails silently to source 1.
+ *    method. Normally read from a background-warmed cache so discovery never
+ *    blocks on the PTY round trip; fails silently to source 1.
+ *
+ * When `forceRefresh` is set (the on-demand rescan a model dropdown fires when
+ * it opens) the picker is instead awaited with its TTL bypassed, so a model
+ * that shipped since the cache warmed appears without a Kangentic restart. This
+ * still does not block the UI: the caller runs it in the background and the
+ * dropdown re-renders once the fresh result lands (~2s).
  *
  * Returns undefined when neither source yields a model, in which case the
  * renderer falls back to a free-form text input.
  */
-export async function rescanClaudeModels(cliPath: string): Promise<string[] | undefined> {
+export async function rescanClaudeModels(
+  cliPath: string,
+  forceRefresh = false,
+): Promise<string[] | undefined> {
   const transcriptModels = await discoverHistoricalModels();
-  const pickerModels = getCachedModelPickerModels(cliPath);
+  const pickerModels = forceRefresh
+    ? await probeModelPickerModels(cliPath, true)
+    : getCachedModelPickerModels(cliPath);
 
   if (!transcriptModels && !pickerModels) return undefined;
   const union = new Set<string>([...(transcriptModels ?? []), ...(pickerModels ?? [])]);
@@ -202,12 +213,16 @@ export async function rescanClaudeModels(cliPath: string): Promise<string[] | un
 /**
  * Discover Claude Code's full runtime capabilities by combining the cached
  * static bits with a fresh model rescan. Used by the IPC layer when no
- * caller-managed cache exists - tests and ad-hoc callers.
+ * caller-managed cache exists - tests and ad-hoc callers. `forceRefresh`
+ * bypasses the picker-probe TTL, mirroring the adapter's cached path.
  */
-export async function discoverClaudeCapabilities(cliPath: string): Promise<AgentCapabilities> {
+export async function discoverClaudeCapabilities(
+  cliPath: string,
+  forceRefresh = false,
+): Promise<AgentCapabilities> {
   const capabilities = await discoverClaudeStaticCapabilities(cliPath);
   if (capabilities.supportsModelOverride) {
-    const models = await rescanClaudeModels(cliPath);
+    const models = await rescanClaudeModels(cliPath, forceRefresh);
     if (models) capabilities.models = models;
   }
   return capabilities;

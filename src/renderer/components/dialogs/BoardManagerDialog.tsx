@@ -21,6 +21,7 @@ import { ICON_REGISTRY, ROLE_DEFAULTS, getUsedIcons } from '../../utils/swimlane
 import { Select } from '../settings/shared';
 import { ToggleCard } from '../ToggleCard';
 import { useAgentCapabilityResolution } from '../../hooks/useAgentCapabilityResolution';
+import { useModelContextWindows } from '../../hooks/useKnownModels';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import {
   getPermissionLabel,
@@ -658,6 +659,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     effortLevels,
     supportsModelOverride,
   } = useAgentCapabilityResolution(effectiveAgent);
+  const modelContextWindows = useModelContextWindows(effectiveAgent);
   const agentPermissions = effectiveAgentInfo?.permissions ?? DEFAULT_PERMISSIONS;
 
   // Merge in in-flight lane drafts so the dropdown reflects model picks
@@ -1322,6 +1324,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                           availableModels={discoveredModels}
                           placeholder="Default"
                           testId="column-model-override"
+                          onOpen={() => useConfigStore.getState().rescanModels()}
+                          contextWindows={modelContextWindows}
                         />
                       </div>
                     </SettingField>

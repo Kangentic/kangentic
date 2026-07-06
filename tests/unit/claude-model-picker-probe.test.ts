@@ -289,6 +289,30 @@ describe('probeModelPickerModels', () => {
     expect(second).toEqual(first);
   });
 
+  it('re-probes when forceRefresh is set even though the success cache is fresh', async () => {
+    installFakePty(
+      (self) => self.emitData(PROMPT_FRAME),
+      (input, self) => {
+        if (input === '\r') self.emitData(PICKER_FRAME);
+      },
+    );
+
+    // Warm the 12h success cache.
+    const first = await probeModelPickerModels('/usr/bin/claude');
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+
+    // A plain call inside the 12h TTL is served from the cache: no respawn.
+    await probeModelPickerModels('/usr/bin/claude');
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+
+    // A forced call (the on-demand rescan a dropdown fires on open) bypasses the
+    // TTL and spawns a fresh probe, so a model that shipped since the cache
+    // warmed can appear without a restart.
+    const forced = await probeModelPickerModels('/usr/bin/claude', true);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(forced).toEqual(first);
+  });
+
   it('caches a failure briefly and retries after the failure TTL expires', async () => {
     setModelPickerProbeTimingsForTests({
       pollIntervalMs: 5,

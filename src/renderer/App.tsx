@@ -389,6 +389,15 @@ export function App() {
             const task = useBoardStore.getState().tasks.find((entry) => entry.session_id === sessionId);
             if (task?.agent) {
               useConfigStore.getState().rememberDiscoveredModel(task.agent, data.model.id);
+              // Also learn this model's account-accurate context window from the
+              // same status.json tick (0 when the window is unknown, e.g. the
+              // transcript fallback), so the dropdowns can badge context size
+              // without hardcoding a per-model window.
+              useConfigStore.getState().rememberModelContextWindow(
+                task.agent,
+                data.model.id,
+                data.contextWindow?.contextWindowSize ?? 0,
+              );
             }
           }
         }

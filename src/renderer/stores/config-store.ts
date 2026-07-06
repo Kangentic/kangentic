@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { AppConfig, DeepPartial, AgentDetectionInfo, SerializedWorkspace } from '../../shared/types';
 import { DEFAULT_CONFIG } from '../../shared/types';
 import { deepMergeConfig } from '../../shared/object-utils';
+import { parseModelId } from '../../shared/model-id';
 import { invalidateAllProjects } from './project-cache';
 
 /** Last-viewed settings tab, preserved across HMR (Pattern A) so the panel
@@ -22,6 +23,16 @@ if (import.meta.hot) {
 function parseAgentVersion(version: string | null): string | null {
   return version?.replace(/\s*\(.*\)/, '') || null;
 }
+
+/** Throttle for the on-demand model rescan a Model dropdown fires when it opens
+ *  (`rescanModels`). Models ship rarely and each forced rescan spawns a fresh
+ *  hidden /model PTY probe, so re-opening a dropdown within this window is a
+ *  cheap no-op rather than another probe. */
+const MODEL_RESCAN_COOLDOWN_MS = 60_000;
+// hmr-safe: transient rescan throttle; resetting on HMR at worst allows one extra probe
+let modelRescanInFlight = false;
+// hmr-safe: transient rescan throttle; resetting on HMR at worst allows one extra probe
+let modelRescanLastAtMs = 0;
 
 interface ConfigStore {
   // -- App config --
@@ -71,6 +82,21 @@ interface ConfigStore {
    *  assignment). Idempotent and cheap: no-op when already known. Persists via
    *  `updateConfig` so the next launch starts with the merged set. */
   rememberDiscoveredModel: (agent: string, model: string) => void;
+
+  /** Record the empirically-observed context-window size (tokens) for a model,
+   *  learned from a live session's status.json. Keyed by agent + BASE model id
+   *  (`[1m]`/dated suffix stripped). No-op on a non-positive size (the "unknown"
+   *  sentinel) or when the value is unchanged; otherwise last-observation-wins.
+   *  Fire-and-forget persist, so the dropdown context-size badge survives
+   *  restarts without re-observing every launch. */
+  rememberModelContextWindow: (agent: string, model: string, contextWindowSize: number) => void;
+
+  /** Fire a forced agent-list refresh (`loadAgentList(true)`) so a newly shipped
+   *  model surfaces in the open dropdown without a Kangentic restart. Called when
+   *  a Model dropdown opens; non-blocking (the caller never awaits it) and
+   *  throttled by an in-flight lock plus a cooldown so repeat opens do not spawn
+   *  concurrent /model probes. */
+  rescanModels: () => void;
 
   // -- Settings panel UI --
   settingsOpen: boolean;
@@ -272,6 +298,44 @@ export const useConfigStore = create<ConfigStore>((set, get) => {
       get().updateConfig({
         discoveredModelsByAgent: { ...current, [agent]: next },
       }).catch(() => undefined);
+    },
+
+    rememberModelContextWindow: (agent, model, contextWindowSize) => {
+      // 0 is the "unknown window" sentinel (transcript-fallback telemetry emits
+      // it because the window is not derivable from a model id); only a real
+      // status.json observation carries a positive size.
+      if (!agent || !model || !(contextWindowSize > 0)) return;
+      // Key by base id so a plain id, its `[1m]` variant, and dated pins share
+      // one window (a model+account constant).
+      const baseId = parseModelId(model).baseId;
+      const byAgent = get().config.discoveredContextWindowsByAgent ?? {};
+      const forAgent = byAgent[agent] ?? {};
+      if (forAgent[baseId] === contextWindowSize) return; // unchanged: no write
+      // Fire-and-forget cache write (not a user-driven setting), last-wins so an
+      // entitlement change re-baselines the badge.
+      get().updateConfig({
+        discoveredContextWindowsByAgent: {
+          ...byAgent,
+          [agent]: { ...forAgent, [baseId]: contextWindowSize },
+        },
+      }).catch(() => undefined);
+    },
+
+    rescanModels: () => {
+      // In-flight lock + cooldown: a Model dropdown can open many times a
+      // session (tabbing through a form, reopening the picker), and each forced
+      // rescan re-probes every agent's CLI plus spawns a hidden /model PTY
+      // probe. Collapse those into at most one probe per cooldown window.
+      if (modelRescanInFlight) return;
+      if (Date.now() - modelRescanLastAtMs < MODEL_RESCAN_COOLDOWN_MS) return;
+      modelRescanInFlight = true;
+      // Fire-and-forget: the dropdown already shows the current list and
+      // re-renders via useKnownModels once loadAgentList resolves (~2s), so the
+      // UI never blocks on the probe round trip.
+      get().loadAgentList(true).catch(() => undefined).finally(() => {
+        modelRescanInFlight = false;
+        modelRescanLastAtMs = Date.now();
+      });
     },
 
     openSettingsToTab: (tabId) => {

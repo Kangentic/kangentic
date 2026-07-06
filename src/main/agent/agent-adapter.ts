@@ -117,8 +117,13 @@ export interface AgentAdapter {
    * read by the renderer to gate optional UI controls. Implementations must
    * never throw - return an empty object on parse failure so the rest of
    * detection still succeeds.
+   *
+   * `forceRefresh` (set when a model dropdown opens) bypasses any
+   * adapter-internal capability caches - notably Claude's 12h /model picker
+   * probe - so a newly shipped model appears without a Kangentic restart.
+   * Adapters with no cache to bypass may ignore it.
    */
-  discoverCapabilities?(cliPath: string): Promise<AgentCapabilities>;
+  discoverCapabilities?(cliPath: string, forceRefresh?: boolean): Promise<AgentCapabilities>;
 
   /** Pre-approve a working directory so the agent does not prompt for trust. */
   ensureTrust(workingDirectory: string): Promise<void>;

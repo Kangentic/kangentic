@@ -74,7 +74,12 @@ export class ClaudeAdapter implements AgentAdapter {
   // restarting Kangentic.
   private staticCapabilitiesCache: { cliPath: string; capabilities: AgentCapabilities } | null = null;
 
-  async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {
+  // `forceRefresh` bypasses the /model picker probe's TTL for an on-demand
+  // rescan (a model dropdown opening) so a newly shipped model surfaces without
+  // a restart. The static `--help` bits are handled by invalidateDetectionCache,
+  // which listAgents already calls on a forced refresh (it nulls this cache), so
+  // they re-probe under force without any extra branch here.
+  async discoverCapabilities(cliPath: string, forceRefresh = false): Promise<AgentCapabilities> {
     let staticCapabilities: AgentCapabilities;
     if (this.staticCapabilitiesCache && this.staticCapabilitiesCache.cliPath === cliPath) {
       staticCapabilities = this.staticCapabilitiesCache.capabilities;
@@ -86,7 +91,7 @@ export class ClaudeAdapter implements AgentAdapter {
     if (!staticCapabilities.supportsModelOverride) {
       return staticCapabilities;
     }
-    const models = await rescanClaudeModels(cliPath);
+    const models = await rescanClaudeModels(cliPath, forceRefresh);
     return models ? { ...staticCapabilities, models } : staticCapabilities;
   }
 

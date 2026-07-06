@@ -2,8 +2,9 @@ import { useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
-import { useKnownModels } from '../../hooks/useKnownModels';
+import { useKnownModels, useModelContextWindows } from '../../hooks/useKnownModels';
 import { groupModelIds } from '../../../shared/model-id';
+import { modelContextBadgeLabel } from '../../utils/format-tokens';
 import { ContextBarPopover } from './ContextBarPopover';
 
 const pill = 'px-2 py-0.5 rounded bg-surface-raised whitespace-nowrap select-none';
@@ -79,6 +80,7 @@ export function ModelEffortPicker({
   // with the New Task Advanced section + column manager, and learns any model
   // the user invokes live.
   const modelOptions = useKnownModels(agent);
+  const modelContextWindows = useModelContextWindows(agent);
   // Display grouping only: one row per base model, with [1m] variants as a 1M
   // chip and dated pins demoted behind the popover's collapsed section. Every
   // selectable value stays the exact discovered string.
@@ -153,7 +155,13 @@ export function ModelEffortPicker({
           <button
             ref={modelTriggerRef}
             type="button"
-            onClick={() => setOpenPopover((previous) => (previous === 'model' ? null : 'model'))}
+            onClick={() => {
+              const opening = openPopover !== 'model';
+              setOpenPopover(opening ? 'model' : null);
+              // Opening: kick off an on-demand rescan so a newly shipped model
+              // appears without a restart (non-blocking, throttled in the store).
+              if (opening) useConfigStore.getState().rescanModels();
+            }}
             className={`${triggerBase} ${interactiveBase}`}
             data-testid="context-bar-model-trigger"
             title="Click to change model"
@@ -169,6 +177,10 @@ export function ModelEffortPicker({
                 value: group.primaryId,
                 label: group.primaryId,
                 oneMillionValue: group.oneMillionId,
+                // Context-size badge (shared rule with ModelCombobox): "1M" for a
+                // `[1m]`-only row, suppressed behind a selectable `[1m]` chip, else
+                // the telemetry-learned window for the base id.
+                contextLabel: modelContextBadgeLabel(group, modelContextWindows),
               }))}
               pinnedOptions={pinnedModelOptions}
               currentValue={currentModelValue}

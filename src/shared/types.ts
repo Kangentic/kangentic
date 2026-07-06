@@ -1614,6 +1614,17 @@ export interface AppConfig {
    *  for the model dropdowns so they don't depend on re-walking JSONL every
    *  launch and they "discover" new models the user invokes in real time. */
   discoveredModelsByAgent: Record<string, string[]>;
+  /** Empirically-observed context-window size (in tokens) per model, learned
+   *  from a live session's `status.json` (`context_window.context_window_size`,
+   *  the account-accurate window Claude reports). Keyed by agent name, then by
+   *  BASE model id (the `[1m]`/dated suffix stripped, since the window is a
+   *  model+account constant). The window is NOT derivable from a model id alone
+   *  (a plain `claude-opus-4-8` runs 1M on a 1M-entitled account, 200K
+   *  elsewhere), so it is discovered from telemetry rather than hardcoded; the
+   *  model dropdowns render a context-size badge only for a model whose window
+   *  has actually been observed. Last-observation-wins so an entitlement change
+   *  re-baselines. */
+  discoveredContextWindowsByAgent: Record<string, Record<string, number>>;
   /** User keybinding overrides: registry action id -> canonical combo string
    *  (e.g. 'Mod+Shift+K'). Absent/empty means use the registry default. Global
    *  only (per-machine), like `developer.*`. See `src/shared/keybindings.ts`. */
@@ -1761,6 +1772,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   workspaceByProject: {},
   commandTerminalWorkspace: null,
   discoveredModelsByAgent: {},
+  discoveredContextWindowsByAgent: {},
   hotkeyOverrides: {},
   dictation: {
     enabled: false,
