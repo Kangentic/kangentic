@@ -178,6 +178,80 @@ describe('getCommitGraph', () => {
     });
   });
 
+  // ── baseContextCount trim value ──────────────────────────────────────────
+
+  describe('trim value: --not <mergeBaseHash>~<baseContextCount>', () => {
+    it('trims to mergeBaseHash~5 (the default baseContextCount) when the merge base resolves', async () => {
+      setDefaultWorktreeHead();
+      const logStdout = line({
+        hash: 'f1'.repeat(10),
+        shortHash: 'f1f1f1f',
+        parents: '',
+        author: 'Dev',
+        timestamp: '2026-07-06T12:00:00Z',
+        subject: 'feat: default baseContextCount trim',
+      });
+      mockGit.raw
+        .mockResolvedValueOnce('mergebase1\n') // merge-base origin/main
+        .mockResolvedValueOnce('basehash1\n') // rev-parse origin/main
+        .mockResolvedValueOnce(logStdout); // log attempt1 (widest range succeeds)
+
+      await getCommitGraph({ projectPath: '/mock/project', baseBranch: 'main' });
+
+      const attempt1Args = mockGit.raw.mock.calls[2][0];
+      expect(attempt1Args).toContain('--not');
+      expect(attempt1Args).toContain('mergebase1~5');
+    });
+
+    it('trims to mergeBaseHash~<explicit baseContextCount> when one is passed', async () => {
+      setDefaultWorktreeHead();
+      const logStdout = line({
+        hash: 'f2'.repeat(10),
+        shortHash: 'f2f2f2f',
+        parents: '',
+        author: 'Dev',
+        timestamp: '2026-07-06T12:00:00Z',
+        subject: 'feat: explicit baseContextCount trim',
+      });
+      mockGit.raw
+        .mockResolvedValueOnce('mergebase1\n') // merge-base origin/main
+        .mockResolvedValueOnce('basehash1\n') // rev-parse origin/main
+        .mockResolvedValueOnce(logStdout); // log attempt1 (widest range succeeds)
+
+      await getCommitGraph({ projectPath: '/mock/project', baseBranch: 'main', baseContextCount: 3 });
+
+      const attempt1Args = mockGit.raw.mock.calls[2][0];
+      expect(attempt1Args).toContain('--not');
+      expect(attempt1Args).toContain('mergebase1~3');
+    });
+
+    it('disables the trim entirely when baseContextCount is 0, even though the merge base resolved', async () => {
+      setDefaultWorktreeHead();
+      const logStdout = line({
+        hash: 'f3'.repeat(10),
+        shortHash: 'f3f3f3f',
+        parents: '',
+        author: 'Dev',
+        timestamp: '2026-07-06T12:00:00Z',
+        subject: 'feat: zero baseContextCount disables trim',
+      });
+      mockGit.raw
+        .mockResolvedValueOnce('mergebase1\n') // merge-base origin/main
+        .mockResolvedValueOnce('basehash1\n') // rev-parse origin/main
+        .mockResolvedValueOnce(logStdout); // log attempt1 (no --not, since baseContextCount disables it)
+
+      const result = await getCommitGraph({ projectPath: '/mock/project', baseBranch: 'main', baseContextCount: 0 });
+
+      // The merge base DID resolve (mergeBaseHash is populated), but the `> 0`
+      // guard must still keep --not out of every log attempt.
+      const calledArgs = mockGit.raw.mock.calls.map((callArgs) => callArgs[0]);
+      for (const args of calledArgs) {
+        expect(args).not.toContain('--not');
+      }
+      expect(result.mergeBaseHash).toBe('mergebase1');
+    });
+  });
+
   // ── 3-attempt degrade chain ───────────────────────────────────────────────
 
   describe('log range degrades on failure: widest range -> drop --not -> HEAD only', () => {

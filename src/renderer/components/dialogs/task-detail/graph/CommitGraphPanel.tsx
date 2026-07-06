@@ -59,19 +59,24 @@ export function CommitGraphPanel({ projectPath, worktreePath, baseBranch, task }
     fetchGraphRef.current();
   }, [worktreePath, projectPath, baseBranch]);
 
-  // Live refresh via the shared diff fs-watcher (fires on HEAD / refs / index changes).
+  // Live refresh via the shared diff fs-watcher. We ONLY register an onDiffChanged
+  // listener here - we deliberately do NOT call subscribeDiff / unsubscribeDiff.
+  // CommitGraphPanel is always rendered inside ChangesPanel for the same task, and
+  // ChangesPanel already arms the fs-watcher for this exact path and keeps it armed
+  // for its whole mounted lifetime. DiffWatcher is a single shared watcher per path
+  // with no reference count (src/main/git/diff-watcher.ts): if this panel also called
+  // unsubscribeDiff on unmount (e.g. a Graph->Files toggle, which unmounts only this
+  // child), it would tear down the watcher out from under the still-mounted
+  // ChangesPanel and silently stop its live refresh. Listening only, and letting
+  // ChangesPanel own subscribe/unsubscribe, avoids that.
   useEffect(() => {
-    const watchPath = worktreePath ?? projectPath;
-    if (!watchPath) return;
-    window.electronAPI.git.subscribeDiff(watchPath);
     const unsubscribe = window.electronAPI.git.onDiffChanged(() => {
       fetchGraphRef.current();
     });
     return () => {
-      window.electronAPI.git.unsubscribeDiff(watchPath);
       unsubscribe();
     };
-  }, [worktreePath, projectPath]);
+  }, []);
 
   const layout = useMemo(() => layoutCommitGraph(result?.commits ?? []), [result]);
 
