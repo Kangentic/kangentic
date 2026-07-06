@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Project } from '../../src/shared/types';
+import type { Embedder } from '../../src/main/retrieval/types';
 
 /**
- * Tests for the kangentic_search_everything MCP tool wrapper.
+ * Tests for the kangentic_search MCP tool wrapper.
  *
  * Strategy: stub the search-core so the test focuses on routing - which
  * projects get scanned, whether project hits are enabled, how scope
@@ -67,6 +68,9 @@ const OTHER_PROJECT_ID = '22222222-2222-4222-8222-222222222222';
 const DEFAULT_PROJECT = makeProject({ id: DEFAULT_PROJECT_ID, name: 'Default', path: '/tmp/default' });
 const OTHER_PROJECT = makeProject({ id: OTHER_PROJECT_ID, name: 'Other', path: '/tmp/other' });
 
+/** Sentinel embedder; identity is what the mode->embedder tests assert on. */
+const SENTINEL_EMBEDDER = { embed: vi.fn(), dimensions: 384, modelTag: 'sentinel', noiseFloor: 0.4 } as unknown as Embedder;
+
 function makeResolver(): RequestResolver {
   return {
     resolveProject: vi.fn((selector: string | null | undefined) => {
@@ -90,10 +94,11 @@ function makeResolver(): RequestResolver {
     }),
     listProjectsRaw: vi.fn(() => [DEFAULT_PROJECT, OTHER_PROJECT]),
     isMemoryIndexingEnabled: vi.fn(() => true),
+    getMemoryEmbedder: vi.fn(() => SENTINEL_EMBEDDER),
   } as unknown as RequestResolver;
 }
 
-describe('kangentic_search_everything MCP tool', () => {
+describe('kangentic_search MCP tool', () => {
   let server: ReturnType<typeof makeFakeServer>;
   let resolver: RequestResolver;
 
@@ -106,7 +111,7 @@ describe('kangentic_search_everything MCP tool', () => {
   });
 
   it('defaults scope to "current" and scans only the active project', async () => {
-    await server.getHandler('kangentic_search_everything')({ query: 'hello' });
+    await server.getHandler('kangentic_search')({ query: 'hello' });
 
     expect(mockRunSearchEverything).toHaveBeenCalledOnce();
     const callArg = mockRunSearchEverything.mock.calls[0][0] as { projects: Project[]; includeProjectHits: boolean };
@@ -115,7 +120,7 @@ describe('kangentic_search_everything MCP tool', () => {
   });
 
   it('scope="all" widens to every registered project and enables project hits', async () => {
-    await server.getHandler('kangentic_search_everything')({ query: 'hello', scope: 'all' });
+    await server.getHandler('kangentic_search')({ query: 'hello', scope: 'all' });
 
     const callArg = mockRunSearchEverything.mock.calls[0][0] as { projects: Project[]; includeProjectHits: boolean };
     expect(callArg.projects.map((project) => project.id).sort()).toEqual([DEFAULT_PROJECT_ID, OTHER_PROJECT_ID].sort());
@@ -123,7 +128,7 @@ describe('kangentic_search_everything MCP tool', () => {
   });
 
   it('explicit project selector forces scope to "current" even when scope="all" is passed', async () => {
-    await server.getHandler('kangentic_search_everything')({ query: 'hello', scope: 'all', project: 'Other' });
+    await server.getHandler('kangentic_search')({ query: 'hello', scope: 'all', project: 'Other' });
 
     const callArg = mockRunSearchEverything.mock.calls[0][0] as { projects: Project[]; includeProjectHits: boolean };
     expect(callArg.projects.map((project) => project.id)).toEqual([OTHER_PROJECT_ID]);
@@ -131,11 +136,35 @@ describe('kangentic_search_everything MCP tool', () => {
   });
 
   it('returns an error result when the project selector is invalid', async () => {
-    const result = await server.getHandler('kangentic_search_everything')({ query: 'hello', project: 'BadName' });
+    const result = await server.getHandler('kangentic_search')({ query: 'hello', project: 'BadName' });
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('No project matching');
     expect(mockRunSearchEverything).not.toHaveBeenCalled();
+  });
+
+  describe('mode -> conversation embedder selection', () => {
+    it('mode "hybrid" (default) pulls the resolver embedder and passes it + a 5000ms budget to conversation search', async () => {
+      await server.getHandler('kangentic_search')({ query: 'q' });
+
+      expect(resolver.getMemoryEmbedder).toHaveBeenCalledTimes(1);
+      const callArg = mockRunSearchEverything.mock.calls[0][0] as {
+        conversationSearch: { enabled: boolean; embedder: unknown; embedWaitMs: number };
+      };
+      expect(callArg.conversationSearch.enabled).toBe(true);
+      expect(callArg.conversationSearch.embedder).toBe(SENTINEL_EMBEDDER);
+      expect(callArg.conversationSearch.embedWaitMs).toBe(5000);
+    });
+
+    it('mode "keyword" passes a null embedder and never asks the resolver for one', async () => {
+      await server.getHandler('kangentic_search')({ query: 'q', mode: 'keyword' });
+
+      expect(resolver.getMemoryEmbedder).not.toHaveBeenCalled();
+      const callArg = mockRunSearchEverything.mock.calls[0][0] as {
+        conversationSearch: { embedder: unknown };
+      };
+      expect(callArg.conversationSearch.embedder).toBeNull();
+    });
   });
 
   it('formats hits grouped by kind with a summary line', async () => {
@@ -170,7 +199,7 @@ describe('kangentic_search_everything MCP tool', () => {
       },
     ]);
 
-    const result = await server.getHandler('kangentic_search_everything')({ query: 'fix' });
+    const result = await server.getHandler('kangentic_search')({ query: 'fix' });
 
     const text = result.content[0].text;
     expect(text).toContain('Found 2 hit(s) for "fix"');
@@ -183,7 +212,7 @@ describe('kangentic_search_everything MCP tool', () => {
   it('returns "No hits" when the core returns an empty result', async () => {
     mockRunSearchEverything.mockResolvedValueOnce([]);
 
-    const result = await server.getHandler('kangentic_search_everything')({ query: 'nothing-matches-this' });
+    const result = await server.getHandler('kangentic_search')({ query: 'nothing-matches-this' });
 
     expect(result.content[0].text).toContain('No hits matching "nothing-matches-this"');
   });
@@ -193,7 +222,7 @@ describe('kangentic_search_everything MCP tool', () => {
     // and the default project id cannot be found in the list.
     (resolver.listProjectsRaw as ReturnType<typeof vi.fn>).mockReturnValueOnce([]);
 
-    const result = await server.getHandler('kangentic_search_everything')({ query: 'hello' });
+    const result = await server.getHandler('kangentic_search')({ query: 'hello' });
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('No projects available to search');
@@ -215,7 +244,7 @@ describe('kangentic_search_everything MCP tool', () => {
       },
     ]);
 
-    const result = await server.getHandler('kangentic_search_everything')({ query: 'Refactor' });
+    const result = await server.getHandler('kangentic_search')({ query: 'Refactor' });
 
     const text = result.content[0].text;
     expect(text).toContain('Found 1 hit(s)');
@@ -240,7 +269,7 @@ describe('kangentic_search_everything MCP tool', () => {
       },
     ]);
 
-    const result = await server.getHandler('kangentic_search_everything')({ query: 'Other', scope: 'all' });
+    const result = await server.getHandler('kangentic_search')({ query: 'Other', scope: 'all' });
 
     const text = result.content[0].text;
     expect(text).toContain('Found 1 hit(s)');
@@ -274,7 +303,7 @@ describe('kangentic_search_everything MCP tool', () => {
       },
     ]);
 
-    const result = await server.getHandler('kangentic_search_everything')({ query: 'frobnicate' });
+    const result = await server.getHandler('kangentic_search')({ query: 'frobnicate' });
 
     const text = result.content[0].text;
     expect(text).toContain('Found 1 hit(s)');
@@ -288,6 +317,9 @@ describe('kangentic_search_everything MCP tool', () => {
     expect(text).toContain('sessionId: session-conv');
     expect(text).toContain('turnUuid: turn-uuid-777');
     expect(text).toContain('a frobnicate hit');
+    // Citation-first drill-down hint points at get_transcript with aroundUuid.
+    expect(text).toContain('kangentic_get_transcript');
+    expect(text).toContain('aroundUuid');
     // Not mixed into an unrelated section.
     expect(text).not.toContain('## Tasks');
     expect(result.isError).toBeUndefined();
@@ -315,7 +347,7 @@ describe('kangentic_search_everything MCP tool', () => {
       },
     ]);
 
-    const result = await server.getHandler('kangentic_search_everything')({ query: 'anything' });
+    const result = await server.getHandler('kangentic_search')({ query: 'anything' });
 
     const text = result.content[0].text;
     expect(text).toContain('## Conversations');

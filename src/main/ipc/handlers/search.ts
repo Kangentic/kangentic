@@ -16,7 +16,7 @@ const SIMILAR_QUERY_MAX_CHARS = 600;
  * IPC handler for the renderer-side global search palette (Ctrl+Shift+F).
  *
  * Pure-logic search lives in `src/main/search/search-core.ts` so the same
- * code powers the MCP tool `kangentic_search_everything`. This handler is
+ * code powers the MCP tool `kangentic_search`. This handler is
  * just the IPC<->core adapter: trim the query, decide which projects to
  * scan based on `request.scope`, and delegate.
  */

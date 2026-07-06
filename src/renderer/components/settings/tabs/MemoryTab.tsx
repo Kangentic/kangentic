@@ -10,7 +10,7 @@ import type { AppConfig, MemoryStatus, MemoryAcceleration } from '../../../../sh
  * Conversation Memory settings. GLOBAL/shared scope (below the settings
  * separator, next to Dictation - both are on-device, keyless, model-backed AI
  * features). Controls the local index over agent conversation transcripts that
- * powers Quick Find conversation search (humans) and the kangentic_recall MCP
+ * powers Quick Find conversation search (humans) and the kangentic_search MCP
  * tool (agents). Keyword search is on by default; the semantic layer is an
  * opt-in enhancement.
  */

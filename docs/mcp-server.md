@@ -29,8 +29,7 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 | Task Tools | `src/main/agent/mcp-http/task-tools.ts` | Board/task/column mutations + related reads (`kangentic_create_task`, `kangentic_move_task`, `kangentic_update_task`, `kangentic_link_pr`, `kangentic_update_column`, `kangentic_delete_task`, `kangentic_list_columns`, `kangentic_find_task`, `kangentic_get_current_task`, etc.). |
 | Session Tools | `src/main/agent/mcp-http/session-tools.ts` | Session inspection, backlog, read-only SQL (`kangentic_list_sessions`, `kangentic_get_transcript`, `kangentic_get_session_files`, `kangentic_get_session_events`, `kangentic_query_db`, `kangentic_list_backlog`, etc.). |
 | Project Tools | `src/main/agent/mcp-http/project-tools.ts` | Multi-project discovery (`kangentic_list_projects`). |
-| Search Tools | `src/main/agent/mcp-http/search-tools.ts` | Cross-project unified search (`kangentic_search_everything`). The board-scoped `kangentic_search_tasks` lives in `task-tools.ts`. |
-| Recall Tools | `src/main/agent/mcp-http/recall-tools.ts` | Citation-first hybrid recall over past agent conversations (`kangentic_recall`). |
+| Search Tools | `src/main/agent/mcp-http/search-tools.ts` | The single unified search (`kangentic_search`): tasks, backlog, session events, projects, and past conversations (keyword or, with `mode:"hybrid"`, semantic). The board-scoped `kangentic_search_tasks` lives in `task-tools.ts`. |
 | Diagnostics Tools | `src/main/agent/mcp-http/diagnostics-tools.ts` | Read-only product tools backing crash records, persistent console logs, process metrics, IPC traffic recordings, and worktree state. |
 | Tool Annotations | `src/main/agent/mcp-http/annotations.ts` | Shared `READ_ONLY_ANNOTATIONS` / `MUTATING_ANNOTATIONS` MCP tool-annotation constants. Every tool in every `*-tools.ts` file declares one of these (see the Tool annotations note below). |
 | Browser Tools | `src/main/agent/mcp-http/browser-tools.ts` | Shipped `kangentic_browser_*` MCP tool family driving the embedded Browser pane via in-process CDP (no HTTP bridge, no lockfile). Gated by the global `browserAutomation.*` policy. |
@@ -282,18 +281,24 @@ List items in the backlog staging area. Items have priority levels and labels fo
 | `priority` | number | No | Filter by priority: 0=none, 1=low, 2=medium, 3=high, 4=urgent |
 | `query` | string | No | Search keyword to filter by title, description, or labels |
 
-### kangentic_search_everything
+### kangentic_search
 
-Unified search across the active project (or all registered projects) covering: board tasks (active + archived, title and description), backlog items (title and description), session events (the structured tool_start/tool_end/idle stream from agent runs), conversation transcripts (ranked keyword search over past agent conversations, when conversation memory is indexed), and project names/paths. Returns a per-kind grouped result with snippets so an agent can pinpoint the matching task, backlog item, session event, conversation turn, or project in one call instead of issuing `kangentic_search_tasks` + `kangentic_get_session_events` separately. Conversation hits carry a `sessionId` + `turnUuid` so you can follow up with `kangentic_get_transcript`. (`kangentic_search_tasks` already spans board + backlog within a single project; reach for `kangentic_search_everything` when you also need session events, past conversations, or cross-project scope.)
+The single unified search tool for agents. One query across the active project (or all registered projects) covering: board tasks (active + archived, title and description), backlog items (title and description), session events (the structured tool_start/tool_end/idle stream from agent runs), past agent conversations, and project names/paths. Returns a per-kind grouped result with snippets so an agent can pinpoint the matching task, backlog item, session event, conversation turn, or project in one call instead of issuing `kangentic_search_tasks` + `kangentic_get_session_events` separately. (`kangentic_search_tasks` already spans board + backlog within a single project; reach for `kangentic_search` when you also need session events, past conversations, semantic matching, or cross-project scope.)
+
+Conversations are matched by **keyword** by default; pass `mode: "hybrid"` to also match them by **meaning** (semantic embedding fused with keyword) - the "have we solved this / seen this before?" recall path over past agent conversations. `mode` affects only the conversation corpus; tasks, backlog, session events, and projects are always keyword. Both modes fall back to keyword transparently when the conversation embedding layer is off. Conversation hits carry a `sessionId` + `turnUuid`; follow up with `kangentic_get_transcript` (`aroundUuid`) to read the neighboring turns.
 
 Defaults to scoping the search to the active project. Pass `scope: "all"` to widen across every registered project (which also surfaces project-name hits so the agent can discover routing targets). Passing `project` forces `scope: "current"` since explicit project routing already specifies the target.
 
-Conversation hits come from the structured transcript index (`memory_chunks` FTS5), not the raw scrollback blob; they appear only when `memory.indexingEnabled` is on (the default). Per-kind hit caps prevent runaway results: 30 tasks, 20 backlog items, 50 session events, 10 projects, 20 conversations.
+Conversation hits come from the structured transcript index (`memory_chunks` FTS5 + the sqlite-vec embeddings for semantic ranking), not the raw scrollback blob; they appear only when `memory.indexingEnabled` is on (the default), and rank semantically only when the embedding layer (`memory.semanticEnabled`) is also on. Per-kind hit caps prevent runaway results: 30 tasks, 20 backlog items, 50 session events, 10 projects, 20 conversations.
+
+This tool consolidates what were previously two tools (`kangentic_search_everything` + a separate `kangentic_recall`) into one, per Anthropic's tool-design guidance that related retrieval operations belong in a single tool with a parameter rather than several overlapping tools.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `query` | string | Yes | Search keyword or phrase (case-insensitive). Empty queries return no results. |
+| `query` | string | Yes | Search keyword or phrase, or (in `mode:"hybrid"`) a natural-language description of what you are looking for. Case-insensitive; empty queries return no results. |
 | `scope` | `'current' \| 'all'` | No | `"current"` (default) searches only the active or `project`-routed project. `"all"` widens to every registered project. Ignored (forced to `"current"`) when `project` is set. |
+| `mode` | `'keyword' \| 'hybrid'` | No | How conversations are matched. `"hybrid"` (default) fuses keyword + semantic embedding; `"keyword"` is lexical-only. Only affects the conversation corpus. |
+| `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. Forces `scope: "current"`. |
 
 ### kangentic_promote_backlog
 
@@ -350,7 +355,7 @@ Structured output is shaped by three agent-agnostic levers, applied to the parse
 - `view`: `"full"` (default), `"responses"` (assistant text turns only, dropping tool calls/results/thinking), or `"result"` (just the final assistant text - the Agent SDK `ResultMessage.result`, rendered bare without the `## Assistant` heading).
 - `tail`: return only the last N entries (the most recent messages). Ignored for `view="result"`.
 - `search`: case-insensitive substring; return only entries whose content (including a tool result inlined under its owning tool call) contains the term.
-- `aroundUuid` + `context`: center the returned entries on the turn with `aroundUuid` (the `turnUuid` from a `kangentic_recall` or `kangentic_search_everything` conversation hit) and include `context` turns either side (default 3). This is the citation-first fetch - pull just the neighborhood of a cited turn rather than the whole transcript. A stale/absent uuid degrades to the full transcript.
+- `aroundUuid` + `context`: center the returned entries on the turn with `aroundUuid` (the `turnUuid` from a `kangentic_search` conversation hit) and include `context` turns either side (default 3). This is the citation-first fetch - pull just the neighborhood of a cited turn rather than the whole transcript. A stale/absent uuid degrades to the full transcript.
 
 Output is bounded by a character budget (default ~50,000 chars; raise via `maxChars`, hard ceiling 500,000). When the result exceeds the budget it keeps the **most recent** entries and prepends a `[Truncated: N earlier entries omitted ...]` note. `view`/`tail`/`search` apply to `structured` only; the `maxChars` budget also caps `raw` scrollback (keeping the most recent portion).
 
@@ -371,28 +376,10 @@ Structured-format support by agent:
 | `view` | string | No | Structured only. `"full"` (default), `"responses"`, or `"result"`. Ignored for raw. |
 | `tail` | number | No | Structured only. Last N entries (most recent). Hard cap 2000. Ignored for `view="result"` and for raw. |
 | `search` | string | No | Structured only. Case-insensitive substring; keep only entries containing it. Ignored for raw. |
-| `aroundUuid` | string | No | Structured only. Center the entries on this turn uuid (from a recall/search conversation hit). Ignored for raw. |
+| `aroundUuid` | string | No | Structured only. Center the entries on this turn uuid (from a `kangentic_search` conversation hit). Ignored for raw. |
 | `context` | number | No | Structured only. Turns either side of `aroundUuid` (default 3, max 50). Ignored without `aroundUuid`. |
 | `maxChars` | number | No | Override the default ~50,000-char output cap (hard ceiling 500,000). Applies to structured and raw. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
-
-### kangentic_recall
-
-Recall past agent conversations by meaning or keyword - the "have we solved this before?" tool for an agent mid-task. Runs hybrid (semantic + keyword) retrieval over the structured transcripts of prior sessions and returns COMPACT citations: one line per hit with a relevance score, the task/agent/date, and a `sessionId` + `turnUuid`. This is step one of a citation-first flow and stays token-cheap; to read the full context around a hit, follow up with `kangentic_get_transcript` using the hit's `sessionId` and `aroundUuid`.
-
-Semantic ranking is used when the conversation-memory embedding layer is enabled (Settings -> Memory); otherwise recall falls back to keyword ranking transparently. Requires conversation-memory indexing to be on. Defaults to the active project; `scope:"all"` recalls across every project (cross-project knowledge transfer). Distinct from `kangentic_search_everything`, which spans many sources and returns a broader grouped result; `kangentic_recall` is conversation-only and citation-first.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `query` | string | Yes | What to recall, in natural language or keywords. |
-| `scope` | `'current' \| 'all'` | No | `"current"` (default) or `"all"`. Forced to `"current"` when `project` is set. |
-| `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
-| `k` | number | No | Max citations (default 8, max 50). |
-| `mode` | `'hybrid' \| 'lexical' \| 'semantic'` | No | `"hybrid"` (default) fuses keyword + semantic; `"lexical"` = keyword only; `"semantic"` = embedding only. Non-lexical modes fall back to keyword when the embedding layer is unavailable. |
-| `taskId` | string | No | Restrict to conversations for this task. |
-| `agent` | string | No | Restrict to an agent by display-name substring. |
-| `since` | string | No | ISO date/time floor on the matched turn (inclusive). |
-| `until` | string | No | ISO date/time ceiling on the matched turn (inclusive). |
 
 ### kangentic_get_session_files
 

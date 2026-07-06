@@ -7,40 +7,42 @@ import { runSearchEverything } from '../../search/search-core';
 import type { SearchHit, Project } from '../../../shared/types';
 
 /**
- * Cross-source unified-search tool. Mirrors the renderer's Ctrl+Shift+F
- * palette so external agents can issue one query and get back hits
- * across tasks, backlog, session events, and (when scope='all') projects
- * instead of stitching together kangentic_search_tasks +
- * kangentic_get_session_events. (kangentic_search_tasks itself already
- * spans board + backlog within a single project; this tool additionally
- * covers session events and cross-project search.)
+ * kangentic_search - the single unified retrieval tool for agents. Mirrors the
+ * renderer's Ctrl+Shift+F palette: one query returns hits across tasks, backlog,
+ * session events, conversation transcripts, and (when scope='all') projects,
+ * instead of stitching together kangentic_search_tasks + kangentic_get_session_events.
+ *
+ * Conversations are searched by keyword by default and by MEANING when mode is
+ * 'hybrid' (the "have we solved this before?" recall use case). This folds the
+ * former kangentic_recall into one tool, so there is no "which search?" ambiguity:
+ * per Anthropic's tool-design guidance, related retrieval operations are one tool
+ * with a parameter, not several overlapping tools. Conversation hits carry a
+ * sessionId + turnUuid; drill into one with kangentic_get_transcript (aroundUuid).
  *
  * Defaults to `scope: 'current'` because cross-project scope opens every
  * registered project's DB and streams every session's events.jsonl - much
- * heavier than a single-project query. Callers must pass `scope: 'all'`
- * explicitly to widen.
- *
- * When the caller passes an explicit `project` selector, scope is forced
- * to 'current' regardless of the `scope` argument: routing to a specific
- * project and asking for "all projects" at the same time is incoherent,
- * and the explicit selector is the stronger signal.
+ * heavier than a single-project query. Callers pass `scope: 'all'` to widen. An
+ * explicit `project` selector forces scope to 'current' (routing to a specific
+ * project while asking for "all projects" is incoherent, and the selector is the
+ * stronger signal).
  */
 export function registerSearchTools(
   server: McpServer,
   resolver: RequestResolver,
 ): void {
   server.registerTool(
-    'kangentic_search_everything',
+    'kangentic_search',
     {
-      description: 'Unified search across the active project (or all registered projects) covering: board tasks (active + archived, title and description), backlog items (title and description), session events (the structured tool_start/tool_end/idle stream from agent runs), conversation transcripts (ranked keyword search over past agent conversations, when conversation memory is indexed), and project names/paths. Returns a per-kind grouped result with snippets so an agent can pinpoint the matching task, backlog item, session event, conversation turn, or project in one call instead of issuing kangentic_search_tasks + kangentic_get_session_events separately. Conversation hits carry a sessionId + turnUuid so you can follow up with kangentic_get_transcript. (kangentic_search_tasks already spans board + backlog within a single project; reach for this tool when you also need session events, past conversations, or cross-project scope.) Per-kind hit caps prevent runaway results: 30 tasks, 20 backlog, 50 session events, 10 projects, 20 conversations. Defaults to scoping the search to the active project; pass `scope: "all"` to widen across every registered project. Passing `project` forces scope to "current" since explicit project routing already specifies the target.',
+      description: 'The single unified search tool: one query across the active project (or all registered projects with scope:"all") covering board tasks (active + archived, title and description), backlog items, session events (the tool_start/tool_end/idle stream from agent runs), past agent conversations, and project names/paths. Returns a per-kind grouped result with snippets, so you pinpoint the matching task, backlog item, session event, conversation turn, or project in one call instead of issuing kangentic_search_tasks + kangentic_get_session_events separately. Conversations are matched by KEYWORD by default; pass mode:"hybrid" to also match them by MEANING (semantic embedding) - this is the "have we solved this / seen this before?" recall path over past conversations. Conversation hits carry a sessionId + turnUuid; follow up with kangentic_get_transcript (aroundUuid) to read the surrounding turns. (kangentic_search_tasks already spans board + backlog within one project; reach for this tool when you also need session events, past conversations, semantic matching, or cross-project scope.) Per-kind hit caps: 30 tasks, 20 backlog, 50 session events, 10 projects, 20 conversations. Defaults to the active project; pass scope:"all" to widen across every registered project. Passing project forces scope to "current" since explicit routing already specifies the target.',
       inputSchema: z.object({
-        query: z.string().min(1).describe('Search keyword or phrase (case-insensitive). Empty queries return no results.'),
+        query: z.string().min(1).describe('Search keyword or phrase, or - in mode:"hybrid" - a natural-language description of what you are looking for (case-insensitive). Empty queries return no results.'),
         scope: z.enum(['current', 'all']).optional().describe('"current" (default) searches only the active or `project`-routed project. "all" widens to every registered project on this machine and additionally surfaces project-name hits so an agent can discover routing targets. Ignored (forced to "current") when `project` is set.'),
+        mode: z.enum(['keyword', 'hybrid']).optional().describe('How CONVERSATIONS are matched (tasks, backlog, session events, and projects are always keyword). "hybrid" (default) fuses keyword + semantic embedding so past conversations match by meaning, not just literal words - use it for "have we done X before?" recall. "keyword" is exact/lexical only and slightly faster. Both fall back to keyword automatically when the conversation embedding layer is off.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: READ_ONLY_ANNOTATIONS,
     },
-    async ({ query, scope, project }): Promise<McpToolResult> => {
+    async ({ query, scope, mode, project }): Promise<McpToolResult> => {
       const resolved = resolver.resolveProject(project);
       if ('error' in resolved) {
         return {
@@ -72,12 +74,24 @@ export function registerSearchTools(
         };
       }
 
+      // mode gates only the CONVERSATION corpus: 'hybrid' (default) pulls the
+      // embedder so past conversations rank by meaning; 'keyword' passes null so
+      // they stay lexical. A null embedder (semantic layer off) degrades to
+      // keyword transparently either way. The MCP tool uses a generous embed
+      // budget (agents tolerate latency; the palette does not).
+      const effectiveMode = mode ?? 'hybrid';
+      const embedder = effectiveMode === 'keyword' ? null : resolver.getMemoryEmbedder();
+
       const hits = await runSearchEverything({
         query,
         projects: projectsToScan,
         includeProjectHits: effectiveScope === 'all',
         projectsForProjectHits: allProjects,
-        conversationSearch: { enabled: resolver.isMemoryIndexingEnabled() },
+        conversationSearch: {
+          enabled: resolver.isMemoryIndexingEnabled(),
+          embedder,
+          embedWaitMs: 5000,
+        },
       });
 
       return {
@@ -152,7 +166,10 @@ function formatHits(query: string, hits: SearchHit[], scope: 'current' | 'all'):
     const lines = conversations.map((hit) =>
       `- [${hit.score.toFixed(3)}] ${hit.taskTitle} via ${hit.agentName} (project: ${hit.projectName}, sessionId: ${hit.sessionId}, turnUuid: ${hit.turnUuid ?? 'n/a'}) - ${hit.snippet}`,
     );
-    sections.push(`## Conversations\n${lines.join('\n')}`);
+    // Citation-first drill-down: read the neighborhood of a cited turn rather
+    // than the whole transcript.
+    const hint = 'Read the turns around a hit with kangentic_get_transcript: { sessionId, aroundUuid: <turnUuid>, context: 3 }';
+    sections.push(`## Conversations\n${lines.join('\n')}\n${hint}`);
   }
 
   return `${summary}\n\n${sections.join('\n\n')}`;

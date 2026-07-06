@@ -265,11 +265,11 @@ Lists every keyboard shortcut grouped by area (General, Task Detail, Git Changes
 
 ### Memory
 
-The Memory tab hosts conversation search + recall - a local index over agent conversation transcripts powering the Quick Find "Conversations" group (for you) and the `kangentic_recall` MCP tool (for agents). It sits next to Dictation (both are on-device, keyless, model-backed AI features). Global-only (per-machine). Keyword search is on by default; the semantic layer is opt-in.
+The Memory tab hosts conversation search + recall - a local index over agent conversation transcripts powering the Quick Find "Conversations" group (for you) and the `kangentic_search` MCP tool (for agents). It sits next to Dictation (both are on-device, keyless, model-backed AI features). Global-only (per-machine). Keyword search is on by default; the semantic layer is opt-in.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `memory.indexingEnabled` | boolean | `true` | Index agent conversation transcripts locally for search and recall. Off: no indexing runs, no conversation hits appear in Quick Find or `kangentic_search_everything`, and the embed worker never starts. All local and keyless. |
+| `memory.indexingEnabled` | boolean | `true` | Index agent conversation transcripts locally for search and recall. Off: no indexing runs, no conversation hits appear in Quick Find or `kangentic_search`, and the embed worker never starts. All local and keyless. |
 | `memory.semanticEnabled` | boolean | `false` | Enable the semantic (embedding) layer on top of lexical search. Turning it on triggers a one-time local model download (the selected `memory.embeddingModel`) and background embedding of the index. Runs in an Electron utilityProcess (transformers.js on onnxruntime-node; execution provider set by `memory.acceleration`); vector search via the sqlite-vec extension. Lexical FTS5 search works regardless; when the model or extension is unavailable, Smart search transparently falls back to lexical. |
 | `memory.embeddingModel` | string | `'mxbai-xsmall'` | Which local embedding model powers semantic search, chosen by quality in the Memory tab's "Search quality" dropdown (labels match the dictation Mode dropdown). Options (see `src/shared/embedding-models.ts`): `mxbai-xsmall` (Fastest, 384d, ~24 MB), `bge-small` (Balanced, 384d, ~34 MB), `bge-base` (Best accuracy, 768d, ~110 MB). All ONNX/q8, keyless, offline. The dropdown shows the quality word; the concrete model name + size + download state show in the status card below it. Switching re-embeds the index in the background; a dimension change (e.g. to `bge-base`) recreates the vector table. Each model declares its own pooling in `src/shared/embedding-models.ts` (bge use CLS pooling, the strategy they were trained for; mxbai uses mean) and query prefix (bge get a retrieval instruction; mxbai none), so the worker reads one source of truth per model. |
 | `memory.acceleration` | `'auto' \| 'gpu' \| 'cpu'` | `'auto'` | Which hardware the embedding model runs on, set in the Memory tab's "Hardware acceleration" dropdown. `auto` (default) and `gpu` prefer a GPU execution provider (DirectML on Windows, WebGPU elsewhere) and fall back to CPU if it fails to initialize; `cpu` forces the universal path. Offloading to an idle GPU keeps the CPU free for the agents when many run at once. The active backend ("DirectML (GPU)", "CPU", ...) is shown in the status card. All local and keyless. |
@@ -283,7 +283,7 @@ raw cosine against it into a model-independent relevance (`(cos - floor) / (1 -
 floor)`); a single internal cutoff then drops off-topic and gibberish hits on
 every model while keeping genuine matches. Only the semantic layer is filtered;
 lexical (keyword) hits always appear. Applied wherever semantic search runs:
-Quick Find, `kangentic_recall`, and similar-conversations.
+Quick Find, `kangentic_search`, and similar-conversations.
 
 Search mode is not a stored preference: the Quick Find palette auto-selects it
 from `memory.semanticEnabled` (Smart/hybrid when on, keyword when off), so there

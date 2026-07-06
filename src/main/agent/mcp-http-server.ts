@@ -26,7 +26,6 @@ import { registerTaskTools } from './mcp-http/task-tools';
 import { registerSessionTools } from './mcp-http/session-tools';
 import { registerProjectTools } from './mcp-http/project-tools';
 import { registerSearchTools } from './mcp-http/search-tools';
-import { registerRecallTools } from './mcp-http/recall-tools';
 import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
 import { registerBrowserTools, type AutomationConfigReader } from './mcp-http/browser-tools';
 import { registerDevtoolsMcpTools } from '../../devtools/mcp/register';
@@ -176,7 +175,6 @@ export function buildConfiguredMcpServer(
   registerSessionTools(mcpServer, resolver);
   registerProjectTools(mcpServer, resolver);
   registerSearchTools(mcpServer, resolver);
-  registerRecallTools(mcpServer, resolver);
   registerDiagnosticsTools(mcpServer, resolver);
   if (browserAutomationEnabled) {
     registerBrowserTools(mcpServer, getBrowserAutomationConfig);

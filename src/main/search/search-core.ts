@@ -408,18 +408,20 @@ export interface SearchEverythingInput {
    * Conversation-memory (structured transcript) search. Omitted or
    * `enabled: false` skips it entirely - existing callers and tests are
    * unaffected. The IPC handler and MCP tool set `enabled` from
-   * `memory.indexingEnabled`. `embedder` enables the semantic/hybrid path
-   * (Phase 2); absent = lexical-only.
+   * `memory.indexingEnabled`. `embedder` enables the semantic/hybrid path;
+   * absent = lexical-only. `embedWaitMs` is the query-embed budget: the palette
+   * uses a short one (latency-sensitive), the MCP tool a generous one.
    */
   conversationSearch?: {
     enabled: boolean;
     embedder?: Embedder | null;
+    embedWaitMs?: number;
   };
 }
 
 /**
  * Pure-logic entry point for the unified search. Used by the IPC handler
- * (`search:everything`) and by the MCP tool (`kangentic_search_everything`).
+ * (`search:everything`) and by the MCP tool (`kangentic_search`).
  * Returns the full `SearchHit[]` with per-kind caps applied; ordering
  * within a kind is project-by-project, and tasks/backlog prioritise title
  * matches over description matches within each project.
@@ -499,7 +501,7 @@ export async function runSearchEverything(input: SearchEverythingInput): Promise
         query,
         projects: input.projects,
         k: budget.conversation,
-        embedWaitMs: 400,
+        embedWaitMs: input.conversationSearch.embedWaitMs ?? 400,
         getDb,
         embedder: input.conversationSearch.embedder ?? null,
       });

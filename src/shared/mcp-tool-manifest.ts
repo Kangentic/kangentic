@@ -66,7 +66,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_update_backlog_item', label: 'Update Backlog Item', blurb: 'edit a backlog item title, description, priority, or labels', category: 'board' },
   { name: 'kangentic_delete_backlog_item', label: 'Delete Backlog Item', blurb: 'permanently remove a backlog item and its attachments', category: 'board' },
   { name: 'kangentic_list_projects', label: 'List Projects', blurb: 'every Kangentic project registered on this machine', category: 'board' },
-  { name: 'kangentic_search_everything', label: 'Search Everything', blurb: 'unified search across tasks, backlog, sessions, and projects', category: 'board' },
+  { name: 'kangentic_search', label: 'Search', blurb: 'unified search across tasks, backlog, session events, projects, and past conversations (keyword or semantic)', category: 'board' },
 
   // ── Sessions (session-tools.ts) - per-task session history, transcripts, and handoff ──
   { name: 'kangentic_list_sessions', label: 'List Sessions', blurb: 'session records for a task with timings, cost, and exit info', category: 'sessions' },
@@ -75,7 +75,6 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_get_session_events', label: 'Session Events', blurb: 'parsed activity events from a session log', category: 'sessions' },
   { name: 'kangentic_get_handoff_context', label: 'Handoff Context', blurb: 'the most recent cross-agent handoff record for a task', category: 'sessions' },
   { name: 'kangentic_get_transcript', label: 'Get Transcript', blurb: 'read what the agent on another task or project said', category: 'sessions' },
-  { name: 'kangentic_recall', label: 'Recall Conversations', blurb: 'hybrid keyword + semantic recall over past agent conversations, with turn-level citations', category: 'sessions' },
 
   // ── Browser Automation (browser-tools.ts) ──
   { name: 'kangentic_browser_list_panes', label: 'List Browser Panes', blurb: 'open embedded Browser panes and their URLs', category: 'browser' },
