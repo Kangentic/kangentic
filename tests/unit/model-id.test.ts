@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { parseModelId, groupModelIds } from '../../src/shared/model-id';
+import {
+  parseModelId,
+  groupModelIds,
+  parseModelFamily,
+  compareModelVersion,
+} from '../../src/shared/model-id';
 
 describe('parseModelId', () => {
   it('passes through ids with no recognized suffix', () => {
@@ -73,6 +78,7 @@ describe('groupModelIds', () => {
         oneMillionId: 'claude-opus-4-8[1m]',
         primaryIsOneMillion: false,
         pinnedBuildIds: ['claude-opus-4-8-20260101'],
+        isSuperseded: false,
       },
     ]);
   });
@@ -88,6 +94,7 @@ describe('groupModelIds', () => {
         oneMillionId: null,
         primaryIsOneMillion: false,
         pinnedBuildIds: ['claude-haiku-4-5-20250601'],
+        isSuperseded: false,
       },
     ]);
   });
@@ -100,6 +107,7 @@ describe('groupModelIds', () => {
         oneMillionId: null,
         primaryIsOneMillion: true,
         pinnedBuildIds: [],
+        isSuperseded: false,
       },
     ]);
   });
@@ -112,6 +120,7 @@ describe('groupModelIds', () => {
         oneMillionId: null,
         primaryIsOneMillion: false,
         pinnedBuildIds: ['claude-opus-4-8-20260301[1m]'],
+        isSuperseded: false,
       },
     ]);
   });
@@ -119,9 +128,9 @@ describe('groupModelIds', () => {
   it('leaves suffix-free ids as their own single-member groups', () => {
     const groups = groupModelIds(['gpt-5-mini', 'gpt-5-codex', 'opus']);
     expect(groups).toEqual([
-      { primaryId: 'gpt-5-codex', oneMillionId: null, primaryIsOneMillion: false, pinnedBuildIds: [] },
-      { primaryId: 'gpt-5-mini', oneMillionId: null, primaryIsOneMillion: false, pinnedBuildIds: [] },
-      { primaryId: 'opus', oneMillionId: null, primaryIsOneMillion: false, pinnedBuildIds: [] },
+      { primaryId: 'gpt-5-codex', oneMillionId: null, primaryIsOneMillion: false, pinnedBuildIds: [], isSuperseded: false },
+      { primaryId: 'gpt-5-mini', oneMillionId: null, primaryIsOneMillion: false, pinnedBuildIds: [], isSuperseded: false },
+      { primaryId: 'opus', oneMillionId: null, primaryIsOneMillion: false, pinnedBuildIds: [], isSuperseded: false },
     ]);
   });
 
@@ -163,5 +172,85 @@ describe('groupModelIds', () => {
     const groups = groupModelIds(clean);
     expect(groups.map((group) => group.primaryId)).toEqual(clean);
     expect(groups.every((group) => group.oneMillionId === null && group.pinnedBuildIds.length === 0)).toBe(true);
+  });
+
+  it('demotes an older generation of the same family', () => {
+    const groups = groupModelIds(['claude-opus-4-7', 'claude-opus-4-8']);
+    const opus47 = groups.find((group) => group.primaryId === 'claude-opus-4-7');
+    const opus48 = groups.find((group) => group.primaryId === 'claude-opus-4-8');
+    expect(opus47?.isSuperseded).toBe(true);
+    expect(opus48?.isSuperseded).toBe(false);
+  });
+
+  it('keeps an older generation\'s 1M chip and dated pins when demoted', () => {
+    const groups = groupModelIds(['claude-opus-4-7', 'claude-opus-4-7[1m]', 'claude-opus-4-8']);
+    const opus47 = groups.find((group) => group.primaryId === 'claude-opus-4-7');
+    expect(opus47?.isSuperseded).toBe(true);
+    expect(opus47?.oneMillionId).toBe('claude-opus-4-7[1m]');
+  });
+
+  it('picks the higher version by comparing tuples, not string length', () => {
+    const groups = groupModelIds(['claude-sonnet-4-6', 'claude-sonnet-5']);
+    const sonnet46 = groups.find((group) => group.primaryId === 'claude-sonnet-4-6');
+    const sonnet5 = groups.find((group) => group.primaryId === 'claude-sonnet-5');
+    expect(sonnet46?.isSuperseded).toBe(true);
+    expect(sonnet5?.isSuperseded).toBe(false);
+  });
+
+  it('demotes a legacy single-segment generation under a newer two-segment one', () => {
+    const groups = groupModelIds(['claude-opus-4', 'claude-opus-4-8']);
+    const opus4 = groups.find((group) => group.primaryId === 'claude-opus-4');
+    const opus48 = groups.find((group) => group.primaryId === 'claude-opus-4-8');
+    expect(opus4?.isSuperseded).toBe(true);
+    expect(opus48?.isSuperseded).toBe(false);
+  });
+
+  it('never supersedes a floating alias with no numeric version', () => {
+    for (const ids of [
+      ['claude-opus', 'claude-opus-4-8'],
+      ['opus', 'claude-opus-4-8'],
+      ['gpt-5-mini', 'claude-opus-4-8'],
+    ]) {
+      const groups = groupModelIds(ids);
+      const alias = groups.find((group) => group.primaryId === ids[0]);
+      expect(alias?.isSuperseded).toBe(false);
+    }
+  });
+
+  it('leaves a lone family member unsuperseded regardless of version', () => {
+    const groups = groupModelIds(['claude-opus-4-7']);
+    expect(groups[0]?.isSuperseded).toBe(false);
+  });
+});
+
+describe('parseModelFamily', () => {
+  it('splits a versioned base id into family and version tuple', () => {
+    expect(parseModelFamily('claude-opus-4-8')).toEqual({ family: 'claude-opus', version: [4, 8] });
+    expect(parseModelFamily('claude-sonnet-5')).toEqual({ family: 'claude-sonnet', version: [5] });
+    expect(parseModelFamily('claude-opus-4')).toEqual({ family: 'claude-opus', version: [4] });
+  });
+
+  it('returns an empty version tuple for a floating alias', () => {
+    expect(parseModelFamily('claude-opus')).toEqual({ family: 'claude-opus', version: [] });
+    expect(parseModelFamily('opus')).toEqual({ family: 'opus', version: [] });
+  });
+
+  it('returns an empty version tuple for a non-numeric trailing segment', () => {
+    expect(parseModelFamily('gpt-5-mini')).toEqual({ family: 'gpt-5-mini', version: [] });
+    expect(parseModelFamily('gemini-2.5-pro')).toEqual({ family: 'gemini-2.5-pro', version: [] });
+  });
+});
+
+describe('compareModelVersion', () => {
+  it('compares tuples lexicographically', () => {
+    expect(compareModelVersion([5], [4, 6])).toBeGreaterThan(0);
+    expect(compareModelVersion([4, 6], [5])).toBeLessThan(0);
+    expect(compareModelVersion([4, 7], [4, 8])).toBeLessThan(0);
+    expect(compareModelVersion([4, 8], [4, 8])).toBe(0);
+  });
+
+  it('treats a missing element as lower than any present element', () => {
+    expect(compareModelVersion([4], [4, 8])).toBeLessThan(0);
+    expect(compareModelVersion([4, 8], [4])).toBeGreaterThan(0);
   });
 });

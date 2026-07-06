@@ -57,6 +57,49 @@ export function parseModelId(id: string): ParsedModelId {
   return { id, baseId: remainder, isOneMillionVariant, datedSnapshot };
 }
 
+export interface ParsedModelFamily {
+  /** The base id with its trailing numeric version run removed. */
+  family: string;
+  /** The trailing numeric version segments, e.g. `claude-opus-4-8` -> `[4, 8]`. Empty when the
+   *  base id has no trailing numeric run (a floating alias like `claude-opus` or `opus`). */
+  version: number[];
+}
+
+/**
+ * Split a `baseId` into a family (everything before the trailing run of
+ * pure-integer `-`-separated segments) and that run as a numeric version
+ * tuple. A base id with no trailing numeric segment (a floating alias that
+ * always tracks "latest", a non-Claude id with a non-numeric tail, or a legacy
+ * Claude id whose version is embedded BEFORE the name like `claude-3-5-sonnet`)
+ * gets an empty version tuple and is never treated as superseded. Demotion
+ * therefore only applies to the current trailing-version scheme
+ * (`claude-opus-4-7` vs `claude-opus-4-8`), which every shipping model uses.
+ */
+export function parseModelFamily(baseId: string): ParsedModelFamily {
+  const segments = baseId.split('-');
+  let splitIndex = segments.length;
+  while (splitIndex > 0 && /^\d+$/.test(segments[splitIndex - 1])) {
+    splitIndex -= 1;
+  }
+  const version = segments.slice(splitIndex).map(Number);
+  const family = segments.slice(0, splitIndex).join('-');
+  return { family, version };
+}
+
+/**
+ * Lexicographically compare two version tuples. A missing element counts as
+ * lower than any present element, so `[4]` < `[4, 8]` and `[5]` > `[4, 6]`.
+ */
+export function compareModelVersion(first: number[], second: number[]): number {
+  const length = Math.max(first.length, second.length);
+  for (let index = 0; index < length; index += 1) {
+    const firstComponent = first[index] ?? -1;
+    const secondComponent = second[index] ?? -1;
+    if (firstComponent !== secondComponent) return firstComponent - secondComponent;
+  }
+  return 0;
+}
+
 export interface ModelDisplayGroup {
   /** Exact string selected by activating the group's primary row. */
   primaryId: string;
@@ -66,6 +109,9 @@ export interface ModelDisplayGroup {
   primaryIsOneMillion: boolean;
   /** Exact dated-pin strings demoted under this group, newest first. */
   pinnedBuildIds: string[];
+  /** True when a newer generation of this family exists (e.g. this is Opus 4.7 and Opus 4.8 is
+   *  also present). A floating alias with no numeric version is never superseded. */
+  isSuperseded: boolean;
 }
 
 /**
@@ -87,8 +133,8 @@ export function groupModelIds(ids: string[]): ModelDisplayGroup[] {
     }
   }
 
-  const groups: ModelDisplayGroup[] = [];
-  for (const members of membersByBase.values()) {
+  const groups: (ModelDisplayGroup & { baseId: string })[] = [];
+  for (const [baseId, members] of membersByBase.entries()) {
     const bareAlias = members.find(
       (member) => !member.isOneMillionVariant && member.datedSnapshot === null,
     );
@@ -115,8 +161,49 @@ export function groupModelIds(ids: string[]): ModelDisplayGroup[] {
       pinnedBuildIds: datedMembers
         .filter((member) => member.id !== primary.id)
         .map((member) => member.id),
+      isSuperseded: false,
+      baseId,
     });
   }
 
-  return groups.sort((first, second) => first.primaryId.localeCompare(second.primaryId));
+  // A family with a version tuple tracks generations (e.g. `claude-opus`
+  // 4-7/4-8); demote every member below the family's max version. A family
+  // whose version tuple is empty (a floating alias, or a non-Claude id with a
+  // non-numeric tail) never supersedes anything - grouping by baseId already
+  // gave it its own group, and there is no newer form to defer to.
+  const groupsByFamily = new Map<string, (ModelDisplayGroup & { baseId: string })[]>();
+  for (const group of groups) {
+    const { family, version } = parseModelFamily(group.baseId);
+    if (version.length === 0) continue;
+    const familyGroups = groupsByFamily.get(family);
+    if (familyGroups) {
+      familyGroups.push(group);
+    } else {
+      groupsByFamily.set(family, [group]);
+    }
+  }
+  for (const familyGroups of groupsByFamily.values()) {
+    if (familyGroups.length < 2) continue;
+    const maxVersion = familyGroups.reduce(
+      (max, group) => {
+        const { version } = parseModelFamily(group.baseId);
+        return compareModelVersion(version, max) > 0 ? version : max;
+      },
+      parseModelFamily(familyGroups[0].baseId).version,
+    );
+    for (const group of familyGroups) {
+      const { version } = parseModelFamily(group.baseId);
+      group.isSuperseded = compareModelVersion(version, maxVersion) < 0;
+    }
+  }
+
+  return groups
+    .map((group) => ({
+      primaryId: group.primaryId,
+      oneMillionId: group.oneMillionId,
+      primaryIsOneMillion: group.primaryIsOneMillion,
+      pinnedBuildIds: group.pinnedBuildIds,
+      isSuperseded: group.isSuperseded,
+    }))
+    .sort((first, second) => first.primaryId.localeCompare(second.primaryId));
 }

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronDown, X } from 'lucide-react';
-import { groupModelIds } from '../../../shared/model-id';
-import { modelContextBadgeLabel } from '../../utils/format-tokens';
+import { groupModelIds, type ModelDisplayGroup } from '../../../shared/model-id';
+import { modelContextBadgeLabel, modelRowLabel } from '../../utils/format-tokens';
 
 interface ModelComboboxProps {
   value: string;
@@ -20,12 +20,21 @@ interface ModelComboboxProps {
    *  on rows that have no selectable `[1m]` variant chip. Absent entries render
    *  no badge (the window is discovered from telemetry, never hardcoded). */
   contextWindows?: Record<string, number>;
+  /** Friendly display name per model id, from `useModelDisplayNames`. A row
+   *  without an entry falls back to its raw id (see `modelRowLabel`). */
+  modelDisplayNames?: Record<string, string>;
 }
 
-// Vertically-navigable suggestion buttons: model options plus the pinned
-// builds toggle. 1M chips sit outside the vertical order and are reached
-// with ArrowRight/ArrowLeft inside their row.
+// Vertically-navigable suggestion buttons: model options plus the older-versions
+// toggle. 1M chips sit outside the vertical order and are reached with
+// ArrowRight/ArrowLeft inside their row.
 const NAVIGABLE_SELECTOR = '[data-model-option], [data-model-pinned-toggle]';
+
+/** A row demoted to the "Older versions" section: either a whole superseded
+ *  generation (keeps its 1M chip / context badge) or a bare dated pin. Both
+ *  are sorted together by their selectable id, so a superseded alias renders
+ *  directly above its own dated pins and families stay clustered. */
+type DemotedRow = { kind: 'group'; group: ModelDisplayGroup; sortId: string } | { kind: 'pin'; id: string; sortId: string };
 
 export function ModelCombobox({
   value,
@@ -36,6 +45,7 @@ export function ModelCombobox({
   testId = 'model-combobox',
   onOpen,
   contextWindows = {},
+  modelDisplayNames = {},
 }: ModelComboboxProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [filterText, setFilterText] = useState('');
@@ -46,30 +56,76 @@ export function ModelCombobox({
   const displayValue = value || '';
   const searchQuery = filterText.toLowerCase();
 
-  // One row per base model: [1m] variants collapse onto their base row as a
-  // 1M chip and dated pins are demoted to the bottom section. Every selectable
-  // value stays the exact discovered string (it is the spawn value).
+  // One row per base model: [1m] variants collapse onto their base row as a 1M
+  // chip, dated pins are demoted to the bottom section, and a superseded
+  // generation (an older Opus/Sonnet/Haiku version whose family has a newer
+  // one) is demoted alongside them. Every selectable value stays the exact
+  // discovered string (it is the spawn value).
   const modelGroups = useMemo(() => groupModelIds(availableModels), [availableModels]);
+  const latestGroups = useMemo(() => modelGroups.filter((group) => !group.isSuperseded), [modelGroups]);
+  const supersededGroups = useMemo(() => modelGroups.filter((group) => group.isSuperseded), [modelGroups]);
 
-  const matchesQuery = (model: string) => model.toLowerCase().includes(searchQuery);
-  const filteredGroups = modelGroups.filter(
-    (group) =>
-      matchesQuery(group.primaryId) ||
-      (group.oneMillionId !== null && matchesQuery(group.oneMillionId)),
+  const matchesQuery = (model: string) =>
+    model.toLowerCase().includes(searchQuery) ||
+    modelRowLabel(model, modelDisplayNames).toLowerCase().includes(searchQuery);
+  const groupMatches = (group: ModelDisplayGroup) =>
+    matchesQuery(group.primaryId) || (group.oneMillionId !== null && matchesQuery(group.oneMillionId));
+
+  const filteredGroups = latestGroups.filter(groupMatches);
+
+  const demotedRows: DemotedRow[] = useMemo(() => {
+    const rows: DemotedRow[] = supersededGroups.map((group) => ({
+      kind: 'group',
+      group,
+      sortId: group.primaryId,
+    }));
+    for (const group of modelGroups) {
+      for (const id of group.pinnedBuildIds) {
+        rows.push({ kind: 'pin', id, sortId: id });
+      }
+    }
+    return rows.sort((first, second) => first.sortId.localeCompare(second.sortId));
+  }, [modelGroups, supersededGroups]);
+
+  const filteredDemotedRows = demotedRows.filter((row) =>
+    row.kind === 'group' ? groupMatches(row.group) : matchesQuery(row.id),
   );
-  const filteredPinned = modelGroups
-    .flatMap((group) => group.pinnedBuildIds)
-    .filter((model) => searchQuery.length === 0 || matchesQuery(model));
-  // When the query only matches pinned builds (e.g. typing a date), surface
-  // them even though the section is collapsed by default.
+
+  // When the query only matches demoted rows (e.g. typing an older version or
+  // a pin's date), surface them even though the section is collapsed by
+  // default. The toggle is hidden in this state (it cannot collapse a
+  // force-open section).
   const autoExpandPinned =
-    searchQuery.length > 0 && filteredGroups.length === 0 && filteredPinned.length > 0;
+    searchQuery.length > 0 && filteredGroups.length === 0 && filteredDemotedRows.length > 0;
   const showPinnedExpanded = pinnedExpanded || autoExpandPinned;
 
   const showSuggestions = isOpen && availableModels.length > 0;
 
+  // Ids selectable from within the demoted section, so a task/column already
+  // set to a superseded generation or a dated pin opens with the section
+  // expanded instead of hiding the current selection behind a collapsed toggle.
+  const demotedSelectableIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const group of supersededGroups) {
+      ids.add(group.primaryId);
+      if (group.oneMillionId !== null) ids.add(group.oneMillionId);
+    }
+    for (const group of modelGroups) {
+      for (const id of group.pinnedBuildIds) ids.add(id);
+    }
+    return ids;
+  }, [modelGroups, supersededGroups]);
+
   useEffect(() => {
-    if (!isOpen) setPinnedExpanded(false);
+    if (!isOpen) {
+      setPinnedExpanded(false);
+      return;
+    }
+    if (value && demotedSelectableIds.has(value)) setPinnedExpanded(true);
+    // Seed the expanded state only on the open transition (reading value and
+    // demotedSelectableIds fresh from this render's closure); re-running on
+    // every keystroke while open would fight a manual collapse.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
   }, [isOpen]);
 
   useEffect(() => {
@@ -193,6 +249,56 @@ export function ModelCombobox({
     }
   };
 
+  // Shared row markup for a full model group (primary button + optional
+  // context badge + optional 1M chip), reused for the top-level list and for
+  // a superseded generation demoted into "Older versions" (`indent` matches
+  // it visually to the plain dated-pin rows in that same section).
+  const renderGroupRow = (group: ModelDisplayGroup, indent: boolean) => {
+    const oneMillionId = group.oneMillionId;
+    // Right-aligned context-size badge (1M / 200K). See modelContextBadgeLabel:
+    // a `[1m]`-only row badges "1M" from its id alone, a row with a selectable
+    // `[1m]` chip is suppressed, and everything else uses the
+    // telemetry-learned window (absent -> none).
+    const contextLabel = modelContextBadgeLabel(group, contextWindows);
+    return (
+      <div key={group.primaryId} data-model-row className="flex items-center">
+        <button
+          type="button"
+          data-model-option
+          onClick={() => handleSelectModel(group.primaryId)}
+          onKeyDown={handleOptionKeyDown}
+          title={group.primaryId}
+          className={`flex-1 min-w-0 text-left py-1.5 text-sm hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate ${
+            indent ? 'pl-7 pr-3 text-fg-muted' : 'px-3 text-fg'
+          }`}
+        >
+          {modelRowLabel(group.primaryId, modelDisplayNames)}
+        </button>
+        {contextLabel && (
+          <span
+            data-model-context-window
+            title={`${contextLabel} context window`}
+            className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-faint flex-shrink-0"
+          >
+            {contextLabel}
+          </span>
+        )}
+        {oneMillionId !== null && (
+          <button
+            type="button"
+            data-model-1m
+            onClick={() => handleSelectModel(oneMillionId)}
+            onKeyDown={handleChipKeyDown}
+            title={oneMillionId}
+            className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-muted hover:text-fg hover:border-fg-faint focus:outline focus:outline-1 focus:outline-fg-faint transition-colors flex-shrink-0"
+          >
+            1M
+          </button>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div ref={containerRef} className={`relative ${className}`}>
       <div className="flex items-center gap-0 border border-edge-input rounded bg-surface">
@@ -236,53 +342,12 @@ export function ModelCombobox({
 
       {showSuggestions && (
         <div className="absolute top-full left-0 right-0 mt-1 bg-surface-raised border border-edge rounded shadow-lg z-50 max-h-48 overflow-y-auto">
-          {filteredGroups.length > 0 || filteredPinned.length > 0 ? (
+          {filteredGroups.length > 0 || filteredDemotedRows.length > 0 ? (
             <div className="py-1">
-              {filteredGroups.map((group) => {
-                const oneMillionId = group.oneMillionId;
-                // Right-aligned context-size badge (1M / 200K). See
-                // modelContextBadgeLabel: a `[1m]`-only row badges "1M" from its id
-                // alone, a row with a selectable `[1m]` chip is suppressed, and
-                // everything else uses the telemetry-learned window (absent -> none).
-                const contextLabel = modelContextBadgeLabel(group, contextWindows);
-                return (
-                  <div key={group.primaryId} data-model-row className="flex items-center">
-                    <button
-                      type="button"
-                      data-model-option
-                      onClick={() => handleSelectModel(group.primaryId)}
-                      onKeyDown={handleOptionKeyDown}
-                      className="flex-1 min-w-0 text-left px-3 py-1.5 text-sm text-fg hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate"
-                    >
-                      {group.primaryId}
-                    </button>
-                    {contextLabel && (
-                      <span
-                        data-model-context-window
-                        title={`${contextLabel} context window`}
-                        className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-faint flex-shrink-0"
-                      >
-                        {contextLabel}
-                      </span>
-                    )}
-                    {oneMillionId !== null && (
-                      <button
-                        type="button"
-                        data-model-1m
-                        onClick={() => handleSelectModel(oneMillionId)}
-                        onKeyDown={handleChipKeyDown}
-                        title={oneMillionId}
-                        className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-muted hover:text-fg hover:border-fg-faint focus:outline focus:outline-1 focus:outline-fg-faint transition-colors flex-shrink-0"
-                      >
-                        1M
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-              {filteredPinned.length > 0 && (
+              {filteredGroups.map((group) => renderGroupRow(group, false))}
+              {filteredDemotedRows.length > 0 && (
                 <div className="border-t border-edge mt-1 pt-1">
-                  {/* During auto-expand (a query that matches only pinned builds)
+                  {/* During auto-expand (a query that matches only demoted rows)
                       the section is forced open, so the toggle cannot collapse
                       anything: hide the dead control rather than render it inert. */}
                   {!autoExpandPinned && (
@@ -297,23 +362,28 @@ export function ModelCombobox({
                         size={12}
                         className={`transition-transform ${showPinnedExpanded ? '' : '-rotate-90'}`}
                       />
-                      Pinned builds ({filteredPinned.length})
+                      Older versions ({filteredDemotedRows.length})
                     </button>
                   )}
                   {showPinnedExpanded &&
-                    filteredPinned.map((model) => (
-                      <button
-                        key={model}
-                        type="button"
-                        data-model-option
-                        data-model-pinned-option
-                        onClick={() => handleSelectModel(model)}
-                        onKeyDown={handleOptionKeyDown}
-                        className="w-full text-left pl-7 pr-3 py-1.5 text-sm text-fg-muted hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate"
-                      >
-                        {model}
-                      </button>
-                    ))}
+                    filteredDemotedRows.map((row) =>
+                      row.kind === 'group' ? (
+                        renderGroupRow(row.group, true)
+                      ) : (
+                        <button
+                          key={row.id}
+                          type="button"
+                          data-model-option
+                          data-model-pinned-option
+                          onClick={() => handleSelectModel(row.id)}
+                          onKeyDown={handleOptionKeyDown}
+                          title={row.id}
+                          className="w-full text-left pl-7 pr-3 py-1.5 text-sm text-fg-muted hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate"
+                        >
+                          {modelRowLabel(row.id, modelDisplayNames)}
+                        </button>
+                      ),
+                    )}
                 </div>
               )}
             </div>

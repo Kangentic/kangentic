@@ -75,3 +75,17 @@ export function configuredModelFromClaudeCommand(
   const displayName = humanizeClaudeModelId(id);
   return displayName ? { id, displayName } : null;
 }
+
+/**
+ * Build the `AgentCapabilities.modelDisplayNames` map for a discovered model
+ * list: humanize each id, dropping any id that produces no meaningful label
+ * (the renderer falls back to the raw id for those).
+ */
+export function buildModelDisplayNames(models: string[]): Record<string, string> {
+  const displayNames: Record<string, string> = {};
+  for (const id of models) {
+    const displayName = humanizeClaudeModelId(id);
+    if (displayName) displayNames[id] = displayName;
+  }
+  return displayNames;
+}

@@ -2,7 +2,13 @@
  * Unit tests for the token/context-window display formatters.
  */
 import { describe, it, expect } from 'vitest';
-import { formatTokenCount, formatContextWindow, isContextWindowTrusted, modelContextBadgeLabel } from '../../src/renderer/utils/format-tokens';
+import {
+  formatTokenCount,
+  formatContextWindow,
+  isContextWindowTrusted,
+  modelContextBadgeLabel,
+  modelRowLabel,
+} from '../../src/renderer/utils/format-tokens';
 import { groupModelIds } from '../../src/shared/model-id';
 
 describe('formatTokenCount', () => {
@@ -82,5 +88,25 @@ describe('modelContextBadgeLabel', () => {
   it('renders no badge for a bare-alias-only row with no telemetry yet', () => {
     const [group] = groupModelIds(['claude-opus-4-8']);
     expect(modelContextBadgeLabel(group, {})).toBeNull();
+  });
+});
+
+describe('modelRowLabel', () => {
+  it('uses the agent-provided display name when known', () => {
+    expect(modelRowLabel('claude-opus-4-8', { 'claude-opus-4-8': 'Opus 4.8' })).toBe('Opus 4.8');
+  });
+
+  it('falls back to the raw id when no display name is known', () => {
+    expect(modelRowLabel('claude-opus-4-8', {})).toBe('claude-opus-4-8');
+  });
+
+  it('appends the formatted date for a dated pin, even when a display name is known', () => {
+    expect(
+      modelRowLabel('claude-opus-4-7-20251022', { 'claude-opus-4-7-20251022': 'Opus 4.7' }),
+    ).toBe('Opus 4.7 · 2025-10-22');
+  });
+
+  it('does not duplicate the date when falling back to the raw id (it already carries the date)', () => {
+    expect(modelRowLabel('claude-opus-4-7-20251022', {})).toBe('claude-opus-4-7-20251022');
   });
 });

@@ -3,6 +3,7 @@ import {
   parseModelFromClaudeCommand,
   humanizeClaudeModelId,
   configuredModelFromClaudeCommand,
+  buildModelDisplayNames,
 } from '../../src/main/agent/adapters/claude/model-display-name';
 import { CommandBuilder } from '../../src/main/agent/adapters/claude';
 
@@ -78,6 +79,24 @@ describe('configuredModelFromClaudeCommand', () => {
 
   it('returns null when no model is present', () => {
     expect(configuredModelFromClaudeCommand('claude --resume abc')).toBeNull();
+  });
+});
+
+describe('buildModelDisplayNames', () => {
+  it('maps every discovered id to its humanized label', () => {
+    expect(buildModelDisplayNames(['claude-opus-4-7', 'claude-opus-4-8', 'claude-fable-5'])).toEqual({
+      'claude-opus-4-7': 'Opus 4.7',
+      'claude-opus-4-8': 'Opus 4.8',
+      'claude-fable-5': 'Fable 5',
+    });
+  });
+
+  it('omits an id that humanizes to nothing meaningful', () => {
+    expect(buildModelDisplayNames(['20251001'])).toEqual({});
+  });
+
+  it('returns an empty map for an empty list', () => {
+    expect(buildModelDisplayNames([])).toEqual({});
   });
 });
 

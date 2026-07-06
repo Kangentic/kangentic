@@ -3,6 +3,7 @@ import path from 'node:path';
 import { execFile, exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { getCachedModelPickerModels, probeModelPickerModels } from './model-picker-probe';
+import { buildModelDisplayNames } from './model-display-name';
 import {
   listMostRecentDirs,
   listMostRecentFiles,
@@ -223,7 +224,10 @@ export async function discoverClaudeCapabilities(
   const capabilities = await discoverClaudeStaticCapabilities(cliPath);
   if (capabilities.supportsModelOverride) {
     const models = await rescanClaudeModels(cliPath, forceRefresh);
-    if (models) capabilities.models = models;
+    if (models) {
+      capabilities.models = models;
+      capabilities.modelDisplayNames = buildModelDisplayNames(models);
+    }
   }
   return capabilities;
 }

@@ -56,6 +56,28 @@ export function modelContextBadgeLabel(
 }
 
 /**
+ * Format a `YYYYMMDD` dated-snapshot capture as `YYYY-MM-DD` for display.
+ */
+function formatDatedSnapshot(datedSnapshot: string): string {
+  return `${datedSnapshot.slice(0, 4)}-${datedSnapshot.slice(4, 6)}-${datedSnapshot.slice(6, 8)}`;
+}
+
+/**
+ * The friendly row label for a model id: the agent-provided display name when
+ * known, else the raw id (never invented in the renderer - see
+ * `.claude/rules/agent-adapters-boundary.md`). A dated pin whose display name
+ * was substituted gets its date appended (the humanizer drops it, so a bare
+ * alias and its pins would otherwise share one label); a raw-id fallback
+ * already carries its own date verbatim, so nothing is appended there.
+ */
+export function modelRowLabel(id: string, displayNames: Record<string, string>): string {
+  const displayName = displayNames[id];
+  if (!displayName) return id;
+  const { datedSnapshot } = parseModelId(id);
+  return datedSnapshot ? `${displayName} · ${formatDatedSnapshot(datedSnapshot)}` : displayName;
+}
+
+/**
  * A context-window pairing is trustworthy only when the reported window size is
  * positive (0 is the "unknown size" sentinel) AND the used-token count fits
  * within it (usedTokens > window is physically impossible, so the window is
