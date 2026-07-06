@@ -203,7 +203,6 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `text-formatting.md` - no em-dashes (U+2014) or `--` as punctuation in authored text.
 - `typescript-style.md` - TypeScript strict mode; no `any` types; full descriptive names.
 - `no-personal-info.md` - no usernames, emails, or machine paths in committed code (repo is public).
-- `no-superpowers-docs.md` - never commit Superpowers scratch or process docs (plans, specs, briefs); they are gitignored.
 
 **Path-scoped rules (load with their subsystem):**
 - `task-lifecycle-lock.md` - wrap per-task async mutation in `withTaskLock` (`src/main/ipc/`).
@@ -257,7 +256,7 @@ ones (e.g. `board-config-parity.md`):
 2. **Decide loading, and keep always-on rules few.** Always-on rules (no frontmatter) load every
    session and cost context every session, so reserve them for universal, file-independent
    conventions (tool use, house style, security). Everything subsystem-specific gets `paths:`
-   frontmatter so it loads only when a matching file enters context. We run ~5 always-on; treat
+   frontmatter so it loads only when a matching file enters context. We run ~4 always-on; treat
    that as a soft ceiling.
 3. **Mind the read-trigger gap.** A path-scoped rule loads when a matching file is *read into
    context*, not when Claude *creates* a new file in that path. So (a) any convention that must
