@@ -67,6 +67,10 @@ export interface CoreSessionSlice {
    *  project has loaded and forwards it to `setConversationSessionId`. Mirrors
    *  `_pendingOpenTaskId`. */
   _pendingOpenConversation: string | null;
+  /** Cross-project handoff companion to `_pendingOpenConversation`: the turn to
+   *  scroll to once the destination project has loaded. Kept separate because the
+   *  project switch resets `scrollToTurnUuid`, which would otherwise drop it. */
+  _pendingScrollToTurnUuid: string | null;
   sessionUsage: Record<string, SessionUsage>;
   /**
    * Shared account-wide rate-limit snapshot. Rate limits are an account-wide
@@ -144,6 +148,7 @@ export interface CoreSessionSlice {
   setConversationSessionId: (id: string | null) => void;
   setScrollToTurnUuid: (uuid: string | null) => void;
   setPendingOpenConversation: (id: string | null) => void;
+  setPendingScrollToTurnUuid: (uuid: string | null) => void;
   upsertSession: (session: Session) => void;
   updateSessionStatus: (id: string, updates: Partial<Session>) => void;
   updateUsage: (sessionId: string, data: SessionUsage) => void;

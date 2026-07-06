@@ -24,6 +24,9 @@ function semanticPlatformNote(status: MemoryStatus | null): string | null {
       ? `Vector search is unavailable - showing keyword matches. (${status.vecError})`
       : 'Vector search is unavailable on this platform - showing keyword matches.';
   }
+  if (status.semantic === 'error') {
+    return 'Semantic search failed to start - showing keyword matches.';
+  }
   return null;
 }
 

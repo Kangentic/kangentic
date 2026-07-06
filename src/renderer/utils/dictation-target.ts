@@ -38,12 +38,16 @@ function isRunningSession(sessionId: string | null): sessionId is string {
     .sessions.some((session) => session.id === sessionId && session.status === 'running');
 }
 
-/** The session id owned by a window layer's currently focused window, if any. */
+/** The session id owned by a window layer's currently focused window, if any.
+ *  Conversation windows are read-only transcript viewers with no input surface,
+ *  so their anchored session id must never become a dictation injection target. */
 function focusedWindowSessionId(manager: typeof boardWindowManager): string | null {
   const state = manager.store.getState();
   const focusedId = state.focusedWindowId;
   if (!focusedId) return null;
-  return state.windows[focusedId]?.sessionId ?? null;
+  const focusedWindow = state.windows[focusedId];
+  if (!focusedWindow || focusedWindow.kind === 'conversation') return null;
+  return focusedWindow.sessionId ?? null;
 }
 
 /**

@@ -212,15 +212,19 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
         // Otherwise open the read-only conversation viewer. Scroll-to-turn is a
         // one-shot consumed by the viewer; set it before the (possibly async)
         // project switch so it is armed when the window mounts.
-        sessionStore.setScrollToTurnUuid(hit.turnUuid);
         if (isCrossProject) {
+          // The project switch resets `scrollToTurnUuid`, so hand it off via a
+          // pending signal alongside the session id (mirrors _pendingOpenConversation);
+          // `useProjectSwitchEffect` re-arms both once the destination loads.
           sessionStore.setPendingOpenConversation(hit.sessionId);
+          sessionStore.setPendingScrollToTurnUuid(hit.turnUuid);
           if (!(await switchProjectIfNeeded())) {
             sessionStore.setPendingOpenConversation(null);
-            sessionStore.setScrollToTurnUuid(null);
+            sessionStore.setPendingScrollToTurnUuid(null);
             return;
           }
         } else {
+          sessionStore.setScrollToTurnUuid(hit.turnUuid);
           sessionStore.setConversationSessionId(hit.sessionId);
         }
         break;
@@ -563,7 +567,8 @@ function ResultRowHeader({ hit }: { hit: SearchHit }) {
           </span>
         </div>
       );
-    case 'conversation':
+    case 'conversation': {
+      const turnLabel = turnKindLabel(hit.turnKind);
       return (
         <div className="flex items-center gap-2 text-xs">
           <MessageSquare size={12} className="flex-shrink-0 text-fg-muted" />
@@ -585,9 +590,9 @@ function ResultRowHeader({ hit }: { hit: SearchHit }) {
           {/* Who spoke in the matched turn. 'Agent' is redundant with the
               snippet's "Assistant:" prefix, so only surface the non-obvious
               roles (You / Tool / System). */}
-          {turnKindLabel(hit.turnKind) !== 'Agent' && (
+          {turnLabel !== 'Agent' && (
             <span className="ml-1 flex-shrink-0 text-[11px] text-fg-muted bg-surface-hover/60 rounded px-1.5 py-0.5">
-              {turnKindLabel(hit.turnKind)}
+              {turnLabel}
             </span>
           )}
           {/* Results are collapsed to one row per conversation; show how many
@@ -623,6 +628,7 @@ function ResultRowHeader({ hit }: { hit: SearchHit }) {
           )}
         </div>
       );
+    }
     case 'project':
       return (
         <div className="flex items-center gap-2 text-xs">

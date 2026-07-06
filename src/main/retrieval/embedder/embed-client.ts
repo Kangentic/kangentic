@@ -72,6 +72,9 @@ export class EmbedClient implements Embedder {
   private disposed = false;
   private idleTimer: NodeJS.Timeout | null = null;
   private currentActiveDevice: string | null = null;
+  /** True while an intentional teardown (idle recycle or dispose) is in flight,
+   *  so the resulting 'exit' is not miscounted as a crash. */
+  private intentionalShutdown = false;
 
   get crashed(): boolean {
     return this.crashCount >= MAX_CRASHES;
@@ -201,7 +204,9 @@ export class EmbedClient implements Embedder {
       entry.resolve(null);
     }
     this.pending.clear();
-    if (!this.disposed) this.crashCount += 1;
+    // An idle recycle or dispose is not a crash; only an unexpected exit counts.
+    if (!this.disposed && !this.intentionalShutdown) this.crashCount += 1;
+    this.intentionalShutdown = false;
   }
 
   private armIdleShutdown(): void {
@@ -221,6 +226,7 @@ export class EmbedClient implements Embedder {
   }
 
   private killChild(): void {
+    this.intentionalShutdown = true;
     const child = this.child;
     this.child = null;
     this.readyPromise = null;

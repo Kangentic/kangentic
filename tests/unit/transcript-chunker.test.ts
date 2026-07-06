@@ -105,6 +105,38 @@ describe('chunkTranscript - shape contract', () => {
   });
 });
 
+describe('chunkTranscript - pre-flush guard', () => {
+  it('flushes before folding in a fragment that would push the already-past-MIN accumulator over MAX', () => {
+    // u1 renders to ~202 tokens ("User: " + 800 chars): strictly between
+    // MIN(60) and TARGET(400), so it neither trailing-merges nor eager-flushes
+    // on its own. u2 renders to ~352 tokens on its own ("User: " + 1400
+    // chars), under MAX(480) so the oversize splitter never explodes it - but
+    // folding it into the still-open accumulator would land at ~554 tokens,
+    // over MAX. The pre-flush guard must flush u1's chunk BEFORE accepting u2,
+    // instead of merging both into one oversize chunk.
+    const entries = [
+      userEntry('u1', 'A'.repeat(800)),
+      userEntry('u2', 'B'.repeat(1400)),
+    ];
+    const chunks = chunkTranscript(entries);
+
+    expect(chunks.length).toBe(2);
+    for (const chunk of chunks) {
+      expect(chunk.tokenEstimate).toBeLessThanOrEqual(MAX_TOKENS);
+    }
+    // The boundary lands cleanly between the two turns: u1 alone in the first
+    // chunk, u2 alone in the second - never merged into one oversize chunk.
+    expect(chunks[0].turnUuidStart).toBe('u1');
+    expect(chunks[0].turnUuidEnd).toBe('u1');
+    expect(chunks[0].text).toContain('A'.repeat(20));
+    expect(chunks[0].text).not.toContain('B');
+    expect(chunks[1].turnUuidStart).toBe('u2');
+    expect(chunks[1].turnUuidEnd).toBe('u2');
+    expect(chunks[1].text).toContain('B'.repeat(20));
+    expect(chunks[1].text).not.toContain('A');
+  });
+});
+
 describe('chunkTranscript - roles', () => {
   it('labels a single-role chunk with that role', () => {
     const chunks = chunkTranscript([userEntry('u1', 'A'.repeat(1600))]);

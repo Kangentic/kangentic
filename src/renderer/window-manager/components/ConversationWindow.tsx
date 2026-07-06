@@ -147,9 +147,16 @@ export function ConversationWindow({
 
   const handleCopyMarkdown = useCallback(() => {
     if (!response) return;
-    navigator.clipboard.writeText(transcriptToMarkdown(response.entries));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    // Only flip to "copied" once the write actually resolves; a rejected write
+    // (unfocused document / denied permission) must not falsely signal success
+    // or surface as an unhandled rejection.
+    void navigator.clipboard
+      .writeText(transcriptToMarkdown(response.entries))
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => undefined);
   }, [response]);
 
   const handleOpenTask = useCallback(() => {

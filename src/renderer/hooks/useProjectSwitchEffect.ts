@@ -197,7 +197,14 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         // Open the conversation viewer if a cross-project search hit queued one.
         const pendingConversation = useSessionStore.getState()._pendingOpenConversation;
         if (pendingConversation) {
+          const pendingScrollToTurnUuid = useSessionStore.getState()._pendingScrollToTurnUuid;
           useSessionStore.getState().setPendingOpenConversation(null);
+          useSessionStore.getState().setPendingScrollToTurnUuid(null);
+          // Arm the scroll target before the session id so it is set when the
+          // conversation window mounts and consumes it.
+          if (pendingScrollToTurnUuid) {
+            useSessionStore.getState().setScrollToTurnUuid(pendingScrollToTurnUuid);
+          }
           useSessionStore.getState().setConversationSessionId(pendingConversation);
         }
 
@@ -289,7 +296,14 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           // Open the conversation viewer if a cross-project search hit queued one.
           const pendingConversation = useSessionStore.getState()._pendingOpenConversation;
           if (pendingConversation) {
+            const pendingScrollToTurnUuid = useSessionStore.getState()._pendingScrollToTurnUuid;
             useSessionStore.getState().setPendingOpenConversation(null);
+            useSessionStore.getState().setPendingScrollToTurnUuid(null);
+            // Arm the scroll target before the session id so it is set when the
+            // conversation window mounts and consumes it.
+            if (pendingScrollToTurnUuid) {
+              useSessionStore.getState().setScrollToTurnUuid(pendingScrollToTurnUuid);
+            }
             useSessionStore.getState().setConversationSessionId(pendingConversation);
           }
 

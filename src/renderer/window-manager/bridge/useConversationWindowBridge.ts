@@ -30,6 +30,11 @@ export function useConversationWindowBridge(): void {
   // windows (task-detail or other conversations) are left untouched.
   useEffect(() => {
     if (!conversationSessionId) {
+      // Signal cleared (e.g. a project switch nulls it): close the window we
+      // opened so it does not linger as an untracked ghost on the new project
+      // (where its session id resolves to an empty transcript).
+      const previousWindowId = conversationWindowIdRef.current;
+      if (previousWindowId) useWindowStore.getState().closeWindow(previousWindowId);
       conversationWindowIdRef.current = null;
       return;
     }

@@ -13,6 +13,4 @@ export {
   type EmbeddingTier,
 } from '../../../shared/embedding-models';
 
-/** Subdirectory under the model cache that becomes transformers.js localModelPath. */
-export const EMBEDDING_MODEL_SUBDIR = 'embeddings';
 export const EMBEDDING_MAX_BATCH = 16;

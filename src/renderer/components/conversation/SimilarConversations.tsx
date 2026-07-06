@@ -3,6 +3,7 @@ import { MessageSquare, ChevronDown, ChevronRight } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
 import { formatRelativeTime } from '../../lib/datetime';
+import { CountBadge } from '../CountBadge';
 import type { SearchHit } from '../../../shared/types';
 
 type ConversationHit = Extract<SearchHit, { kind: 'conversation' }>;
@@ -67,7 +68,7 @@ export function SimilarConversations({ taskId }: SimilarConversationsProps) {
         {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
         <MessageSquare size={12} />
         Similar conversations
-        <span className="ml-1 normal-case font-normal text-fg-disabled">{hits.length}</span>
+        <CountBadge count={hits.length} variant="muted" size="sm" className="ml-1" />
       </button>
       {!collapsed && (
         <ul className="px-2 pb-3 space-y-0.5">

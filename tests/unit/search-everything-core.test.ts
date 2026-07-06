@@ -64,8 +64,13 @@ function makeMockDb(fixture: FakeProjectFixture): Database.Database {
  * and the per-chunk task-title / session-type hydration gets. Board tables are
  * empty so the only hits produced are conversation hits, isolating the new
  * `kind: 'conversation'` path.
+ *
+ * `liveSessionIds` scripts the liveness query the search core runs to compute
+ * `sessionActive` (`SELECT id FROM sessions WHERE status IN ('running',
+ * 'queued')`); defaults to none live, so `session-conv` is not live unless the
+ * caller opts it in.
  */
-function makeConversationMockDb(): Database.Database {
+function makeConversationMockDb(liveSessionIds: string[] = []): Database.Database {
   const lexicalRows = [{ id: 501, snip: 'a frobnicate hit…', score: -2.5 }];
   const chunkRow = {
     id: 501,
@@ -93,6 +98,9 @@ function makeConversationMockDb(): Database.Database {
         if (sql.includes('session_type, started_at FROM sessions')) return [];
         if (sql.includes('memory_chunks_fts') && sql.includes('MATCH')) return lexicalRows;
         if (sql.includes('FROM memory_chunks') && sql.includes('id IN')) return [chunkRow];
+        if (sql.includes('SELECT id FROM sessions') && sql.includes('status IN')) {
+          return liveSessionIds.map((id) => ({ id }));
+        }
         throw new Error(`unexpected all SQL: ${sql}`);
       }),
       get: vi.fn(() => {
@@ -467,6 +475,33 @@ describe('runSearchEverything', () => {
       expect(hit.snippet).toContain('frobnicate');
       // Phase-1 RRF score for a single lexical rank-1 hit: 1/(60+1).
       expect(hit.score).toBeCloseTo(1 / 61, 12);
+      // No live session was scripted, so the hit's session is not active.
+      expect(hit.sessionActive).toBe(false);
+    }
+  });
+
+  it('marks a conversation hit sessionActive when its session is running or queued', async () => {
+    // Same fixture as above, but this time the liveness query
+    // (`SELECT id FROM sessions WHERE status IN (...)`) reports session-conv
+    // as live. A hardcoded sessionActive constant (true or false) would fail
+    // one of this test and its sibling above.
+    const project = makeProject({ path: tempProjectRoot });
+    const db = makeConversationMockDb(['session-conv']);
+
+    const hits = await runSearchEverything({
+      query: 'frobnicate',
+      projects: [project],
+      includeProjectHits: false,
+      getDb: () => db,
+      conversationSearch: { enabled: true },
+    });
+
+    const conversationHits = hits.filter((hit) => hit.kind === 'conversation');
+    expect(conversationHits).toHaveLength(1);
+    const hit = conversationHits[0];
+    if (hit.kind === 'conversation') {
+      expect(hit.sessionId).toBe('session-conv');
+      expect(hit.sessionActive).toBe(true);
     }
   });
 

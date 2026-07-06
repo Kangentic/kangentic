@@ -1578,12 +1578,6 @@ export interface AppConfig {
   };
 
   /**
-   * Voice-to-text dictation. GLOBAL/shared scope (hardware/user level, not
-   * per-project): lives below the settings separator in the Dictation tab.
-   * The push-to-talk binding is NOT here; it lives in `hotkeyOverrides` keyed
-   * by the `dictation.pushToTalk` keybinding-registry id.
-   */
-  /**
    * Conversation memory: local index over agent conversation transcripts for
    * search and recall. GLOBAL/shared scope (below the settings separator, in
    * the Memory tab). Works offline with no API key.
@@ -1607,7 +1601,12 @@ export interface AppConfig {
     acceleration?: MemoryAcceleration;
   };
 
-
+  /**
+   * Voice-to-text dictation. GLOBAL/shared scope (hardware/user level, not
+   * per-project): lives below the settings separator in the Dictation tab.
+   * The push-to-talk binding is NOT here; it lives in `hotkeyOverrides` keyed
+   * by the `dictation.pushToTalk` keybinding-registry id.
+   */
   dictation?: {
     /** Master toggle: show the mic button and enable push-to-talk. Default false. */
     enabled?: boolean;
@@ -3481,7 +3480,7 @@ export interface ConversationSessionMeta {
   startedAt: string;
   exitedAt: string | null;
   isolatedSwimlaneId: string | null;
-  status: string;
+  status: SessionRecordStatus;
 }
 
 

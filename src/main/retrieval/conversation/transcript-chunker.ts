@@ -181,33 +181,37 @@ export function chunkTranscript(entries: TranscriptEntry[]): ChunkInput[] {
   }
 
   const chunks: ChunkInput[] = [];
-  let acc: Accumulator | null = null;
+  let accumulator: Accumulator | null = null;
   let seq = 0;
 
   const flush = (): void => {
-    if (!acc || acc.texts.length === 0) return;
-    const text = acc.texts.join('\n');
+    if (!accumulator || accumulator.texts.length === 0) return;
+    const text = accumulator.texts.join('\n');
     chunks.push({
       seq: seq++,
       text,
       contentHash: sha1(text),
       tokenEstimate: estimateTokens(text),
-      role: dominantRole(acc.roles),
-      tsStart: acc.tsStart,
-      tsEnd: acc.tsEnd,
-      turnUuidStart: acc.uuidStart,
-      turnUuidEnd: acc.uuidEnd,
+      role: dominantRole(accumulator.roles),
+      tsStart: accumulator.tsStart,
+      tsEnd: accumulator.tsEnd,
+      turnUuidStart: accumulator.uuidStart,
+      turnUuidEnd: accumulator.uuidEnd,
     });
-    acc = null;
+    accumulator = null;
   };
 
   for (const fragment of fragments) {
     const fragmentTokens = estimateTokens(fragment.text);
-    if (acc && acc.tokens + fragmentTokens > MAX_TOKENS && acc.tokens >= MIN_TOKENS) {
+    if (
+      accumulator &&
+      accumulator.tokens + fragmentTokens > MAX_TOKENS &&
+      accumulator.tokens >= MIN_TOKENS
+    ) {
       flush();
     }
-    if (!acc) {
-      acc = {
+    if (!accumulator) {
+      accumulator = {
         texts: [],
         roles: [],
         tsStart: fragment.ts,
@@ -217,13 +221,13 @@ export function chunkTranscript(entries: TranscriptEntry[]): ChunkInput[] {
         tokens: 0,
       };
     }
-    acc.texts.push(fragment.text);
-    acc.roles.push(fragment.role);
-    acc.tokens += fragmentTokens;
-    acc.tsEnd = fragment.ts;
-    acc.uuidEnd = fragment.uuid;
+    accumulator.texts.push(fragment.text);
+    accumulator.roles.push(fragment.role);
+    accumulator.tokens += fragmentTokens;
+    accumulator.tsEnd = fragment.ts;
+    accumulator.uuidEnd = fragment.uuid;
     // Flush eagerly once we're at/over the target to keep chunks near TARGET.
-    if (acc.tokens >= TARGET_TOKENS) flush();
+    if (accumulator.tokens >= TARGET_TOKENS) flush();
   }
   flush();
 

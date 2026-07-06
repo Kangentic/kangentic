@@ -214,6 +214,7 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   conversationSessionId: null,
   scrollToTurnUuid: null,
   _pendingOpenConversation: null,
+  _pendingScrollToTurnUuid: null,
   sessionUsage: {},
   latestRateLimits: null,
   sessionFirstOutput: {},
@@ -573,6 +574,7 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   setConversationSessionId: (id) => set({ conversationSessionId: id }),
   setScrollToTurnUuid: (uuid) => set({ scrollToTurnUuid: uuid }),
   setPendingOpenConversation: (id) => set({ _pendingOpenConversation: id }),
+  setPendingScrollToTurnUuid: (uuid) => set({ _pendingScrollToTurnUuid: uuid }),
 
   upsertSession: (session) => {
     set((state) => {

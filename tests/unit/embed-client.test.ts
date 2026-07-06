@@ -20,6 +20,9 @@ vi.mock('electron', () => ({
 import { EmbedClient, resolveDeviceChain } from '../../src/main/retrieval/embedder/embed-client';
 import type { EmbeddingModelDef } from '../../src/shared/embedding-models';
 
+// Mirrors the private IDLE_SHUTDOWN_MS in embed-client.ts.
+const IDLE_SHUTDOWN_MS = 5 * 60_000;
+
 const TEST_MODEL: EmbeddingModelDef = {
   id: 'test-model',
   tier: 'balanced',
@@ -211,6 +214,73 @@ describe('EmbedClient', () => {
     expect(client.activeDevice).toBeNull();
 
     await expect(promise).resolves.toBeNull();
+    client.dispose();
+  });
+
+  it('recycles the worker after an idle timeout without counting it as a crash, and stays usable across repeated cycles', async () => {
+    // Guards the `intentionalShutdown` flag: killChild() (armed by the idle
+    // timer) must not be miscounted by onWorkerExit() as an unexpected crash.
+    // Reverting that guard makes crashCount latch to MAX_CRASHES after exactly
+    // 3 idle recycles, which is exactly what this test would then catch.
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+
+      for (let cycle = 0; cycle < 4; cycle++) {
+        const promise = client.embed(['x']);
+        const child = lastChild();
+        child.emit('message', { type: 'ready' });
+        await vi.advanceTimersByTimeAsync(0);
+        child.emit('message', { type: 'result', id: cycle + 1, vectors: [new Float32Array([0.1])] });
+        await promise;
+
+        // The idle timer arms once the request settles (armIdleShutdown in
+        // embed()'s finally). Advancing past IDLE_SHUTDOWN_MS fires it, which
+        // calls killChild() and sets intentionalShutdown before the worker exits.
+        await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+        // The real utilityProcess emits 'exit' asynchronously after kill();
+        // the mock's kill() is a no-op, so simulate that exit explicitly.
+        child.emit('exit');
+      }
+
+      // Four idle recycles are intentional teardowns, never crashes - the
+      // layer must stay available (this is what keeps semantic search alive).
+      expect(client.crashed).toBe(false);
+      expect(mockFork).toHaveBeenCalledTimes(4);
+
+      // Confirm it is still genuinely usable: the next embed forks a fresh
+      // worker and completes normally.
+      const finalPromise = client.embed(['still-alive']);
+      const finalChild = lastChild();
+      finalChild.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      const vectors = [new Float32Array([0.9])];
+      finalChild.emit('message', { type: 'result', id: 5, vectors });
+      await expect(finalPromise).resolves.toBe(vectors);
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('degrades cleanly to null when the worker reports an init error before ready (no throw)', async () => {
+    // An init/model-load failure surfaces as an 'error' message with no `id`,
+    // before 'ready'. ensureReady()/embed() must degrade to null without
+    // throwing, and the failure must not be silently retried mid-flight.
+    const client = new EmbedClient(TEST_MODEL);
+    const promise = client.embed(['x']);
+    const child = lastChild();
+
+    child.emit('message', { type: 'error', message: 'model load failed' });
+
+    await expect(promise).resolves.toBeNull();
+
+    // The failed init is memoized on the same child + readyPromise; a second
+    // embed must still degrade to null without throwing or forking again.
+    await expect(client.embed(['again'])).resolves.toBeNull();
+    expect(mockFork).toHaveBeenCalledTimes(1);
+
     client.dispose();
   });
 });
