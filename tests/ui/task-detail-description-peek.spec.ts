@@ -2,10 +2,18 @@
  * UI tests for the description peek in the task detail header.
  *
  * Opens a dialog on a task with an active session and a description, toggles
- * the description strip on/off via the kebab menu item ("Show description" /
+ * the description peek on/off via the kebab menu item ("Show description" /
  * "Hide description") and the Mod+Shift+K hotkey, and confirms the affordance
  * is absent when the task has no description content or the session is
  * suspended/queued.
+ *
+ * During an active (or preparing) session the peek renders as a right-hand
+ * side panel (`[data-testid="task-detail-description-panel"]`), sharing the
+ * draggable split divider (`[data-testid="task-detail-split-divider"]`) with
+ * the terminal / launch overlay - parity with the Browser and Changes panels.
+ * It is mutually exclusive with those two: opening one closes the other two.
+ * With no session at all, the description instead renders as the unchanged,
+ * uncapped in-body `descriptionBar` (no terminal to sit beside).
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -62,11 +70,12 @@ const QUEUED_SESSION_ID = 'sess-desc-peek-queued';
 // Fifth fixture task: NO session and NO spawn progress at all (displayState.kind
 // === 'none'), but a non-empty description (hasDescriptionContent is true).
 // hasSessionContext is false here, so canShowDescription is false (no kebab
-// toggle) - but TaskDetailBody's own descriptionBar condition
-// (`!hasSessionContext || descriptionPeekOpen`) is independently satisfied
-// whenever there is no session at all, and renders the description bar
-// UNCAPPED (no ' max-h-[25vh] overflow-y-auto' suffix). Contrasts the capped
-// in-session peek strip covered by the running fixture above.
+// toggle) - but TaskDetailBody's own descriptionBar branch (rendered whenever
+// !hasSessionContext) is independently satisfied whenever there is no session
+// at all, and renders the description bar UNCAPPED (no ' max-h-[25vh]
+// overflow-y-auto' suffix) - this in-body treatment is unchanged by the
+// side-panel redesign, since there is no terminal/overlay for it to sit
+// beside. Contrasts the side-panel peek covered by the running fixture above.
 const NO_SESSION_TASK_ID = 'task-desc-peek-no-session';
 const NO_SESSION_TASK_DESCRIPTION = 'A description that renders uncapped because there is no session at all';
 
@@ -531,7 +540,7 @@ test.describe('Task Detail description peek', () => {
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
-  test('preparing state peek is available and toggles the strip', async () => {
+  test('preparing state peek is available and opens as a side panel beside the launch overlay', async () => {
     // Drive the task into displayState.kind === 'preparing' by injecting a
     // spawnProgress label directly into the session store. spawnProgress is
     // normally pushed by the main process via tasks.onSpawnProgress (which
@@ -561,16 +570,19 @@ test.describe('Task Detail description peek', () => {
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
     // The pre-session launch spinner is showing (no active terminal yet).
-    // Scoped to the LaunchOverlay's own wrapper because the header ALSO
-    // renders an `.animate-spin` lifecycle icon while isSessionActive is
-    // true (preparing counts as active) - a bare `.animate-spin` locator
-    // would be ambiguous (strict-mode violation).
-    const overlaySpinner = dialog.locator('div.flex-1.min-h-0.relative .animate-spin');
+    // Scoped to the LaunchOverlay wrapper's invariant classes (min-h-0,
+    // relative, overflow-hidden - present whether or not the description
+    // panel is open, unlike its conditional flex-1 / flex-shrink-0 classes)
+    // because the header ALSO renders an `.animate-spin` lifecycle icon while
+    // isSessionActive is true (preparing counts as active) - a bare
+    // `.animate-spin` locator would be ambiguous (strict-mode violation).
+    const overlaySpinner = dialog.locator('div.min-h-0.relative.overflow-hidden .animate-spin');
     await expect(overlaySpinner).toBeVisible({ timeout: 5000 });
     await expect(dialog.locator('text=Creating worktree...')).toBeVisible();
 
-    // Description not visible initially - the strip is gated on descriptionPeekOpen.
+    // Description not visible initially - the panel is gated on descriptionPeekOpen.
     await expect(dialog.locator(`text=${PREPARING_TASK_DESCRIPTION}`)).not.toBeVisible();
+    await expect(dialog.locator('[data-testid="task-detail-description-panel"]')).not.toBeVisible();
 
     // "Show description" IS present in the kebab even though there is no
     // session yet - this is the base hasSessionContext gate (kind is not
@@ -580,28 +592,25 @@ test.describe('Task Detail description peek', () => {
     await dialog.locator('[title="Actions"]').click();
     await expect(page.locator('text=Show description')).toBeVisible({ timeout: 5000 });
     await page.locator('text=Show description').click();
-    await expect(dialog.locator(`text=${PREPARING_TASK_DESCRIPTION}`)).toBeVisible({ timeout: 8000 });
 
-    // The description strip reveals ABOVE the launch overlay: TaskDetailBody's
-    // 'preparing' branch renders `{descriptionBar}` as a sibling immediately
-    // BEFORE the `<div className="flex-1 min-h-0 relative">` wrapper around
-    // LaunchOverlay. This adjacency selector (mirrors the
-    // `div.flex-1 + [data-testid="prespawn-context-bar"]` pattern in
-    // task-detail-prespawn-layout.spec.ts) only matches when the description
-    // bar immediately precedes the overlay wrapper in the DOM.
-    const descriptionBeforeOverlay = dialog.locator(
-      'div.px-4.py-3.border-b.border-edge.flex-shrink-0.space-y-2 + div.flex-1.min-h-0.relative',
-    );
-    await expect(descriptionBeforeOverlay).toBeVisible();
+    // The peek opens as a right-hand side panel beside the launch overlay,
+    // sharing the same draggable split divider the running-session branch
+    // uses (parity between the 'preparing' and 'running' side-panel treatment).
+    const descriptionPanel = dialog.locator('[data-testid="task-detail-description-panel"]');
+    await expect(descriptionPanel).toBeVisible({ timeout: 8000 });
+    await expect(descriptionPanel.locator(`text=${PREPARING_TASK_DESCRIPTION}`)).toBeVisible();
+    await expect(dialog.locator('[data-testid="task-detail-split-divider"]')).toBeVisible();
 
-    // The overlay is still showing - a preparing session never grew a terminal.
+    // The overlay is still showing beside the panel - a preparing session
+    // never grew a terminal.
     await expect(overlaySpinner).toBeVisible();
 
     // Toggle back off via the kebab.
     await dialog.locator('[title="Actions"]').click();
     await expect(page.locator('text=Hide description')).toBeVisible({ timeout: 5000 });
     await page.locator('text=Hide description').click();
-    await expect(dialog.locator(`text=${PREPARING_TASK_DESCRIPTION}`)).not.toBeVisible({ timeout: 8000 });
+    await expect(descriptionPanel).not.toBeVisible({ timeout: 8000 });
+    await expect(dialog.locator('[data-testid="task-detail-split-divider"]')).not.toBeVisible();
 
     // Close the dialog. No terminal is mounted in the 'preparing' branch (only
     // LaunchOverlay), so a plain Escape is safe here (mirrors
@@ -616,7 +625,7 @@ test.describe('Task Detail description peek', () => {
   // each stays well inside the UI project's 15s per-test timeout - opening
   // and closing two separate dialogs back-to-back in a single test pushed it
   // right up against the budget.
-  test('description peek strip has a height cap during an active session', async () => {
+  test('description peek renders as a resizable side panel beside the terminal during an active session', async () => {
     // Open the RUNNING fixture task and reveal the peek via the kebab.
     const runningCard = page
       .locator('[data-swimlane-name="Executing"]')
@@ -629,19 +638,15 @@ test.describe('Task Detail description peek', () => {
 
     await runningDialog.locator('[title="Actions"]').click();
     await page.locator('text=Show description').click();
-    await expect(runningDialog.locator(`text=${TASK_DESCRIPTION}`)).toBeVisible({ timeout: 8000 });
 
-    // The peek strip's container carries the height cap ONLY when
-    // hasSessionContext is true (an active session): TaskDetailBody appends
-    // ' max-h-[25vh] overflow-y-auto' to the container className in that
-    // case. This is what keeps a long description from pushing the terminal
-    // off-screen while a session is live.
-    const runningDescriptionContainer = runningDialog.locator(
-      'div.px-4.py-3.border-b.border-edge.flex-shrink-0.space-y-2',
-    );
-    const runningClassName = await runningDescriptionContainer.getAttribute('class');
-    expect(runningClassName).toContain('max-h-[25vh]');
-    expect(runningClassName).toContain('overflow-y-auto');
+    // During an active session the peek is a right-hand side panel (parity
+    // with Browser/Changes) - not a capped top strip. It shares the
+    // draggable split divider with the terminal, so both must be visible
+    // together, and the description text lives inside the panel.
+    const descriptionPanel = runningDialog.locator('[data-testid="task-detail-description-panel"]');
+    await expect(descriptionPanel).toBeVisible({ timeout: 8000 });
+    await expect(runningDialog.locator('[data-testid="task-detail-split-divider"]')).toBeVisible();
+    await expect(descriptionPanel.locator(`text=${TASK_DESCRIPTION}`)).toBeVisible();
 
     // Close the running-session dialog via Control+Shift+W - it has an active
     // xterm terminal, so a plain Escape would be captured by the terminal
@@ -655,8 +660,8 @@ test.describe('Task Detail description peek', () => {
     // session, no spawnProgress -> displayState.kind === 'none'), so
     // TaskDetailBody's final fallback branch renders descriptionBar
     // unconditionally and WITHOUT the session-only height-cap suffix. This
-    // is the contrast case for the capped in-session strip covered by the
-    // sibling test above.
+    // is the contrast case for the side-panel peek covered by the sibling
+    // test above.
     //
     // Opened via the session store's setDetailTaskId (not a card click):
     // TaskCard.tsx's onClick sets `initialEdit: displayState.kind === 'none'`,
@@ -710,17 +715,65 @@ test.describe('Task Detail description peek', () => {
     await dialog.locator('[title="Actions"]').click();
     await expect(page.locator('text=Show description')).toBeVisible({ timeout: 5000 });
 
-    // Toggle it open: the strip renders the priority badge ("High"), not any
+    // Toggle it open: the panel renders the priority badge ("High"), not any
     // description text, since task.description is empty. The task-detail
     // TITLE BAR also always shows a PriorityBadge (unconditionally, not
     // gated on the peek), so a bare `[title="High"]` locator resolves to two
-    // elements - scope to the description-peek container specifically (the
-    // same container asserted on above) to target only the strip's copy.
-    const descriptionContainer = dialog.locator(
-      'div.px-4.py-3.border-b.border-edge.flex-shrink-0.space-y-2',
-    );
+    // elements - scope to the description-peek side panel specifically to
+    // target only the panel's copy.
+    const descriptionContainer = dialog.locator('[data-testid="task-detail-description-panel"]');
     await page.locator('text=Show description').click();
     await expect(descriptionContainer.locator('[title="High"]')).toBeVisible({ timeout: 8000 });
+
+    // Close the dialog (active session -> Control+Shift+W, not Escape).
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('description peek and the Changes panel are mutually exclusive', async () => {
+    // The running fixture task sits in the Executing lane with a worktree/
+    // branch, so canShowChanges is true (!isArchived && !isInTodo &&
+    // !isInDone) independent of session state, and canShowDescription is true
+    // too - both right panels are available at once, which is what makes this
+    // task the right fixture for proving they cannot both be open together.
+    const card = page
+      .locator('[data-swimlane-name="Executing"]')
+      .locator('text=Description Peek Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    // Open Changes via the header pill. `changes-expand` only renders once
+    // ChangesPanel has actually mounted in split mode, so it is stronger
+    // evidence that Changes is open than the (shared) divider alone.
+    const changesToggle = dialog.locator('[data-testid="changes-toggle"]');
+    await expect(changesToggle).toBeVisible({ timeout: 8000 });
+    await changesToggle.click();
+    const changesExpand = dialog.locator('[data-testid="changes-expand"]');
+    await expect(changesExpand).toBeVisible({ timeout: 8000 });
+    await expect(dialog.locator('[data-testid="task-detail-split-divider"]')).toBeVisible();
+
+    // Open the description peek via the kebab - this must close Changes.
+    await dialog.locator('[title="Actions"]').click();
+    await expect(page.locator('text=Show description')).toBeVisible({ timeout: 5000 });
+    await page.locator('text=Show description').click();
+
+    const descriptionPanel = dialog.locator('[data-testid="task-detail-description-panel"]');
+    await expect(descriptionPanel).toBeVisible({ timeout: 8000 });
+    await expect(changesExpand).not.toBeVisible();
+    // The divider stays present - the description peek is the new right panel.
+    await expect(dialog.locator('[data-testid="task-detail-split-divider"]')).toBeVisible();
+
+    // Opening Changes again must close the description peek.
+    await changesToggle.click();
+    await expect(changesExpand).toBeVisible({ timeout: 8000 });
+    await expect(descriptionPanel).not.toBeVisible();
+
+    // Clean up: close Changes so no state leaks into a later test run.
+    await changesToggle.click();
+    await expect(dialog.locator('[data-testid="task-detail-split-divider"]')).not.toBeVisible();
 
     // Close the dialog (active session -> Control+Shift+W, not Escape).
     await page.keyboard.press('Control+Shift+W');

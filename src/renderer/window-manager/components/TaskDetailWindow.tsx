@@ -284,20 +284,34 @@ export function TaskDetailWindow({
     }
   }, [windowId, maximizeWindow, dockWindow, snapWindow, untileWindow, popToFloat, useStore]);
 
-  const handleToggleDescription = useCallback(
-    () => setDescriptionPeekOpen((open) => !open),
-    [],
-  );
+  // The three right-panel views (Browser / Changes / Description peek) are
+  // mutually exclusive and share the terminal split: opening one closes the
+  // other two. The close is computed before the open (never inside a setState
+  // updater, which React can double-invoke in StrictMode).
+  const handleToggleDescription = useCallback(() => {
+    const opening = !descriptionPeekOpen;
+    if (opening) {
+      if (browserOpen) toggleBrowserOpen(task.id);
+      if (changesOpen) toggleChangesOpen(task.id);
+    }
+    setDescriptionPeekOpen(opening);
+  }, [descriptionPeekOpen, browserOpen, changesOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
 
   const handleToggleBrowser = useCallback(() => {
-    if (!browserOpen && changesOpen) toggleChangesOpen(task.id);
+    if (!browserOpen) {
+      if (changesOpen) toggleChangesOpen(task.id);
+      if (descriptionPeekOpen) setDescriptionPeekOpen(false);
+    }
     toggleBrowserOpen(task.id);
-  }, [browserOpen, changesOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
+  }, [browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
 
   const handleToggleChanges = useCallback(() => {
-    if (!changesOpen && browserOpen) toggleBrowserOpen(task.id);
+    if (!changesOpen) {
+      if (browserOpen) toggleBrowserOpen(task.id);
+      if (descriptionPeekOpen) setDescriptionPeekOpen(false);
+    }
     toggleChangesOpen(task.id);
-  }, [browserOpen, changesOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
+  }, [browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
 
   const browserEnabled = browserEnabledConfig !== false;
   const canShowBrowser = browserEnabled
@@ -382,9 +396,13 @@ export function TaskDetailWindow({
     when: (event) =>
       !('button' in event) || (titleBarRef.current?.contains(event.target as Node) ?? false),
   });
-  useKeybinding('taskDetail.toggleBrowser', handleToggleBrowser, { capture: true, enabled: isFocused && canShowBrowser });
-  useKeybinding('taskDetail.toggleChanges', handleToggleChanges, { capture: true, enabled: isFocused && sessionState.canShowChanges });
-  useKeybinding('taskDetail.toggleDescription', handleToggleDescription, { capture: true, enabled: isFocused && canShowDescription });
+  // The panel-toggle hotkeys stay inert while editing: edit mode swaps in the
+  // edit form (not TaskDetailBody) and a kebab-less title bar, so firing one
+  // would silently flip hidden state and, being capture-phase, swallow the
+  // keystroke with no visible effect until edit is left.
+  useKeybinding('taskDetail.toggleBrowser', handleToggleBrowser, { capture: true, enabled: isFocused && canShowBrowser && !isEditing });
+  useKeybinding('taskDetail.toggleChanges', handleToggleChanges, { capture: true, enabled: isFocused && sessionState.canShowChanges && !isEditing });
+  useKeybinding('taskDetail.toggleDescription', handleToggleDescription, { capture: true, enabled: isFocused && canShowDescription && !isEditing });
   useKeybinding('window.snapLeft', () => handleSnapDirection('left'), { capture: true, enabled: isFocused });
   useKeybinding('window.snapRight', () => handleSnapDirection('right'), { capture: true, enabled: isFocused });
   useKeybinding('window.snapUp', () => handleSnapDirection('up'), { capture: true, enabled: isFocused });
