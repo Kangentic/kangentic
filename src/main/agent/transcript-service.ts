@@ -127,7 +127,11 @@ export async function resolveSessionTranscript(
       const parsed = await adapter.parseTranscript(record.agent_session_id, record.cwd);
       entries = parsed.entries;
       sourcePath = parsed.sourcePath;
-    } catch {
+    } catch (error) {
+      // A genuine parser failure (permission error, corrupt JSONL, adapter
+      // regression) must not look identical to "session has no transcript yet":
+      // log it, then fall through to the index fallback.
+      console.warn(`transcript live-parse failed for session ${record.agent_session_id}:`, error);
       entries = [];
     }
     if (entries.length > 0) {

@@ -361,3 +361,122 @@ describe('resolveSessionTranscript', () => {
     expect(result!.taskTitle).toBe('(unknown task)');
   });
 });
+
+/**
+ * `truncateEntries` (private to transcript-service.ts) applies the 20k-char
+ * `clampSpan` to assistant text/thinking blocks, tool_result.content, and
+ * system.text - but deliberately leaves assistant tool_use blocks untouched
+ * (a tool call's `input` must survive intact for the diff/tool-use renderer).
+ * The 'live' source path is the only one that runs truncateEntries (the index
+ * fallback path clamps once, up front, inside entriesFromIndex), so these
+ * cases are driven through resolveSessionTranscript's live-parse branch.
+ */
+describe("truncateEntries clamp coverage (via resolveSessionTranscript's 'live' source)", () => {
+  async function resolveWithLiveEntries(entries: TranscriptEntry[]) {
+    const db = makeFakeDb({ sessionRecord: makeRecord(), taskRow: { title: 'Wire the auth flow' } });
+    const parseTranscript = vi.fn(async () => ({ entries, sourcePath: '/history/session-1.jsonl' }));
+    getBySessionType.mockReturnValue({
+      displayName: 'Claude Code',
+      parseTranscript,
+    } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+    return resolveSessionTranscript(db, 'session-1');
+  }
+
+  it('clamps an oversize assistant text block AND an oversize thinking block, each carrying the truncation marker', async () => {
+    const longText = 'A'.repeat(20_010);
+    const longThinking = 'B'.repeat(20_020);
+    const entries: TranscriptEntry[] = [
+      {
+        kind: 'assistant',
+        uuid: 'a1',
+        ts: 10,
+        blocks: [
+          { type: 'text', text: longText },
+          { type: 'thinking', text: longThinking },
+        ],
+      },
+    ];
+
+    const result = await resolveWithLiveEntries(entries);
+
+    expect(result).not.toBeNull();
+    const [entry] = result!.entries;
+    expect(entry.kind).toBe('assistant');
+    if (entry.kind !== 'assistant') return;
+    const [textBlock, thinkingBlock] = entry.blocks;
+    expect(textBlock.type).toBe('text');
+    expect(thinkingBlock.type).toBe('thinking');
+    if (textBlock.type === 'text') {
+      expect(textBlock.text).not.toBe(longText);
+      expect(textBlock.text).toContain('[truncated 10 chars]');
+      expect(textBlock.text.split('\n[truncated')[0].length).toBe(20_000);
+    }
+    if (thinkingBlock.type === 'thinking') {
+      expect(thinkingBlock.text).not.toBe(longThinking);
+      expect(thinkingBlock.text).toContain('[truncated 20 chars]');
+    }
+  });
+
+  it('leaves an oversize assistant tool_use block completely UNCLAMPED (input passes through unchanged)', async () => {
+    const largeInput = { command: 'X'.repeat(30_000) };
+    const entries: TranscriptEntry[] = [
+      {
+        kind: 'assistant',
+        uuid: 'a1',
+        ts: 10,
+        blocks: [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: largeInput }],
+      },
+    ];
+
+    const result = await resolveWithLiveEntries(entries);
+
+    expect(result).not.toBeNull();
+    const [entry] = result!.entries;
+    expect(entry.kind).toBe('assistant');
+    if (entry.kind !== 'assistant') return;
+    const [block] = entry.blocks;
+    expect(block.type).toBe('tool_use');
+    if (block.type === 'tool_use') {
+      // Passed through by identity: the full 30k-char command survives,
+      // unlike text/thinking blocks which would have been clamped at 20k.
+      expect(block.input).toEqual(largeInput);
+      expect((block.input as { command: string }).command.length).toBe(30_000);
+    }
+  });
+
+  it('clamps an oversize tool_result.content span', async () => {
+    const longContent = 'C'.repeat(20_050);
+    const entries: TranscriptEntry[] = [
+      { kind: 'tool_result', uuid: 't1', ts: 10, toolUseId: 'tu-1', content: longContent },
+    ];
+
+    const result = await resolveWithLiveEntries(entries);
+
+    expect(result).not.toBeNull();
+    const [entry] = result!.entries;
+    expect(entry.kind).toBe('tool_result');
+    if (entry.kind === 'tool_result') {
+      expect(entry.content).not.toBe(longContent);
+      expect(entry.content).toContain('[truncated 50 chars]');
+      expect(entry.content.split('\n[truncated')[0].length).toBe(20_000);
+    }
+  });
+
+  it('clamps an oversize system.text span', async () => {
+    const longSystemText = 'D'.repeat(20_100);
+    const entries: TranscriptEntry[] = [
+      { kind: 'system', uuid: 's1', ts: 10, subtype: 'command', text: longSystemText },
+    ];
+
+    const result = await resolveWithLiveEntries(entries);
+
+    expect(result).not.toBeNull();
+    const [entry] = result!.entries;
+    expect(entry.kind).toBe('system');
+    if (entry.kind === 'system') {
+      expect(entry.text).not.toBe(longSystemText);
+      expect(entry.text).toContain('[truncated 100 chars]');
+      expect(entry.text.split('\n[truncated')[0].length).toBe(20_000);
+    }
+  });
+});

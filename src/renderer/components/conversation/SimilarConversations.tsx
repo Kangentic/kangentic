@@ -27,20 +27,20 @@ export function SimilarConversations({ taskId }: SimilarConversationsProps) {
   const [hits, setHits] = useState<ConversationHit[]>([]);
   const [collapsed, setCollapsed] = useState(false);
   // Guard against a stale response landing after the task changed.
-  const requestSeq = useRef(0);
+  const requestSequence = useRef(0);
 
   useEffect(() => {
-    const seq = ++requestSeq.current;
+    const sequence = ++requestSequence.current;
     let cancelled = false;
     window.electronAPI.memory
       .similarForTask(taskId, currentProjectId)
       .then((results) => {
-        if (cancelled || seq !== requestSeq.current) return;
+        if (cancelled || sequence !== requestSequence.current) return;
         setHits(results.slice(0, MAX_ROWS));
       })
       .catch(() => {
         // Best-effort: a failed lookup renders nothing, never blocks the dialog.
-        if (cancelled || seq !== requestSeq.current) return;
+        if (cancelled || sequence !== requestSequence.current) return;
         setHits([]);
       });
     return () => {

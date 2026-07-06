@@ -221,4 +221,106 @@ describe('chunkTranscript - fragment rendering', () => {
     const chunks = chunkTranscript([userEntry('blank', '   \n  \t ')]);
     expect(chunks).toEqual([]);
   });
+
+  it("renders a 'system' kind entry (rather than silently dropping it), labeled with its subtype and role", () => {
+    const entries: TranscriptEntry[] = [
+      { kind: 'system', uuid: 'sys-1', ts: 5000, subtype: 'command', text: 'RUN_MARKER echo hello' },
+    ];
+    const chunks = chunkTranscript(entries);
+
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].role).toBe('system');
+    expect(chunks[0].text).toContain('[command]: RUN_MARKER echo hello');
+  });
+
+  it('truncates a tool_use input summary over 200 chars with an ellipsis marker', () => {
+    const bigCommand = 'y'.repeat(300);
+    const entries = [
+      assistantEntry('a1', [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: bigCommand } }]),
+    ];
+    const chunks = chunkTranscript(entries);
+    const joined = chunks.map((chunk) => chunk.text).join('\n');
+
+    expect(joined).toContain('Tool: Bash');
+    expect(joined).toContain('…');
+    expect(joined).not.toContain('y'.repeat(300));
+  });
+
+  it("summarizeToolInput falls back to '' when JSON.stringify throws on a circular input, rendering just the tool name", () => {
+    const circularInput: Record<string, unknown> = {};
+    circularInput.self = circularInput;
+    const entries = [
+      assistantEntry('a1', [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: circularInput }]),
+    ];
+    const chunks = chunkTranscript(entries);
+    const joined = chunks.map((chunk) => chunk.text).join('\n');
+
+    // No trailing summary text is appended when JSON.stringify throws - just
+    // the bare tool name.
+    expect(joined.trim()).toBe('Tool: Bash');
+  });
+});
+
+describe('chunkTranscript - splitOversizeText branches (via an oversize fragment)', () => {
+  it('splits an oversize paragraph-structured text on paragraph boundaries, never mixing two paragraphs into one piece', () => {
+    // Three ~1000-char paragraphs (no sentence punctuation at all), separated
+    // by blank lines. Each paragraph individually fits under MAX_CHARS, so
+    // the paragraph-split branch pushes each whole; a hard-character-window
+    // fallback (no paragraph awareness) would instead cut every ~1920 chars
+    // with a 200-char overlap, freely mixing content across paragraphs.
+    const paragraphOne = `PARA_ONE_START ${'a'.repeat(1000)} PARA_ONE_END`;
+    const paragraphTwo = `PARA_TWO_START ${'b'.repeat(1000)} PARA_TWO_END`;
+    const paragraphThree = `PARA_THREE_START ${'c'.repeat(1000)} PARA_THREE_END`;
+    const text = [paragraphOne, paragraphTwo, paragraphThree].join('\n\n');
+    const entries = [userEntry('u1', text)];
+
+    const chunks = chunkTranscript(entries);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.tokenEstimate).toBeLessThanOrEqual(MAX_TOKENS);
+    }
+
+    const chunkFor = (marker: string) => chunks.find((chunk) => chunk.text.includes(marker));
+    const chunkOne = chunkFor('PARA_ONE_START');
+    const chunkTwo = chunkFor('PARA_TWO_START');
+    const chunkThree = chunkFor('PARA_THREE_START');
+    expect(chunkOne).toBeDefined();
+    expect(chunkTwo).toBeDefined();
+    expect(chunkThree).toBeDefined();
+    expect(chunkOne!.text).toContain('PARA_ONE_END');
+    expect(chunkTwo!.text).toContain('PARA_TWO_END');
+    expect(chunkThree!.text).toContain('PARA_THREE_END');
+    // No cross-contamination between paragraphs.
+    expect(chunkOne!.text).not.toContain('PARA_TWO_START');
+    expect(chunkOne!.text).not.toContain('PARA_THREE_START');
+    expect(chunkTwo!.text).not.toContain('PARA_ONE_START');
+    expect(chunkTwo!.text).not.toContain('PARA_THREE_START');
+    expect(chunkThree!.text).not.toContain('PARA_ONE_START');
+    expect(chunkThree!.text).not.toContain('PARA_TWO_START');
+  });
+
+  it('splits an oversize single-paragraph text on sentence boundaries, preserving every sentence exactly once', () => {
+    // 60 short punctuated sentences with no blank lines, so the paragraph
+    // branch is a no-op (one giant "paragraph") and the sentence-split loop
+    // must do the work. Clean sentence-boundary splitting keeps every
+    // "Sentence number NNN" marker intact and unique; a hard-window fallback
+    // (200-char overlap, no punctuation awareness) would duplicate a marker
+    // caught in the overlap zone or cut one in half, breaking the exact count.
+    const sentenceCount = 60;
+    const sentences = Array.from(
+      { length: sentenceCount },
+      (_, index) => `Sentence number ${String(index).padStart(3, '0')} padding text to add bulk.`,
+    );
+    const text = sentences.join(' ');
+    const entries = [userEntry('u1', text)];
+
+    const chunks = chunkTranscript(entries);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    const joined = chunks.map((chunk) => chunk.text).join('\n');
+    const matches = joined.match(/Sentence number \d{3}/g) ?? [];
+    expect(matches.length).toBe(sentenceCount);
+    expect(new Set(matches).size).toBe(sentenceCount);
+  });
 });

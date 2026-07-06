@@ -314,7 +314,7 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
               type="text"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search tasks, backlog, session events, projects..."
+              placeholder="Search tasks, backlog, conversations, session events, projects..."
               className="flex-1 min-w-0 bg-transparent text-sm text-fg placeholder-fg-disabled outline-none"
             />
             {/* Corner spinner only while results are already on screen (a
@@ -467,7 +467,7 @@ function semanticDegradedNotice(status: MemoryStatus | null): string | null {
 function EmptyState() {
   return (
     <div className="px-4 py-8 text-sm text-fg-muted text-center space-y-1">
-      <div>Search across tasks, backlog, session events, and projects.</div>
+      <div>Search across tasks, backlog, conversations, session events, and projects.</div>
       <div className="text-xs text-fg-disabled">
         Type to find by title, description, or tool call.
       </div>

@@ -113,8 +113,11 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
       />
 
       {/* Model picker + download card, revealed once semantic search is on.
-          Mirrors the dictation model dropdown + status card. */}
-      {semanticEnabled ? (
+          Gated on indexingEnabled too (like the rebuild card below) so turning
+          indexing off - which disables the semantic toggle - also hides this
+          panel instead of leaving it interactive with no way to switch semantic
+          back off. Mirrors the dictation model dropdown + status card. */}
+      {indexingEnabled && semanticEnabled ? (
         <div className="space-y-3">
           <SettingRow {...settingProps('memory.embeddingModel')}>
             <Select

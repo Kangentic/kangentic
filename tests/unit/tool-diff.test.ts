@@ -56,6 +56,42 @@ describe('parseFileEditTool', () => {
     expect(parseFileEditTool('x')).toBeNull();
     expect(parseFileEditTool(['a'])).toBeNull();
   });
+
+  it('returns null for a Write-shaped input that has content but no file_path', () => {
+    // The Write branch requires filePath truthy; content alone is not enough
+    // to identify a file-edit shape.
+    expect(parseFileEditTool({ content: 'hello' })).toBeNull();
+  });
+
+  it('drops only the invalid entries from a MultiEdit edits array, keeping the valid hunks', () => {
+    const result = parseFileEditTool({
+      file_path: '/a.ts',
+      edits: [
+        { old_string: 'x', new_string: 'y' },
+        { old_string: 123, new_string: 'z' }, // wrong type, dropped
+        { not_a_valid_edit: true }, // missing both fields, dropped
+        { old_string: 'p', new_string: 'q' },
+      ],
+    });
+
+    expect(result).toEqual({
+      filePath: '/a.ts',
+      hunks: [
+        { oldText: 'x', newText: 'y' },
+        { oldText: 'p', newText: 'q' },
+      ],
+    });
+  });
+
+  it('returns null for a MultiEdit whose edits array is empty or entirely invalid', () => {
+    expect(parseFileEditTool({ file_path: '/a.ts', edits: [] })).toBeNull();
+    expect(
+      parseFileEditTool({
+        file_path: '/a.ts',
+        edits: [{ foo: 'bar' }, { old_string: 1, new_string: 2 }],
+      }),
+    ).toBeNull();
+  });
 });
 
 describe('diffStats', () => {

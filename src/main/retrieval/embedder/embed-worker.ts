@@ -18,7 +18,13 @@
  * native onnxruntime-node runtime files resolve to real on-disk paths.
  */
 
-import { env, pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
+import {
+  env,
+  pipeline,
+  type DataType,
+  type DeviceType,
+  type FeatureExtractionPipeline,
+} from '@huggingface/transformers';
 
 interface InitMessage {
   type: 'init';
@@ -77,10 +83,8 @@ async function initExtractor(
   for (const device of message.devices) {
     try {
       const extractor = await pipeline('feature-extraction', message.modelId, {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- device/dtype are wide string-literal unions in transformers.js; values come from config.
-        device: device as any,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above.
-        dtype: message.dtype as any,
+        device: device as DeviceType,
+        dtype: message.dtype as DataType,
       });
       return { extractor, device };
     } catch (error) {
@@ -98,6 +102,10 @@ parentPort.on('message', (event: Electron.MessageEvent) => {
     pooling = message.pooling === 'cls' ? 'cls' : 'mean';
     const initPromise = initExtractor(message);
     extractorPromise = initPromise.then((result) => result.extractor);
+    // Mark this derived promise as handled: the embed path only attaches its own
+    // .catch() when a request arrives, so without this a failed init would surface
+    // as an unhandledRejection before the first embed message.
+    extractorPromise.catch(() => {});
     initPromise.then(
       (result) => post({ type: 'ready', device: result.device }),
       (error: unknown) => post({ type: 'error', message: String(error) }),
