@@ -424,7 +424,6 @@ export function TaskDetailWindow({
     <TaskDetailHeader
       task={task}
       onClose={closeWithGuard}
-      isEditing={isEditing}
       setIsEditing={setIsEditing}
       canToggle={sessionState.canToggle}
       isSessionActive={sessionState.isSessionActive}

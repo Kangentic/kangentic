@@ -25,6 +25,7 @@ import { WindowManagerProvider, useLayerStore, useSnapPreviewController } from '
 import type { WindowManagerLayerOptions } from '../context';
 import { DEFAULT_MIN_WIDTH_PX, DEFAULT_MIN_HEIGHT_PX } from '../dnd/useWindowResize';
 import { useTaskDetailWindowBridge } from '../bridge/useTaskDetailWindowBridge';
+import { useConversationWindowBridge } from '../bridge/useConversationWindowBridge';
 import { useWindowSessionClaims } from '../bridge/useWindowSessionClaims';
 import { useWindowAutoCloseOnDone } from '../bridge/useWindowAutoCloseOnDone';
 import { useWindowFocusReconcile } from '../bridge/useWindowFocusReconcile';
@@ -219,6 +220,7 @@ export function WindowManagerLayer(props: WindowManagerLayerProps) {
  *  instance (the exported singleton), so they are independent of the provider. */
 function BoardBridges(): null {
   useTaskDetailWindowBridge();
+  useConversationWindowBridge();
   useWindowSessionClaims();
   useWindowAutoCloseOnDone();
   useWindowFocusReconcile();

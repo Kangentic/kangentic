@@ -65,6 +65,10 @@ export const PATHS = {
   /** Downloaded voice-dictation models, one subdirectory per model id (global cache). */
   get modelsDir() { return this.modelCacheDir; },
   modelDir(modelId: string) { return path.join(this.modelCacheDir, modelId); },
+  /** Root for the conversation-memory embedding model (transformers.js
+   *  localModelPath); the model id nests below this. Shares the persistent
+   *  model cache so it survives per-instance data-dir isolation. */
+  get embeddingModelsDir() { return path.join(this.modelCacheDir, 'embeddings'); },
 };
 
 export function ensureDirs(): void {

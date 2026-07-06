@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { DollarSign, Cpu, Wrench, CheckCircle2, XCircle, Hash, ArrowUp, ArrowDown, ArrowRight, Calendar, Clock, Hourglass, Fingerprint, GitBranch, FileCode, Copy, Check, ChevronDown, ChevronRight, Layers } from 'lucide-react';
+import { DollarSign, Cpu, Wrench, CheckCircle2, XCircle, Hash, ArrowUp, ArrowDown, ArrowRight, Calendar, Clock, Hourglass, Fingerprint, GitBranch, FileCode, Copy, Check, ChevronDown, ChevronRight, Layers, MessageSquare } from 'lucide-react';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatDuration, formatCost } from '../../utils/format-session';
 import { formatShortDateTime, formatDurationBetween } from '../../lib/datetime';
 import { ByToolTable } from '../shared/ByToolTable';
+import { useSessionStore } from '../../stores/session-store';
 import type { SessionSummary } from '../../../shared/types';
 
 interface SessionSummaryPanelProps {
@@ -19,6 +20,7 @@ export function SessionSummaryPanel({ taskId }: SessionSummaryPanelProps) {
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   const [byToolExpanded, setByToolExpanded] = useState(false);
+  const setConversationSessionId = useSessionStore((state) => state.setConversationSessionId);
 
   useEffect(() => {
     let cancelled = false;
@@ -220,17 +222,29 @@ export function SessionSummaryPanel({ taskId }: SessionSummaryPanelProps) {
       {/* Header row with status */}
       <div className="flex items-center justify-between px-4 pt-3 pb-1.5">
         <span className="text-xs font-semibold text-fg-muted tracking-wide uppercase">Session Summary</span>
-        {showCompleted ? (
-          <span className="flex items-center gap-1 text-xs text-green-400">
-            <CheckCircle2 size={12} />
-            Completed
-          </span>
-        ) : (
-          <span className="flex items-center gap-1 text-xs text-red-400">
-            <XCircle size={12} />
-            Exited ({summary.exitCode})
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setConversationSessionId(summary.sessionId)}
+            className="flex items-center gap-1 text-xs text-fg-muted hover:text-fg transition-colors"
+            title="View the full conversation transcript"
+            data-testid="session-summary-view-conversation"
+          >
+            <MessageSquare size={12} />
+            View conversation
+          </button>
+          {showCompleted ? (
+            <span className="flex items-center gap-1 text-xs text-green-400">
+              <CheckCircle2 size={12} />
+              Completed
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 text-xs text-red-400">
+              <XCircle size={12} />
+              Exited ({summary.exitCode})
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Metric rows (includes timeline) */}

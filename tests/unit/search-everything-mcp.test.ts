@@ -89,6 +89,7 @@ function makeResolver(): RequestResolver {
       return { error: `No project matching "${selector}".` };
     }),
     listProjectsRaw: vi.fn(() => [DEFAULT_PROJECT, OTHER_PROJECT]),
+    isMemoryIndexingEnabled: vi.fn(() => true),
   } as unknown as RequestResolver;
 }
 
@@ -249,5 +250,76 @@ describe('kangentic_search_everything MCP tool', () => {
     expect(text).not.toContain('## Backlog');
     expect(text).not.toContain('## Session Events');
     expect(result.isError).toBeUndefined();
+  });
+
+  it('formats a conversation hit under a ## Conversations section with score/sessionId/turnUuid', async () => {
+    mockRunSearchEverything.mockResolvedValueOnce([
+      {
+        kind: 'conversation',
+        projectId: DEFAULT_PROJECT_ID,
+        projectName: 'Default',
+        taskId: 'task-conv',
+        taskTitle: 'Investigate frobnication',
+        sessionId: 'session-conv',
+        agentName: 'Claude Code',
+        chunkId: 501,
+        turnUuid: 'turn-uuid-777',
+        turnKind: 'assistant',
+        turnTs: 1717000000000,
+        score: 0.0164,
+        matchKind: 'lexical',
+        snippet: 'a frobnicate hit',
+        matchStart: 2,
+        matchEnd: 12,
+      },
+    ]);
+
+    const result = await server.getHandler('kangentic_search_everything')({ query: 'frobnicate' });
+
+    const text = result.content[0].text;
+    expect(text).toContain('Found 1 hit(s)');
+    // Summary count line includes the conversation tally.
+    expect(text).toContain('conversation: 1');
+    expect(text).toContain('## Conversations');
+    // The row carries the formatted score, sessionId, and turnUuid.
+    expect(text).toContain('[0.016]');
+    expect(text).toContain('Investigate frobnication');
+    expect(text).toContain('via Claude Code');
+    expect(text).toContain('sessionId: session-conv');
+    expect(text).toContain('turnUuid: turn-uuid-777');
+    expect(text).toContain('a frobnicate hit');
+    // Not mixed into an unrelated section.
+    expect(text).not.toContain('## Tasks');
+    expect(result.isError).toBeUndefined();
+  });
+
+  it('renders turnUuid as n/a when a conversation hit lost its anchor', async () => {
+    mockRunSearchEverything.mockResolvedValueOnce([
+      {
+        kind: 'conversation',
+        projectId: DEFAULT_PROJECT_ID,
+        projectName: 'Default',
+        taskId: null,
+        taskTitle: '(unknown task)',
+        sessionId: 'session-anchorless',
+        agentName: 'Claude Code',
+        chunkId: 9,
+        turnUuid: null,
+        turnKind: 'mixed',
+        turnTs: null,
+        score: 0.5,
+        matchKind: 'semantic',
+        snippet: 'no-mark snippet',
+        matchStart: 0,
+        matchEnd: 0,
+      },
+    ]);
+
+    const result = await server.getHandler('kangentic_search_everything')({ query: 'anything' });
+
+    const text = result.content[0].text;
+    expect(text).toContain('## Conversations');
+    expect(text).toContain('turnUuid: n/a');
+    expect(text).toContain('[0.500]');
   });
 });

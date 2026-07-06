@@ -18,7 +18,7 @@ const esbuildCommon = {
   platform: 'node',
   target: 'node24',
   format: 'cjs',
-  external: ['electron', 'better-sqlite3', 'node-pty', 'sherpa-onnx-node'],
+  external: ['electron', 'better-sqlite3', 'node-pty', 'sherpa-onnx-node', 'sqlite-vec', '@huggingface/transformers'],
   conditions: ['require'],
   define: {
     'MAIN_WINDOW_VITE_DEV_SERVER_URL': JSON.stringify(''),
@@ -76,8 +76,18 @@ async function build() {
       entryPoints: [path.join(projectDir, 'src/preload/preload.ts')],
       outfile: path.join(projectDir, '.vite/build/preload.js'),
     }),
+    // The conversation-memory embedding worker runs in an Electron
+    // utilityProcess, so it is bundled as its own entry next to the main
+    // bundle. `@huggingface/transformers` stays external (resolved from
+    // node_modules at runtime) so its bundled onnxruntime-web wasm assets
+    // resolve to real files.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/retrieval/embedder/embed-worker.ts')],
+      outfile: path.join(projectDir, '.vite/build/embed-worker.js'),
+    }),
   ]);
-  console.log('[build] Main + preload built');
+  console.log('[build] Main + preload + embed worker built');
 
   // Copy external scripts (bridges + adapter plugins) that run outside the
   // esbuild bundle as raw .js/.mjs and must sit next to the bundle. The copy

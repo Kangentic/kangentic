@@ -72,6 +72,10 @@ function makeContext(projects: Project[] = [DEFAULT_PROJECT, OTHER_PROJECT]) {
     projectRepo: {
       list: vi.fn(() => projects),
     },
+    // The handler reads memory.indexingEnabled to gate conversation search.
+    configManager: {
+      load: vi.fn(() => ({ memory: { indexingEnabled: true } })),
+    },
   };
 }
 

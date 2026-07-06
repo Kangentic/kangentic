@@ -6,7 +6,7 @@ import type {
   DictationConfig,
   DictationInfo,
 } from '../../../../shared/types';
-import { SectionHeader, SettingRow, SettingToggleRow, Select, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { SectionHeader, SettingRow, SettingToggleRow, Select, DownloadProgressBar, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 import { effectiveCombo } from '../../../../shared/keybindings';
 import { formatCombo } from '../../../utils/keybindings';
@@ -245,7 +245,18 @@ export function DictationTab({
         ) : modelInstalled ? (
           <div className="text-fg-faint">Cached for offline use.</div>
         ) : isDownloading ? (
-          <div className="text-fg-faint">Downloading...</div>
+          <>
+            <div className="text-fg-faint">
+              Downloading... {modelProgress && modelProgress.totalBytes > 0
+                ? Math.min(100, Math.round((modelProgress.downloadedBytes / modelProgress.totalBytes) * 100))
+                : 0}%
+            </div>
+            <DownloadProgressBar
+              percent={modelProgress && modelProgress.totalBytes > 0
+                ? (modelProgress.downloadedBytes / modelProgress.totalBytes) * 100
+                : 0}
+            />
+          </>
         ) : (
           <div className="text-fg-faint">Downloads automatically when enabled.</div>
         )}

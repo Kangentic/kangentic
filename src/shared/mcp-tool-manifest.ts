@@ -75,6 +75,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_get_session_events', label: 'Session Events', blurb: 'parsed activity events from a session log', category: 'sessions' },
   { name: 'kangentic_get_handoff_context', label: 'Handoff Context', blurb: 'the most recent cross-agent handoff record for a task', category: 'sessions' },
   { name: 'kangentic_get_transcript', label: 'Get Transcript', blurb: 'read what the agent on another task or project said', category: 'sessions' },
+  { name: 'kangentic_recall', label: 'Recall Conversations', blurb: 'hybrid keyword + semantic recall over past agent conversations, with turn-level citations', category: 'sessions' },
 
   // ── Browser Automation (browser-tools.ts) ──
   { name: 'kangentic_browser_list_panes', label: 'List Browser Panes', blurb: 'open embedded Browser panes and their URLs', category: 'browser' },

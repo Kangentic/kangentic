@@ -1530,6 +1530,31 @@ export interface AppConfig {
    * The push-to-talk binding is NOT here; it lives in `hotkeyOverrides` keyed
    * by the `dictation.pushToTalk` keybinding-registry id.
    */
+  /**
+   * Conversation memory: local index over agent conversation transcripts for
+   * search and recall. GLOBAL/shared scope (below the settings separator, in
+   * the Memory tab). Works offline with no API key.
+   */
+  memory?: {
+    /** Index agent conversation transcripts locally for search/recall.
+     *  Default true. Off: no indexing, no conversation search results, and the
+     *  embed worker never runs. */
+    indexingEnabled?: boolean;
+    /** Semantic (embedding) layer on top of lexical search. Default false;
+     *  turning it on triggers the one-time local model download. */
+    semanticEnabled?: boolean;
+    /** Selected embedding model id (see src/shared/embedding-models.ts). Default
+     *  'mxbai-xsmall'. Switching re-embeds the index in the background. */
+    embeddingModel?: string;
+    /** Which hardware the embedding model runs on. 'auto' (default) prefers a GPU
+     *  execution provider (DirectML on Windows, WebGPU elsewhere) and falls back to
+     *  CPU if it fails to initialize; 'gpu' forces the same GPU-first chain; 'cpu'
+     *  forces the universal CPU path. Offloading to an idle GPU keeps the CPU free
+     *  for the agents when many run at once. */
+    acceleration?: MemoryAcceleration;
+  };
+
+
   dictation?: {
     /** Master toggle: show the mic button and enable push-to-talk. Default false. */
     enabled?: boolean;
@@ -1571,9 +1596,6 @@ export interface AppConfig {
   skipDeleteConfirm: boolean;
   skipBoardConfigConfirm: boolean;
   autoFocusIdleSession: boolean;
-  /** Show the hover highlight, copy button, click-to-copy, and right-click "Copy Block"
-   *  affordance over quote / code / message blocks in the terminal. Default `true`. */
-  terminalBlockCopy: boolean;
   /** Click-outside dismiss policy for modeless task-detail windows. Default `single`. */
   windowLightDismiss: WindowLightDismiss;
   /** Task IDs that have already been offered an auto-rename suggestion. Persisted so a
@@ -1748,7 +1770,6 @@ export const DEFAULT_CONFIG: AppConfig = {
   skipDeleteConfirm: false,
   skipBoardConfigConfirm: false,
   autoFocusIdleSession: false,
-  terminalBlockCopy: true,
   windowLightDismiss: 'single',
   autoNameAskedTaskIds: [],
   autoNameRateLimitPerHour: 60,
@@ -1761,6 +1782,12 @@ export const DEFAULT_CONFIG: AppConfig = {
   commandTerminalWorkspace: null,
   discoveredModelsByAgent: {},
   hotkeyOverrides: {},
+  memory: {
+    indexingEnabled: true,
+    semanticEnabled: false,
+    embeddingModel: 'mxbai-xsmall',
+    acceleration: 'auto',
+  },
   dictation: {
     enabled: false,
     engineMode: 'auto',
@@ -3099,6 +3126,30 @@ export interface ElectronAPI {
     everything: (input: SearchRequest) => Promise<SearchHit[]>;
   };
 
+  // Conversation viewer (structured transcripts)
+  transcripts: {
+    get: (input: TranscriptGetRequest) => Promise<TranscriptGetResponse>;
+    listSessions: (
+      taskId: string,
+      projectId?: string | null,
+    ) => Promise<ConversationSessionMeta[]>;
+  };
+
+  // Conversation memory (search index) status + proactive surfaces.
+  memory: {
+    getStatus: () => Promise<MemoryStatus>;
+    /** Past conversations similar to a task (from its title + description),
+     *  excluding the task's own sessions. Returns conversation-kind hits. */
+    similarForTask: (
+      taskId: string,
+      projectId?: string | null,
+    ) => Promise<Extract<SearchHit, { kind: 'conversation' }>[]>;
+    /** Purge the project's conversation index and re-run the backfill sweep
+     *  (recovery from a corrupt/stale index). Resolves when the purge is done;
+     *  the rebuild sweep continues in the background. */
+    rebuildIndex: (projectId?: string | null) => Promise<void>;
+  };
+
   // Platform
   platform: string;
 
@@ -3167,6 +3218,51 @@ export interface SearchRequest {
   query: string;
   scope: 'current' | 'all';
   currentProjectId: string;
+  /**
+   * Retrieval mode for conversation hits. 'keyword' (default) = lexical FTS5;
+   * 'smart' = hybrid lexical + semantic (falls back to lexical when the
+   * semantic layer is unavailable). Omitted = 'keyword' (back-compat).
+   */
+  mode?: 'keyword' | 'smart';
+}
+
+/** Runtime state of the semantic (embedding) layer, for the palette Smart-mode
+ *  UI. `lexical` = enabled but sqlite-vec unavailable, so search stays lexical. */
+export type MemorySemanticState = 'disabled' | 'downloading' | 'lexical' | 'hybrid' | 'error';
+
+/** Download/availability state of the selected embedding model. */
+export type MemoryModelState = 'absent' | 'downloading' | 'ready' | 'error';
+
+/** The selected embedding model's identity + download state, for the settings
+ *  model card (mirrors the dictation model-status card). */
+export interface MemoryModelStatus {
+  id: string;
+  displayName: string;
+  tier: 'fast' | 'balanced' | 'accurate';
+  approxSizeMb: number;
+  dimensions: number;
+  state: MemoryModelState;
+  /** 0..1 while `state === 'downloading'`. */
+  progress?: number;
+}
+
+/** Where the embedding model runs. See `AppConfig.memory.acceleration`. */
+export type MemoryAcceleration = 'auto' | 'gpu' | 'cpu';
+
+export interface MemoryStatus {
+  indexingEnabled: boolean;
+  semantic: MemorySemanticState;
+  /** Human-readable execution backend the embed worker actually initialized on
+   *  (e.g. "DirectML (GPU)", "WebGPU (GPU)", "CPU"), for the settings model card.
+   *  Undefined until the worker has embedded at least once this run. */
+  activeBackend?: string;
+  /** 0..1 while `semantic === 'downloading'`, else undefined. */
+  modelProgress?: number;
+  /** The selected model + its download state (present once semantic is on). */
+  model?: MemoryModelStatus;
+  /** When `semantic === 'lexical'`, the reason sqlite-vec failed to load (so the
+   *  Memory tab can explain the degrade), or undefined if it simply is not loaded. */
+  vecError?: string;
 }
 
 interface SearchHitBase {
@@ -3205,9 +3301,98 @@ export type SearchHit =
   | (SearchHitBase & {
       kind: 'project';
       projectPath: string;
+    })
+  | (SearchHitBase & {
+      kind: 'conversation';
+      /** Owning task, or null for a session whose task row was removed. */
+      taskId: string | null;
+      taskTitle: string;
+      /** Kangentic session id (sessions.id); the conversation-viewer anchor. */
+      sessionId: string;
+      agentName: string;
+      /** memory_chunks.id of the matched chunk; step-2 fetch / context expansion key. */
+      chunkId: number;
+      /** TranscriptEntry uuid the matched chunk starts at; the scroll-to target.
+       *  Null when the chunk lost its anchor (older index rows). */
+      turnUuid: string | null;
+      /** Dominant role of the matched chunk: 'user' | 'assistant' | 'tool_result' | 'system'
+       *  | 'mixed'. Drives the result-row badge. */
+      turnKind: string;
+      /** Epoch ms of the matched turn; scroll-to ts fallback + relative-time display. */
+      turnTs: number | null;
+      /** Relevance, higher = better. Phase 1: normalized bm25. Phase 2: RRF.
+       *  Conversation hits render sorted by this within their group. */
+      score: number;
+      /** How the hit was produced. Semantic-only hits carry an empty
+       *  match range (matchStart === matchEnd) so the row skips the <mark>. */
+      matchKind: 'lexical' | 'semantic' | 'hybrid';
+      /** True when this session has a live agent right now (sessions.status
+       *  running/queued). Selecting the hit then opens the live task terminal
+       *  instead of the read-only conversation viewer, and the row badges it as
+       *  "Terminal" vs "History". */
+      sessionActive: boolean;
+      /** How many chunks in this conversation matched. The hit is the best-scoring
+       *  one; the row shows "N matches" when this is > 1 (results are collapsed to
+       *  one row per conversation). */
+      matchCount: number;
     });
 
 export type SearchHitKind = SearchHit['kind'];
+
+// =============================================================================
+// Conversation viewer (structured transcripts)
+// =============================================================================
+// Backing types for the human-facing conversation viewer, which renders the
+// structured `TranscriptEntry[]` for a single session (parsed live from the
+// agent's native history, or reconstructed from the memory index when the
+// native file has been pruned).
+
+export interface TranscriptGetRequest {
+  /** Kangentic session id (sessions.id) or the agent-native session id. */
+  sessionId: string;
+  /** Interaction-time project id. Read-only, but preferred over the ambient
+   *  current project (a conversation hit can target another project). */
+  projectId?: string | null;
+}
+
+/** Where a rendered conversation's content came from. `none` = neither the
+ *  native history nor an index fallback was available. */
+export type TranscriptSource = 'live' | 'index' | 'none';
+
+export type TranscriptUnavailableReason =
+  | 'unsupported_agent'
+  | 'no_agent_session_id'
+  | 'file_missing';
+
+export interface TranscriptGetResponse {
+  sessionId: string;
+  taskId: string | null;
+  taskTitle: string;
+  agentName: string;
+  /** ISO 8601 session start. */
+  startedAt: string;
+  /** Session record status. `running`/`queued` mean the transcript may still
+   *  grow, so an open viewer live-refreshes; other states are static. Null when
+   *  the session was not found. */
+  sessionStatus: SessionRecordStatus | null;
+  source: TranscriptSource;
+  /** Located native history file/db path, or null. */
+  sourcePath: string | null;
+  entries: TranscriptEntry[];
+  /** True when content came from the index fallback (block structure lossy). */
+  degraded: boolean;
+  unavailableReason?: TranscriptUnavailableReason;
+}
+
+/** One selectable session in the conversation viewer's session picker. */
+export interface ConversationSessionMeta {
+  sessionId: string;
+  agentName: string;
+  startedAt: string;
+  exitedAt: string | null;
+  isolatedSwimlaneId: string | null;
+  status: string;
+}
 
 
 // =============================================================================

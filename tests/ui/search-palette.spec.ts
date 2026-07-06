@@ -21,7 +21,10 @@ const OTHER_PROJECT_ID = 'proj-other';
 const TASK_ID = 'task-search-1';
 const SESSION_ID = 'sess-search-1';
 
-function preConfigWithSearchHits(): string {
+function preConfigWithSearchHits(
+  conversationSessionActive = false,
+  conversationMatchKind: 'lexical' | 'semantic' | 'hybrid' = 'lexical',
+): string {
   return `
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
@@ -121,9 +124,34 @@ function preConfigWithSearchHits(): string {
           matchStart: 10,
           matchEnd: 14,
         },
+        {
+          kind: 'conversation',
+          projectId: '${PROJECT_ID}',
+          projectName: 'Primary Project',
+          taskId: '${TASK_ID}',
+          taskTitle: 'Task with auth in title',
+          sessionId: '${SESSION_ID}',
+          agentName: 'Claude Code',
+          chunkId: 42,
+          turnUuid: 'turn-uuid-abc',
+          turnKind: 'assistant',
+          turnTs: Date.now(),
+          score: 0.9,
+          matchKind: '${conversationMatchKind}',
+          snippet: 'We reworked the auth flow to refresh tokens',
+          matchStart: 20,
+          matchEnd: 24,
+          sessionActive: ${conversationSessionActive},
+        },
       ];
 
-      return { currentProjectId: '${PROJECT_ID}', searchHits: hits };
+      return {
+        currentProjectId: '${PROJECT_ID}',
+        searchHits: hits,
+        // Semantic layer off, so Smart mode shows the "off" degraded notice
+        // while still returning the seeded (lexical) hits.
+        memoryStatus: { indexingEnabled: true, semantic: 'disabled' },
+      };
     });
   `;
 }
@@ -223,12 +251,121 @@ test.describe('Search Palette', () => {
       await expect(page.getByTestId('search-palette-results')).toBeVisible({ timeout: 2000 });
 
       const results = page.locator('[data-testid="search-palette-result"]');
-      await expect(results).toHaveCount(4);
+      await expect(results).toHaveCount(5);
       // Per-kind data attribute should reflect each hit's kind
       await expect(page.locator('[data-result-kind="project"]')).toHaveCount(1);
       await expect(page.locator('[data-result-kind="task"]')).toHaveCount(1);
       await expect(page.locator('[data-result-kind="backlog"]')).toHaveCount(1);
+      await expect(page.locator('[data-result-kind="conversation"]')).toHaveCount(1);
       await expect(page.locator('[data-result-kind="session_event"]')).toHaveCount(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('conversation hit renders in its own group and Enter opens the viewer', async () => {
+    const { browser, page } = await launchWithState(preConfigWithSearchHits());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+F');
+      await page.getByTestId('search-palette-input').fill('auth');
+      await expect(page.getByTestId('search-palette-results')).toBeVisible({ timeout: 2000 });
+
+      // The Conversations group heading renders (its list-item also carries the
+      // group count, so match the heading row rather than an exact text node).
+      await expect(
+        page.locator('[data-testid="search-palette-results"] > li', { hasText: 'Conversations' }),
+      ).toBeVisible();
+
+      // The conversation row shows the task title.
+      const conversationRow = page.locator('[data-result-kind="conversation"]');
+      await expect(conversationRow).toContainText('Task with auth in title');
+
+      // The row is deliberately decluttered: no agent name ("Claude Code" - the
+      // task title identifies the conversation and the agent shows once opened),
+      // no "matched by meaning" sparkle on a keyword hit (it has a highlighted
+      // term), and no redundant agent-turn badge (the snippet's "Assistant:"
+      // prefix already conveys it).
+      await expect(conversationRow).not.toContainText('Claude Code');
+      await expect(conversationRow.locator('[aria-label="Matched by meaning"]')).toHaveCount(0);
+      await expect(conversationRow).not.toContainText('Agent');
+
+      // Clicking the conversation hit sets the nav signal and opens the viewer.
+      // (The one-shot scrollToTurnUuid is set here too, but the viewer consumes it
+      // on mount - its scroll-to behavior is covered in conversation-viewer.spec.ts.)
+      await conversationRow.click();
+      await expect(page.getByTestId('search-palette')).not.toBeVisible();
+
+      await expect
+        .poll(async () =>
+          page.evaluate(() => {
+            const stores = (window as unknown as {
+              __zustandStores?: { session: { getState: () => { conversationSessionId: string | null } } };
+            }).__zustandStores;
+            return stores?.session.getState().conversationSessionId ?? null;
+          }),
+        )
+        .toBe(SESSION_ID);
+
+      await expect(page.getByTestId('conversation-window')).toBeVisible({ timeout: 5000 });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a pure-semantic conversation hit shows the "matched by meaning" sparkle', async () => {
+    const { browser, page } = await launchWithState(preConfigWithSearchHits(false, 'semantic'));
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+F');
+      await page.getByTestId('search-palette-input').fill('auth');
+      await expect(page.getByTestId('search-palette-results')).toBeVisible({ timeout: 2000 });
+
+      // Semantic-only hits match by meaning with no highlighted term, so the row
+      // flags why it surfaced with the sparkle indicator.
+      const conversationRow = page.locator('[data-result-kind="conversation"]');
+      await expect(conversationRow.locator('[aria-label="Matched by meaning"]')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('active conversation hit is badged Terminal and opens the task, not the viewer', async () => {
+    const { browser, page } = await launchWithState(preConfigWithSearchHits(true));
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+F');
+      await page.getByTestId('search-palette-input').fill('auth');
+      await expect(page.getByTestId('search-palette-results')).toBeVisible({ timeout: 2000 });
+
+      // A live session is badged "Terminal" (not "History") so the user knows
+      // selecting it opens the active terminal rather than the read-only history.
+      const conversationRow = page.locator('[data-result-kind="conversation"]');
+      await expect(conversationRow).toContainText('Terminal');
+      await expect(conversationRow).not.toContainText('History');
+
+      // Clicking opens the task detail (the live terminal), NOT the viewer.
+      await conversationRow.click();
+      await expect(page.getByTestId('search-palette')).not.toBeVisible();
+
+      await expect
+        .poll(async () =>
+          page.evaluate(() => {
+            const stores = (window as unknown as {
+              __zustandStores?: {
+                session: { getState: () => { detailTaskId: string | null; conversationSessionId: string | null } };
+              };
+            }).__zustandStores;
+            const sessionState = stores?.session.getState();
+            return {
+              detailTaskId: sessionState?.detailTaskId ?? null,
+              conversationSessionId: sessionState?.conversationSessionId ?? null,
+            };
+          }),
+        )
+        .toEqual({ detailTaskId: TASK_ID, conversationSessionId: null });
+
+      await expect(page.getByTestId('conversation-window')).not.toBeVisible();
     } finally {
       await browser.close();
     }
@@ -251,6 +388,46 @@ test.describe('Search Palette', () => {
       // Task detail dialog opens (its container has data-testid="task-detail-dialog" if present;
       // fall back to checking for the dialog title text)
       await expect(page.locator('text=Task with auth in title').first()).toBeVisible({ timeout: 5000 });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // ---------- Mode follows the Memory setting (no per-search toggle) -------
+
+  test('has no per-search mode toggle', async () => {
+    const { browser, page } = await launchWithState(preConfigWithSearchHits());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+F');
+      await expect(page.getByTestId('search-palette')).toBeVisible();
+      // The Keyword/Smart pill pair is gone; search auto-selects the mode.
+      await expect(page.getByTestId('search-mode-toggle')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('with semantic search off, the query runs in keyword mode with no degraded notice', async () => {
+    const { browser, page } = await launchWithState(preConfigWithSearchHits());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+F');
+      await page.getByTestId('search-palette-input').fill('auth');
+      await expect(page.getByTestId('search-palette-results')).toBeVisible({ timeout: 2000 });
+
+      // Semantic search is off by default, so the search is keyword-only: no
+      // degraded notice, and the IPC request carries mode:'keyword'.
+      await expect(page.getByTestId('search-degraded-notice')).toHaveCount(0);
+      await expect
+        .poll(async () =>
+          page.evaluate(() => {
+            const request = (window as unknown as { __mockLastSearchRequest?: { mode?: string } })
+              .__mockLastSearchRequest;
+            return request?.mode ?? null;
+          }),
+        )
+        .toBe('keyword');
     } finally {
       await browser.close();
     }

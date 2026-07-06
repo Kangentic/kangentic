@@ -210,6 +210,9 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   dialogSessionIds: [],
   pendingDetailWindowsProjectId: null,
   scrollToEventKey: null,
+  conversationSessionId: null,
+  scrollToTurnUuid: null,
+  _pendingOpenConversation: null,
   sessionUsage: {},
   latestRateLimits: null,
   sessionFirstOutput: {},
@@ -559,6 +562,9 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
     set((state) => ({ dialogSessionIds: state.dialogSessionIds.filter((id) => id !== sessionId) })),
   setPendingDetailWindowsProjectId: (projectId) => set({ pendingDetailWindowsProjectId: projectId }),
   setScrollToEventKey: (key) => set({ scrollToEventKey: key }),
+  setConversationSessionId: (id) => set({ conversationSessionId: id }),
+  setScrollToTurnUuid: (uuid) => set({ scrollToTurnUuid: uuid }),
+  setPendingOpenConversation: (id) => set({ _pendingOpenConversation: id }),
 
   upsertSession: (session) => {
     set((state) => {

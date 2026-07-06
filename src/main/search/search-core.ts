@@ -10,6 +10,39 @@ import type {
   SearchHit,
   Project,
 } from '../../shared/types';
+import { searchConversationMemory, type TranscriptSearchHit } from '../retrieval/memory-search';
+import type { Embedder } from '../retrieval/types';
+
+/** Map an engine transcript hit to the `conversation` SearchHit surfaced to the
+ *  palette and MCP. Shared by the unified search and the similar-sessions IPC.
+ *  `sessionActive` (does the session have a live agent right now) drives the
+ *  palette's open-terminal-vs-open-history routing and row badge; callers without
+ *  liveness context (similar-sessions) leave it false. */
+export function toConversationSearchHit(
+  hit: TranscriptSearchHit,
+  sessionActive = false,
+): Extract<SearchHit, { kind: 'conversation' }> {
+  return {
+    kind: 'conversation',
+    projectId: hit.projectId,
+    projectName: hit.projectName,
+    taskId: hit.taskId,
+    taskTitle: hit.taskTitle,
+    sessionId: hit.sessionId,
+    agentName: hit.agentName,
+    chunkId: hit.chunkId,
+    turnUuid: hit.turnUuid,
+    turnKind: hit.role,
+    turnTs: hit.turnTs,
+    score: hit.score,
+    matchKind: hit.matchKind,
+    snippet: hit.snippet,
+    matchStart: hit.matchStart,
+    matchEnd: hit.matchEnd,
+    sessionActive,
+    matchCount: hit.matchCount,
+  };
+}
 
 // Unified search across tasks, backlog, session events, and projects. Scan
 // strategy per source:
@@ -18,11 +51,14 @@ import type {
 //     readline. Async; we run all projects' event scans concurrently via
 //     Promise.all so cross-project I/O overlaps.
 //
-// Transcripts (the SQLite `session_transcripts` blob written by
-// TranscriptWriter) are NOT searched. For TUI agents like Claude Code the
-// transcript is mostly inline-redraw frames (cursor positioning + screen
-// clears) so it produces duplicate hits and noisy snippets. The structured
-// `events.jsonl` hook stream is the canonical "what happened" surface.
+// The RAW `session_transcripts` scrollback blob (written by TranscriptWriter)
+// is still NOT searched: for TUI agents like Claude Code it is mostly
+// inline-redraw frames (cursor positioning + screen clears), so it produces
+// duplicate hits and noisy snippets. Instead, the STRUCTURED transcript
+// (TranscriptEntry-derived chunks in the memory index) is searched as
+// `kind: 'conversation'` when conversation memory is enabled - see
+// `searchConversationMemory`. The `events.jsonl` hook stream remains the
+// telemetry "what happened" surface (`kind: 'session_event'`).
 // Per-kind hit budgets keep one slow source from starving the others.
 
 export const PER_KIND_CAP = {
@@ -30,6 +66,7 @@ export const PER_KIND_CAP = {
   backlog: 20,
   session_event: 50,
   project: 10,
+  conversation: 20,
 } as const;
 
 const SNIPPET_RADIUS = 60;
@@ -152,6 +189,7 @@ interface Budget {
   backlog: number;
   session_event: number;
   project: number;
+  conversation: number;
 }
 
 function pushTaskHits(
@@ -366,6 +404,17 @@ export interface SearchEverythingInput {
   projectsForProjectHits?: Project[];
   /** Optional DB-factory injection for tests. Defaults to `getProjectDb`. */
   getDb?: (projectId: string) => Database.Database;
+  /**
+   * Conversation-memory (structured transcript) search. Omitted or
+   * `enabled: false` skips it entirely - existing callers and tests are
+   * unaffected. The IPC handler and MCP tool set `enabled` from
+   * `memory.indexingEnabled`. `embedder` enables the semantic/hybrid path
+   * (Phase 2); absent = lexical-only.
+   */
+  conversationSearch?: {
+    enabled: boolean;
+    embedder?: Embedder | null;
+  };
 }
 
 /**
@@ -412,13 +461,58 @@ export async function runSearchEverything(input: SearchEverythingInput): Promise
   // Acceptable for v1 - the over-shoot is a handful of extra rows, never
   // unbounded. Tighten by serializing or atomicizing push+decrement if it
   // becomes user-visible.
-  await Promise.all(input.projects.map(async (project) => {
+  const eventScans = Promise.all(input.projects.map(async (project) => {
     try {
       await pushSessionEventHits(project, needleLower, budget, hits, getDb);
     } catch (err) {
       console.warn(`[search:everything] event scan failed for project ${project.id}:`, err);
     }
   }));
+
+  // Structured-transcript (conversation memory) search runs concurrently as a
+  // single cross-project call. Isolated in try/catch so a missing index or a
+  // malformed FTS query never fails the whole search.
+  // Per-project set of session ids with a live agent (running/queued), so a
+  // conversation hit whose session is still active routes to the live terminal
+  // instead of the read-only viewer. Cached per project for the call.
+  const liveSessionsByProject = new Map<string, Set<string>>();
+  const liveSessionIdsFor = (projectId: string): Set<string> => {
+    const cached = liveSessionsByProject.get(projectId);
+    if (cached) return cached;
+    let live = new Set<string>();
+    try {
+      const rows = getDb(projectId)
+        .prepare("SELECT id FROM sessions WHERE status IN ('running', 'queued')")
+        .all() as Array<{ id: string }>;
+      live = new Set(rows.map((row) => row.id));
+    } catch {
+      // Project DB unavailable: treat as no live sessions (routes to history).
+    }
+    liveSessionsByProject.set(projectId, live);
+    return live;
+  };
+
+  const conversationScan = (async () => {
+    if (!input.conversationSearch?.enabled) return;
+    try {
+      const conversationHits = await searchConversationMemory({
+        query,
+        projects: input.projects,
+        k: budget.conversation,
+        embedWaitMs: 400,
+        getDb,
+        embedder: input.conversationSearch.embedder ?? null,
+      });
+      for (const hit of conversationHits) {
+        const sessionActive = liveSessionIdsFor(hit.projectId).has(hit.sessionId);
+        hits.push(toConversationSearchHit(hit, sessionActive));
+      }
+    } catch (err) {
+      console.warn('[search:everything] conversation scan failed:', err);
+    }
+  })();
+
+  await Promise.all([eventScans, conversationScan]);
 
   return hits;
 }

@@ -48,9 +48,11 @@ export function BranchPicker({
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  // When anchored externally (kebab fallback) the dropdown is portaled + fixed so
-  // it escapes the header's overflow clip; otherwise it stays inline + absolute.
-  const usePortal = hideTrigger || anchorRef !== undefined;
+  // The inline chip lives inside headers and dialogs that clip overflow, so its
+  // dropdown always portals + fixed to escape the clip (as the kebab fallback,
+  // hideTrigger / anchorRef, already does). Only the 'input' variant stays inline +
+  // absolute, because it stretches to its container's full width.
+  const usePortal = hideTrigger || anchorRef !== undefined || variant === 'chip';
   const positionAnchor = anchorRef ?? containerRef;
   const { style: dropdownStyle } = usePopoverPosition(
     positionAnchor,

@@ -251,6 +251,19 @@ export const IPC = {
   // Search
   SEARCH_EVERYTHING: 'search:everything',
 
+  // Conversation viewer (structured transcripts). Read-only; prefer the
+  // explicit projectId but fall back to the ambient current project.
+  TRANSCRIPT_GET: 'transcript:get',
+  TRANSCRIPT_LIST_SESSIONS: 'transcript:listSessions',
+
+  // Conversation-memory semantic-layer status (Smart-mode palette UI).
+  MEMORY_STATUS: 'memory:status',
+  // Proactive "similar past conversations" for a task (Phase 3 surface).
+  MEMORY_SIMILAR: 'memory:similar',
+  // Purge the current project's conversation index and re-run the backfill sweep
+  // (recovery from a corrupt/stale index; Memory settings "Rebuild index").
+  MEMORY_REBUILD_INDEX: 'memory:rebuildIndex',
+
   // Diagnostics (product, all builds): renderer console + window error
   // forwarding to main, where they are persisted to .kangentic/logs/.
   // See src/main/diagnostics/ for the consumers.

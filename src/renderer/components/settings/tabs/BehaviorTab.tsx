@@ -46,13 +46,6 @@ export function BehaviorTab({ globalConfig }: { globalConfig: AppConfig }) {
         onChange={(value) => updateGlobal({ skipBoardConfigConfirm: value })}
       />
 
-      <SectionHeader label="Terminal" searchIds={['terminalBlockCopy']} />
-      <SettingToggleRow
-        {...settingProps('terminalBlockCopy')}
-        checked={globalConfig.terminalBlockCopy}
-        onChange={(value) => updateGlobal({ terminalBlockCopy: value })}
-      />
-
       <SectionHeader label="Task Windows" searchIds={['windowLightDismiss']} />
       <SettingRow {...settingProps('windowLightDismiss')}>
         <Select

@@ -3,8 +3,6 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '../addons/fit-addon';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
-import { registerTerminal } from '../utils/terminal-registry';
-import { pixelToBufferRow, extractBlockContentAt } from '../utils/terminal-block-buffer';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
 import { noteTerminalFocus } from '../utils/dictation-target';
@@ -102,8 +100,6 @@ export function useTerminal(options: UseTerminalOptions) {
   /** Coalesces xterm onData bursts (paste, key-repeat, clipboard callback)
    *  into one IPC write per microtask. */
   const writeBatcherRef = useRef<WriteBatcher | null>(null);
-  /** Unregisters this terminal from the block-copy hit-test registry on unmount. */
-  const unregisterTerminalRef = useRef<(() => void) | null>(null);
 
   const initTerminal = useCallback(() => {
     if (!terminalRef.current || xtermRef.current) return;
@@ -172,9 +168,6 @@ export function useTerminal(options: UseTerminalOptions) {
 
     xtermRef.current = terminal;
     fitAddonRef.current = fitAddon;
-
-    // Register for block-copy hit testing (right-click "Copy Block" + hover button).
-    unregisterTerminalRef.current = registerTerminal(terminal, terminalRef.current);
 
     // Send user input to PTY (via the microtask-batched queue above).
     if (options.sessionId) {
@@ -302,10 +295,9 @@ export function useTerminal(options: UseTerminalOptions) {
     };
   }, [options.sessionId]);
 
-  // Handle context-menu actions dispatched from the main process: Copy, Copy
-  // Block, Select All, and Paste. The event detail carries the right-click
-  // coordinates so we only act when the click landed inside THIS terminal's
-  // container.
+  // Handle context-menu actions dispatched from the main process: Copy, Select
+  // All, and Paste. The event detail carries the right-click coordinates so we
+  // only act when the click landed inside THIS terminal's container.
   useEffect(() => {
     const isInside = (e: Event): boolean => {
       const el = terminalRef.current;
@@ -321,18 +313,6 @@ export function useTerminal(options: UseTerminalOptions) {
       // Menu.popup steals document focus, so navigator.clipboard.writeText would reject.
       copySelectionToClipboard(xtermRef.current!);
     };
-    const handleCopyBlock = (e: Event) => {
-      if (!isInside(e)) return;
-      const term = xtermRef.current!;
-      const { x, y } = (e as CustomEvent).detail || {};
-      if (x == null || y == null) return;
-      const row = pixelToBufferRow(term, x, y);
-      if (row == null) return;
-      const hit = extractBlockContentAt(term, row);
-      // Focus-independent write: this fires from the native context menu, whose
-      // Menu.popup steals document focus (navigator.clipboard would reject).
-      if (hit?.content) window.electronAPI.clipboard.writeText(hit.content).catch(() => { /* best-effort */ });
-    };
     const handleSelectAll = (e: Event) => {
       if (!isInside(e)) return;
       xtermRef.current!.selectAll();
@@ -344,12 +324,10 @@ export function useTerminal(options: UseTerminalOptions) {
       }).catch(() => { /* clipboard access denied */ });
     };
     window.addEventListener('terminal-copy', handleCopy);
-    window.addEventListener('terminal-copy-block', handleCopyBlock);
     window.addEventListener('terminal-select-all', handleSelectAll);
     window.addEventListener('terminal-paste', handlePaste);
     return () => {
       window.removeEventListener('terminal-copy', handleCopy);
-      window.removeEventListener('terminal-copy-block', handleCopyBlock);
       window.removeEventListener('terminal-select-all', handleSelectAll);
       window.removeEventListener('terminal-paste', handlePaste);
     };
@@ -370,8 +348,6 @@ export function useTerminal(options: UseTerminalOptions) {
       } else if (options.sessionId) {
         savedScrollPositions.delete(options.sessionId);
       }
-      unregisterTerminalRef.current?.();
-      unregisterTerminalRef.current = null;
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
@@ -484,8 +460,6 @@ export function useTerminal(options: UseTerminalOptions) {
     xtermRef.current?.focus();
   }, []);
 
-  const getTerminal = useCallback(() => xtermRef.current, []);
-
   return {
     terminalRef,
     initTerminal,
@@ -495,6 +469,5 @@ export function useTerminal(options: UseTerminalOptions) {
     reloadScrollback,
     scrollbackPending: scrollbackPendingRef,
     suppressDataRef,
-    getTerminal,
   };
 }

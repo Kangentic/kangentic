@@ -37,6 +37,7 @@ import { registerBacklogHandlers } from './handlers/backlog';
 import { registerGitDiffHandlers } from './handlers/git-diff';
 import { registerBrowserHandlers } from './handlers/browser';
 import { registerSearchHandlers } from './handlers/search';
+import { registerTranscriptHandlers } from './handlers/transcripts';
 import type { IpcContext } from './ipc-context';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 
@@ -137,6 +138,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerGitDiffHandlers(context);
   registerBrowserHandlers(context);
   registerSearchHandlers(context);
+  registerTranscriptHandlers(context);
   registerSystemHandlers(context);
 
   // Periodically flush live-session metrics so an app/OS kill mid-run doesn't

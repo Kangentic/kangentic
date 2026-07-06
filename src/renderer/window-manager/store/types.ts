@@ -32,8 +32,12 @@ export type WindowSessionStatus = 'live' | 'suspended' | 'closed';
 
 /** What a managed window hosts. The engine is content-agnostic and instantiated
  *  once per kind on its own layer (board task-detail windows, command terminals).
- *  `WindowContent` routes on this; `anchor` is interpreted per kind. */
-export type WindowContentKind = 'task-detail' | 'command-terminal';
+ *  `WindowContent` routes on this; `anchor` is interpreted per kind.
+ *
+ *  `conversation` windows live on the board task-detail layer alongside
+ *  `task-detail` windows; their `anchor` is the Kangentic session id. They are
+ *  transient (never persisted in the workspace) in v1. */
+export type WindowContentKind = 'task-detail' | 'command-terminal' | 'conversation';
 
 export interface ManagedWindow {
   /** Window id, distinct from the session id. */

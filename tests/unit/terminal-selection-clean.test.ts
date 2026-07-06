@@ -1,12 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { cleanSelection } from '../../src/renderer/utils/terminal-clipboard';
 
-// Characterization tests locking the legacy string-based `cleanSelection`. This
-// feature adds a buffer-aware cleaner (`cleanSelectionLines`, covered in
-// terminal-blocks.test.ts) and leaves `cleanSelection` byte-identical as the
-// fallback path. A parallel worktree is fixing a bug in this same clipboard
-// module; these tests fail loudly if its semantics drift here unintentionally.
-describe('cleanSelection (legacy string cleaner)', () => {
+// Characterization tests locking the string-based `cleanSelection`, which is the
+// cleaner used when copying a terminal selection (unwrap soft line breaks, trim
+// trailing whitespace, trim outer blank lines). These tests fail loudly if its
+// semantics drift unintentionally.
+describe('cleanSelection (string cleaner)', () => {
   it('leaves distinct lines as-is', () => {
     expect(cleanSelection('hello\nworld', 80)).toBe('hello\nworld');
   });

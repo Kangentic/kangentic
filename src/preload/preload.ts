@@ -427,6 +427,19 @@ const api: ElectronAPI = {
     everything: (input) => ipcRenderer.invoke(IPC.SEARCH_EVERYTHING, input),
   },
 
+  transcripts: {
+    get: (input) => ipcRenderer.invoke(IPC.TRANSCRIPT_GET, input),
+    listSessions: (taskId, projectId) =>
+      ipcRenderer.invoke(IPC.TRANSCRIPT_LIST_SESSIONS, taskId, projectId),
+  },
+
+  memory: {
+    getStatus: () => ipcRenderer.invoke(IPC.MEMORY_STATUS),
+    similarForTask: (taskId, projectId) =>
+      ipcRenderer.invoke(IPC.MEMORY_SIMILAR, taskId, projectId),
+    rebuildIndex: (projectId) => ipcRenderer.invoke(IPC.MEMORY_REBUILD_INDEX, projectId),
+  },
+
   platform: process.platform,
 
   webUtils: {

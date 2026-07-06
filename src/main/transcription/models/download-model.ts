@@ -3,7 +3,14 @@ import * as path from 'node:path';
 import * as https from 'node:https';
 import * as http from 'node:http';
 import type { IncomingMessage } from 'node:http';
-import type { ModelDef } from './model-registry';
+import type { ModelFileSpec } from './model-registry';
+
+/** Minimal shape `downloadModelFiles` needs. Any `ModelDef` satisfies it, and
+ *  the conversation-memory embedding model reuses the same downloader. */
+export interface DownloadableModel {
+  files: ModelFileSpec[];
+  approxSizeMb: number;
+}
 
 const MAX_REDIRECTS = 5;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -88,7 +95,7 @@ function downloadFileTo(
  * (resume-friendly). Reports cumulative progress against an estimated total.
  */
 export async function downloadModelFiles(
-  model: ModelDef,
+  model: DownloadableModel,
   destDir: string,
   onProgress: (progress: DownloadProgress) => void,
 ): Promise<void> {
@@ -101,6 +108,9 @@ export async function downloadModelFiles(
     if (fs.existsSync(destPath)) {
       continue;
     }
+    // Nested file paths (e.g. `<model-id>/onnx/model_quantized.onnx`) need their
+    // parent created; dictation models are flat, so this is a no-op for them.
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
     await downloadFileTo(fileSpec.url, destPath, (delta) => {
       downloadedBytes += delta;
       onProgress({ downloadedBytes, totalBytes });

@@ -323,6 +323,69 @@ Index: `idx_handoffs_task_id` on (task_id).
 
 TypeScript type: `HandoffRecord` in `src/shared/types.ts`. Repository: `HandoffRepository` in `src/main/db/repositories/handoff-repository.ts`.
 
+### memory_chunks table
+
+Conversation-memory index: a per-project retrieval store over the STRUCTURED transcript (TranscriptEntry-derived chunks), not the raw `session_transcripts` scrollback blob. Corpus-generic (a `corpus` column) so the same store can later index repo files/docs; `session_id`/`task_id` are nullable for that reuse and always set for the conversation corpus.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | INTEGER | PRIMARY KEY (rowid) | |
+| corpus | TEXT | NOT NULL | 'conversation' |
+| doc_id | TEXT | NOT NULL | |
+| seq | INTEGER | NOT NULL | |
+| session_id | TEXT | | |
+| task_id | TEXT | | |
+| agent_session_id | TEXT | | |
+| role | TEXT | NOT NULL | |
+| text | TEXT | NOT NULL | |
+| content_hash | TEXT | NOT NULL | |
+| token_estimate | INTEGER | NOT NULL | |
+| ts_start | INTEGER | | |
+| ts_end | INTEGER | | |
+| turn_uuid_start | TEXT | | |
+| turn_uuid_end | TEXT | | |
+| embedded_model | TEXT | | (NULL = not embedded) |
+| meta_json | TEXT | | |
+| created_at | TEXT | NOT NULL | |
+
+Constraint: `UNIQUE(corpus, doc_id, seq)`. Indices: `idx_memory_chunks_doc` (corpus, doc_id, seq), `idx_memory_chunks_session` (session_id), `idx_memory_chunks_embedded` (embedded_model). Cascade cleanup via the `trg_sessions_delete_memory` DELETE trigger on `sessions`.
+
+### memory_chunks_fts (FTS5)
+
+FTS5 external-content virtual table over `memory_chunks.text` (`content='memory_chunks'`, `content_rowid='id'`, `tokenize='unicode61 remove_diacritics 2'`), kept in sync by the `trg_memory_chunks_ai`/`_ad`/`_au` triggers. Provides `bm25()` ranking and `snippet()` for conversation search. FTS5 is compiled into the shipped better-sqlite3, so this needs no extra dependency.
+
+The vector table `memory_chunks_vec` (`USING vec0`) is NOT created by migrations: it needs the sqlite-vec extension loaded, which may be unavailable, so `RetrievalStore.ensureVecTable()` creates it lazily at runtime only when the extension loaded. No trigger references it (a missing-module trigger body would break every `DELETE FROM sessions`); vec rows are cleaned by application code.
+
+### memory_index_state table
+
+Per-document index bookkeeping: the source-file staleness signature (path/mtime/size) so a sweep skips unchanged sources, and a terminal `unsupported` status for raw-only agents with no structured parser.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| corpus | TEXT | NOT NULL | |
+| doc_id | TEXT | NOT NULL | |
+| session_id | TEXT | | |
+| source_path | TEXT | | |
+| source_mtime_ms | INTEGER | | |
+| source_size | INTEGER | | |
+| entry_count | INTEGER | NOT NULL | 0 |
+| chunk_count | INTEGER | NOT NULL | 0 |
+| status | TEXT | NOT NULL | 'ok' |
+| indexed_at | TEXT | NOT NULL | |
+
+Constraint: `PRIMARY KEY (corpus, doc_id)`. `status` is one of `ok`, `unsupported`, `missing-source`, `error`.
+
+### memory_meta table
+
+Key/value bookkeeping for the memory index. Holds `chunker_version`; a mismatch against the current chunker version purges and reindexes the project.
+
+| Column | Type | Constraints |
+|--------|------|-------------|
+| key | TEXT | PRIMARY KEY |
+| value | TEXT | NOT NULL |
+
+Module: `src/main/retrieval/` (store `RetrievalStore`, indexer `ConversationIndexer`, service `retrievalService`, query `searchConversationMemory`).
+
 ## Migration Strategy
 
 Migrations run automatically on database open via `runGlobalMigrations()` (from `src/main/db/migrations/global-schema.ts`) and `runProjectMigrations()` (from `src/main/db/migrations/project-schema.ts`). Default swimlane and action seeding lives in `src/main/db/migrations/default-data.ts`. The strategy uses three approaches depending on the change:
@@ -385,6 +448,7 @@ Listed in execution order within `runProjectMigrations()`:
 43. **`description` column on swimlanes** - adds `description TEXT DEFAULT NULL`, a free-form, team-shared blurb describing a column's purpose. Surfaced as a header tooltip and round-trips through `kangentic.json` (`BoardColumnConfig.description`). Idempotent guarded `ALTER TABLE`.
 44. **`compaction_count` columns on sessions and usage_history** - adds `compaction_count INTEGER NOT NULL DEFAULT 0` to `sessions` (via the metrics-columns loop, migration 17) and the same to `usage_history` (in the `CREATE TABLE` block plus a guarded `ALTER TABLE` for existing DBs). Counts context compactions per CLI run (Claude `PreCompact` hook -> `EventType.Compact`, counted in `UsageAccumulator`); the per-task lifetime "sessions compacted" total is the SUM across the task's session rows. NOT NULL DEFAULT 0 so existing rows and never-compacted runs aggregate correctly.
 45. **`detail_view_state` column on tasks** - adds `detail_view_state TEXT DEFAULT NULL`, a per-task JSON blob (`TaskDetailViewState`) holding the task-detail dialog's layout (divider ratio, which side panel is open, Changes view mode, selected diff file, reviewed files, diff scope, file-tree width). Hydrated into the session store on board load and saved debounced via the task-scoped `TASK_SET_DETAIL_VIEW_STATE` IPC so reopening a task restores its layout across restarts. The dedicated `setDetailViewState` writer deliberately does not bump `updated_at` (view-state churn must not reorder the board). Idempotent guarded `ALTER TABLE`.
+46. **Conversation-memory index (`memory_chunks` + FTS + `memory_index_state` + `memory_meta`)** - creates the per-project retrieval store over the structured transcript: `memory_chunks` (corpus-generic chunk store, `UNIQUE(corpus, doc_id, seq)`), the `memory_chunks_fts` FTS5 external-content shadow (with `_ai`/`_ad`/`_au` sync triggers), `memory_index_state` (per-doc staleness signature + status), and `memory_meta` (chunker version). Cascade cleanup via `trg_sessions_delete_memory` on `sessions`. The `memory_chunks_vec` (vec0) table is created at runtime by `RetrievalStore.ensureVecTable()` only when the sqlite-vec extension loaded, never by migrations, and no trigger references it. Idempotent `CREATE ... IF NOT EXISTS`.
 
 ### Key Migrations (Global DB)
 

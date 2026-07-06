@@ -4,10 +4,12 @@
  * reports the agent's own). This is a placeholder that the agent's live
  * telemetry overrides, so a later in-session `/model` change stays accurate.
  *
- * All Claude-command-syntax and model-naming knowledge lives here (and is
- * surfaced via the adapter's `configuredModelFromCommand`), keeping it out of
- * the shared spawn/renderer code.
+ * Claude-command-syntax parsing lives here (and is surfaced via the adapter's
+ * `configuredModelFromCommand`), keeping it out of the shared spawn/renderer
+ * code. Model-name humanizing delegates to the shared `humanizeModelId`.
  */
+
+import { humanizeModelId } from '../../../../shared/model-id';
 
 /**
  * Extract the raw `--model` value from a built Claude command string. `quoteArg`
@@ -29,37 +31,12 @@ export function parseModelFromClaudeCommand(command: string): string | null {
 }
 
 /**
- * Humanize a Claude model id, matching Anthropic's scheme
- * (`claude-<name>-<major>-<minor>` <-> "<Name> <major>.<minor>").
- * e.g. `claude-opus-4-8` -> "Opus 4.8", `claude-fable-5` -> "Fable 5",
- * `opus` -> "Opus". Best-effort: the exact name comes from the agent's own
- * status.json later. Returns null when nothing meaningful can be derived.
+ * Humanize a Claude model id (best-effort; the exact name comes from the agent's
+ * own status.json later). Delegates to the shared `humanizeModelId` so model-name
+ * display formatting has a single source (also used by the conversation viewer).
  */
 export function humanizeClaudeModelId(modelId: string): string | null {
-  const trimmed = modelId.trim();
-  if (!trimmed) return null;
-
-  // A bracketed suffix (e.g. `[1m]`) marks a context-window variant.
-  const bracketMatch = trimmed.match(/\[([^\]]+)\]/);
-  const base = trimmed.replace(/\[[^\]]*\]/, '');
-  const segments = base.replace(/^claude-/i, '').split('-').filter(Boolean);
-  if (segments.length === 0) return null;
-
-  const nameParts: string[] = [];
-  const versionParts: string[] = [];
-  for (const segment of segments) {
-    if (/^\d+$/.test(segment)) {
-      // Numeric segment: a version component, unless it is a date stamp
-      // (>= 6 digits, e.g. 20251001), which we drop.
-      if (segment.length < 6) versionParts.push(segment);
-    } else {
-      nameParts.push(segment.charAt(0).toUpperCase() + segment.slice(1));
-    }
-  }
-
-  const label = [nameParts.join(' '), versionParts.join('.')].filter(Boolean).join(' ');
-  if (!label) return null;
-  return bracketMatch ? `${label} (${bracketMatch[1].toUpperCase()})` : label;
+  return humanizeModelId(modelId);
 }
 
 /**

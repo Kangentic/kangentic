@@ -57,6 +57,42 @@ export function parseModelId(id: string): ParsedModelId {
   return { id, baseId: remainder, isOneMillionVariant, datedSnapshot };
 }
 
+/**
+ * Humanize a model id for display, matching Anthropic's naming scheme
+ * (`claude-<name>-<major>-<minor>` <-> "<Name> <major>.<minor>"): e.g.
+ * `claude-opus-4-8` -> "Opus 4.8", `claude-fable-5` -> "Fable 5", `opus` -> "Opus".
+ * Pure string-shape formatting for the display layer. A dated pin (a 6+ digit
+ * segment like `20251001`) is dropped; a `[1m]`-style bracket becomes a
+ * parenthesized suffix. Returns null when nothing meaningful can be derived, so
+ * callers fall back to the raw id. The Claude adapter's `humanizeClaudeModelId`
+ * delegates here so this stays the single source for model-name display.
+ */
+export function humanizeModelId(modelId: string): string | null {
+  const trimmed = modelId.trim();
+  if (!trimmed) return null;
+
+  const bracketMatch = trimmed.match(/\[([^\]]+)\]/);
+  const base = trimmed.replace(/\[[^\]]*\]/, '');
+  const segments = base.replace(/^claude-/i, '').split('-').filter(Boolean);
+  if (segments.length === 0) return null;
+
+  const nameParts: string[] = [];
+  const versionParts: string[] = [];
+  for (const segment of segments) {
+    if (/^\d+$/.test(segment)) {
+      // Numeric segment: a version component, unless it is a date stamp
+      // (>= 6 digits, e.g. 20251001), which we drop.
+      if (segment.length < 6) versionParts.push(segment);
+    } else {
+      nameParts.push(segment.charAt(0).toUpperCase() + segment.slice(1));
+    }
+  }
+
+  const label = [nameParts.join(' '), versionParts.join('.')].filter(Boolean).join(' ');
+  if (!label) return null;
+  return bracketMatch ? `${label} (${bracketMatch[1].toUpperCase()})` : label;
+}
+
 export interface ModelDisplayGroup {
   /** Exact string selected by activating the group's primary row. */
   primaryId: string;

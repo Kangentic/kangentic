@@ -32,7 +32,7 @@ export function registerSearchTools(
   server.registerTool(
     'kangentic_search_everything',
     {
-      description: 'Unified keyword search across the active project (or all registered projects) covering: board tasks (active + archived, title and description), backlog items (title and description), session events (the structured tool_start/tool_end/idle stream from agent runs), and project names/paths. Returns a per-kind grouped result with snippets so an agent can pinpoint the matching task, backlog item, session event, or project in one call instead of issuing kangentic_search_tasks + kangentic_get_session_events separately. (kangentic_search_tasks already spans board + backlog within a single project; reach for this tool when you also need session events or cross-project scope.) Per-kind hit caps prevent runaway results: 30 tasks, 20 backlog, 50 session events, 10 projects. Defaults to scoping the search to the active project; pass `scope: "all"` to widen across every registered project. Passing `project` forces scope to "current" since explicit project routing already specifies the target.',
+      description: 'Unified search across the active project (or all registered projects) covering: board tasks (active + archived, title and description), backlog items (title and description), session events (the structured tool_start/tool_end/idle stream from agent runs), conversation transcripts (ranked keyword search over past agent conversations, when conversation memory is indexed), and project names/paths. Returns a per-kind grouped result with snippets so an agent can pinpoint the matching task, backlog item, session event, conversation turn, or project in one call instead of issuing kangentic_search_tasks + kangentic_get_session_events separately. Conversation hits carry a sessionId + turnUuid so you can follow up with kangentic_get_transcript. (kangentic_search_tasks already spans board + backlog within a single project; reach for this tool when you also need session events, past conversations, or cross-project scope.) Per-kind hit caps prevent runaway results: 30 tasks, 20 backlog, 50 session events, 10 projects, 20 conversations. Defaults to scoping the search to the active project; pass `scope: "all"` to widen across every registered project. Passing `project` forces scope to "current" since explicit project routing already specifies the target.',
       inputSchema: z.object({
         query: z.string().min(1).describe('Search keyword or phrase (case-insensitive). Empty queries return no results.'),
         scope: z.enum(['current', 'all']).optional().describe('"current" (default) searches only the active or `project`-routed project. "all" widens to every registered project on this machine and additionally surfaces project-name hits so an agent can discover routing targets. Ignored (forced to "current") when `project` is set.'),
@@ -77,6 +77,7 @@ export function registerSearchTools(
         projects: projectsToScan,
         includeProjectHits: effectiveScope === 'all',
         projectsForProjectHits: allProjects,
+        conversationSearch: { enabled: resolver.isMemoryIndexingEnabled() },
       });
 
       return {
@@ -103,16 +104,18 @@ function formatHits(query: string, hits: SearchHit[], scope: 'current' | 'all'):
   const backlog: Extract<SearchHit, { kind: 'backlog' }>[] = [];
   const sessionEvents: Extract<SearchHit, { kind: 'session_event' }>[] = [];
   const projects: Extract<SearchHit, { kind: 'project' }>[] = [];
+  const conversations: Extract<SearchHit, { kind: 'conversation' }>[] = [];
   for (const hit of hits) {
     switch (hit.kind) {
       case 'task': tasks.push(hit); break;
       case 'backlog': backlog.push(hit); break;
       case 'session_event': sessionEvents.push(hit); break;
       case 'project': projects.push(hit); break;
+      case 'conversation': conversations.push(hit); break;
     }
   }
 
-  const summary = `Found ${hits.length} hit(s) for "${query}" (scope: ${scope}; tasks: ${tasks.length}, backlog: ${backlog.length}, session_event: ${sessionEvents.length}, project: ${projects.length})`;
+  const summary = `Found ${hits.length} hit(s) for "${query}" (scope: ${scope}; tasks: ${tasks.length}, backlog: ${backlog.length}, session_event: ${sessionEvents.length}, project: ${projects.length}, conversation: ${conversations.length})`;
 
   const sections: string[] = [];
 
@@ -143,6 +146,13 @@ function formatHits(query: string, hits: SearchHit[], scope: 'current' | 'all'):
       `- ${hit.projectName} (id: ${hit.projectId}, path: ${hit.projectPath}) - ${hit.snippet}`,
     );
     sections.push(`## Projects\n${lines.join('\n')}`);
+  }
+
+  if (conversations.length > 0) {
+    const lines = conversations.map((hit) =>
+      `- [${hit.score.toFixed(3)}] ${hit.taskTitle} via ${hit.agentName} (project: ${hit.projectName}, sessionId: ${hit.sessionId}, turnUuid: ${hit.turnUuid ?? 'n/a'}) - ${hit.snippet}`,
+    );
+    sections.push(`## Conversations\n${lines.join('\n')}`);
   }
 
   return `${summary}\n\n${sections.join('\n\n')}`;

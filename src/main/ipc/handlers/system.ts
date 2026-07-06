@@ -106,6 +106,11 @@ export function registerSystemHandlers(context: IpcContext): void {
       void import('../../pr/pr-refresh-scheduler').then(({ prRefreshScheduler }) => {
         prRefreshScheduler.startForProject(context, project);
       });
+      // Re-run the conversation-memory sweep so toggling memory.indexingEnabled
+      // on takes effect without reopening the project.
+      void import('../../retrieval/retrieval-service').then(({ retrievalService }) => {
+        retrievalService.startForProject(context, project);
+      });
     }
   });
 

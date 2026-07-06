@@ -22,6 +22,22 @@
   let nextDisplayId = 1;
   let bulkDeleteProgressCallbacks = [];
   let searchHits = [];
+  // Conversation memory (Phase 2/3). `memoryStatus` feeds the palette's
+  // Smart-mode degraded notice and the Privacy tab status line; `similarConversations`
+  // feeds the task-detail "Similar conversations" section. Both seeded via
+  // __mockPreConfigure (mirrors searchHits).
+  let memoryStatus = {
+    indexingEnabled: true,
+    semantic: 'disabled',
+    model: { id: 'mxbai-xsmall', displayName: 'mxbai xsmall', tier: 'fast', approxSizeMb: 24, dimensions: 384, state: 'absent' },
+  };
+  let similarConversations = [];
+  // Conversation viewer fixtures. `transcriptSeeds` maps a sessionId to a
+  // TranscriptGetResponse; `transcriptSessionsByTask` maps a taskId to the
+  // ConversationSessionMeta[] the session picker offers. Both seeded via
+  // __mockPreConfigure (mirrors searchHits).
+  let transcriptSeeds = {};
+  let transcriptSessionsByTask = {};
   // Browser pane state. Per-task URL overrides live here; project default is
   // resolved through projectConfigs.<path>.browser.defaultUrl. captureCalls is
   // a call log so tests can assert the prompt payload that would have been
@@ -134,7 +150,6 @@
     skipDeleteConfirm: false,
     skipBoardConfigConfirm: false,
     autoFocusIdleSession: false,
-    terminalBlockCopy: true,
     windowLightDismiss: 'single',
     autoNameAskedTaskIds: [],
     autoNameRateLimitPerHour: 60,
@@ -2343,7 +2358,62 @@
     },
 
     search: {
-      everything: function (_request) { return Promise.resolve(searchHits.slice()); },
+      everything: function (request) {
+        // Record the request so specs can assert the mode plumbing (the seeded
+        // hits are returned regardless of mode - only the mode wiring is tested).
+        if (typeof window !== 'undefined') {
+          window.__mockLastSearchRequest = request;
+          if (!window.__mockSearchRequests) window.__mockSearchRequests = [];
+          window.__mockSearchRequests.push(request);
+        }
+        return Promise.resolve(searchHits.slice());
+      },
+    },
+
+    memory: {
+      getStatus: function () { return Promise.resolve(Object.assign({}, memoryStatus)); },
+      similarForTask: function (taskId, projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockSimilarForTaskCalls) window.__mockSimilarForTaskCalls = [];
+          window.__mockSimilarForTaskCalls.push({
+            taskId: taskId,
+            projectId: projectId === undefined ? null : projectId,
+          });
+        }
+        return Promise.resolve(similarConversations.slice());
+      },
+      rebuildIndex: function (projectId) {
+        if (typeof window !== 'undefined') {
+          if (!window.__mockRebuildIndexCalls) window.__mockRebuildIndexCalls = [];
+          window.__mockRebuildIndexCalls.push({ projectId: projectId === undefined ? null : projectId });
+        }
+        return Promise.resolve();
+      },
+    },
+
+    transcripts: {
+      get: function (input) {
+        var seed = transcriptSeeds[input.sessionId];
+        if (seed) return Promise.resolve(seed);
+        // Default: nothing indexed / no native file for this session.
+        return Promise.resolve({
+          sessionId: input.sessionId,
+          taskId: null,
+          taskTitle: '',
+          agentName: '',
+          startedAt: new Date().toISOString(),
+          sessionStatus: null,
+          source: 'none',
+          sourcePath: null,
+          entries: [],
+          degraded: false,
+          unavailableReason: 'file_missing',
+        });
+      },
+      listSessions: function (taskId, _projectId) {
+        var list = transcriptSessionsByTask[taskId];
+        return Promise.resolve(list ? list.slice() : []);
+      },
     },
 
     browser: {
@@ -2456,6 +2526,18 @@
     }
     if (result && Array.isArray(result.searchHits)) {
       searchHits = result.searchHits;
+    }
+    if (result && result.memoryStatus && typeof result.memoryStatus === 'object') {
+      memoryStatus = result.memoryStatus;
+    }
+    if (result && Array.isArray(result.similarConversations)) {
+      similarConversations = result.similarConversations;
+    }
+    if (result && result.transcriptSeeds && typeof result.transcriptSeeds === 'object') {
+      Object.assign(transcriptSeeds, result.transcriptSeeds);
+    }
+    if (result && result.transcriptSessionsByTask && typeof result.transcriptSessionsByTask === 'object') {
+      Object.assign(transcriptSessionsByTask, result.transcriptSessionsByTask);
     }
   };
 

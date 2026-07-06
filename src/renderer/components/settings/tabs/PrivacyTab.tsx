@@ -32,6 +32,13 @@ export function PrivacyTab() {
         for geographic lookup only, then discarded. GDPR-compliant by design.
       </p>
 
+      <SectionHeader label="Conversation Search" />
+      <p className="text-sm text-fg-muted leading-relaxed">
+        Local conversation indexing and semantic search settings live in the{' '}
+        <span className="text-fg-secondary">Memory</span> tab. All of it runs on your device with no
+        API key; nothing leaves your machine.
+      </p>
+
       <SectionHeader label="How to Opt Out" />
       <p className="text-sm text-fg-muted leading-relaxed">
         Set <code className="font-mono">KANGENTIC_TELEMETRY=0</code> as an environment variable to disable analytics.

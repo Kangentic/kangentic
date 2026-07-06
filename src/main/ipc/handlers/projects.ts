@@ -21,6 +21,7 @@ import { trackEvent } from '../../analytics/analytics';
 import { isShuttingDown } from '../../shutdown-state';
 import { runWithProjectLogContext } from '../../diagnostics/project-log-context';
 import { prRefreshScheduler } from '../../pr/pr-refresh-scheduler';
+import { retrievalService } from '../../retrieval/retrieval-service';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type { Project, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
@@ -100,6 +101,7 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   // Stop this project's background PR-refresh timer (no-op if it is not the
   // active one). Before the path-exists guard so both cleanup paths tear it down.
   prRefreshScheduler.stop(projectId);
+  retrievalService.stop(projectId);
 
   // Guard: project path must exist
   if (!fs.existsSync(projectPath)) {
@@ -566,6 +568,11 @@ export function registerProjectHandlers(context: IpcContext): void {
     // merged off-app while away is reflected on return; the sweep is deferred off
     // the IPC critical path and the timer is torn down on switch/delete/shutdown.
     prRefreshScheduler.startForProject(context, project);
+
+    // Background conversation-memory indexing: a deferred, switch-guarded
+    // backfill sweep of unindexed sessions. Live sessions are indexed via the
+    // finalize hooks attached here on first open.
+    retrievalService.startForProject(context, project);
 
     if (!isWarmReopen) {
       const db = getProjectDb(id);

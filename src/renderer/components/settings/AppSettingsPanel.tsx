@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from 'react';
-import { Bell, Bot, Bug, FolderCog, GitBranch, Globe, Keyboard, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Terminal, Zap } from 'lucide-react';
+import { Bell, Bot, Brain, Bug, FolderCog, GitBranch, Globe, Keyboard, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Terminal, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { SettingsPanelProvider, SearchTabGroupHeader, NoSearchResults } from './shared';
 import type { SettingsTabDefinition, SettingScope, SettingsContentProps } from './shared';
@@ -17,6 +17,7 @@ import { DictationTab } from './tabs/DictationTab';
 import { McpServerTab } from './tabs/McpServerTab';
 import { BrowserAutomationTab } from './tabs/BrowserAutomationTab';
 import { NotificationsTab } from './tabs/NotificationsTab';
+import { MemoryTab } from './tabs/MemoryTab';
 import { PrivacyTab } from './tabs/PrivacyTab';
 import { DeveloperTab } from './tabs/DeveloperTab';
 import { HotkeysTab } from './tabs/HotkeysTab';
@@ -45,6 +46,7 @@ export const APP_TABS: SettingsTabDefinition[] = [
   { id: 'layout', label: 'Layout', icon: LayoutGrid, separator: true, tooltip: 'Applies to all projects' },
   { id: 'behavior', label: 'Behavior', icon: SlidersHorizontal, tooltip: 'Applies to all projects' },
   { id: 'dictation', label: 'Dictation', icon: Mic, tooltip: 'Applies to all projects' },
+  { id: 'memory', label: 'Memory', icon: Brain, tooltip: 'Applies to all projects' },
   { id: 'hotkeys', label: 'Hotkeys', icon: Keyboard, tooltip: 'Applies to all projects' },
   { id: 'mcpServer', label: 'MCP Server', icon: Plug, tooltip: 'Applies to all projects' },
   { id: 'browserAutomation', label: 'Agent Browser', icon: MousePointerClick, tooltip: 'Applies to all projects' },
@@ -111,6 +113,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       case 'mcpServer': return <McpServerTab globalConfig={globalConfig} />;
       case 'browserAutomation': return <BrowserAutomationTab globalConfig={globalConfig} />;
       case 'notifications': return <NotificationsTab globalConfig={globalConfig} />;
+      case 'memory': return <MemoryTab globalConfig={globalConfig} />;
       case 'privacy': return <PrivacyTab />;
       default: return null;
     }

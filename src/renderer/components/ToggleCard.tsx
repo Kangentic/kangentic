@@ -9,6 +9,11 @@ interface ToggleCardProps {
   icon?: React.ReactNode;
   /** Override the announced label. Defaults to `label`. */
   ariaLabel?: string;
+  /**
+   * When true, the card renders greyed and ignores clicks. Used for a setting
+   * gated on a prerequisite (e.g. semantic search needs indexing enabled).
+   */
+  disabled?: boolean;
 }
 
 /**
@@ -42,15 +47,21 @@ export function ToggleIndicator({ checked, className = '' }: { checked: boolean;
  * Use this for any standalone boolean setting that has a label + description.
  * For dense lists of toggles, use `CompactToggleList` instead.
  */
-export function ToggleCard({ label, description, checked, onChange, icon, ariaLabel }: ToggleCardProps) {
+export function ToggleCard({ label, description, checked, onChange, icon, ariaLabel, disabled }: ToggleCardProps) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-disabled={disabled || undefined}
+      disabled={disabled}
       aria-label={ariaLabel ?? label}
-      onClick={() => onChange(!checked)}
-      className="flex items-start justify-between gap-3 w-full text-left cursor-pointer bg-surface/40 hover:bg-surface/70 border border-edge/40 hover:border-edge rounded-md px-3.5 py-2.5 transition-colors focus:outline-none focus-visible:border-accent"
+      onClick={disabled ? undefined : () => onChange(!checked)}
+      className={`flex items-start justify-between gap-3 w-full text-left border rounded-md px-3.5 py-2.5 transition-colors focus:outline-none focus-visible:border-accent ${
+        disabled
+          ? 'bg-surface/40 border-edge/40 opacity-50 cursor-not-allowed'
+          : 'cursor-pointer bg-surface/40 hover:bg-surface/70 border-edge/40 hover:border-edge'
+      }`}
     >
       {icon && <span className="flex-shrink-0 mt-0.5 text-fg-muted">{icon}</span>}
       <div className="flex-1 min-w-0">

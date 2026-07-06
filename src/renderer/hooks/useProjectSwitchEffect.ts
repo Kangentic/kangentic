@@ -156,6 +156,11 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           // detail window re-renders against the live session list, so they
           // need no separate restore - clear them on switch.
           dialogSessionIds: [],
+          // Conversation windows are transient (per-project session), so drop any
+          // open conversation signal on switch; a cross-project handoff re-arms it
+          // via `_pendingOpenConversation` below.
+          conversationSessionId: null,
+          scrollToTurnUuid: null,
         });
 
         // Re-derive the active tab from config rather than the live
@@ -183,6 +188,13 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         if (pendingTaskId) {
           useSessionStore.getState().setPendingOpenTaskId(null);
           useSessionStore.getState().setDetailTaskId(pendingTaskId);
+        }
+
+        // Open the conversation viewer if a cross-project search hit queued one.
+        const pendingConversation = useSessionStore.getState()._pendingOpenConversation;
+        if (pendingConversation) {
+          useSessionStore.getState().setPendingOpenConversation(null);
+          useSessionStore.getState().setConversationSessionId(pendingConversation);
         }
 
         // Restore the persisted window layout. Warm switches keep sessions live,
@@ -227,6 +239,8 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           activeSessionId: null,
           dialogSessionIds: [],
           detailTaskId: null,
+          conversationSessionId: null,
+          scrollToTurnUuid: null,
           sessionEvents: preservedEvents,
         });
 
@@ -259,6 +273,13 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           if (pendingTaskId) {
             useSessionStore.getState().setPendingOpenTaskId(null);
             useSessionStore.getState().setDetailTaskId(pendingTaskId);
+          }
+
+          // Open the conversation viewer if a cross-project search hit queued one.
+          const pendingConversation = useSessionStore.getState()._pendingOpenConversation;
+          if (pendingConversation) {
+            useSessionStore.getState().setPendingOpenConversation(null);
+            useSessionStore.getState().setConversationSessionId(pendingConversation);
           }
 
           markProjectSeen(currentProject.id);
@@ -301,6 +322,8 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         activeSessionId: null,
         dialogSessionIds: [],
         detailTaskId: null,
+        conversationSessionId: null,
+        scrollToTurnUuid: null,
         pendingDetailWindowsProjectId: null,
       });
       // Reset effective config to global defaults (no project overrides)

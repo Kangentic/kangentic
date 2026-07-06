@@ -6,6 +6,7 @@ import { agentRegistry } from '../agent-registry';
 import {
   filterTranscriptView,
   searchTranscript,
+  sliceTranscriptAroundUuid,
   renderTranscriptBudgeted,
   TRANSCRIPT_CHAR_BUDGET,
   TRANSCRIPT_CHAR_BUDGET_MAX,
@@ -105,6 +106,10 @@ export async function handleGetTranscript(
       : TRANSCRIPT_CHAR_BUDGET;
   const search =
     typeof params.search === 'string' && params.search.trim().length > 0 ? params.search : undefined;
+  const aroundUuid =
+    typeof params.aroundUuid === 'string' && params.aroundUuid.trim().length > 0 ? params.aroundUuid : undefined;
+  const contextTurns =
+    typeof params.context === 'number' && params.context >= 0 ? Math.min(50, Math.floor(params.context)) : 3;
   const sessionIndex =
     typeof params.sessionIndex === 'number' && params.sessionIndex >= 0 ? Math.floor(params.sessionIndex) : 0;
 
@@ -179,7 +184,8 @@ export async function handleGetTranscript(
 
       const totalParsed = entries.length;
 
-      // Filter on the agent-agnostic TranscriptEntry[]: view, then search.
+      // Filter on the agent-agnostic TranscriptEntry[]: view, then the
+      // turn-anchored window (citation-first fetch), then search.
       const viewed = filterTranscriptView(entries, view);
       if (view !== 'full' && viewed.length === 0) {
         const label = view === 'result' ? 'assistant response' : 'assistant responses';
@@ -189,7 +195,11 @@ export async function handleGetTranscript(
         };
       }
 
-      const searched = search ? searchTranscript(viewed, search) : viewed;
+      // sliceTranscriptAroundUuid returns the full list unchanged when the uuid
+      // is absent, so a stale citation degrades to the full transcript.
+      const windowed = aroundUuid ? sliceTranscriptAroundUuid(viewed, aroundUuid, contextTurns) : viewed;
+
+      const searched = search ? searchTranscript(windowed, search) : windowed;
       if (search && searched.length === 0) {
         return { success: true, message: `No entries match "${search}" in this session.` };
       }

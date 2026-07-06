@@ -231,8 +231,8 @@ test.describe('Task detail header pill overflow (title floor)', () => {
     await resizeTaskWindow(page, LONG_TASK_ID, NARROW_RECT);
 
     // At the min-width end the floor reserve leaves no room, so even the
-    // highest-priority default (Commands) folds - which proves every pill folded.
-    await expect(page.locator('[data-testid="commands-button"]')).toBeHidden();
+    // highest-priority default (the folder pill) folds - which proves every pill folded.
+    await expect(page.locator('[data-testid="branch-pill"]')).toBeHidden();
     await expect(page.locator('[data-testid="browser-toggle"]')).toBeHidden();
 
     // The title ellipsizes (rendered width < natural width). Poll so the overflow
@@ -251,9 +251,9 @@ test.describe('Task detail header pill overflow (title floor)', () => {
     await maximizeTaskWindow(page, LONG_TASK_ID);
 
     // Maximized leaves plenty of room above the floor, so the pills reclaim it: the
-    // highest-priority default is visible. This inverts the old behavior where a long
-    // title reserved its full width and hid every pill.
-    await expect(page.locator('[data-testid="commands-button"]')).toBeVisible();
+    // highest-priority default (the folder pill) is visible. This inverts the old behavior
+    // where a long title reserved its full width and hid every pill.
+    await expect(page.locator('[data-testid="branch-pill"]')).toBeVisible();
 
     // The title still truncates (its natural width exceeds even a maximized window),
     // and the rendered title keeps at least the ~50ch floor's worth of characters.
@@ -275,10 +275,10 @@ test.describe('Task detail header pill overflow (title floor)', () => {
     await openTaskDialog(page, SHORT_TITLE);
 
     // A short title leaves room for the pills. Every built-in default stays put...
-    await expect(page.locator('[data-testid="commands-button"]')).toBeVisible();
     await expect(page.locator('[data-testid="branch-pill"]')).toBeVisible();
     await expect(page.locator('[data-testid="changes-toggle"]')).toBeVisible();
     await expect(page.locator('[data-testid="browser-toggle"]')).toBeVisible();
+    await expect(page.locator('[data-testid="conversation-pill"]')).toBeVisible();
 
     // ...while the lowest-priority custom shortcuts fold into the kebab. A folded
     // pill is not rendered (showPill === false), so the rendered shortcut-pill count

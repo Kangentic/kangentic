@@ -26,9 +26,11 @@ import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds } from './
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
+import { retrievalService } from './retrieval/retrieval-service';
+import { setProjectDbInitializer } from './db/database';
+import { loadVecExtension } from './retrieval/vec-extension';
 import { restoreShellEnv } from './shell-env';
 import { isFirstPartyPermissionAllowed } from './permission-policy';
-import { probeTerminalBlock, buildCopyBlockDispatchScript } from './terminal-context-menu';
 import { MIN_ZOOM, MAX_ZOOM } from '../shared/zoom-steps';
 
 initStartupTimer(PROCESS_START);
@@ -350,29 +352,17 @@ function getCwdArg(): string | null {
 // Re-export for external consumers (e.g. updater module)
 export { resolveIconPath } from './window-utils';
 
-// Build and show the standard (non-image) right-click context menu. First probes
-// the renderer for a copyable terminal block under the cursor; when one is found,
-// prepends a "Copy Block" item that copies the block's clean content (no CLI
-// quote bar / indentation). The probe is bounded (see probeTerminalBlock), so a
-// slow or absent renderer just yields the menu without the extra item.
-async function showTerminalAwareContextMenu(
+// Build and show the standard (non-image) right-click context menu with Copy,
+// Paste, and Select All. When the click lands inside a terminal, the actions are
+// dispatched as CustomEvents the renderer's terminal handlers act on; otherwise
+// they fall back to the document's native execCommand.
+function showTerminalAwareContextMenu(
   wc: Electron.WebContents,
   params: Electron.ContextMenuParams,
-): Promise<void> {
+): void {
   const { x, y } = params;
-  const probe = await probeTerminalBlock((script) => wc.executeJavaScript(script), x, y);
 
   const template: Electron.MenuItemConstructorOptions[] = [];
-
-  if (probe.blockKind) {
-    template.push(
-      {
-        label: 'Copy Block',
-        click: () => { void wc.executeJavaScript(buildCopyBlockDispatchScript(x, y)).catch(() => { /* renderer gone */ }); },
-      },
-      { type: 'separator' },
-    );
-  }
 
   template.push(
     {
@@ -568,10 +558,8 @@ const createWindow = () => {
       return;
     }
 
-    // Probe the renderer for a copyable block under the cursor, then build the
-    // menu (with a "Copy Block" item when a quote/code block was hit). The probe
-    // is bounded, so the worst case is a menu that opens without the item.
-    void showTerminalAwareContextMenu(wc, params);
+    // Show the standard terminal-aware Copy / Paste / Select All menu.
+    showTerminalAwareContextMenu(wc, params);
   });
 
   // Track renderer crashes (OOM, GPU process gone, etc.)
@@ -627,6 +615,11 @@ const createWindow = () => {
           const project2 = await createPreviewClone(ephemeralContext, cwd); // adopts "Project 2"
           const opened = await openProjectByPath(project1.path);
           mark('project_opened');
+          // openProjectByPath (unlike the project:open IPC handler) does not start
+          // the background conversation-memory indexer, so the ephemeral preview
+          // would never index and semantic search would return nothing. Kick it
+          // here. Dev-only path; production starts it from the project:open handler.
+          if (opened) retrievalService.startForProject(ephemeralContext, opened);
           // Fill the working trees AFTER the board is open (Project 1 first - it is
           // current) so the slow checkout never contends with the open or delays the
           // board appearing.
@@ -713,6 +706,11 @@ Menu.setApplicationMenu(
 
 app.whenReady().then(async () => {
   mark('app_ready');
+
+  // Load the sqlite-vec extension into every project DB as it opens (after
+  // migrations). Registered before any project opens so the semantic search
+  // layer is available; a load failure degrades to lexical-only.
+  setProjectDbInitializer(loadVecExtension);
 
   // Redundant AUMID call inside whenReady -- ensures the ID is set even if
   // Electron clears it during app initialization on some Windows versions.
@@ -918,6 +916,9 @@ function getShutdownDependencies() {
       // Stop the background PR-refresh timer (also .unref()'d, but clear it
       // explicitly so no tick fires mid-shutdown).
       prRefreshScheduler.stop();
+      // Stop conversation-memory indexing synchronously: drop pending finalize
+      // timers and abandon any in-flight sweep (recovered on next open).
+      retrievalService.dispose();
       // Stop accepting new MCP requests synchronously. The server's close()
       // is non-blocking; in-flight requests are abandoned, which is fine
       // because they're idempotent (the agent will retry on reconnect or

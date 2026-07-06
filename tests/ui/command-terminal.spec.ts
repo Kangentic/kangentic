@@ -437,9 +437,10 @@ test.describe('Command Terminal', () => {
         // Click the kebab menu button
         await sharedPage.locator('[title="Actions"]').click();
 
-        // Verify menu items (use nth(1) for "Commands" to avoid matching the header pill)
+        // Verify menu items. Commands is kebab-only now (no header pill), so it is the
+        // sole "Commands" button.
         await expect(sharedPage.locator('button:has-text("Open folder")')).toBeVisible();
-        await expect(sharedPage.getByRole('button', { name: 'Commands' }).nth(1)).toBeVisible();
+        await expect(sharedPage.getByRole('button', { name: 'Commands' })).toBeVisible();
         await expect(sharedPage.getByTestId('command-bar-kebab-stop')).toBeVisible();
       });
 

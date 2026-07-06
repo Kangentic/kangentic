@@ -181,6 +181,25 @@ export function searchTranscript(entries: TranscriptEntry[], term: string): Tran
   });
 }
 
+/**
+ * Return a window of `context` entries either side of the entry with `uuid` (the
+ * turn-anchored fetch behind the citation-first MCP recall flow: recall cites a
+ * turnUuid, get_transcript fetches just that neighborhood). When the uuid is not
+ * found, returns all entries unchanged so the caller can fall back with a note.
+ */
+export function sliceTranscriptAroundUuid(
+  entries: TranscriptEntry[],
+  uuid: string,
+  context: number,
+): TranscriptEntry[] {
+  const index = entries.findIndex((entry) => entry.uuid === uuid);
+  if (index < 0) return entries;
+  const radius = Math.max(0, context);
+  const start = Math.max(0, index - radius);
+  const end = Math.min(entries.length, index + radius + 1);
+  return entries.slice(start, end);
+}
+
 /** Result of rendering a transcript under an entry/char budget. */
 export interface BudgetedTranscript {
   markdown: string;
@@ -276,7 +295,7 @@ function safeJson(value: unknown): string {
 }
 
 /** Map a tool_use id to its tool_result content, the way the renderer inlines it. */
-function buildResultsByUseId(entries: TranscriptEntry[]): Map<string, { content: string; isError: boolean }> {
+export function buildResultsByUseId(entries: TranscriptEntry[]): Map<string, { content: string; isError: boolean }> {
   const resultsByUseId = new Map<string, { content: string; isError: boolean }>();
   for (const entry of entries) {
     if (entry.kind === 'tool_result' && entry.toolUseId) {

@@ -775,9 +775,24 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
 
     serializeWorkspace: () => {
       const current = get();
+      // Conversation windows are transient in v1: never persisted. Exclude them
+      // from the snapshot, and defensively prune any that somehow ended up in the
+      // tile tree so a persisted leaf never dangles on restore (the board layer's
+      // `isKnownAnchor` treats an anchor as a taskId, and a session-id anchor would
+      // otherwise drop the WHOLE tree). Task-detail windows are unaffected.
+      const persistableWindows = Object.values(current.windows).filter(
+        (managedWindow) => managedWindow.kind !== 'conversation',
+      );
+      let tileTree = current.tileTree;
+      for (const managedWindow of Object.values(current.windows)) {
+        if (managedWindow.kind !== 'conversation') continue;
+        if (tileTree && treeContainsWindow(tileTree, managedWindow.id)) {
+          tileTree = removeWindowFromTree(tileTree, managedWindow.id);
+        }
+      }
       return toSerializedWorkspace(
-        Object.values(current.windows),
-        current.tileTree,
+        persistableWindows,
+        tileTree,
         current.tileTreeRect,
         current.focusedWindowId,
       );

@@ -23,7 +23,7 @@ const esbuildCommon = {
   platform: 'node',
   target: 'node24',
   format: 'cjs',
-  external: ['electron', 'better-sqlite3', 'node-pty', 'sherpa-onnx-node'],
+  external: ['electron', 'better-sqlite3', 'node-pty', 'sherpa-onnx-node', 'sqlite-vec', '@huggingface/transformers'],
   conditions: ['require'],
   define: {
     'MAIN_WINDOW_VITE_DEV_SERVER_URL': JSON.stringify(`http://localhost:${port}`),
@@ -167,9 +167,16 @@ async function start() {
       entryPoints: [path.join(projectDir, 'src/preload/preload.ts')],
       outfile: path.join(projectDir, '.vite/build/preload.js'),
     }),
+    // Conversation-memory embedding worker (Electron utilityProcess entry),
+    // built next to the main bundle so it resolves at __dirname in dev too.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/retrieval/embedder/embed-worker.ts')],
+      outfile: path.join(projectDir, '.vite/build/embed-worker.js'),
+    }),
   ]);
   console.timeEnd('[dev] esbuild');
-  console.log('[dev] Main + preload built');
+  console.log('[dev] Main + preload + embed worker built');
 
   // Copy external scripts (bridges + adapter plugins) next to the bundle, the
   // same step scripts/build.js runs. Without this, dev runs whatever stale copy

@@ -17,6 +17,7 @@ import { useBoardStore } from '../../stores/board-store';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
 import { WindowTitleBar } from './WindowTitleBar';
 import { TaskDetailWindow } from './TaskDetailWindow';
+import { ConversationWindow } from './ConversationWindow';
 import type { ManagedWindow } from '../store/types';
 
 const CommandTerminalWindow = lazy(() =>
@@ -56,6 +57,20 @@ export function WindowContent({
             titleBarPointerDown={titleBarPointerDown}
           />
         </Suspense>
+      </PanelErrorBoundary>
+    );
+  }
+
+  if (managedWindow.kind === 'conversation') {
+    return (
+      <PanelErrorBoundary label="Conversation">
+        <ConversationWindow
+          managedWindow={managedWindow}
+          isFocused={isFocused}
+          isMaximized={isMaximized}
+          titleBarPointerDown={titleBarPointerDown}
+          requestClose={requestClose}
+        />
       </PanelErrorBoundary>
     );
   }

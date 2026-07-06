@@ -20,6 +20,8 @@ import type { IpcContext } from '../../ipc/ipc-context';
 import type { Project } from '../../../shared/types';
 import type { CommandContext } from '../commands';
 import { buildCommandContextForProject } from '../mcp-project-context';
+import { retrievalService } from '../../retrieval/retrieval-service';
+import type { Embedder } from '../../retrieval/types';
 
 export interface ResolvedProject {
   context: CommandContext;
@@ -150,6 +152,21 @@ export class RequestResolver {
    */
   listProjectsRaw(): Project[] {
     return [...this.loadProjects()];
+  }
+
+  /** Whether conversation-memory indexing (and thus conversation search hits)
+   *  is enabled in global config. Default true. */
+  isMemoryIndexingEnabled(): boolean {
+    try {
+      return this.ipcContext.configManager.load().memory?.indexingEnabled !== false;
+    } catch {
+      return true;
+    }
+  }
+
+  /** The semantic embedder for hybrid recall, or null for lexical-only. */
+  getMemoryEmbedder(): Embedder | null {
+    return retrievalService.getEmbedder(this.ipcContext);
   }
 
   private loadProjects(): Project[] {

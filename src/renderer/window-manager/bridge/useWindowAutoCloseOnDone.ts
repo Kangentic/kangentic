@@ -26,6 +26,9 @@ export function useWindowAutoCloseOnDone(): void {
   useEffect(() => {
     const closeWindow = useWindowStore.getState().closeWindow;
     for (const managedWindow of Object.values(windows)) {
+      // Conversation windows anchor on a session id, not a taskId, so the
+      // board-membership checks below don't apply - never auto-close them here.
+      if (managedWindow.kind !== 'task-detail') continue;
       // Opened on an already-done/archived task -> leave it (Completed-Tasks review).
       if (managedWindow.openedDone) continue;
       const task = tasks.find((candidate) => candidate.id === managedWindow.anchor);

@@ -104,9 +104,6 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   // ── Behavior > Board ──
   { id: 'skipBoardConfigConfirm', tabId: 'behavior', label: 'Auto-Apply Board Config Changes', description: 'When a kangentic.json board change is detected (from a teammate or your own pulled-back commit), apply it immediately instead of showing the confirmation dialog.', scope: 'global', section: 'Board', keywords: ['board config', 'kangentic.json', 'reconcile', 'reconciliation', 'apply', 'confirm', 'dialog', 'pull', 'auto'] },
 
-  // ── Behavior > Terminal ──
-  { id: 'terminalBlockCopy', tabId: 'behavior', label: 'Copyable Blocks', description: 'Hover a quote, code, or message block in the terminal to highlight it and copy its clean content (via the copy button, a click, or the right-click menu). Turn off to remove the highlight and copy affordances.', scope: 'global', section: 'Terminal', keywords: ['copy', 'block', 'code', 'quote', 'message', 'clipboard', 'highlight', 'hover', 'terminal', 'output'] },
-
   // ── Behavior > Task Windows ──
   { id: 'windowLightDismiss', tabId: 'behavior', label: 'Close on Outside Click', description: 'Click empty space outside a task window (anything but a button or the terminal panel) to dismiss it. Closing keeps the agent running and hands its terminal back to the panel; reopening the task reattaches.', scope: 'global', section: 'Task Windows', keywords: ['dismiss', 'click outside', 'window', 'peek', 'close', 'light dismiss', 'task window'] },
 
@@ -128,6 +125,11 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'dictation.releaseBufferMs', tabId: 'dictation', label: 'Release buffer', description: 'Keep capturing briefly after release so the last word is not clipped.', scope: 'global', section: 'Input', keywords: ['release', 'buffer', 'tail', 'trailing', 'capture', 'delay', 'grace', 'clip', 'cutoff', 'word', 'voice', 'dictation'] },
   { id: 'dictation.remote', tabId: 'dictation', label: 'Cloud Backend', description: 'OpenAI-compatible /v1/audio/transcriptions endpoint for the final text, used when the Refinement model is set to Cloud. The live preview still streams on-device; only the final clip is sent to this server.', scope: 'global', section: 'Cloud backend', keywords: ['remote', 'cloud', 'openai', 'endpoint', 'api', 'url', 'voice', 'dictation'] },
 
+  // ── Memory (conversation search + recall) ──
+  { id: 'memory.indexingEnabled', tabId: 'memory', label: 'Index conversations for search', description: 'Locally index agent conversation transcripts so you can search and recall them. Runs offline with no API key. Turn off to stop indexing and hide conversation search results.', scope: 'global', keywords: ['index', 'conversation', 'transcript', 'search', 'recall', 'memory', 'privacy', 'local', 'offline', 'history'] },
+  { id: 'memory.semanticEnabled', tabId: 'memory', label: 'Semantic search', description: 'Match conversations by meaning, not just keywords. Downloads a small local model once, then runs fully offline. Requires conversation indexing.', scope: 'global', keywords: ['semantic', 'smart', 'embedding', 'vector', 'meaning', 'recall', 'search', 'model', 'offline', 'memory', 'download'] },
+  { id: 'memory.embeddingModel', tabId: 'memory', label: 'Search quality', description: 'Faster and smaller, or slower and more accurate. The model is downloaded once and runs offline; switching re-indexes in the background.', scope: 'global', keywords: ['embedding', 'model', 'semantic', 'quality', 'size', 'accuracy', 'fastest', 'balanced', 'bge', 'mxbai', 'tier', 'download'] },
+  { id: 'memory.acceleration', tabId: 'memory', label: 'Hardware acceleration', description: 'Where the semantic model runs. Auto prefers the GPU when available, otherwise CPU.', scope: 'global', keywords: ['gpu', 'cpu', 'hardware', 'acceleration', 'directml', 'webgpu', 'device', 'semantic', 'embedding', 'performance', 'offload'] },
   // ── Privacy (synthetic) ──
   { id: 'privacy.info', tabId: 'privacy', label: 'Privacy', description: 'Anonymous analytics and data collection policy', scope: 'global', keywords: ['telemetry', 'analytics', 'aptabase', 'gdpr', 'opt out'] },
 

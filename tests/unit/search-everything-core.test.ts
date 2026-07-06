@@ -58,6 +58,52 @@ function makeMockDb(fixture: FakeProjectFixture): Database.Database {
   } as unknown as Database.Database;
 }
 
+/**
+ * A mock DB that ALSO answers the conversation-memory prepares
+ * (`searchConversationMemory`): the FTS MATCH query, the getChunks IN-clause,
+ * and the per-chunk task-title / session-type hydration gets. Board tables are
+ * empty so the only hits produced are conversation hits, isolating the new
+ * `kind: 'conversation'` path.
+ */
+function makeConversationMockDb(): Database.Database {
+  const lexicalRows = [{ id: 501, snip: 'a frobnicate hit…', score: -2.5 }];
+  const chunkRow = {
+    id: 501,
+    corpus: 'conversation',
+    doc_id: 'session-conv',
+    seq: 3,
+    session_id: 'session-conv',
+    task_id: 'task-conv',
+    agent_session_id: 'agent-xyz',
+    role: 'assistant',
+    text: 'discussion about frobnicate internals',
+    content_hash: 'hc',
+    token_estimate: 20,
+    ts_start: 1717000000000,
+    ts_end: 1717000001000,
+    turn_uuid_start: 'turn-uuid-777',
+    turn_uuid_end: 'turn-uuid-777',
+    embedded_model: null,
+  };
+  return {
+    prepare: vi.fn((sql: string) => ({
+      all: vi.fn(() => {
+        if (sql.includes('display_id, title, description, archived_at')) return [];
+        if (sql.includes('FROM backlog_tasks')) return [];
+        if (sql.includes('session_type, started_at FROM sessions')) return [];
+        if (sql.includes('memory_chunks_fts') && sql.includes('MATCH')) return lexicalRows;
+        if (sql.includes('FROM memory_chunks') && sql.includes('id IN')) return [chunkRow];
+        throw new Error(`unexpected all SQL: ${sql}`);
+      }),
+      get: vi.fn(() => {
+        if (sql.includes('SELECT title FROM tasks WHERE id')) return { title: 'Frobnicate Conversation Task' };
+        if (sql.includes('SELECT session_type FROM sessions WHERE id')) return { session_type: 'kangentic_test_agent' };
+        throw new Error(`unexpected get SQL: ${sql}`);
+      }),
+    })),
+  } as unknown as Database.Database;
+}
+
 describe('runSearchEverything', () => {
   let tempProjectRoot: string;
 
@@ -389,5 +435,57 @@ describe('runSearchEverything', () => {
     });
 
     expect(hits.filter((hit) => hit.kind === 'session_event')).toEqual([]);
+  });
+
+  it('surfaces a kind: "conversation" hit when conversationSearch is enabled', async () => {
+    const project = makeProject({ path: tempProjectRoot });
+    const db = makeConversationMockDb();
+
+    const hits = await runSearchEverything({
+      query: 'frobnicate',
+      projects: [project],
+      includeProjectHits: false,
+      getDb: () => db,
+      conversationSearch: { enabled: true },
+    });
+
+    const conversationHits = hits.filter((hit) => hit.kind === 'conversation');
+    expect(conversationHits).toHaveLength(1);
+    const hit = conversationHits[0];
+    if (hit.kind === 'conversation') {
+      expect(hit.projectId).toBe(project.id);
+      expect(hit.sessionId).toBe('session-conv');
+      expect(hit.taskId).toBe('task-conv');
+      expect(hit.taskTitle).toBe('Frobnicate Conversation Task');
+      // Unknown session_type falls back to the raw value deterministically.
+      expect(hit.agentName).toBe('kangentic_test_agent');
+      expect(hit.chunkId).toBe(501);
+      expect(hit.turnUuid).toBe('turn-uuid-777');
+      expect(hit.turnKind).toBe('assistant');
+      expect(hit.turnTs).toBe(1717000000000);
+      expect(hit.matchKind).toBe('lexical');
+      expect(hit.snippet).toContain('frobnicate');
+      // Phase-1 RRF score for a single lexical rank-1 hit: 1/(60+1).
+      expect(hit.score).toBeCloseTo(1 / 61, 12);
+    }
+  });
+
+  it('produces no conversation hits (and does not touch the memory index) when conversationSearch is omitted', async () => {
+    // Same conversation-capable DB, but without conversationSearch the memory
+    // path never runs, so behaviour matches the pre-feature contract exactly.
+    const project = makeProject({ path: tempProjectRoot });
+    const db = makeConversationMockDb();
+
+    const hits = await runSearchEverything({
+      query: 'frobnicate',
+      projects: [project],
+      includeProjectHits: false,
+      getDb: () => db,
+      // conversationSearch intentionally omitted.
+    });
+
+    expect(hits.filter((hit) => hit.kind === 'conversation')).toEqual([]);
+    // Board tables are empty, so with the feature off the whole result is empty.
+    expect(hits).toEqual([]);
   });
 });

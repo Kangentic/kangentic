@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, Circle, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2 } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, Circle, FolderGit2, FolderGit, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, MessageSquare } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
@@ -9,7 +9,6 @@ import { Pill } from '../../Pill';
 import { PrLink } from '../../PrLink';
 import { IsolatedBadge } from '../../IsolatedBadge';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
-import { CommandPalettePopover } from './CommandPalettePopover';
 import { CommandSearchList } from './CommandSearchList';
 import { useHeaderPillOverflow, type HeaderPillSpec } from './useHeaderPillOverflow';
 import { MaximizeToggleButton } from '../dialog-maximize';
@@ -17,6 +16,7 @@ import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { useConfigStore } from '../../../stores/config-store';
 import { useToastStore } from '../../../stores/toast-store';
 import { useProjectStore } from '../../../stores/project-store';
+import { useSessionStore } from '../../../stores/session-store';
 import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
 import { type TilePreset } from '../../../window-manager/tiling/presets';
 import { WindowLayoutMenu } from '../WindowLayoutMenu';
@@ -104,7 +104,6 @@ function PauseButtonIcon({
 interface TaskDetailHeaderProps {
   task: Task;
   onClose: () => void;
-  isEditing: boolean;
   setIsEditing: (editing: boolean) => void;
   canToggle: boolean;
   isSessionActive: boolean;
@@ -145,10 +144,34 @@ interface TaskDetailHeaderProps {
   canTileMultiple?: boolean;
 }
 
+/**
+ * Open the conversation viewer for a task's newest session. Prefers the live
+ * session (readily available); otherwise resolves the newest via listSessions.
+ * The viewer's own picker covers switching between a task's sessions. Shared by
+ * the header's Conversation pill and the kebab "View conversation" item.
+ */
+async function openTaskConversation(taskId: string): Promise<void> {
+  const projectId = useProjectStore.getState().currentProject?.id ?? null;
+  let sessionId = useSessionStore.getState()._sessionByTaskId.get(taskId)?.id ?? null;
+  if (!sessionId) {
+    try {
+      const list = await window.electronAPI.transcripts.listSessions(taskId, projectId);
+      const newest = [...list].sort((first, second) => second.startedAt.localeCompare(first.startedAt))[0];
+      sessionId = newest?.sessionId ?? null;
+    } catch {
+      sessionId = null;
+    }
+  }
+  if (sessionId) {
+    useSessionStore.getState().setConversationSessionId(sessionId);
+  } else {
+    useToastStore.getState().addToast({ message: 'No conversation history for this task yet', variant: 'info' });
+  }
+}
+
 export function TaskDetailHeader({
   task,
   onClose,
-  isEditing,
   setIsEditing,
   canToggle,
   isSessionActive,
@@ -181,8 +204,6 @@ export function TaskDetailHeader({
   onApplyTilePreset,
   canTileMultiple,
 }: TaskDetailHeaderProps) {
-  const [showCommandPalette, setShowCommandPalette] = useState(false);
-  const commandButtonRef = useRef<HTMLDivElement>(null);
   const headerRef = useRef<HTMLDivElement>(null);
   const leadingRef = useRef<HTMLDivElement>(null);
   const trailingRef = useRef<HTMLDivElement>(null);
@@ -197,23 +218,25 @@ export function TaskDetailHeader({
 
   // Quick-access pills, highest priority collapses LAST. The title is reserved only
   // up to a ~50ch floor (useHeaderPillOverflow); these compete for whatever is left
-  // above the floor. Among the built-in defaults the order is Browser -> PR ->
-  // Changes -> Project -> Commands (Browser drops first). Custom header shortcuts
-  // rank LOWEST (priority 10), so they fold BEFORE any built-in default - an
-  // unbounded number of shortcuts can never bury the defaults. A folded header
-  // shortcut that is not already a menu shortcut folds into the kebab.
+  // above the floor. Among the built-in defaults the order is Conversation ->
+  // Browser -> PR -> Changes -> Folder (Conversation drops first). Custom header
+  // shortcuts rank LOWEST (priority 10), so they fold BEFORE any built-in default -
+  // an unbounded number of shortcuts can never bury the defaults. A folded pill /
+  // header shortcut that is not already a menu item folds into the kebab (Commands,
+  // Open folder, and View conversation all have kebab entries). Commands is
+  // kebab-only (no header pill) - it is a menu, not a one-tap toggle.
   const pillSpecs = useMemo<HeaderPillSpec[]>(() => {
     const specs: HeaderPillSpec[] = [];
-    if (!isEditing) specs.push({ id: 'commands', priority: 50 });
     if (task.worktree_path || projectPath) specs.push({ id: 'folder', priority: 40 });
     if (canShowChanges) specs.push({ id: 'changes', priority: 30 });
     if (task.pr_url) specs.push({ id: 'pr', priority: 25 });
     if (canShowBrowser) specs.push({ id: 'browser', priority: 20 });
+    specs.push({ id: 'conversation', priority: 18 });
     for (const action of headerShortcuts) {
       specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
     }
     return specs;
-  }, [isEditing, task.worktree_path, task.pr_url, projectPath, canShowChanges, canShowBrowser, headerShortcuts]);
+  }, [task.worktree_path, task.pr_url, projectPath, canShowChanges, canShowBrowser, headerShortcuts]);
 
   const hiddenPillIds = useHeaderPillOverflow(headerRef, leadingRef, trailingRef, titleSpanRef, pillsRef, pillSpecs);
   const showPill = (id: string) => !hiddenPillIds.has(id);
@@ -312,54 +335,23 @@ export function TaskDetailHeader({
           `data-pill-id`. */}
       {!isArchived && (
         <div ref={pillsRef} className="flex items-center gap-3 flex-shrink-0">
-          {/* Commands button */}
-          {showPill('commands') && !isEditing && (
-            <div data-pill-id="commands" className="relative flex-shrink-0" ref={commandButtonRef}>
-              <Pill
-                shape="square"
-                onClick={() => setShowCommandPalette(!showCommandPalette)}
-                className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors"
-                title="Run a command or skill"
-                data-testid="commands-button"
-              >
-                <SquareChevronRight size={14} />
-                Commands
-              </Pill>
-              {showCommandPalette && (
-                <CommandPalettePopover
-                  triggerRef={commandButtonRef}
-                  cwd={task.worktree_path ?? projectPath ?? undefined}
-                  onSelect={(command) => {
-                    setShowCommandPalette(false);
-                    onCommandSelect(command);
-                  }}
-                  onClose={() => setShowCommandPalette(false)}
-                />
-              )}
-            </div>
-          )}
-
-          {/* Open folder pill */}
+          {/* Open folder pill - icon-only. The FolderGit2 (worktree) vs FolderGit
+              (no worktree) glyph signals worktree-vs-project at a glance; the type
+              and base branch live in the tooltip. (Commands is kebab-only - it is a
+              menu, not a one-tap toggle, so it does not earn a header slot.) */}
           {showPill('folder') && (task.worktree_path || projectPath) && (
             <div data-pill-id="folder" className="flex-shrink-0">
               <Pill
                 shape="square"
                 onClick={() => window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!)}
                 className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
-                title={[
-                  task.branch_name,
-                  worktreeBaseBranch ? `from ${worktreeBaseBranch}` : null,
-                  task.worktree_path ?? projectPath,
-                ].filter(Boolean).join('\n') || 'Open working directory'}
+                title={task.worktree_path
+                  ? `Worktree${worktreeBaseBranch ? ` from ${worktreeBaseBranch}` : ''}`
+                  : 'Project'}
+                aria-label={task.worktree_path ? 'Open worktree folder' : 'Open project folder'}
                 data-testid="branch-pill"
               >
-                {task.worktree_path ? <FolderGit2 size={14} /> : <FolderOpen size={14} />}
-                {task.worktree_path ? 'Worktree' : 'Project'}
-                {worktreeBaseBranch && (
-                  <span className="text-fg-faint" data-testid="branch-pill-base">
-                    ({worktreeBaseBranch})
-                  </span>
-                )}
+                {task.worktree_path ? <FolderGit2 size={14} /> : <FolderGit size={14} />}
               </Pill>
             </div>
           )}
@@ -388,10 +380,10 @@ export function TaskDetailHeader({
                     : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
                 }`}
                 title={`${changesOpen ? 'Hide' : 'Show'} changes (${changesCombo})`}
+                aria-label="Toggle changes"
                 data-testid="changes-toggle"
               >
                 <GitCompare size={14} />
-                Changes
               </Pill>
             </div>
           )}
@@ -408,10 +400,27 @@ export function TaskDetailHeader({
                     : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
                 }`}
                 title={`${browserOpen ? 'Hide' : 'Show'} browser (${browserCombo})`}
+                aria-label="Toggle browser"
                 data-testid="browser-toggle"
               >
                 <Globe size={14} />
-                Browser
+              </Pill>
+            </div>
+          )}
+
+          {/* Conversation pill - opens the read-only transcript viewer for this
+              task's newest session (also in the kebab as "View conversation"). */}
+          {showPill('conversation') && (
+            <div data-pill-id="conversation" className="flex-shrink-0">
+              <Pill
+                shape="square"
+                onClick={() => void openTaskConversation(task.id)}
+                className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors"
+                title="View conversation"
+                aria-label="View conversation"
+                data-testid="conversation-pill"
+              >
+                <MessageSquare size={14} />
               </Pill>
             </div>
           )}
@@ -623,6 +632,14 @@ function TaskDetailKebabItems({
         icon={<Pencil size={14} />}
         label="Edit"
         onClick={() => { closeAll(); setIsEditing(true); }}
+      />
+
+      {/* View conversation - opens the structured transcript viewer */}
+      <KebabMenuItem
+        icon={<MessageSquare size={14} />}
+        label="View conversation"
+        onClick={() => { closeAll(); void openTaskConversation(task.id); }}
+        data-testid="view-conversation-btn"
       />
 
       {/* Open folder */}
