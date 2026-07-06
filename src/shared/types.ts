@@ -224,8 +224,8 @@ export interface TaskDetailViewState {
   changesOpen?: boolean;
   /** Browser side panel open. */
   browserOpen?: boolean;
-  /** Commit graph side panel open. */
-  graphOpen?: boolean;
+  /** Which view the Changes panel is showing: the file diffs or the commit graph. */
+  changesViewTab?: 'files' | 'graph';
   /** Changes panel split-vs-expanded mode. */
   changesViewMode?: 'split' | 'expanded';
   /** Selected diff file path in the Changes panel. */

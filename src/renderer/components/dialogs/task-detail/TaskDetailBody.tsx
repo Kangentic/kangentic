@@ -20,7 +20,6 @@ import { useTaskSplitResize } from '../../../hooks/useTaskSplitResize';
 import { PanelErrorBoundary } from '../../PanelErrorBoundary';
 
 const ChangesPanel = lazy(() => import('./changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
-const CommitGraphPanel = lazy(() => import('./graph/CommitGraphPanel').then((module) => ({ default: module.CommitGraphPanel })));
 
 interface TaskDetailBodyProps {
   task: Task;
@@ -46,7 +45,6 @@ interface TaskDetailBodyProps {
   resumeError?: string;
   onResetSession?: () => void;
   browserOpen: boolean;
-  graphOpen: boolean;
 }
 
 export function TaskDetailBody({
@@ -72,7 +70,6 @@ export function TaskDetailBody({
   resumeError,
   onResetSession,
   browserOpen,
-  graphOpen,
 }: TaskDetailBodyProps) {
   const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
   const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
@@ -96,14 +93,9 @@ export function TaskDetailBody({
   // drew the eye to that unavoidable repaint (it read as a "flash"), so there is
   // none. The two panels are mutually exclusive: this is just which one (if any)
   // is showing.
-  // The right panel is one of three mutually-exclusive views: Browser, Commit
-  // graph, or Changes (the window-level toggles enforce that only one is open,
-  // but precedence here is defensive: Browser, then Graph, then Changes).
-  const rightPanelPresent = changesOpen || browserOpen || graphOpen;
+  const rightPanelPresent = changesOpen || browserOpen;
   const showBrowser = browserOpen;
-  const showGraph = graphOpen && !browserOpen;
-  const changesPresent = rightPanelPresent && !showBrowser && !showGraph;
-  const graphPresent = rightPanelPresent && showGraph;
+  const changesPresent = rightPanelPresent && !showBrowser;
   const changesExpanded = changesPresent && changesViewMode === 'expanded';
   const handleChangesExpand = () => setChangesViewMode(task.id, 'expanded');
   const handleChangesCollapse = () => setChangesViewMode(task.id, 'split');
@@ -182,26 +174,7 @@ export function TaskDetailBody({
           panelMode={changesViewMode}
           onExpand={handleChangesExpand}
           onCollapse={handleChangesCollapse}
-        />
-      </Suspense>
-    </PanelErrorBoundary>
-  );
-
-  const graphContent = (
-    <PanelErrorBoundary label="Commit graph">
-      <Suspense
-        fallback={
-          <div className="flex items-center justify-center h-full">
-            <Loader2 size={20} className="animate-spin text-fg-muted" />
-          </div>
-        }
-      >
-        <CommitGraphPanel
-          projectPath={projectPath}
-          worktreePath={task.worktree_path ?? undefined}
-          baseBranch={task.base_branch || defaultBaseBranch || 'main'}
           task={task}
-          isFocused={isFocused}
         />
       </Suspense>
     </PanelErrorBoundary>
@@ -217,19 +190,6 @@ export function TaskDetailBody({
       </div>
     </div>
   );
-
-  // The commit graph shares the changes/browser slot but has no expand mode, so
-  // it always renders bordered. For the sessionless layouts below, the graph and
-  // changes panels are combined into one "side panel" (only one is ever present).
-  const graphPanelElement = graphPresent && (
-    <div className="flex-1 min-h-0 min-w-0 overflow-hidden border-l border-edge">
-      <div className="h-full">
-        {graphContent}
-      </div>
-    </div>
-  );
-  const sidePanelPresent = changesPresent || graphPresent;
-  const sidePanelElement = changesPanelElement || graphPanelElement;
 
   // Active terminal session
   if (sessionId && displayKind !== 'queued' && displayKind !== 'suspended') {
@@ -247,8 +207,6 @@ export function TaskDetailBody({
               taskId={task.id}
               cwd={task.worktree_path ?? projectPath}
             />
-          ) : showGraph ? (
-            graphContent
           ) : (
             changesContent
           )}
@@ -338,11 +296,11 @@ export function TaskDetailBody({
         <>
           <div className="flex-1 min-h-0 flex">
             {!changesExpanded && (
-              <div className={`${sidePanelPresent ? 'w-1/2' : 'flex-1'} min-h-0 relative`}>
+              <div className={`${changesPresent ? 'w-1/2' : 'flex-1'} min-h-0 relative`}>
                 <LaunchOverlay label={pendingCommandLabel} />
               </div>
             )}
-            {sidePanelElement}
+            {changesPanelElement}
           </div>
           <PreSpawnContextBar taskId={task.id} />
         </>
@@ -363,7 +321,7 @@ export function TaskDetailBody({
       <>
         <div className="flex-1 min-h-0 flex">
           {!changesExpanded && (
-            <div className={`${sidePanelPresent ? 'w-1/2' : 'flex-1'} flex flex-col items-center justify-center gap-3 bg-surface/50`}>
+            <div className={`${changesPresent ? 'w-1/2' : 'flex-1'} flex flex-col items-center justify-center gap-3 bg-surface/50`}>
               <button
                 onClick={handleToggle}
                 disabled={toggling}
@@ -388,18 +346,17 @@ export function TaskDetailBody({
               )}
             </div>
           )}
-          {sidePanelElement}
+          {changesPanelElement}
         </div>
         <PreSpawnContextBar taskId={task.id} />
       </>
     );
   }
 
-  // Side-panel-only view (no session but the Changes or Commit graph pane is
-  // open). Uses sidePanelPresent (not the raw *Open flags) for parity with the
-  // active-session branches above; the panel shows and hides instantly, with no
-  // exit animation (see top of render).
-  if (sidePanelPresent) {
+  // Changes-only view (no session but changes panel open). Uses changesPresent
+  // (not changesOpen) for parity with the active-session branches above; the
+  // panel shows and hides instantly, with no exit animation (see top of render).
+  if (changesPresent) {
     return (
       <>
         <div className="flex-1 min-h-0 flex">
@@ -418,7 +375,7 @@ export function TaskDetailBody({
               )}
             </div>
           )}
-          {sidePanelElement}
+          {changesPanelElement}
         </div>
         <PreSpawnContextBar taskId={task.id} />
       </>

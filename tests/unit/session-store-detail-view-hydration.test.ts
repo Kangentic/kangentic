@@ -1,7 +1,7 @@
 /**
  * Unit tests for hydrateDetailViewStateForTasks in task-changes-panel-slice.ts.
  *
- * Two behaviors pinned:
+ * Three behaviors pinned:
  *
  * 1. Idempotency guard (hydratedDetailViewTasks + the unseen filter):
  *    A task already in the guard set is skipped on re-hydration, so a live
@@ -17,21 +17,41 @@
  *    Red condition: change `continue` in the catch block to `throw` and the
  *    test fails with an exception.
  *
+ * 3. changesViewTab round-trips through the persisted detail_view_state blob
+ *    (buildDetailViewBlob's write side, hydrateDetailViewStateForTasks's read
+ *    side): setChangesViewTab(id, 'graph') schedules a debounced save whose
+ *    blob carries `changesViewTab: 'graph'`; the 'files' default is never
+ *    written (mirrors changesOpen/browserOpen, which also only persist when
+ *    set). Hydrating a blob with `changesViewTab: 'graph'` restores it.
+ *    Red condition (write): remove the
+ *    `if (state.changesViewTab[taskId] === 'graph') blob.changesViewTab = 'graph';`
+ *    line from buildDetailViewBlob and the persist test's captured blob loses
+ *    the key. Red condition (read): remove the
+ *    `if (blob.changesViewTab !== undefined) changesViewTab[task.id] = blob.changesViewTab;`
+ *    line from hydrateDetailViewStateForTasks and the hydrate test fails.
+ *
  * All tests drive the Zustand store directly. window.electronAPI is stubbed
  * before importing the store. vi.useFakeTimers() prevents the debounced-save
  * setTimeout (triggered by setter calls like toggleChangesOpen) from
- * firing during or between tests.
+ * firing during or between tests unless a test explicitly advances timers
+ * (the changesViewTab persistence tests do, to flush the debounced save and
+ * inspect the blob it would have sent over IPC).
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
-import type { Task } from '../../src/shared/types';
+import type { Task, TaskDetailViewState } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
 // Stub window.electronAPI before importing the store.
 // hydrateDetailViewStateForTasks is synchronous and does not call any IPC,
 // but the store module reads window.electronAPI at module load time.
+// setDetailViewStateMock captures every debounced-save payload so the
+// changesViewTab persistence tests can inspect the blob that would have been
+// sent to the main process.
 // ---------------------------------------------------------------------------
+
+const setDetailViewStateMock = vi.fn(async (_taskId: string, _state: TaskDetailViewState | null, _projectId?: string | null) => {});
 
 (globalThis as Record<string, unknown>).window = {
   electronAPI: {
@@ -60,6 +80,7 @@ import type { Task } from '../../src/shared/types';
     },
     tasks: {
       getSpawnProgress: async () => ({}),
+      setDetailViewState: setDetailViewStateMock,
     },
   },
 };
@@ -92,11 +113,13 @@ function resetSliceState(): void {
     changesFileTreeWidth: {},
     changesViewedFiles: {},
     changesViewMode: {},
+    changesViewTab: {},
     dividerRatio: {},
     browserOpenTasks: new Set<string>(),
     maximizedTasks: new Set<string>(),
     hydratedDetailViewTasks: new Set<string>(),
   });
+  setDetailViewStateMock.mockClear();
 }
 
 // ---------------------------------------------------------------------------
@@ -244,5 +267,62 @@ describe('hydrateDetailViewStateForTasks - malformed-blob skip', () => {
 
     // Same reference means no new setState was issued for the malformed task.
     expect(useSessionStore.getState().hydratedDetailViewTasks).toBe(hydratedAfterFirst);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Behavior 3: changesViewTab round-trips through the persisted blob
+// ---------------------------------------------------------------------------
+
+describe('changesViewTab - persists to and hydrates from detail_view_state', () => {
+  beforeEach(() => {
+    // Flush any debounced saves left pending by earlier tests first: the
+    // save-scheduling maps in task-changes-panel-slice.ts (detailViewPendingSaves /
+    // detailViewSaveTimers) are module-scope singletons, not part of the
+    // Zustand store state resetSliceState clears, so a stray timer from an
+    // earlier describe block (e.g. toggleChangesOpen('task-1')) would
+    // otherwise fire alongside this test's own save and inflate the call
+    // count. Advancing first lets it fire and clear itself; resetSliceState's
+    // trailing mockClear() then establishes a clean baseline for this test.
+    vi.advanceTimersByTime(1000);
+    resetSliceState();
+  });
+
+  it('persists changesViewTab: "graph" into the saved blob after setChangesViewTab(id, "graph")', () => {
+    useSessionStore.getState().setChangesViewTab('task-graph', 'graph');
+
+    // Flush the debounced save (500ms in the real slice); advance well past it.
+    vi.advanceTimersByTime(1000);
+
+    expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
+    const [taskId, blob] = setDetailViewStateMock.mock.calls[0];
+    expect(taskId).toBe('task-graph');
+    expect(blob).toMatchObject({ changesViewTab: 'graph' });
+  });
+
+  it('does not persist changesViewTab when set to the default "files"', () => {
+    useSessionStore.getState().setChangesViewTab('task-files', 'files');
+
+    vi.advanceTimersByTime(1000);
+
+    expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
+    const [, blob] = setDetailViewStateMock.mock.calls[0];
+    expect(blob?.changesViewTab).toBeUndefined();
+  });
+
+  it('hydrates changesViewTab: "graph" from a persisted blob back into the store', () => {
+    const task = makeTask('task-hydrate-graph', JSON.stringify({ changesViewTab: 'graph' }));
+
+    useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
+
+    expect(useSessionStore.getState().changesViewTab['task-hydrate-graph']).toBe('graph');
+  });
+
+  it('leaves changesViewTab unset when the persisted blob omits it (files stays the effective default)', () => {
+    const task = makeTask('task-hydrate-default', JSON.stringify({ dividerRatio: 0.5 }));
+
+    useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
+
+    expect(useSessionStore.getState().changesViewTab['task-hydrate-default']).toBeUndefined();
   });
 });

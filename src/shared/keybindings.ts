@@ -240,15 +240,6 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     defaultCombo: 'Mod+Shift+G',
     rebindable: true,
   },
-  {
-    id: 'taskDetail.toggleGraph',
-    label: 'Toggle Commit Graph',
-    description: 'Show or hide the commit graph pane inside the task detail dialog.',
-    group: 'Task Detail',
-    scope: 'task-dialog',
-    defaultCombo: 'Mod+Shift+L',
-    rebindable: true,
-  },
   // Changes panel review navigation. Next/prev change steps through the diff
   // hunks and rolls into the adjacent file at a file's first/last change (F7 /
   // Shift+F7 is the VS Code / JetBrains diff-nav convention, offered as an alt).

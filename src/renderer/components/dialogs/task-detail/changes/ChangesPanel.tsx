@@ -1,12 +1,13 @@
 import '../../../../monacoConfig';
 import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
-import { RefreshCw, ChevronsLeftRight, ChevronsRightLeft, Loader2 } from 'lucide-react';
+import { RefreshCw, ChevronsLeftRight, ChevronsRightLeft, Loader2, FileText, Waypoints } from 'lucide-react';
 import { FileTreePanel } from './FileTreePanel';
 import { DiffViewer } from './DiffViewer';
+import { CommitGraphPanel } from '../graph/CommitGraphPanel';
 import { useSessionStore } from '../../../../stores/session-store';
 import { useConfigStore } from '../../../../stores/config-store';
 import { useKeybinding } from '../../../../hooks/useKeybinding';
-import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileContentResult } from '../../../../../shared/types';
+import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileContentResult, Task } from '../../../../../shared/types';
 
 // Stable empty set so a task with no viewed files keeps a referentially-constant
 // prop (avoids re-rendering the file tree every render).
@@ -85,6 +86,10 @@ interface ChangesPanelProps {
   panelMode?: 'split' | 'expanded';
   onExpand?: () => void;
   onCollapse?: () => void;
+  /** When provided, the panel shows a Files | Graph view toggle in its header and
+   *  can render the commit-graph view. The task supplies the graph's PR marker
+   *  (pr_number / head_sha). Omitted for the command-terminal Changes embed. */
+  task?: Task;
 }
 
 interface ContentCacheEntry {
@@ -101,7 +106,7 @@ interface DisplayedFileContent {
   filePath: string;
 }
 
-export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPath, worktreePath, baseBranch, emptyMessage, panelMode, onExpand, onCollapse }: ChangesPanelProps) {
+export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPath, worktreePath, baseBranch, emptyMessage, panelMode, onExpand, onCollapse, task }: ChangesPanelProps) {
   const effectiveScrollKey = scrollKey ?? entityId;
   // The task-detail embed passes panelMode + a handler; the standalone
   // TaskChangesDialog passes neither, so it never shows these controls. Expand
@@ -140,6 +145,11 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   const selectedFile = useSessionStore((state) => state.changesSelectedFile[entityId] ?? null);
   const setChangesSelectedFile = useSessionStore((state) => state.setChangesSelectedFile);
   const setSelectedFile = useCallback((filePath: string | null) => setChangesSelectedFile(entityId, filePath), [entityId, setChangesSelectedFile]);
+  // Which view this panel is showing: the file diffs ('files', default) or the
+  // commit graph ('graph'). Only offered when a `task` is provided (the graph
+  // needs its PR marker); the command-terminal embed stays files-only.
+  const changesViewTab = useSessionStore((state) => state.changesViewTab[entityId] ?? 'files');
+  const setChangesViewTab = useSessionStore((state) => state.setChangesViewTab);
   const [fileContent, setFileContent] = useState<DisplayedFileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -501,6 +511,12 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
 
   const selectedFileEntry = useMemo(() => files.find((file) => file.path === selectedFile), [files, selectedFile]);
 
+  const showGraphView = !!task && changesViewTab === 'graph';
+
+  // The file-diff view (error / empty / two-pane). Rendered as a helper so the
+  // Files|Graph toggle bar stays mounted above it and the file-list fetch keeps
+  // running even while the graph view is showing (switching back is instant).
+  const renderFilesBody = (): React.ReactNode => {
   if (error) {
     return (
       <div className="flex flex-col h-full">
@@ -598,6 +614,57 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
           <Loader2 size={20} className="animate-spin text-fg-muted" />
         </div>
       )}
+    </div>
+  );
+  };
+
+  // Slim header toggle between the file diffs and the commit graph. Only shown
+  // when a `task` is provided (the command-terminal embed omits it).
+  const viewToggleBar = task ? (
+    <div className="flex items-center gap-1 border-b border-edge px-2 py-1.5 flex-shrink-0" data-testid="changes-view-toggle">
+      <button
+        type="button"
+        onClick={() => setChangesViewTab(entityId, 'files')}
+        className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors ${
+          showGraphView ? 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover' : 'bg-accent/15 text-accent-fg'
+        }`}
+        title="Show file changes"
+        data-testid="changes-view-files"
+      >
+        <FileText size={13} />
+        Files
+      </button>
+      <button
+        type="button"
+        onClick={() => setChangesViewTab(entityId, 'graph')}
+        className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors ${
+          showGraphView ? 'bg-accent/15 text-accent-fg' : 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover'
+        }`}
+        title="Show commit graph"
+        data-testid="changes-view-graph"
+      >
+        <Waypoints size={13} />
+        Graph
+      </button>
+    </div>
+  ) : null;
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      {viewToggleBar}
+      <div className="flex-1 min-h-0">
+        {showGraphView && task ? (
+          <CommitGraphPanel
+            projectPath={projectPath}
+            worktreePath={worktreePath}
+            baseBranch={baseBranch}
+            task={task}
+            isFocused={isFocused}
+          />
+        ) : (
+          renderFilesBody()
+        )}
+      </div>
     </div>
   );
 }

@@ -126,8 +126,6 @@ export function TaskDetailWindow({
   const toggleChangesOpen = useSessionStore((s) => s.toggleChangesOpen);
   const browserOpen = useSessionStore((s) => s.browserOpenTasks.has(task.id));
   const toggleBrowserOpen = useSessionStore((s) => s.toggleBrowserOpen);
-  const graphOpen = useSessionStore((s) => s.graphOpenTasks.has(task.id));
-  const toggleGraphOpen = useSessionStore((s) => s.toggleGraphOpen);
 
   const isArchived = task.archived_at !== null;
   const currentSwimlane = swimlanes.find((s) => s.id === task.swimlane_id);
@@ -266,39 +264,24 @@ export function TaskDetailWindow({
     }
   }, [windowId, maximizeWindow, dockWindow, snapWindow, untileWindow, popToFloat, useStore]);
 
-  // The right panel holds one view at a time: opening Browser, Changes, or the
-  // commit Graph closes whichever of the other two is open.
+  // The right panel holds one view at a time: opening Browser or Changes closes
+  // the other. (The commit graph lives INSIDE the Changes panel as a Files|Graph
+  // view toggle, so it needs no separate slot here.)
   const handleToggleBrowser = useCallback(() => {
     if (!browserOpen && changesOpen) toggleChangesOpen(task.id);
-    if (!browserOpen && graphOpen) toggleGraphOpen(task.id);
     toggleBrowserOpen(task.id);
-  }, [browserOpen, changesOpen, graphOpen, toggleBrowserOpen, toggleChangesOpen, toggleGraphOpen, task.id]);
+  }, [browserOpen, changesOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
 
   const handleToggleChanges = useCallback(() => {
     if (!changesOpen && browserOpen) toggleBrowserOpen(task.id);
-    if (!changesOpen && graphOpen) toggleGraphOpen(task.id);
     toggleChangesOpen(task.id);
-  }, [browserOpen, changesOpen, graphOpen, toggleBrowserOpen, toggleChangesOpen, toggleGraphOpen, task.id]);
-
-  const handleToggleGraph = useCallback(() => {
-    if (!graphOpen && browserOpen) toggleBrowserOpen(task.id);
-    if (!graphOpen && changesOpen) toggleChangesOpen(task.id);
-    toggleGraphOpen(task.id);
-  }, [browserOpen, changesOpen, graphOpen, toggleBrowserOpen, toggleChangesOpen, toggleGraphOpen, task.id]);
+  }, [browserOpen, changesOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
 
   const browserEnabled = browserEnabledConfig !== false;
   const canShowBrowser = browserEnabled
     && !!sessionState.session?.id
     && sessionState.displayState.kind !== 'queued'
     && sessionState.displayState.kind !== 'suspended';
-  // The commit graph shares the Changes panel's right-panel slot and its
-  // lifecycle gate: hidden for archived / To Do / Done, where TaskDetailBody
-  // renders no side panel at all (an enabled toggle there would be a dead
-  // control - the archived branch returns before any side panel). Like Changes
-  // it needs no live session (it reads git directly), only a directory to read
-  // (the worktree or project).
-  const canShowGraph = sessionState.canShowChanges && !!(task.worktree_path || projectPath);
-
   const { copied: displayIdCopied, copy: copyDisplayId } = useCopyDisplayId(task.display_id);
 
   const moveTargets = useMemo(() =>
@@ -378,7 +361,6 @@ export function TaskDetailWindow({
   });
   useKeybinding('taskDetail.toggleBrowser', handleToggleBrowser, { capture: true, enabled: isFocused && canShowBrowser });
   useKeybinding('taskDetail.toggleChanges', handleToggleChanges, { capture: true, enabled: isFocused && sessionState.canShowChanges });
-  useKeybinding('taskDetail.toggleGraph', handleToggleGraph, { capture: true, enabled: isFocused && canShowGraph });
   useKeybinding('window.snapLeft', () => handleSnapDirection('left'), { capture: true, enabled: isFocused });
   useKeybinding('window.snapRight', () => handleSnapDirection('right'), { capture: true, enabled: isFocused });
   useKeybinding('window.snapUp', () => handleSnapDirection('up'), { capture: true, enabled: isFocused });
@@ -471,9 +453,6 @@ export function TaskDetailWindow({
       canShowBrowser={canShowBrowser}
       browserOpen={browserOpen}
       onToggleBrowser={handleToggleBrowser}
-      canShowGraph={canShowGraph}
-      graphOpen={graphOpen}
-      onToggleGraph={handleToggleGraph}
       isMaximized={isMaximized}
       onToggleMaximized={handleToggleMaximized}
       onUndock={isTiled ? handleUndock : undefined}
@@ -620,7 +599,6 @@ export function TaskDetailWindow({
               resumeError={actions.resumeError}
               onResetSession={actions.handleResetSession}
               browserOpen={browserOpen}
-              graphOpen={graphOpen}
             />
           )}
         </div>
