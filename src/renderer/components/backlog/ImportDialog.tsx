@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue } from 'react';
 import { Check, Loader2, Paperclip, Search, AlertCircle, RefreshCw, EyeOff, Eye } from 'lucide-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { formatRelativeTime } from '../../lib/datetime';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { Pill } from '../Pill';
@@ -17,21 +18,29 @@ interface ImportDialogProps {
 
 type StateFilter = 'open' | 'closed' | 'all';
 
-const PER_PAGE = 30;
+// Internal fetch chunk size. The dialog has no "page" concept in the UI - every
+// item is loaded automatically - this is purely how many items are requested
+// per round-trip to the adapter.
+const FETCH_CHUNK_SIZE = 30;
+const ESTIMATED_ROW_HEIGHT = 64;
+
+function sortByCreatedDesc(list: ExternalIssue[]): ExternalIssue[] {
+  return list.slice().sort(
+    (itemA, itemB) => new Date(itemB.createdAt).getTime() - new Date(itemA.createdAt).getTime(),
+  );
+}
 
 export function ImportDialog({ source, onClose }: ImportDialogProps) {
   const [issues, setIssues] = useState<ExternalIssue[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [page, setPage] = useState(1);
-  const [hasNextPage, setHasNextPage] = useState(false);
   const [stateFilter, setStateFilter] = useState<StateFilter>('open');
-  const [serverSearchQuery, setServerSearchQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [cliError, setCliError] = useState<string | null>(null);
 
-  // Client-side filters (universal, source-agnostic)
+  // Client-side filters, evaluated live over the full (unbounded) issue set
   const [filterText, setFilterText] = useState('');
   const [filterStatuses, setFilterStatuses] = useState<Set<string>>(new Set());
   const [filterAssignees, setFilterAssignees] = useState<Set<string>>(new Set());
@@ -39,18 +48,96 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
   const [filterLabels, setFilterLabels] = useState<Set<string>>(new Set());
   const [hideImported, setHideImported] = useState(true);
 
-  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fetchSequenceRef = useRef(0);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const loadBacklog = useBacklogStore((state) => state.loadBacklog);
   const addToast = useToastStore((state) => state.addToast);
 
   const isProjectsSource = source.source === 'github_projects';
 
-  // Clean up search debounce on unmount
+  // Stop any in-flight background paging once the dialog unmounts.
   useEffect(() => {
     return () => {
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      // Bumping the LIVE ref value at unmount is the cancellation signal for any
+      // in-flight loadAllIssues loop, so we intentionally read/write current here
+      // rather than a copied-in snapshot (which is what the rule would suggest).
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      fetchSequenceRef.current++;
     };
   }, []);
+
+  // Fetches every page for the given state filter, streaming each page into
+  // `issues` as it lands so rows and filter facets fill in progressively.
+  // `fetchSequenceRef` supersedes any older in-flight loop (e.g. a rapid state
+  // filter change) so a stale page can never append to a newer query's list.
+  const loadAllIssues = useCallback(async (state: StateFilter) => {
+    const token = ++fetchSequenceRef.current;
+    setError(null);
+    setLoading(true);
+    setLoadingMore(false);
+
+    let pageNumber = 1;
+    let isFirstPage = true;
+    try {
+      while (true) {
+        let result;
+        try {
+          result = await window.electronAPI.backlog.importFetch({
+            source: source.source,
+            repository: source.repository,
+            page: pageNumber,
+            perPage: FETCH_CHUNK_SIZE,
+            state,
+          });
+        } catch (fetchError: unknown) {
+          if (fetchSequenceRef.current !== token) return;
+          setError(fetchError instanceof Error ? fetchError.message : 'Failed to fetch issues');
+          return;
+        }
+        if (fetchSequenceRef.current !== token) return;
+
+        // Capture into a per-iteration const before mutating `isFirstPage` below:
+        // the updater closure is invoked by React at flush time, not at call
+        // time, so referencing the outer mutable `isFirstPage` directly would
+        // have it read as already-`false` for every page, including the first -
+        // silently turning the intended "replace" into an "append" and leaking
+        // the previous state filter's stale data into the new one.
+        const wasFirstPage = isFirstPage;
+        const sorted = sortByCreatedDesc(result.issues);
+        setIssues((previous) => {
+          const merged = wasFirstPage ? sorted : [...previous, ...sorted];
+          // Dedupe by externalId: a source can return the same item on two pages
+          // when its ordering shifts between sequential fetches, which would
+          // otherwise collide the virtualizer's item key and double-submit the row
+          // on import. Keep the first occurrence.
+          const seenIds = new Set<string>();
+          return merged.filter((issue) => {
+            if (seenIds.has(issue.externalId)) return false;
+            seenIds.add(issue.externalId);
+            return true;
+          });
+        });
+        if (isFirstPage) setLoading(false);
+        isFirstPage = false;
+
+        if (!result.hasNextPage) return;
+        setLoadingMore(true);
+        pageNumber += 1;
+      }
+    } catch (unexpectedError: unknown) {
+      // Guards against a malformed adapter response (e.g. a non-array `issues`)
+      // throwing after a successful fetch, which would otherwise surface only
+      // as a silent unhandled rejection with no error banner shown.
+      if (fetchSequenceRef.current === token) {
+        setError(unexpectedError instanceof Error ? unexpectedError.message : 'Failed to process issues');
+      }
+    } finally {
+      if (fetchSequenceRef.current === token) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
+    }
+  }, [source.source, source.repository]);
 
   // Check CLI on mount
   useEffect(() => {
@@ -59,7 +146,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         setCliError(result.error ?? 'CLI not available');
         setLoading(false);
       } else {
-        fetchIssues(1, stateFilter, '');
+        loadAllIssues(stateFilter);
       }
     }).catch((fetchError: unknown) => {
       setCliError(fetchError instanceof Error ? fetchError.message : 'CLI check failed');
@@ -68,56 +155,16 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fetchIssues = useCallback(async (
-    fetchPage: number,
-    state: StateFilter,
-    search: string,
-    append = false,
-  ) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await window.electronAPI.backlog.importFetch({
-        source: source.source,
-        repository: source.repository,
-        page: fetchPage,
-        perPage: PER_PAGE,
-        searchQuery: search || undefined,
-        state,
-      });
-      const sortedResult = result.issues.slice().sort(
-        (itemA, itemB) => new Date(itemB.createdAt).getTime() - new Date(itemA.createdAt).getTime(),
-      );
-      setIssues((previous) => append ? [...previous, ...sortedResult] : sortedResult);
-      setHasNextPage(result.hasNextPage);
-      setPage(fetchPage);
-    } catch (fetchError: unknown) {
-      setError(fetchError instanceof Error ? fetchError.message : 'Failed to fetch issues');
-    } finally {
-      setLoading(false);
-    }
-  }, [source.source, source.repository]);
-
   const handleStateFilterChange = (newState: StateFilter) => {
     setStateFilter(newState);
     setSelectedIds(new Set());
-    fetchIssues(1, newState, serverSearchQuery);
+    loadAllIssues(newState);
   };
 
-  const handleServerSearchChange = (value: string) => {
-    setServerSearchQuery(value);
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-    searchTimeoutRef.current = setTimeout(() => {
-      setSelectedIds(new Set());
-      fetchIssues(1, stateFilter, value);
-    }, 200);
-  };
-
-  const handleLoadMore = () => {
-    fetchIssues(page + 1, stateFilter, serverSearchQuery, true);
-  };
-
-  // Derive unique filter values from fetched data
+  // Derive unique filter values from the full (unbounded) fetched set. Because
+  // this is a useMemo over `issues`, every streamed page recomputes it - a
+  // filter option that only exists on a later page appears as soon as that
+  // page lands, with no user action required.
   const uniqueStatuses = useMemo(() =>
     [...new Set(issues.map((issue) => issue.state).filter((state): state is string => Boolean(state) && state !== 'unknown'))].sort(),
     [issues],
@@ -138,20 +185,13 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     [issues],
   );
 
-  // Defer text-search inputs so typing stays responsive even when the row list is large.
-  // The <input value> binds to the live state; this deferred copy drives the filter computation.
-  // Note: deferred values are used only for visible-filter math. Fetch triggers and the
-  // hasActiveFilters predicate use the live values so the network and the empty-state UI
-  // reflect what the user has actually typed, not last frame's input.
+  // Defer the search input so typing stays responsive even with a large loaded set.
   const deferredFilterText = useDeferredValue(filterText);
-  const deferredServerSearchQuery = useDeferredValue(serverSearchQuery);
+  const titleSearchLower = deferredFilterText.toLowerCase();
 
-  // For non-Projects sources, prefilter the already-fetched list against the live server query
-  // so the visible list narrows immediately while the debounced remote refetch is in flight.
-  const titleSearchTerm = isProjectsSource ? deferredFilterText : deferredServerSearchQuery;
-  const titleSearchLower = titleSearchTerm.toLowerCase();
-
-  // Client-side filtering (issues are pre-sorted by createdAt desc on fetch)
+  // Client-side filtering over the full loaded set (pre-sorted by createdAt desc
+  // on fetch). This recomputes on every streamed page, so a filter applied
+  // early keeps picking up matching items that arrive later.
   const filteredIssues = useMemo(() => {
     return issues.filter((issue) => {
       if (hideImported && issue.alreadyImported) return false;
@@ -164,9 +204,26 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     });
   }, [issues, titleSearchLower, filterStatuses, filterAssignees, filterTypes, filterLabels, hideImported]);
 
-  const selectableIssues = filteredIssues.filter((issue) => !issue.alreadyImported);
-  const allImported = issues.length > 0 && issues.every((issue) => issue.alreadyImported);
-  const hasActiveFilters = filterText !== '' || serverSearchQuery !== '' || filterStatuses.size > 0 || filterAssignees.size > 0 || filterTypes.size > 0 || filterLabels.size > 0;
+  const selectableIssues = useMemo(
+    () => filteredIssues.filter((issue) => !issue.alreadyImported),
+    [filteredIssues],
+  );
+  const allImported = useMemo(
+    () => issues.length > 0 && issues.every((issue) => issue.alreadyImported),
+    [issues],
+  );
+  const hasActiveFilters = filterText !== '' || filterStatuses.size > 0 || filterAssignees.size > 0 || filterTypes.size > 0 || filterLabels.size > 0;
+
+  const virtualizer = useVirtualizer({
+    count: filteredIssues.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    // Key measurements by issue identity, not position: filtering can remove an
+    // item mid-list and shift every later index, which would otherwise apply a
+    // stale cached height (from whatever used to be at that index) to the wrong row.
+    getItemKey: (index) => filteredIssues[index].externalId,
+    overscan: 10,
+  });
 
   const handleToggleSelect = useCallback((externalId: string) => {
     setSelectedIds((previous) => {
@@ -194,12 +251,6 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     setFilterAssignees(new Set());
     setFilterTypes(new Set());
     setFilterLabels(new Set());
-    if (serverSearchQuery !== '') {
-      setServerSearchQuery('');
-      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      setSelectedIds(new Set());
-      fetchIssues(1, stateFilter, '');
-    }
   };
 
   const toggleFilterStatus = (status: string) => {
@@ -307,14 +358,17 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       ? `Import (${selectedIds.size})`
       : 'Import';
 
+  // Whether background paging is still in progress is communicated by the
+  // dedicated streaming indicator below the list, not repeated here.
+  const showingSubset = hasActiveFilters || hideImported;
+  const footerCountLabel = showingSubset
+    ? `${filteredIssues.length} of ${issues.length} items`
+    : `${issues.length} items loaded`;
+
   const footer = (
     <div className="flex items-center justify-between">
       <span className="text-xs text-fg-faint">
-        {selectedIds.size > 0
-          ? `${selectedIds.size} selected`
-          : hasActiveFilters || hideImported
-            ? `${filteredIssues.length} of ${issues.length} items`
-            : `${issues.length} items loaded`}
+        {selectedIds.size > 0 ? `${selectedIds.size} selected` : footerCountLabel}
       </span>
       <div className="flex gap-2">
         <button
@@ -338,6 +392,8 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     </div>
   );
 
+  const virtualItems = virtualizer.getVirtualItems();
+
   return (
     <BaseDialog
       onClose={onClose}
@@ -348,18 +404,15 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       preventBackdropClose={importing}
       testId="import-dialog"
     >
-      {/* Universal filter toolbar */}
+      {/* Universal filter toolbar - live client-side over the full loaded set */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-edge/50">
         {/* Text search */}
         <div className="relative flex-1">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-disabled" />
           <input
             type="text"
-            value={isProjectsSource ? filterText : serverSearchQuery}
-            onChange={(event) => isProjectsSource
-              ? setFilterText(event.target.value)
-              : handleServerSearchChange(event.target.value)
-            }
+            value={filterText}
+            onChange={(event) => setFilterText(event.target.value)}
             placeholder="Filter by title..."
             className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-disabled pl-8 pr-3 py-1.5 outline-none focus:border-edge-input"
             data-testid="import-search"
@@ -446,7 +499,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
             <span className="text-xs text-danger">{error}</span>
             <button
               type="button"
-              onClick={() => fetchIssues(1, stateFilter, serverSearchQuery)}
+              onClick={() => loadAllIssues(stateFilter)}
               className="ml-auto text-xs text-accent-fg hover:underline"
             >
               Retry
@@ -455,31 +508,53 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         </div>
       )}
 
-      {/* Issue list */}
-      <div className="overflow-y-auto flex-1">
-        {!cliError && selectableIssues.length > 0 && (
-          <div className="flex items-center gap-2 px-4 py-1.5 border-b border-edge/30 bg-surface-hover/20">
-            <input
-              type="checkbox"
-              checked={selectedIds.size === selectableIssues.length}
-              onChange={handleSelectAll}
-              className="accent-accent-emphasis"
-              data-testid="import-select-all"
-            />
-            <span className="text-xs text-fg-faint">Select all</span>
+      {/* Select-all header - lives outside the virtualized scroll region so it
+          never participates in the virtualizer's offset math. Gated on !loading
+          too, so a state-filter switch doesn't show a stale select-all against
+          the outgoing filter's items while the new filter's first page loads. */}
+      {!cliError && !loading && selectableIssues.length > 0 && (
+        <div className="flex items-center gap-2 px-4 py-1.5 border-b border-edge/30 bg-surface-hover/20 flex-shrink-0">
+          <input
+            type="checkbox"
+            checked={selectedIds.size === selectableIssues.length}
+            onChange={handleSelectAll}
+            className="accent-accent-emphasis"
+            data-testid="import-select-all"
+          />
+          <span className="text-xs text-fg-faint">Select all</span>
+        </div>
+      )}
+
+      <div ref={scrollContainerRef} className="overflow-y-auto flex-1 min-h-0">
+        {!cliError && !loading && filteredIssues.length > 0 && (
+          <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+            {virtualItems.map((virtualRow) => {
+              const issue = filteredIssues[virtualRow.index];
+              return (
+                <div
+                  key={issue.externalId}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualRow.start}px)`,
+                  }}
+                >
+                  <ImportIssueRow
+                    issue={issue}
+                    selected={selectedIds.has(issue.externalId)}
+                    onToggle={handleToggleSelect}
+                  />
+                </div>
+              );
+            })}
           </div>
         )}
 
-        {filteredIssues.map((issue) => (
-          <ImportIssueRow
-            key={issue.externalId}
-            issue={issue}
-            selected={selectedIds.has(issue.externalId)}
-            onToggle={handleToggleSelect}
-          />
-        ))}
-
-        {/* Loading state */}
+        {/* Loading state (first page only - subsequent pages stream in via the loading-more indicator below the list) */}
         {loading && (
           <div
             data-testid="import-loading"
@@ -489,8 +564,10 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
           </div>
         )}
 
-        {/* Empty state */}
-        {!loading && !cliError && filteredIssues.length === 0 && !error && (
+        {/* Empty state - suppressed while background pages are still streaming, so
+            a transient empty result never asserts a definitive state (e.g. "All
+            items have been imported") that a later page would contradict. */}
+        {!loading && !loadingMore && !cliError && filteredIssues.length === 0 && !error && (
           <div
             data-testid="import-empty-state"
             className="flex flex-col items-center justify-center flex-1 min-h-[200px] text-fg-faint gap-2"
@@ -501,7 +578,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
                 <span className="text-sm">All items have been imported</span>
                 <button
                   type="button"
-                  onClick={() => fetchIssues(1, stateFilter, serverSearchQuery)}
+                  onClick={() => loadAllIssues(stateFilter)}
                   className="flex items-center gap-1.5 mt-1 text-xs text-accent-fg hover:underline"
                 >
                   <RefreshCw size={12} />
@@ -525,21 +602,19 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
             )}
           </div>
         )}
-
-        {/* Load more */}
-        {hasNextPage && !loading && (
-          <div className="flex justify-center py-3 border-t border-edge/30">
-            <button
-              type="button"
-              onClick={handleLoadMore}
-              className="text-xs text-accent-fg hover:underline"
-              data-testid="import-load-more"
-            >
-              Load more items
-            </button>
-          </div>
-        )}
       </div>
+
+      {/* Streaming indicator - persistent while background pages continue loading,
+          independent of scroll position. */}
+      {loadingMore && (
+        <div
+          data-testid="import-loading-more"
+          className="flex items-center justify-center gap-2 py-2 border-t border-edge/30 text-xs text-fg-faint flex-shrink-0"
+        >
+          <Loader2 size={12} className="animate-spin" />
+          Loading more items...
+        </div>
+      )}
     </BaseDialog>
   );
 }
