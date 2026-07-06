@@ -337,9 +337,9 @@ test.describe('DiffViewer toolbar: trailingControls rendered when a file is sele
   test('next/prev-change keybindings are inert while the markdown preview is active', async () => {
     // Three files so both next-change (F7) and prev-change (Shift+F7) have a
     // real adjacent file to roll into IF the `enabled: isFocused && !previewActive`
-    // guard on DiffViewer's changes.nextChange/changes.prevChange bindings
-    // (DiffViewer.tsx:405-406) were broken. Entering preview mode nulls
-    // diffEditorRef (the `binary || previewActive` effect in DiffViewer.tsx), so
+    // guard on DiffViewer's changes.nextChange/changes.prevChange bindings were
+    // broken. Entering preview mode nulls diffEditorRef (the
+    // `binary || previewActive` effect in DiffViewer.tsx), so
     // if the handler fired while previewing it would hit navigateChange's
     // "no diff mounted" branch and immediately roll to the adjacent file via
     // onCrossFile - a Monaco-independent, unmistakable signal that the binding
@@ -431,6 +431,141 @@ test.describe('DiffViewer toolbar: trailingControls rendered when a file is sele
     await expect(preview).toBeVisible();
     await expect(preview.locator('h1')).toHaveText('Nav Guard Heading');
     await expect(previewToggle).toHaveAttribute('aria-pressed', 'true');
+
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitDiff = null;
+    });
+
+    await changesPill.click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('a deleted markdown file previews its old content, not the empty new content', async () => {
+    // diff-service reports a deleted file with modified: '' and original holding
+    // the last committed text. DiffViewer's preview branch is
+    // `content={status === 'D' ? original : modified}` - if that fallback were
+    // reverted to always render `modified`, this file would preview blank
+    // instead of the old heading.
+    await page.evaluate(() => {
+      (window as unknown as { __mockGitDiff: unknown }).__mockGitDiff = {
+        files: [
+          {
+            path: 'docs/deleted.md',
+            status: 'D',
+            insertions: 0,
+            deletions: 2,
+            binary: false,
+            original: '# Deleted Doc\n\nOld body.\n',
+            modified: '',
+            language: 'markdown',
+          },
+        ],
+      };
+    });
+
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=DiffViewer Toolbar Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    const changesPill = page.locator('[data-testid="changes-toggle"]');
+    await changesPill.click();
+
+    // ChangesPanel auto-selects the single deleted markdown file; the preview
+    // toggle mounts once the toolbar renders (markdown-only, same as the other
+    // markdown tests above).
+    const previewToggle = page.locator('[data-testid="diff-markdown-preview"]');
+    await expect(previewToggle).toBeVisible({ timeout: 8000 });
+    await expect(previewToggle).toHaveAttribute('aria-pressed', 'false');
+
+    // Flip to the rendered preview. The old heading must render - this fails if
+    // the fallback branch is reverted to always use `modified` (blank preview).
+    await previewToggle.click();
+    await expect(previewToggle).toHaveAttribute('aria-pressed', 'true');
+    const preview = page.locator('[data-testid="diff-markdown-preview-content"]');
+    await expect(preview).toBeVisible();
+    await expect(preview.locator('h1')).toHaveText('Deleted Doc');
+
+    await page.evaluate(() => {
+      (window as unknown as Record<string, unknown>).__mockGitDiff = null;
+    });
+
+    await changesPill.click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('markdown preview toggle resets to the diff when switching to a different file', async () => {
+    // Two markdown files so previewing the first, then selecting the second,
+    // exercises DiffViewer's per-file reset (previousFilePathRef nulling
+    // showMarkdownPreview when filePath changes). Without that reset the second
+    // file would open already in preview mode.
+    await page.evaluate(() => {
+      (window as unknown as { __mockGitDiff: unknown }).__mockGitDiff = {
+        files: [
+          {
+            path: 'docs/first.md',
+            status: 'M',
+            insertions: 2,
+            deletions: 1,
+            binary: false,
+            original: '# First Old\n',
+            modified: '# First Heading\n\nBody.\n',
+            language: 'markdown',
+          },
+          {
+            path: 'docs/second.md',
+            status: 'M',
+            insertions: 2,
+            deletions: 1,
+            binary: false,
+            original: '# Second Old\n',
+            modified: '# Second Heading\n\nBody.\n',
+            language: 'markdown',
+          },
+        ],
+      };
+    });
+
+    const card = page
+      .locator('[data-swimlane-name="Code Review"]')
+      .locator('text=DiffViewer Toolbar Task')
+      .first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 5000 });
+
+    const changesPill = page.locator('[data-testid="changes-toggle"]');
+    await changesPill.click();
+
+    // Select docs/first.md explicitly (ChangesPanel auto-selects the first
+    // file anyway, but select it by row so the assumption is unambiguous).
+    const firstFileRow = page.locator('[data-testid="changes-file-row"][data-path="docs/first.md"]');
+    await firstFileRow.locator('button').first().click();
+
+    const previewToggle = page.locator('[data-testid="diff-markdown-preview"]');
+    await expect(previewToggle).toBeVisible({ timeout: 8000 });
+    await previewToggle.click();
+    await expect(previewToggle).toHaveAttribute('aria-pressed', 'true');
+    const preview = page.locator('[data-testid="diff-markdown-preview-content"]');
+    await expect(preview).toBeVisible();
+    await expect(preview.locator('h1')).toHaveText('First Heading');
+
+    // Select docs/second.md. Correct behavior resets the toggle so the second
+    // file opens on its diff.
+    const secondFileRow = page.locator('[data-testid="changes-file-row"][data-path="docs/second.md"]');
+    await secondFileRow.locator('button').first().click();
+    await expect(secondFileRow).toHaveAttribute('data-selected', 'true');
+
+    await expect(previewToggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(preview).not.toBeVisible();
+    await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible();
 
     await page.evaluate(() => {
       (window as unknown as Record<string, unknown>).__mockGitDiff = null;

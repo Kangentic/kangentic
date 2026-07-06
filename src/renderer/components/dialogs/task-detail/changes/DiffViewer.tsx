@@ -98,12 +98,25 @@ export function DiffViewer({
 
   // Markdown files can flip from the Monaco diff to a rendered preview of their
   // NEW content. `language` is the server-derived signal (diff-service maps
-  // .md/.mdx/.markdown -> 'markdown'). The toggle is a transient per-view choice:
-  // the diff shows by default, and a non-markdown file never previews regardless
-  // of this (sticky, hidden) value.
-  const isMarkdown = language === 'markdown';
+  // .md/.mdx/.markdown -> 'markdown'); a binary-flagged file is excluded because
+  // it has no renderable text and its content pane shows the binary placeholder,
+  // not the preview. The diff shows by default and the toggle resets per file
+  // (see below), so every file opens on its diff.
+  const isMarkdown = language === 'markdown' && !binary;
   const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
   const previewActive = isMarkdown && showMarkdownPreview;
+
+  // Reset the preview toggle whenever the selected file changes, so each file
+  // opens on its diff - like changeIndexRef / pendingRevealRef, which also reset
+  // per file. DiffViewer is never re-keyed per file (Monaco stays mounted), so the
+  // reset is manual. Adjust state during render (React's supported reset-on-prop-
+  // change pattern) rather than in an effect, so switching between two markdown
+  // files never paints a frame of the previous file's preview.
+  const previousFilePathRef = useRef(filePath);
+  if (previousFilePathRef.current !== filePath) {
+    previousFilePathRef.current = filePath;
+    setShowMarkdownPreview(false);
+  }
 
   // Diff-rendering preferences are single global config keys (the toolbar
   // toggles and the Layout settings tab read and write the same keys), so the
@@ -382,6 +395,24 @@ export function DiffViewer({
     }
   }, [binary, previewActive]);
 
+  // Leaving the preview mounts a brand-new DiffEditor for the same file. The
+  // per-file arm effect above is keyed on scrollMemoryKey, so it does not fire on
+  // a preview toggle - without this, the fresh editor would open at Monaco's
+  // default top instead of the file's remembered/first-change position. Re-arm the
+  // reveal on the true->false transition so onMount restores it, mirroring a file
+  // open. (Deliberately not saving the live scroll on the false->true transition:
+  // the DiffEditor's disposal fires a clamp-to-zero scroll event, which would
+  // poison the saved position.)
+  const previousPreviewActiveRef = useRef(previewActive);
+  useEffect(() => {
+    const wasPreviewActive = previousPreviewActiveRef.current;
+    previousPreviewActiveRef.current = previewActive;
+    if (wasPreviewActive && !previewActive) {
+      pendingRevealRef.current = scrollMemoryKey;
+      changeIndexRef.current = -1;
+    }
+  }, [previewActive, scrollMemoryKey]);
+
   // Apply whitespace changes to the live editor so a toolbar or settings toggle
   // takes effect immediately, not just on the next file open.
   useEffect(() => {
@@ -401,7 +432,9 @@ export function DiffViewer({
 
   // Keyboard navigation: next/prev change, rolling into the adjacent file at a
   // boundary. Gated on the window being focused; capture phase so it beats the
-  // embedded terminal. Bound here because the diff editor owns the line changes.
+  // embedded terminal. Also gated off while previewing markdown: the diff editor
+  // is unmounted then, so there are no line changes to navigate. Bound here
+  // because the diff editor owns the line changes.
   useKeybinding('changes.nextChange', () => navigateChange('next'), { capture: true, enabled: isFocused && !previewActive });
   useKeybinding('changes.prevChange', () => navigateChange('prev'), { capture: true, enabled: isFocused && !previewActive });
 
@@ -516,14 +549,17 @@ export function DiffViewer({
             <Loader2 size={20} className="animate-spin text-fg-muted" />
           </div>
         ) : previewActive ? (
-          // Rendered markdown preview of the new content (falls back to the old
-          // content for a deleted file). Reuses the shared MarkdownRenderer so the
-          // preview is theme-aware and routes links through shell.openExternal.
+          // Rendered markdown preview. A deleted file (status 'D') has no new
+          // content, so preview its old content; every other status previews the
+          // new content - including a file legitimately emptied in the working
+          // tree, which must render blank rather than fall back to the stale old
+          // text. Reuses the shared MarkdownRenderer so the preview is theme-aware
+          // and routes links through shell.openExternal.
           <div
             data-testid="diff-markdown-preview-content"
             className="h-full overflow-y-auto px-4 py-3"
           >
-            <MarkdownRenderer content={modified || original} />
+            <MarkdownRenderer content={status === 'D' ? original : modified} />
           </div>
         ) : (
           // On unmount (panel close, Changes<->Browser switch, file deselect),
