@@ -98,6 +98,12 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.TASK_DELETED_BY_AGENT, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_DELETED_BY_AGENT, handler);
     },
+    onSessionResync: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId?: string) =>
+        callback(projectId);
+      ipcRenderer.on(IPC.TASK_SESSION_RESYNC, handler);
+      return () => ipcRenderer.removeListener(IPC.TASK_SESSION_RESYNC, handler);
+    },
     onSpawnProgress: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, taskId: string, label: string | null) =>
         callback(taskId, label);

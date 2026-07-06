@@ -143,6 +143,10 @@ interface MockContext {
   projectRepo: {
     getById: ReturnType<typeof vi.fn>;
   };
+  mainWindow: {
+    isDestroyed: ReturnType<typeof vi.fn>;
+    webContents: { send: ReturnType<typeof vi.fn> };
+  };
 }
 
 function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
@@ -164,6 +168,10 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     },
     projectRepo: {
       getById: vi.fn(() => ({ id: 'proj-board-1', name: 'Test Project', path: '/mock/board-project' })),
+    },
+    mainWindow: {
+      isDestroyed: vi.fn(() => false),
+      webContents: { send: vi.fn() },
     },
     ...overrides,
   };
@@ -513,5 +521,81 @@ describe('SWIMLANE_UPDATE handler - restart-on-model and effort live-inject bran
 
     // Model is unchanged, so no restart should be triggered.
     expect(hoisted.restartSessionForSettingsChange).not.toHaveBeenCalled();
+  });
+
+  // =========================================================================
+  // Test 7: MODEL change, restart succeeds -> TASK_SESSION_RESYNC pushed
+  // =========================================================================
+
+  it('MODEL change, restart succeeds: pushes TASK_SESSION_RESYNC to the renderer', async () => {
+    // The board store keeps the pre-restart session_id until it re-syncs. The
+    // handler must push a quiet (toast-free) TASK_SESSION_RESYNC once the
+    // restart resolves ok, so ContextBar's task join (and every other
+    // session_id-keyed consumer) recovers without a full reload.
+    const task = createTaskInLane({ id: 'task-board-7', session_id: 'session-board-7' });
+    const swimlaneBefore = createSwimlaneBefore({ id: 'lane-executing' });
+    const updatedSwimlane = { ...swimlaneBefore, model_override: 'opus', name: 'Executing' };
+
+    const repos = buildProjectRepos(swimlaneBefore, updatedSwimlane, [task]);
+    mockGetProjectRepos.mockReturnValue(repos);
+
+    context.sessionManager.getSession.mockReturnValue({ status: 'running' });
+    mockAgentRegistryGet.mockReturnValue({ name: 'claude' });
+
+    hoisted.prepareInjectionPlan.mockReturnValue({
+      sequence: [],
+      verifier: null,
+      verifiedPrefixLength: 0,
+      needsRestartForModel: true,
+    });
+    hoisted.restartSessionForSettingsChange.mockResolvedValue({ ok: true });
+
+    await callSwimlaneUpdate({ id: 'lane-executing', model_override: 'opus' }, context);
+
+    await vi.waitFor(() => {
+      expect(context.mainWindow.webContents.send).toHaveBeenCalledTimes(1);
+    }, { timeout: 2000 });
+
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
+      IPC.TASK_SESSION_RESYNC,
+      'proj-board-1',
+    );
+  });
+
+  // =========================================================================
+  // Test 8: MODEL change, restart fails -> TASK_SESSION_RESYNC is NOT pushed
+  // =========================================================================
+
+  it('MODEL change, restart fails: does NOT push TASK_SESSION_RESYNC', async () => {
+    // If the restart could not resolve a new session, there is nothing for the
+    // renderer to re-sync to; pushing anyway would race the (now stale) id
+    // against whatever the failed restart left behind.
+    const task = createTaskInLane({ id: 'task-board-8', session_id: 'session-board-8' });
+    const swimlaneBefore = createSwimlaneBefore({ id: 'lane-executing' });
+    const updatedSwimlane = { ...swimlaneBefore, model_override: 'opus', name: 'Executing' };
+
+    const repos = buildProjectRepos(swimlaneBefore, updatedSwimlane, [task]);
+    mockGetProjectRepos.mockReturnValue(repos);
+
+    context.sessionManager.getSession.mockReturnValue({ status: 'running' });
+    mockAgentRegistryGet.mockReturnValue({ name: 'claude' });
+
+    hoisted.prepareInjectionPlan.mockReturnValue({
+      sequence: [],
+      verifier: null,
+      verifiedPrefixLength: 0,
+      needsRestartForModel: true,
+    });
+    hoisted.restartSessionForSettingsChange.mockResolvedValue({ ok: false, reason: 'no session found' });
+
+    await callSwimlaneUpdate({ id: 'lane-executing', model_override: 'opus' }, context);
+
+    // Wait for the fire-and-forget restart to have run before asserting the
+    // negative (there is no positive condition to poll for here).
+    await vi.waitFor(() => {
+      expect(hoisted.restartSessionForSettingsChange).toHaveBeenCalledTimes(1);
+    }, { timeout: 2000 });
+
+    expect(context.mainWindow.webContents.send).not.toHaveBeenCalled();
   });
 });

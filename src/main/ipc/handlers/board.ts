@@ -148,6 +148,15 @@ export function registerBoardHandlers(context: IpcContext): void {
                   `[SWIMLANE_UPDATE] Could not restart session for task ${taskId.slice(0, 8)}`
                   + ` after model change in column "${result.name}": ${restart.reason}`,
                 );
+                return;
+              }
+              // The restart respawned the task with a new session_id; the board
+              // store still has the pre-restart session_id until it reloads.
+              // Push a quiet (toast-free) re-sync trigger, distinct from
+              // TASK_UPDATED_BY_AGENT, since this is a consequence of the
+              // user's own column edit, not an agent-driven change.
+              if (!context.mainWindow.isDestroyed()) {
+                context.mainWindow.webContents.send(IPC.TASK_SESSION_RESYNC, projectId);
               }
             });
           } else {

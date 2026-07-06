@@ -2847,6 +2847,7 @@ export interface ElectronAPI {
     onCreatedByAgent: (callback: (taskId: string, taskTitle: string, columnName: string, projectId?: string) => void) => () => void;
     onUpdatedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
     onDeletedByAgent: (callback: (taskId: string, taskTitle: string, projectId?: string) => void) => () => void;
+    onSessionResync: (callback: (projectId?: string) => void) => () => void;
     onSpawnProgress: (callback: (taskId: string, label: string | null) => void) => () => void;
     /**
      * Queryable snapshot of in-flight spawn-progress labels (keyed by taskId).

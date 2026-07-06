@@ -135,7 +135,14 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   const sessionShell = session?.shell;
   const isResuming = session?.resuming ?? false;
   const injectTransientSettings = useSessionStore((s) => s.injectTransientSettings);
-  const task = useBoardStore((s) => s.tasks.find((t) => t.session_id === sessionId));
+  // Resolve via the session's own taskId, not the task's forward session_id: a
+  // model/effort restart (column edit or manual override) respawns the session
+  // and updates the DB row, but the board store's task.session_id goes stale
+  // until the next reload. session.taskId stays correct across the restart.
+  // Transient command-terminal sessions carry a synthetic uuid taskId that
+  // matches no tasks row, so they still fall through to the transient/static
+  // branches below.
+  const task = useBoardStore((s) => s.tasks.find((t) => t.id === session?.taskId));
   const taskAgent = task?.agent ?? agentFallback;
   // Resolve the agent that contributed the latest rate-limit snapshot so the
   // tooltip can name it. Falls back to undefined when the source session has
