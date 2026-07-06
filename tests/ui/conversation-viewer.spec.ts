@@ -127,10 +127,10 @@ function preConfig(): string {
   `;
 }
 
-async function launch(): Promise<{ browser: Browser; page: Page }> {
+async function launch(permissions?: string[]): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady();
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, permissions });
   const page = await context.newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfig());
@@ -269,6 +269,24 @@ test.describe('Conversation Viewer', () => {
         await page.getByTestId('conversation-close').click();
         await expect(page.getByTestId('conversation-window')).toHaveCount(0);
       }
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('title-bar copy button copies the whole transcript as Markdown', async () => {
+    const { browser, page } = await launch(['clipboard-read', 'clipboard-write']);
+    try {
+      await openConversation(page, SESSION_A);
+      await expect(page.getByText('USER_QUESTION_ALPHA')).toBeVisible();
+
+      await page.getByTestId('conversation-copy-markdown-button').click();
+      const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+      expect(clipboardText).toContain('USER_QUESTION_ALPHA');
+      expect(clipboardText).toContain('ASSISTANT_TEXT_ALPHA');
+
+      // Flips to a checkmark for brief confirmation, then reverts.
+      await expect(page.getByTestId('conversation-copy-markdown-button').locator('.lucide-check')).toBeVisible();
     } finally {
       await browser.close();
     }

@@ -242,6 +242,11 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault();
+      // Stop the native event from reaching document-level Escape listeners
+      // (BaseDialog, TaskDetailWindow) below this overlay - otherwise a task
+      // detail open underneath Quick Find closes on the same keypress instead
+      // of only Quick Find. A second Escape then closes the dialog normally.
+      event.stopPropagation();
       requestClose();
       return;
     }

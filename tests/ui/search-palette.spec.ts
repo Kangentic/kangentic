@@ -156,6 +156,43 @@ function preConfigWithSearchHits(
   `;
 }
 
+/** Isolated fixture: one project, one task with a live (running) session, so
+ *  clicking its card opens the normal task-detail header (not the auto-edit
+ *  form a session-less task's card click opens into - see TaskCard.tsx's
+ *  `initialEdit` heuristic). Kept separate from `preConfigWithSearchHits` so
+ *  it never touches the other tests reusing that shared fixture. */
+function preConfigWithLiveSessionTask(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+
+      state.projects.push({
+        id: 'proj-search-escape', name: 'Escape Stacking Project', path: '/mock/escape-stacking',
+        github_url: null, default_agent: 'claude', last_opened: ts, created_at: ts,
+      });
+
+      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        state.swimlanes.push(Object.assign({}, s, { id: 'lane-escape-' + i, position: i, created_at: ts }));
+      });
+
+      state.sessions.push({
+        id: 'sess-escape-1', taskId: 'task-escape-1', projectId: 'proj-search-escape',
+        pid: 9999, status: 'running', shell: 'bash', cwd: '/mock/escape-stacking',
+        startedAt: ts, exitCode: null,
+      });
+
+      state.tasks.push({
+        id: 'task-escape-1', title: 'Escape stacking task', description: '',
+        swimlane_id: 'lane-escape-0', position: 0, agent: 'claude', session_id: 'sess-escape-1',
+        worktree_path: null, branch_name: null, pr_number: null, pr_url: null,
+        base_branch: null, archived_at: null, created_at: ts, updated_at: ts,
+      });
+
+      return { currentProjectId: 'proj-search-escape' };
+    });
+  `;
+}
+
 async function launchWithState(preConfigScript: string): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady();
   const browser = await chromium.launch({ headless: true });
@@ -236,6 +273,33 @@ test.describe('Search Palette', () => {
       await expect(page.getByTestId('search-palette')).toBeVisible();
       await page.keyboard.press('Escape');
       await expect(page.getByTestId('search-palette')).not.toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Escape with a task detail open underneath closes only the palette, not the task detail', async () => {
+    const { browser, page } = await launchWithState(preConfigWithLiveSessionTask());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.locator('text=Escape stacking task').first().click();
+      await expect(page.getByTestId('task-detail-dialog')).toBeVisible();
+
+      await page.keyboard.press('Control+Shift+F');
+      await expect(page.getByTestId('search-palette')).toBeVisible();
+
+      // One Escape must close only the palette (the topmost layer) - the
+      // task detail window underneath must still be open. Regression test:
+      // the palette's Escape handler previously did not stop propagation,
+      // so the same keypress also closed the task detail's own document-level
+      // Escape listener in one go.
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('search-palette')).not.toBeVisible();
+      await expect(page.getByTestId('task-detail-dialog')).toBeVisible();
+
+      // A second Escape now closes the task detail normally.
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('task-detail-dialog')).not.toBeVisible();
     } finally {
       await browser.close();
     }

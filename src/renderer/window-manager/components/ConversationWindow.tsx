@@ -239,6 +239,22 @@ export function ConversationWindow({
             </Select>
           )}
 
+          {/* Promoted from kebab-only to a visible icon button: copying the whole
+              conversation is common enough in a read-only viewer to earn a one-tap
+              affordance rather than living only behind "...". The kebab entry stays
+              too (parity with TaskDetailHeader's pill+kebab pattern). */}
+          <button
+            type="button"
+            onClick={handleCopyMarkdown}
+            disabled={!response}
+            title="Copy conversation as Markdown"
+            aria-label="Copy conversation"
+            data-testid="conversation-copy-markdown-button"
+            className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {copied ? <Check size={16} className="text-green-400" /> : <Copy size={16} />}
+          </button>
+
           <KebabMenu>
             {(close) => (
               <>
