@@ -39,6 +39,7 @@ import {
 import type { IpcContext } from '../../main/ipc/ipc-context';
 import { getProcessMetrics } from '../../main/diagnostics/process-metrics';
 import { getEventLoopLagReport } from '../../main/diagnostics/event-loop-lag';
+import { ROTATED_FILE_SUFFIX } from '../../main/diagnostics/async-file-queue';
 import type { SessionManager } from '../../main/pty/session-manager';
 
 /**
@@ -439,7 +440,12 @@ function respondIpcLog(
     limit: clampLimit(url.searchParams.get('limit'), 200, 2000),
   };
   const file = path.join(projectRoot, '.kangentic', 'logs', `ipc-${date}.jsonl`);
-  const entries = readJsonLines<Record<string, unknown>>(file);
+  // Read the rotated copy (older) before the primary (newer) so a fresh
+  // rotation doesn't blank recent-traffic queries; both are chronological.
+  const entries = [
+    ...readJsonLines<Record<string, unknown>>(file + ROTATED_FILE_SUFFIX),
+    ...readJsonLines<Record<string, unknown>>(file),
+  ];
   const filtered = entries.filter((entry) => {
     if (filter.since && typeof entry.ts === 'string' && entry.ts < filter.since) return false;
     if (filter.channel && entry.channel !== filter.channel) return false;
@@ -495,6 +501,10 @@ function respondEngineState(
  * `window.__kangenticLagReport` global, returning an `unavailable` marker when
  * the debugger is not attached or the recorder is not installed. Together they
  * are a retroactive freeze log - recorded stalls with timestamps + durations.
+ * The renderer report separates real freezes (`spikeCount` / `maxLagMs` /
+ * `recentSpikes`) from background-throttle artifacts, which land in
+ * `hiddenSpikeCount` / `maxHiddenLagMs` so a hidden window's ~900ms throttled
+ * ticks do not pollute freeze diagnosis.
  */
 async function respondEventLoopLag(
   options: InspectionServerOptions,

@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo, type ReactNode } from 'react';
 import { useCopyDisplayId } from './useCopyDisplayId';
-import { X, Trash2, Pencil, Loader2, Circle, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2 } from 'lucide-react';
+import { X, Trash2, Pencil, Loader2, Circle, FolderGit2, FolderOpen, GitPullRequest, GitCompare, ArrowRightLeft, ChevronRight, ChevronLeft, CirclePause, CirclePlay, Clock, SquareChevronRight, Zap, Archive, Inbox, Copy, Check, Globe, RefreshCw, PictureInPicture2, AlignLeft } from 'lucide-react';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
@@ -133,6 +133,9 @@ interface TaskDetailHeaderProps {
   canShowBrowser: boolean;
   browserOpen: boolean;
   onToggleBrowser: () => void;
+  canShowDescription?: boolean;
+  descriptionPeekOpen?: boolean;
+  onToggleDescription?: () => void;
   isMaximized: boolean;
   onToggleMaximized: () => void;
   /** When provided (the window is tiled), render a "pop out" control that floats
@@ -175,6 +178,9 @@ export function TaskDetailHeader({
   canShowBrowser,
   browserOpen,
   onToggleBrowser,
+  canShowDescription = false,
+  descriptionPeekOpen = false,
+  onToggleDescription,
   isMaximized,
   onToggleMaximized,
   onUndock,
@@ -472,6 +478,9 @@ export function TaskDetailHeader({
               canShowBrowser={canShowBrowser}
               browserOpen={browserOpen}
               onToggleBrowser={onToggleBrowser}
+              canShowDescription={canShowDescription}
+              descriptionPeekOpen={descriptionPeekOpen}
+              onToggleDescription={onToggleDescription}
             />
           )}
         </KebabMenu>
@@ -538,6 +547,9 @@ interface TaskDetailKebabItemsProps {
   canShowBrowser: boolean;
   browserOpen: boolean;
   onToggleBrowser: () => void;
+  canShowDescription?: boolean;
+  descriptionPeekOpen?: boolean;
+  onToggleDescription?: () => void;
 }
 
 function TaskDetailKebabItems({
@@ -564,6 +576,9 @@ function TaskDetailKebabItems({
   canShowBrowser,
   browserOpen,
   onToggleBrowser,
+  canShowDescription = false,
+  descriptionPeekOpen = false,
+  onToggleDescription,
 }: TaskDetailKebabItemsProps) {
   const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
   const [showCommandsSubmenu, setShowCommandsSubmenu] = useState(false);
@@ -640,6 +655,15 @@ function TaskDetailKebabItems({
           icon={<GitCompare size={14} />}
           label={changesOpen ? 'Hide changes' : 'Show changes'}
           onClick={() => { closeAll(); onToggleChanges(); }}
+        />
+      )}
+
+      {/* Description peek */}
+      {canShowDescription && onToggleDescription && (
+        <KebabMenuItem
+          icon={<AlignLeft size={14} />}
+          label={descriptionPeekOpen ? 'Hide description' : 'Show description'}
+          onClick={() => { closeAll(); onToggleDescription(); }}
         />
       )}
 

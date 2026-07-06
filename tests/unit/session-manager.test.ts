@@ -126,7 +126,7 @@ describe('Scrollback', () => {
     const chunk = 'x'.repeat(600 * 1024);
     feedData(chunk);
 
-    const scrollback = manager.getScrollback(session.id);
+    const scrollback = await manager.getScrollback(session.id);
     // getScrollback() prepends \x1b[0m (4 bytes) and findSafeStartIndex
     // may trim up to 32 bytes at the truncation boundary
     expect(scrollback.startsWith('\x1b[0m')).toBe(true);
@@ -140,7 +140,7 @@ describe('Scrollback', () => {
     const chunk = 'y'.repeat(100 * 1024);
     feedData(chunk);
 
-    const scrollback = manager.getScrollback(session.id);
+    const scrollback = await manager.getScrollback(session.id);
     // No truncation, so only the 4-byte SGR reset prefix is added
     expect(scrollback.startsWith('\x1b[0m')).toBe(true);
     expect(scrollback.length).toBe(100 * 1024 + 4);
@@ -155,7 +155,7 @@ describe('Scrollback', () => {
     feedData(chunk);
     feedData(chunk);
 
-    const scrollback = manager.getScrollback(session.id);
+    const scrollback = await manager.getScrollback(session.id);
     expect(scrollback.startsWith('\x1b[0m')).toBe(true);
     expect(scrollback.length).toBeLessThanOrEqual(512 * 1024 + 4);
     expect(scrollback.length).toBeGreaterThan(512 * 1024 - 32);
@@ -210,7 +210,7 @@ describe('Scrollback clearing on resize', () => {
     const result = manager.resize(session.id, 120, 50);
     expect(result).toEqual({ colsChanged: false });
 
-    const scrollback = manager.getScrollback(session.id);
+    const scrollback = await manager.getScrollback(session.id);
     expect(scrollback).toContain('hello world');
   });
 
@@ -223,7 +223,7 @@ describe('Scrollback clearing on resize', () => {
     const result = manager.resize(session.id, 80, 24);
     expect(result).toEqual({ colsChanged: true });
 
-    const scrollback = manager.getScrollback(session.id);
+    const scrollback = await manager.getScrollback(session.id);
     // Scrollback is preserved on resize (KISS read-time strip approach)
     expect(scrollback).toContain('hello world');
   });
@@ -239,11 +239,11 @@ describe('Scrollback clearing on resize', () => {
 
     // Resize to same 80 cols (should preserve)
     manager.resize(session.id, 80, 30);
-    expect(manager.getScrollback(session.id)).toContain('data at 80 cols');
+    expect(await manager.getScrollback(session.id)).toContain('data at 80 cols');
 
     // Resize to different cols - scrollback preserved (no write-time clearing)
     manager.resize(session.id, 100, 30);
-    expect(manager.getScrollback(session.id)).toContain('data at 80 cols');
+    expect(await manager.getScrollback(session.id)).toContain('data at 80 cols');
   });
 
   it('clamps cols to minimum of 2', async () => {
@@ -286,12 +286,78 @@ describe('Scrollback clearing on resize', () => {
 
     // Change cols - scrollback preserved
     manager.resize(session.id, 80, 24);
-    expect(manager.getScrollback(session.id)).toContain('old data');
+    expect(await manager.getScrollback(session.id)).toContain('old data');
 
     // New data arrives at new width
     feedData('new data');
-    expect(manager.getScrollback(session.id)).toContain('new data');
-    expect(manager.getScrollback(session.id)).toContain('old data');
+    expect(await manager.getScrollback(session.id)).toContain('new data');
+    expect(await manager.getScrollback(session.id)).toContain('old data');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2b. Pre-spawn resize queue (stale-width race on auto-resume)
+// ---------------------------------------------------------------------------
+
+describe('Pre-spawn resize queue', () => {
+  let manager: SessionManager;
+
+  beforeEach(() => {
+    manager = new SessionManager();
+  });
+
+  it('spawns a resumed session at dimensions from a resize that arrived while suspended', async () => {
+    const mock1 = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock1.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({ taskId: 'task-pending-resize', command: '', cwd: tmpDir });
+
+    // Suspend: the PTY is torn down (pty=null) but the record persists for resume.
+    await manager.suspend(session.id);
+
+    // A renderer resize arrives while suspended, before the resume spawn. It is
+    // stashed rather than dropped (the secondary stale-width hole: xterm never
+    // re-sends unchanged dims, so a dropped resize would strand the PTY at the
+    // default width forever).
+    expect(manager.resize(session.id, 190, 40)).toEqual({ colsChanged: false });
+
+    // Resume: performSpawn consumes the stash and spawns the PTY at 190x40
+    // instead of the 120x30 default, so the mount-time resize is a no-op and no
+    // corrective repaint window opens.
+    const mock2 = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock2.mockPty as unknown as pty.IPty);
+    await manager.spawn({ id: session.id, taskId: 'task-pending-resize', command: '', cwd: tmpDir, resuming: true });
+
+    expect(pty.spawn).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ cols: 190, rows: 40 }),
+    );
+
+    manager.kill(session.id);
+  });
+
+  it('drops a queued resize when the session is killed before respawn', async () => {
+    const mock1 = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock1.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({ taskId: 'task-killed-resize', command: '', cwd: tmpDir });
+
+    await manager.suspend(session.id);
+    manager.resize(session.id, 190, 40); // stashed while suspended
+    manager.kill(session.id); // deliberate teardown clears the stash
+
+    // A fresh spawn for the same task must NOT inherit the killed session's
+    // stashed dims: it spawns at the default.
+    const mock2 = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock2.mockPty as unknown as pty.IPty);
+    const fresh = await manager.spawn({ taskId: 'task-killed-resize', command: '', cwd: tmpDir });
+
+    expect(pty.spawn).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ cols: 120, rows: 30 }),
+    );
+
+    manager.kill(fresh.id);
   });
 });
 
@@ -326,7 +392,7 @@ describe('Remove', () => {
     manager.remove(session.id);
 
     expect(manager.getSession(session.id)).toBeUndefined();
-    expect(manager.getScrollback(session.id)).toBe('');
+    expect(await manager.getScrollback(session.id)).toBe('');
     expect(manager.getEventsForSession(session.id)).toEqual([]);
     expect(manager.getUsageCache()[session.id]).toBeUndefined();
     expect(manager.getActivityCache()[session.id]).toBeUndefined();
@@ -672,7 +738,7 @@ describe('PTY spawn failure', () => {
       cwd: tmpDir,
     });
 
-    const scrollback = manager.getScrollback(session.id);
+    const scrollback = await manager.getScrollback(session.id);
     expect(scrollback).toContain('posix_spawnp');
     expect(scrollback).toContain('spawn-helper');
 
@@ -691,7 +757,7 @@ describe('PTY spawn failure', () => {
       cwd: tmpDir,
     });
 
-    const scrollback = manager.getScrollback(session.id);
+    const scrollback = await manager.getScrollback(session.id);
     expect(scrollback).not.toContain('posix_spawnp');
     expect(scrollback).not.toContain('spawn-helper');
 
@@ -1076,11 +1142,15 @@ describe('Transcript-fallback handoff', () => {
     // Let the fire-and-forget eager attach (awaits the mocked locate) settle.
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(priv.sessionHistoryReader.isAttached(session.id)).toBe(true);
-    // The fallback populated the card model + context % from the transcript.
+    // The fallback populated the card model + token occupancy from the
+    // transcript, but NO window (it is not derivable from a model id): window
+    // stays the 0 "unknown size" sentinel and the percentage stays 0, so the
+    // card shows the model name only until status.json flows.
     const fallbackUsage = manager.getUsageCache()[session.id];
     expect(fallbackUsage?.model.displayName).toBe('Opus 4.8');
     expect(fallbackUsage?.contextWindow.usedTokens).toBe(5000);
-    expect(fallbackUsage?.contextWindow.contextWindowSize).toBe(200_000);
+    expect(fallbackUsage?.contextWindow.contextWindowSize).toBe(0);
+    expect(fallbackUsage?.contextWindow.usedPercentage).toBe(0);
 
     // status.json now flows (Claude painted / card opened). Trigger the read;
     // onFirstStatus must detach the fallback reader.
@@ -1101,6 +1171,55 @@ describe('Transcript-fallback handoff', () => {
     priv.statusFileReader.handleStatusChange(session.id);
 
     expect(priv.sessionHistoryReader.isAttached(session.id)).toBe(false);
+  });
+
+  // On a RESUME the transcript already holds the PRE-suspend conversation, whose
+  // last entry is stale occupancy (Claude prunes/recomputes context on resume).
+  // The eager attach passes startAtEnd, so the fallback starts at EOF and must
+  // NOT surface that stale entry - the exact #286 failure (a 650k pre-suspend
+  // snapshot rendered as an impossible percentage). Regression guard.
+  it('does not surface stale pre-suspend occupancy on a resume (fallback starts at EOF)', async () => {
+    const historyFile = path.join(tmpDir, 'resume-stale-transcript.jsonl');
+    fs.writeFileSync(
+      historyFile,
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          id: 'stale',
+          model: 'claude-opus-4-8',
+          usage: {
+            input_tokens: 2,
+            cache_creation_input_tokens: 446,
+            cache_read_input_tokens: 649_950,
+            output_tokens: 318,
+          },
+        },
+      }) + '\n',
+    );
+    vi.spyOn(ClaudeSessionHistoryParser, 'locate').mockResolvedValue(historyFile);
+    const adapter = new ClaudeAdapter();
+
+    const statusPath = path.join(tmpDir, 'resume-stale-status.json');
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: 'task-resume-stale',
+      command: '',
+      cwd: tmpDir,
+      agentSessionId: 'resume-stale-uuid',
+      statusOutputPath: statusPath,
+      agentParser: adapter,
+      resuming: true,
+    });
+
+    // Let the fire-and-forget eager attach (awaits the mocked locate) settle.
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    // The stale 650,398-token pre-suspend entry is behind the EOF cursor, so it
+    // never reaches the usage cache. No stale tokens, and certainly no >100%.
+    const usage = manager.getUsageCache()[session.id];
+    expect(usage?.contextWindow.usedTokens ?? 0).not.toBe(650_398);
+    expect(usage?.contextWindow.usedTokens ?? 0).toBe(0);
   });
 
   // The sibling test above never sets `session_id` in status.json, so
@@ -1255,10 +1374,10 @@ describe('Query methods for missing sessions', () => {
     manager = new SessionManager();
   });
 
-  it('returns empty/undefined for non-existent session ID', () => {
+  it('returns empty/undefined for non-existent session ID', async () => {
     expect(manager.getSession('ghost')).toBeUndefined();
     expect(manager.getEventsForSession('ghost')).toEqual([]);
-    expect(manager.getScrollback('ghost')).toBe('');
+    expect(await manager.getScrollback('ghost')).toBe('');
   });
 
   it('returns empty objects when no sessions exist', () => {

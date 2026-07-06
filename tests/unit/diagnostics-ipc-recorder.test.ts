@@ -180,6 +180,106 @@ describe('ipc-recorder', () => {
     expect(entry.error).toEqual({ name: 'Error', message: 'database locked' });
     expect(entry.result).toBeUndefined();
   });
+
+  it('truncates an oversized safe-channel result to a marker, leaving small args intact', async () => {
+    const { installIpcRecorder } = await import('../../src/main/diagnostics/ipc-recorder');
+    const { ipcMain } = await import('electron');
+    installIpcRecorder({ getProjectRoot: () => tempDirectory, enabled: () => true });
+
+    const huge = 'x'.repeat(40_000); // JSON well over the 32KB cap
+    ipcMain.handle('project:list', async (_event: unknown, _arg: string) => [huge]);
+    await registeredHandler!({}, 'small-arg');
+
+    const entries = await readJsonlEntries('project:list');
+    expect(entries).toHaveLength(1);
+    const entry = entries[0] as {
+      args: unknown;
+      result: { truncated: boolean; serializedChars: number; preview: string };
+    };
+    // Small args pass through unchanged.
+    expect(entry.args).toEqual(['small-arg']);
+    // The oversized result is replaced with a compact marker; the line still
+    // parsed as valid JSON (readJsonlEntries did the JSON.parse).
+    expect(entry.result.truncated).toBe(true);
+    expect(entry.result.serializedChars).toBeGreaterThan(32 * 1024);
+    expect(entry.result.preview).toHaveLength(2 * 1024);
+  });
+
+  it('truncates oversized args independently of a small result', async () => {
+    const { installIpcRecorder } = await import('../../src/main/diagnostics/ipc-recorder');
+    const { ipcMain } = await import('electron');
+    installIpcRecorder({ getProjectRoot: () => tempDirectory, enabled: () => true });
+
+    ipcMain.handle('project:list', async () => ['ok']);
+    await registeredHandler!({}, 'y'.repeat(40_000));
+
+    const entries = await readJsonlEntries('project:list');
+    const entry = entries[0] as {
+      args: { truncated: boolean; serializedChars: number };
+      result: unknown;
+    };
+    expect(entry.args.truncated).toBe(true);
+    expect(entry.args.serializedChars).toBeGreaterThan(32 * 1024);
+    // The small result is untouched.
+    expect(entry.result).toEqual(['ok']);
+  });
+
+  it('rotates the daily log to <file>.1 when it exceeds the configured cap, keeping whole JSON lines', async () => {
+    const { installIpcRecorder } = await import('../../src/main/diagnostics/ipc-recorder');
+    const { ipcMain } = await import('electron');
+    const { flushAllForTest } = await import('../../src/main/diagnostics/async-file-queue');
+    // Tiny cap so a handful of entries forces a rotation.
+    installIpcRecorder({ getProjectRoot: () => tempDirectory, enabled: () => true, maxLogFileBytes: 256 });
+
+    ipcMain.handle('project:list', async () => ['project-a']);
+    for (let index = 0; index < 12; index += 1) {
+      await registeredHandler!({});
+      await flushAllForTest(); // separate flush batches so rotation can trigger between them
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const directory = path.join(tempDirectory, '.kangentic', 'logs');
+    const primary = path.join(directory, `ipc-${today}.jsonl`);
+    const rotated = `${primary}.1`;
+    expect(fs.existsSync(rotated)).toBe(true);
+
+    // Every non-empty line in both files must be complete, valid JSON.
+    for (const file of [rotated, primary]) {
+      const lines = fs.readFileSync(file, 'utf-8').split(/\r?\n/).filter((line) => line.trim().length > 0);
+      for (const line of lines) {
+        expect(() => JSON.parse(line)).not.toThrow();
+      }
+    }
+  });
+
+  it('prunes ipc log files older than the retention window, sparing recent and non-ipc files', async () => {
+    const { installIpcRecorder, __INTERNAL } = await import('../../src/main/diagnostics/ipc-recorder');
+    const { ipcMain } = await import('electron');
+    const directory = path.join(tempDirectory, '.kangentic', 'logs');
+    fs.mkdirSync(directory, { recursive: true });
+
+    const ancientPrimary = path.join(directory, 'ipc-2020-01-01.jsonl');
+    const ancientRotated = path.join(directory, 'ipc-2020-01-01.jsonl.1');
+    const recentDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const recentPrimary = path.join(directory, `ipc-${recentDate}.jsonl`);
+    const logMirror = path.join(directory, '2020-01-01.log'); // not an ipc file
+    fs.writeFileSync(ancientPrimary, '{}\n');
+    fs.writeFileSync(ancientRotated, '{}\n');
+    fs.writeFileSync(recentPrimary, '{}\n');
+    fs.writeFileSync(logMirror, 'stale\n');
+
+    installIpcRecorder({ getProjectRoot: () => tempDirectory, enabled: () => true });
+    ipcMain.handle('project:list', async () => ['project-a']);
+    await registeredHandler!({}); // triggers the one-shot prune
+    await __INTERNAL.awaitPendingPruneForTest();
+
+    // Ancient ipc files (primary + rotated) are gone.
+    expect(fs.existsSync(ancientPrimary)).toBe(false);
+    expect(fs.existsSync(ancientRotated)).toBe(false);
+    // In-retention ipc file and the non-ipc log mirror survive.
+    expect(fs.existsSync(recentPrimary)).toBe(true);
+    expect(fs.existsSync(logMirror)).toBe(true);
+  });
 });
 
 describe('ipc-recorder - outbound push recording', () => {

@@ -14,6 +14,7 @@ import { useBacklogStore } from '../../stores/backlog-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
 import { useTaskProgress } from '../../utils/task-progress';
+import { isContextWindowTrusted } from '../../utils/format-tokens';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { getProgressColor } from '../../utils/color-lerp';
 import { LabelPills } from '../Pill';
@@ -346,26 +347,26 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
                   </div>
                 );
               }
-              // Show just the model name (no progress bar) when EITHER:
-              //   - Usage hasn't streamed any token counts yet (boot window)
-              //   - The agent's context window size is unknown (unmapped
-              //     Gemini model: contextWindowSize is 0 as sentinel)
-              // Always render the full progress bar layout once the CLI has
-              // reported. Default to 0% with a placeholder label when usage
-              // data hasn't streamed yet -- the bar at zero is the graceful
-              // baseline, never a blank slot. Smoothly animates to real
-              // values via the inner bar's transition-all when tokens arrive.
-              // Active/idle state is already conveyed by the top-left
-              // status icon (spinner vs mail), so no dot or label here.
+              // Always render the full bar layout (model + percent + track) once
+              // the model name is known, so the card height is STABLE - the bar
+              // does not mount in later and shove the card taller (the boot-window
+              // jank). The bar sits at 0% until a TRUSTWORTHY window exists: a
+              // positive contextWindowSize (0 is the "unknown size" sentinel) AND
+              // usedTokens within it (usedTokens > window is impossible, so the
+              // window is wrong - never divide by a bad denominator). It animates
+              // to the real value when telemetry fills in. Gating pct on
+              // windowTrusted also guarantees the label is never > 100%.
               const usage = displayState.usage;
-              const hasTokens = !!usage && usage.contextWindow.totalInputTokens > 0;
-              const hasKnownWindow = !!usage && usage.contextWindow.contextWindowSize > 0;
-              const pct = usage && hasTokens && hasKnownWindow
-                ? Math.round(usage.contextWindow.usedPercentage)
-                : 0;
+              const windowTrusted = !!usage
+                && isContextWindowTrusted(usage.contextWindow.contextWindowSize, usage.contextWindow.usedTokens);
+              const pct = windowTrusted ? Math.round(usage?.contextWindow.usedPercentage ?? 0) : 0;
               const progressColor = getProgressColor(pct);
               return (
-                <div className="mt-2 pt-2 border-t border-edge" data-testid="usage-bar">
+                <div
+                  className="mt-2 pt-2 border-t border-edge"
+                  data-testid="usage-bar"
+                  data-context-window={windowTrusted ? undefined : 'unknown'}
+                >
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-xs text-fg-faint truncate">
                       {resolvedModelName}

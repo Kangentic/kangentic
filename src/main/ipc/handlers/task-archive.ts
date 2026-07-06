@@ -20,6 +20,11 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
     return tasks.listArchived();
   });
 
+  ipcMain.handle(IPC.TASK_LIST_ARCHIVED_PREVIEW, (_, limit: number) => {
+    const { tasks } = getProjectRepos(context);
+    return tasks.listArchivedPreview(limit);
+  });
+
   ipcMain.handle(IPC.TASK_UNARCHIVE, async (_, input: { id: string; targetSwimlaneId: string }, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
     if (!resolvedProjectId) throw new Error('No project is currently open');

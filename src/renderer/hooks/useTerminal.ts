@@ -1,12 +1,13 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '../addons/fit-addon';
-import { WebglAddon } from '@xterm/addon-webgl';
+import { attachWebglRenderer } from '../utils/terminal-webgl';
 import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences } from '../utils/terminal-clipboard';
 import { registerTerminal } from '../utils/terminal-registry';
 import { pixelToBufferRow, extractBlockContentAt } from '../utils/terminal-block-buffer';
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
+import { isBoardDragActive, onBoardDragEnd } from '../lib/session-update-coalescer';
 import { noteTerminalFocus } from '../utils/dictation-target';
 import '@xterm/xterm/css/xterm.css';
 
@@ -27,6 +28,15 @@ if (import.meta.hot) {
   import.meta.hot.dispose((data: Record<string, unknown>) => {
     data.savedScrollPositions = savedScrollPositions;
   });
+}
+
+// hmr-safe: a monotonic counter only used to mint a unique renderer-report key
+// for a session-less (transient) terminal; resetting it on HMR at worst reuses
+// a key for a terminal that has since disposed its report entry.
+let transientRendererKeyCounter = 0;
+function nextTransientRendererKey(): number {
+  transientRendererKeyCounter += 1;
+  return transientRendererKeyCounter;
 }
 
 /** Fixed dark terminal theme -- Claude Code's TUI is designed for dark backgrounds. */
@@ -104,6 +114,8 @@ export function useTerminal(options: UseTerminalOptions) {
   const writeBatcherRef = useRef<WriteBatcher | null>(null);
   /** Unregisters this terminal from the block-copy hit-test registry on unmount. */
   const unregisterTerminalRef = useRef<(() => void) | null>(null);
+  /** Tears down the WebGL renderer attachment (cancels retries, disposes addon). */
+  const disposeWebglRef = useRef<(() => void) | null>(null);
 
   const initTerminal = useCallback(() => {
     if (!terminalRef.current || xtermRef.current) return;
@@ -159,16 +171,11 @@ export function useTerminal(options: UseTerminalOptions) {
       isAtBottomRef.current = buffer.viewportY >= buffer.baseY;
     });
 
-    // Try WebGL renderer
-    try {
-      const webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        webglAddon.dispose();
-      });
-      terminal.loadAddon(webglAddon);
-    } catch {
-      // WebGL not available, use canvas fallback
-    }
+    // Attach the WebGL renderer with context-loss recovery (retry + backoff,
+    // logged, renderer type tracked). Keyed by session id, or a stable transient
+    // key for a session-less pane so the devtools report can distinguish them.
+    const rendererKey = options.sessionId ?? `transient-${nextTransientRendererKey()}`;
+    disposeWebglRef.current = attachWebglRenderer(terminal, rendererKey);
 
     xtermRef.current = terminal;
     fitAddonRef.current = fitAddon;
@@ -192,11 +199,9 @@ export function useTerminal(options: UseTerminalOptions) {
       });
 
       // Resize-first scrollback replay: fit the terminal to the container
-      // FIRST, then send an immediate (non-debounced) resize to the PTY.
-      // If cols changed, skip scrollback entirely -- the PTY may still flush
-      // output at the old width before SIGWINCH is processed, so replaying
-      // scrollback would show truncated/garbled content. Instead, let Claude
-      // Code's SIGWINCH redraw populate the terminal via live onData.
+      // FIRST, then fetch scrollback. The width change (if any) and the sample
+      // are ordered on the main process, not here - see the parallel-IPC note
+      // below.
       scrollbackPendingRef.current = true;
       const scrollbackGeneration = ++scrollbackGenerationRef.current;
       const suppressScrollback = suppressDataRef.current;
@@ -206,16 +211,14 @@ export function useTerminal(options: UseTerminalOptions) {
       const { cols, rows } = terminal;
 
       // Parallel IPCs: resize forwards SIGWINCH on main; getScrollback is a
-      // pure in-memory read. Firing them together hides the cheaper read
-      // inside the resize round-trip instead of chaining them serially.
-      //
-      // Timing caveat: SIGWINCH-redraw bytes from Claude can now land in the
-      // main-process buffer *after* getScrollback has already sampled it, so
-      // the replayed scrollback may be one frame stale. Those bytes arrive
-      // via live onData and get dropped by the scrollbackPendingRef guard
-      // while we're mid-write. The post-write force-resize at line 202
-      // compensates: once scrollbackPendingRef clears, it triggers a fresh
-      // SIGWINCH and Claude's next redraw flows through live onData cleanly.
+      // pure in-memory read. Firing them together is safe because main
+      // preserves per-renderer IPC order and the resize handler is synchronous,
+      // so main records the width change before getScrollback runs. When cols
+      // changed, main's getScrollback waits for the agent TUI's async SIGWINCH
+      // repaint to land before sampling (PtyBufferManager.waitForResizeRepaint),
+      // so the replay is at the fitted width - no stale frame, no compensating
+      // resize needed here. The colsChanged field of the resize result is
+      // therefore intentionally unused by the renderer.
       const resizePromise = window.electronAPI.sessions.resize(sid, cols, rows);
       const scrollbackPromise = suppressScrollback
         ? Promise.resolve<string | null>(null)
@@ -239,14 +242,11 @@ export function useTerminal(options: UseTerminalOptions) {
               isAtBottomRef.current = restoreScrollPosition(xtermRef.current, options.sessionId);
             }
             scrollbackPendingRef.current = false;
-            // Force an explicit resize to the PTY even if dimensions haven't
-            // changed, so the running process (Claude Code's TUI) re-renders.
-            // Focus the terminal after the full init chain completes.
+            // Focus the terminal after the full init chain completes. No
+            // corrective resize: main already sampled the settled frame at the
+            // fitted width, and a same-dims resize is a documented no-op (POSIX
+            // sends SIGWINCH only on a real size change; ConPTY likewise).
             requestAnimationFrame(() => {
-              if (xtermRef.current && options.sessionId) {
-                const { cols, rows } = xtermRef.current;
-                window.electronAPI.sessions.resize(options.sessionId, cols, rows);
-              }
               xtermRef.current?.focus();
             });
           };
@@ -286,6 +286,11 @@ export function useTerminal(options: UseTerminalOptions) {
       // server-side getScrollback() drains the pending buffer, so this is
       // defense-in-depth. Dropped slices are still acked inside the queue.
       shouldDrop: () => scrollbackPendingRef.current || suppressDataRef.current,
+      // While a board drag is active, HOLD (not drop) inbound writes so xterm
+      // parsing doesn't compete with the drag on the renderer thread. Held bytes
+      // are retained and resumed on drag end; the coalescer's 30s watchdog
+      // bounds the hold if a drag end is ever missed.
+      shouldHold: () => isBoardDragActive(),
       ack: (bytes) => window.electronAPI.sessions.ackData(sessionId, bytes),
     });
 
@@ -293,11 +298,15 @@ export function useTerminal(options: UseTerminalOptions) {
       if (incomingSessionId !== sessionId) return;
       queue.push(data);
     });
+    // Resume the held drain the moment a board drag ends (also via the
+    // coalescer's watchdog / window-blur backstops, which route through here).
+    const unsubscribeDragEnd = onBoardDragEnd(() => queue.kick());
 
     cleanupRef.current = cleanup;
     return () => {
       cleanup();
       cleanupRef.current = null;
+      unsubscribeDragEnd();
       queue.reset();
     };
   }, [options.sessionId]);
@@ -372,6 +381,10 @@ export function useTerminal(options: UseTerminalOptions) {
       }
       unregisterTerminalRef.current?.();
       unregisterTerminalRef.current = null;
+      // Tear down WebGL (cancel any pending re-init retry, drop the report entry)
+      // before disposing the terminal it is attached to.
+      disposeWebglRef.current?.();
+      disposeWebglRef.current = null;
       xtermRef.current?.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
@@ -430,9 +443,11 @@ export function useTerminal(options: UseTerminalOptions) {
     const sessionId = options.sessionId;
 
     // Parallel IPCs: same shape as initTerminal's mount-time path. Resize
-    // forwards SIGWINCH on main; getScrollback is an in-memory read. See the
-    // initTerminal comment for the SIGWINCH-frame staleness caveat - the
-    // post-write force-resize compensates here too.
+    // forwards SIGWINCH on main; getScrollback is an in-memory read. When cols
+    // changed, main waits for the agent TUI's repaint to settle before sampling
+    // (see the initTerminal note), so the reload lands the fitted-width frame.
+    // skipResize sends no SIGWINCH: the window manager calls it once resizing
+    // has already settled, so there is nothing to wait for.
     const resizePromise = skipResize
       ? Promise.resolve(undefined)
       : window.electronAPI.sessions.resize(sessionId, cols, rows);
@@ -453,13 +468,10 @@ export function useTerminal(options: UseTerminalOptions) {
             isAtBottomRef.current = restoreScrollPosition(xtermRef.current, options.sessionId);
           }
           scrollbackPendingRef.current = false;
+          // Focus after the reload completes. No corrective resize: when a
+          // resize was sent above, main sampled the settled frame; a same-dims
+          // resize is a no-op either way.
           requestAnimationFrame(() => {
-            // Skip the force-resize for a skipResize replay: a SIGWINCH here
-            // would make the TUI redraw and re-pollute the just-cleaned buffer.
-            if (!skipResize && xtermRef.current && options.sessionId) {
-              const { cols, rows } = xtermRef.current;
-              window.electronAPI.sessions.resize(options.sessionId, cols, rows);
-            }
             xtermRef.current?.focus();
           });
         };

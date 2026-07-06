@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronDown, X } from 'lucide-react';
 import { groupModelIds } from '../../../shared/model-id';
+import { modelContextBadgeLabel } from '../../utils/format-tokens';
 
 interface ModelComboboxProps {
   value: string;
@@ -9,6 +10,16 @@ interface ModelComboboxProps {
   placeholder?: string;
   className?: string;
   testId?: string;
+  /** Fired each time the dropdown is opened (focus or chevron). Callers use it
+   *  to kick off an on-demand model rescan so a newly shipped model appears
+   *  without a restart. Non-blocking: the dropdown opens immediately with the
+   *  current list and re-renders if the rescan surfaces anything new. */
+  onOpen?: () => void;
+  /** Empirically-observed context-window size (tokens) per BASE model id, from
+   *  `useModelContextWindows`. Renders a right-aligned size badge (1M / 200K)
+   *  on rows that have no selectable `[1m]` variant chip. Absent entries render
+   *  no badge (the window is discovered from telemetry, never hardcoded). */
+  contextWindows?: Record<string, number>;
 }
 
 // Vertically-navigable suggestion buttons: model options plus the pinned
@@ -23,6 +34,8 @@ export function ModelCombobox({
   placeholder = 'Default',
   className = '',
   testId = 'model-combobox',
+  onOpen,
+  contextWindows = {},
 }: ModelComboboxProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [filterText, setFilterText] = useState('');
@@ -110,6 +123,7 @@ export function ModelCombobox({
       setFilterText('');
     } else {
       setIsOpen(true);
+      onOpen?.();
       inputRef.current?.focus();
     }
   };
@@ -117,6 +131,7 @@ export function ModelCombobox({
   const handleInputFocus = () => {
     if (availableModels.length > 0) {
       setIsOpen(true);
+      onOpen?.();
     }
   };
 
@@ -225,6 +240,11 @@ export function ModelCombobox({
             <div className="py-1">
               {filteredGroups.map((group) => {
                 const oneMillionId = group.oneMillionId;
+                // Right-aligned context-size badge (1M / 200K). See
+                // modelContextBadgeLabel: a `[1m]`-only row badges "1M" from its id
+                // alone, a row with a selectable `[1m]` chip is suppressed, and
+                // everything else uses the telemetry-learned window (absent -> none).
+                const contextLabel = modelContextBadgeLabel(group, contextWindows);
                 return (
                   <div key={group.primaryId} data-model-row className="flex items-center">
                     <button
@@ -236,9 +256,13 @@ export function ModelCombobox({
                     >
                       {group.primaryId}
                     </button>
-                    {group.primaryIsOneMillion && (
-                      <span className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-faint flex-shrink-0">
-                        1M
+                    {contextLabel && (
+                      <span
+                        data-model-context-window
+                        title={`${contextLabel} context window`}
+                        className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-faint flex-shrink-0"
+                      >
+                        {contextLabel}
                       </span>
                     )}
                     {oneMillionId !== null && (

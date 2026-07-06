@@ -24,9 +24,18 @@ interface RendererLagReport {
   sampleIntervalMs: number;
   spikeThresholdMs: number;
   samples: number;
+  /** Max lag from a VISIBLE-window sample (throttle artifacts are excluded). */
   maxLagMs: number;
+  /** Spike count from VISIBLE-window samples only. */
   spikeCount: number;
+  /** Recent VISIBLE-window spikes only (background-throttle spikes never enter the ring). */
   recentSpikes: RendererLagSpike[];
+  /** Whether the window was hidden at report time. */
+  documentHidden: boolean;
+  /** Spikes attributed to background throttling (window hidden), not real freezes. */
+  hiddenSpikeCount: number;
+  /** Max lag observed while the window was throttled (background), in ms. */
+  maxHiddenLagMs: number;
 }
 
 // Keep these three constants in sync with event-loop-lag.ts (the main-process
@@ -42,6 +51,17 @@ let samples = 0;
 let maxLagMs = 0;
 let spikeCount = 0;
 const recentSpikes: RendererLagSpike[] = [];
+// Background-throttle artifacts are routed here instead of the ring. When
+// `document.hidden`, Chromium throttles this 100ms sampler to >=1s, so every
+// hidden sample reads as a ~900ms "spike" that would otherwise flood the ring
+// (2 minutes of background evicts all real freeze history) and dominate maxLagMs.
+let hiddenSpikeCount = 0;
+let maxHiddenLagMs = 0;
+let lastSampleHidden = false;
+
+function isDocumentHidden(): boolean {
+  return typeof document !== 'undefined' && document.hidden === true;
+}
 
 export function startRendererLagRecorder(): void {
   if (timer) return;
@@ -52,6 +72,16 @@ export function startRendererLagRecorder(): void {
     const lag = now - lastFire - SAMPLE_INTERVAL_MS;
     lastFire = now;
     samples += 1;
+    const hidden = isDocumentHidden();
+    // The first VISIBLE sample after foregrounding still carries the throttle
+    // backlog, so classify it as an artifact via the previous-sample flag.
+    const throttleArtifact = hidden || lastSampleHidden;
+    lastSampleHidden = hidden;
+    if (throttleArtifact) {
+      if (lag > maxHiddenLagMs) maxHiddenLagMs = lag;
+      if (lag >= SPIKE_THRESHOLD_MS) hiddenSpikeCount += 1;
+      return;
+    }
     if (lag > maxLagMs) maxLagMs = lag;
     if (lag >= SPIKE_THRESHOLD_MS) {
       spikeCount += 1;
@@ -78,5 +108,8 @@ export function getRendererLagReport(): RendererLagReport {
     maxLagMs: Math.round(maxLagMs),
     spikeCount,
     recentSpikes: [...recentSpikes],
+    documentHidden: isDocumentHidden(),
+    hiddenSpikeCount,
+    maxHiddenLagMs: Math.round(maxHiddenLagMs),
   };
 }

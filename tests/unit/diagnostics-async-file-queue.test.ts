@@ -300,6 +300,21 @@ describe('async-file-queue: queueAppendWithRotation', () => {
     expect(readRaw(filePath)).toBe('fresh\n');
     expect(fs.existsSync(filePath + '.1')).toBe(false);
   });
+
+  it('seeds the rotation counter from the on-disk size so a restart cannot grow an over-cap primary', async () => {
+    const filePath = path.join(tempDirectory, 'rot.jsonl');
+    const cap = 16;
+    // A primary left on disk by a prior process, already over the cap. The
+    // in-memory counter is empty this "process"; without seeding it would start
+    // at 0 and let the primary keep growing far past the cap before rotating.
+    fs.writeFileSync(filePath, 'x'.repeat(20) + '\n'); // 21 bytes > 16
+    // First rotating append: seeding the counter from the 21-byte on-disk size
+    // forces a rotation right away (21 + 6 > 16).
+    queueAppendWithRotation(filePath, 'fresh\n', cap);
+    await flushAllForTest();
+    expect(readRaw(filePath)).toBe('fresh\n');
+    expect(readRaw(filePath + '.1')).toBe('x'.repeat(20) + '\n');
+  });
 });
 
 describe('async-file-queue: resetForTest', () => {

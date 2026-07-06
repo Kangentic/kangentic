@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
 import { getProcessMetrics } from '../../diagnostics/process-metrics';
+import { ROTATED_FILE_SUFFIX } from '../../diagnostics/async-file-queue';
 import { enumerateWorktrees } from '../../git/worktree-list';
 import type { CrashRecord, IpcLogEntry, LogEntry } from '../../../shared/types';
 import { PROJECT_SELECTOR_DESCRIPTION } from './handler-helpers';
@@ -161,7 +162,7 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
     'kangentic_get_ipc_log',
     {
       description:
-        'Read recent IPC traffic from `<projectRoot>/.kangentic/logs/ipc-<YYYY-MM-DD>.jsonl`. Each entry has channel, args, result, durationMs, and (on failure) error. Inbound `ipcMain.handle` invocations (renderer -> main) leave `direction` absent; outbound `webContents.send` pushes (main -> renderer, e.g. `task:createdByAgent` board-invalidation events) set `direction: "out"` and, when the push was dropped because the window was destroyed, an `error` with name `PushDropped`. Only available when Settings → Developer → Record IPC Traffic is on. Channels carrying secrets (settings writes, MCP config, auth) are stored as `{ redacted: true, channel }`. Pass `project` to inspect another project.',
+        'Read recent IPC traffic from `<projectRoot>/.kangentic/logs/ipc-<YYYY-MM-DD>.jsonl`. Each entry has channel, args, result, durationMs, and (on failure) error. Inbound `ipcMain.handle` invocations (renderer -> main) leave `direction` absent; outbound `webContents.send` pushes (main -> renderer, e.g. `task:createdByAgent` board-invalidation events) set `direction: "out"` and, when the push was dropped because the window was destroyed, an `error` with name `PushDropped`. Only available when Settings → Developer → Record IPC Traffic is on. Channels carrying secrets (settings writes, MCP config, auth) are stored as `{ redacted: true, channel }`. An oversized args/result (e.g. a large list) is stored as `{ truncated: true, serializedChars, preview }` instead of the full payload. Pass `project` to inspect another project.',
       inputSchema: z.object({
         date: z
           .string()
@@ -194,7 +195,12 @@ export function registerDiagnosticsTools(server: McpServer, resolver: RequestRes
       const projectPath = resolved.context.getProjectPath();
       const targetDate = date ?? today();
       const filePath = path.join(projectPath, '.kangentic', 'logs', `ipc-${targetDate}.jsonl`);
-      const entries = readJsonLines<IpcLogEntry>(filePath);
+      // Read the rotated copy (older) before the primary (newer) so a fresh
+      // rotation doesn't blank a recent-traffic query.
+      const entries = [
+        ...readJsonLines<IpcLogEntry>(filePath + ROTATED_FILE_SUFFIX),
+        ...readJsonLines<IpcLogEntry>(filePath),
+      ];
       const filtered = entries.filter((entry) => {
         if (since && entry.ts < since) return false;
         if (channel && entry.channel !== channel) return false;

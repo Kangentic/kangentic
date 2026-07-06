@@ -1667,6 +1667,17 @@ export interface AppConfig {
    *  for the model dropdowns so they don't depend on re-walking JSONL every
    *  launch and they "discover" new models the user invokes in real time. */
   discoveredModelsByAgent: Record<string, string[]>;
+  /** Empirically-observed context-window size (in tokens) per model, learned
+   *  from a live session's `status.json` (`context_window.context_window_size`,
+   *  the account-accurate window Claude reports). Keyed by agent name, then by
+   *  BASE model id (the `[1m]`/dated suffix stripped, since the window is a
+   *  model+account constant). The window is NOT derivable from a model id alone
+   *  (a plain `claude-opus-4-8` runs 1M on a 1M-entitled account, 200K
+   *  elsewhere), so it is discovered from telemetry rather than hardcoded; the
+   *  model dropdowns render a context-size badge only for a model whose window
+   *  has actually been observed. Last-observation-wins so an entitlement change
+   *  re-baselines. */
+  discoveredContextWindowsByAgent: Record<string, Record<string, number>>;
   /** User keybinding overrides: registry action id -> canonical combo string
    *  (e.g. 'Mod+Shift+K'). Absent/empty means use the registry default. Global
    *  only (per-machine), like `developer.*`. See `src/shared/keybindings.ts`. */
@@ -1814,6 +1825,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   workspaceByProject: {},
   commandTerminalWorkspace: null,
   discoveredModelsByAgent: {},
+  discoveredContextWindowsByAgent: {},
   hotkeyOverrides: {},
   dictation: {
     enabled: false,
@@ -2159,6 +2171,17 @@ export interface TaskMoveInput {
 export interface TaskUnarchiveInput {
   id: string;
   targetSwimlaneId: string;
+}
+
+/**
+ * Result of `tasks.listArchivedPreview(limit)`: the newest `limit` archived
+ * tasks plus the authoritative total archived count. The board hydrates from
+ * this small payload instead of the full archive (which can be many MB); the
+ * full list loads lazily only when the Completed dialog opens.
+ */
+export interface ArchivedTasksPreview {
+  totalCount: number;
+  tasks: Task[];
 }
 
 export interface TaskBulkDeleteFailure {
@@ -2780,6 +2803,12 @@ export interface ElectronAPI {
      */
     cancelSpawn: (taskId: string) => Promise<void>;
     listArchived: () => Promise<Task[]>;
+    /**
+     * The newest `limit` archived tasks plus the total archived count. Cheap
+     * hydration payload for the Done column's count + inline preview; the full
+     * archive loads lazily via `listArchived` when the Completed dialog opens.
+     */
+    listArchivedPreview: (limit: number) => Promise<ArchivedTasksPreview>;
     unarchive: (input: TaskUnarchiveInput, projectId?: string | null) => Promise<Task>;
     bulkDelete: (ids: string[], projectId?: string | null) => Promise<TaskBulkDeleteResult>;
     bulkUnarchive: (ids: string[], targetSwimlaneId: string, projectId?: string | null) => Promise<void>;
@@ -3355,6 +3384,20 @@ export interface ProcessMetrics {
  * renderer). Inbound entries leave `direction` absent so existing log
  * readers see no change; outbound pushes set `direction: 'out'`.
  */
+/**
+ * Placeholder substituted for an args/result payload whose serialized form
+ * exceeds the recorder's size cap. Keeps each JSONL line small (a single ~1.2MB
+ * `task:list-archived` result would otherwise be stringified in full on the main
+ * thread) while preserving enough signal to identify the oversized channel.
+ */
+export interface IpcPayloadTruncated {
+  truncated: true;
+  /** UTF-16 length of the full serialized payload (-1 when unserializable). */
+  serializedChars: number;
+  /** First ~2KB of the serialized JSON, enough to identify the payload shape. */
+  preview: string;
+}
+
 export interface IpcLogEntry {
   ts: string;
   channel: string;
@@ -3363,10 +3406,10 @@ export interface IpcLogEntry {
    * invocation; `'out'` means a main -> renderer `webContents.send` push.
    */
   direction?: 'in' | 'out';
-  /** Either the captured args array or a redaction placeholder. */
-  args: unknown[] | { redacted: true; channel: string };
-  /** Either the captured result or a redaction placeholder. Omitted on error. */
-  result?: unknown | { redacted: true; channel: string };
+  /** Captured args array, a redaction placeholder, or an over-cap truncation marker. */
+  args: unknown[] | { redacted: true; channel: string } | IpcPayloadTruncated;
+  /** Captured result, a redaction placeholder, or an over-cap truncation marker. Omitted on error. */
+  result?: unknown | { redacted: true; channel: string } | IpcPayloadTruncated;
   /** Handler round-trip time in ms. Always `0` for outbound pushes (no round trip to measure). */
   durationMs: number;
   /**

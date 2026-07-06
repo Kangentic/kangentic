@@ -192,6 +192,7 @@ test.describe('Project switch warm cache', () => {
       // Board, backlog, and config slices should be pure cache hits.
       expect(counts['tasks.list'] ?? 0).toBe(0);
       expect(counts['tasks.listArchived'] ?? 0).toBe(0);
+      expect(counts['tasks.listArchivedPreview'] ?? 0).toBe(0);
       expect(counts['swimlanes.list'] ?? 0).toBe(0);
       expect(counts['backlog.list'] ?? 0).toBe(0);
       expect(counts['config.get'] ?? 0).toBe(0);

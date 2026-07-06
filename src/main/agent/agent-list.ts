@@ -24,7 +24,10 @@ type CliPathOverrides = Record<string, string | null | undefined>;
 
 const agentListCache = createCachedSingleton<AgentDetectionInfo[]>();
 
-async function buildAgentList(cliPathOverrides: CliPathOverrides): Promise<AgentDetectionInfo[]> {
+async function buildAgentList(
+  cliPathOverrides: CliPathOverrides,
+  forceRefresh = false,
+): Promise<AgentDetectionInfo[]> {
   // Each adapter probes an independent CLI binary - detect spawns
   // `<binary> --version`, probeAuth spawns auth introspection, and
   // discoverCapabilities spawns `--help` plus an async session-history walk.
@@ -40,7 +43,7 @@ async function buildAgentList(cliPathOverrides: CliPathOverrides): Promise<Agent
           ? adapter.probeAuth().catch(() => null)
           : Promise.resolve(undefined),
         info.found && info.path && adapter.discoverCapabilities
-          ? adapter.discoverCapabilities(info.path).catch(() => undefined)
+          ? adapter.discoverCapabilities(info.path, forceRefresh).catch(() => undefined)
           : Promise.resolve(undefined),
       ]);
       return {
@@ -64,8 +67,10 @@ async function buildAgentList(cliPathOverrides: CliPathOverrides): Promise<Agent
 /**
  * Return the cached agent inventory, building it on a cold cache. Concurrent
  * callers share one build. When `forceRefresh` is true, every adapter's
- * detection cache is invalidated first (so `--version` re-probes) and the list
- * is rebuilt from scratch.
+ * detection cache is invalidated first (so `--version` re-probes), the list is
+ * rebuilt from scratch, and `forceRefresh` is threaded into capability
+ * discovery so adapter-internal caches (Claude's 12h /model picker probe) are
+ * bypassed too - the on-demand rescan a model dropdown fires when it opens.
  */
 export async function listAgents(
   cliPathOverrides: CliPathOverrides,
@@ -76,7 +81,7 @@ export async function listAgents(
       agentRegistry.getOrThrow(agentName).invalidateDetectionCache();
     }
   }
-  return agentListCache.get(() => buildAgentList(cliPathOverrides), forceRefresh);
+  return agentListCache.get(() => buildAgentList(cliPathOverrides, forceRefresh), forceRefresh);
 }
 
 /** Clear the cached inventory so the next `listAgents` rebuilds it. */

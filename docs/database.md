@@ -428,6 +428,7 @@ Operates on a per-project DB.
 | `archive(id)` | Set `archived_at` to now (soft-delete for Done column) |
 | `unarchive(id, targetSwimlaneId, position)` | Clear `archived_at`, move to target swimlane and position |
 | `listArchived()` | All archived tasks ordered by `archived_at` DESC |
+| `listArchivedPreview(limit)` | The newest `limit` archived tasks plus the total archived count; cheap hydration for the Done column (full list loads lazily via `listArchived`) |
 | `delete(id)` | Hard delete with position shift in the owning swimlane |
 
 ### SwimlaneRepository

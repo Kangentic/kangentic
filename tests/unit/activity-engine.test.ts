@@ -2231,9 +2231,10 @@ describe('ActivityEngine', () => {
 
     it('periodic markThinkingSignal calls over many timeout windows keep thinking alive', () => {
       // Pins the contract used by `processStatusUpdate` in
-      // SessionTelemetry: while Claude's statusline is updating,
-      // each update fires `markThinkingSignal`, refreshing
-      // `lastSignalAt` and re-arming the watchdog timer. As long as the
+      // SessionTelemetry: while Claude's statusline is updating, each
+      // update that shows OUTPUT-token growth (and no pending idle_hint)
+      // fires `markThinkingSignal`, refreshing `lastSignalAt` and
+      // re-arming the watchdog timer. As long as those proof-of-work
       // signals arrive at sub-threshold intervals, the engine stays in
       // `thinking` indefinitely. This is what kept Task #121's
       // 189-second plan-composition gap from running away into an

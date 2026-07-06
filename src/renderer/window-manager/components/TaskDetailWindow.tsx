@@ -40,6 +40,7 @@ import {
   useCopyDisplayId,
   useTaskSessionState,
   useTaskActions,
+  taskHasDescriptionContent,
 } from '../../components/dialogs/task-detail';
 import { useLayerStore } from '../context';
 import { registerWindowCloser, unregisterWindowCloser } from '../store/window-close-registry';
@@ -121,6 +122,7 @@ export function TaskDetailWindow({
   const [modelOverride, setModelOverride] = useState(task.model_override ?? '');
   const [effortOverride, setEffortOverride] = useState(task.effort_override ?? '');
   const [isEditing, setIsEditing] = useState(!!initialEdit);
+  const [descriptionPeekOpen, setDescriptionPeekOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const changesOpen = useSessionStore((s) => s.changesOpenTasks.has(task.id));
   const toggleChangesOpen = useSessionStore((s) => s.toggleChangesOpen);
@@ -187,6 +189,32 @@ export function TaskDetailWindow({
   });
 
   const hasSessionContext = sessionState.hasSessionContext || actions.toggling;
+
+  const hasDescriptionContent = taskHasDescriptionContent(task, attachments.savedAttachments.length);
+  // Gate the peek affordance (kebab item + hotkey) on exactly the states whose
+  // body branch renders the description panel, so the toggle is never dead AND
+  // the panel can never get stuck open after the affordance disappears:
+  //   - Exclude 'none' (no session context; the body shows the in-body
+  //     descriptionBar, which is not driven by descriptionPeekOpen). Read
+  //     displayState.kind directly rather than the toggling-boosted
+  //     `hasSessionContext` above, since an in-flight pause / resume can leave
+  //     `toggling` true while kind is 'none' (no session), a state whose body
+  //     branch also ignores the flag.
+  //   - Exclude 'queued' and 'suspended' (their body branches render a
+  //     placeholder / resume prompt and also ignore the flag).
+  //   - INCLUDE 'exited': the active-terminal body branch still renders once the
+  //     agent finishes (the session record and its id persist), so the peek stays
+  //     meaningful beside the finished terminal. This mirrors canShowBrowser,
+  //     which likewise stays available on exit; excluding 'exited' here would
+  //     strand an open peek with no in-dialog control to close it.
+  // Unlike canShowBrowser we do NOT require a live session?.id, because the
+  // pre-session 'preparing' branch renders the peek too (the description is
+  // meaningful before the PTY exists), and preparing has no session yet.
+  const canShowDescription = !isArchived
+    && hasDescriptionContent
+    && sessionState.displayState.kind !== 'none'
+    && sessionState.displayState.kind !== 'queued'
+    && sessionState.displayState.kind !== 'suspended';
 
   // Unsaved-changes detection for edit mode: any editable field differing from
   // the persisted task counts as dirty (mirrors handleCancel's reverts).
@@ -264,18 +292,36 @@ export function TaskDetailWindow({
     }
   }, [windowId, maximizeWindow, dockWindow, snapWindow, untileWindow, popToFloat, useStore]);
 
-  // The right panel holds one view at a time: opening Browser or Changes closes
-  // the other. (The commit graph lives INSIDE the Changes panel as a Files|Graph
-  // view toggle, so it needs no separate slot here.)
+  // The three right-panel views (Browser / Changes / Description peek) are
+  // mutually exclusive and share the terminal split: opening one closes the
+  // other two. The close is computed before the open (never inside a setState
+  // updater, which React can double-invoke in StrictMode). The commit graph is
+  // NOT a fourth view here - it lives inside the Changes panel as a Files | Graph
+  // toggle.
+  const handleToggleDescription = useCallback(() => {
+    const opening = !descriptionPeekOpen;
+    if (opening) {
+      if (browserOpen) toggleBrowserOpen(task.id);
+      if (changesOpen) toggleChangesOpen(task.id);
+    }
+    setDescriptionPeekOpen(opening);
+  }, [descriptionPeekOpen, browserOpen, changesOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
+
   const handleToggleBrowser = useCallback(() => {
-    if (!browserOpen && changesOpen) toggleChangesOpen(task.id);
+    if (!browserOpen) {
+      if (changesOpen) toggleChangesOpen(task.id);
+      if (descriptionPeekOpen) setDescriptionPeekOpen(false);
+    }
     toggleBrowserOpen(task.id);
-  }, [browserOpen, changesOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
+  }, [browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
 
   const handleToggleChanges = useCallback(() => {
-    if (!changesOpen && browserOpen) toggleBrowserOpen(task.id);
+    if (!changesOpen) {
+      if (browserOpen) toggleBrowserOpen(task.id);
+      if (descriptionPeekOpen) setDescriptionPeekOpen(false);
+    }
     toggleChangesOpen(task.id);
-  }, [browserOpen, changesOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
+  }, [browserOpen, changesOpen, descriptionPeekOpen, toggleBrowserOpen, toggleChangesOpen, task.id]);
 
   const browserEnabled = browserEnabledConfig !== false;
   const canShowBrowser = browserEnabled
@@ -359,8 +405,13 @@ export function TaskDetailWindow({
     when: (event) =>
       !('button' in event) || (titleBarRef.current?.contains(event.target as Node) ?? false),
   });
-  useKeybinding('taskDetail.toggleBrowser', handleToggleBrowser, { capture: true, enabled: isFocused && canShowBrowser });
-  useKeybinding('taskDetail.toggleChanges', handleToggleChanges, { capture: true, enabled: isFocused && sessionState.canShowChanges });
+  // The panel-toggle hotkeys stay inert while editing: edit mode swaps in the
+  // edit form (not TaskDetailBody) and a kebab-less title bar, so firing one
+  // would silently flip hidden state and, being capture-phase, swallow the
+  // keystroke with no visible effect until edit is left.
+  useKeybinding('taskDetail.toggleBrowser', handleToggleBrowser, { capture: true, enabled: isFocused && canShowBrowser && !isEditing });
+  useKeybinding('taskDetail.toggleChanges', handleToggleChanges, { capture: true, enabled: isFocused && sessionState.canShowChanges && !isEditing });
+  useKeybinding('taskDetail.toggleDescription', handleToggleDescription, { capture: true, enabled: isFocused && canShowDescription && !isEditing });
   useKeybinding('window.snapLeft', () => handleSnapDirection('left'), { capture: true, enabled: isFocused });
   useKeybinding('window.snapRight', () => handleSnapDirection('right'), { capture: true, enabled: isFocused });
   useKeybinding('window.snapUp', () => handleSnapDirection('up'), { capture: true, enabled: isFocused });
@@ -453,6 +504,9 @@ export function TaskDetailWindow({
       canShowBrowser={canShowBrowser}
       browserOpen={browserOpen}
       onToggleBrowser={handleToggleBrowser}
+      canShowDescription={canShowDescription}
+      descriptionPeekOpen={descriptionPeekOpen}
+      onToggleDescription={handleToggleDescription}
       isMaximized={isMaximized}
       onToggleMaximized={handleToggleMaximized}
       onUndock={isTiled ? handleUndock : undefined}
@@ -599,6 +653,7 @@ export function TaskDetailWindow({
               resumeError={actions.resumeError}
               onResetSession={actions.handleResetSession}
               browserOpen={browserOpen}
+              descriptionPeekOpen={descriptionPeekOpen}
             />
           )}
         </div>

@@ -61,15 +61,83 @@ function emptyUsage(): SessionUsage {
   };
 }
 
+/**
+ * Strip a trailing bracketed variant tag (e.g. `[1m]`) and lowercase, so a plain
+ * model id and its 1M-context variant map to one key. The effective context
+ * window is an account+model constant (a plain `claude-opus-4-8` runs 1M on a
+ * 1M-entitled account, the same as `claude-opus-4-8[1m]`), so keying the known
+ * window by base id lets a status.json from any session of the model fill the
+ * window for every other session of that model.
+ */
+function baseModelId(modelId: string): string {
+  return modelId.toLowerCase().replace(/\[[^\]]+\]$/, '');
+}
+
 export class UsageAccumulator {
   private usageCache = new Map<string, SessionUsage>();
   private toolStats = new Map<string, Map<string, ToolAccumulator>>();
   /** Per-session count of context compactions (PreCompact -> Compact events). */
   private compactionCounts = new Map<string, number>();
+  /**
+   * The authoritative context-window size observed for each base model id,
+   * learned from any live status.json seen THIS run. The map is
+   * process-lifetime only: it starts empty on every boot and is not yet
+   * hydrated from persisted metrics on project open (a future extension), so a
+   * model's window has to be re-observed each run. Used to fill the window for
+   * a session whose only telemetry is the Claude transcript fallback (tokens +
+   * model, no window) - so a background/parked session, whose statusLine never
+   * painted and thus never wrote status.json, still shows a correct percentage
+   * on the board without being opened.
+   */
+  private knownWindowByModel = new Map<string, number>();
 
   /** Latest cached usage for a session, or undefined if none recorded yet. */
   getSessionUsage(sessionId: string): SessionUsage | undefined {
     return this.usageCache.get(sessionId);
+  }
+
+  /**
+   * Remember an authoritative context window observed for a model. Called with
+   * the window from any live status.json this run (SessionTelemetry.processStatusUpdate
+   * is the only caller today; project-open hydration from persisted metrics is a
+   * future extension, not yet wired). Keyed by base model id so a plain id and
+   * its `[1m]` variant share.
+   *
+   * RETROACTIVELY fills any already-cached session of this model that has tokens
+   * but no window - a background transcript-fallback session that emitted BEFORE
+   * the window was learned (e.g. an idle card whose sibling just painted). Their
+   * usage is updated in place and their ids are returned so the caller can
+   * re-emit them to the renderer; without this, an idle background card would
+   * stay on the model name until it happened to emit usage again. Sessions whose
+   * tokens exceed the (possibly stale) window are left at the 0 sentinel.
+   */
+  recordKnownWindow(modelId: string | undefined, contextWindowSize: number): string[] {
+    if (!modelId || contextWindowSize <= 0) return [];
+    const base = baseModelId(modelId);
+    this.knownWindowByModel.set(base, contextWindowSize);
+
+    const refilled: string[] = [];
+    for (const [sessionId, usage] of this.usageCache) {
+      const mergedContext = usage.contextWindow;
+      if (
+        mergedContext.contextWindowSize <= 0
+        && mergedContext.usedTokens > 0
+        && mergedContext.usedTokens <= contextWindowSize
+        && usage.model.id
+        && baseModelId(usage.model.id) === base
+      ) {
+        mergedContext.contextWindowSize = contextWindowSize;
+        mergedContext.usedPercentage = (mergedContext.usedTokens / contextWindowSize) * 100;
+        refilled.push(sessionId);
+      }
+    }
+    return refilled;
+  }
+
+  /** The known authoritative window for a model, or undefined if none observed. */
+  getKnownWindow(modelId: string | undefined): number | undefined {
+    if (!modelId) return undefined;
+    return this.knownWindowByModel.get(baseModelId(modelId));
   }
 
   /**
@@ -91,9 +159,31 @@ export class UsageAccumulator {
     // Recalculate usedPercentage from merged values. Individual parse
     // chunks (Codex append-mode JSONL) may provide contextWindowSize
     // and usedTokens in separate updates; computing percentage only
-    // after merge ensures consistency across chunks.
+    // after merge ensures consistency across chunks. This is the single
+    // place a context percentage is computed for the merge path.
     const mergedContext = next.contextWindow;
-    if (mergedContext.contextWindowSize > 0 && mergedContext.usedTokens > 0) {
+    // Fill a missing window from the account's known window for this model. The
+    // Claude transcript fallback emits tokens + model but NO window (it is not
+    // derivable from a model id); when the session's own status.json never
+    // flowed (a parked background session), pairing those tokens with the
+    // known account+model window - observed from any other session's
+    // status.json - yields a correct percentage without opening the card.
+    if (mergedContext.contextWindowSize <= 0 && mergedContext.usedTokens > 0) {
+      const knownWindow = this.getKnownWindow(next.model.id);
+      if (knownWindow && knownWindow > 0) {
+        mergedContext.contextWindowSize = knownWindow;
+      }
+    }
+    if (mergedContext.contextWindowSize > 0 && mergedContext.usedTokens > mergedContext.contextWindowSize) {
+      // usedTokens > window is physically impossible (auto-compaction fires far
+      // below a full window), so the WINDOW is wrong, not the tokens. This
+      // happens when fresh transcript occupancy pairs with a stale or mismatched
+      // window seed. Degrade to the 0 "unknown size" sentinel (model name only,
+      // no bar) rather than clamping to 100 and rendering a confident-but-wrong
+      // bar. Sticky by construction: later token-only merges see window 0.
+      mergedContext.contextWindowSize = 0;
+      mergedContext.usedPercentage = 0;
+    } else if (mergedContext.contextWindowSize > 0 && mergedContext.usedTokens > 0) {
       mergedContext.usedPercentage = (mergedContext.usedTokens / mergedContext.contextWindowSize) * 100;
     }
     this.usageCache.set(sessionId, next);
@@ -106,6 +196,9 @@ export class UsageAccumulator {
    * complete usage payload.
    */
   replaceSessionUsage(sessionId: string, usage: SessionUsage): void {
+    // Recording the authoritative window for this model (and re-emitting any
+    // sibling background sessions it back-fills) is done by the caller
+    // (SessionTelemetry.processStatusUpdate) so it can push the re-emits.
     this.usageCache.set(sessionId, usage);
   }
 

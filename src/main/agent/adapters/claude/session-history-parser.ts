@@ -11,13 +11,22 @@ import { humanizeClaudeModelId } from './model-display-name';
  * pipeline (status.json), but Claude Code only runs the statusLine command
  * when its TUI actually paints the statusline. A background (never-opened)
  * session in Kangentic's pwsh-wrapped PTY never does that initial paint, so
- * status.json is never written and the board card stays on the spawn-time
- * model placeholder at 0% forever. Claude appends the transcript JSONL
- * continuously regardless of painting, so this parser tails it to derive a
- * live model + context % until status.json starts flowing. On the first
- * status.json parse, SessionManager detaches the transcript watcher and
- * status.json (richer: Claude's own used_percentage, cost, rate limits)
- * takes over via a full usage replace.
+ * status.json can be slow to appear (a heavy resume boots for a while before
+ * its first paint), so the board card would stay on the spawn-time model
+ * placeholder meanwhile. Claude appends the transcript JSONL continuously
+ * regardless of painting, so this parser tails it to derive a live model +
+ * token occupancy until status.json starts flowing. On the first status.json
+ * parse, SessionManager detaches the transcript watcher and status.json
+ * (richer AND authoritative: Claude's own context_window_size, used_percentage,
+ * cost, rate limits) takes over via a full usage replace.
+ *
+ * IMPORTANT: this parser emits token counts + the model ONLY. It never emits a
+ * context-window size or percentage, because the window is NOT derivable from a
+ * model id (a plain `claude-opus-4-8` runs a 1M window on a 1M-entitled account
+ * and 200K elsewhere). The authoritative window comes exclusively from
+ * status.json (this run's live status, or a same-model sibling's, remembered by
+ * UsageAccumulator). Until a real window is known the card/ContextBar show the
+ * model name only.
  *
  * Wired through the generic `runtime.sessionHistory` hook, the same pipeline
  * Codex and Gemini use. Emits a SPARSE SessionUsage (only the fields it can
@@ -127,25 +136,23 @@ export class ClaudeSessionHistoryParser {
       return { usage: null, events: [], activity: null };
     }
 
-    const contextWindowSize = resolveClaudeContextWindowSize(latest.model);
-    // Precompute usedPercentage when the window is known to avoid a 0% flash
-    // (UsageAccumulator.setSessionUsage recomputes it after merge anyway).
-    // Mirror the Codex/Gemini `as unknown as SessionUsage` sparse-usage cast:
-    // omit cost, rateLimits, effort, sessionId, transcriptPath entirely so the
-    // shallow spread merge never overwrites those base fields with defaults.
+    // Emit token counts + model ONLY. Omit `contextWindowSize` and
+    // `usedPercentage` entirely: the window is not derivable from a model id
+    // (see the class doc), so the shallow spread merge in
+    // UsageAccumulator.setSessionUsage PRESERVES whatever authoritative window
+    // is already cached (a prior status.json of this agent session, live or
+    // seeded on resume) and the accumulator computes the percentage in one
+    // place. When no authoritative window is known the merged window stays at
+    // the 0 "unknown size" sentinel and the card/ContextBar show the model name
+    // only. Mirror the Codex/Gemini `as unknown as SessionUsage` sparse cast:
+    // omitted keys (cost, rateLimits, effort, sessionId, transcriptPath, and now
+    // contextWindowSize + usedPercentage) are never overwritten by the merge.
     const sparseUsage = {
       contextWindow: {
-        usedPercentage:
-          contextWindowSize !== null && contextWindowSize > 0
-            ? (latest.input / contextWindowSize) * 100
-            : 0,
         usedTokens: latest.input,
         cacheTokens: latest.cacheTokens,
         totalInputTokens: latest.input,
         totalOutputTokens: latest.output,
-        // 0 is the "unknown size" sentinel - TaskCard hides the progress bar
-        // and shows the model name only, rather than a bar against a guess.
-        contextWindowSize: contextWindowSize ?? 0,
       },
       model: {
         id: latest.model,
@@ -172,58 +179,4 @@ function numberOrZero(value: unknown): number {
 /** Simple async sleep helper for the locate polling loop. */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/**
- * Set of model ids we've already warned about, so the WARN log fires at most
- * once per unique unknown model per process lifetime.
- */
-const unknownModelWarningsLogged = new Set<string>();
-
-/**
- * Look up the context-window size Claude Code uses for a given model id.
- *
- * IMPORTANT: this is Claude Code's EFFECTIVE window, not the model's API
- * maximum. Claude Code uses a 200K context window for standard sessions and
- * 1M only for the 1M-context beta (the `[1m]` model variant). Even though
- * Opus 4.8 / Sonnet 5 / Fable 5 have a 1M API context window, a standard
- * Kangentic-spawned Claude session reports `context_window_size: 200000` in
- * status.json. Matching that here means the transcript fallback's percentage
- * lines up with what status.json reports later, so the handoff produces no
- * jump. Verified against real status.json fixtures
- * (tests/unit/claude-status-parser.test.ts): `claude-opus-4-7` -> 200000,
- * `claude-opus-4-7[1m]` -> 1000000.
- *
- * Returns null for unrecognized model families so the caller degrades to the
- * 0-sentinel (model name, no bar) rather than rendering a bar against a guess.
- * Matches by the name segment (opus/sonnet/haiku/fable/mythos) so new versions
- * and dated snapshots (e.g. `claude-opus-4-8-20260115`) still resolve.
- */
-export function resolveClaudeContextWindowSize(modelId: string): number | null {
-  const lower = modelId.toLowerCase();
-  // 1M-context beta variant, marked by a bracketed [1m] suffix on the id.
-  if (/\[1m\]/.test(lower)) return 1_000_000;
-  // Standard tier: 200K for every recognized Claude model family.
-  if (
-    lower.includes('opus') ||
-    lower.includes('sonnet') ||
-    lower.includes('haiku') ||
-    lower.includes('fable') ||
-    lower.includes('mythos')
-  ) {
-    return 200_000;
-  }
-  // Unknown model family: warn once and return null so the caller can
-  // gracefully degrade. Do not guess - a bar against a guessed limit would
-  // give false precision, and status.json will supply the real size once it
-  // flows.
-  if (!unknownModelWarningsLogged.has(lower)) {
-    unknownModelWarningsLogged.add(lower);
-    console.warn(
-      `[claude-session-history] unknown model "${modelId}" - context window size not in lookup table. `
-      + `Card will show the model name without a progress bar until status.json flows. Update `
-      + `resolveClaudeContextWindowSize() in src/main/agent/adapters/claude/session-history-parser.ts.`,
-    );
-  }
-  return null;
 }

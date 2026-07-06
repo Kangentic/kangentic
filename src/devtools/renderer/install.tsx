@@ -6,6 +6,7 @@ import {
   stopRendererLagRecorder,
   getRendererLagReport,
 } from './lag-recorder';
+import { getTerminalRendererReport } from '../../renderer/utils/terminal-webgl';
 
 /**
  * Renderer-side bootstrap for the dev-only inspection bridge.
@@ -27,6 +28,7 @@ export function DevtoolsBootstrap(): null {
       __kangenticPreviewSnapshot?: () => unknown;
       __kangenticPreviewStoreState?: (storeName: string, path?: string | null) => unknown;
       __kangenticLagReport?: () => unknown;
+      __kangenticTerminalRenderers?: () => unknown;
     };
     (window as DevtoolsWindow).__kangenticPreviewSnapshot = buildPreviewSnapshot;
     (window as DevtoolsWindow).__kangenticPreviewStoreState = readStoreState;
@@ -35,6 +37,11 @@ export function DevtoolsBootstrap(): null {
     // inspection server's /event-loop-lag route can surface UI-freeze history.
     startRendererLagRecorder();
     (window as DevtoolsWindow).__kangenticLagReport = getRendererLagReport;
+
+    // Terminal renderer report: exposes each terminal's live renderer type
+    // (webgl vs the slow DOM fallback) + context-loss count, so a silently
+    // degraded terminal is observable via kangentic_devtools_eval.
+    (window as DevtoolsWindow).__kangenticTerminalRenderers = getTerminalRendererReport;
 
     // Subscribe to the toast store: every push lands in our ring.
     const unsubscribeToast = useToastStore.subscribe((state, prevState) => {
@@ -59,6 +66,7 @@ export function DevtoolsBootstrap(): null {
       delete (window as DevtoolsWindow).__kangenticPreviewSnapshot;
       delete (window as DevtoolsWindow).__kangenticPreviewStoreState;
       delete (window as DevtoolsWindow).__kangenticLagReport;
+      delete (window as DevtoolsWindow).__kangenticTerminalRenderers;
     };
   }, []);
 

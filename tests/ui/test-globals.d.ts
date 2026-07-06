@@ -23,6 +23,9 @@ declare global {
 
     /** Captures the URL most recently submitted by BrowserEmptyState mounts. */
     __lastEmptyStateUrl?: string | null;
+
+    /** Records URLs passed to a spec-patched `shell.openExternal`. */
+    __openedExternalUrls?: string[];
   }
 }
 

@@ -170,12 +170,12 @@ test.describe('BoardManagerDialog', () => {
 
   test('After Plan Mode row only renders when permission_mode is plan', async () => {
     await openManagerByHeader('Code Review');
-    await page.locator('[data-testid="board-manager-section-agent"]').click();
 
-    // Code Review has no permission override so plan-exit-target should be hidden.
+    // Code Review has no permission override so plan-exit-target should be hidden
+    // (the Agent section renders inline in the one-scroll form).
     await expect(page.locator('[data-testid="plan-exit-target"]')).toBeHidden();
 
-    // Switch to Planning tab where permission_mode = 'plan'.
+    // Switch to Planning column where permission_mode = 'plan'.
     await page.locator('[data-testid="board-manager-tab"][data-tab-name="Planning"]').click();
     await expect(page.locator('[data-testid="plan-exit-target"]')).toBeVisible();
   });

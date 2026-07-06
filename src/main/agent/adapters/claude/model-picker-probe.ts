@@ -426,9 +426,18 @@ export function getCachedModelPickerModels(cliPath: string): string[] | undefine
  * results are reused for SUCCESS_TTL_MS (failures for FAILURE_TTL_MS) per CLI
  * path. Capability discovery uses getCachedModelPickerModels (non-blocking)
  * instead of awaiting this directly.
+ *
+ * `forceRefresh` bypasses the TTL early-return so a fresh probe runs even when
+ * the cache is still warm - the on-demand rescan a model dropdown fires when it
+ * opens, so a newly shipped model surfaces without a Kangentic restart. The
+ * in-flight dedup is still honored (an already-running probe is a fresh result,
+ * so we ride it rather than spawning a second PTY).
  */
-export async function probeModelPickerModels(cliPath: string): Promise<string[] | undefined> {
-  if (cache && cache.cliPath === cliPath) {
+export async function probeModelPickerModels(
+  cliPath: string,
+  forceRefresh = false,
+): Promise<string[] | undefined> {
+  if (!forceRefresh && cache && cache.cliPath === cliPath) {
     const ttl = cache.models ? SUCCESS_TTL_MS : FAILURE_TTL_MS;
     if (Date.now() - cache.fetchedAtMs < ttl) return cache.models;
   }

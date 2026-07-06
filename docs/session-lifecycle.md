@@ -265,6 +265,16 @@ The handoff is transparent to the user - the task card shows spawn progress phas
 - PTY `onData` accumulates into a per-session buffer.
 - A 16ms flush interval (~60fps) emits buffered data via IPC `session:data`.
 - A 512KB scrollback ring buffer per session supports terminal restoration.
+- **Repaint-settled scrollback sampling.** A session spawns at a default 120x30; on a cold launch
+  an auto-resumed PTY sits at that size until a card opens and the renderer fits it wider. When a
+  width-changing resize fires, a full-screen agent TUI repaints its frame asynchronously in
+  response to SIGWINCH. So `getScrollback` waits for that repaint to land and quiesce before
+  sampling (`PtyBufferManager.waitForResizeRepaint`), so a terminal restored right after a resize
+  replays the frame at the fitted width instead of a stale narrow one. The wait arms only when the
+  scrollback shows a TUI (a `\x1b[2J` clear) and is bounded by a max-wait ceiling, so a missing or
+  slow repaint can only delay a first paint, never hang the read. A resize that arrives before the
+  PTY exists (the renderer mounts before the auto-resume spawn lands) is stashed and applied at
+  spawn, so the PTY starts at the fitted size and no corrective resize is needed.
 
 ## Key Constants
 
@@ -273,6 +283,7 @@ The handoff is transparent to the user - the task card shows spawn progress phas
 | MAX_SCROLLBACK | 512 KB | Terminal history per session |
 | MAX_EVENTS | 500 | Activity log cap per session |
 | Flush interval | 16 ms | Output batching (~60fps) |
+| Repaint-settle max wait | 400 ms | Ceiling for the post-resize repaint wait before sampling scrollback |
 | Status debounce | 100 ms | Usage file watch |
 | Event debounce | 50 ms | Event log + activity state watch |
 | Hard shutdown deadline | 6000 ms | Failsafe timer before force-killing process tree |

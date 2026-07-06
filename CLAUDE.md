@@ -114,9 +114,18 @@ won't be found.
   MARCHES (`@keyframes march-border` + a `pathLength`-normalized stroke-dash). The `+` add
   affordance lives in the CENTER of the glyph (replacing the shell prompt) when the layer is open
   and below the cap, not a corner badge, so it never clashes with the activity color. This replaces
-  the old background dot. Project switching keeps every slot's PTY alive in the map (no
-  stash/restore); the bar closes on switch and its windows rebind to the new project's slots on
-  reopen.
+  the old background dot. GEOMETRY is global but POPULATION is per-project: the window layout blob
+  is shared, yet WHICH slots get windows is reconciled to the current project's live transient
+  sessions on open (`reconcileCommandTerminalWindows` +
+  `planCommandWindowReconciliation` in `command-window-reconcile.ts`). Project switching keeps every
+  slot's PTY alive in the map (no stash/restore); the bar closes on switch, and on reopen the
+  reconcile closes carried-over windows whose slot has no live session for the new project (keeping
+  one default terminal) and opens a window for every live session that lacks one (so switching BACK
+  reattaches all of a project's terminals instead of leaking a window-less PTY). The reconcile runs
+  BEFORE the layer mounts (`useCommandBar.open()`, plus the empty-store branch of
+  `useEnsureCommandWindow` for the app-restart blob-restore path), because a carried-over window
+  committed into the store would otherwise spawn a fresh PTY under the wrong project before a
+  bridge-effect reconcile could close it.
 - **Settings tab separator** - In `AppSettingsPanel`, tabs above the `separator: true` marker
   are per-project settings (saved to `.kangentic/config.json`). Tabs below the separator
   (Behavior, Notifications, Privacy) are shared settings that apply across all projects (saved

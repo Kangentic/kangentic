@@ -92,11 +92,30 @@ export function queueAppendWithRotation(
 /**
  * Reset the in-memory primary byte count for a rotating path. Call this after
  * externally truncating or deleting the file (e.g. a session re-attach that
- * unlinks stale output) so the next append starts counting from zero rather
- * than a stale total that would trigger a spurious early rotation.
+ * unlinks stale output) so the next flush reseeds the total from the on-disk
+ * size (0 for a just-unlinked file) rather than a stale in-memory total that
+ * would trigger a spurious early rotation.
  */
 export function resetRotationState(filePath: string): void {
   rotationBytes.delete(filePath);
+}
+
+/**
+ * Seed the rotation byte counter from the on-disk file size the first time a
+ * rotating path is flushed in this process. `rotationBytes` starts empty per
+ * process, so without this a restart mid-file would begin counting from zero
+ * and let an already-large primary grow far past its cap before the first
+ * rotation. Runs once per path (cleared only by `resetRotationState`).
+ */
+async function ensureRotationCounterSeeded(filePath: string): Promise<void> {
+  if (!rotationMaxBytes.has(filePath) || rotationBytes.has(filePath)) return;
+  try {
+    const stats = await fs.promises.stat(filePath);
+    rotationBytes.set(filePath, stats.size);
+  } catch {
+    // Missing file (first write, or just unlinked) starts at zero.
+    rotationBytes.set(filePath, 0);
+  }
 }
 
 async function maybeRotate(filePath: string, addedBytes: number): Promise<void> {
@@ -142,6 +161,7 @@ async function flush(filePath: string): Promise<void> {
         await fs.promises.mkdir(directory, { recursive: true });
         dirReady.add(directory);
       }
+      await ensureRotationCounterSeeded(filePath);
       await maybeRotate(filePath, batch.length);
       await fs.promises.appendFile(filePath, batch, 'utf-8');
       if (rotationMaxBytes.has(filePath)) {

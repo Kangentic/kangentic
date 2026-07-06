@@ -22,6 +22,29 @@ const SCROLLBACK_TRIM_THRESHOLD = MAX_SCROLLBACK + SCROLLBACK_TRIM_SLACK;
 const MAX_BYTES_PER_FLUSH = 256 * 1024;
 
 /**
+ * Repaint-settle window for getScrollback (see waitForResizeRepaint).
+ *
+ * When the terminal width changes, a full-screen agent TUI (Claude, Codex)
+ * repaints its frame asynchronously in response to SIGWINCH. A getScrollback
+ * that samples the buffer in the gap between the resize and that repaint would
+ * replay a frame laid out for the OLD width - the stale-frame bug this settle
+ * closes. So getScrollback waits for the repaint bytes to land and quiesce
+ * before sampling, bounded so a missing repaint can never hang the read.
+ *
+ *  - QUIESCE: no new data for this long counts as "the repaint has landed".
+ *    ~3 flush ticks (16ms each), long enough to bridge a multi-chunk redraw.
+ *  - MAX_WAIT: hard ceiling from wait entry. A width change with no repaint
+ *    (or a genuinely slow one) adds at most this to a first paint.
+ *  - STALE: a pending-repaint stamp older than this is treated as settled - the
+ *    repaint has long since landed, so sample immediately.
+ *  - POLL: settle poll cadence, matched to the flush tick.
+ */
+const REPAINT_QUIESCE_MS = 50;
+const REPAINT_MAX_WAIT_MS = 400;
+const REPAINT_STALE_MS = 2000;
+const REPAINT_POLL_MS = 16;
+
+/**
  * Largest slice end <= `max` that does not split a UTF-16 surrogate pair.
  * xterm's parser reassembles escape sequences across `write` calls, so the
  * only cross-slice hazard is a split surrogate pair (which would render as
@@ -91,10 +114,15 @@ interface BufferState {
   flushScheduled: boolean;
   scrollback: string;
   lastCols: number;
-  /** Whether the first resize has established the real terminal dimensions.
-   *  The initial resize must NOT clear scrollback - it contains carried-over
-   *  history from a previous session that hasn't been replayed yet. */
-  initialized: boolean;
+  /** Timestamp (Date.now()) of the most recent width-changing resize, or null
+   *  when none is pending. Set by onResize when cols change; consumed and
+   *  cleared by waitForResizeRepaint once the post-resize repaint has settled.
+   *  Drives the repaint-settle in getScrollback. */
+  pendingRepaintAt: number | null;
+  /** Timestamp (Date.now()) of the most recent onData, or null before any data.
+   *  Used by waitForResizeRepaint to detect that the SIGWINCH repaint has
+   *  landed (data after the resize stamp) and then quiesced. */
+  lastDataAt: number | null;
   /** Position of the first \x1b[2J (clear screen) in the scrollback, or -1
    *  if not found yet. Set once and cached. Used by getScrollback() to strip
    *  shell command noise that precedes the agent TUI's first draw. */
@@ -128,7 +156,8 @@ export class PtyBufferManager {
       flushScheduled: false,
       scrollback: previousScrollback,
       lastCols: initialCols,
-      initialized: false,
+      pendingRepaintAt: null,
+      lastDataAt: null,
       tuiStartIndex: previousScrollback ? 0 : -1,
       // Start empty even on carry-over: the new process re-emits its own modes.
       decPrivateModes: new Set<number>(),
@@ -166,6 +195,9 @@ export class PtyBufferManager {
 
     state.buffer += data;
     state.scrollback += data;
+    // Stamp the arrival so a pending repaint-settle can tell that the
+    // post-resize redraw has landed (data after the resize) and then quiesced.
+    state.lastDataAt = Date.now();
     if (state.scrollback.length > SCROLLBACK_TRIM_THRESHOLD) {
       state.scrollback = state.scrollback.slice(-MAX_SCROLLBACK);
       const safeStart = findSafeStartIndex(state.scrollback);
@@ -204,28 +236,97 @@ export class PtyBufferManager {
   }
 
   /**
-   * When column width changes, report it so the renderer can decide whether
-   * to skip scrollback replay (TUI escape sequences garble at wrong width).
+   * Record a resize and report whether the column width changed from the last
+   * known width. The session is seeded (initSession) with the actual spawn
+   * cols, so the first renderer resize truthfully reports the 120-to-fitted
+   * width change on a cold launch - the signal the repaint-settle keys on.
    *
-   * The FIRST resize after initSession is special: it establishes the real
-   * terminal dimensions (the renderer fits to its container). We must NOT
-   * report cols changed on this initial resize because it may contain
-   * carried-over history from a suspended session that hasn't been replayed
-   * to the xterm instance yet.
+   * A width change stamps pendingRepaintAt: a full-screen agent TUI repaints
+   * asynchronously in response to the SIGWINCH this resize triggers, and
+   * getScrollback must wait for that repaint before sampling (see
+   * waitForResizeRepaint). onResize itself does not touch scrollback; a stale
+   * "must not clear on the first resize" guard used to swallow this signal and
+   * has been removed (nothing consumes it to clear anything).
    */
   onResize(sessionId: string, cols: number): boolean {
     const state = this.buffers.get(sessionId);
     if (!state) return false;
 
-    if (!state.initialized) {
-      state.initialized = true;
-      state.lastCols = cols;
-      return false;
-    }
-
     const colsChanged = cols !== state.lastCols;
     state.lastCols = cols;
+    if (colsChanged) {
+      state.pendingRepaintAt = Date.now();
+    }
     return colsChanged;
+  }
+
+  /**
+   * Wait until the async repaint that follows a width-changing resize has
+   * landed in the buffer and quiesced, so a getScrollback taken right after a
+   * resize replays the frame at the NEW width instead of a stale one. Awaited
+   * by SessionManager.getScrollback before it samples.
+   *
+   * No-op (resolves immediately) unless a fresh width change is pending AND the
+   * session's scrollback shows a full-screen TUI (a \x1b[2J clear). Plain-shell
+   * sessions and agents whose TUI never clears the screen have no SIGWINCH
+   * repaint to wait for, so they keep sampling immediately - the pre-existing
+   * behavior. Bounded by REPAINT_MAX_WAIT_MS from wait entry so a missing or
+   * slow repaint can only delay a first paint, never hang the read.
+   */
+  async waitForResizeRepaint(sessionId: string): Promise<void> {
+    const state = this.buffers.get(sessionId);
+    if (!state || state.pendingRepaintAt === null) return;
+
+    const stamp = state.pendingRepaintAt;
+    const entryTime = Date.now();
+
+    // A stamp older than STALE means the repaint has long since landed (or
+    // never will) - clear it and sample now rather than wait pointlessly.
+    if (entryTime - stamp > REPAINT_STALE_MS) {
+      state.pendingRepaintAt = null;
+      return;
+    }
+
+    // Gate on the TUI clear marker via a direct scan (NOT tuiStartIndex, which
+    // cannot distinguish "marker absent" from "marker at index 0"). No marker
+    // means no full-screen repaint to wait for.
+    if (!state.scrollback.includes('\x1b[2J')) {
+      state.pendingRepaintAt = null;
+      return;
+    }
+
+    // Poll until repaint bytes have arrived after the resize stamp and then
+    // gone quiet, or the deadline (measured from wait entry, so re-resizes
+    // during a window drag cannot push it out indefinitely) is reached.
+    const deadline = entryTime + REPAINT_MAX_WAIT_MS;
+    await new Promise<void>((resolve) => {
+      const poll = (): void => {
+        const current = this.buffers.get(sessionId);
+        // Session torn down mid-wait (killed): stop waiting.
+        if (!current) {
+          resolve();
+          return;
+        }
+        const now = Date.now();
+        const settled =
+          current.lastDataAt !== null &&
+          current.lastDataAt > stamp &&
+          now - current.lastDataAt >= REPAINT_QUIESCE_MS;
+        if (settled || now >= deadline) {
+          // Only clear the stamp this wait was anchored to. A second
+          // width-changing resize during this wait re-stamps pendingRepaintAt
+          // to a newer value for a not-yet-settled repaint; nulling it
+          // unconditionally would let the next getScrollback skip the wait and
+          // sample that newer repaint stale. Leave a newer stamp in place so it
+          // gets its own settle.
+          if (current.pendingRepaintAt === stamp) current.pendingRepaintAt = null;
+          resolve();
+          return;
+        }
+        setTimeout(poll, REPAINT_POLL_MS);
+      };
+      setTimeout(poll, REPAINT_POLL_MS);
+    });
   }
 
   getScrollback(sessionId: string): string {

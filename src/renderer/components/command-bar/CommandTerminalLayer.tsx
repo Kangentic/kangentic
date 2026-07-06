@@ -2,8 +2,14 @@
  * The command-terminal window layer: a second, independent window-manager layer
  * (separate from the board task-detail layer) that hosts the Command Terminal as
  * a movable / resizable / maximizable / snappable window, top-layered over a
- * slight backdrop blur. Its arrangement persists GLOBALLY (one blob shared across
- * all projects); the session stays per-project and ephemeral.
+ * slight backdrop blur.
+ *
+ * GEOMETRY is GLOBAL: one blob (`AppConfig.commandTerminalWorkspace`) holds the
+ * size / position / tiling shared across all projects. POPULATION is PER-PROJECT:
+ * which slots get windows is derived from the current project's live transient
+ * sessions on open (see `reconcileCommandTerminalWindows`), because the session
+ * store is keyed per `(projectId, slot)`. Without that split the window count
+ * carried over from one project would spawn that many fresh PTYs in the next.
  *
  * Mounted by `AppLayout` only while open (Ctrl+Shift+P). The command window-store
  * instance is a module singleton that survives the mount/unmount, so hiding the
@@ -20,9 +26,12 @@ import {
 } from '../../window-manager';
 import type { WindowManagerLayerOptions } from '../../window-manager';
 import { useConfigStore } from '../../stores/config-store';
+import { useProjectStore } from '../../stores/project-store';
+import { useSessionStore } from '../../stores/session-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { getIsHmrReload } from '../../utils/hmr-flag';
 import { CommandTerminalLayerProvider } from './command-terminal-context';
+import { planCommandWindowReconciliation } from './command-window-reconcile';
 
 /** The single command-terminal slot anchor (Phase 1 is one window; Phase 2 adds
  *  more slots). The on-disk layout is anchored by this stable id, not a task. */
@@ -58,17 +67,20 @@ export function canSpawnAdditionalCommandTerminal(): boolean {
   return Object.keys(commandWindowManager.store.getState().windows).length < MAX_COMMAND_TERMINALS;
 }
 
-/** Open another Command Terminal in the next free slot (up to the cap) and SPLIT
- *  it into the existing window's footprint (side by side, keeping the size /
- *  position the user set), rather than tiling everything full-screen. Operates on
- *  the module-singleton store, so the title-bar button can call it whether or not
- *  the layer is currently mounted. Returns false if already at the cap. */
-export function spawnAdditionalCommandTerminal(): boolean {
+/** Open a Command Terminal in a specific slot and SPLIT it into the existing
+ *  window's footprint (side by side, keeping the size / position the user set),
+ *  rather than tiling everything full-screen. Operates on the module-singleton
+ *  store, so callers work whether or not the layer is currently mounted.
+ *
+ *  Placement is dock-into-last: reconciliation-opened windows cannot recover
+ *  their old rect from the global blob (the saver persists continuously, so once
+ *  a slot's window is trimmed in one project its geometry is gone), so appending
+ *  left-to-right is the pragmatic answer, matching multi-terminal spawn. Pass
+ *  `skipEnterAnimation` for a programmatic restore (a project-switch reconcile)
+ *  so the window paints flat; a plain user spawn omits it and keeps the entrance. */
+function openCommandTerminalWindowInSlot(slot: string, options?: { skipEnterAnimation?: boolean }): void {
   const store = commandWindowManager.store;
   const existingWindows = Object.values(store.getState().windows);
-  const usedSlots = new Set(existingWindows.map((managedWindow) => managedWindow.anchor));
-  const slot = nextFreeSlot(usedSlots);
-  if (!slot) return false;
 
   // Dock the new window to the RIGHT of the most-recently-opened existing window,
   // so terminals append left-to-right. `dockIntoWindow` confines the pair to the
@@ -82,6 +94,7 @@ export function spawnAdditionalCommandTerminal(): boolean {
     anchor: slot,
     sessionId: null,
     title: COMMAND_WINDOW_TITLE,
+    ...(options?.skipEnterAnimation ? { skipEnterAnimation: true } : {}),
   });
 
   if (dockTarget) {
@@ -101,12 +114,76 @@ export function spawnAdditionalCommandTerminal(): boolean {
       window.innerHeight || 1,
     );
   }
+}
+
+/** Open another Command Terminal in the next free slot (up to the cap). Operates
+ *  on the module-singleton store, so the title-bar button can call it whether or
+ *  not the layer is currently mounted. Returns false if already at the cap. */
+export function spawnAdditionalCommandTerminal(): boolean {
+  const store = commandWindowManager.store;
+  const usedSlots = new Set(
+    Object.values(store.getState().windows).map((managedWindow) => managedWindow.anchor),
+  );
+  const slot = nextFreeSlot(usedSlots);
+  if (!slot) return false;
+
+  // A user-created terminal keeps its entrance animation.
+  openCommandTerminalWindowInSlot(slot);
   return true;
 }
 
-/** Ensure the command layer has its single window once mounted: reuse the live
- *  one (reopen after hide), else restore the saved global layout, else open a
- *  fresh slot. Runs once per mount. */
+/** Reconcile the singleton window POPULATION to the current project's live
+ *  transient sessions: close carried-over windows whose slot has no live session
+ *  for the project, and open a window for every live session that lacks one (so a
+ *  back-switch reattaches the PTY instead of orphaning it). Geometry stays global
+ *  (the blob); only which slots get windows is per project.
+ *
+ *  MUST run while the layer is UNMOUNTED (the `open()` path) or inside
+ *  `useEnsureCommandWindow`'s empty-store branch, so no `CommandTerminalWindow`
+ *  mount effect can observe a pre-reconcile population and spawn under the wrong
+ *  project. Closes are applied before opens so docking never targets a window
+ *  about to close.
+ *
+ *  `skipWhenEmpty` (the `open()` caller) bails when the store holds no windows. An
+ *  empty store has no carried-over windows to reconcile, and populating it here
+ *  would open DEFAULT-geometry windows that pre-empt `useEnsureCommandWindow`'s
+ *  saved-layout restore: its `windows.length > 0` guard would then skip
+ *  `applyWorkspace`, losing the blob geometry on a first open after a hard reload
+ *  with surviving PTYs. The mount effect owns the empty-store case. */
+export function reconcileCommandTerminalWindows(options?: { skipWhenEmpty?: boolean }): void {
+  const projectId = useProjectStore.getState().currentProject?.id ?? null;
+  if (!projectId) return;
+
+  const store = commandWindowManager.store;
+  if (options?.skipWhenEmpty && Object.keys(store.getState().windows).length === 0) return;
+
+  const sessionState = useSessionStore.getState();
+  const plan = planCommandWindowReconciliation({
+    windows: Object.values(store.getState().windows).map((managedWindow) => ({
+      windowId: managedWindow.id,
+      slot: managedWindow.anchor,
+    })),
+    transientSessions: sessionState.transientSessions,
+    sessions: sessionState.sessions,
+    projectId,
+    maxWindows: MAX_COMMAND_TERMINALS,
+  });
+
+  for (const windowId of plan.closeWindowIds) store.getState().closeWindow(windowId);
+  for (const slot of plan.openSlots) openCommandTerminalWindowInSlot(slot, { skipEnterAnimation: true });
+}
+
+/** Ensure the command layer has its windows once mounted. Runs once per mount.
+ *
+ *  Non-empty store: reopen after a hide (`open()` already reconciled the
+ *  population) or an HMR remount (the live layout and `transientSessions` are
+ *  both HMR-preserved and consistent). Leave it alone.
+ *
+ *  Empty store (first open this app run): restore the GLOBAL geometry blob, then
+ *  reconcile the population to this project's live sessions (trim restored
+ *  windows whose slot has no live PTY, keeping one default; open windows for live
+ *  PTYs the blob did not cover, e.g. hard-reload survivors re-paired by
+ *  `syncSessions`), then fall back to a fresh default window if still empty. */
 function useEnsureCommandWindow(): void {
   useEffect(() => {
     const store = commandWindowManager.store;
@@ -115,9 +192,14 @@ function useEnsureCommandWindow(): void {
     const saved = useConfigStore.getState().globalConfig.commandTerminalWorkspace;
     if (saved) {
       // Slot anchors are always valid; the transient session is ephemeral, so the
-      // restored window resolves to no session and the window spawns a fresh one.
+      // restored windows resolve to no session (reconciliation decides which stay).
       store.getState().applyWorkspace(saved, () => null, () => true);
     }
+
+    // Safe here (unlike a bridge effect on a non-empty store): an empty store
+    // committed zero window frames, so no window mount effect can spawn until this
+    // effect finishes and React re-renders the reconciled population.
+    reconcileCommandTerminalWindows();
 
     if (Object.keys(store.getState().windows).length === 0) {
       store.getState().openWindow({

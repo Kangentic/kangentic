@@ -7,5 +7,6 @@ export { useBranchConfig } from './useBranchConfig';
 export { useCopyDisplayId } from './useCopyDisplayId';
 export { useTaskSessionState } from './useTaskSessionState';
 export { useTaskActions } from './useTaskActions';
+export { taskHasDescriptionContent } from './description-content';
 export type { AttachmentWithPreview, AttachmentsState } from './useAttachments';
 export type { BranchConfigState } from './useBranchConfig';

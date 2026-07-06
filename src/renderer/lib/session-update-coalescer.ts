@@ -69,6 +69,42 @@ const pendingReloads = new Map<ReloadKey, () => void>();
 // hmr-safe: a board drag never survives a module reload - every <DndContext>
 // re-keys via hmrGeneration, so dragActive correctly resets to false on reload.
 let dragActive = false;
+
+/**
+ * Whether a board drag is currently in progress. Read by other renderer
+ * subsystems that want to pause expensive per-frame work during a drag (e.g. the
+ * incoming xterm write queue, which holds its buffer instead of parsing mid-drag).
+ */
+export function isBoardDragActive(): boolean {
+  return dragActive;
+}
+
+// hmr-safe: subscriptions are owned by live components (each re-registers on
+// remount). resetCoalescerForHmr NOTIFIES rather than clears, so a held consumer
+// (e.g. a paused write queue) resumes; a stale listener firing on an
+// already-reset consumer is a no-op.
+const dragEndListeners = new Set<() => void>();
+
+/**
+ * Subscribe to board-drag-end. Fires after `endBoardDrag()` has cleared the gate
+ * and flushed (also via the 30s watchdog and the window-blur backstop, which
+ * both route through `endBoardDrag`). Returns an unsubscribe function.
+ */
+export function onBoardDragEnd(listener: () => void): () => void {
+  dragEndListeners.add(listener);
+  return () => { dragEndListeners.delete(listener); };
+}
+
+function notifyDragEndListeners(): void {
+  // Copy first so an unsubscribe during iteration cannot skip a listener.
+  for (const listener of Array.from(dragEndListeners)) {
+    try {
+      listener();
+    } catch {
+      // A listener throwing must not block the others or the flush path.
+    }
+  }
+}
 // hmr-safe: transient scheduler flag; a stale microtask from a replaced module
 // no-ops because flush() reads live buffers and re-checks dragActive.
 let flushScheduled = false;
@@ -239,6 +275,8 @@ export function endBoardDrag(): void {
   }
   dragActive = false;
   flush();
+  // Resume any consumer that paused for the drag (e.g. held write queues).
+  notifyDragEndListeners();
 }
 
 /**
@@ -258,4 +296,8 @@ export function resetCoalescerForHmr(): void {
   }
   dragActive = false;
   flushScheduled = false;
+  // Notify (do NOT clear) so a held write queue resumes after the HMR reset.
+  // Live terminals do not remount on an unrelated Fast Refresh, so their
+  // subscriptions remain valid; a kick on an already-drained queue is a no-op.
+  notifyDragEndListeners();
 }
