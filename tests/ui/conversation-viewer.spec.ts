@@ -435,4 +435,87 @@ test.describe('Conversation Viewer', () => {
       await browser.close();
     }
   });
+
+  test('a mousedown on conversation message text is excluded from the terminal-focus handler, but a task-detail window\'s chrome still gets it', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, SESSION_A);
+      await expect(page.getByText('USER_QUESTION_ALPHA')).toBeVisible();
+
+      // Regression: WindowFrame's onMouseDownCapture calls preventDefault() on
+      // any mousedown outside .xterm/interactive controls, to focus a
+      // task-detail window's terminal on background click. A conversation
+      // window has no terminal - its body is read-only, selectable message
+      // text - so the unconditional preventDefault was also suppressing the
+      // browser's native text-selection drag before it could start.
+      // `[data-testid="conversation-view"]` is now excluded the same way
+      // `.xterm` is; a mousedown on its rendered text must NOT be prevented.
+      const messagePrevented = await page.evaluate(() => {
+        const view = document.querySelector('[data-testid="conversation-view"]');
+        const paragraph = view?.querySelector('p');
+        if (!paragraph) throw new Error('no <p> found inside conversation-view');
+        const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+        paragraph.dispatchEvent(event);
+        return event.defaultPrevented;
+      });
+      expect(messagePrevented).toBe(false);
+
+      // Scoping check: the SAME handler still prevents default elsewhere in a
+      // window's chrome - a task-detail window's title bar (non-interactive,
+      // non-terminal chrome, but NOT excluded like conversation-view is) -
+      // proving this is a targeted exclusion, not a blanket removal of the
+      // focus-terminal behavior.
+      await page.getByTestId('conversation-open-task-button').click();
+      await page.getByTestId('task-detail-dialog').waitFor({ state: 'visible', timeout: 3000 });
+      const titlebarPrevented = await page.evaluate(() => {
+        const titlebar = document.querySelector('[data-testid="task-detail-titlebar"]');
+        if (!titlebar) throw new Error('task-detail-titlebar not found');
+        const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+        titlebar.dispatchEvent(event);
+        return event.defaultPrevented;
+      });
+      expect(titlebarPrevented).toBe(true);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('normal-size icon-only header button renders the compact ~36x30 square; small-size renders the tighter ~26x22 variant', async () => {
+    const { browser, page } = await launch();
+    try {
+      // "normal" (default, no `label`): the title-bar copy-as-Markdown button.
+      await openConversation(page, SESSION_A);
+      await expect(page.getByText('USER_QUESTION_ALPHA')).toBeVisible();
+      const normalBox = await page.getByTestId('conversation-copy-markdown-button').boundingBox();
+      expect(normalBox).not.toBeNull();
+      // ~36x30, verified via devtools during development. Real layout, so a
+      // generous tolerance rather than a pixel-exact check (cross-platform-
+      // parity: font metrics/rounding differ across OSes) - no zero-tolerance
+      // assertion.
+      expect(normalBox!.width).toBeGreaterThan(30);
+      expect(normalBox!.width).toBeLessThan(44);
+      expect(normalBox!.height).toBeGreaterThan(24);
+      expect(normalBox!.height).toBeLessThan(36);
+
+      await page.getByTestId('conversation-close').click();
+      await expect(page.getByTestId('conversation-window')).toHaveCount(0);
+
+      // "small" (size="small", no `label`): a per-message copy button.
+      await openConversation(page, 'sess-conv-consecutive');
+      const smallBox = await page.getByTestId('conversation-message-copy').first().boundingBox();
+      expect(smallBox).not.toBeNull();
+      // ~26x22, same devtools-verified figure, same tolerance rationale.
+      expect(smallBox!.width).toBeGreaterThan(20);
+      expect(smallBox!.width).toBeLessThan(32);
+      expect(smallBox!.height).toBeGreaterThan(16);
+      expect(smallBox!.height).toBeLessThan(28);
+
+      // The relative check matters more than either absolute range: "small"
+      // must render visibly smaller than "normal" in both dimensions.
+      expect(smallBox!.width).toBeLessThan(normalBox!.width);
+      expect(smallBox!.height).toBeLessThan(normalBox!.height);
+    } finally {
+      await browser.close();
+    }
+  });
 });

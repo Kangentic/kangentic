@@ -289,4 +289,29 @@ test.describe('Task detail header pill overflow (title floor)', () => {
       .poll(async () => page.locator('[data-testid^="shortcut-pill-"]').count())
       .toBeLessThan(SHORTCUT_LABELS.length);
   });
+
+  test('a labeled shortcut pill keeps Pill\'s wider default padding (HeaderActionButton\'s icon-only override is label-gated)', async () => {
+    await openTaskDialog(page, SHORT_TITLE);
+
+    const labeledPill = page.locator('[data-testid^="shortcut-pill-"]').first();
+    await expect(labeledPill).toBeVisible();
+
+    // HeaderActionButton only tightens padding to a near-square icon-only shape
+    // when no `label` is passed (`!min-w-0 !px-[9px]` for size="normal",
+    // `!px-[5px]` for size="small"). Every header shortcut pill renders WITH a
+    // `label`, so none of the icon-only override classes should be present -
+    // it keeps Pill's wider, text-friendly default padding instead.
+    const className = await labeledPill.evaluate((element) => element.className);
+    expect(className).not.toContain('!min-w-0');
+    expect(className).not.toContain('!px-[9px]');
+    expect(className).not.toContain('!px-[5px]');
+
+    // Corroborating geometry: a labeled pill (icon + text) renders visibly
+    // wider than the icon-only "normal" square (~30-44px, per the conversation
+    // viewer's HeaderActionButton size test) - a sanity floor, not a
+    // pixel-exact assertion.
+    const box = await labeledPill.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.width).toBeGreaterThan(44);
+  });
 });
