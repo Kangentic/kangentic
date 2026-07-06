@@ -221,6 +221,41 @@ describe('groupModelIds', () => {
     const groups = groupModelIds(['claude-opus-4-7']);
     expect(groups[0]?.isSuperseded).toBe(false);
   });
+
+  it('demotes every older member of a three-generation family, leaving only the newest', () => {
+    const groups = groupModelIds(['claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8']);
+    const opus46 = groups.find((group) => group.primaryId === 'claude-opus-4-6');
+    const opus47 = groups.find((group) => group.primaryId === 'claude-opus-4-7');
+    const opus48 = groups.find((group) => group.primaryId === 'claude-opus-4-8');
+    expect(opus46?.isSuperseded).toBe(true);
+    expect(opus47?.isSuperseded).toBe(true);
+    expect(opus48?.isSuperseded).toBe(false);
+  });
+
+  it('demotes an older generation even when the newest generation has only ever shipped as a dated pin (no bare alias yet)', () => {
+    const groups = groupModelIds(['claude-opus-4-7', 'claude-opus-4-8-20260301']);
+    const opus47 = groups.find((group) => group.primaryId === 'claude-opus-4-7');
+    const opus48Pin = groups.find((group) => group.primaryId === 'claude-opus-4-8-20260301');
+    expect(opus47?.isSuperseded).toBe(true);
+    expect(opus48Pin?.isSuperseded).toBe(false);
+  });
+
+  it('keeps 1M chips and dated pins attached to their own generation across a three-generation family', () => {
+    const groups = groupModelIds([
+      'claude-opus-4-6',
+      'claude-opus-4-6[1m]',
+      'claude-opus-4-7',
+      'claude-opus-4-7-20251201',
+      'claude-opus-4-8',
+      'claude-opus-4-8[1m]',
+    ]);
+    const opus46 = groups.find((group) => group.primaryId === 'claude-opus-4-6');
+    const opus47 = groups.find((group) => group.primaryId === 'claude-opus-4-7');
+    const opus48 = groups.find((group) => group.primaryId === 'claude-opus-4-8');
+    expect(opus46).toMatchObject({ isSuperseded: true, oneMillionId: 'claude-opus-4-6[1m]' });
+    expect(opus47).toMatchObject({ isSuperseded: true, pinnedBuildIds: ['claude-opus-4-7-20251201'] });
+    expect(opus48).toMatchObject({ isSuperseded: false, oneMillionId: 'claude-opus-4-8[1m]' });
+  });
 });
 
 describe('parseModelFamily', () => {

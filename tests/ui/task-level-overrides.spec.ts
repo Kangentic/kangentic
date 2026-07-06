@@ -524,6 +524,31 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
   });
 
+  test('a query matching a superseded generation\'s humanized label (not its raw id) filters to that row and auto-expands', async () => {
+    await openDialog();
+
+    const modelInput = groupedPage.locator('input[data-testid="task-model-override"]');
+    await modelInput.click();
+    // "Opus 4.7" matches ONLY the superseded generation's humanized label
+    // (modelRowLabel), not its raw id "claude-opus-4-7" (no dot, no space)
+    // and not the current-generation "Opus 4.8" label. This exercises the
+    // matchesQuery branch that checks the humanized label, distinct from the
+    // raw-id / dated-pin substring matches covered elsewhere.
+    await modelInput.fill('Opus 4.7');
+
+    // No primary (current-generation) row matches, so the section auto-opens
+    // and the ONLY visible option is the demoted Opus 4.7 generation.
+    await expect(groupedPage.locator('[data-model-option]')).toHaveCount(1);
+    const supersededRow = groupedPage.locator('[data-model-option][title="claude-opus-4-7"]');
+    await expect(supersededRow).toHaveText('Opus 4.7');
+    await supersededRow.click();
+    await expect(modelInput).toHaveValue('claude-opus-4-7');
+
+    await groupedPage.keyboard.press('Escape');
+    await groupedPage.locator('button:has-text("Discard")').click();
+    await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+
   test('opening the dropdown on a task already set to a superseded generation auto-expands Older versions', async () => {
     await openDialog();
 
@@ -820,5 +845,81 @@ test.describe('NewTaskDialog Advanced - context-window badge suppressed by a 1M 
 
     await suppressedPage.keyboard.press('Escape');
     await suppressedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+});
+
+/**
+ * A superseded generation demoted into "Older versions" is rendered through
+ * the SAME `renderGroupRow` helper as a top-level row (just with `indent:
+ * true`), so it can still carry its own telemetry-learned context-window
+ * badge. This is a distinct render path from the top-level badge tests above
+ * (own browser + fixture, mirroring the grouped-model-dropdown block) since
+ * the badge only becomes visible once the "Older versions" section is
+ * expanded.
+ */
+test.describe('NewTaskDialog Advanced - context-window badge on a demoted superseded row', () => {
+  let demotedBadgeBrowser: Browser;
+  let demotedBadgePage: Page;
+
+  test.beforeAll(async () => {
+    await waitForViteReady();
+    demotedBadgeBrowser = await chromium.launch({ headless: true });
+    const context = await demotedBadgeBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+    demotedBadgePage = await context.newPage();
+
+    await demotedBadgePage.addInitScript(() => {
+      (window as Record<string, unknown>).__mockAgentListOverrides = {
+        claude: {
+          capabilities: {
+            effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+            supportsModelOverride: true,
+            // Opus 4.7 is superseded by Opus 4.8 (both present), so it is
+            // demoted into "Older versions".
+            models: ['claude-opus-4-7', 'claude-opus-4-8'],
+          },
+        },
+      };
+      (window as Record<string, unknown>).__mockConfigOverrides = {
+        discoveredContextWindowsByAgent: {
+          claude: {
+            // Learned window on the DEMOTED generation. Opus 4.8 (the
+            // primary, non-demoted row) deliberately has no learned window,
+            // so its absence of a badge stays a clean signal.
+            'claude-opus-4-7': 200_000,
+          },
+        },
+      };
+    });
+    await demotedBadgePage.addInitScript({ path: MOCK_SCRIPT });
+    await demotedBadgePage.goto(VITE_URL);
+    await demotedBadgePage.waitForLoadState('load');
+    await demotedBadgePage.waitForSelector('text=Kangentic', { timeout: 15000 });
+    await createProject(demotedBadgePage, `DemotedContextBadge ${Date.now()}`);
+  });
+
+  test.afterAll(async () => {
+    await demotedBadgeBrowser?.close();
+  });
+
+  test('badges a demoted superseded row from its own learned context window once expanded', async () => {
+    const column = demotedBadgePage.locator('[data-swimlane-name="To Do"]');
+    await column.locator('text=Add task').click();
+    await demotedBadgePage.locator('input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    await demotedBadgePage.locator('[data-testid="task-advanced-toggle"]').click();
+    await demotedBadgePage.locator('input[data-testid="task-model-override"]').click();
+
+    // Opus 4.8 (primary, top-level) has no learned window: no badge.
+    const opus48Row = demotedBadgePage.locator('[data-model-row]').filter({ hasText: 'claude-opus-4-8' });
+    await expect(opus48Row.locator('[data-model-context-window]')).toHaveCount(0);
+
+    // The demoted Opus 4.7 row is not rendered until "Older versions" expands.
+    await expect(demotedBadgePage.locator('[title="claude-opus-4-7"]')).toHaveCount(0);
+    await demotedBadgePage.locator('[data-model-pinned-toggle]').click();
+
+    const opus47Row = demotedBadgePage.locator('[data-model-row]').filter({ hasText: 'claude-opus-4-7' });
+    await expect(opus47Row.locator('[data-model-context-window]')).toHaveText('200K');
+
+    await demotedBadgePage.keyboard.press('Escape');
+    await demotedBadgePage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
   });
 });
