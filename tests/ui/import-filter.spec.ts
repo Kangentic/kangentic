@@ -60,6 +60,11 @@
  * 14. A malformed page response (a non-array `issues` field) is caught by
  *     loadAllIssues's outer try/catch and shows the error banner with Retry,
  *     instead of an unhandled rejection or a silently-stuck loading state.
+ *
+ * 15. An issue whose externalId reappears on a later streamed page (its
+ *     ordering shifted between sequential fetches) is deduped to a single
+ *     row instead of double-rendering it, and the footer's loaded count
+ *     reflects the deduped total, not the raw sum of both pages' arrays.
  */
 import { test, expect, type Page } from '@playwright/test';
 import { launchPage, createProject, collectPageErrors } from './helpers';
@@ -742,6 +747,47 @@ test.describe('ImportDialog - filter and streaming behaviour', () => {
     // throw rather than it surfacing as an unhandled rejection (the failure
     // mode the catch exists to prevent, per the comment in loadAllIssues).
     expect(getPageErrors()).toEqual([]);
+
+    await browser.close();
+  });
+
+  test('a duplicate externalId across two streamed pages is deduped, not double-rendered', async () => {
+    const { browser, page } = await launchPage();
+
+    await seedGitHubSource(page);
+
+    // A source can return the same item on two pages when its ordering shifts
+    // between sequential fetches (the exact scenario loadAllIssues's seenIds
+    // dedup exists to guard against - see the comment above setIssues in
+    // ImportDialog.tsx). Without it, the item would render twice (colliding
+    // the virtualizer's item key) and risk a double-submit on import.
+    await page.evaluate(
+      ([duplicateIssue, uniquePageOneIssue, uniquePageTwoIssue]) => {
+        (window as unknown as { __mockImportFetchPages?: unknown }).__mockImportFetchPages = [
+          { issues: [duplicateIssue, uniquePageOneIssue], totalCount: 3, hasNextPage: true },
+          { issues: [duplicateIssue, uniquePageTwoIssue], totalCount: 3, hasNextPage: false },
+        ];
+      },
+      [
+        makeIssue({ externalId: 'dup-shared', title: 'Item that shifted between pages' }),
+        makeIssue({ externalId: 'unique-page1', title: 'Unique page one issue' }),
+        makeIssue({ externalId: 'unique-page2', title: 'Unique page two issue' }),
+      ],
+    );
+
+    await createProject(page, 'import-dedupe-test');
+    await openImportDialog(page);
+
+    await waitForStreamingSettled(page);
+
+    // The duplicated item renders exactly once, not twice.
+    await expect(page.locator('[data-testid="import-issue-dup-shared"]')).toHaveCount(1);
+    await expect(page.locator('[data-testid="import-issue-unique-page1"]')).toBeVisible();
+    await expect(page.locator('[data-testid="import-issue-unique-page2"]')).toBeVisible();
+
+    // The footer's loaded count reflects the deduped total (3 unique issues),
+    // not the raw sum of both pages' issues arrays (4).
+    await expect(page.locator('text=/3 of 3 items/')).toBeVisible();
 
     await browser.close();
   });
