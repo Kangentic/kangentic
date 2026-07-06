@@ -63,6 +63,7 @@ export function MultiSelectDropdown({
           {options.map((option) => (
             <label
               key={option}
+              data-testid={`filter-option-${label.toLowerCase()}-${option}`}
               className="flex items-center gap-2.5 px-3 py-2 text-sm text-fg hover:bg-surface-hover/40 cursor-pointer whitespace-nowrap"
             >
               <input

@@ -15,7 +15,7 @@
       "color": "#8b5cf6",
       "autoSpawn": true,
       "permissionMode": "plan",
-      "modelOverride": "claude-fable-5",
+      "modelOverride": "claude-opus-4-8",
       "effortOverride": "xhigh",
       "planExitTarget": "Executing"
     },
@@ -25,8 +25,8 @@
       "icon": "square-terminal",
       "autoSpawn": true,
       "permissionMode": "auto",
-      "modelOverride": "claude-opus-4-8",
-      "effortOverride": "xhigh"
+      "modelOverride": "claude-sonnet-5",
+      "effortOverride": "high"
     },
     {
       "id": "623a36ef-9045-4437-b9c8-f67312dc5437",
@@ -37,7 +37,7 @@
       "permissionMode": "auto",
       "autoCommand": "/code-review {{baseBranch}}",
       "modelOverride": "claude-opus-4-8",
-      "effortOverride": "xhigh",
+      "effortOverride": "high",
       "sessionTarget": "isolated",
       "sessionSpawnStrategy": "always_spawn_new"
     },
@@ -49,8 +49,8 @@
       "autoSpawn": true,
       "permissionMode": "auto",
       "autoCommand": "/pull-request",
-      "modelOverride": "claude-opus-4-8",
-      "effortOverride": "xhigh"
+      "modelOverride": "claude-sonnet-5",
+      "effortOverride": "high"
     },
     {
       "id": "8adfe5cc-955c-4c4f-83a2-461e2a9d3c14",
@@ -60,8 +60,8 @@
       "autoSpawn": true,
       "permissionMode": "auto",
       "autoCommand": "/merge-pull-request",
-      "modelOverride": "claude-opus-4-8",
-      "effortOverride": "xhigh"
+      "modelOverride": "claude-sonnet-5",
+      "effortOverride": "high"
     },
     {
       "id": "64f9ef9a-c05d-44f8-a846-329a8f15e69f",
