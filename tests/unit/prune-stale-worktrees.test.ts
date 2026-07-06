@@ -19,6 +19,10 @@ vi.mock('node:fs', () => ({
 
 vi.mock('../../src/main/db/database', () => ({
   closeProjectDb: mockCloseProjectDb,
+  // pruneStaleWorktreeProjects transitively imports retrieval-service.ts, whose
+  // module-scope defaultDeps destructures getProjectDb from this module at
+  // import time - the mock must export it even though this test never calls it.
+  getProjectDb: vi.fn(),
 }));
 
 vi.mock('../../src/main/config/paths', () => ({

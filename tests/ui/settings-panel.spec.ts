@@ -295,14 +295,15 @@ test.describe('Settings Panel', () => {
     // Spot-check each section header by its heading role (short labels like "Board"
     // are substrings of tool names AND collide with the board view-toggle button
     // behind the panel) plus a representative tool from each group. Backlog tools
-    // and Search Everything live under Board; sessions under Sessions.
+    // and the unified Search tool live under Board; sessions under Sessions. "Search"
+    // needs `exact: true` - without it, the substring match also hits "Search Tasks".
     await expect(page.getByRole('heading', { name: 'Tasks', exact: true })).toBeVisible();
     await expect(page.getByText('Create Task')).toBeVisible();
     await expect(page.getByText('Move Task')).toBeVisible();
     await expect(page.getByText('Delete Task')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Board', exact: true })).toBeVisible();
     await expect(page.getByText('List Backlog')).toBeVisible();
-    await expect(page.getByText('Search Everything')).toBeVisible();
+    await expect(page.getByText('Search', { exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Sessions', exact: true })).toBeVisible();
     await expect(page.getByText('Session History')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Browser Automation', exact: true })).toBeVisible();
