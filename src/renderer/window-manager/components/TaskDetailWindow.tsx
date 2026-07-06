@@ -191,20 +191,28 @@ export function TaskDetailWindow({
   const hasSessionContext = sessionState.hasSessionContext || actions.toggling;
 
   const hasDescriptionContent = taskHasDescriptionContent(task, attachments.savedAttachments.length);
-  // Gate the peek affordance (kebab item + hotkey) on the states whose body
-  // branch actually renders descriptionBar, so the toggle is never dead:
-  //   - Use the BASE sessionState.hasSessionContext (kind is not 'none'/'exited'),
-  //     NOT the toggling-boosted `hasSessionContext` above: an in-flight pause /
-  //     resume can leave `toggling` true while kind is 'none' (no session), and
-  //     that state falls through to the "suspended or toggling" body branch,
-  //     which never consumes descriptionPeekOpen.
+  // Gate the peek affordance (kebab item + hotkey) on exactly the states whose
+  // body branch renders the description panel, so the toggle is never dead AND
+  // the panel can never get stuck open after the affordance disappears:
+  //   - Exclude 'none' (no session context; the body shows the in-body
+  //     descriptionBar, which is not driven by descriptionPeekOpen). Read
+  //     displayState.kind directly rather than the toggling-boosted
+  //     `hasSessionContext` above, since an in-flight pause / resume can leave
+  //     `toggling` true while kind is 'none' (no session), a state whose body
+  //     branch also ignores the flag.
   //   - Exclude 'queued' and 'suspended' (their body branches render a
   //     placeholder / resume prompt and also ignore the flag).
+  //   - INCLUDE 'exited': the active-terminal body branch still renders once the
+  //     agent finishes (the session record and its id persist), so the peek stays
+  //     meaningful beside the finished terminal. This mirrors canShowBrowser,
+  //     which likewise stays available on exit; excluding 'exited' here would
+  //     strand an open peek with no in-dialog control to close it.
   // Unlike canShowBrowser we do NOT require a live session?.id, because the
-  // pre-session 'preparing' branch renders descriptionBar too (the description
-  // is meaningful before the PTY exists), and preparing has no session yet.
-  const canShowDescription = sessionState.hasSessionContext
+  // pre-session 'preparing' branch renders the peek too (the description is
+  // meaningful before the PTY exists), and preparing has no session yet.
+  const canShowDescription = !isArchived
     && hasDescriptionContent
+    && sessionState.displayState.kind !== 'none'
     && sessionState.displayState.kind !== 'queued'
     && sessionState.displayState.kind !== 'suspended';
 

@@ -130,16 +130,24 @@ export function TaskDetailBody({
     />
   );
 
-  // Description view mode with attachment thumbnails - the non-session, in-body
-  // view (no terminal to sit beside). During an active session the description
-  // instead rides the right-panel split as descriptionPanelContent below.
-  const descriptionBar = !isArchived && hasDescriptionContent && !hasSessionContext && (
-    <div className="px-4 py-3 border-b border-edge flex-shrink-0 space-y-2">
+  // The renderable description body shared by the in-body strip, the side-panel
+  // peek, and the archived view; only the wrapper chrome differs per site.
+  const descriptionContent = (
+    <>
       {task.description && (
         <MarkdownRenderer content={task.description} />
       )}
       {labelsAndPriorityRow}
       {thumbnailStrip}
+    </>
+  );
+
+  // Description view mode with attachment thumbnails - the non-session, in-body
+  // view (no terminal to sit beside). During an active session the description
+  // instead rides the right-panel split as descriptionPanelContent below.
+  const descriptionBar = !isArchived && hasDescriptionContent && !hasSessionContext && (
+    <div className="px-4 py-3 border-b border-edge flex-shrink-0 space-y-2">
+      {descriptionContent}
     </div>
   );
 
@@ -148,11 +156,7 @@ export function TaskDetailBody({
   // split divider. Same content as descriptionBar, without the top-strip chrome.
   const descriptionPanelContent = (
     <div className="h-full overflow-y-auto px-4 py-3 space-y-2" data-testid="task-detail-description-panel">
-      {task.description && (
-        <MarkdownRenderer content={task.description} />
-      )}
-      {labelsAndPriorityRow}
-      {thumbnailStrip}
+      {descriptionContent}
     </div>
   );
 
@@ -163,11 +167,7 @@ export function TaskDetailBody({
         <div className="flex-1 min-h-0 overflow-y-auto">
           {hasDescriptionContent ? (
             <div className="px-4 py-4 space-y-3 max-h-[40vh] overflow-y-auto">
-              {task.description && (
-                <MarkdownRenderer content={task.description} />
-              )}
-              {labelsAndPriorityRow}
-              {thumbnailStrip}
+              {descriptionContent}
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center text-fg-disabled text-sm p-8 h-full">

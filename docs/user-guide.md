@@ -618,6 +618,7 @@ Task detail (whichever panel is open):
 - **Mod+Shift+W** - Close the command terminal, the task detail dialog, or a create dialog (New Task / New Backlog Task). Escape also closes any modal.
 - **Mod+Shift+B** - Toggle the browser pane inside the task detail dialog
 - **Mod+Shift+G** - Toggle the changes (diff) panel inside the task detail dialog
+- **Mod+Shift+K** - Toggle the description panel inside the task detail dialog
 - **Middle-click the window header** - Close a modeless task-detail window (default `Mouse:Middle`; routes through the same unsaved-edits guard as the close button)
 
 Windows (modeless task-detail windows):

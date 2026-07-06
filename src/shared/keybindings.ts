@@ -243,7 +243,7 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
   {
     id: 'taskDetail.toggleDescription',
     label: 'Toggle Description Peek',
-    description: 'Show or hide the description strip above the terminal in the task detail dialog.',
+    description: 'Show or hide the description panel inside the task detail dialog.',
     group: 'Task Detail',
     scope: 'task-dialog',
     defaultCombo: 'Mod+Shift+K',

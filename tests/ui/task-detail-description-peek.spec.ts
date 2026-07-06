@@ -485,14 +485,15 @@ test.describe('Task Detail description peek', () => {
   });
 
   test('toggling the peek does not remount the terminal', async () => {
-    // Load-bearing acceptance criterion for this feature: the description
-    // strip must reveal/hide ABOVE the terminal without tearing the terminal
-    // down. TaskDetailBody renders `{descriptionBar}` as a sibling BEFORE the
-    // `<TerminalTab key={sessionId}>` container (not a wrapper around it), so
-    // toggling descriptionPeekOpen must never change the terminal's position
-    // or key in the tree. Proven here via DOM node identity: a custom probe
-    // attribute stamped on the live xterm textarea survives the toggle only
-    // if React reused the same node (no unmount/remount of TerminalTab).
+    // Load-bearing acceptance criterion for this feature: revealing/hiding the
+    // description peek must not tear the terminal down. The peek renders in a
+    // separate right-panel slot (after the terminal and the split divider), and
+    // the `<TerminalTab key={sessionId}>` container keeps a stable key and a
+    // fixed sibling slot independent of descriptionPeekOpen, so toggling it must
+    // never change the terminal's position or key in the tree. Proven here via
+    // DOM node identity: a custom probe attribute stamped on the live xterm
+    // textarea survives the toggle only if React reused the same node (no
+    // unmount/remount of TerminalTab).
     const card = page
       .locator('[data-swimlane-name="Executing"]')
       .locator('text=Description Peek Task')
@@ -690,9 +691,12 @@ test.describe('Task Detail description peek', () => {
     expect(noSessionClassName).not.toContain('max-h-[25vh]');
     expect(noSessionClassName).not.toContain('overflow-y-auto');
 
-    // Close the dialog. No terminal is mounted here either (no session at
-    // all), so a plain Escape is safe (mirrors task-detail-prespawn-layout.spec.ts).
-    await page.keyboard.press('Escape');
+    // Close via the window's X control, not a keybinding: setDetailTaskId opens
+    // the window WITHOUT focusing it, and the close hotkeys (Escape /
+    // Control+Shift+W) are gated on isFocused, so a keyboard close no-ops here.
+    // (The card-click tests focus the window implicitly; this programmatic open
+    // does not.) Clicking the close button is focus-independent.
+    await noSessionDialog.locator('[data-testid="task-detail-close"]').click();
     await expect(noSessionDialog).not.toBeVisible({ timeout: 8000 });
   });
 
