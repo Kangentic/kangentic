@@ -349,9 +349,14 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
 /**
  * Grouped model dropdown tests use their own browser instance with a fixture
  * whose model list contains the duplicate spellings real Claude transcripts
- * produce: a bare alias, its [1m] context-window variant, and a dated pinned
- * build. The combobox must collapse them to one row per base model while
- * every selectable value stays the exact discovered string (the spawn value).
+ * produce: a bare alias, its [1m] context-window variant, a dated pinned
+ * build, AND a superseded generation (`claude-opus-4-7`, older than the
+ * `claude-opus-4-8` also present). The combobox must collapse the base-model
+ * duplicates to one row, demote the superseded generation alongside the
+ * dated pin into "Older versions", and label every row from the
+ * adapter-provided `modelDisplayNames` map (falling back to the raw id)
+ * while every selectable value stays the exact discovered string (the spawn
+ * value).
  */
 test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture)', () => {
   let groupedBrowser: Browser;
@@ -372,9 +377,21 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
             models: [
               'claude-haiku-4-5',
               'claude-haiku-4-5-20251001',
+              'claude-opus-4-7',
               'claude-opus-4-8',
               'claude-opus-4-8[1m]',
             ],
+            // Mirrors what the Claude adapter's discoverCapabilities()
+            // populates via humanizeClaudeModelId(): the headless mock does
+            // not run real main-process discovery, so this must be supplied
+            // explicitly or every row falls back to its raw id.
+            modelDisplayNames: {
+              'claude-haiku-4-5': 'Haiku 4.5',
+              'claude-haiku-4-5-20251001': 'Haiku 4.5',
+              'claude-opus-4-7': 'Opus 4.7',
+              'claude-opus-4-8': 'Opus 4.8',
+              'claude-opus-4-8[1m]': 'Opus 4.8 (1M)',
+            },
           },
         },
       };
@@ -402,22 +419,25 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
   }
 
-  test('collapses variants to one row per base model with a 1M chip and a collapsed pinned section', async () => {
+  test('collapses variants to one humanized row per current-generation model, demoting the superseded generation and the dated pin', async () => {
     await openDialog();
 
     await groupedPage.locator('input[data-testid="task-model-override"]').click();
     const optionTexts = await groupedPage.locator('[data-model-option]').allTextContents();
-    // One primary row per base model; the [1m] variant and the dated pin do
-    // not get their own visible rows.
-    expect(optionTexts).toEqual(['claude-haiku-4-5', 'claude-opus-4-8']);
+    // One primary row per current-generation base model, humanized. The [1m]
+    // variant never gets its own row; the older Opus 4.7 generation and the
+    // dated Haiku pin are demoted, so they are not present while collapsed.
+    expect(optionTexts).toEqual(['Haiku 4.5', 'Opus 4.8']);
 
     // The opus row carries an always-visible 1M chip.
     await expect(groupedPage.locator('[data-model-1m]')).toHaveCount(1);
 
-    // The dated build sits behind a collapsed "Pinned builds" toggle.
-    const pinnedToggle = groupedPage.locator('[data-model-pinned-toggle]');
-    await expect(pinnedToggle).toHaveText(/Pinned builds \(1\)/);
+    // Opus 4.7 (superseded) and the dated Haiku pin sit behind a collapsed
+    // "Older versions" toggle.
+    const olderToggle = groupedPage.locator('[data-model-pinned-toggle]');
+    await expect(olderToggle).toHaveText(/Older versions \(2\)/);
     await expect(groupedPage.locator('[data-model-pinned-option]')).toHaveCount(0);
+    await expect(groupedPage.locator('[title="claude-opus-4-7"]')).toHaveCount(0);
 
     // Close the suggestion dropdown before dismissing the dialog.
     await groupedPage.keyboard.press('Escape');
@@ -441,13 +461,18 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     expect(task!.model_override).toBe('claude-opus-4-8[1m]');
   });
 
-  test('expanding pinned builds and selecting one persists the exact dated string', async () => {
+  test('expanding Older versions and selecting the dated pin persists the exact dated string, humanized with its date', async () => {
     await openDialog();
 
     await groupedPage.locator('input[placeholder="Task title"]').fill('Pinned Build Task');
     await groupedPage.locator('input[data-testid="task-model-override"]').click();
     await groupedPage.locator('[data-model-pinned-toggle]').click();
-    await groupedPage.locator('[data-model-pinned-option]:has-text("claude-haiku-4-5-20251001")').click();
+    // The dated pin's row is humanized but keeps its date appended (the
+    // humanizer drops the date, so it is re-appended generically); the raw
+    // id is still selectable via its title attribute.
+    const pinnedRow = groupedPage.locator('[data-model-pinned-option][title="claude-haiku-4-5-20251001"]');
+    await expect(pinnedRow).toHaveText('Haiku 4.5 · 2025-10-01');
+    await pinnedRow.click();
     await expect(groupedPage.locator('input[data-testid="task-model-override"]')).toHaveValue('claude-haiku-4-5-20251001');
 
     await groupedPage.locator('button[type="submit"]:has-text("Create")').click();
@@ -459,16 +484,36 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     expect(task!.model_override).toBe('claude-haiku-4-5-20251001');
   });
 
-  test('a query that only matches a pinned build auto-expands the pinned section', async () => {
+  test('expanding Older versions and selecting the superseded generation persists its exact id', async () => {
+    await openDialog();
+
+    await groupedPage.locator('input[placeholder="Task title"]').fill('Older Generation Task');
+    await groupedPage.locator('input[data-testid="task-model-override"]').click();
+    await groupedPage.locator('[data-model-pinned-toggle]').click();
+    const olderOpusRow = groupedPage.locator('[data-model-option][title="claude-opus-4-7"]');
+    await expect(olderOpusRow).toHaveText('Opus 4.7');
+    await olderOpusRow.click();
+    await expect(groupedPage.locator('input[data-testid="task-model-override"]')).toHaveValue('claude-opus-4-7');
+
+    await groupedPage.locator('button[type="submit"]:has-text("Create")').click();
+    await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
+
+    const taskData = await groupedPage.evaluate(() => window.electronAPI.tasks.list());
+    const task = taskData.find((t: { title: string }) => t.title === 'Older Generation Task');
+    expect(task).toBeDefined();
+    expect(task!.model_override).toBe('claude-opus-4-7');
+  });
+
+  test('a query that only matches a demoted row auto-expands the Older versions section', async () => {
     await openDialog();
 
     const modelInput = groupedPage.locator('input[data-testid="task-model-override"]');
     await modelInput.click();
     await modelInput.fill('20251001');
 
-    // No primary row matches, so the pinned section opens by itself and the
-    // dated build is selectable without touching the toggle.
-    await expect(groupedPage.locator('[data-model-pinned-option]')).toHaveText(['claude-haiku-4-5-20251001']);
+    // No primary row matches, so the section opens by itself and the dated
+    // build is selectable without touching the toggle.
+    await expect(groupedPage.locator('[data-model-pinned-option]')).toHaveText(['Haiku 4.5 · 2025-10-01']);
     await groupedPage.locator('[data-model-pinned-option]').click();
     await expect(modelInput).toHaveValue('claude-haiku-4-5-20251001');
 
@@ -477,6 +522,58 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     await groupedPage.keyboard.press('Escape');
     await groupedPage.locator('button:has-text("Discard")').click();
     await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+
+  test('a query matching a superseded generation\'s humanized label (not its raw id) filters to that row and auto-expands', async () => {
+    await openDialog();
+
+    const modelInput = groupedPage.locator('input[data-testid="task-model-override"]');
+    await modelInput.click();
+    // "Opus 4.7" matches ONLY the superseded generation's humanized label
+    // (modelRowLabel), not its raw id "claude-opus-4-7" (no dot, no space)
+    // and not the current-generation "Opus 4.8" label. This exercises the
+    // matchesQuery branch that checks the humanized label, distinct from the
+    // raw-id / dated-pin substring matches covered elsewhere.
+    await modelInput.fill('Opus 4.7');
+
+    // No primary (current-generation) row matches, so the section auto-opens
+    // and the ONLY visible option is the demoted Opus 4.7 generation.
+    await expect(groupedPage.locator('[data-model-option]')).toHaveCount(1);
+    const supersededRow = groupedPage.locator('[data-model-option][title="claude-opus-4-7"]');
+    await expect(supersededRow).toHaveText('Opus 4.7');
+    await supersededRow.click();
+    await expect(modelInput).toHaveValue('claude-opus-4-7');
+
+    await groupedPage.keyboard.press('Escape');
+    await groupedPage.locator('button:has-text("Discard")').click();
+    await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+
+  test('opening the dropdown on a task already set to a superseded generation auto-expands Older versions', async () => {
+    await openDialog();
+
+    const titleInput = groupedPage.locator('input[placeholder="Task title"]');
+    const modelInput = groupedPage.locator('input[data-testid="task-model-override"]');
+    // Simulate an existing selection of the superseded generation (as if the
+    // task was created before Opus 4.8 shipped). Close the suggestion popover
+    // by clicking elsewhere in the dialog (not Escape, to avoid any ambiguity
+    // with the dialog's own Escape-to-discard handling), leaving the value set.
+    await modelInput.fill('claude-opus-4-7');
+    await titleInput.click();
+    await expect(modelInput).toHaveValue('claude-opus-4-7');
+
+    // Reopen the dropdown: the section is expanded WITHOUT the user touching
+    // the toggle, and the toggle stays visible (still collapsible) since this
+    // is value-driven, not the query-driven force-open.
+    await modelInput.click();
+    await expect(groupedPage.locator('[data-model-pinned-toggle]')).toBeVisible();
+    await expect(groupedPage.locator('[data-model-option][title="claude-opus-4-7"]')).toBeVisible();
+
+    // Close the dropdown via an outside click, then discard the dirty form.
+    await titleInput.click();
+    await groupedPage.keyboard.press('Escape');
+    await groupedPage.locator('button:has-text("Discard")').click();
+    await titleInput.waitFor({ state: 'hidden', timeout: 2000 });
   });
 });
 
@@ -748,5 +845,81 @@ test.describe('NewTaskDialog Advanced - context-window badge suppressed by a 1M 
 
     await suppressedPage.keyboard.press('Escape');
     await suppressedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+});
+
+/**
+ * A superseded generation demoted into "Older versions" is rendered through
+ * the SAME `renderGroupRow` helper as a top-level row (just with `indent:
+ * true`), so it can still carry its own telemetry-learned context-window
+ * badge. This is a distinct render path from the top-level badge tests above
+ * (own browser + fixture, mirroring the grouped-model-dropdown block) since
+ * the badge only becomes visible once the "Older versions" section is
+ * expanded.
+ */
+test.describe('NewTaskDialog Advanced - context-window badge on a demoted superseded row', () => {
+  let demotedBadgeBrowser: Browser;
+  let demotedBadgePage: Page;
+
+  test.beforeAll(async () => {
+    await waitForViteReady();
+    demotedBadgeBrowser = await chromium.launch({ headless: true });
+    const context = await demotedBadgeBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+    demotedBadgePage = await context.newPage();
+
+    await demotedBadgePage.addInitScript(() => {
+      (window as Record<string, unknown>).__mockAgentListOverrides = {
+        claude: {
+          capabilities: {
+            effortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+            supportsModelOverride: true,
+            // Opus 4.7 is superseded by Opus 4.8 (both present), so it is
+            // demoted into "Older versions".
+            models: ['claude-opus-4-7', 'claude-opus-4-8'],
+          },
+        },
+      };
+      (window as Record<string, unknown>).__mockConfigOverrides = {
+        discoveredContextWindowsByAgent: {
+          claude: {
+            // Learned window on the DEMOTED generation. Opus 4.8 (the
+            // primary, non-demoted row) deliberately has no learned window,
+            // so its absence of a badge stays a clean signal.
+            'claude-opus-4-7': 200_000,
+          },
+        },
+      };
+    });
+    await demotedBadgePage.addInitScript({ path: MOCK_SCRIPT });
+    await demotedBadgePage.goto(VITE_URL);
+    await demotedBadgePage.waitForLoadState('load');
+    await demotedBadgePage.waitForSelector('text=Kangentic', { timeout: 15000 });
+    await createProject(demotedBadgePage, `DemotedContextBadge ${Date.now()}`);
+  });
+
+  test.afterAll(async () => {
+    await demotedBadgeBrowser?.close();
+  });
+
+  test('badges a demoted superseded row from its own learned context window once expanded', async () => {
+    const column = demotedBadgePage.locator('[data-swimlane-name="To Do"]');
+    await column.locator('text=Add task').click();
+    await demotedBadgePage.locator('input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    await demotedBadgePage.locator('[data-testid="task-advanced-toggle"]').click();
+    await demotedBadgePage.locator('input[data-testid="task-model-override"]').click();
+
+    // Opus 4.8 (primary, top-level) has no learned window: no badge.
+    const opus48Row = demotedBadgePage.locator('[data-model-row]').filter({ hasText: 'claude-opus-4-8' });
+    await expect(opus48Row.locator('[data-model-context-window]')).toHaveCount(0);
+
+    // The demoted Opus 4.7 row is not rendered until "Older versions" expands.
+    await expect(demotedBadgePage.locator('[title="claude-opus-4-7"]')).toHaveCount(0);
+    await demotedBadgePage.locator('[data-model-pinned-toggle]').click();
+
+    const opus47Row = demotedBadgePage.locator('[data-model-row]').filter({ hasText: 'claude-opus-4-7' });
+    await expect(opus47Row.locator('[data-model-context-window]')).toHaveText('200K');
+
+    await demotedBadgePage.keyboard.press('Escape');
+    await demotedBadgePage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
   });
 });

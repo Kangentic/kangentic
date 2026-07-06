@@ -260,6 +260,12 @@ Commands:
         'claude-opus-4-7',
         'claude-sonnet-4-6',
       ]);
+      // Every discovered model gets a humanized display name alongside its id.
+      expect(capabilities.modelDisplayNames).toEqual({
+        'claude-haiku-4-5': 'Haiku 4.5',
+        'claude-opus-4-7': 'Opus 4.7',
+        'claude-sonnet-4-6': 'Sonnet 4.6',
+      });
     });
 
     it('scans past summary and user records to find the assistant model', async () => {
@@ -337,6 +343,7 @@ Commands:
       const capabilities = await discoverClaudeCapabilities('/usr/bin/claude');
       expect(capabilities.supportsModelOverride).toBe(true);
       expect(capabilities.models).toBeUndefined();
+      expect(capabilities.modelDisplayNames).toBeUndefined();
     });
 
     it('returns undefined when no session files contain a model', async () => {

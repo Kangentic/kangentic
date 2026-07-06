@@ -64,6 +64,13 @@ export interface AgentCapabilities {
    * list - the renderer falls back to a free-form text input in that case.
    */
   models?: string[];
+  /**
+   * Friendly display name per entry in `models` (e.g. `claude-opus-4-8` ->
+   * "Opus 4.8"), computed by the adapter so no agent-naming knowledge lives in
+   * shared or renderer code. An id absent from this map (or when the map
+   * itself is absent) falls back to showing its raw id.
+   */
+  modelDisplayNames?: Record<string, string>;
 }
 
 export interface AgentDetectionInfo {

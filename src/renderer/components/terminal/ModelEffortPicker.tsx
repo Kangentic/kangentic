@@ -2,9 +2,9 @@ import { useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
-import { useKnownModels, useModelContextWindows } from '../../hooks/useKnownModels';
-import { groupModelIds } from '../../../shared/model-id';
-import { modelContextBadgeLabel } from '../../utils/format-tokens';
+import { useKnownModels, useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
+import { groupModelIds, type ModelDisplayGroup } from '../../../shared/model-id';
+import { modelContextBadgeLabel, modelRowLabel } from '../../utils/format-tokens';
 import { ContextBarPopover } from './ContextBarPopover';
 
 const pill = 'px-2 py-0.5 rounded bg-surface-raised whitespace-nowrap select-none';
@@ -81,17 +81,50 @@ export function ModelEffortPicker({
   // the user invokes live.
   const modelOptions = useKnownModels(agent);
   const modelContextWindows = useModelContextWindows(agent);
+  const modelDisplayNames = useModelDisplayNames(agent);
   // Display grouping only: one row per base model, with [1m] variants as a 1M
-  // chip and dated pins demoted behind the popover's collapsed section. Every
-  // selectable value stays the exact discovered string.
+  // chip, dated pins demoted behind the popover's collapsed section, and a
+  // superseded generation (an older Opus/Sonnet/Haiku version whose family
+  // has a newer one) demoted alongside them. Every selectable value stays the
+  // exact discovered string.
   const modelGroups = useMemo(() => groupModelIds(modelOptions), [modelOptions]);
-  const pinnedModelOptions = useMemo(
-    () =>
-      modelGroups
-        .flatMap((group) => group.pinnedBuildIds)
-        .map((model) => ({ value: model, label: model })),
-    [modelGroups],
-  );
+  const latestModelGroups = useMemo(() => modelGroups.filter((group) => !group.isSuperseded), [modelGroups]);
+  const supersededModelGroups = useMemo(() => modelGroups.filter((group) => group.isSuperseded), [modelGroups]);
+
+  // Memoized to match the sibling `*ModelGroups` derivations above (the
+  // pre-demotion code memoized the pinned list; keep parity so a later
+  // React.memo on ContextBarPopover would see stable option identities).
+  const { modelOptionsForPopover, pinnedModelOptions } = useMemo(() => {
+    const toOption = (group: ModelDisplayGroup) => ({
+      value: group.primaryId,
+      label: modelRowLabel(group.primaryId, modelDisplayNames),
+      oneMillionValue: group.oneMillionId,
+      // Context-size badge (shared rule with ModelCombobox): "1M" for a
+      // `[1m]`-only row, suppressed behind a selectable `[1m]` chip, else
+      // the telemetry-learned window for the base id.
+      contextLabel: modelContextBadgeLabel(group, modelContextWindows),
+    });
+
+    const latestOptions = latestModelGroups.map(toOption);
+    // Merged "Older versions" list: every superseded generation (as a full row,
+    // keeping its 1M chip / context badge) plus every group's dated pins, all
+    // sorted together by id so a superseded alias renders directly above its
+    // own dated pins and families stay clustered.
+    const demotedEntries: Array<{ sortId: string; option: { value: string; label: string; oneMillionValue?: string | null; contextLabel?: string | null } }> = [];
+    for (const group of supersededModelGroups) {
+      demotedEntries.push({ sortId: group.primaryId, option: toOption(group) });
+    }
+    for (const group of modelGroups) {
+      for (const id of group.pinnedBuildIds) {
+        demotedEntries.push({ sortId: id, option: { value: id, label: modelRowLabel(id, modelDisplayNames) } });
+      }
+    }
+    const demotedOptions = demotedEntries
+      .sort((first, second) => first.sortId.localeCompare(second.sortId))
+      .map((entry) => entry.option);
+
+    return { modelOptionsForPopover: latestOptions, pinnedModelOptions: demotedOptions };
+  }, [latestModelGroups, supersededModelGroups, modelGroups, modelDisplayNames, modelContextWindows]);
 
   const [openPopover, setOpenPopover] = useState<'model' | 'effort' | null>(null);
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
@@ -134,7 +167,13 @@ export function ModelEffortPicker({
   // Display labels:
   // - live mode: existing behavior (live > overrides; effort pill suppressed when null)
   // - prespawn: show overrides falling through to "Default" so users can click to pick
-  const modelLabel = liveModelName ?? taskModelOverride ?? swimlaneModelOverride ?? 'Default';
+  // An override is humanized the same way as the popover rows for
+  // consistency; the live telemetry name is already human-readable and wins.
+  const modelOverrideId = taskModelOverride || swimlaneModelOverride;
+  const modelOverrideLabel = modelOverrideId
+    ? modelRowLabel(modelOverrideId, modelDisplayNames)
+    : null;
+  const modelLabel = liveModelName ?? modelOverrideLabel ?? 'Default';
   const showModelTrigger = supportsModel;
   const showEffortTrigger = supportsEffort && (mode === 'prespawn' || effectiveEffort != null);
   const effortLabel = effectiveEffort ?? 'Default';
@@ -173,15 +212,7 @@ export function ModelEffortPicker({
             <ContextBarPopover
               triggerRef={modelTriggerRef}
               title="Model"
-              options={modelGroups.map((group) => ({
-                value: group.primaryId,
-                label: group.primaryId,
-                oneMillionValue: group.oneMillionId,
-                // Context-size badge (shared rule with ModelCombobox): "1M" for a
-                // `[1m]`-only row, suppressed behind a selectable `[1m]` chip, else
-                // the telemetry-learned window for the base id.
-                contextLabel: modelContextBadgeLabel(group, modelContextWindows),
-              }))}
+              options={modelOptionsForPopover}
               pinnedOptions={pinnedModelOptions}
               currentValue={currentModelValue}
               swimlaneDefault={swimlaneModelOverride}

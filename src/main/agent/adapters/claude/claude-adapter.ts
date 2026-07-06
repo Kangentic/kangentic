@@ -10,7 +10,7 @@ import { removeHooks as removeClaudeHooks } from './hook-manager';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capability-discovery';
 import { createSlashCommandVerifier } from './slash-command-verifier';
-import { configuredModelFromClaudeCommand } from './model-display-name';
+import { configuredModelFromClaudeCommand, buildModelDisplayNames } from './model-display-name';
 import { ClaudeSessionHistoryParser } from './session-history-parser';
 import type {
   AgentAdapter,
@@ -92,7 +92,9 @@ export class ClaudeAdapter implements AgentAdapter {
       return staticCapabilities;
     }
     const models = await rescanClaudeModels(cliPath, forceRefresh);
-    return models ? { ...staticCapabilities, models } : staticCapabilities;
+    return models
+      ? { ...staticCapabilities, models, modelDisplayNames: buildModelDisplayNames(models) }
+      : staticCapabilities;
   }
 
   async ensureTrust(workingDirectory: string): Promise<void> {

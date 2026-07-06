@@ -4,6 +4,22 @@ import { Check, ChevronDown } from 'lucide-react';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 
 /**
+ * `oneMillionValue` carries the exact `<base>[1m]` model string for rows
+ * whose base model has a known 1M context variant; it renders as an
+ * always-visible chip that selects that exact string. `contextLabel` is the
+ * telemetry-learned context-window size (e.g. "1M" / "200K"); it renders as a
+ * non-interactive size badge on rows that have no `oneMillionValue` chip, so
+ * the two never stack a redundant "1M".
+ */
+interface PopoverOption {
+  value: string;
+  label: string;
+  hint?: string;
+  oneMillionValue?: string | null;
+  contextLabel?: string | null;
+}
+
+/**
  * Enumeration-only popover for the ContextBar model and effort triggers.
  * Lists the options reported by the agent's `discoverCapabilities` (e.g.
  * Claude's `models = ['opus','sonnet','haiku']` or `effortLevels =
@@ -33,20 +49,14 @@ export function ContextBarPopover({
 }: {
   triggerRef: React.RefObject<HTMLElement | null>;
   title: string;
+  options: ReadonlyArray<PopoverOption>;
   /**
-   * `oneMillionValue` carries the exact `<base>[1m]` model string for rows
-   * whose base model has a known 1M context variant; it renders as an
-   * always-visible chip that selects that exact string. `contextLabel` is the
-   * telemetry-learned context-window size (e.g. "1M" / "200K"); it renders as a
-   * non-interactive size badge on rows that have no `oneMillionValue` chip, so
-   * the two never stack a redundant "1M".
+   * Superseded model generations and dated pinned builds, demoted behind a
+   * collapsed "Older versions" disclosure below the main list. Same row
+   * shape as `options` (a demoted generation keeps its own 1M chip / context
+   * badge). Values are exact spawnable strings.
    */
-  options: ReadonlyArray<{ value: string; label: string; hint?: string; oneMillionValue?: string | null; contextLabel?: string | null }>;
-  /**
-   * Dated pinned builds demoted behind a collapsed "Pinned builds" disclosure
-   * below the main list. Values are exact spawnable strings.
-   */
-  pinnedOptions?: ReadonlyArray<{ value: string; label: string }>;
+  pinnedOptions?: ReadonlyArray<PopoverOption>;
   /** The currently active value (live status > task override > swimlane override). Checkmark is rendered next to this. */
   currentValue: string | null;
   /**
@@ -63,12 +73,15 @@ export function ContextBarPopover({
   testId?: string;
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
-  // Collapsed by default; forced open when the active value IS a pinned build
-  // so its checkmark is never hidden.
+  // Collapsed by default; forced open when the active value IS a demoted row
+  // (a superseded generation or a dated pin) so its checkmark is never hidden.
   const [pinnedExpanded, setPinnedExpanded] = useState(false);
-  const currentIsPinned =
-    currentValue !== null && pinnedOptions.some((option) => option.value === currentValue);
-  const showPinnedExpanded = pinnedExpanded || currentIsPinned;
+  const currentIsDemoted =
+    currentValue !== null &&
+    pinnedOptions.some(
+      (option) => option.value === currentValue || (option.oneMillionValue ?? null) === currentValue,
+    );
+  const showPinnedExpanded = pinnedExpanded || currentIsDemoted;
   // The ContextBar is always pinned to the bottom of its container (task-detail
   // dialog, bottom panel, or the floating command-terminal overlay). Prefer
   // opening upward so the menu never renders past a floating container's bottom
@@ -104,6 +117,64 @@ export function ContextBarPopover({
     return () => document.removeEventListener('keydown', handleEscape, true);
   }, [onClose]);
 
+  // Shared row markup (checkmark + label + optional hint/1M chip/context
+  // badge), reused for the main list and for a row demoted into "Older
+  // versions" (`indent` matches it visually to the section's dated-pin rows).
+  const renderOptionRow = (option: PopoverOption, indent: boolean) => {
+    const oneMillionValue = option.oneMillionValue ?? null;
+    // The row checkmark lights for either spelling of the same base model
+    // (`claude-opus-4-8` and `claude-opus-4-8[1m]` share one row).
+    const isCurrent =
+      option.value === currentValue ||
+      (oneMillionValue !== null && oneMillionValue === currentValue);
+    return (
+      <div key={option.value} className="flex items-center">
+        <button
+          type="button"
+          onClick={() => onSelect(option.value)}
+          title={option.value}
+          // Click target sizing: `py-2` + `text-sm` ≈ 38px tall (above WCAG
+          // 2.5.5 AA's 24px floor and close to AAA's 44px). `min-w-[180px]`
+          // keeps short option lists like effort (`low`..`max`) from
+          // collapsing to a 60px-wide target. Long model ids still grow
+          // the popover past this floor via the parent's `w-max`.
+          className={`flex-1 min-w-[180px] py-2 text-sm text-left hover:bg-surface-hover/40 flex items-center gap-2 whitespace-nowrap ${
+            indent ? 'pl-7 pr-3 text-fg-muted' : 'px-3 text-fg-secondary'
+          }`}
+          data-testid={testId ? `${testId}-option-${option.value}` : undefined}
+        >
+          <Check size={12} className={`flex-shrink-0 ${isCurrent ? 'text-fg-secondary' : 'text-transparent'}`} />
+          <span className="flex-1 truncate">{option.label}</span>
+          {option.hint && <span className="text-fg-faint text-xs flex-shrink-0">{option.hint}</span>}
+        </button>
+        {oneMillionValue === null && option.contextLabel && (
+          <span
+            title={`${option.contextLabel} context window`}
+            className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-faint flex-shrink-0"
+            data-testid={testId ? `${testId}-option-context-${option.value}` : undefined}
+          >
+            {option.contextLabel}
+          </span>
+        )}
+        {oneMillionValue !== null && (
+          <button
+            type="button"
+            onClick={() => onSelect(oneMillionValue)}
+            title={oneMillionValue}
+            className={`mr-2 px-1.5 py-0.5 text-[11px] rounded border flex-shrink-0 transition-colors ${
+              currentValue === oneMillionValue
+                ? 'border-fg-muted text-fg-secondary'
+                : 'border-edge text-fg-muted hover:text-fg-secondary hover:border-fg-faint'
+            }`}
+            data-testid={testId ? `${testId}-option-1m-${oneMillionValue}` : undefined}
+          >
+            1M
+          </button>
+        )}
+      </div>
+    );
+  };
+
   return createPortal(
     <div
       ref={popoverRef}
@@ -120,58 +191,7 @@ export function ContextBarPopover({
       <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
         {title}
       </div>
-      {options.map((option) => {
-        const oneMillionValue = option.oneMillionValue ?? null;
-        // The row checkmark lights for either spelling of the same base model
-        // (`claude-opus-4-8` and `claude-opus-4-8[1m]` share one row).
-        const isCurrent =
-          option.value === currentValue ||
-          (oneMillionValue !== null && oneMillionValue === currentValue);
-        return (
-          <div key={option.value} className="flex items-center">
-            <button
-              type="button"
-              onClick={() => onSelect(option.value)}
-              title={option.value}
-              // Click target sizing: `py-2` + `text-sm` ≈ 38px tall (above WCAG
-              // 2.5.5 AA's 24px floor and close to AAA's 44px). `min-w-[180px]`
-              // keeps short option lists like effort (`low`..`max`) from
-              // collapsing to a 60px-wide target. Long model ids still grow
-              // the popover past this floor via the parent's `w-max`.
-              className="flex-1 min-w-[180px] px-3 py-2 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2 whitespace-nowrap"
-              data-testid={testId ? `${testId}-option-${option.value}` : undefined}
-            >
-              <Check size={12} className={`flex-shrink-0 ${isCurrent ? 'text-fg-secondary' : 'text-transparent'}`} />
-              <span className="flex-1 truncate">{option.label}</span>
-              {option.hint && <span className="text-fg-faint text-xs flex-shrink-0">{option.hint}</span>}
-            </button>
-            {oneMillionValue === null && option.contextLabel && (
-              <span
-                title={`${option.contextLabel} context window`}
-                className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-faint flex-shrink-0"
-                data-testid={testId ? `${testId}-option-context-${option.value}` : undefined}
-              >
-                {option.contextLabel}
-              </span>
-            )}
-            {oneMillionValue !== null && (
-              <button
-                type="button"
-                onClick={() => onSelect(oneMillionValue)}
-                title={oneMillionValue}
-                className={`mr-2 px-1.5 py-0.5 text-[11px] rounded border flex-shrink-0 transition-colors ${
-                  currentValue === oneMillionValue
-                    ? 'border-fg-muted text-fg-secondary'
-                    : 'border-edge text-fg-muted hover:text-fg-secondary hover:border-fg-faint'
-                }`}
-                data-testid={testId ? `${testId}-option-1m-${oneMillionValue}` : undefined}
-              >
-                1M
-              </button>
-            )}
-          </div>
-        );
-      })}
+      {options.map((option) => renderOptionRow(option, false))}
       {pinnedOptions.length > 0 && (
         <div className="border-t border-edge mt-1 pt-1">
           <button
@@ -184,22 +204,9 @@ export function ContextBarPopover({
               size={12}
               className={`flex-shrink-0 transition-transform ${showPinnedExpanded ? '' : '-rotate-90'}`}
             />
-            Pinned builds ({pinnedOptions.length})
+            Older versions ({pinnedOptions.length})
           </button>
-          {showPinnedExpanded &&
-            pinnedOptions.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => onSelect(option.value)}
-                title={option.value}
-                className="w-full min-w-[180px] pl-7 pr-3 py-2 text-sm text-fg-muted text-left hover:bg-surface-hover/40 flex items-center gap-2 whitespace-nowrap"
-                data-testid={testId ? `${testId}-option-${option.value}` : undefined}
-              >
-                <Check size={12} className={`flex-shrink-0 ${option.value === currentValue ? 'text-fg-secondary' : 'text-transparent'}`} />
-                <span className="flex-1 truncate">{option.label}</span>
-              </button>
-            ))}
+          {showPinnedExpanded && pinnedOptions.map((option) => renderOptionRow(option, true))}
         </div>
       )}
       {swimlaneDefault !== null && (

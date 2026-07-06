@@ -34,6 +34,23 @@ export function useKnownModels(agent: string | null): string[] {
 }
 
 const EMPTY_WINDOWS: Record<string, number> = {};
+const EMPTY_DISPLAY_NAMES: Record<string, string> = {};
+
+/**
+ * Friendly display name per discovered model id (e.g. `claude-opus-4-8` ->
+ * "Opus 4.8"), from the agent's own capability discovery
+ * (`AgentCapabilities.modelDisplayNames`). All naming knowledge lives in the
+ * adapter (see `.claude/rules/agent-adapters-boundary.md`); an id absent from
+ * the map falls back to its raw id at the render site.
+ */
+export function useModelDisplayNames(agent: string | null): Record<string, string> {
+  const displayNames = useConfigStore(
+    useShallow((state) =>
+      agent ? state.agentList.find((entry) => entry.name === agent)?.capabilities?.modelDisplayNames : undefined,
+    ),
+  );
+  return displayNames ?? EMPTY_DISPLAY_NAMES;
+}
 
 /**
  * Empirically-observed context-window sizes for an agent's models, keyed by

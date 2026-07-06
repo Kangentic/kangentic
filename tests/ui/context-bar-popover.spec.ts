@@ -555,12 +555,14 @@ test.describe('ContextBar model/effort popover - capability gating', () => {
 });
 
 // Grouped model list: when discovery surfaces duplicate spellings of the same
-// base model (bare alias, [1m] context-window variant, dated pinned build),
-// the popover shows one row per base model with a 1M chip and tucks dated
-// builds behind a collapsed "Pinned builds" disclosure. Every selection still
-// sends the exact discovered string (the spawn value).
+// base model (bare alias, [1m] context-window variant, dated pinned build)
+// PLUS a superseded generation (an older Opus/Sonnet/Haiku version whose
+// family has a newer one), the popover shows one humanized row per
+// current-generation base model with a 1M chip and tucks the superseded
+// generation + dated builds behind a collapsed "Older versions" disclosure.
+// Every selection still sends the exact discovered string (the spawn value).
 test.describe('ContextBar model popover - grouped suffixed models', () => {
-  test('groups variants onto one row and selections send exact suffixed strings', async () => {
+  test('groups variants onto one humanized row, demotes the superseded generation and the dated pin, and selections send exact suffixed strings', async () => {
     const preconfig = `
       window.__mockAgentListOverrides = {
         claude: {
@@ -570,9 +572,21 @@ test.describe('ContextBar model popover - grouped suffixed models', () => {
             models: [
               'claude-haiku-4-5',
               'claude-haiku-4-5-20251001',
+              'claude-opus-4-7',
               'claude-opus-4-8',
               'claude-opus-4-8[1m]',
             ],
+            // Mirrors what the Claude adapter's discoverCapabilities()
+            // populates via humanizeClaudeModelId(): the headless mock does
+            // not run real main-process discovery, so this must be supplied
+            // explicitly or every row falls back to its raw id.
+            modelDisplayNames: {
+              'claude-haiku-4-5': 'Haiku 4.5',
+              'claude-haiku-4-5-20251001': 'Haiku 4.5',
+              'claude-opus-4-7': 'Opus 4.7',
+              'claude-opus-4-8': 'Opus 4.8',
+              'claude-opus-4-8[1m]': 'Opus 4.8 (1M)',
+            },
           },
         },
       };
@@ -590,20 +604,36 @@ test.describe('ContextBar model popover - grouped suffixed models', () => {
       const popover = page.locator('[data-testid="context-bar-model-popover"]');
       await expect(popover).toBeVisible();
 
-      // One primary row per base model; no separate row for the [1m] spelling.
-      await expect(page.locator('[data-testid="context-bar-model-popover-option-claude-haiku-4-5"]')).toBeVisible();
-      await expect(page.locator('[data-testid="context-bar-model-popover-option-claude-opus-4-8"]')).toBeVisible();
+      // One primary row per current-generation base model, humanized; no
+      // separate row for the [1m] spelling, and the superseded Opus 4.7
+      // generation is not present at the top level while collapsed.
+      const haikuRow = page.locator('[data-testid="context-bar-model-popover-option-claude-haiku-4-5"]');
+      await expect(haikuRow).toBeVisible();
+      await expect(haikuRow).toHaveText('Haiku 4.5');
+      const opusRow = page.locator('[data-testid="context-bar-model-popover-option-claude-opus-4-8"]');
+      await expect(opusRow).toBeVisible();
+      await expect(opusRow).toContainText('Opus 4.8');
       await expect(page.locator('[data-testid="context-bar-model-popover-option-claude-opus-4-8[1m]"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="context-bar-model-popover-option-claude-opus-4-7"]')).toHaveCount(0);
 
-      // The dated build hides behind the collapsed pinned disclosure (the
-      // live [1m] value is not pinned, so the section starts closed).
-      const pinnedToggle = page.locator('[data-testid="context-bar-model-popover-pinned-toggle"]');
-      await expect(pinnedToggle).toHaveText(/Pinned builds \(1\)/);
+      // The superseded generation and the dated build hide behind the
+      // collapsed "Older versions" disclosure (the live [1m] value is not
+      // demoted, so the section starts closed).
+      const olderToggle = page.locator('[data-testid="context-bar-model-popover-pinned-toggle"]');
+      await expect(olderToggle).toHaveText(/Older versions \(2\)/);
       await expect(page.locator('[data-testid="context-bar-model-popover-option-claude-haiku-4-5-20251001"]')).toHaveCount(0);
 
-      // Expanding and picking the dated build sends the exact dated string.
-      await pinnedToggle.click();
-      await page.locator('[data-testid="context-bar-model-popover-option-claude-haiku-4-5-20251001"]').click();
+      // Expanding reveals both demoted rows, humanized (the dated pin keeps
+      // its date appended since the humanizer drops it).
+      await olderToggle.click();
+      const olderOpusRow = page.locator('[data-testid="context-bar-model-popover-option-claude-opus-4-7"]');
+      await expect(olderOpusRow).toBeVisible();
+      await expect(olderOpusRow).toHaveText('Opus 4.7');
+      const datedPinRow = page.locator('[data-testid="context-bar-model-popover-option-claude-haiku-4-5-20251001"]');
+      await expect(datedPinRow).toHaveText('Haiku 4.5 · 2025-10-01');
+
+      // Picking the dated build sends the exact dated string.
+      await datedPinRow.click();
       await expect(popover).toHaveCount(0);
       let calls = await page.evaluate(() => (window as unknown as { __mockSetRuntimeOverrideCalls?: unknown[] }).__mockSetRuntimeOverrideCalls);
       expect(calls).toEqual([{ taskId: TASK_ID, model: 'claude-haiku-4-5-20251001' }]);
@@ -619,11 +649,22 @@ test.describe('ContextBar model popover - grouped suffixed models', () => {
         { taskId: TASK_ID, model: 'claude-opus-4-8[1m]' },
       ]);
 
-      // When the live model IS a pinned build, the disclosure auto-expands so
-      // the active value's checkmark is never hidden.
+      // When the live model IS a demoted (dated pin) build, the disclosure
+      // auto-expands so the active value's checkmark is never hidden.
       await applyClaudeUsage(page, SESSION_ID, 'claude-haiku-4-5-20251001', 'Haiku 4.5', 'high');
       await modelTrigger.click();
       await expect(page.locator('[data-testid="context-bar-model-popover-option-claude-haiku-4-5-20251001"]')).toBeVisible();
+
+      // Close before reopening: the trigger toggles, so leaving the popover
+      // open here would make the next click close it instead of reopening.
+      await modelTrigger.click();
+      await expect(popover).toHaveCount(0);
+
+      // When the live model IS a superseded generation, the disclosure
+      // auto-expands too.
+      await applyClaudeUsage(page, SESSION_ID, 'claude-opus-4-7', 'Opus 4.7', 'high');
+      await modelTrigger.click();
+      await expect(page.locator('[data-testid="context-bar-model-popover-option-claude-opus-4-7"]')).toBeVisible();
     } finally {
       await browser.close();
     }
