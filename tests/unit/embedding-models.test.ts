@@ -20,6 +20,11 @@ describe('embedding-models registry', () => {
       expect(model.dimensions).toBeGreaterThan(0);
       expect(model.approxSizeMb).toBeGreaterThan(0);
       expect(model.dtype).toBe('q8');
+      expect(['mean', 'cls']).toContain(model.pooling);
+      // The anisotropy floor calibrates relevance filtering; it must be a real
+      // cosine in [0, 1) or the filter divides by <= 0 and disables itself.
+      expect(model.noiseFloor).toBeGreaterThanOrEqual(0);
+      expect(model.noiseFloor).toBeLessThan(1);
       expect(model.license).toBeTruthy();
       expect(model.modelTag).toBeTruthy();
       expect(['fast', 'balanced', 'accurate']).toContain(model.tier);
@@ -48,6 +53,21 @@ describe('embedding-models registry', () => {
   it('covers all three tiers exactly once', () => {
     const tiers = EMBEDDING_MODELS.map((model) => model.tier).sort();
     expect(tiers).toEqual(['accurate', 'balanced', 'fast']);
+  });
+
+  it('bge tiers use CLS pooling + a query prefix; mxbai uses mean + none', () => {
+    // The load-bearing invariant this registry exists to hold: bge was trained
+    // for CLS pooling and a retrieval query instruction (mean-pooling it or
+    // dropping the prefix silently collapses its score separation), while mxbai
+    // is a symmetric mean-pooled model. If someone flips these, retrieval quietly
+    // degrades - so pin them here.
+    const byId = new Map(EMBEDDING_MODELS.map((model) => [model.id, model]));
+    expect(byId.get('bge-base')?.pooling).toBe('cls');
+    expect(byId.get('bge-small')?.pooling).toBe('cls');
+    expect(byId.get('mxbai-xsmall')?.pooling).toBe('mean');
+    expect(byId.get('bge-base')?.queryPrefix).toBeTruthy();
+    expect(byId.get('bge-small')?.queryPrefix).toBeTruthy();
+    expect(byId.get('mxbai-xsmall')?.queryPrefix).toBe('');
   });
 
   it('the default id resolves to a real model', () => {

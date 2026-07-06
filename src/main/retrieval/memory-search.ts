@@ -44,7 +44,8 @@ export interface SearchConversationMemoryInput {
   embedWaitMs?: number;
   /** DB-factory injection for tests. Defaults to getProjectDb. */
   getDb?: (projectId: string) => Database.Database;
-  /** Semantic embedder, or null/absent for lexical-only. */
+  /** Semantic embedder, or null/absent for lexical-only. The embedder carries
+   *  the active model's `noiseFloor`, which calibrates the relevance filter. */
   embedder?: Embedder | null;
 }
 
@@ -84,6 +85,8 @@ export async function searchConversationMemory(
   const getDb = input.getDb ?? getProjectDb;
   const k = input.k ?? DEFAULT_K;
   const matchQuery = escapeFtsMatchQuery(query);
+  // The active model's anisotropy floor calibrates the relevance filter (0 = off).
+  const semanticFloor = input.embedder?.noiseFloor ?? 0;
 
   // Embed the query once for all projects (semantic path).
   let queryVector: Float32Array | null = null;
@@ -106,7 +109,7 @@ export async function searchConversationMemory(
     }
 
     const lexical = matchQuery ? safeLexical(store, matchQuery) : [];
-    const semantic = queryVector ? safeSemantic(store, queryVector) : [];
+    const semantic = queryVector ? relevantSemantic(store, queryVector, semanticFloor) : [];
     if (lexical.length === 0 && semantic.length === 0) continue;
 
     const fused = reciprocalRankFusion(lexical, semantic);
@@ -195,6 +198,38 @@ function safeSemantic(store: RetrievalStore, queryVector: Float32Array) {
   } catch {
     return [];
   }
+}
+
+/**
+ * Calibrated relevance cutoff on the model-independent 0-1 scale. Conservative
+ * on purpose: it rejects clear non-matches (which sit at the model's noise floor,
+ * so relevance ~= 0) while keeping anything plausibly related, because ranking +
+ * RRF fusion order the rest and an over-tight cut that returns nothing for a real
+ * query is worse than a couple of weak tail hits. This is the single "strictness"
+ * constant (no user knob): these models are meant to be used by relative ranking,
+ * not an absolute cosine threshold.
+ */
+const SEMANTIC_RELEVANCE_CUTOFF = 0.15;
+
+/** Semantic hits whose CALIBRATED relevance clears the cutoff, re-ranked densely
+ *  so RRF sees contiguous ranks. Embeddings are normalized and the vec table uses
+ *  L2 distance, so cosine similarity is `1 - d^2 / 2`. These sentence encoders are
+ *  anisotropic: unrelated text pairs cluster at a high, model-specific cosine
+ *  (`noiseFloor`, e.g. ~0.6 for bge), not 0, so a raw cosine threshold is not
+ *  portable across models. We rescale cosine against the floor into a
+ *  model-independent relevance `(cos - floor) / (1 - floor)`, clamped implicitly
+ *  by the cutoff, so gibberish (which lands at the floor -> relevance ~0) is
+ *  dropped on every model. A floor <= 0 (or >= 1) disables the filter. */
+function relevantSemantic(store: RetrievalStore, queryVector: Float32Array, noiseFloor: number) {
+  const hits = safeSemantic(store, queryVector);
+  const denom = 1 - noiseFloor;
+  if (!(noiseFloor > 0) || denom <= 0) return hits;
+  return hits
+    .filter((hit) => {
+      const cosine = 1 - (hit.distance * hit.distance) / 2;
+      return (cosine - noiseFloor) / denom >= SEMANTIC_RELEVANCE_CUTOFF;
+    })
+    .map((hit, index) => ({ ...hit, rank: index + 1 }));
 }
 
 /**

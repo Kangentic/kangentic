@@ -27,9 +27,11 @@ const TEST_MODEL: EmbeddingModelDef = {
   displayName: 'Test',
   dimensions: 384,
   dtype: 'q8',
+  pooling: 'mean',
   approxSizeMb: 24,
   license: 'Apache-2.0',
   queryPrefix: '',
+  noiseFloor: 0.45,
   modelTag: 'test-model@q8',
   blurb: 'test',
 };

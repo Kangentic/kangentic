@@ -308,7 +308,10 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
               placeholder="Search tasks, backlog, session events, projects..."
               className="flex-1 min-w-0 bg-transparent text-sm text-fg placeholder-fg-disabled outline-none"
             />
-            {searching ? (
+            {/* Corner spinner only while results are already on screen (a
+                re-query); the empty "Searching..." state carries its own inline
+                spinner, so the two never show at once. */}
+            {searching && hasResults ? (
               <Loader2 size={14} className="text-fg-muted animate-spin flex-shrink-0" />
             ) : null}
             <ScopeToggle scope={scope} onChange={setScope} />
@@ -350,9 +353,10 @@ export function SearchPalette({ onClose }: SearchPaletteProps) {
               </ul>
             ) : searching ? (
               <div
-                className="px-4 py-6 text-sm text-fg-muted text-center"
+                className="flex items-center justify-center gap-2 px-4 py-6 text-sm text-fg-muted"
                 data-testid="search-searching"
               >
+                <Loader2 size={14} className="animate-spin flex-shrink-0" />
                 Searching...
               </div>
             ) : (

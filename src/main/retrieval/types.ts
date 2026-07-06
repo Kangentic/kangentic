@@ -102,4 +102,8 @@ export interface Embedder {
   readonly dimensions: number;
   /** e.g. 'bge-small@q8'. Persisted per chunk so a model change re-embeds. */
   readonly modelTag: string;
+  /** Cosine that unrelated text pairs cluster at for this model (anisotropy
+   *  floor). The search filter rescales raw cosine against it into a
+   *  model-independent 0-1 relevance. 0 disables the relevance filter. */
+  readonly noiseFloor: number;
 }

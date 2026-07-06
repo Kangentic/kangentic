@@ -53,12 +53,14 @@ interface PendingRequest {
 export class EmbedClient implements Embedder {
   readonly dimensions: number;
   readonly modelTag: string;
+  readonly noiseFloor: number;
 
   private readonly deviceChain: string[];
 
   constructor(private readonly model: EmbeddingModelDef, acceleration: MemoryAcceleration = 'auto') {
     this.dimensions = model.dimensions;
     this.modelTag = model.modelTag;
+    this.noiseFloor = model.noiseFloor;
     this.deviceChain = resolveDeviceChain(acceleration);
   }
 
@@ -137,6 +139,7 @@ export class EmbedClient implements Embedder {
       modelDir,
       wasmDir,
       dtype: this.model.dtype,
+      pooling: this.model.pooling,
       queryPrefix: this.model.queryPrefix,
       devices: this.deviceChain,
     });

@@ -88,9 +88,11 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
         searchIds={['memory.indexingEnabled', 'memory.semanticEnabled', 'memory.embeddingModel']}
       />
       <p className="text-sm text-fg-muted leading-relaxed">
-        Search and recall past agent conversations - keyword by default, plus optional on-device
-        semantic matching. Powers the Quick Find "Conversations" group for you and the recall tool
-        for agents. Everything runs locally with no API key; nothing leaves your machine.
+        Search and recall past agent conversations - in Quick Find for you, and via the recall tool
+        for agents. Only structured conversation turns are indexed (never raw terminal noise),
+        automatically: new sessions as they finish, older history backfilled over time. Keyword
+        search is instant and on by default; semantic adds meaning-based matching with a small
+        on-device model. Everything runs locally with no API key, across one project or all at once.
       </p>
 
       <SettingToggleRow
@@ -125,18 +127,9 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
             </Select>
           </SettingRow>
 
-          <SettingRow {...settingProps('memory.acceleration')}>
-            <Select
-              value={acceleration}
-              onChange={(event) => updateGlobal({ memory: { acceleration: event.target.value as MemoryAcceleration } })}
-              data-testid="memory-acceleration-select"
-            >
-              <option value="auto">Auto</option>
-              <option value="gpu">GPU</option>
-              <option value="cpu">CPU</option>
-            </Select>
-          </SettingRow>
-
+          {/* The model card follows its own "Search quality" dropdown: that
+              dropdown selects the model, and the card shows its size / download
+              / ready state, so they belong together. */}
           {model ? (
             <div
               className="flex items-center justify-between gap-2 rounded border border-edge bg-surface-hover px-3 py-2 text-xs"
@@ -173,6 +166,18 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
             </div>
           ) : null}
 
+          <SettingRow {...settingProps('memory.acceleration')}>
+            <Select
+              value={acceleration}
+              onChange={(event) => updateGlobal({ memory: { acceleration: event.target.value as MemoryAcceleration } })}
+              data-testid="memory-acceleration-select"
+            >
+              <option value="auto">Auto</option>
+              <option value="gpu">GPU</option>
+              <option value="cpu">CPU</option>
+            </Select>
+          </SettingRow>
+
           {platformNote ? (
             <div className="text-xs text-fg-muted px-1" data-testid="semantic-status">
               {platformNote}
@@ -205,15 +210,6 @@ export function MemoryTab({ globalConfig }: { globalConfig: AppConfig }) {
           </button>
         </div>
       ) : null}
-
-      <SectionHeader label="How It Works" />
-      <p className="text-sm text-fg-muted leading-relaxed">
-        Only your structured conversation turns are indexed (not raw terminal noise), and it happens
-        automatically in the background: new sessions are indexed as they finish, and your existing
-        history is backfilled over time. Keyword search works instantly with no download; Semantic
-        search adds a small on-device model. You can search one project or all of them at once, so a
-        fix from one resurfaces in another.
-      </p>
     </div>
   );
 }

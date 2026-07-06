@@ -21,28 +21,36 @@ files:
   - "node_modules/sherpa-onnx-node/**"
   - "node_modules/sherpa-onnx-*/**"
   # Conversation-memory retrieval: sqlite-vec loadable extension (per-platform
-  # binary packages) + transformers.js and its bundled onnxruntime-web wasm.
-  # onnxruntime-node is deliberately NOT shipped: the embed worker pins the
-  # wasm backend (device: 'wasm'), so the ~50MB+ native runtime is unused.
+  # binary packages) + transformers.js. The embed worker runs on the NATIVE
+  # onnxruntime-node execution providers (DirectML / WebGPU / CPU) because
+  # transformers.js v4 dropped the browser 'wasm' backend in Node, so
+  # onnxruntime-node and its native binaries (onnxruntime_binding.node +
+  # onnxruntime.dll + DirectML.dll) must ship and be unpacked. onnxruntime-web is
+  # retained only as transformers' optional peer; its wasm path is now unused
+  # (follow-up: drop it once the packaged smoke test confirms onnxruntime-node is
+  # the sole backend).
   - "node_modules/sqlite-vec/**"
   - "node_modules/sqlite-vec-*/**"
   - "node_modules/@huggingface/transformers/**"
+  - "node_modules/onnxruntime-node/**"
   - "node_modules/onnxruntime-web/**"
   - "!node_modules/better-sqlite3/{src,deps}/**"
   - "!node_modules/better-sqlite3/binding.gyp"
   - "!node_modules/node-pty/{src,scripts,deps,third_party}/**"
-  - "!node_modules/onnxruntime-node/**"
   - "!**/*.map"
 
 asar: true
 asarUnpack:
   - "node_modules/node-pty/prebuilds/**"
   - "node_modules/sherpa-onnx-*/**"
-  # SQLite dlopen cannot read a loadable extension inside an asar archive, and
-  # the ort .wasm files must be real on-disk files; the embed worker runs from
-  # the unpacked tree so it resolves these via plain node_modules resolution.
+  # SQLite dlopen cannot read a loadable extension inside an asar archive, and a
+  # native .node addon (plus its sibling onnxruntime.dll / DirectML.dll on
+  # Windows) cannot be dlopen'd from inside asar either; the embed worker runs
+  # from the unpacked tree so it resolves sqlite-vec, transformers, and
+  # onnxruntime-node via plain node_modules resolution.
   - "node_modules/sqlite-vec-*/**"
   - "node_modules/@huggingface/transformers/**"
+  - "node_modules/onnxruntime-node/**"
   - "node_modules/onnxruntime-web/**"
   - ".vite/build/embed-worker.js"
   - ".vite/build/event-bridge.js"

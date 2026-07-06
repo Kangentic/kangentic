@@ -32,7 +32,8 @@ export function registerSearchHandlers(context: IpcContext): void {
       : allProjects.filter((project) => project.id === request.currentProjectId);
     if (projects.length === 0) return [];
 
-    const indexingEnabled = context.configManager.load().memory?.indexingEnabled !== false;
+    const memoryConfig = context.configManager.load().memory;
+    const indexingEnabled = memoryConfig?.indexingEnabled !== false;
     // Smart mode adds the semantic/hybrid path; the embedder is null when the
     // semantic layer is off or unavailable, so the search stays lexical.
     const embedder = request.mode === 'smart' ? retrievalService.getEmbedder(context) : null;

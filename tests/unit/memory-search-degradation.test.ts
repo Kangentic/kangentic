@@ -49,6 +49,9 @@ type EmbedderMode = 'ok' | 'null' | 'slow' | 'throw';
 class DeterministicFakeEmbedder implements Embedder {
   readonly dimensions: number;
   readonly modelTag = 'fake-embedder@test';
+  // 0 disables the relevance filter, so these degradation tests assert purely on
+  // the embedder's ok/null/slow/throw behavior, not on cosine calibration.
+  readonly noiseFloor = 0;
   readonly embedCalls: Array<{ texts: string[]; opts?: { timeoutMs?: number } }> = [];
 
   constructor(
