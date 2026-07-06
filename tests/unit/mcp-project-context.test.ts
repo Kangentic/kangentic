@@ -37,6 +37,12 @@ vi.mock('../../src/shared/ipc-channels', () => ({
   IPC: new Proxy({}, { get: (_target, prop) => String(prop) }),
 }));
 
+// sendToRenderer (invoked when a callback fires) mirrors into the IPC traffic
+// recorder; stub it so invoking a callback stays a pure unit test.
+vi.mock('../../src/main/diagnostics/ipc-recorder', () => ({
+  recordPush: vi.fn(),
+}));
+
 // RequestResolver is imported by mcp-project-context and called with `new`.
 // Track constructor calls via a hoisted spy variable that the test body can
 // inspect after each call.
@@ -52,7 +58,7 @@ vi.mock('../../src/main/agent/mcp-http/project-resolver', () => {
 
 import { createRequestResolver, buildCommandContextForProject } from '../../src/main/agent/mcp-project-context';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
-import type { Project } from '../../src/shared/types';
+import type { Project, Swimlane } from '../../src/shared/types';
 
 function makeProject(overrides: Partial<Project> = {}): Project {
   return {
@@ -180,5 +186,72 @@ describe('buildCommandContextForProject', () => {
     expect(typeof context!.onSwimlaneUpdated).toBe('function');
     expect(typeof context!.onBacklogChanged).toBe('function');
     expect(typeof context!.onLabelColorsChanged).toBe('function');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// onSwimlaneUpdated write-back
+//
+// Regression lock: an MCP update_column edits a swimlane row and fires
+// onSwimlaneUpdated. That callback must persist the team-shared column fields
+// to kangentic.json (via BoardConfigManager.writeBackForProject), not only push
+// the renderer notification - otherwise an agent's model/effort/permission edit
+// is lost on restart and never reaches teammates via git. It must be
+// project-scoped so a cross-project update_column reaches the right file.
+// ---------------------------------------------------------------------------
+
+describe('buildCommandContextForProject - onSwimlaneUpdated write-back', () => {
+  const PROJECT_PATH = '/projects/example';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function makeWriteBackContext() {
+    const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
+    const send = vi.fn();
+    const writeBackForProject = vi.fn();
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      mainWindow: { isDestroyed: () => false, webContents: { send } },
+      boardConfigManager: { writeBackForProject },
+    } as unknown as IpcContext;
+    return { ipcContext, send, writeBackForProject };
+  }
+
+  // onSwimlaneUpdated only reads id + name off the swimlane.
+  const fakeSwimlane = (): Swimlane => ({ id: 'lane-1', name: 'To Do' }) as unknown as Swimlane;
+
+  it('writes back the targeted project id and path (project-scoped)', () => {
+    const { ipcContext, writeBackForProject } = makeWriteBackContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+    expect(context).not.toBeNull();
+
+    context!.onSwimlaneUpdated(fakeSwimlane());
+
+    expect(writeBackForProject).toHaveBeenCalledTimes(1);
+    expect(writeBackForProject).toHaveBeenCalledWith(DEFAULT_ID, PROJECT_PATH);
+  });
+
+  it('still notifies the renderer (write-back is additive)', () => {
+    const { ipcContext, send } = makeWriteBackContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+
+    context!.onSwimlaneUpdated(fakeSwimlane());
+
+    // The ipc-channels mock is a Proxy that returns each key as its own string,
+    // so the channel arrives as the literal 'SWIMLANE_UPDATED_BY_AGENT'.
+    expect(send).toHaveBeenCalledWith(
+      'SWIMLANE_UPDATED_BY_AGENT', 'lane-1', 'To Do', DEFAULT_ID,
+    );
+  });
+
+  it('does not write back for non-swimlane callbacks (onBacklogChanged)', () => {
+    const { ipcContext, writeBackForProject } = makeWriteBackContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+
+    context!.onBacklogChanged();
+
+    expect(writeBackForProject).not.toHaveBeenCalled();
   });
 });

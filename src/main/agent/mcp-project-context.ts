@@ -110,6 +110,13 @@ export function buildCommandContextForProject(
 
     onSwimlaneUpdated: (swimlane) => {
       sendToRenderer(ipcContext.mainWindow, IPC.SWIMLANE_UPDATED_BY_AGENT, swimlane.id, swimlane.name, projectId);
+      // Persist team-shared column fields (color, model/effort/permission
+      // overrides, auto-command, ...) to kangentic.json so an agent's column
+      // edit survives a restart and reaches teammates via git. Project-scoped
+      // so a cross-project update_column reaches the right project's file, not
+      // just the currently-active one. Best-effort: writeBackForProject never
+      // throws.
+      ipcContext.boardConfigManager.writeBackForProject(projectId, projectPath);
     },
 
     onBacklogChanged: () => {
