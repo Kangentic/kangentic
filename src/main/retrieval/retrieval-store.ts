@@ -297,24 +297,41 @@ export class RetrievalStore {
 
   // --- Read path -----------------------------------------------------------
 
-  searchLexical(matchQuery: string, limit: number): LexicalHit[] {
+  /** `taskId`, when given, restricts the FTS match itself to that task's chunks
+   *  (a JOIN against memory_chunks, not a post-filter) so ranking and `limit`
+   *  apply within the task instead of discarding most of a small result set
+   *  after the fact. */
+  searchLexical(matchQuery: string, limit: number, taskId?: string): LexicalHit[] {
+    const taskFilter = taskId ? 'AND memory_chunks.task_id = ?' : '';
+    const params = taskId ? [matchQuery, taskId, limit] : [matchQuery, limit];
     const rows = this.db
       .prepare(
         `SELECT memory_chunks_fts.rowid AS id,
                 snippet(memory_chunks_fts, 0, '', '', '…', 12) AS snip,
                 bm25(memory_chunks_fts) AS score
          FROM memory_chunks_fts
-         WHERE memory_chunks_fts MATCH ?
+         JOIN memory_chunks ON memory_chunks.id = memory_chunks_fts.rowid
+         WHERE memory_chunks_fts MATCH ? ${taskFilter}
          ORDER BY score
          LIMIT ?`,
       )
-      .all(matchQuery, limit) as Array<{ id: number; snip: string; score: number }>;
+      .all(...params) as Array<{ id: number; snip: string; score: number }>;
     return rows.map((row, index) => ({
       chunkId: row.id,
       rank: index + 1,
       bm25: row.score,
       snippet: row.snip,
     }));
+  }
+
+  /** Every chunk id belonging to one task, for scoping a semantic (vec0) search
+   *  down to that task after an over-fetched KNN query (vec0 has no per-query
+   *  WHERE filter, so this narrows the candidate set after the fact instead). */
+  getChunkIdsForTask(taskId: string): Set<number> {
+    const rows = this.db
+      .prepare('SELECT id FROM memory_chunks WHERE task_id = ?')
+      .all(taskId) as Array<{ id: number }>;
+    return new Set(rows.map((row) => row.id));
   }
 
   getChunks(ids: number[]): StoredChunk[] {

@@ -49,7 +49,7 @@ export type ConversationEvent =
       edit: FileEdit;
       result: ToolOutcome | null;
     }
-  | { type: 'system'; uuid: string; ts: number; subtype: 'compaction' | 'command' | 'command_output'; text: string };
+  | { type: 'system'; uuid: string; ts: number; subtype: 'compaction' | 'command' | 'command_output' | 'session_boundary'; text: string };
 
 /**
  * Flatten a structured transcript into the normalized event stream. Tool results

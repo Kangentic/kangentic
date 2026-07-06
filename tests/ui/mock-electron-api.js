@@ -2464,6 +2464,7 @@
           entries: [],
           degraded: false,
           unavailableReason: 'file_missing',
+          sessions: [],
         });
       },
       listSessions: function (taskId, _projectId) {

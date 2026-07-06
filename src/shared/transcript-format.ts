@@ -1,4 +1,4 @@
-import type { TranscriptEntry } from './types';
+import type { TranscriptEntry, TranscriptBlock } from './types';
 import { sanitizeTranscriptText } from './ansi-strip';
 
 /**
@@ -57,38 +57,11 @@ export function transcriptToMarkdown(entries: TranscriptEntry[]): string {
       continue;
     }
     // assistant
-    const parts: string[] = [];
-    parts.push(entry.model ? `## Assistant (${entry.model})` : '## Assistant');
-    parts.push('');
     for (const block of entry.blocks) {
-      if (block.type === 'text') {
-        parts.push(sanitizeTranscriptText(block.text).trim());
-        parts.push('');
-      } else if (block.type === 'thinking') {
-        parts.push('> _thinking_');
-        parts.push('');
-        parts.push(`> ${sanitizeTranscriptText(block.text).trim().split('\n').join('\n> ')}`);
-        parts.push('');
-      } else if (block.type === 'tool_use') {
-        renderedUseIds.add(block.id);
-        parts.push(`**Tool:** \`${block.name}\``);
-        parts.push('');
-        parts.push('```json');
-        parts.push(safeJson(block.input));
-        parts.push('```');
-        const result = resultsByUseId.get(block.id);
-        if (result) {
-          parts.push('');
-          parts.push(result.isError ? '**Error:**' : '**Result:**');
-          parts.push('');
-          parts.push('```');
-          parts.push(sanitizeTranscriptText(result.content));
-          parts.push('```');
-        }
-        parts.push('');
-      }
+      if (block.type === 'tool_use') renderedUseIds.add(block.id);
     }
-    sections.push(parts.join('\n').trimEnd());
+    const heading = entry.model ? `## Assistant (${entry.model})` : '## Assistant';
+    sections.push(`${heading}\n\n${renderAssistantBlocksMarkdown(entry.blocks, resultsByUseId)}`);
   }
 
   // Surface orphaned tool results (a tool_use id never emitted in this file)
@@ -272,7 +245,7 @@ export function renderTranscriptBudgeted(
 
 /** Render a `kind: 'system'` transcript entry as a markdown section. */
 function renderSystemEntry(
-  subtype: 'compaction' | 'command' | 'command_output',
+  subtype: 'compaction' | 'command' | 'command_output' | 'session_boundary',
   text: string,
 ): string {
   const clean = sanitizeTranscriptText(text).trim();
@@ -281,6 +254,12 @@ function renderSystemEntry(
   }
   if (subtype === 'command') {
     return `\`[command: ${clean}]\``;
+  }
+  if (subtype === 'session_boundary') {
+    // Already a ready-to-display label (e.g. "New session - Claude Code
+    // (isolated: Executing)"), unlike the other subtypes whose text is raw
+    // payload behind a canned label.
+    return `## ${clean}`;
   }
   // command_output
   return `**Command output:**\n\n\`\`\`\n${clean}\n\`\`\``;
@@ -292,6 +271,65 @@ function safeJson(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+/**
+ * Render one tool call (its name, input, and paired result if any) as a
+ * markdown block: a fenced JSON input under a `**Tool:**` label, and a
+ * fenced result/error section beneath it. Used by `renderAssistantBlocksMarkdown`
+ * per tool_use block, so a copied message stays human-readable rather than a
+ * raw JSON dump.
+ */
+export function renderToolCallMarkdown(
+  name: string,
+  input: unknown,
+  result: { content: string; isError: boolean } | null,
+): string {
+  const parts: string[] = [];
+  parts.push(`**Tool:** \`${name}\``);
+  parts.push('');
+  parts.push('```json');
+  parts.push(safeJson(input));
+  parts.push('```');
+  if (result) {
+    parts.push('');
+    parts.push(result.isError ? '**Error:**' : '**Result:**');
+    parts.push('');
+    parts.push('```');
+    parts.push(sanitizeTranscriptText(result.content));
+    parts.push('```');
+  }
+  return parts.join('\n');
+}
+
+/**
+ * Render an assistant turn's blocks (text, thinking, tool calls) as one
+ * markdown string, matching what `transcriptToMarkdown` renders per turn (minus
+ * the `## Assistant` document heading). The single source of truth for a
+ * message's "copy" button, so a tool-calling turn copies its tool calls and
+ * results too, not just its prose text - a turn made entirely of tool calls
+ * would otherwise have nothing to copy at all.
+ */
+export function renderAssistantBlocksMarkdown(
+  blocks: TranscriptBlock[],
+  resultsByUseId: Map<string, { content: string; isError: boolean }>,
+): string {
+  const parts: string[] = [];
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      parts.push(sanitizeTranscriptText(block.text).trim());
+      parts.push('');
+    } else if (block.type === 'thinking') {
+      parts.push('> _thinking_');
+      parts.push('');
+      parts.push(`> ${sanitizeTranscriptText(block.text).trim().split('\n').join('\n> ')}`);
+      parts.push('');
+    } else if (block.type === 'tool_use') {
+      parts.push(renderToolCallMarkdown(block.name, block.input, resultsByUseId.get(block.id) ?? null));
+      parts.push('');
+    }
+  }
+  return parts.join('\n').trimEnd();
 }
 
 /** Map a tool_use id to its tool_result content, the way the renderer inlines it. */

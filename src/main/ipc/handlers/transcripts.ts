@@ -3,7 +3,7 @@ import { IPC } from '../../../shared/ipc-channels';
 import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { agentRegistry } from '../../agent/agent-registry';
-import { resolveSessionTranscript } from '../../agent/transcript-service';
+import { resolveTaskTranscript } from '../../agent/transcript-service';
 import type {
   ConversationSessionMeta,
   TranscriptGetRequest,
@@ -16,9 +16,12 @@ import type { IpcContext } from '../ipc-context';
  * accept an explicit interaction-time projectId (a conversation hit can target
  * another project) but fall back to the ambient current project.
  *
- * The heavy lifting - session resolution, live-parse-vs-index fallback, and
- * per-span truncation - lives in the shared `resolveSessionTranscript` service,
- * which the MCP get_transcript handler will also use.
+ * TRANSCRIPT_GET always returns a task's ENTIRE lifecycle - every session it
+ * has ever accumulated, stitched into one timeline - not just the one session
+ * id passed in (that id only resolves which task to show). The heavy lifting
+ * lives in the shared `resolveTaskTranscript` service. The MCP get_transcript
+ * tool deliberately stays per-session (an agent inspecting one specific run)
+ * and calls the single-session `resolveSessionTranscript` instead.
  */
 export function registerTranscriptHandlers(context: IpcContext): void {
   ipcMain.handle(
@@ -37,11 +40,12 @@ export function registerTranscriptHandlers(context: IpcContext): void {
         entries: [],
         degraded: false,
         unavailableReason: 'file_missing',
+        sessions: [],
       };
       if (!projectId) return emptyResponse;
 
       const db = getProjectDb(projectId);
-      const resolved = await resolveSessionTranscript(db, request.sessionId);
+      const resolved = await resolveTaskTranscript(db, request.sessionId);
       if (!resolved) return emptyResponse;
 
       return {
@@ -56,6 +60,7 @@ export function registerTranscriptHandlers(context: IpcContext): void {
         entries: resolved.entries,
         degraded: resolved.degraded,
         unavailableReason: resolved.unavailableReason,
+        sessions: resolved.sessions,
       };
     },
   );

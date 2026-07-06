@@ -147,10 +147,12 @@ interface TaskDetailHeaderProps {
 }
 
 /**
- * Open the conversation viewer for a task's newest session. Prefers the live
- * session (readily available); otherwise resolves the newest via listSessions.
- * The viewer's own picker covers switching between a task's sessions. Shared by
- * the header's Conversation pill and the kebab "View conversation" item.
+ * Open the conversation viewer for this task. The anchor session id only
+ * resolves WHICH task to show (`transcripts.get` always returns that task's
+ * entire lifecycle regardless of which of its sessions is passed), so any
+ * valid session id works - prefer the live one (readily available), otherwise
+ * resolve the newest via listSessions. Shared by the header's Conversation
+ * pill and the kebab "View conversation" item.
  */
 async function openTaskConversation(taskId: string): Promise<void> {
   const projectId = useProjectStore.getState().currentProject?.id ?? null;

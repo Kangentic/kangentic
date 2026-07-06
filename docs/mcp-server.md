@@ -296,6 +296,8 @@ Defaults to scoping the search to the active project. Pass `scope: "all"` to wid
 
 Conversation hits come from the structured transcript index (`memory_chunks` FTS5 + the sqlite-vec embeddings for semantic ranking), not the raw scrollback blob; they appear only when `memory.indexingEnabled` is on (the default), and rank semantically only when the embedding layer (`memory.semanticEnabled`) is also on. Per-kind hit caps prevent runaway results: 30 tasks, 20 backlog items, 50 session events, 10 projects, 20 conversations.
 
+Pass `taskId` to restrict conversation hits to one task's history - e.g. "what was discussed in task #286 about X, and how does that affect the current work?" Resolve the display `"#N"` to its internal id first with `kangentic_find_task` or `kangentic_get_current_task`. `taskId` only scopes conversation hits; task/backlog/session-event/project hits are unaffected. Lexical matching filters by task in the FTS query itself; semantic matching over-fetches a wider vec0 candidate set and narrows it to the task afterward (sqlite-vec has no per-query `WHERE` filter).
+
 This tool consolidates what were previously two tools (`kangentic_search_everything` + a separate `kangentic_recall`) into one, per Anthropic's tool-design guidance that related retrieval operations belong in a single tool with a parameter rather than several overlapping tools.
 
 | Parameter | Type | Required | Description |
@@ -303,6 +305,7 @@ This tool consolidates what were previously two tools (`kangentic_search_everyth
 | `query` | string | Yes | Search keyword or phrase, or (in `mode:"hybrid"`) a natural-language description of what you are looking for. Case-insensitive; empty queries return no results. |
 | `scope` | `'current' \| 'all'` | No | `"current"` (default) searches only the active or `project`-routed project. `"all"` widens to every registered project. Ignored (forced to `"current"`) when `project` is set. |
 | `mode` | `'keyword' \| 'hybrid'` | No | How conversations are matched. `"hybrid"` (default) fuses keyword + semantic embedding; `"keyword"` is lexical-only. Only affects the conversation corpus. |
+| `taskId` | string | No | Restrict conversation hits to this task's internal id (not the display `"#N"`). Other hit kinds are unaffected. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. Forces `scope: "current"`. |
 
 ### kangentic_promote_backlog

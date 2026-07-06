@@ -3,6 +3,7 @@ import { SessionRepository } from '../db/repositories/session-repository';
 import { agentRegistry } from './agent-registry';
 import { RetrievalStore } from '../retrieval/retrieval-store';
 import type {
+  ConversationSessionMeta,
   SessionRecord,
   TranscriptEntry,
   TranscriptSource,
@@ -22,6 +23,22 @@ export interface ResolvedTranscript {
   entries: TranscriptEntry[];
   degraded: boolean;
   unavailableReason?: TranscriptUnavailableReason;
+}
+
+/** A task's entire lifecycle, stitched from every session it has ever
+ *  accumulated. The "latest" fields (record/agentName/source/sourcePath)
+ *  describe the newest contributing session, since that is the one live
+ *  polling watches; `entries` and `sessions` span all of them. */
+export interface ResolvedTaskTranscript {
+  record: SessionRecord;
+  taskTitle: string;
+  agentName: string;
+  source: TranscriptSource;
+  sourcePath: string | null;
+  entries: TranscriptEntry[];
+  degraded: boolean;
+  unavailableReason?: TranscriptUnavailableReason;
+  sessions: ConversationSessionMeta[];
 }
 
 function clampSpan(text: string): string {
@@ -143,5 +160,107 @@ export async function resolveSessionTranscript(
     entries: [],
     degraded: false,
     unavailableReason: adapter?.parseTranscript ? 'no_agent_session_id' : 'unsupported_agent',
+  };
+}
+
+function toSessionMeta(record: SessionRecord, agentName: string): ConversationSessionMeta {
+  return {
+    sessionId: record.id,
+    agentName,
+    startedAt: record.started_at,
+    exitedAt: record.exited_at,
+    isolatedSwimlaneId: record.isolated_swimlane_id,
+    status: record.status,
+  };
+}
+
+/**
+ * Resolve a TASK's entire lifecycle: every session it has ever accumulated
+ * (a model switch stays within one session, but an agent change, an isolated
+ * swimlane move, or an explicit new spawn each create a new `sessions` row),
+ * stitched into one chronological timeline with a `session_boundary` divider
+ * between sessions. This is unconditional, not a user setting - "the
+ * conversation for this task" always means its full history end to end,
+ * regardless of what changed mid-task (model, agent, isolation).
+ *
+ * `anchorSessionId` resolves only WHICH task to show; the returned entries
+ * span every session sharing that task_id, oldest first, each assistant entry
+ * stamped with the agentName of the session it came from (the response's own
+ * top-level agentName only describes the latest one). A session with no
+ * task_id (a rare orphan/transient record) has nothing to unify across, so it
+ * degrades to just its own entries. Returns null only when the anchor session
+ * id resolves to no record at all.
+ */
+export async function resolveTaskTranscript(
+  db: Database.Database,
+  anchorSessionId: string,
+): Promise<ResolvedTaskTranscript | null> {
+  const sessionRepo = new SessionRepository(db);
+  const anchor = sessionRepo.findByAnyId(anchorSessionId);
+  if (!anchor) return null;
+
+  const sessions = anchor.task_id
+    ? sessionRepo.listForTaskNewestFirst(anchor.task_id).reverse() // oldest first
+    : [anchor];
+
+  // Swimlane names for a readable boundary message ("isolated: Executing").
+  const swimlaneIds = [
+    ...new Set(
+      sessions
+        .map((session) => session.isolated_swimlane_id)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  const swimlaneNames = new Map<string, string>();
+  if (swimlaneIds.length > 0) {
+    const placeholders = swimlaneIds.map(() => '?').join(',');
+    const rows = db
+      .prepare(`SELECT id, name FROM swimlanes WHERE id IN (${placeholders})`)
+      .all(...swimlaneIds) as Array<{ id: string; name: string }>;
+    for (const row of rows) swimlaneNames.set(row.id, row.name);
+  }
+
+  const entries: TranscriptEntry[] = [];
+  const sessionMetas: ConversationSessionMeta[] = [];
+  let anyDegraded = false;
+  let latest: ResolvedTranscript | null = null;
+
+  for (const [index, session] of sessions.entries()) {
+    const resolved = await resolveSessionTranscript(db, session.id);
+    if (!resolved) continue;
+    latest = resolved;
+    anyDegraded = anyDegraded || resolved.degraded;
+    sessionMetas.push(toSessionMeta(session, resolved.agentName));
+
+    if (index > 0) {
+      const swimlaneLabel = session.isolated_swimlane_id
+        ? ` (isolated: ${swimlaneNames.get(session.isolated_swimlane_id) ?? 'unknown column'})`
+        : '';
+      entries.push({
+        kind: 'system',
+        uuid: `session-boundary-${session.id}`,
+        ts: new Date(session.started_at).getTime(),
+        subtype: 'session_boundary',
+        text: `New session - ${resolved.agentName}${swimlaneLabel}`,
+      });
+    }
+
+    for (const entry of resolved.entries) {
+      entries.push(entry.kind === 'assistant' ? { ...entry, agentName: resolved.agentName } : entry);
+    }
+  }
+
+  if (!latest) return null;
+
+  return {
+    record: latest.record,
+    taskTitle: latest.taskTitle,
+    agentName: latest.agentName,
+    source: latest.source,
+    sourcePath: latest.sourcePath,
+    entries,
+    degraded: anyDegraded,
+    unavailableReason: latest.unavailableReason,
+    sessions: sessionMetas,
   };
 }

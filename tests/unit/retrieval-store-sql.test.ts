@@ -227,6 +227,40 @@ describe('RetrievalStore.searchLexical', () => {
     const { db } = makeRecordingDb({ all: () => [] });
     expect(new RetrievalStore(db).searchLexical('"nope"*', 32)).toEqual([]);
   });
+
+  it('joins against memory_chunks and binds taskId when scoping to one task', () => {
+    const { db, calls } = makeRecordingDb({
+      all: () => [{ id: 9, snip: 'delta', score: -2.0 }],
+    });
+
+    const hits = new RetrievalStore(db).searchLexical('"foo"*', 32, 'task-42');
+
+    expect(hits).toEqual([{ chunkId: 9, rank: 1, bm25: -2.0, snippet: 'delta' }]);
+    const matchCall = calls.find((call) => call.sql.includes('MATCH'));
+    expect(matchCall?.sql).toContain('JOIN memory_chunks ON memory_chunks.id = memory_chunks_fts.rowid');
+    expect(matchCall?.sql).toContain('memory_chunks.task_id = ?');
+    expect(matchCall?.args).toEqual(['"foo"*', 'task-42', 32]);
+  });
+});
+
+describe('RetrievalStore.getChunkIdsForTask', () => {
+  it('returns the set of chunk ids for one task, binding taskId', () => {
+    const { db, calls } = makeRecordingDb({
+      all: () => [{ id: 1 }, { id: 2 }, { id: 3 }],
+    });
+
+    const ids = new RetrievalStore(db).getChunkIdsForTask('task-42');
+
+    expect(ids).toEqual(new Set([1, 2, 3]));
+    const selectCall = calls.find((call) => call.method === 'all');
+    expect(selectCall?.sql).toContain('WHERE task_id = ?');
+    expect(selectCall?.args).toEqual(['task-42']);
+  });
+
+  it('returns an empty set when the task has no chunks', () => {
+    const { db } = makeRecordingDb({ all: () => [] });
+    expect(new RetrievalStore(db).getChunkIdsForTask('task-none')).toEqual(new Set());
+  });
 });
 
 const storedRow = {

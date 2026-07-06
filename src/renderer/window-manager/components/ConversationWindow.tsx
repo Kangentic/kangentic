@@ -1,12 +1,15 @@
 /**
  * Conversation viewer, hosted inside a managed window on the board task-detail
- * layer. Its `anchor` is the Kangentic session id that opened it.
+ * layer. Its `anchor` is the Kangentic session id that opened it, used only to
+ * resolve which task to show - `transcripts.get` always returns that task's
+ * ENTIRE lifecycle (every session it has ever accumulated, stitched into one
+ * timeline), regardless of which of its sessions the anchor points at. There
+ * is deliberately no session picker: which session shows is not a setting.
  *
- * Fetches the structured transcript for the picked session directly via
- * `window.electronAPI.transcripts.get` (precedent: SessionSummaryPanel calls the
- * IPC bridge directly), renders it through the pure `ConversationView`, and
- * offers a session picker (when the task has more than one session), an
- * "Open task" jump, and a "Copy as Markdown" export.
+ * Fetches the structured transcript directly via `window.electronAPI.transcripts.get`
+ * (precedent: SessionSummaryPanel calls the IPC bridge directly), renders it
+ * through the pure `ConversationView`, and offers an "Open task" jump and a
+ * "Copy as Markdown" export.
  *
  * The title bar reuses the same panel.* keybindings + structural-Escape pattern
  * as TaskDetailWindow (gated on `isFocused`); it adds no new KEYBINDINGS entries.
@@ -22,14 +25,12 @@ import { useKeybinding } from '../../hooks/useKeybinding';
 import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
 import { WindowLayoutMenu } from '../../components/dialogs/WindowLayoutMenu';
 import { KebabMenu, KebabMenuItem } from '../../components/KebabMenu';
-import { Select } from '../../components/settings/shared';
 import { HeaderActionButton } from '../../components/HeaderActionButton';
 import { ConversationView } from '../../components/conversation/ConversationView';
-import { formatShortDateTime } from '../../lib/datetime';
 import { transcriptToMarkdown } from '../../../shared/transcript-format';
 import { useLayerStore } from '../context';
 import type { ManagedWindow } from '../store/types';
-import type { TranscriptGetResponse, ConversationSessionMeta } from '../../../shared/types';
+import type { TranscriptGetResponse } from '../../../shared/types';
 
 interface ConversationWindowProps {
   managedWindow: ManagedWindow;
@@ -80,20 +81,23 @@ export function ConversationWindow({
   const isTiled = useStore((state) => state.windows[managedWindow.id]?.state === 'tiled');
   const windowCount = useStore((state) => Object.keys(state.windows).length);
 
-  // Which session's transcript is shown. Defaults to the window's anchor; the
-  // session picker re-points it.
-  const [pickedSessionId, setPickedSessionId] = useState(managedWindow.anchor);
   const [response, setResponse] = useState<TranscriptGetResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [sessionList, setSessionList] = useState<ConversationSessionMeta[]>([]);
   const [copied, setCopied] = useState(false);
+  const [isHovering, setIsHovering] = useState(false);
 
-  // Fetch the transcript for the picked session (on mount + when the picker moves).
+  // Auto-follow new turns only when the user is neither focused on nor
+  // hovering this window - otherwise a live poll would yank them away from
+  // whatever part of the transcript they are reading.
+  const autoFollowNewMessages = !isFocused && !isHovering;
+
+  // Fetch the transcript on mount. The anchor only resolves WHICH task to
+  // show - the response always spans that task's entire lifecycle.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     window.electronAPI.transcripts
-      .get({ sessionId: pickedSessionId, projectId: currentProjectId })
+      .get({ sessionId: managedWindow.anchor, projectId: currentProjectId })
       .then((result) => {
         if (cancelled) return;
         setResponse(result);
@@ -107,12 +111,13 @@ export function ConversationWindow({
     return () => {
       cancelled = true;
     };
-  }, [pickedSessionId, currentProjectId]);
+  }, [managedWindow.anchor, currentProjectId]);
 
-  // Live-follow: while the session is still running/queued its transcript can
-  // grow, so silently re-fetch on an interval (no loading spinner). The effect
-  // depends only on the primitive status, so each refresh does not re-arm the
-  // timer; when the session goes non-live the effect re-runs and stops polling.
+  // Live-follow: while the LATEST contributing session is still
+  // running/queued its transcript can grow, so silently re-fetch on an
+  // interval (no loading spinner). The effect depends only on the primitive
+  // status, so each refresh does not re-arm the timer; when the session goes
+  // non-live the effect re-runs and stops polling.
   const sessionStatus = response?.sessionStatus ?? null;
   useEffect(() => {
     const live = sessionStatus === 'running' || sessionStatus === 'queued';
@@ -120,7 +125,7 @@ export function ConversationWindow({
     let cancelled = false;
     const interval = setInterval(() => {
       window.electronAPI.transcripts
-        .get({ sessionId: pickedSessionId, projectId: currentProjectId })
+        .get({ sessionId: managedWindow.anchor, projectId: currentProjectId })
         .then((result) => {
           if (!cancelled) setResponse(result);
         })
@@ -130,28 +135,9 @@ export function ConversationWindow({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [sessionStatus, pickedSessionId, currentProjectId]);
+  }, [sessionStatus, managedWindow.anchor, currentProjectId]);
 
-  // Once we know the owning task, list its sessions so the picker can offer them.
   const taskId = response?.taskId ?? null;
-  useEffect(() => {
-    if (!taskId) {
-      setSessionList([]);
-      return;
-    }
-    let cancelled = false;
-    window.electronAPI.transcripts
-      .listSessions(taskId, currentProjectId)
-      .then((list) => {
-        if (!cancelled) setSessionList(list);
-      })
-      .catch(() => {
-        if (!cancelled) setSessionList([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [taskId, currentProjectId]);
 
   const handleCopyMarkdown = useCallback(() => {
     if (!response) return;
@@ -212,7 +198,12 @@ export function ConversationWindow({
   const activeScrollUuid = managedWindow.anchor === conversationSessionId ? scrollToTurnUuid : null;
 
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden" data-testid="conversation-window">
+    <div
+      className="flex h-full w-full flex-col overflow-hidden"
+      data-testid="conversation-window"
+      onMouseEnter={() => setIsHovering(true)}
+      onMouseLeave={() => setIsHovering(false)}
+    >
       <div
         className="border-b border-edge flex-shrink-0 select-none"
         data-testid="conversation-titlebar"
@@ -228,24 +219,6 @@ export function ConversationWindow({
               {taskTitle}
             </div>
           </div>
-
-          {sessionList.length > 1 && (
-            <Select
-              value={pickedSessionId}
-              onChange={(event) => setPickedSessionId(event.target.value)}
-              className="appearance-none bg-surface-hover border border-edge-input rounded pl-2.5 pr-8 py-1 text-xs text-fg focus:outline-none focus:border-accent"
-              chevronSize={13}
-              chevronClassName="right-2"
-              data-testid="conversation-session-picker"
-            >
-              {sessionList.map((session) => (
-                <option key={session.sessionId} value={session.sessionId}>
-                  {formatShortDateTime(session.startedAt)}
-                  {session.isolatedSwimlaneId ? ' (isolated)' : ''}
-                </option>
-              ))}
-            </Select>
-          )}
 
           {/* Promoted from kebab-only to visible icon buttons (shared component,
               matching TaskDetailHeader's header row): both are common enough in a
@@ -343,6 +316,7 @@ export function ConversationWindow({
           agentName={agentName}
           scrollToTurnUuid={activeScrollUuid}
           onConsumedScroll={consumeScroll}
+          autoFollowNewMessages={autoFollowNewMessages}
         />
       )}
     </div>

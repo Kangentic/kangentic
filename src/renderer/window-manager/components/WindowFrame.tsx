@@ -109,10 +109,16 @@ export function WindowFrame({ managedWindow, containerSize, overlayRef, tiledRec
         // control and not the terminal itself) focuses the terminal, so the focus
         // cue + blinking cursor activate and you can type right away. preventDefault
         // stops the browser's default focus-reset to <body> (the header is not
-        // focusable), so the terminal focus actually sticks.
+        // focusable), so the terminal focus actually sticks. A conversation window
+        // has no terminal to focus at all - its body is read-only, selectable
+        // message text - so this preventDefault has no benefit there and only
+        // side effect: it kills the browser's native text-selection drag before it
+        // can start, since preventDefault on mousedown is exactly what suppresses
+        // that. Excluded the same way .xterm is.
         const target = event.target as HTMLElement;
         if (target.closest('button, a, input, textarea, select, [role="button"], [role="menuitem"], [contenteditable="true"]')) return;
         if (target.closest('.xterm')) return;
+        if (target.closest('[data-testid="conversation-view"]')) return;
         event.preventDefault();
         frameRef.current?.querySelector<HTMLElement>('.xterm-helper-textarea')?.focus();
       }}

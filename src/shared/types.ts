@@ -2626,12 +2626,18 @@ export interface SessionHistoryParseResult {
  */
 export type TranscriptEntry =
   | { kind: 'user'; uuid: string; ts: number; text: string }
-  | { kind: 'assistant'; uuid: string; ts: number; model?: string; blocks: TranscriptBlock[] }
+  // agentName is set only when this entry was stitched into a cross-session
+  // task-level view (resolveTaskTranscript) whose sessions used different
+  // agents - the role badge prefers it over the response's single top-level
+  // agentName, which only describes the latest session. Absent for an
+  // ordinary single-session transcript.
+  | { kind: 'assistant'; uuid: string; ts: number; model?: string; agentName?: string; blocks: TranscriptBlock[] }
   | { kind: 'tool_result'; uuid: string; ts: number; toolUseId: string; content: string; isError?: boolean }
   // Non-conversation events surfaced explicitly instead of being rendered as
   // misleading "## User" turns: conversation-compaction boundaries/summaries,
-  // and slash-command invocations and their local stdout.
-  | { kind: 'system'; uuid: string; ts: number; subtype: 'compaction' | 'command' | 'command_output'; text: string };
+  // slash-command invocations and their local stdout, and (session_boundary)
+  // the seam between two sessions stitched into one task-level view.
+  | { kind: 'system'; uuid: string; ts: number; subtype: 'compaction' | 'command' | 'command_output' | 'session_boundary'; text: string };
 
 export type TranscriptBlock =
   | { type: 'text'; text: string }
@@ -3440,12 +3446,19 @@ export type SearchHitKind = SearchHit['kind'];
 // Conversation viewer (structured transcripts)
 // =============================================================================
 // Backing types for the human-facing conversation viewer, which renders the
-// structured `TranscriptEntry[]` for a single session (parsed live from the
-// agent's native history, or reconstructed from the memory index when the
-// native file has been pruned).
+// structured `TranscriptEntry[]` for a task's ENTIRE lifecycle: every session
+// the task has ever accumulated (a model switch, an agent change, an isolated
+// swimlane move each spin up a distinct sessions row), stitched into one
+// chronological timeline with a `session_boundary` divider between them. This
+// is unconditional - not a user setting - so "the conversation for this task"
+// always means its full history end to end, regardless of what changed
+// mid-task. A session with no task_id (rare - a transient/orphan record) falls
+// back to just its own entries, since there is no task to unify across.
 
 export interface TranscriptGetRequest {
-  /** Kangentic session id (sessions.id) or the agent-native session id. */
+  /** Kangentic session id (sessions.id) or the agent-native session id) -
+   *  used only to resolve WHICH task to show; every session belonging to that
+   *  task is included regardless of which one was passed. */
   sessionId: string;
   /** Interaction-time project id. Read-only, but preferred over the ambient
    *  current project (a conversation hit can target another project). */
@@ -3453,7 +3466,9 @@ export interface TranscriptGetRequest {
 }
 
 /** Where a rendered conversation's content came from. `none` = neither the
- *  native history nor an index fallback was available. */
+ *  native history nor an index fallback was available. For a stitched
+ *  multi-session view this describes the LATEST session (the one live-polling
+ *  cares about); earlier sessions may individually be 'index' or 'none'. */
 export type TranscriptSource = 'live' | 'index' | 'none';
 
 export type TranscriptUnavailableReason =
@@ -3462,23 +3477,33 @@ export type TranscriptUnavailableReason =
   | 'file_missing';
 
 export interface TranscriptGetResponse {
+  /** The LATEST contributing session's id (the one live-polling watches). */
   sessionId: string;
   taskId: string | null;
   taskTitle: string;
+  /** The LATEST contributing session's agent. A session_boundary divider and
+   *  each assistant entry's own agentName (when present) carry the others. */
   agentName: string;
-  /** ISO 8601 session start. */
+  /** ISO 8601 start of the LATEST contributing session. */
   startedAt: string;
-  /** Session record status. `running`/`queued` mean the transcript may still
-   *  grow, so an open viewer live-refreshes; other states are static. Null when
-   *  the session was not found. */
+  /** LATEST contributing session's record status. `running`/`queued` mean the
+   *  transcript may still grow, so an open viewer live-refreshes; other states
+   *  are static. Null when no session was found at all. */
   sessionStatus: SessionRecordStatus | null;
   source: TranscriptSource;
-  /** Located native history file/db path, or null. */
+  /** LATEST contributing session's located native history file/db path, or null. */
   sourcePath: string | null;
+  /** Every session's entries concatenated oldest-first, with a
+   *  `session_boundary` system entry inserted between sessions. A session
+   *  with no task (orphan) has exactly one contributing session: itself. */
   entries: TranscriptEntry[];
-  /** True when content came from the index fallback (block structure lossy). */
+  /** True when ANY contributing session's content came from the index
+   *  fallback (block structure lossy for that stretch). */
   degraded: boolean;
   unavailableReason?: TranscriptUnavailableReason;
+  /** Every session that contributed entries, oldest first - lets the viewer's
+   *  session picker jump to where each one begins in the unified scroll. */
+  sessions: ConversationSessionMeta[];
 }
 
 /** One selectable session in the conversation viewer's session picker. */

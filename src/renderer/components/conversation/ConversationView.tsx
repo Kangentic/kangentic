@@ -18,7 +18,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ChevronRight, ChevronDown, Wrench, MessageSquareWarning, Bot, User, Terminal, Copy, Check } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { MarkdownRenderer } from '../MarkdownRenderer';
-import { buildResultsByUseId } from '../../../shared/transcript-format';
+import { HeaderActionButton } from '../HeaderActionButton';
+import { buildResultsByUseId, renderAssistantBlocksMarkdown } from '../../../shared/transcript-format';
 import { sanitizeTranscriptText } from '../../../shared/ansi-strip';
 import { humanizeModelId } from '../../../shared/model-id';
 import { parseFileEditTool, computeLineDiff, diffStats, type FileEdit } from '../../../shared/tool-diff';
@@ -41,13 +42,9 @@ interface DisplayRow {
   /** The TranscriptEntry uuid; used as the React key AND the scroll-to target. */
   uuid: string;
   entry: TranscriptEntry;
-  /** First row of a same-speaker run: the role header renders here and is omitted
-   *  on the continuations, so a stream of agent turns reads as one grouped block
-   *  instead of repeating "Agent" on every turn/tool call. */
-  startsRun: boolean;
 }
 
-/** Groups consecutive entries by speaker so the role header renders once per run. */
+/** Classifies an entry's speaker for the row box color / system divider. */
 function speakerGroup(entry: TranscriptEntry): 'user' | 'agent' | 'tool' | 'system' {
   switch (entry.kind) {
     case 'user':
@@ -73,6 +70,11 @@ interface ConversationViewProps {
   scrollToTurnUuid: string | null;
   /** Called once the scroll-to signal has been consumed (found or not). */
   onConsumedScroll: () => void;
+  /** Whether new turns arriving (a live session's transcript growing) should
+   *  smoothly auto-scroll to the bottom. The owning window gates this on the
+   *  user NOT focusing or hovering it, so reading an earlier part of the
+   *  transcript is never yanked out from under them. */
+  autoFollowNewMessages: boolean;
 }
 
 export function ConversationView({
@@ -83,6 +85,7 @@ export function ConversationView({
   agentName,
   scrollToTurnUuid,
   onConsumedScroll,
+  autoFollowNewMessages,
 }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
@@ -115,11 +118,9 @@ export function ConversationView({
     return ids;
   }, [entries]);
 
-  // Display rows = every entry except tool_results folded into a card. Each row
-  // records whether it starts a new same-speaker run (for the once-per-run header).
+  // Display rows = every entry except tool_results folded into a card.
   const displayRows = useMemo<DisplayRow[]>(() => {
     const rows: DisplayRow[] = [];
-    let previousSpeaker: string | null = null;
     for (const entry of entries) {
       if (
         entry.kind === 'tool_result'
@@ -128,9 +129,7 @@ export function ConversationView({
       ) {
         continue; // folded into its owning tool_use card
       }
-      const speaker = speakerGroup(entry);
-      rows.push({ uuid: entry.uuid, entry, startsRun: previousSpeaker !== speaker });
-      previousSpeaker = speaker;
+      rows.push({ uuid: entry.uuid, entry });
     }
     return rows;
   }, [entries, ownedToolUseIds]);
@@ -187,10 +186,41 @@ export function ConversationView({
     onConsumedScroll();
   }, [scrollToTurnUuid, displayRows, entries, virtualizer, onConsumedScroll]);
 
+  // Auto-follow: while the window isn't focused/hovered, smoothly scroll to the
+  // bottom whenever the live-refresh poll grows the transcript, so the newest
+  // turn stays in view. Tracks the previous row count in a ref rather than
+  // state so this never fires on the initial load (previousCount starts null)
+  // - only on a genuine append after the view is already showing something.
+  // Declared after the scrollToTurnUuid effect so an explicit turn-navigation
+  // (rare same-tick coincidence with a live append) wins the final scroll
+  // position - effects run in declaration order.
+  const previousRowCountRef = useRef<number | null>(null);
+  useEffect(() => {
+    const previousCount = previousRowCountRef.current;
+    previousRowCountRef.current = displayRows.length;
+    if (previousCount === null) return;
+    if (displayRows.length <= previousCount) return;
+    if (!autoFollowNewMessages) return;
+    virtualizer.scrollToEnd({ behavior: 'smooth' });
+  }, [displayRows.length, autoFollowNewMessages, virtualizer]);
+
   useEffect(() => {
     return () => {
       if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     };
+  }, []);
+
+  // A selection spanning multiple rendered blocks (headings, paragraphs, list
+  // items) gets the browser's default plain-text serialization, which inserts
+  // a blank line at each block boundary crossed - often leaving 1-2 trailing
+  // blank lines when the selection ends mid-block. Collapse runs of 3+
+  // newlines to a plain paragraph break and trim the ends so a multi-block
+  // selection still pastes clean, matching the copy button's tidiness.
+  const handleSelectionCopy = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
+    const text = window.getSelection()?.toString() ?? '';
+    if (!text) return;
+    event.preventDefault();
+    event.clipboardData.setData('text/plain', text.replace(/\n{3,}/g, '\n\n').trim());
   }, []);
 
   // source === 'none': no content at all. Explain why per unavailable reason.
@@ -209,7 +239,11 @@ export function ConversationView({
   const totalSize = virtualizer.getTotalSize();
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col overflow-hidden" data-testid="conversation-view">
+    <div
+      className="flex-1 min-h-0 flex flex-col overflow-hidden"
+      data-testid="conversation-view"
+      onCopy={handleSelectionCopy}
+    >
       {degraded && (
         <div
           className="flex items-center gap-2 px-4 py-2 text-xs text-amber-300 bg-amber-500/10 border-b border-amber-500/20"
@@ -263,7 +297,6 @@ export function ConversationView({
                     <div className={gapClass}>
                       <ConversationRow
                         entry={row.entry}
-                        startsRun={row.startsRun}
                         agentName={agentName}
                         resultsByUseId={resultsByUseId}
                         expandedKeys={expandedKeys}
@@ -274,13 +307,12 @@ export function ConversationView({
                     <div className={gapClass}>
                       <div
                         data-highlighted={isHighlighted ? 'true' : undefined}
-                        className={`group rounded-lg border px-3 py-2 transition-colors duration-700 ${
+                        className={`group/message rounded-lg border px-3 py-2 transition-colors duration-700 ${
                           isHighlighted ? 'border-amber-400/60 bg-amber-400/10' : boxClass
                         }`}
                       >
                         <ConversationRow
                           entry={row.entry}
-                          startsRun={row.startsRun}
                           agentName={agentName}
                           resultsByUseId={resultsByUseId}
                           expandedKeys={expandedKeys}
@@ -316,15 +348,13 @@ function emptyReasonText(reason: TranscriptUnavailableReason | undefined): strin
 
 interface ConversationRowProps {
   entry: TranscriptEntry;
-  /** True when this row opens a new same-speaker run (renders the role header). */
-  startsRun: boolean;
   agentName?: string;
   resultsByUseId: Map<string, { content: string; isError: boolean }>;
   expandedKeys: Set<string>;
   toggleExpanded: (key: string) => void;
 }
 
-function ConversationRow({ entry, startsRun, agentName, resultsByUseId, expandedKeys, toggleExpanded }: ConversationRowProps) {
+function ConversationRow({ entry, agentName, resultsByUseId, expandedKeys, toggleExpanded }: ConversationRowProps) {
   if (entry.kind === 'user') return <UserRow text={entry.text} ts={entry.ts} />;
   if (entry.kind === 'system') return <SystemRow subtype={entry.subtype} text={entry.text} />;
   if (entry.kind === 'tool_result') return <OrphanToolResultRow entry={entry} expandedKeys={expandedKeys} toggleExpanded={toggleExpanded} />;
@@ -333,8 +363,11 @@ function ConversationRow({ entry, startsRun, agentName, resultsByUseId, expanded
       model={entry.model}
       blocks={entry.blocks}
       uuid={entry.uuid}
-      showHeader={startsRun}
-      agentName={agentName}
+      // A stitched task-level view stamps each entry with the agent of the
+      // session it came from (entry.agentName); the component-level prop only
+      // describes the latest session, so it's the fallback for an ordinary
+      // single-session transcript where entries don't carry their own.
+      agentName={entry.agentName ?? agentName}
       ts={entry.ts}
       resultsByUseId={resultsByUseId}
       expandedKeys={expandedKeys}
@@ -378,7 +411,7 @@ function RoleBadge({
  *  and a hover-revealed copy button for that message's own contents. */
 function MessageHeader({ badge, ts, copyText }: { badge?: ReactNode; ts: number; copyText: string }) {
   return (
-    <div className="mb-1 flex items-center gap-2">
+    <div className="mb-2 flex items-center gap-2">
       {badge}
       {ts > 0 && <span className="text-[11px] text-fg-disabled whitespace-nowrap">{formatTime(ts)}</span>}
       <div className="flex-1" />
@@ -387,9 +420,9 @@ function MessageHeader({ badge, ts, copyText }: { badge?: ReactNode; ts: number;
   );
 }
 
-/** Copy button that reveals on message hover (or keyboard focus) and copies that
- *  message's text, flipping to a check for brief confirmation. */
-function CopyIconButton({ text }: { text: string }) {
+/** Shared copy-with-confirmation behavior for the message and tool-call copy
+ *  buttons: writes to the clipboard, flips to a check for 1.5s on success. */
+function useCopyFeedback(text: string): { copied: boolean; handleCopy: () => void } {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const handleCopy = useCallback(() => {
@@ -403,26 +436,40 @@ function CopyIconButton({ text }: { text: string }) {
       .catch(() => undefined);
   }, [text]);
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
-  return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      title="Copy message"
-      aria-label="Copy message"
-      data-testid="conversation-message-copy"
-      className="flex-shrink-0 rounded p-1 text-fg-disabled opacity-0 transition-opacity hover:bg-surface-hover hover:text-fg-muted group-hover:opacity-100 focus-visible:opacity-100"
-    >
-      {copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
-    </button>
-  );
+  return { copied, handleCopy };
 }
 
-/** The copyable text of an assistant turn: its rendered text blocks, joined. */
-function assistantTextContent(blocks: TranscriptBlock[]): string {
-  return blocks
-    .filter((block): block is Extract<TranscriptBlock, { type: 'text' }> => block.type === 'text')
-    .map((block) => sanitizeTranscriptText(block.text))
-    .join('\n\n');
+/** HeaderActionButton takes an icon COMPONENT, not a pre-rendered element, so
+ *  the brief "copied" confirmation (green check) is its own tiny component
+ *  rather than an inline conditional element (mirrors ConversationWindow's
+ *  title-bar copy button). */
+function MessageCopiedCheckIcon({ size }: { size?: number }) {
+  return <Check size={size} className="text-green-400" />;
+}
+
+/** Copy button that reveals on message hover (or keyboard focus) and copies
+ *  that message's text, flipping to a check for brief confirmation. Reuses
+ *  the shared HeaderActionButton (size="small") so it carries the exact same
+ *  colors/contrast as the title-bar action buttons instead of a bespoke,
+ *  fainter treatment. */
+function CopyIconButton({ text }: { text: string }) {
+  const { copied, handleCopy } = useCopyFeedback(text);
+  return (
+    <HeaderActionButton
+      icon={copied ? MessageCopiedCheckIcon : Copy}
+      onClick={handleCopy}
+      size="small"
+      title="Copy message"
+      ariaLabel="Copy message"
+      testId="conversation-message-copy"
+      // HeaderActionButton's rest background (bg-surface-hover/50) barely
+      // differs from a message row's own background (bg-surface-hover/30),
+      // so it nearly disappears here even though the title bar (against
+      // bg-surface-raised) contrasts fine. A visible border reads regardless
+      // of background blending, so add one just for this placement.
+      className="!border-edge/60 opacity-0 group-hover/message:opacity-100 focus-visible:opacity-100"
+    />
+  );
 }
 
 function UserRow({ text, ts }: { text: string; ts: number }) {
@@ -441,14 +488,25 @@ function UserRow({ text, ts }: { text: string; ts: number }) {
   );
 }
 
-function SystemRow({ subtype, text }: { subtype: 'compaction' | 'command' | 'command_output'; text: string }) {
+function SystemRow({
+  subtype,
+  text,
+}: {
+  subtype: 'compaction' | 'command' | 'command_output' | 'session_boundary';
+  text: string;
+}) {
   const clean = sanitizeTranscriptText(text).trim();
   const label =
     subtype === 'compaction'
       ? 'Conversation compacted'
       : subtype === 'command'
         ? `[command] ${clean}`
-        : 'Command output';
+        // session_boundary's text is already a ready-to-display label (e.g.
+        // "New session - Claude Code (isolated: Executing)"), unlike the
+        // other subtypes whose text is raw payload behind a canned label.
+        : subtype === 'session_boundary'
+          ? clean
+          : 'Command output';
   return (
     <div className="flex items-center gap-3 py-1 text-fg-disabled" data-testid="conversation-row-system">
       <div className="flex-1 h-px bg-edge/50" />
@@ -462,9 +520,6 @@ interface AssistantRowProps {
   model?: string;
   blocks: TranscriptBlock[];
   uuid: string;
-  /** Render the role header only on the first turn of a run; continuations
-   *  stack headerless so a multi-turn/tool agent stretch reads as one block. */
-  showHeader: boolean;
   /** Agent CLI display name for the role pill; falls back to "Agent". */
   agentName?: string;
   ts: number;
@@ -473,15 +528,16 @@ interface AssistantRowProps {
   toggleExpanded: (key: string) => void;
 }
 
-function AssistantRow({ model, blocks, uuid, showHeader, agentName, ts, resultsByUseId, expandedKeys, toggleExpanded }: AssistantRowProps) {
-  // The badge (agent name + model) shows once per run; every turn carries its own
-  // timestamp + hover copy via the message header.
+function AssistantRow({ model, blocks, uuid, agentName, ts, resultsByUseId, expandedKeys, toggleExpanded }: AssistantRowProps) {
+  // Every turn shows its own badge (agent name + model) and timestamp - a
+  // tool-calling stretch is exactly where knowing which agent/model ran each
+  // step (without scrolling back to find the last header) matters most.
   return (
     <div data-testid="conversation-row-assistant">
       <MessageHeader
-        badge={showHeader ? <RoleBadge icon={<Bot size={12} />} label={agentName || 'Agent'} model={model} /> : undefined}
+        badge={<RoleBadge icon={<Bot size={12} />} label={agentName || 'Agent'} model={model} />}
         ts={ts}
-        copyText={assistantTextContent(blocks)}
+        copyText={renderAssistantBlocksMarkdown(blocks, resultsByUseId)}
       />
       <div className="space-y-2">
         {blocks.map((block, index) => {

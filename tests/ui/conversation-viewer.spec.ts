@@ -55,10 +55,20 @@ function preConfig(): string {
         snippet: 'We reworked the auth flow', matchStart: 15, matchEnd: 19,
       }];
 
-      // Session A: a full transcript exercising every row kind.
-      var transcriptA = {
-        sessionId: '${SESSION_A}', taskId: '${TASK_ID}', taskTitle: 'Wire the auth flow',
-        agentName: 'Claude Code', startedAt: ts, source: 'live', sourcePath: '/mock/a.jsonl',
+      // A task's conversation is always its ENTIRE lifecycle: every session it
+      // has ever accumulated, stitched into one timeline, regardless of which
+      // of the task's sessions is requested. Session A's own entries exercise
+      // every row kind; session B is a second (later) session for the SAME
+      // task. The real backend (resolveTaskTranscript) returns the identical
+      // combined response no matter which session id you ask for, so both
+      // seeds below are the SAME object.
+      var sessionBoundaryEntry = {
+        kind: 'system', uuid: 'session-boundary-${SESSION_B}', ts: nowMs + 10,
+        subtype: 'session_boundary', text: 'New session - Claude Code',
+      };
+      var transcriptUnified = {
+        sessionId: '${SESSION_B}', taskId: '${TASK_ID}', taskTitle: 'Wire the auth flow',
+        agentName: 'Claude Code', startedAt: ts, source: 'live', sourcePath: '/mock/b.jsonl',
         entries: [
           { kind: 'user', uuid: 'turn-user-1', ts: nowMs, text: 'USER_QUESTION_ALPHA' },
           { kind: 'assistant', uuid: '${SCROLL_TARGET_UUID}', ts: nowMs + 1, model: 'claude-opus-4',
@@ -74,18 +84,14 @@ function preConfig(): string {
           { kind: 'system', uuid: 'turn-system-1', ts: nowMs + 3, subtype: 'compaction', text: 'compacted' },
           { kind: 'tool_result', uuid: 'turn-orphan-1', ts: nowMs + 4, toolUseId: 'tool-orphan',
             content: 'ORPHAN_RESULT_ALPHA', isError: true },
+          sessionBoundaryEntry,
+          { kind: 'user', uuid: 'turn-user-b', ts: nowMs + 11, text: 'USER_QUESTION_BRAVO' },
         ],
         degraded: false,
-      };
-
-      // Session B: a distinct transcript, to prove the session picker switches.
-      var transcriptB = {
-        sessionId: '${SESSION_B}', taskId: '${TASK_ID}', taskTitle: 'Wire the auth flow',
-        agentName: 'Claude Code', startedAt: ts, source: 'live', sourcePath: '/mock/b.jsonl',
-        entries: [
-          { kind: 'user', uuid: 'turn-user-b', ts: nowMs, text: 'USER_QUESTION_BRAVO' },
+        sessions: [
+          { sessionId: '${SESSION_A}', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited' },
+          { sessionId: '${SESSION_B}', agentName: 'Claude Code', startedAt: ts, exitedAt: null, isolatedSwimlaneId: null, status: 'exited' },
         ],
-        degraded: false,
       };
 
       // Degraded (index fallback) transcript.
@@ -94,28 +100,64 @@ function preConfig(): string {
         agentName: 'Claude Code', startedAt: ts, source: 'index', sourcePath: null,
         entries: [{ kind: 'user', uuid: 'turn-deg', ts: nowMs, text: 'DEGRADED_TEXT' }],
         degraded: true,
+        sessions: [{ sessionId: 'sess-degraded', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited' }],
       };
 
       function emptyResp(sid, reason) {
         return {
           sessionId: sid, taskId: null, taskTitle: '', agentName: '', startedAt: ts,
           source: 'none', sourcePath: null, entries: [], degraded: false, unavailableReason: reason,
+          sessions: [],
         };
       }
 
+      // Two consecutive assistant turns (each a lone tool call), to verify the
+      // role badge renders on EVERY assistant row - not just the first in a
+      // same-speaker run (a prior "once per run" collapsing this session reversed).
+      var transcriptConsecutive = {
+        sessionId: 'sess-conv-consecutive', taskId: null, taskTitle: 'Consecutive tool calls',
+        agentName: 'Claude Code', startedAt: ts, source: 'live', sourcePath: '/mock/consecutive.jsonl',
+        entries: [
+          { kind: 'assistant', uuid: 'turn-asst-consec-1', ts: nowMs, model: 'claude-opus-4-8',
+            blocks: [{ type: 'tool_use', id: 'tool-consec-1', name: 'Glob', input: { pattern: '*.md' } }] },
+          { kind: 'tool_result', uuid: 'turn-toolres-consec-1', ts: nowMs + 1, toolUseId: 'tool-consec-1', content: 'README.md', isError: false },
+          { kind: 'assistant', uuid: 'turn-asst-consec-2', ts: nowMs + 2, model: 'claude-opus-4-8',
+            blocks: [{ type: 'tool_use', id: 'tool-consec-2', name: 'Read', input: { file_path: 'README.md' } }] },
+          { kind: 'tool_result', uuid: 'turn-toolres-consec-2', ts: nowMs + 3, toolUseId: 'tool-consec-2', content: 'CONSECUTIVE_RESULT_TEXT', isError: false },
+        ],
+        degraded: false,
+        sessions: [{ sessionId: 'sess-conv-consecutive', agentName: 'Claude Code', startedAt: ts, exitedAt: null, isolatedSwimlaneId: null, status: 'running' }],
+      };
+
+      // A markdown heading + paragraph, to verify a multi-block text selection
+      // copies trimmed - the browser's default plain-text serialization of a
+      // selection spanning block elements (h2, p) leaves trailing blank lines.
+      var transcriptMultiBlock = {
+        sessionId: 'sess-conv-multiblock', taskId: null, taskTitle: 'Multi-block markdown',
+        agentName: 'Claude Code', startedAt: ts, source: 'live', sourcePath: '/mock/multiblock.jsonl',
+        entries: [
+          { kind: 'assistant', uuid: 'turn-asst-multiblock', ts: nowMs, model: 'claude-opus-4-8',
+            blocks: [{ type: 'text', text: '## HEADING_ALPHA\\n\\nPARAGRAPH_BODY_ALPHA.' }] },
+        ],
+        degraded: false,
+        sessions: [{ sessionId: 'sess-conv-multiblock', agentName: 'Claude Code', startedAt: ts, exitedAt: null, isolatedSwimlaneId: null, status: 'running' }],
+      };
+
       var transcriptSeeds = {};
-      transcriptSeeds['${SESSION_A}'] = transcriptA;
-      transcriptSeeds['${SESSION_B}'] = transcriptB;
+      // Both of the task's session ids resolve to the SAME unified response -
+      // the real backend always returns a task's full lifecycle regardless of
+      // which of its sessions was asked for.
+      transcriptSeeds['${SESSION_A}'] = transcriptUnified;
+      transcriptSeeds['${SESSION_B}'] = transcriptUnified;
+      transcriptSeeds['sess-conv-multiblock'] = transcriptMultiBlock;
+      transcriptSeeds['sess-conv-consecutive'] = transcriptConsecutive;
       transcriptSeeds['sess-degraded'] = transcriptDegraded;
       transcriptSeeds['sess-empty-unsupported'] = emptyResp('sess-empty-unsupported', 'unsupported_agent');
       transcriptSeeds['sess-empty-nosession'] = emptyResp('sess-empty-nosession', 'no_agent_session_id');
       transcriptSeeds['sess-empty-missing'] = emptyResp('sess-empty-missing', 'file_missing');
 
       var transcriptSessionsByTask = {};
-      transcriptSessionsByTask['${TASK_ID}'] = [
-        { sessionId: '${SESSION_A}', agentName: 'Claude Code', startedAt: ts, exitedAt: null, isolatedSwimlaneId: null, status: 'exited' },
-        { sessionId: '${SESSION_B}', agentName: 'Claude Code', startedAt: ts, exitedAt: null, isolatedSwimlaneId: null, status: 'exited' },
-      ];
+      transcriptSessionsByTask['${TASK_ID}'] = transcriptUnified.sessions;
 
       return {
         currentProjectId: '${PROJECT_ID}',
@@ -179,13 +221,17 @@ test.describe('Conversation Viewer', () => {
       await expect(page.getByTestId('conversation-title')).toContainText('Wire the auth flow');
 
       // User + assistant rows render; the folded tool_result is inside the card.
-      await expect(page.getByTestId('conversation-row-user')).toBeVisible();
+      // (Two user rows now: this task's unified view also includes session
+      // B's own USER_QUESTION_BRAVO turn.)
+      await expect(page.getByTestId('conversation-row-user').first()).toBeVisible();
       await expect(page.getByText('USER_QUESTION_ALPHA')).toBeVisible();
       await expect(page.getByTestId('conversation-row-assistant')).toBeVisible();
       await expect(page.getByText('ASSISTANT_TEXT_ALPHA')).toBeVisible();
 
-      // The system divider and the orphan tool_result both render.
-      await expect(page.getByTestId('conversation-row-system')).toBeVisible();
+      // The system divider and the orphan tool_result both render. (Two
+      // system rows now: the compaction entry plus the session_boundary
+      // divider marking the seam with session B.)
+      await expect(page.getByTestId('conversation-row-system').first()).toBeVisible();
       await expect(page.getByTestId('conversation-row-tool-result')).toBeVisible();
 
       // Thinking is collapsed by default; its body appears only after toggling.
@@ -224,19 +270,20 @@ test.describe('Conversation Viewer', () => {
     }
   });
 
-  test('session picker switches the shown transcript', async () => {
+  test('the conversation always spans a task\'s entire lifecycle, regardless of which of its sessions is opened', async () => {
     const { browser, page } = await launch();
     try {
+      // Opening the task's OLDER session (A) still shows the newer session
+      // (B)'s content too - the response is never scoped to just one session.
       await openConversation(page, SESSION_A);
       await expect(page.getByText('USER_QUESTION_ALPHA')).toBeVisible();
-
-      // The task has two sessions, so the picker is shown; switch to session B.
-      const picker = page.getByTestId('conversation-session-picker');
-      await expect(picker).toBeVisible();
-      await picker.selectOption(SESSION_B);
-
       await expect(page.getByText('USER_QUESTION_BRAVO')).toBeVisible();
-      await expect(page.getByText('USER_QUESTION_ALPHA')).toHaveCount(0);
+
+      // The session_boundary divider marks the seam between the two sessions,
+      // and there is no picker to switch away from this view - which session
+      // shows is not a setting.
+      await expect(page.getByText('New session - Claude Code')).toBeVisible();
+      await expect(page.getByTestId('conversation-session-picker')).toHaveCount(0);
     } finally {
       await browser.close();
     }
@@ -300,6 +347,90 @@ test.describe('Conversation Viewer', () => {
 
       await page.getByTestId('conversation-open-task-button').click();
       await expect(page.getByTestId('task-detail-dialog')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('every assistant turn shows its own role badge, and a tool-only turn\'s message copy button includes the tool call', async () => {
+    const { browser, page } = await launch(['clipboard-read', 'clipboard-write']);
+    try {
+      await openConversation(page, 'sess-conv-consecutive');
+
+      // Two consecutive assistant turns (each a lone tool call, no text) both
+      // show their own badge - not collapsed to "only the first in a run".
+      const assistantRows = page.getByTestId('conversation-row-assistant');
+      await expect(assistantRows).toHaveCount(2);
+      await expect(assistantRows.getByText('Claude Code')).toHaveCount(2);
+
+      // There is exactly one copy button per row (the message header's) - no
+      // second, nested copy affordance inside the tool card itself.
+      await expect(page.getByTestId('conversation-tool-copy')).toHaveCount(0);
+
+      // The second turn is tool-only (no text block); its message-level copy
+      // button must still copy something useful - the tool call itself.
+      await assistantRows.nth(1).getByTestId('conversation-message-copy').click();
+      const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+      expect(clipboardText).toContain('**Tool:** `Read`');
+      expect(clipboardText).toContain('README.md');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('hovering one message reveals only its own copy icon, not every message in the window', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, 'sess-conv-consecutive');
+
+      const rows = page.getByTestId('conversation-row-assistant');
+      await expect(rows).toHaveCount(2);
+      const hoveredCopy = rows.nth(0).getByTestId('conversation-message-copy');
+      const otherCopy = rows.nth(1).getByTestId('conversation-message-copy');
+
+      // Regression: the conversation window's own chrome carries an unnamed
+      // `.group` class (unrelated hover-reveal), which used to also satisfy an
+      // unnamed `group-hover:opacity-100` on every message's copy icon - so
+      // hovering ANYWHERE in the window revealed ALL of them. The fix scopes
+      // the reveal to a named `group/message`, so only the hovered row's own
+      // icon should show.
+      await rows.nth(0).hover();
+      await expect(hoveredCopy).toHaveCSS('opacity', '1');
+      await expect(otherCopy).toHaveCSS('opacity', '0');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('selecting text across a heading and paragraph copies without trailing blank lines', async () => {
+    const { browser, page } = await launch(['clipboard-read', 'clipboard-write']);
+    try {
+      await openConversation(page, 'sess-conv-multiblock');
+      await expect(page.getByText('PARAGRAPH_BODY_ALPHA')).toBeVisible();
+
+      // Select from the heading through the end of the paragraph - a selection
+      // spanning block elements (h2, p), which is exactly what left trailing
+      // blank lines before the custom copy handler trimmed them.
+      await page.evaluate(() => {
+        const view = document.querySelector('[data-testid="conversation-view"]');
+        const heading = view?.querySelector('h2');
+        const paragraph = view?.querySelector('p');
+        if (!heading || !paragraph) throw new Error('heading/paragraph not found');
+        const range = document.createRange();
+        range.setStartBefore(heading);
+        range.setEndAfter(paragraph);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      });
+      await page.keyboard.press('Control+c');
+
+      const clipboardText = await page.evaluate(() => navigator.clipboard.readText());
+      expect(clipboardText).toContain('HEADING_ALPHA');
+      expect(clipboardText).toContain('PARAGRAPH_BODY_ALPHA.');
+      // No run of 3+ newlines, and no trailing blank line at the very end.
+      expect(clipboardText).not.toMatch(/\n{3,}/);
+      expect(clipboardText).toBe(clipboardText.trim());
     } finally {
       await browser.close();
     }

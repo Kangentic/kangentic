@@ -10,6 +10,10 @@ import type { Embedder, StoredChunk } from './types';
 /** Per-list candidate depth before fusion. */
 const PER_LIST_LIMIT = 32;
 const DEFAULT_K = 20;
+/** Semantic (vec0) over-fetch depth when scoping to one task: vec0's KNN has no
+ *  per-query WHERE filter, so a task-scoped semantic search asks for far more
+ *  candidates than PER_LIST_LIMIT and narrows to the task's chunks afterward. */
+const TASK_SCOPED_SEMANTIC_OVERFETCH = 300;
 
 export interface TranscriptSearchHit {
   chunkId: number;
@@ -47,6 +51,12 @@ export interface SearchConversationMemoryInput {
   /** Semantic embedder, or null/absent for lexical-only. The embedder carries
    *  the active model's `noiseFloor`, which calibrates the relevance filter. */
   embedder?: Embedder | null;
+  /** Restrict results to one task's conversation history (its internal id, not
+   *  the display "#N"). Lexical filtering happens in the SQL query itself, so
+   *  ranking/limit apply within the task; semantic filtering over-fetches a
+   *  wider KNN candidate set (vec0 has no per-query WHERE filter) and narrows
+   *  it down afterward. */
+  taskId?: string;
 }
 
 function agentDisplayName(sessionType: string): string {
@@ -108,8 +118,24 @@ export async function searchConversationMemory(
       continue;
     }
 
-    const lexical = matchQuery ? safeLexical(store, matchQuery) : [];
-    const semantic = queryVector ? relevantSemantic(store, queryVector, semanticFloor) : [];
+    // Scoping to one task: skip this project entirely when it holds none of
+    // the task's chunks, and over-fetch the semantic candidate pool since
+    // vec0's KNN cannot be pre-filtered by task_id.
+    let taskChunkIds: Set<number> | null = null;
+    if (input.taskId) {
+      taskChunkIds = store.getChunkIdsForTask(input.taskId);
+      if (taskChunkIds.size === 0) continue;
+    }
+
+    const lexical = matchQuery ? safeLexical(store, matchQuery, input.taskId) : [];
+    let semantic = queryVector
+      ? relevantSemantic(store, queryVector, semanticFloor, taskChunkIds ? TASK_SCOPED_SEMANTIC_OVERFETCH : PER_LIST_LIMIT)
+      : [];
+    if (taskChunkIds) {
+      semantic = semantic
+        .filter((hit) => taskChunkIds.has(hit.chunkId))
+        .map((hit, index) => ({ ...hit, rank: index + 1 }));
+    }
     if (lexical.length === 0 && semantic.length === 0) continue;
 
     const fused = reciprocalRankFusion(lexical, semantic);
@@ -183,18 +209,18 @@ export async function searchConversationMemory(
   return [...bestBySession.values()].sort((a, b) => b.score - a.score).slice(0, k);
 }
 
-function safeLexical(store: RetrievalStore, matchQuery: string) {
+function safeLexical(store: RetrievalStore, matchQuery: string, taskId?: string) {
   try {
-    return store.searchLexical(matchQuery, PER_LIST_LIMIT);
+    return store.searchLexical(matchQuery, PER_LIST_LIMIT, taskId);
   } catch {
     // A malformed MATCH slips through, or the FTS table is missing on an old DB.
     return [];
   }
 }
 
-function safeSemantic(store: RetrievalStore, queryVector: Float32Array) {
+function safeSemantic(store: RetrievalStore, queryVector: Float32Array, limit: number) {
   try {
-    return store.searchSemantic(queryVector, PER_LIST_LIMIT);
+    return store.searchSemantic(queryVector, limit);
   } catch {
     return [];
   }
@@ -220,8 +246,8 @@ const SEMANTIC_RELEVANCE_CUTOFF = 0.15;
  *  model-independent relevance `(cos - floor) / (1 - floor)`, clamped implicitly
  *  by the cutoff, so gibberish (which lands at the floor -> relevance ~0) is
  *  dropped on every model. A floor <= 0 (or >= 1) disables the filter. */
-function relevantSemantic(store: RetrievalStore, queryVector: Float32Array, noiseFloor: number) {
-  const hits = safeSemantic(store, queryVector);
+function relevantSemantic(store: RetrievalStore, queryVector: Float32Array, noiseFloor: number, limit: number) {
+  const hits = safeSemantic(store, queryVector, limit);
   const denom = 1 - noiseFloor;
   if (!(noiseFloor > 0) || denom <= 0) return hits;
   return hits

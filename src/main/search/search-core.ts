@@ -416,6 +416,8 @@ export interface SearchEverythingInput {
     enabled: boolean;
     embedder?: Embedder | null;
     embedWaitMs?: number;
+    /** Restrict conversation hits to one task's history (internal id). */
+    taskId?: string;
   };
 }
 
@@ -504,6 +506,7 @@ export async function runSearchEverything(input: SearchEverythingInput): Promise
         embedWaitMs: input.conversationSearch.embedWaitMs ?? 400,
         getDb,
         embedder: input.conversationSearch.embedder ?? null,
+        taskId: input.conversationSearch.taskId,
       });
       for (const hit of conversationHits) {
         const sessionActive = liveSessionIdsFor(hit.projectId).has(hit.sessionId);
