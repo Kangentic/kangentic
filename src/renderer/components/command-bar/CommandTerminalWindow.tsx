@@ -22,7 +22,7 @@ import type { ReactNode } from 'react';
 import { Circle, CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, PictureInPicture2, SquareChevronRight, Zap } from 'lucide-react';
 import { BranchPicker } from '../dialogs/BranchPicker';
 import { LaunchOverlay } from '../LaunchOverlay';
-import { Pill } from '../Pill';
+import { HeaderActionButton } from '../HeaderActionButton';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopover';
 import { useHeaderPillOverflow, type HeaderPillSpec } from '../dialogs/task-detail/useHeaderPillOverflow';
@@ -460,7 +460,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
       {/* Header. Priority-plus layout: the title keeps a ~50ch floor; the pills
           reclaim the space above it and fold into the kebab as the window narrows
           (useHeaderPillOverflow). */}
-      <div ref={headerRef} className="flex items-center gap-3 px-4 py-2.5 border-b border-edge flex-shrink-0 select-none min-w-0">
+      <div ref={headerRef} className="flex items-center gap-3 px-4 h-[54px] border-b border-edge flex-shrink-0 select-none min-w-0">
         {/* Leading cluster: Stop (protected, measured as one unit). */}
         <div ref={leadingRef} className="flex items-center flex-shrink-0">
           <button
@@ -505,35 +505,26 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
               task-detail no-worktree case; the path shows once the folder opens. */}
           {projectPath && showPill('folder') && (
             <div data-pill-id="folder" className="flex-shrink-0">
-              <Pill
-                shape="square"
+              <HeaderActionButton
+                icon={FolderGit}
                 onClick={() => window.electronAPI.shell.openPath(projectPath)}
-                className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
                 title="Project"
-                aria-label="Open project folder"
-                data-testid="command-bar-folder-button"
-              >
-                <FolderGit size={14} />
-              </Pill>
+                ariaLabel="Open project folder"
+                testId="command-bar-folder-button"
+              />
             </div>
           )}
 
           {projectPath && showPill('changes') && (
             <div data-pill-id="changes" className="flex-shrink-0">
-              <Pill
-                shape="square"
+              <HeaderActionButton
+                icon={GitCompare}
                 onClick={handleToggleChanges}
-                className={`flex-shrink-0 transition-colors border ${
-                  changesOpen
-                    ? 'bg-accent/15 text-accent-fg border-accent/30'
-                    : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
-                }`}
+                active={changesOpen}
                 title={changesOpen ? 'Hide changes' : 'Show changes'}
-                aria-label="Toggle changes"
-                data-testid="command-bar-changes-toggle"
-              >
-                <GitCompare size={14} />
-              </Pill>
+                ariaLabel="Toggle changes"
+                testId="command-bar-changes-toggle"
+              />
             </div>
           )}
 
@@ -553,16 +544,13 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             const ActionIcon = ICON_REGISTRY.get(action.icon ?? 'zap') ?? Zap;
             return (
               <div key={pillId} data-pill-id={pillId} className="flex-shrink-0">
-                <Pill
-                  shape="square"
+                <HeaderActionButton
+                  icon={ActionIcon}
                   onClick={() => handleShortcutExecute(action)}
-                  className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
                   title={action.command}
-                  data-testid={`command-bar-shortcut-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
-                >
-                  <ActionIcon size={14} />
-                  {action.label}
-                </Pill>
+                  label={action.label}
+                  testId={`command-bar-shortcut-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
+                />
               </div>
             );
           })}

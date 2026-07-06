@@ -5,7 +5,7 @@ import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
 import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
-import { Pill } from '../../Pill';
+import { HeaderActionButton } from '../../HeaderActionButton';
 import { PrLink } from '../../PrLink';
 import { IsolatedBadge } from '../../IsolatedBadge';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
@@ -257,7 +257,7 @@ export function TaskDetailHeader({
   );
 
   return (
-    <div ref={headerRef} className="flex items-center gap-3 px-4 py-3 min-w-0">
+    <div ref={headerRef} className="flex items-center gap-3 px-4 h-[54px] min-w-0">
       {/* Leading cluster: pause / id / priority. flex-shrink-0 so the priority
           badge never compresses, and so it measures as one unit for the overflow calc. */}
       <div ref={leadingRef} className="flex items-center gap-3 flex-shrink-0">
@@ -341,18 +341,15 @@ export function TaskDetailHeader({
               menu, not a one-tap toggle, so it does not earn a header slot.) */}
           {showPill('folder') && (task.worktree_path || projectPath) && (
             <div data-pill-id="folder" className="flex-shrink-0">
-              <Pill
-                shape="square"
+              <HeaderActionButton
+                icon={task.worktree_path ? FolderGit2 : FolderGit}
                 onClick={() => window.electronAPI.shell.openPath(task.worktree_path ?? projectPath!)}
-                className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
                 title={task.worktree_path
                   ? `Worktree${worktreeBaseBranch ? ` from ${worktreeBaseBranch}` : ''}`
                   : 'Project'}
-                aria-label={task.worktree_path ? 'Open worktree folder' : 'Open project folder'}
-                data-testid="branch-pill"
-              >
-                {task.worktree_path ? <FolderGit2 size={14} /> : <FolderGit size={14} />}
-              </Pill>
+                ariaLabel={task.worktree_path ? 'Open worktree folder' : 'Open project folder'}
+                testId="branch-pill"
+              />
             </div>
           )}
 
@@ -371,40 +368,28 @@ export function TaskDetailHeader({
           {/* Changes toggle pill */}
           {showPill('changes') && canShowChanges && (
             <div data-pill-id="changes" className="flex-shrink-0">
-              <Pill
-                shape="square"
+              <HeaderActionButton
+                icon={GitCompare}
                 onClick={onToggleChanges}
-                className={`flex-shrink-0 transition-colors border ${
-                  changesOpen
-                    ? 'bg-accent/15 text-accent-fg border-accent/30'
-                    : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
-                }`}
+                active={changesOpen}
                 title={`${changesOpen ? 'Hide' : 'Show'} changes (${changesCombo})`}
-                aria-label="Toggle changes"
-                data-testid="changes-toggle"
-              >
-                <GitCompare size={14} />
-              </Pill>
+                ariaLabel="Toggle changes"
+                testId="changes-toggle"
+              />
             </div>
           )}
 
           {/* Browser toggle pill */}
           {showPill('browser') && canShowBrowser && (
             <div data-pill-id="browser" className="flex-shrink-0">
-              <Pill
-                shape="square"
+              <HeaderActionButton
+                icon={Globe}
                 onClick={onToggleBrowser}
-                className={`flex-shrink-0 transition-colors border ${
-                  browserOpen
-                    ? 'bg-accent/15 text-accent-fg border-accent/30'
-                    : 'bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-transparent'
-                }`}
+                active={browserOpen}
                 title={`${browserOpen ? 'Hide' : 'Show'} browser (${browserCombo})`}
-                aria-label="Toggle browser"
-                data-testid="browser-toggle"
-              >
-                <Globe size={14} />
-              </Pill>
+                ariaLabel="Toggle browser"
+                testId="browser-toggle"
+              />
             </div>
           )}
 
@@ -412,16 +397,13 @@ export function TaskDetailHeader({
               task's newest session (also in the kebab as "View conversation"). */}
           {showPill('conversation') && (
             <div data-pill-id="conversation" className="flex-shrink-0">
-              <Pill
-                shape="square"
+              <HeaderActionButton
+                icon={MessageSquare}
                 onClick={() => void openTaskConversation(task.id)}
-                className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors"
                 title="View conversation"
-                aria-label="View conversation"
-                data-testid="conversation-pill"
-              >
-                <MessageSquare size={14} />
-              </Pill>
+                ariaLabel="View conversation"
+                testId="conversation-pill"
+              />
             </div>
           )}
 
@@ -435,16 +417,13 @@ export function TaskDetailHeader({
                 data-pill-id={`shortcut:${action.id ?? action.label}`}
                 className="flex-shrink-0"
               >
-                <Pill
-                  shape="square"
+                <HeaderActionButton
+                  icon={ActionIcon}
                   onClick={() => executeShortcut(action)}
-                  className="bg-surface-hover/50 text-fg-muted hover:text-fg-secondary hover:bg-surface-hover transition-colors flex-shrink-0"
                   title={action.command}
-                  data-testid={`shortcut-pill-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
-                >
-                  <ActionIcon size={14} />
-                  {action.label}
-                </Pill>
+                  label={action.label}
+                  testId={`shortcut-pill-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
+                />
               </div>
             );
           })}
