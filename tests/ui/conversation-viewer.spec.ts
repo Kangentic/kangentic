@@ -291,4 +291,17 @@ test.describe('Conversation Viewer', () => {
       await browser.close();
     }
   });
+
+  test('title-bar "Open task" button opens the task detail for the transcript\'s task', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, SESSION_A);
+      await expect(page.getByText('USER_QUESTION_ALPHA')).toBeVisible();
+
+      await page.getByTestId('conversation-open-task-button').click();
+      await expect(page.getByTestId('task-detail-dialog')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
 });

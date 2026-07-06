@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { MessageSquare, X, SquareArrowOutUpRight, Copy, Check, Loader2, PictureInPicture2 } from 'lucide-react';
+import { MessageSquare, X, SquareTerminal, Copy, Check, Loader2, PictureInPicture2 } from 'lucide-react';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
@@ -23,6 +23,7 @@ import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
 import { WindowLayoutMenu } from '../../components/dialogs/WindowLayoutMenu';
 import { KebabMenu, KebabMenuItem } from '../../components/KebabMenu';
 import { Select } from '../../components/settings/shared';
+import { HeaderActionButton } from '../../components/HeaderActionButton';
 import { ConversationView } from '../../components/conversation/ConversationView';
 import { formatShortDateTime } from '../../lib/datetime';
 import { transcriptToMarkdown } from '../../../shared/transcript-format';
@@ -46,6 +47,13 @@ const LIVE_REFRESH_MS = 2500;
 // (mirrors TaskDetailWindow's selector).
 const INTERACTIVE_SELECTOR =
   'button, a, input, textarea, select, [role="button"], [role="menuitem"], [contenteditable="true"], [data-no-drag]';
+
+/** HeaderActionButton takes an icon COMPONENT, not a pre-rendered element, so the
+ *  brief "copied" confirmation (green check, same as the kebab twin) is its own
+ *  tiny component rather than an inline conditional element. */
+function CopiedCheckIcon({ size }: { size?: number }) {
+  return <Check size={size} className="text-green-400" />;
+}
 
 function isInteractiveTarget(event: React.PointerEvent | React.MouseEvent): boolean {
   const interactive = (event.target as HTMLElement).closest(INTERACTIVE_SELECTOR);
@@ -239,28 +247,35 @@ export function ConversationWindow({
             </Select>
           )}
 
-          {/* Promoted from kebab-only to a visible icon button: copying the whole
-              conversation is common enough in a read-only viewer to earn a one-tap
-              affordance rather than living only behind "...". The kebab entry stays
-              too (parity with TaskDetailHeader's pill+kebab pattern). */}
-          <button
-            type="button"
+          {/* Promoted from kebab-only to visible icon buttons (shared component,
+              matching TaskDetailHeader's header row): both are common enough in a
+              read-only viewer to earn a one-tap affordance rather than living only
+              behind "...". The kebab entries stay too (same pill+kebab redundancy
+              TaskDetailHeader uses for "View conversation"). */}
+          {taskId && (
+            <HeaderActionButton
+              icon={SquareTerminal}
+              onClick={handleOpenTask}
+              title="Open task"
+              ariaLabel="Open task"
+              testId="conversation-open-task-button"
+            />
+          )}
+          <HeaderActionButton
+            icon={copied ? CopiedCheckIcon : Copy}
             onClick={handleCopyMarkdown}
             disabled={!response}
             title="Copy conversation as Markdown"
-            aria-label="Copy conversation"
-            data-testid="conversation-copy-markdown-button"
-            className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {copied ? <Check size={16} className="text-green-400" /> : <Copy size={16} />}
-          </button>
+            ariaLabel="Copy conversation"
+            testId="conversation-copy-markdown-button"
+          />
 
           <KebabMenu>
             {(close) => (
               <>
                 {taskId && (
                   <KebabMenuItem
-                    icon={<SquareArrowOutUpRight size={13} />}
+                    icon={<SquareTerminal size={13} />}
                     label="Open task"
                     onClick={() => {
                       handleOpenTask();
