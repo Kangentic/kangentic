@@ -5,6 +5,31 @@ const APTABASE_APP_KEY = 'A-US-7825295071';
 
 let enabled = false;
 
+/** Properties merged into every subsequent tracked event. Currently just the
+ *  anonymous client id (see setAnalyticsClientId) - a plain object is fine
+ *  since it is only ever populated once, at startup. */
+const sharedProps: Record<string, string | number | boolean> = {};
+
+/**
+ * Attach the anonymous client id to every subsequent tracked event. Called
+ * once at startup (see analytics/client-id.ts) so events can be rolled up
+ * into a unique-installs count ourselves. Aptabase's own identity model
+ * rotates daily and cannot do this.
+ */
+export function setAnalyticsClientId(clientId: string): void {
+  sharedProps.clientId = clientId;
+}
+
+/**
+ * Determine whether an app_heartbeat should be emitted. Skips pure-idle
+ * heartbeats (no active sessions) to keep the dominant event under the
+ * Aptabase free-tier event budget and to make measured duration reflect
+ * active work rather than app-open-idle time.
+ */
+export function shouldEmitHeartbeat(counts: { active: number }): boolean {
+  return counts.active > 0;
+}
+
 /**
  * Determine whether analytics should be enabled.
  *
@@ -42,7 +67,7 @@ export function initAnalytics(): void {
  */
 export function trackEvent(eventName: string, props?: Record<string, string | number | boolean>): void {
   if (!enabled) return;
-  aptabaseTrack(eventName, props).catch(() => {
+  aptabaseTrack(eventName, { ...sharedProps, ...props }).catch(() => {
     // Silently ignore tracking failures -- analytics should never disrupt the app
   });
 }
@@ -67,5 +92,5 @@ export function trackEventAsync(
   props?: Record<string, string | number | boolean>
 ): Promise<void> {
   if (!enabled) return Promise.resolve();
-  return aptabaseTrack(eventName, props).catch(() => {});
+  return aptabaseTrack(eventName, { ...sharedProps, ...props }).catch(() => {});
 }

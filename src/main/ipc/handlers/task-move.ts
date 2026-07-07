@@ -249,13 +249,28 @@ export async function handleTaskMove(
 
       // Analytics: track critical-path transitions only.
       // Read agent from task.agent (set at spawn) and model from the latest
-      // session record's metrics. Either may be missing (legacy rows, never
-      // spawned, exited before status.json) - omit absent props.
+      // session record (the most recent run's CLI model id). Cost/duration/
+      // token/tool metrics come from the LIFETIME summary aggregated across
+      // every session row for the task (getSummaryForTask), so a task worked
+      // across resume/suspend legs reports cumulative totals rather than just
+      // the final leg - getLatestForTask alone would silently drop every
+      // earlier leg's metrics. Any field may be missing (legacy rows, never
+      // spawned, exited before any usage was recorded) - omit absent props.
+      // These are properties on an existing event (budget-neutral), not new
+      // events.
       if (toLane?.role === 'done') {
         const completeProps: Record<string, string | number | boolean> = {};
         if (task.agent) completeProps.agent = task.agent;
         const latestSessionRecord = sessionRepo.getLatestForTask(task.id);
         if (latestSessionRecord?.model_id) completeProps.model = latestSessionRecord.model_id;
+        const lifetimeSummary = sessionRepo.getSummaryForTask(task.id);
+        if (lifetimeSummary) {
+          completeProps.durationSeconds = Math.round(lifetimeSummary.durationMs / 1000);
+          completeProps.costUsd = Math.round(lifetimeSummary.totalCostUsd * 10000) / 10000;
+          completeProps.inputTokens = lifetimeSummary.totalInputTokens;
+          completeProps.outputTokens = lifetimeSummary.totalOutputTokens;
+          completeProps.toolCalls = lifetimeSummary.toolCallCount;
+        }
         trackEvent('task_complete', completeProps);
       }
 

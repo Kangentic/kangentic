@@ -511,12 +511,19 @@ export function registerSessionHandlers(context: IpcContext): void {
       const exitProps: Record<string, string | number | boolean> = { exitCode, durationSeconds };
       const exitAgentName = context.sessionManager.getSessionAgentName(sessionId);
       if (exitAgentName) exitProps.agent = exitAgentName;
-      // Read model from the in-memory usage cache (still populated at this
-      // point; captureSessionMetrics below clears it). The DB record's
-      // model_id is not written until captureSessionMetrics runs, so we cannot
-      // read it from the repo here.
+      // Read model/cost/toolCalls from the in-memory usage cache (still
+      // populated at this point; captureSessionMetrics below clears it). The
+      // DB record's fields are not written until captureSessionMetrics runs,
+      // so we cannot read them from the repo here. Token counts are
+      // deliberately omitted: the cache's contextWindow figures are a
+      // current-context snapshot, not the cumulative lifetime totals (those
+      // are covered by task_complete's DB-sourced numbers instead).
       const usageForExit = context.sessionManager.getUsageCache()[sessionId];
       if (usageForExit?.model?.id) exitProps.model = usageForExit.model.id;
+      if (usageForExit?.cost?.totalCostUsd != null) {
+        exitProps.costUsd = Math.round(usageForExit.cost.totalCostUsd * 10000) / 10000;
+      }
+      if (usageForExit?.toolCallCount != null) exitProps.toolCalls = usageForExit.toolCallCount;
       trackEvent('session_exit', exitProps);
       sessionStartTimes.delete(sessionId);
       sessionSpawnAnalyticsFired.delete(sessionId);

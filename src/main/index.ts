@@ -1,6 +1,6 @@
 const PROCESS_START = performance.now();
 
-import { app, BrowserWindow, clipboard, Menu, nativeImage, session } from 'electron';
+import { app, BrowserWindow, clipboard, Menu, nativeImage, powerMonitor, session } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
@@ -20,7 +20,9 @@ import { ConfigManager } from './config/config-manager';
 import { isShuttingDown, setShuttingDown } from './shutdown-state';
 import { isBenignStreamWriteError } from './diagnostics/benign-stream-error';
 const windowConfigManager = new ConfigManager();
-import { initAnalytics, trackEvent, sanitizeErrorMessage } from './analytics/analytics';
+import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, setAnalyticsClientId } from './analytics/analytics';
+import { resolveClientId } from './analytics/client-id';
+import { PATHS } from './config/paths';
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
 import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds } from './window-utils';
 import { loadReactDevTools } from './devtools';
@@ -791,6 +793,46 @@ app.whenReady().then(async () => {
   createWindow();
   initUpdater(mainWindow!);
 
+  // Windows has no powerMonitor 'shutdown' event (Linux/macOS only). An OS
+  // shutdown/restart/log-off there is signaled via this BrowserWindow event
+  // instead. Route it through the same synchronous shutdown flush as
+  // before-quit / SIGINT/SIGTERM so a session killed by the OS still gets a
+  // closing event instead of a stale one.
+  if (process.platform === 'win32') {
+    mainWindow!.on('session-end', () => {
+      performShutdown();
+    });
+  }
+
+  // System suspend fixes the stale-last-event case where the process is
+  // killed while asleep before it can flush anything: emit one heartbeat
+  // (gated the same as the periodic one, so an idle app going to sleep sends
+  // nothing) right before the system goes down. Not a close event; the app
+  // keeps running once the system resumes. Registered before the awaited
+  // client-id resolution below so a slow lookup can never delay it.
+  powerMonitor.on('suspend', () => {
+    trackHeartbeat();
+  });
+
+  // OS-initiated shutdown/reboot bypasses before-quit entirely on Linux/macOS
+  // (Windows's equivalent is the BrowserWindow 'session-end' handler above).
+  // Route it through the same flush so an abrupt OS shutdown still records a
+  // closing event instead of leaving a stale last event.
+  if (process.platform !== 'win32') {
+    powerMonitor.on('shutdown', () => {
+      performShutdown();
+    });
+  }
+
+  // Resolve the anonymous client id before the first event so every event
+  // (starting with app_launch) carries it. Best-effort: resolveClientId
+  // never throws (it falls back to a random id internally).
+  const clientId = await resolveClientId(
+    app.getPath('home'),
+    path.join(PATHS.configDir, 'analytics-client-id.json')
+  );
+  setAnalyticsClientId(clientId);
+
   // Fire app_launch event (analytics initialized before app.whenReady above).
   // trackEvent is a no-op if analytics is disabled, so no guard needed here.
   trackEvent('app_launch', { platform: process.platform, arch: process.arch });
@@ -865,10 +907,13 @@ app.on('activate', () => {
   }
 });
 
-/** Send a heartbeat event with current session counts. */
+/** Send a heartbeat event with current session counts. Skipped when no
+ *  session is active (shouldEmitHeartbeat) so a pure-idle app-open window
+ *  does not spend event budget or drag out measured session duration. */
 function trackHeartbeat(): void {
   const sessionManager = getSessionManager();
   const counts = sessionManager.getSessionCounts();
+  if (!shouldEmitHeartbeat(counts)) return;
   trackEvent('app_heartbeat', {
     activeSessions: counts.active,
     suspendedSessions: counts.suspended,
@@ -878,9 +923,12 @@ function trackHeartbeat(): void {
 }
 
 /**
- * Fire-and-forget shutdown analytics. Sends a final heartbeat so Aptabase can
- * calculate session duration (its "Avg. Duration" metric is the time between
- * first and last event in a session), then sends the app_close event.
+ * Fire-and-forget shutdown analytics. Attempts a final heartbeat (skipped by
+ * the shouldEmitHeartbeat gate when no session is active, which is the common
+ * idle-at-quit case), then always sends the app_close event. Aptabase's
+ * "Avg. Duration" metric (time between first and last event in a session) is
+ * still covered by app_close's own durationSeconds even when the heartbeat is
+ * skipped.
  *
  * Wrapped in try-catch so analytics failures never prevent syncShutdownCleanup.
  */
@@ -931,8 +979,15 @@ function getShutdownDependencies() {
   };
 }
 
-app.on('before-quit', () => {
-  if (isShuttingDown()) return;
+/**
+ * Shared synchronous shutdown flush: app quit (before-quit), SIGINT/SIGTERM,
+ * and OS-initiated shutdown/reboot/log-off (powerMonitor 'shutdown' on
+ * Linux/macOS, BrowserWindow 'session-end' on Windows) all route through
+ * this. Idempotent via isShuttingDown: returns false (and does nothing) if
+ * a shutdown is already in progress.
+ */
+function performShutdown(): boolean {
+  if (isShuttingDown()) return false;
   setShuttingDown();
 
   // Hard failsafe: if Electron's normal shutdown hangs, force-kill everything
@@ -943,16 +998,16 @@ app.on('before-quit', () => {
   // Synchronous cleanup - then let the quit proceed normally so Electron
   // tears down all Chromium child processes (GPU, utility, crashpad, etc.)
   syncShutdownCleanup(getShutdownDependencies());
+  return true;
+}
+
+app.on('before-quit', () => {
+  performShutdown();
 });
 
 // Handle force-close (Ctrl+C / SIGINT / SIGTERM) which may not fire before-quit
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    if (isShuttingDown()) return;
-    setShuttingDown();
-    startHardShutdownFailsafe();
-    trackShutdownAnalytics();
-    syncShutdownCleanup(getShutdownDependencies());
-    process.exit(0);
+    if (performShutdown()) process.exit(0);
   });
 }
