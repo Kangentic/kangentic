@@ -301,6 +301,51 @@ describe('UsageAccumulator.setSessionUsage - merge behavior', () => {
     expect(merged.contextWindow.usedPercentage).toBe(0);
   });
 
+  it('hydrateKnownWindows applies last-wins when the same model appears twice in one call', () => {
+    // The persisted config is flattened across agents with no dedup
+    // (apply-runtime-config.ts). If two entries ever named the same base
+    // model id with different windows, the loop processes them in order via
+    // plain Map.set, so the LAST entry decides the final known window - not
+    // the largest, not the first. Pin that order-dependent semantic so a
+    // future "optimize with a Map first" refactor can't silently flip it.
+    usage.hydrateKnownWindows([
+      { modelId: 'claude-opus-4-8', contextWindowSize: 1_000_000 },
+      { modelId: 'claude-opus-4-8', contextWindowSize: 200_000 },
+    ]);
+    const merged = usage.setSessionUsage('parked-session', {
+      contextWindow: { usedTokens: 100_000 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+    expect(merged.contextWindow.contextWindowSize).toBe(200_000);
+    expect(merged.contextWindow.usedPercentage).toBe(50);
+  });
+
+  it('hydrateKnownWindows silently ignores a malformed entry (empty modelId or non-positive window)', () => {
+    // discoveredContextWindowsByAgent is a fire-and-forget cache write (see
+    // config-store.ts:rememberModelContextWindow), but it round-trips through
+    // disk between runs, so a corrupted or hand-edited config file is a real
+    // (if rare) input surface for this NEW boot-hydration entry point. Each
+    // entry runs through the existing recordKnownWindow guard
+    // (`!modelId || contextWindowSize <= 0`), so a malformed entry must be a
+    // silent no-op: no crash, no known window recorded, no refill.
+    const refilled = usage.hydrateKnownWindows([
+      { modelId: '', contextWindowSize: 1_000_000 },
+      { modelId: 'claude-opus-4-8', contextWindowSize: 0 },
+      { modelId: 'claude-opus-4-8', contextWindowSize: -5 },
+    ]);
+    expect(refilled).toEqual([]);
+    // Assert directly on the known-window map (bypasses setSessionUsage's own
+    // redundant `knownWindow > 0` fill guard) so this test actually exercises
+    // recordKnownWindow's guard rather than being shielded by a second one.
+    expect(usage.getKnownWindow('claude-opus-4-8')).toBeUndefined();
+    const merged = usage.setSessionUsage('s', {
+      contextWindow: { usedTokens: 100_000 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+    expect(merged.contextWindow.contextWindowSize).toBe(0);
+    expect(merged.contextWindow.usedPercentage).toBe(0);
+  });
+
   it('replaceSessionUsage bypasses the impossibility guard (status.json is self-consistent and already clamped)', () => {
     // The status.json path replaces the whole payload with Claude's own numbers.
     // Its used_percentage is clamped upstream, and its usedTokens include output
