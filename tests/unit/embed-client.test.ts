@@ -264,6 +264,78 @@ describe('EmbedClient', () => {
     }
   });
 
+  it('setWarmHold(true) suppresses the idle recycle, keeping the same worker resident', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      const promise = client.embed(['x']);
+      const child = lastChild();
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
+      await promise;
+
+      client.setWarmHold(true);
+      // No timer is pending while held, so a synchronous advance suffices.
+      vi.advanceTimersByTime(IDLE_SHUTDOWN_MS);
+
+      // No idle recycle: no shutdown message posted, and the next embed reuses
+      // the same worker instead of forking a fresh one.
+      expect(child.kill).not.toHaveBeenCalled();
+      expect(mockFork).toHaveBeenCalledTimes(1);
+
+      const secondPromise = client.embed(['still-warm']);
+      expect(mockFork).toHaveBeenCalledTimes(1);
+      // The worker's readyPromise is already resolved, so the request only
+      // reaches sendEmbed() (and registers in `pending`) after a microtask
+      // flush - flush before emitting the reply, or it arrives with no
+      // matching pending entry and is silently dropped.
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('message', { type: 'result', id: 2, vectors: [new Float32Array([0.2])] });
+      await secondPromise;
+
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('setWarmHold(false) re-arms the idle recycle after a hold is released', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      const promise = client.embed(['x']);
+      const child = lastChild();
+      child.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
+      await promise;
+
+      client.setWarmHold(true);
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      expect(mockFork).toHaveBeenCalledTimes(1);
+
+      // Releasing the hold re-arms the idle timer immediately (not just on the
+      // next embed), so the worker recycles on its own past the idle window.
+      client.setWarmHold(false);
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      child.emit('exit');
+
+      const nextPromise = client.embed(['recycled']);
+      const nextChild = lastChild();
+      expect(mockFork).toHaveBeenCalledTimes(2);
+      nextChild.emit('message', { type: 'ready' });
+      await vi.advanceTimersByTimeAsync(0);
+      nextChild.emit('message', { type: 'result', id: 2, vectors: [new Float32Array([0.3])] });
+      await nextPromise;
+
+      expect(client.crashed).toBe(false);
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('degrades cleanly to null when the worker reports an init error before ready (no throw)', async () => {
     // An init/model-load failure surfaces as an 'error' message with no `id`,
     // before 'ready'. ensureReady()/embed() must degrade to null without

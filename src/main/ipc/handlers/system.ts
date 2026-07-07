@@ -62,6 +62,14 @@ export function registerSystemHandlers(context: IpcContext): void {
     if (config.mcpServer && context.currentProjectId && context.currentProjectPath) {
       syncProjectMcpConfig(context, context.currentProjectId, context.currentProjectPath);
     }
+    // Re-evaluate the embed-worker warm-hold: toggling memory.semanticEnabled off
+    // should release the resident worker promptly rather than waiting for its
+    // next idle-recycle window.
+    if (config.memory) {
+      void import('../../retrieval/retrieval-service').then(({ retrievalService }) => {
+        retrievalService.reconcileEmbedWorker(context);
+      });
+    }
   });
 
   // Synchronous sibling of CONFIG_SET for the renderer's quit/unload flush: an async

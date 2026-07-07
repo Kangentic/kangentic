@@ -3290,12 +3290,6 @@ export interface ElectronAPI {
   // Conversation memory (search index) status + proactive surfaces.
   memory: {
     getStatus: () => Promise<MemoryStatus>;
-    /** Past conversations similar to a task (from its title + description),
-     *  excluding the task's own sessions. Returns conversation-kind hits. */
-    similarForTask: (
-      taskId: string,
-      projectId?: string | null,
-    ) => Promise<Extract<SearchHit, { kind: 'conversation' }>[]>;
     /** Purge the project's conversation index and re-run the backfill sweep
      *  (recovery from a corrupt/stale index). Resolves when the purge is done;
      *  the rebuild sweep continues in the background. */

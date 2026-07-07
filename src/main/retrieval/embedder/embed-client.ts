@@ -45,10 +45,11 @@ interface PendingRequest {
 
 /**
  * Client for the embedding utilityProcess worker. Spawns lazily on first demand,
- * shuts the worker down when idle, and restarts it (with a crash cap) after an
- * unexpected exit. Every failure path - not spawned, crashed, timed out, over
- * the queue cap - resolves `null` so callers degrade to lexical-only rather than
- * throwing. `dispose()` is synchronous for the shutdown path.
+ * shuts the worker down when idle (unless `setWarmHold(true)` is held), and
+ * restarts it (with a crash cap) after an unexpected exit. Every failure path -
+ * not spawned, crashed, timed out, over the queue cap - resolves `null` so
+ * callers degrade to lexical-only rather than throwing. `dispose()` is
+ * synchronous for the shutdown path.
  */
 export class EmbedClient implements Embedder {
   readonly dimensions: number;
@@ -72,6 +73,10 @@ export class EmbedClient implements Embedder {
   private disposed = false;
   private idleTimer: NodeJS.Timeout | null = null;
   private currentActiveDevice: string | null = null;
+  /** While true, the idle recycle never fires, so the worker (and its loaded
+   *  model + GPU backend) stays resident. The service holds it whenever semantic
+   *  search is enabled and a project is open. */
+  private warmHold = false;
   /** True while an intentional teardown (idle recycle or dispose) is in flight,
    *  so the resulting 'exit' is not miscounted as a crash. */
   private intentionalShutdown = false;
@@ -209,8 +214,16 @@ export class EmbedClient implements Embedder {
     this.intentionalShutdown = false;
   }
 
+  /** Hold (or release) the worker against the idle recycle. Releasing re-arms
+   *  the timer immediately so a stale hold does not linger past its use. */
+  setWarmHold(hold: boolean): void {
+    this.warmHold = hold;
+    if (hold) this.clearIdleTimer();
+    else this.armIdleShutdown();
+  }
+
   private armIdleShutdown(): void {
-    if (this.disposed || this.idleTimer || this.pending.size > 0) return;
+    if (this.disposed || this.warmHold || this.idleTimer || this.pending.size > 0) return;
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
       if (this.pending.size === 0) this.killChild();

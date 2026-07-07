@@ -443,8 +443,6 @@ const api: ElectronAPI = {
 
   memory: {
     getStatus: () => ipcRenderer.invoke(IPC.MEMORY_STATUS),
-    similarForTask: (taskId, projectId) =>
-      ipcRenderer.invoke(IPC.MEMORY_SIMILAR, taskId, projectId),
     rebuildIndex: (projectId) => ipcRenderer.invoke(IPC.MEMORY_REBUILD_INDEX, projectId),
   },
 

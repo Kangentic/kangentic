@@ -100,6 +100,13 @@ function isSemanticEnabled(context: IpcContext): boolean {
   }
 }
 
+/** Whether the embed worker should stay warm (never idle-recycle): semantic is
+ *  enabled and a project is open. Gates every cold-load spike - task-detail
+ *  opens, Quick Find smart queries, and the MCP recall path - the same way. */
+function shouldWarmHoldEmbedWorker(context: IpcContext): boolean {
+  return !disposed && isSemanticEnabled(context) && context.currentProjectId != null;
+}
+
 /** The user-selected embedding model (or the default). */
 function selectedModel(context: IpcContext): EmbeddingModelDef {
   try {
@@ -160,7 +167,26 @@ function resolveEmbedder(context: IpcContext): Embedder | null {
   const model = selectedModel(context);
   if (!isEmbeddingModelPresent(model)) return null;
   const client = getEmbedClientFor(model, selectedAcceleration(context));
+  client.setWarmHold(shouldWarmHoldEmbedWorker(context));
   return client.crashed ? null : client;
+}
+
+/** Re-evaluate the warm-hold gate: hold the resident worker when semantic is
+ *  enabled and a project is open, otherwise dispose it so its ~100MB+ model and
+ *  GPU backend are freed promptly. Called when either input changes -
+ *  semantic toggled off, or the current project closes - since neither has its
+ *  own embed() call to piggyback the gate check on. */
+function reconcileEmbedWorker(context: IpcContext): void {
+  if (shouldWarmHoldEmbedWorker(context)) {
+    embedClient?.setWarmHold(true);
+    return;
+  }
+  if (embedClient) {
+    embedClient.dispose();
+    embedClient = null;
+    activeModelId = null;
+    activeAcceleration = null;
+  }
 }
 
 function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
@@ -242,6 +268,7 @@ async function embedPass(context: IpcContext, projectId: string): Promise<void> 
   if (!store.hasVec) return;
 
   const client = getEmbedClientFor(model, selectedAcceleration(context));
+  client.setWarmHold(shouldWarmHoldEmbedWorker(context));
   for (;;) {
     if (disposed || client.crashed) return;
     const chunks = store.chunksNeedingEmbedding(model.modelTag, EMBED_PASS_LIMIT);
@@ -368,6 +395,13 @@ export const retrievalService = {
    *  or hybrid results. */
   getEmbedder(context: IpcContext): Embedder | null {
     return resolveEmbedder(context);
+  },
+
+  /** Re-evaluate the embed-worker warm-hold. Call after a change to
+   *  `memory.semanticEnabled` or to the current project (open/close), since
+   *  those paths have no embed() call of their own to piggyback the gate on. */
+  reconcileEmbedWorker(context: IpcContext): void {
+    reconcileEmbedWorker(context);
   },
 
   /** Current conversation-memory status for the renderer's Smart-mode UI and

@@ -284,7 +284,7 @@ raw cosine against it into a model-independent relevance (`(cos - floor) / (1 -
 floor)`); a single internal cutoff then drops off-topic and gibberish hits on
 every model while keeping genuine matches. Only the semantic layer is filtered;
 lexical (keyword) hits always appear. Applied wherever semantic search runs:
-Quick Find, `kangentic_search`, and similar-conversations.
+Quick Find and `kangentic_search`.
 
 Search mode is not a stored preference: the Quick Find palette auto-selects it
 from `memory.semanticEnabled` (Smart/hybrid when on, keyword when off), so there

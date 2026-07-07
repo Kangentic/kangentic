@@ -23,15 +23,13 @@
   let bulkDeleteProgressCallbacks = [];
   let searchHits = [];
   // Conversation memory (Phase 2/3). `memoryStatus` feeds the palette's
-  // Smart-mode degraded notice and the Privacy tab status line; `similarConversations`
-  // feeds the task-detail "Similar conversations" section. Both seeded via
+  // Smart-mode degraded notice and the Privacy tab status line. Seeded via
   // __mockPreConfigure (mirrors searchHits).
   let memoryStatus = {
     indexingEnabled: true,
     semantic: 'disabled',
     model: { id: 'bge-base', displayName: 'bge base', tier: 'accurate', approxSizeMb: 110, dimensions: 768, state: 'absent' },
   };
-  let similarConversations = [];
   // Conversation viewer fixtures. `transcriptSeeds` maps a sessionId to a
   // TranscriptGetResponse; `transcriptSessionsByTask` maps a taskId to the
   // ConversationSessionMeta[] the session picker offers. Both seeded via
@@ -2482,16 +2480,6 @@
 
     memory: {
       getStatus: function () { return Promise.resolve(Object.assign({}, memoryStatus)); },
-      similarForTask: function (taskId, projectId) {
-        if (typeof window !== 'undefined') {
-          if (!window.__mockSimilarForTaskCalls) window.__mockSimilarForTaskCalls = [];
-          window.__mockSimilarForTaskCalls.push({
-            taskId: taskId,
-            projectId: projectId === undefined ? null : projectId,
-          });
-        }
-        return Promise.resolve(similarConversations.slice());
-      },
       rebuildIndex: function (projectId) {
         if (typeof window !== 'undefined') {
           if (!window.__mockRebuildIndexCalls) window.__mockRebuildIndexCalls = [];
@@ -2647,9 +2635,6 @@
     }
     if (result && result.memoryStatus && typeof result.memoryStatus === 'object') {
       memoryStatus = result.memoryStatus;
-    }
-    if (result && Array.isArray(result.similarConversations)) {
-      similarConversations = result.similarConversations;
     }
     if (result && result.transcriptSeeds && typeof result.transcriptSeeds === 'object') {
       Object.assign(transcriptSeeds, result.transcriptSeeds);

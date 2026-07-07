@@ -115,6 +115,7 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     if (context.currentProjectId === projectId) {
       context.currentProjectId = null;
       context.currentProjectPath = null;
+      retrievalService.reconcileEmbedWorker(context);
     }
     context.recoveredProjects.delete(projectId);
     return;
@@ -240,6 +241,7 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   if (context.currentProjectId === projectId) {
     context.currentProjectId = null;
     context.currentProjectPath = null;
+    retrievalService.reconcileEmbedWorker(context);
   }
   context.recoveredProjects.delete(projectId);
 

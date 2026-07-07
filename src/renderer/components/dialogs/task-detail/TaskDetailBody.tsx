@@ -5,7 +5,6 @@ import { ContextBar } from '../../terminal/ContextBar';
 import { PreSpawnContextBar } from '../../terminal/PreSpawnContextBar';
 import { LaunchOverlay } from '../../LaunchOverlay';
 import { SessionSummaryPanel } from '../SessionSummaryPanel';
-import { SimilarConversations } from '../../conversation/SimilarConversations';
 import { BrowserPane } from '../../browser/BrowserPane';
 import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { LabelPills } from '../../Pill';
@@ -176,7 +175,6 @@ export function TaskDetailBody({
             </div>
           )}
           <SessionSummaryPanel taskId={task.id} />
-          <SimilarConversations taskId={task.id} />
         </div>
       </>
     );

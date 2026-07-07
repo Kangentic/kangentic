@@ -1,16 +1,9 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
-import { runSearchEverything, toConversationSearchHit } from '../../search/search-core';
+import { runSearchEverything } from '../../search/search-core';
 import { retrievalService } from '../../retrieval/retrieval-service';
-import { searchConversationMemory } from '../../retrieval/memory-search';
-import { getProjectDb } from '../../db/database';
 import type { SearchHit, SearchRequest, MemoryStatus, Project } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
-
-/** How many candidate similar conversations to surface on a task. */
-const SIMILAR_LIMIT = 6;
-/** Cap the query length so a huge description does not dominate the embedding. */
-const SIMILAR_QUERY_MAX_CHARS = 600;
 
 /**
  * IPC handler for the renderer-side global search palette (Ctrl+Shift+F).
@@ -59,51 +52,6 @@ export function registerSearchHandlers(context: IpcContext): void {
       const project = context.projectRepo.list().find((entry) => entry.id === resolvedProjectId);
       if (!project) return;
       retrievalService.rebuildProjectIndex(context, project);
-    },
-  );
-
-  ipcMain.handle(
-    IPC.MEMORY_SIMILAR,
-    async (
-      _event,
-      taskId: string,
-      projectId?: string | null,
-    ): Promise<Extract<SearchHit, { kind: 'conversation' }>[]> => {
-      const resolvedProjectId = projectId ?? context.currentProjectId;
-      if (!resolvedProjectId) return [];
-      if (context.configManager.load().memory?.indexingEnabled === false) return [];
-
-      const project = context.projectRepo.list().find((entry) => entry.id === resolvedProjectId);
-      if (!project) return [];
-
-      // Build the query from the task's title + description.
-      let query = '';
-      try {
-        const row = getProjectDb(resolvedProjectId)
-          .prepare('SELECT title, description FROM tasks WHERE id = ?')
-          .get(taskId) as { title: string; description: string | null } | undefined;
-        if (!row) return [];
-        query = `${row.title ?? ''} ${row.description ?? ''}`.trim().slice(0, SIMILAR_QUERY_MAX_CHARS);
-      } catch {
-        return [];
-      }
-      if (!query) return [];
-
-      const embedder = retrievalService.getEmbedder(context);
-      const hits = await searchConversationMemory({
-        query,
-        projects: [project],
-        k: SIMILAR_LIMIT + 4,
-        embedWaitMs: 1500,
-        embedder,
-      });
-      // Exclude the task's own conversations - "similar" means other work.
-      // Similar-sessions are historical suggestions, so they route to the
-      // read-only viewer (sessionActive defaults to false).
-      return hits
-        .filter((hit) => hit.taskId !== taskId)
-        .slice(0, SIMILAR_LIMIT)
-        .map((hit) => toConversationSearchHit(hit));
     },
   );
 }

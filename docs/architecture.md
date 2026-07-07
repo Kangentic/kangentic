@@ -347,12 +347,11 @@ Read-only structured-transcript access for the conversation viewer. Prefer the e
 | `transcript:get` | invoke | Return the structured (tool_use / tool_result) transcript for a session. Powers the conversation viewer. |
 | `transcript:listSessions` | invoke | List the sessions that have a readable transcript, for the viewer's session picker. |
 
-### Memory (3 channels)
-Conversation-memory semantic layer (Smart-mode search + proactive recall). See the Memory settings tab.
+### Memory (2 channels)
+Conversation-memory semantic layer (Smart-mode search). See the Memory settings tab.
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `memory:status` | invoke | Report the conversation-memory index status for the Smart-mode palette UI. |
-| `memory:similar` | invoke | Return "similar past conversations" for a task (proactive recall surface). |
 | `memory:rebuildIndex` | invoke | Purge the current project's conversation index and re-run the backfill sweep (recovery from a corrupt/stale index; Memory settings "Rebuild index"). |
 
 ### Diagnostics (2 channels)
