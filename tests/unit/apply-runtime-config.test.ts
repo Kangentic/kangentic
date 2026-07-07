@@ -20,10 +20,12 @@ function makeSessionManager() {
     setMaxConcurrent: vi.fn(),
     setShell: vi.fn(),
     setIdleTimeout: vi.fn(),
+    hydrateDiscoveredContextWindows: vi.fn(),
   } as unknown as SessionManager & {
     setMaxConcurrent: ReturnType<typeof vi.fn>;
     setShell: ReturnType<typeof vi.fn>;
     setIdleTimeout: ReturnType<typeof vi.fn>;
+    hydrateDiscoveredContextWindows: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -64,5 +66,40 @@ describe('applyRuntimeConfig', () => {
     // returns the global config without any project overrides applied.
     expect(configManager.getEffectiveConfig).toHaveBeenCalledWith(undefined);
     expect(sessionManager.setShell).toHaveBeenCalledWith(null);
+  });
+
+  it('flattens discoveredContextWindowsByAgent across agents and hydrates SessionManager', () => {
+    // Pins the config -> SessionManager flatten contract: the persisted
+    // per-agent map (agent -> baseModelId -> window) becomes a flat entry
+    // list, with no agent-name branching (agent-adapters-boundary.md).
+    const sessionManager = makeSessionManager();
+    const configManager = makeConfigManager({
+      agent: { maxConcurrentSessions: 5, idleTimeoutMinutes: 42 },
+      terminal: { shell: '/usr/bin/fish' },
+      discoveredContextWindowsByAgent: {
+        claude: { 'claude-opus-4-8': 1_000_000, 'claude-sonnet-4-5': 200_000 },
+        codex: { 'gpt-5.3-codex': 258_400 },
+      },
+    } as Partial<AppConfig>);
+
+    applyRuntimeConfig(sessionManager, configManager, '/some/project');
+
+    expect(sessionManager.hydrateDiscoveredContextWindows).toHaveBeenCalledWith([
+      { modelId: 'claude-opus-4-8', contextWindowSize: 1_000_000 },
+      { modelId: 'claude-sonnet-4-5', contextWindowSize: 200_000 },
+      { modelId: 'gpt-5.3-codex', contextWindowSize: 258_400 },
+    ]);
+  });
+
+  it('hydrates an empty list when discoveredContextWindowsByAgent is absent', () => {
+    const sessionManager = makeSessionManager();
+    const configManager = makeConfigManager({
+      agent: { maxConcurrentSessions: 5, idleTimeoutMinutes: 42 },
+      terminal: { shell: '/usr/bin/fish' },
+    } as Partial<AppConfig>);
+
+    applyRuntimeConfig(sessionManager, configManager, '/some/project');
+
+    expect(sessionManager.hydrateDiscoveredContextWindows).toHaveBeenCalledWith([]);
   });
 });

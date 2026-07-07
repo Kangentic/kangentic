@@ -306,6 +306,15 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Hydrate known context windows from persisted metrics
+   * (config `discoveredContextWindowsByAgent`), relayed from
+   * `applyRuntimeConfig`. See `SessionTelemetry.hydrateKnownWindows`.
+   */
+  hydrateDiscoveredContextWindows(entries: Array<{ modelId: string; contextWindowSize: number }>): void {
+    this.telemetry.hydrateKnownWindows(entries);
+  }
+
+  /**
    * Enable transcript capture by providing a TranscriptRepository.
    * Called after the project DB is available. Without this, PTY output
    * is not persisted (only kept in the in-memory ring buffer).

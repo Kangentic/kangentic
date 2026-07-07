@@ -80,14 +80,13 @@ export class UsageAccumulator {
   private compactionCounts = new Map<string, number>();
   /**
    * The authoritative context-window size observed for each base model id,
-   * learned from any live status.json seen THIS run. The map is
-   * process-lifetime only: it starts empty on every boot and is not yet
-   * hydrated from persisted metrics on project open (a future extension), so a
-   * model's window has to be re-observed each run. Used to fill the window for
-   * a session whose only telemetry is the Claude transcript fallback (tokens +
-   * model, no window) - so a background/parked session, whose statusLine never
-   * painted and thus never wrote status.json, still shows a correct percentage
-   * on the board without being opened.
+   * learned from any live status.json seen this run OR hydrated at
+   * project-open from persisted metrics (see `hydrateKnownWindows`, called via
+   * `SessionTelemetry.hydrateKnownWindows` from `applyRuntimeConfig`). Used to
+   * fill the window for a session whose only telemetry is the Claude
+   * transcript fallback (tokens + model, no window) - so a background/parked
+   * session, whose statusLine never painted and thus never wrote status.json,
+   * still shows a correct percentage on the board without being opened.
    */
   private knownWindowByModel = new Map<string, number>();
 
@@ -98,18 +97,19 @@ export class UsageAccumulator {
 
   /**
    * Remember an authoritative context window observed for a model. Called with
-   * the window from any live status.json this run (SessionTelemetry.processStatusUpdate
-   * is the only caller today; project-open hydration from persisted metrics is a
-   * future extension, not yet wired). Keyed by base model id so a plain id and
-   * its `[1m]` variant share.
+   * the window from any live status.json this run
+   * (SessionTelemetry.processStatusUpdate) or from persisted metrics hydrated
+   * at project-open (SessionTelemetry.hydrateKnownWindows, one call per entry).
+   * Keyed by base model id so a plain id and its `[1m]` variant share.
    *
    * RETROACTIVELY fills any already-cached session of this model that has tokens
    * but no window - a background transcript-fallback session that emitted BEFORE
-   * the window was learned (e.g. an idle card whose sibling just painted). Their
-   * usage is updated in place and their ids are returned so the caller can
-   * re-emit them to the renderer; without this, an idle background card would
-   * stay on the model name until it happened to emit usage again. Sessions whose
-   * tokens exceed the (possibly stale) window are left at the 0 sentinel.
+   * the window was learned (e.g. an idle card whose sibling just painted, or a
+   * parked card that emitted before boot hydration ran). Their usage is updated
+   * in place and their ids are returned so the caller can re-emit them to the
+   * renderer; without this, an idle background card would stay on the model
+   * name until it happened to emit usage again. Sessions whose tokens exceed
+   * the (possibly stale) window are left at the 0 sentinel.
    */
   recordKnownWindow(modelId: string | undefined, contextWindowSize: number): string[] {
     if (!modelId || contextWindowSize <= 0) return [];
@@ -138,6 +138,22 @@ export class UsageAccumulator {
   getKnownWindow(modelId: string | undefined): number | undefined {
     if (!modelId) return undefined;
     return this.knownWindowByModel.get(baseModelId(modelId));
+  }
+
+  /**
+   * Hydrate the known-window map at project-open from persisted metrics
+   * (config `discoveredContextWindowsByAgent`, flattened by the caller). Each
+   * entry runs through `recordKnownWindow`, so it gets the same
+   * set-and-retroactively-refill behavior as a live status.json - a parked
+   * session cached earlier this run with window 0 is corrected in place.
+   * Returns the union of every entry's refilled session ids.
+   */
+  hydrateKnownWindows(entries: Array<{ modelId: string; contextWindowSize: number }>): string[] {
+    const refilled: string[] = [];
+    for (const entry of entries) {
+      refilled.push(...this.recordKnownWindow(entry.modelId, entry.contextWindowSize));
+    }
+    return refilled;
   }
 
   /**

@@ -56,11 +56,14 @@ class MockProcessTreeProbe implements ProcessTreeProbe {
 interface CallbackLog {
   activityChanges: Array<{ sessionId: string; activity: ActivityState; reason: ActivityReason }>;
   events: Array<{ sessionId: string; event: SessionEvent }>;
+  usageChanges: Array<{ sessionId: string; usage: SessionUsage }>;
 }
 
 function makeCallbacks(log: CallbackLog) {
   return {
-    onUsageChange: (_sessionId: string, _usage: SessionUsage): void => {},
+    onUsageChange: (sessionId: string, usage: SessionUsage): void => {
+      log.usageChanges.push({ sessionId, usage });
+    },
     onActivityChange: (sessionId: string, activity: ActivityState, reason: ActivityReason): void => {
       log.activityChanges.push({ sessionId, activity, reason });
     },
@@ -123,7 +126,7 @@ describe('SessionTelemetry: clearSessionTracking -> bgShellWatcher.unregisterSes
     vi.useFakeTimers();
     probe = new MockProcessTreeProbe();
     rootPids = new Map();
-    log = { activityChanges: [], events: [] };
+    log = { activityChanges: [], events: [], usageChanges: [] };
     telemetry = makeTelemetry(probe, rootPids, log);
   });
 
@@ -225,7 +228,7 @@ describe('SessionTelemetry: watcher liveness keep-alive (onShellsObservedAlive -
     vi.useFakeTimers();
     probe = new MockProcessTreeProbe();
     rootPids = new Map();
-    log = { activityChanges: [], events: [] };
+    log = { activityChanges: [], events: [], usageChanges: [] };
     const callbacks = makeCallbacks(log);
     telemetry = new SessionTelemetry(
       { ...callbacks, getSessionRootPid: (sessionId) => rootPids.get(sessionId) },
@@ -321,7 +324,7 @@ describe('SessionTelemetry: ingestEvents - named vs anonymous BackgroundShellSta
     vi.useFakeTimers();
     probe = new MockProcessTreeProbe();
     rootPids = new Map();
-    log = { activityChanges: [], events: [] };
+    log = { activityChanges: [], events: [], usageChanges: [] };
     telemetry = makeTelemetry(probe, rootPids, log);
   });
 
@@ -472,7 +475,7 @@ describe('SessionTelemetry: onNamedShellLikelyExited -> BackgroundShellEnd + mar
     vi.useFakeTimers();
     probe = new MockProcessTreeProbe();
     rootPids = new Map();
-    log = { activityChanges: [], events: [] };
+    log = { activityChanges: [], events: [], usageChanges: [] };
     const callbacks = makeCallbacks(log);
 
     // Create a real temp file. Its stat will never change between polls,
@@ -602,7 +605,7 @@ describe('SessionTelemetry: processStatusUpdate -> reemitBackfilled wiring', () 
     vi.useFakeTimers();
     probe = new MockProcessTreeProbe();
     rootPids = new Map();
-    log = { activityChanges: [], events: [] };
+    log = { activityChanges: [], events: [], usageChanges: [] };
     usageChanges = [];
     const baseCallbacks = makeCallbacks(log);
     telemetry = new SessionTelemetry(
@@ -708,6 +711,96 @@ describe('SessionTelemetry: processStatusUpdate -> reemitBackfilled wiring', () 
       model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
     };
     telemetry.processStatusUpdate('session-b', statusUpdate);
+
+    const unrelatedReemit = usageChanges.find((entry) => entry.sessionId === 'session-other-model');
+    expect(unrelatedReemit).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap: hydrateKnownWindows - boot-time hydration from persisted metrics
+// ---------------------------------------------------------------------------
+
+describe('SessionTelemetry: hydrateKnownWindows -> UsageAccumulator.hydrateKnownWindows wiring', () => {
+  // Mirrors the "re-emits a sibling background session" group above, but for
+  // the boot-hydration path (applyRuntimeConfig -> SessionManager -> here)
+  // instead of a live status.json. UsageAccumulator.hydrateKnownWindows is
+  // covered directly in tests/unit/usage-accumulator.test.ts; this file
+  // verifies the missing half: that a parked session already cached this run
+  // with window 0 gets a FRESH onUsageChange callback once hydration runs, not
+  // just a silent cache mutation.
+
+  let probe: MockProcessTreeProbe;
+  let rootPids: Map<string, number>;
+  let log: CallbackLog;
+  let usageChanges: Array<{ sessionId: string; usage: SessionUsage }>;
+  let telemetry: SessionTelemetry;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    probe = new MockProcessTreeProbe();
+    rootPids = new Map();
+    log = { activityChanges: [], events: [], usageChanges: [] };
+    usageChanges = [];
+    const baseCallbacks = makeCallbacks(log);
+    telemetry = new SessionTelemetry(
+      {
+        ...baseCallbacks,
+        onUsageChange: (sessionId, usage) => {
+          usageChanges.push({ sessionId, usage });
+        },
+        getSessionRootPid: (sessionId) => rootPids.get(sessionId),
+      },
+      {
+        processTreeProbe: probe,
+        disableBgShellWatcher: false,
+        activityEngineOptions: {
+          bgShellEscapeHatchMs: 60_000,
+          staleThinkingTimeoutMs: 60_000,
+          idleStabilityWindowMs: 0,
+        },
+      },
+    );
+  });
+
+  afterEach(() => {
+    telemetry.dispose();
+    vi.useRealTimers();
+  });
+
+  it('re-emits a parked session with the hydrated window (boot hydration from persisted metrics)', () => {
+    // A parked session already emitted this run via the transcript fallback
+    // (window 0, tokens only) BEFORE hydration ran - the exact live gap: on
+    // boot, session restore can race ahead of applyRuntimeConfig's hydration.
+    telemetry.setSessionUsage('parked-session', {
+      contextWindow: { usedTokens: 200_000, totalInputTokens: 200_000 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+
+    const seedEmit = usageChanges.filter((entry) => entry.sessionId === 'parked-session');
+    expect(seedEmit).toHaveLength(1);
+    expect(seedEmit[0].usage.contextWindow.contextWindowSize).toBe(0);
+
+    usageChanges.length = 0;
+
+    // applyRuntimeConfig relays the persisted config-derived window here.
+    telemetry.hydrateKnownWindows([{ modelId: 'claude-opus-4-8', contextWindowSize: 1_000_000 }]);
+
+    const reemit = usageChanges.find((entry) => entry.sessionId === 'parked-session');
+    expect(reemit).toBeDefined();
+    expect(reemit!.usage.contextWindow.contextWindowSize).toBe(1_000_000);
+    expect(reemit!.usage.contextWindow.usedPercentage).toBe(20);
+    expect(reemit!.usage.toolCallCount).toBe(0);
+  });
+
+  it('does NOT re-emit an unrelated session of a different model', () => {
+    telemetry.setSessionUsage('session-other-model', {
+      contextWindow: { usedTokens: 50_000, totalInputTokens: 50_000 },
+      model: { id: 'claude-sonnet-4-5', displayName: 'Sonnet 4.5' },
+    } as Partial<SessionUsage>);
+    usageChanges.length = 0;
+
+    telemetry.hydrateKnownWindows([{ modelId: 'claude-opus-4-8', contextWindowSize: 1_000_000 }]);
 
     const unrelatedReemit = usageChanges.find((entry) => entry.sessionId === 'session-other-model');
     expect(unrelatedReemit).toBeUndefined();

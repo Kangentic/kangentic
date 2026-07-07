@@ -604,6 +604,17 @@ export class SessionTelemetry {
   }
 
   /**
+   * Hydrate the accumulator's known context windows from persisted metrics
+   * (called from `applyRuntimeConfig` on project-open and every config-set,
+   * via `SessionManager.hydrateDiscoveredContextWindows`), and re-emit any
+   * parked session it retroactively back-fills - mirrors the reemit
+   * `processStatusUpdate` does for a live status.json.
+   */
+  hydrateKnownWindows(entries: Array<{ modelId: string; contextWindowSize: number }>): void {
+    this.reemitBackfilled(this.usage.hydrateKnownWindows(entries));
+  }
+
+  /**
    * Push a fresh usage snapshot to the renderer for each session whose window
    * was just back-filled from a newly-learned account+model window. Stamps the
    * live tool-call count like the other emit paths so snapshot reads stay

@@ -229,6 +229,78 @@ describe('UsageAccumulator.setSessionUsage - merge behavior', () => {
     expect(merged.contextWindow.usedPercentage).toBe(0);
   });
 
+  it('hydrateKnownWindows fills a subsequent transcript-fallback session (boot hydration from persisted metrics)', () => {
+    // Simulates project-open: the window was learned in a PREVIOUS run and is
+    // hydrated from persisted config before any status.json flows this run.
+    usage.hydrateKnownWindows([{ modelId: 'claude-opus-4-8', contextWindowSize: 1_000_000 }]);
+    const merged = usage.setSessionUsage('parked-session', {
+      contextWindow: { usedTokens: 200_000 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+    expect(merged.contextWindow.contextWindowSize).toBe(1_000_000);
+    expect(merged.contextWindow.usedPercentage).toBe(20);
+  });
+
+  it('hydrateKnownWindows retroactively refills an already-cached parked session and returns its id', () => {
+    // A parked session already emitted this run via the transcript fallback
+    // (window 0) BEFORE hydration ran. Hydration must correct it in place, not
+    // just seed the map for future emits.
+    usage.setSessionUsage('parked-session', {
+      contextWindow: { usedTokens: 200_000 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+    const refilled = usage.hydrateKnownWindows([{ modelId: 'claude-opus-4-8', contextWindowSize: 1_000_000 }]);
+    expect(refilled).toContain('parked-session');
+    const after = usage.getSessionUsage('parked-session')!;
+    expect(after.contextWindow.contextWindowSize).toBe(1_000_000);
+    expect(after.contextWindow.usedPercentage).toBe(20);
+  });
+
+  it('hydrateKnownWindows processes every entry, not just the first (union of refilled ids across models)', () => {
+    // Two parked sessions on TWO DIFFERENT models, both already cached this run
+    // via the transcript fallback (window 0) before hydration ran. A single
+    // hydrateKnownWindows call carrying both entries must refill BOTH sessions
+    // and return the UNION of both refilled ids - a regression that only
+    // processes entries[0] (or uses `=` instead of `push(...)`) would silently
+    // drop the second session while every single-entry test above stays green.
+    usage.setSessionUsage('parked-session-opus', {
+      contextWindow: { usedTokens: 200_000 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+    usage.setSessionUsage('parked-session-sonnet', {
+      contextWindow: { usedTokens: 50_000 },
+      model: { id: 'claude-sonnet-4-5', displayName: 'Sonnet 4.5' },
+    } as Partial<SessionUsage>);
+
+    const refilled = usage.hydrateKnownWindows([
+      { modelId: 'claude-opus-4-8', contextWindowSize: 1_000_000 },
+      { modelId: 'claude-sonnet-4-5', contextWindowSize: 200_000 },
+    ]);
+
+    expect(refilled).toContain('parked-session-opus');
+    expect(refilled).toContain('parked-session-sonnet');
+
+    const afterOpus = usage.getSessionUsage('parked-session-opus')!;
+    expect(afterOpus.contextWindow.contextWindowSize).toBe(1_000_000);
+    expect(afterOpus.contextWindow.usedPercentage).toBe(20);
+
+    const afterSonnet = usage.getSessionUsage('parked-session-sonnet')!;
+    expect(afterSonnet.contextWindow.contextWindowSize).toBe(200_000);
+    expect(afterSonnet.contextWindow.usedPercentage).toBe(25);
+  });
+
+  it('a hydrated stale-too-small window still degrades to the sentinel (never > 100%)', () => {
+    // A persisted window can go stale (entitlement drop 1M -> 200K). The
+    // impossible-window degrade must still protect against it.
+    usage.hydrateKnownWindows([{ modelId: 'claude-opus-4-8', contextWindowSize: 200_000 }]);
+    const merged = usage.setSessionUsage('parked-session', {
+      contextWindow: { usedTokens: 650_398 },
+      model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+    } as Partial<SessionUsage>);
+    expect(merged.contextWindow.contextWindowSize).toBe(0);
+    expect(merged.contextWindow.usedPercentage).toBe(0);
+  });
+
   it('replaceSessionUsage bypasses the impossibility guard (status.json is self-consistent and already clamped)', () => {
     // The status.json path replaces the whole payload with Claude's own numbers.
     // Its used_percentage is clamped upstream, and its usedTokens include output
