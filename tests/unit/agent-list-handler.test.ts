@@ -170,6 +170,7 @@ function makeContext() {
       setMaxConcurrent: vi.fn(),
       setShell: vi.fn(),
       setIdleTimeout: vi.fn(),
+      hydrateDiscoveredContextWindows: vi.fn(),
     },
     projectRepo: {
       list: vi.fn(() => []),
