@@ -1,5 +1,6 @@
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
+import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attachment-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { resolveColumn } from './column-resolver';
@@ -126,6 +127,7 @@ export const handleUpdateTask: CommandHandler = (
   const newLabels = params.labels as string[] | null;
   const newBaseBranch = params.baseBranch as string | null;
   const newUseWorktree = params.useWorktree as boolean | null;
+  const newAttachments = params.attachments as Array<{ filePath: string; filename?: string }> | null;
 
   // Observability for the "labels dropped on a large description" bug
   // (task #229). See the matching note in handleCreateTask.
@@ -156,7 +158,39 @@ export const handleUpdateTask: CommandHandler = (
   if (newBaseBranch !== null) updates.base_branch = newBaseBranch;
   if (newUseWorktree !== null) updates.use_worktree = newUseWorktree ? 1 : 0;
 
-  const updated = taskRepo.update(updates as unknown as TaskUpdateInput);
+  const hasScalarChange = Object.keys(updates).length > 1;
+  let updated = hasScalarChange ? taskRepo.update(updates as unknown as TaskUpdateInput) : task;
+
+  // Attach files if provided (additive - existing attachments are untouched).
+  let attachmentsAdded = 0;
+  if (newAttachments && newAttachments.length > 0) {
+    const attachmentRepo = new AttachmentRepository(db);
+    const projectPath = context.getProjectPath();
+    for (const entry of newAttachments) {
+      try {
+        const fileData = readFileAsAttachment(entry.filePath, entry.filename);
+        attachmentRepo.add(projectPath, task.id, fileData.filename, fileData.base64Data, fileData.mediaType);
+        attachmentsAdded += 1;
+      } catch (error) {
+        console.error(`[update_task] Failed to attach file "${entry.filePath}":`, error);
+      }
+    }
+    // Re-fetch so the response and onTaskUpdated carry the fresh derived attachment_count.
+    updated = taskRepo.getById(task.id) ?? updated;
+  }
+
+  // If nothing actually changed (no scalar field set, and every requested
+  // attachment failed to read), surface a structured failure instead of a
+  // misleading success with an empty "Updated  for ..." message. Mirrors the
+  // equivalent guard in handleUpdateBacklogItem. Reachable only via attachments,
+  // since the tool layer forwards attachments past its "at least one field"
+  // gate while attachments contribute to changedFields only when one succeeds.
+  if (!hasScalarChange && attachmentsAdded === 0) {
+    const attachmentsRequested = newAttachments?.length ?? 0;
+    return attachmentsRequested > 0
+      ? { success: false, error: `Failed to attach any of the ${attachmentsRequested} requested file(s); no other fields were updated.` }
+      : { success: false, error: 'No fields provided to update' };
+  }
 
   context.onTaskUpdated(updated);
 
@@ -170,6 +204,7 @@ export const handleUpdateTask: CommandHandler = (
   if (newLabels !== null) changedFields.push('labels');
   if (newBaseBranch !== null) changedFields.push('baseBranch');
   if (newUseWorktree !== null) changedFields.push('useWorktree');
+  if (attachmentsAdded > 0) changedFields.push('attachments');
 
   return {
     success: true,
@@ -186,6 +221,7 @@ export const handleUpdateTask: CommandHandler = (
       labels: updated.labels,
       baseBranch: updated.base_branch,
       useWorktree: updated.use_worktree,
+      ...(newAttachments !== null ? { attachmentCount: updated.attachment_count, attachmentsAdded } : {}),
     },
   };
 };
@@ -351,4 +387,53 @@ export const handleDeleteTask: CommandHandler = (
     message: `Deleted task "${task.title}" (#${task.display_id}).`,
     data: { id: task.id, displayId: task.display_id, title: task.title },
   };
+};
+
+/**
+ * Remove a single attachment by ID from either surface. Tries the board
+ * `task_attachments` table first, then falls back to backlog
+ * `backlog_attachments` - the attachment UUID alone determines which surface
+ * owns it, so there is no separate board/backlog parameter to get wrong.
+ */
+export const handleRemoveAttachment: CommandHandler = (
+  params: Record<string, unknown>,
+  context: CommandContext,
+): CommandResponse => {
+  const attachmentId = params.attachmentId as string;
+
+  if (!attachmentId) {
+    return { success: false, error: 'attachmentId is required' };
+  }
+
+  const db = context.getProjectDb();
+
+  const attachmentRepo = new AttachmentRepository(db);
+  const boardAttachment = attachmentRepo.getById(attachmentId);
+  if (boardAttachment) {
+    attachmentRepo.remove(attachmentId);
+    const taskRepo = new TaskRepository(db);
+    const task = taskRepo.getById(boardAttachment.task_id);
+    if (task) {
+      context.onTaskUpdated(task);
+    }
+    return {
+      success: true,
+      message: `Removed attachment "${boardAttachment.filename}" from task ${task ? `"${task.title}" (#${task.display_id})` : boardAttachment.task_id}.`,
+      data: { attachmentId, taskId: boardAttachment.task_id, filename: boardAttachment.filename },
+    };
+  }
+
+  const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
+  const backlogAttachment = backlogAttachmentRepo.getById(attachmentId);
+  if (backlogAttachment) {
+    backlogAttachmentRepo.remove(attachmentId);
+    context.onBacklogChanged();
+    return {
+      success: true,
+      message: `Removed attachment "${backlogAttachment.filename}" from backlog item ${backlogAttachment.backlog_task_id}.`,
+      data: { attachmentId, backlogItemId: backlogAttachment.backlog_task_id, filename: backlogAttachment.filename },
+    };
+  }
+
+  return { success: false, error: `Attachment "${attachmentId}" not found` };
 };

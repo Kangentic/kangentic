@@ -97,7 +97,7 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
   server.registerTool(
     'kangentic_update_backlog_item',
     {
-      description: 'Update a backlog item\'s title, description, priority, or labels. Only the fields you provide are changed; omitted fields are left as-is. Note that `labels` is a full replacement (not additive) - pass the complete new label set. Find item IDs with kangentic_list_backlog or kangentic_search_tasks (with `scope: "backlog"`). Pass `project` to update a backlog item in a different project.',
+      description: 'Update a backlog item\'s title, description, priority, labels, or attachments. Only the fields you provide are changed; omitted fields are left as-is. Note that `labels` is a full replacement (not additive) - pass the complete new label set; `attachments` is additive - existing attachments are kept. Find item IDs with kangentic_list_backlog or kangentic_search_tasks (with `scope: "backlog"`). Pass `project` to update a backlog item in a different project.',
       inputSchema: z.object({
         itemId: z.string().describe('Backlog item UUID (from kangentic_list_backlog or kangentic_search_tasks).'),
         title: z.string().max(200).optional().describe('New title (max 200 characters).'),
@@ -107,16 +107,21 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
           z.string(),
           z.object({ name: z.string(), color: z.string() }),
         ])).optional().describe('Full replacement label set. Strings, or {name, color} objects to also set the label color.'),
+        attachments: z.array(z.object({
+          filePath: z.string().describe('Absolute path to the file to attach'),
+          filename: z.string().optional().describe('Override display filename'),
+        })).optional().describe('File attachments to ADD to the backlog item. This is additive - existing attachments are kept, not replaced. Each entry needs `filePath` (absolute) and may override the display `filename`. Use kangentic_remove_task_attachment to remove one.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ itemId, title, description, priority, labels, project }) => withProject(resolver, project, (ctx) => callHandler('update_backlog_item', {
+    async ({ itemId, title, description, priority, labels, attachments, project }) => withProject(resolver, project, (ctx) => callHandler('update_backlog_item', {
       itemId,
       title: title ?? null,
       description: description ?? null,
       priority: priority ?? null,
       labels: labels ?? null,
+      attachments: attachments ?? null,
     }, ctx, 'Failed to update backlog item')),
   );
 

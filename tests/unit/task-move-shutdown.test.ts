@@ -54,6 +54,7 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
     getLatestForTask = vi.fn(() => null);
+    getSummaryForTask = vi.fn(() => null);
     updateGitStats = vi.fn();
   },
 }));

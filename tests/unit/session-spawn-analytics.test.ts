@@ -18,6 +18,13 @@
  *        A subsequent `session-changed` with status=`running` for the same
  *        id (simulating a re-spawn with the same id) fires analytics again.
  *
+ *   #3 - session_exit costUsd/toolCalls: the `exit` listener reads
+ *        `sessionManager.getUsageCache()[sessionId]` and attaches `costUsd`
+ *        (rounded to 4 decimals) and `toolCalls` to the `session_exit` props
+ *        when the cache entry carries `cost.totalCostUsd` /
+ *        `toolCallCount`. When the cache entry is absent or lacks those
+ *        fields, both props must be OMITTED (not sent as 0/undefined).
+ *
  * Mock strategy mirrors session-idle-timeout.test.ts:
  *   - `electron` and `ipcMain` are mocked so registerSessionHandlers can be
  *     called without a real Electron process.
@@ -357,5 +364,96 @@ describe('exit listener - session_spawn Set entry is cleared so re-spawn fires a
       agent: 'gemini',
       isTransient: false,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #3 - session_exit costUsd/toolCalls sourced from the in-memory usage cache
+// ---------------------------------------------------------------------------
+
+describe('exit listener - session_exit attaches costUsd/toolCalls from the usage cache', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedIpcHandlers.clear();
+    capturedSessionEventHandlers.clear();
+
+    mockGetLatestForTask.mockReturnValue(null);
+
+    mockGetProjectRepos.mockReturnValue({
+      tasks: { getById: vi.fn(() => null), update: vi.fn() },
+      swimlanes: { getById: vi.fn(() => null) },
+      actions: { getTransitionsFor: vi.fn(() => []) },
+      attachments: { add: vi.fn(), listForTask: vi.fn(() => []) },
+    });
+  });
+
+  /**
+   * Runs the running -> exit sequence and returns the props object passed to
+   * the `session_exit` trackEvent call. Fails loudly if session_exit was
+   * never tracked (e.g. because sessionStartTimes was never populated).
+   */
+  function fireRunningThenExit(
+    sessionId: string,
+    agentName: string,
+    usageCacheEntry: Record<string, unknown> | undefined,
+  ): Record<string, string | number | boolean> {
+    const context = createMockContext(sessionId, agentName);
+    context.sessionManager.getUsageCache.mockReturnValue(
+      usageCacheEntry !== undefined ? { [sessionId]: usageCacheEntry } : {},
+    );
+    registerSessionHandlers(context as never);
+
+    const sessionChangedHandler = capturedSessionEventHandlers.get('session-changed');
+    if (!sessionChangedHandler) throw new Error('session-changed handler was not registered');
+    const exitHandler = capturedSessionEventHandlers.get('exit');
+    if (!exitHandler) throw new Error('exit handler was not registered');
+
+    // Populate sessionStartTimes so the exit listener's duration branch (and
+    // therefore the trackEvent('session_exit', ...) call) actually runs.
+    sessionChangedHandler(sessionId, makeRunningSession(sessionId));
+    vi.mocked(trackEvent).mockClear();
+
+    exitHandler(sessionId, 0);
+
+    const exitCall = vi.mocked(trackEvent).mock.calls.find((call) => call[0] === 'session_exit');
+    if (!exitCall) throw new Error('session_exit was never tracked');
+    return exitCall[1] as Record<string, string | number | boolean>;
+  }
+
+  it('attaches costUsd (rounded to 4 decimals) and toolCalls when the usage cache has both', () => {
+    const sessionId = 'analytics-exit-usage-populated-005';
+
+    const props = fireRunningThenExit(sessionId, 'claude', {
+      cost: { totalCostUsd: 1.23456 },
+      toolCallCount: 7,
+      model: { id: 'claude-opus-4-8' },
+    });
+
+    expect(props.costUsd).toBe(1.2346);
+    expect(props.toolCalls).toBe(7);
+    expect(props.model).toBe('claude-opus-4-8');
+  });
+
+  it('omits costUsd and toolCalls when the usage cache entry lacks cost/toolCallCount', () => {
+    const sessionId = 'analytics-exit-usage-missing-fields-006';
+
+    const props = fireRunningThenExit(sessionId, 'claude', {
+      model: { id: 'claude-opus-4-8' },
+    });
+
+    expect(props).not.toHaveProperty('costUsd');
+    expect(props).not.toHaveProperty('toolCalls');
+    // model is independently gated and still attaches when present.
+    expect(props.model).toBe('claude-opus-4-8');
+  });
+
+  it('omits costUsd and toolCalls when getUsageCache() has no entry for the session', () => {
+    const sessionId = 'analytics-exit-usage-empty-cache-007';
+
+    const props = fireRunningThenExit(sessionId, 'claude', undefined);
+
+    expect(props).not.toHaveProperty('costUsd');
+    expect(props).not.toHaveProperty('toolCalls');
+    expect(props).not.toHaveProperty('model');
   });
 });
