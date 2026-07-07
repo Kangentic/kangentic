@@ -79,4 +79,30 @@ describe('resolveClientId', () => {
     expect(clientId).toMatch(/^[0-9a-f-]{36}$/);
     expect(JSON.parse(fs.readFileSync(cacheFilePath, 'utf-8'))).toEqual({ clientId });
   });
+
+  it('falls back to a random id when machineId() hangs past the 3000ms timeout, without waiting for it to ever settle', async () => {
+    // machineId() never resolves or rejects on its own (simulates a hung
+    // subprocess, e.g. reg.exe/ioreg/dbus blocked by AV or a locked-down
+    // environment). Only the internal `withTimeout` race should be able to
+    // unblock resolveClientId here.
+    mocks.machineId.mockReturnValue(new Promise<string>(() => {}));
+
+    vi.useFakeTimers();
+    try {
+      const pending = resolveClientId('/home/alice', cacheFilePath);
+
+      // Advance exactly to the documented MACHINE_ID_TIMEOUT_MS boundary so
+      // this test is falsifiable against a regression that widens or removes
+      // the timeout (a change back to a bare `await machineId()` would leave
+      // `pending` unresolved forever and this awaited assertion would hang
+      // until vitest's own test timeout fails the test).
+      await vi.advanceTimersByTimeAsync(3000);
+      const clientId = await pending;
+
+      expect(clientId).toMatch(/^[0-9a-f-]{36}$/);
+      expect(JSON.parse(fs.readFileSync(cacheFilePath, 'utf-8'))).toEqual({ clientId });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
