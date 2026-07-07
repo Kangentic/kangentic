@@ -101,10 +101,12 @@ vi.mock('../../src/main/pr/pr-refresh-scheduler', () => ({
 // whole shard. Stubbing it isolates this config-wiring test from the retrieval
 // subsystem entirely.
 const retrievalStartForProjectSpy = vi.fn();
+const reconcileEmbedWorkerSpy = vi.fn();
 vi.mock('../../src/main/retrieval/retrieval-service', () => ({
   retrievalService: {
     startForProject: (...args: unknown[]) => retrievalStartForProjectSpy(...args),
     attach: vi.fn(),
+    reconcileEmbedWorker: (...args: unknown[]) => reconcileEmbedWorkerSpy(...args),
   },
 }));
 
@@ -225,6 +227,45 @@ describe('CONFIG_SET IPC handler - applyRuntimeConfig wiring', () => {
       context.configManager,
       null,
     );
+  });
+});
+
+describe('CONFIG_SET IPC handler - retrieval-service reconcileEmbedWorker wiring', () => {
+  // Regression guard: toggling memory settings (semanticEnabled off, etc.) must
+  // release/re-hold the resident embed worker promptly rather than waiting for
+  // its next idle-recycle window. Mirrors the CONFIG_SET_PROJECT_BY_PATH
+  // prRefreshScheduler wiring tests below - the call is behind a lazy dynamic
+  // import (`void import('../../retrieval/retrieval-service').then(...)`) that
+  // resolves on a microtask, so assertions poll via vi.waitFor.
+  beforeEach(() => {
+    capturedHandlers.clear();
+    capturedOnHandlers.clear();
+    applyRuntimeConfigSpy.mockClear();
+    reconcileEmbedWorkerSpy.mockClear();
+  });
+
+  it('calls reconcileEmbedWorker when the saved config includes a memory key', async () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:set', { memory: { semanticEnabled: false } });
+
+    await vi.waitFor(() => expect(reconcileEmbedWorkerSpy).toHaveBeenCalledTimes(1));
+    expect(reconcileEmbedWorkerSpy).toHaveBeenCalledWith(context);
+  });
+
+  it('does NOT call reconcileEmbedWorker when the saved config has no memory key', async () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:set', { terminal: { shell: '/usr/bin/zsh' } });
+
+    // Drain the microtask queue. The dynamic import is behind the `if (config.memory)`
+    // branch, so it is never queued when the key is absent.
+    // (Intentional fixed budget - we cannot poll for non-occurrence.)
+    await Promise.resolve();
+
+    expect(reconcileEmbedWorkerSpy).not.toHaveBeenCalled();
   });
 });
 
