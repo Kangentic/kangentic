@@ -212,6 +212,59 @@ describe('computeUpdatedDescription', () => {
     expect(result.success).toBe(false);
     expect((result as { error: string }).error).toContain(String(TASK_DESCRIPTION_MAX_LENGTH));
   });
+
+  it('succeeds as a no-op when find and replace are identical', () => {
+    const result = computeUpdatedDescription(ORIGINAL_DESCRIPTION, {
+      edits: [{ find: 'first section text', replace: 'first section text' }],
+    });
+
+    expect(result).toEqual({ success: true, text: ORIGINAL_DESCRIPTION });
+  });
+
+  it('supports deletion via an empty-string replace', () => {
+    const result = computeUpdatedDescription('one two three', {
+      edits: [{ find: 'two ', replace: '' }],
+    });
+
+    expect(result).toEqual({ success: true, text: 'one three' });
+  });
+
+  it('accepts a result whose length lands exactly at the cap (boundary: > not >=)', () => {
+    const result = computeUpdatedDescription('short', {
+      append: 'x'.repeat(TASK_DESCRIPTION_MAX_LENGTH - 'short'.length),
+    });
+
+    expect(result.success).toBe(true);
+    expect((result as { text: string }).text).toHaveLength(TASK_DESCRIPTION_MAX_LENGTH);
+  });
+
+  it('rejects a result that lands exactly one character past the cap', () => {
+    const result = computeUpdatedDescription('short', {
+      append: 'x'.repeat(TASK_DESCRIPTION_MAX_LENGTH - 'short'.length + 1),
+    });
+
+    expect(result.success).toBe(false);
+    expect((result as { error: string }).error).toContain(String(TASK_DESCRIPTION_MAX_LENGTH + 1));
+  });
+
+  it('resolves overlapping-but-not-identical find strings across sequential edits (an earlier replace can make a later find unique)', () => {
+    // "section" alone appears twice (Section A / Section B headers), so it is
+    // non-unique against the ORIGINAL text. The first edit narrows the
+    // second edit's target to a string that only exists once in the
+    // POST-first-edit text, proving edits are matched against the evolving
+    // text, not the original.
+    const result = computeUpdatedDescription(ORIGINAL_DESCRIPTION, {
+      edits: [
+        { find: '## Section A\nfirst section text', replace: '## Section A\nfirst section CHANGED' },
+        { find: 'first section CHANGED', replace: 'first section FINAL' },
+      ],
+    });
+
+    expect(result).toEqual({
+      success: true,
+      text: '## Section A\nfirst section FINAL\n\n## Section B\nsecond section text\n',
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

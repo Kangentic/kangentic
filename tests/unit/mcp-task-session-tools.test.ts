@@ -664,6 +664,92 @@ describe('kangentic_update_task descriptionEdits / appendDescription wiring', ()
 });
 
 // ---------------------------------------------------------------------------
+// kangentic_update_task descriptionEdits - Zod schema-level validation.
+//
+// The fake server harness above stubs `registerTool` itself, but the
+// `inputSchema` it captures is the REAL z.object(...) built by task-tools.ts -
+// only the SDK's server/transport is faked, not zod. In the real MCP server,
+// the SDK validates incoming args against this schema BEFORE the registered
+// handler ever runs; every wiring test above invokes the handler directly
+// with already-valid args, so none of them would catch a broken or dropped
+// Zod constraint (e.g. `.min(1)` silently removed from the array or the
+// `find` field). Exercise the schema directly via `.safeParse` to close that
+// protocol-level gap.
+// ---------------------------------------------------------------------------
+
+describe('kangentic_update_task descriptionEdits - Zod schema validation', () => {
+  let server: ReturnType<typeof makeFakeServer>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    server = makeFakeServer();
+    const resolver = makeResolver();
+    const taskCounter: TaskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
+  });
+
+  function updateTaskSchema(): { safeParse: (data: unknown) => { success: boolean } } {
+    const { inputSchema } = server.getConfig('kangentic_update_task');
+    return inputSchema as unknown as { safeParse: (data: unknown) => { success: boolean } };
+  }
+
+  it('rejects an empty descriptionEdits array (schema .min(1))', () => {
+    const result = updateTaskSchema().safeParse({ taskId: 'task-1', descriptionEdits: [] });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a descriptionEdits array beyond the 100-edit cap (schema .max(100))', () => {
+    const tooManyEdits = Array.from({ length: 101 }, (_, index) => ({
+      find: `find-${index}`,
+      replace: `replace-${index}`,
+    }));
+
+    const result = updateTaskSchema().safeParse({ taskId: 'task-1', descriptionEdits: tooManyEdits });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a descriptionEdits array at exactly the 100-edit cap boundary', () => {
+    const maxEdits = Array.from({ length: 100 }, (_, index) => ({
+      find: `find-${index}`,
+      replace: `replace-${index}`,
+    }));
+
+    const result = updateTaskSchema().safeParse({ taskId: 'task-1', descriptionEdits: maxEdits });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an empty-string find (schema .min(1) on the find field)', () => {
+    const result = updateTaskSchema().safeParse({
+      taskId: 'task-1',
+      descriptionEdits: [{ find: '', replace: 'anything' }],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts an empty-string replace (deletion is valid at the schema level)', () => {
+    const result = updateTaskSchema().safeParse({
+      taskId: 'task-1',
+      descriptionEdits: [{ find: 'something', replace: '' }],
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts a well-formed single-entry descriptionEdits array', () => {
+    const result = updateTaskSchema().safeParse({
+      taskId: 'task-1',
+      descriptionEdits: [{ find: 'old', replace: 'new' }],
+    });
+
+    expect(result.success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // kangentic_remove_task_attachment - tool registration and wiring at the
 // mcp-http layer (as opposed to handleRemoveAttachment's command-handler
 // logic, already covered in mcp-attachment-handlers.test.ts).
