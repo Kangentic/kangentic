@@ -79,6 +79,47 @@ describe('parseClaudeTranscriptToolCounts', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('falls back to "tool" as the breakdown key when a tool_use block has no name', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-transcript-tool-counts-'));
+    const filePath = path.join(dir, 'missing-name.jsonl');
+    try {
+      fs.writeFileSync(
+        filePath,
+        '{"type":"assistant","message":{"id":"msg_1","content":[{"type":"tool_use","id":"tu_1"}]}}\n' +
+          '{"type":"assistant","message":{"id":"msg_2","content":[{"type":"tool_use","id":"tu_2","name":""}]}}\n',
+      );
+      const counts = await parseClaudeTranscriptToolCounts(filePath);
+      expect(counts).not.toBeNull();
+      // Both a missing `name` field and an empty-string `name` fall back to
+      // the same "tool" bucket, and each has a distinct tool_use.id, so both
+      // are counted (not deduped against each other).
+      expect(counts!.toolCallCount).toBe(2);
+      expect(counts!.toolBreakdown).toEqual([
+        { toolName: 'tool', callCount: 2, totalDurationMs: 0, interruptedCount: 0 },
+      ]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips an assistant message whose content is not an array (a single tool_use-shaped object, not block-array-wrapped)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-transcript-tool-counts-'));
+    const filePath = path.join(dir, 'non-array-content.jsonl');
+    try {
+      // A well-formed transcript always wraps content in an array, even for
+      // a single block. This simulates a malformed/legacy line where content
+      // is a bare object shaped like a tool_use block - it must be skipped
+      // entirely, not unwrapped and counted.
+      fs.writeFileSync(
+        filePath,
+        '{"type":"assistant","message":{"id":"msg_1","content":{"type":"tool_use","id":"tu_bare","name":"Bash"}}}\n',
+      );
+      expect(await parseClaudeTranscriptToolCounts(filePath)).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
