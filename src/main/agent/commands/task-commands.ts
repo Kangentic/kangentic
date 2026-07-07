@@ -5,17 +5,82 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
-import { handleCreateBacklogTask } from './backlog-commands';
+import { handleCreateBacklogTask, BACKLOG_DESCRIPTION_MAX_LENGTH } from './backlog-commands';
 import { linkPRForTask } from '../../pr/pr-linking';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type { TaskUpdateInput } from '../../../shared/types';
+
+export const TASK_DESCRIPTION_MAX_LENGTH = 50_000;
+
+export interface DescriptionEdit {
+  find: string;
+  replace: string;
+}
+
+export type DescriptionEditResult =
+  | { success: true; text: string }
+  | { success: false; error: string };
+
+/**
+ * Render a `find` value for an error message without echoing a huge string
+ * back to the caller (which would defeat the token-saving point of the edit
+ * modes). Long values are truncated with their full length reported.
+ */
+function describeFindValue(find: string): string {
+  const maxEchoLength = 200;
+  if (find.length <= maxEchoLength) return JSON.stringify(find);
+  return `${JSON.stringify(find.slice(0, maxEchoLength))} (truncated, ${find.length} chars total)`;
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  if (needle.length === 0) return 0;
+  let count = 0;
+  let index = haystack.indexOf(needle);
+  while (index !== -1) {
+    count += 1;
+    index = haystack.indexOf(needle, index + needle.length);
+  }
+  return count;
+}
+
+/**
+ * Apply Edit-tool-style exact-string replacements to a description, then an
+ * optional append, mirroring the file Edit tool's failure semantics: a `find`
+ * that is absent or not unique fails the whole call rather than a silent
+ * no-op or partial write. Edits apply sequentially against the evolving text.
+ */
+export function computeUpdatedDescription(
+  current: string,
+  options: { edits?: DescriptionEdit[] | null; append?: string | null },
+): DescriptionEditResult {
+  let text = current;
+  const edits = options.edits ?? [];
+  for (let index = 0; index < edits.length; index += 1) {
+    const { find, replace } = edits[index];
+    const occurrences = countOccurrences(text, find);
+    if (occurrences === 0) {
+      return { success: false, error: `descriptionEdits[${index}]: text to find was not present in the description: ${describeFindValue(find)}` };
+    }
+    if (occurrences > 1) {
+      return { success: false, error: `descriptionEdits[${index}]: text to find appears ${occurrences} times in the description; it must be unique: ${describeFindValue(find)}` };
+    }
+    text = text.split(find).join(replace);
+  }
+  if (options.append) {
+    text = text + options.append;
+  }
+  if (text.length > TASK_DESCRIPTION_MAX_LENGTH) {
+    return { success: false, error: `Resulting description would be ${text.length} characters, over the ${TASK_DESCRIPTION_MAX_LENGTH} character limit.` };
+  }
+  return { success: true, text };
+}
 
 export const handleCreateTask: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
 ) => {
   const title = String(params.title ?? '').slice(0, 200);
-  const description = String(params.description ?? '').slice(0, 10_000);
+  const description = String(params.description ?? '').slice(0, TASK_DESCRIPTION_MAX_LENGTH);
   const columnName = params.column as string | null;
   const branchName = params.branchName as string | null;
   const baseBranch = params.baseBranch as string | null;
@@ -42,6 +107,17 @@ export const handleCreateTask: CommandHandler = (
   // item instead of a board task. The default (no column) always goes to the
   // To Do column on the active board, never the backlog.
   if (columnName && columnName.trim().toLowerCase() === 'backlog') {
+    // The create_task Zod cap (TASK_DESCRIPTION_MAX_LENGTH) covers board tasks;
+    // backlog items keep the lower BACKLOG_DESCRIPTION_MAX_LENGTH. Enforce it
+    // here so an over-cap backlog description fails loudly rather than being
+    // silently truncated by handleCreateBacklogTask's slice.
+    const backlogDescriptionLength = String(params.description ?? '').length;
+    if (backlogDescriptionLength > BACKLOG_DESCRIPTION_MAX_LENGTH) {
+      return {
+        success: false,
+        error: `Backlog item description is ${backlogDescriptionLength} characters, over the ${BACKLOG_DESCRIPTION_MAX_LENGTH} character limit for backlog items (board tasks allow up to ${TASK_DESCRIPTION_MAX_LENGTH}).`,
+      };
+    }
     return handleCreateBacklogTask({ ...params, priority: priority ?? 0 }, context);
   }
 
@@ -120,6 +196,8 @@ export const handleUpdateTask: CommandHandler = (
   const taskId = params.taskId as string;
   const newTitle = params.title as string | null;
   const newDescription = params.description as string | null;
+  const newDescriptionEdits = (params.descriptionEdits ?? null) as DescriptionEdit[] | null;
+  const newAppendDescription = (params.appendDescription ?? null) as string | null;
   const newPrUrl = params.prUrl as string | null;
   const newPrNumber = params.prNumber as number | null;
   const newAgent = params.agent as string | null;
@@ -133,6 +211,8 @@ export const handleUpdateTask: CommandHandler = (
   // (task #229). See the matching note in handleCreateTask.
   console.log('[update_task] received args:', {
     descriptionLength: typeof newDescription === 'string' ? newDescription.length : null,
+    descriptionEditsCount: newDescriptionEdits?.length ?? null,
+    appendLength: typeof newAppendDescription === 'string' ? newAppendDescription.length : null,
     labels: newLabels,
   });
 
@@ -149,7 +229,32 @@ export const handleUpdateTask: CommandHandler = (
 
   const updates: Record<string, unknown> = { id: task.id };
   if (newTitle !== null) updates.title = String(newTitle).slice(0, 200);
-  if (newDescription !== null) updates.description = String(newDescription).slice(0, 10_000);
+
+  // `description` (full replace) is mutually exclusive with `descriptionEdits`
+  // / `appendDescription`; the tool layer (task-tools.ts) rejects the two
+  // together, so this if/else never sees both from the MCP path.
+  let descriptionChanged = false;
+  if (newDescription !== null) {
+    updates.description = String(newDescription).slice(0, TASK_DESCRIPTION_MAX_LENGTH);
+    descriptionChanged = true;
+  } else if (newDescriptionEdits !== null || newAppendDescription !== null) {
+    const editResult = computeUpdatedDescription(task.description, {
+      edits: newDescriptionEdits,
+      append: newAppendDescription,
+    });
+    if (!editResult.success) {
+      return { success: false, error: editResult.error };
+    }
+    // Only treat this as a change when the text actually moved. An empty
+    // `appendDescription` or a no-op edit (e.g. find === replace) otherwise
+    // triggers a spurious DB write, an updated_at bump, and a misleading
+    // "description" in changedFields.
+    if (editResult.text !== task.description) {
+      updates.description = editResult.text;
+      descriptionChanged = true;
+    }
+  }
+
   if (newPrUrl !== null) updates.pr_url = String(newPrUrl);
   if (newPrNumber !== null) updates.pr_number = Number(newPrNumber);
   if (newAgent !== null) updates.agent = newAgent;
@@ -196,7 +301,7 @@ export const handleUpdateTask: CommandHandler = (
 
   const changedFields: string[] = [];
   if (newTitle !== null) changedFields.push('title');
-  if (newDescription !== null) changedFields.push('description');
+  if (descriptionChanged) changedFields.push('description');
   if (newPrUrl !== null) changedFields.push('prUrl');
   if (newPrNumber !== null) changedFields.push('prNumber');
   if (newAgent !== null) changedFields.push('agent');

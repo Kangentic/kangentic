@@ -577,6 +577,93 @@ describe('kangentic_update_task "at least one field" guard - attachments wiring'
 });
 
 // ---------------------------------------------------------------------------
+// kangentic_update_task descriptionEdits / appendDescription - tool-layer
+// wiring: the "at least one field" guard, the description mutual-exclusivity
+// guard, and forwarding to callHandler. handleUpdateTask's own apply/atomicity
+// logic is covered in mcp-update-task-description-edits.test.ts.
+// ---------------------------------------------------------------------------
+
+describe('kangentic_update_task descriptionEdits / appendDescription wiring', () => {
+  let server: ReturnType<typeof makeFakeServer>;
+  let resolver: RequestResolver;
+  let taskCounter: TaskCounter;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    server = makeFakeServer();
+    resolver = makeResolver();
+    taskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
+  });
+
+  it('accepts a descriptionEdits-only call through the guard and forwards it to callHandler', async () => {
+    const result = await server.getHandler('kangentic_update_task')({
+      taskId: 'task-1',
+      descriptionEdits: [{ find: 'old text', replace: 'new text' }],
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [handlerName, params] = mockCallHandler.mock.calls[0];
+    expect(handlerName).toBe('update_task');
+    const typedParams = params as Record<string, unknown>;
+    expect(typedParams.descriptionEdits).toEqual([{ find: 'old text', replace: 'new text' }]);
+    expect(typedParams.description).toBeNull();
+    expect(typedParams.appendDescription).toBeNull();
+  });
+
+  it('accepts an appendDescription-only call through the guard and forwards it to callHandler', async () => {
+    const result = await server.getHandler('kangentic_update_task')({
+      taskId: 'task-1',
+      appendDescription: '\n\nmore text',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [, params] = mockCallHandler.mock.calls[0];
+    const typedParams = params as Record<string, unknown>;
+    expect(typedParams.appendDescription).toBe('\n\nmore text');
+    expect(typedParams.description).toBeNull();
+    expect(typedParams.descriptionEdits).toBeNull();
+  });
+
+  it('rejects description + descriptionEdits together without calling callHandler', async () => {
+    const result = await server.getHandler('kangentic_update_task')({
+      taskId: 'task-1',
+      description: 'full replacement',
+      descriptionEdits: [{ find: 'old text', replace: 'new text' }],
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('not both');
+    expect(mockCallHandler).not.toHaveBeenCalled();
+  });
+
+  it('rejects description + appendDescription together without calling callHandler', async () => {
+    const result = await server.getHandler('kangentic_update_task')({
+      taskId: 'task-1',
+      description: 'full replacement',
+      appendDescription: '\n\nmore text',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('not both');
+    expect(mockCallHandler).not.toHaveBeenCalled();
+  });
+
+  it('allows descriptionEdits and appendDescription together (compose mode)', async () => {
+    const result = await server.getHandler('kangentic_update_task')({
+      taskId: 'task-1',
+      descriptionEdits: [{ find: 'old text', replace: 'new text' }],
+      appendDescription: '\n\nmore text',
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // kangentic_remove_task_attachment - tool registration and wiring at the
 // mcp-http layer (as opposed to handleRemoveAttachment's command-handler
 // logic, already covered in mcp-attachment-handlers.test.ts).

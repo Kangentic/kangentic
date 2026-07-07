@@ -33,6 +33,7 @@ const mockTaskRepoUpdate = vi.fn();
 const mockTaskRepoGetById = vi.fn();
 const mockTaskRepoGetByDisplayId = vi.fn();
 const mockResolveColumn = vi.fn();
+const mockBacklogRepoCreate = vi.fn();
 
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {
@@ -57,7 +58,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {},
 }));
 vi.mock('../../src/main/db/repositories/backlog-repository', () => ({
-  BacklogRepository: class { create = vi.fn(); getById = vi.fn(); update = vi.fn(); list = vi.fn(() => []); },
+  BacklogRepository: class { create = mockBacklogRepoCreate; getById = vi.fn(); update = vi.fn(); list = vi.fn(() => []); },
 }));
 vi.mock('../../src/main/db/repositories/backlog-attachment-repository', () => ({
   BacklogAttachmentRepository: class { add = vi.fn(); list = vi.fn(() => []); deleteByTaskId = vi.fn(); },
@@ -74,6 +75,7 @@ vi.mock('../../src/main/pr/pr-linking', () => ({
 // ---------------------------------------------------------------------------
 
 import { handleCreateTask, handleUpdateTask } from '../../src/main/agent/commands/task-commands';
+import { BACKLOG_DESCRIPTION_MAX_LENGTH } from '../../src/main/agent/commands/backlog-commands';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 
 // ---------------------------------------------------------------------------
@@ -176,5 +178,123 @@ describe('handleUpdateTask - labels survive a large description (round-trip guar
         labels: ['probe-a-v2'],
       }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TASK_DESCRIPTION_MAX_LENGTH raised to 50,000 (from the prior 10,000 cap) -
+// a description in the 10,001-50,000 range must survive both the
+// handleCreateTask (board path) and handleUpdateTask (full-replace) slices
+// in full, not get truncated back down to the old cap.
+// ---------------------------------------------------------------------------
+
+// Comfortably past the old 10,000-character cap but well under the new
+// 50,000-character cap - proves the raise, not just "not truncated to zero".
+const DESCRIPTION_OVER_OLD_TASK_CAP = 'z'.repeat(BACKLOG_DESCRIPTION_MAX_LENGTH + 10_000);
+
+describe('handleCreateTask - persists the full description up to the raised 50,000 cap', () => {
+  let context: CommandContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    context = makeContext();
+    mockResolveColumn.mockReturnValue({ swimlane: { id: 'lane-1', name: 'To Do' } });
+    mockTaskRepoCreate.mockImplementation((input: { title: string; description: string }) => ({
+      id: 'task-uuid-1',
+      display_id: 1,
+      title: input.title,
+      description: input.description,
+    }));
+  });
+
+  it('persists a description well past the old 10,000-char cap in full (board task path, column omitted)', () => {
+    const result = handleCreateTask(
+      { title: 'Long description task', description: DESCRIPTION_OVER_OLD_TASK_CAP },
+      context,
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockTaskRepoCreate).toHaveBeenCalledOnce();
+    const createInput = mockTaskRepoCreate.mock.calls[0][0] as { description: string };
+    expect(createInput.description).toHaveLength(DESCRIPTION_OVER_OLD_TASK_CAP.length);
+    expect(createInput.description).toBe(DESCRIPTION_OVER_OLD_TASK_CAP);
+  });
+});
+
+describe('handleUpdateTask - persists the full full-replace description up to the raised 50,000 cap', () => {
+  let context: CommandContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    context = makeContext();
+    mockTaskRepoGetById.mockReturnValue({ id: 'task-uuid-1', display_id: 1, title: 'Existing', description: 'old description' });
+    mockTaskRepoUpdate.mockImplementation((input: { description?: string }) => ({
+      id: 'task-uuid-1',
+      display_id: 1,
+      title: 'Existing',
+      description: input.description,
+    }));
+  });
+
+  it('persists a full-replace description well past the old 10,000-char cap in full', () => {
+    const result = handleUpdateTask(
+      { taskId: 'task-uuid-1', description: DESCRIPTION_OVER_OLD_TASK_CAP },
+      context,
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockTaskRepoUpdate).toHaveBeenCalledOnce();
+    const updateInput = mockTaskRepoUpdate.mock.calls[0][0] as { description: string };
+    expect(updateInput.description).toHaveLength(DESCRIPTION_OVER_OLD_TASK_CAP.length);
+    expect(updateInput.description).toBe(DESCRIPTION_OVER_OLD_TASK_CAP);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Backlog items keep the lower BACKLOG_DESCRIPTION_MAX_LENGTH cap even though
+// board tasks were raised to 50,000. handleCreateTask must reject an
+// over-cap Backlog create with a structured error rather than silently
+// truncating (handleCreateBacklogTask's internal .slice() would otherwise
+// mask the overflow).
+// ---------------------------------------------------------------------------
+
+describe('handleCreateTask - Backlog column enforces its own lower description cap', () => {
+  let context: CommandContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    context = makeContext();
+    mockBacklogRepoCreate.mockImplementation((input: { title: string; description: string; priority: number; labels: string[] }) => ({
+      id: 'backlog-uuid-1',
+      title: input.title,
+      description: input.description,
+      priority: input.priority,
+      labels: input.labels,
+    }));
+  });
+
+  it('rejects a Backlog create whose description exceeds the backlog cap, and creates no row', () => {
+    const overBacklogCapDescription = 'x'.repeat(BACKLOG_DESCRIPTION_MAX_LENGTH + 5_000);
+
+    const result = handleCreateTask(
+      { title: 'Too-long backlog item', description: overBacklogCapDescription, column: 'Backlog' },
+      context,
+    );
+
+    expect(result.success).toBe(false);
+    expect((result as { error: string }).error).toContain(String(BACKLOG_DESCRIPTION_MAX_LENGTH));
+    expect(mockBacklogRepoCreate).not.toHaveBeenCalled();
+    expect(mockTaskRepoCreate).not.toHaveBeenCalled();
+  });
+
+  it('creates a backlog item normally when the description is within the backlog cap', () => {
+    const result = handleCreateTask(
+      { title: 'Short backlog item', description: 'A short description', column: 'Backlog' },
+      context,
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockBacklogRepoCreate).toHaveBeenCalledOnce();
+    expect(mockTaskRepoCreate).not.toHaveBeenCalled();
   });
 });

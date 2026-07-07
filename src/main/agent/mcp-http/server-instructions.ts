@@ -93,6 +93,9 @@ export function buildServerInstructions(
     '',
     'LABELS WITH A LONG DESCRIPTION (known limitation):',
     'When a kangentic_create_task or kangentic_update_task call carries both a long description (roughly 1KB or more) and labels, the labels can be dropped before they reach the server. To make labels stick, set them in a separate labels-only kangentic_update_task call after creating or updating the task with the long description.',
+    '',
+    'EDITING A LONG TASK DESCRIPTION:',
+    'For an incremental change to a long task description, prefer kangentic_update_task\'s `descriptionEdits` (exact find/replace, like the file Edit tool) or `appendDescription` over resending the whole `description`. They cost far fewer tokens and cannot silently drop or alter untouched sections. Reserve `description` for a genuine full rewrite.',
   ];
 
   if (browserAutomationEnabled) {

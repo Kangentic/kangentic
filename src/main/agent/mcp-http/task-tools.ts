@@ -4,6 +4,7 @@ import { callHandler, runHandler, withProject, detectCrossProjectMention, saniti
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
 import type { BoardHit, BacklogHit, SearchScope } from '../commands/search-commands';
+import { TASK_DESCRIPTION_MAX_LENGTH } from '../commands/task-commands';
 
 /**
  * Build the create_task routing-check refusal shown when the call
@@ -48,7 +49,7 @@ export function registerTaskTools(
       description: 'Create a task on the Kangentic board (default: the To Do column on the active board) or in the backlog. This is the only task-creation tool - use it whenever the user asks to "create a task", "add a todo", "add to backlog", or similar. ATTACHMENTS RULE: When the user\'s prompt references local files by absolute path (design handoffs, mockups, screenshots, specs, READMEs, transcripts), pass those paths in `attachments` on this same call. Default to attaching, not omitting. Do not require a second user request to add them. The only exception is files the user explicitly named as "for context only, don\'t attach." With no `column` argument, the task always lands in the active board\'s To Do column - never the backlog. Pass `column: "Backlog"` (case-insensitive) to create a backlog item instead. Pass any other column name (e.g. "Planning", "Code Review") to land directly in that board column. Board tasks get a git branch and are ready to work on immediately. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the task to that project instead of the active default - do not rely on the active default when the user clearly targeted another project. The name counts however it is phrased, not just the explicit "create a task in X" form: "create a task in X to fix ...", "the X to do board", "add a bug to the X board", "in X", and "X\'s backlog" all target project X. Use kangentic_list_projects to find valid selectors. LABELS WITH A LONG DESCRIPTION: due to a known large-payload limitation, when this call carries both a long description (roughly 1KB or more) and labels, the labels can be dropped before they reach the server. In that case create the task here (you may omit labels), then set labels with a separate labels-only kangentic_update_task call right after.',
       inputSchema: z.object({
         title: z.string().max(200).describe('Task title (max 200 characters)'),
-        description: z.string().max(10000).optional().describe('Task description. Supports markdown.'),
+        description: z.string().max(TASK_DESCRIPTION_MAX_LENGTH).optional().describe('Task description. Supports markdown.'),
         column: z.string().optional().describe('Target column name. Defaults to the To Do column on the active board. Use kangentic_list_columns to see board columns. Pass "Backlog" (case-insensitive) to create a backlog item instead of a board task. Only route to the backlog when the user explicitly asks for the backlog.'),
         priority: z.number().int().min(0).max(4).optional().describe('Priority: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent. Applies to both board tasks and backlog items.'),
         labels: z.array(z.union([
@@ -355,11 +356,16 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_update_task',
     {
-      description: 'Update an existing task. Supports title, description, PR info, agent assignment, priority, labels, base branch, worktree toggle, and attaching files. To move a task between columns, use kangentic_move_task instead. Find the task ID first with kangentic_find_task. Pass `project` to update a task in a different project.',
+      description: 'Update an existing task. Supports title, description (full replace, in-place find/replace edits, or append), PR info, agent assignment, priority, labels, base branch, worktree toggle, and attaching files. To move a task between columns, use kangentic_move_task instead. Find the task ID first with kangentic_find_task. Pass `project` to update a task in a different project.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         title: z.string().max(200).optional().describe('New task title (max 200 characters).'),
-        description: z.string().max(10000).optional().describe('New task description (markdown). Replaces the entire description.'),
+        description: z.string().max(TASK_DESCRIPTION_MAX_LENGTH).optional().describe('New task description (markdown). Replaces the entire description. For an incremental change to a long description, prefer descriptionEdits or appendDescription instead - they cost far fewer tokens and cannot silently drop untouched sections. Mutually exclusive with descriptionEdits and appendDescription.'),
+        descriptionEdits: z.array(z.object({
+          find: z.string().min(1).max(TASK_DESCRIPTION_MAX_LENGTH).describe('Exact text to find in the current description. Must appear exactly once.'),
+          replace: z.string().max(TASK_DESCRIPTION_MAX_LENGTH).describe('Text to replace it with.'),
+        })).min(1).max(100).describe('Ordered exact-string replacements applied to the current description, like the file Edit tool. Each edit\'s `find` must be present and unique in the text as it stands after the prior edits in the list; a missing or non-unique `find` fails the entire call and writes nothing. Mutually exclusive with `description`; may be combined with `appendDescription` (edits apply first, then the append).').optional(),
+        appendDescription: z.string().max(TASK_DESCRIPTION_MAX_LENGTH).optional().describe('Text appended to the end of the current description, exactly as given (no separator is inserted). Mutually exclusive with `description`; may be combined with `descriptionEdits` (edits apply first, then this append).'),
         prUrl: z.string().url().optional().describe('Pull request URL (e.g. https://github.com/owner/repo/pull/123).'),
         prNumber: z.number().int().positive().optional().describe('Pull request number.'),
         agent: z.string().optional().describe('Agent name to assign (e.g. "claude", "codex"). Pass empty string to clear.'),
@@ -375,18 +381,24 @@ export function registerTaskTools(
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ taskId, title, description, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, attachments, project }) => {
+    async ({ taskId, title, description, descriptionEdits, appendDescription, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, attachments, project }) => {
       if (
-        title === undefined && description === undefined && prUrl === undefined && prNumber === undefined &&
+        title === undefined && description === undefined && descriptionEdits === undefined && appendDescription === undefined &&
+        prUrl === undefined && prNumber === undefined &&
         agent === undefined && priority === undefined && labels === undefined && baseBranch === undefined &&
         useWorktree === undefined && attachments === undefined
       ) {
         return { content: [{ type: 'text' as const, text: 'Provide at least one field to update.' }], isError: true };
       }
+      if (description !== undefined && (descriptionEdits !== undefined || appendDescription !== undefined)) {
+        return { content: [{ type: 'text' as const, text: 'Pass either `description` (full replace) or `descriptionEdits`/`appendDescription` (in-place edits), not both.' }], isError: true };
+      }
       return withProject(resolver, project, (ctx) => callHandler('update_task', {
         taskId,
         title: title ?? null,
         description: description ?? null,
+        descriptionEdits: descriptionEdits ?? null,
+        appendDescription: appendDescription ?? null,
         prUrl: prUrl ?? null,
         prNumber: prNumber ?? null,
         agent: agent ?? null,

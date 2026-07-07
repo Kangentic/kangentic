@@ -100,7 +100,7 @@ Create a task on the board (default: the To Do column on the active board) or in
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `title` | string | Yes | Task title (max 200 chars) |
-| `description` | string | No | Task description, supports markdown (max 10000 chars) |
+| `description` | string | No | Task description, supports markdown (max 50000 chars for a board task; a backlog item is capped at 10000 and an over-cap backlog description is rejected) |
 | `column` | string | No | Target column name (case-insensitive). Defaults to To Do. Pass `"Backlog"` to route to the backlog staging area instead of the board. |
 | `priority` | number | No | Priority: 0=none (default), 1=low, 2=medium, 3=high, 4=urgent. Applies to both board tasks and backlog items. |
 | `labels` | array | No | Labels for categorization. Each entry is a string or `{ name, color }` object with hex color. Applies to both board tasks and backlog items. |
@@ -208,13 +208,15 @@ Get detailed column configuration: description, auto-spawn, permission mode, pla
 
 ### kangentic_update_task
 
-Update a task's title, description, PR info, agent assignment, priority, labels, base branch, worktree toggle, or attachments. To move a task between columns, use `kangentic_move_task` instead.
+Update a task's title, description (full replace, in-place find/replace edits, or append), PR info, agent assignment, priority, labels, base branch, worktree toggle, or attachments. To move a task between columns, use `kangentic_move_task` instead.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID (numeric display ID or full UUID) |
 | `title` | string | No | New title (max 200 chars) |
-| `description` | string | No | New description (max 10000 chars) |
+| `description` | string | No | New description, replaces the entire description (max 50000 chars). Mutually exclusive with `descriptionEdits` and `appendDescription`; for an incremental change to a long description, prefer those instead - they cost far fewer tokens and cannot silently drop untouched sections. |
+| `descriptionEdits` | array | No | Ordered exact-string replacements applied to the current description, like the file `Edit` tool: `[{ find: string, replace: string }]` (1-100 edits; each `find`/`replace` up to 50000 chars). Each `find` must be present and unique in the text as it stands after prior edits in the list, or the whole call fails and nothing is written. Mutually exclusive with `description`; may combine with `appendDescription` (edits apply first). |
+| `appendDescription` | string | No | Text appended to the end of the current description, exactly as given (no separator inserted, max 50000 chars). Mutually exclusive with `description`; may combine with `descriptionEdits` (edits apply first, then this append). |
 | `prUrl` | string | No | Pull request URL (e.g. `https://github.com/owner/repo/pull/123`) |
 | `prNumber` | number | No | Pull request number |
 | `agent` | string | No | Agent name to assign (e.g. `"claude"`, `"codex"`). Empty string clears. |
@@ -547,7 +549,7 @@ The committed `.claude/settings.json` `mcp__kangentic` entry remains for humans 
 - **DNS rebinding protection** - the Streamable HTTP transport enforces a host allowlist (`127.0.0.1`, `localhost`, `[::1]`) on top of the loopback bind.
 - **Project routing via URL path** - the URL embeds the project ID (`/mcp/<projectId>`). A stale `mcp.json` for a different project cannot be reused against the current launch.
 - **Runaway-loop safeguard** - task creations are capped at a fixed 500 per app launch, enforced atomically by the shared `TaskCounter`. This is an internal circuit breaker against a looping agent, not a user-tunable knob; the count resets on restart.
-- **Input validation** - Zod schemas enforce title (200 chars) and description (10000 chars) limits at the protocol level; the command handlers validate again.
+- **Input validation** - Zod schemas enforce title (200 chars) and description (50000 chars for tasks; 10000 chars for backlog item descriptions) limits at the protocol level, and the command handlers validate again. A backlog item created via `kangentic_create_task` shares the task 50000-char Zod schema, so `handleCreateTask` enforces the 10000 backlog cap itself and rejects an over-cap backlog description rather than truncating it.
 - **Column safety** - `kangentic_create_task` defaults to the To Do column; creating in an auto_spawn column intentionally triggers agent spawn.
 - **Destructive operations are explicit** - `kangentic_delete_task`, `kangentic_delete_backlog_item`, `kangentic_remove_task_attachment`, and `kangentic_move_task` mutate the board. Agents must invoke them by name; there is no implicit fallback.
 - **Honest mutating annotations** - mutating tools carry `readOnlyHint: false`, so the plan-mode auto-approval surface is exactly the read-only set. Deletes, moves, and creates always prompt while planning, even though the auto-allow injection pre-approves them in default mode.

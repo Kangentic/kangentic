@@ -9,6 +9,12 @@ import { resolveColumn } from './column-resolver';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type { BacklogTaskUpdateInput } from '../../../shared/types';
 
+// Backlog items keep a lower description cap than board tasks (whose cap is
+// TASK_DESCRIPTION_MAX_LENGTH in task-commands.ts). handleCreateTask enforces
+// this before routing a `column: "Backlog"` create here, so an over-cap
+// backlog description fails loudly instead of being silently truncated.
+export const BACKLOG_DESCRIPTION_MAX_LENGTH = 10_000;
+
 export const handleListBacklog: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
@@ -64,7 +70,7 @@ export const handleCreateBacklogTask: CommandHandler = (
   context: CommandContext,
 ): CommandResponse => {
   const title = String(params.title ?? '').slice(0, 200);
-  const description = String(params.description ?? '').slice(0, 10_000);
+  const description = String(params.description ?? '').slice(0, BACKLOG_DESCRIPTION_MAX_LENGTH);
   const priority = (params.priority as number) ?? 0;
   const rawLabels = (params.labels as Array<string | { name: string; color: string }>) ?? [];
   const attachments = params.attachments as Array<{ filePath: string; filename?: string }> | null;
@@ -183,7 +189,7 @@ export const handleUpdateBacklogItem: CommandHandler = (
     changedFields.push('title');
   }
   if (newDescription !== null) {
-    updates.description = String(newDescription).slice(0, 10_000);
+    updates.description = String(newDescription).slice(0, BACKLOG_DESCRIPTION_MAX_LENGTH);
     changedFields.push('description');
   }
   if (newPriority !== null) {

@@ -56,7 +56,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_find_task', label: 'Find Task', blurb: 'look up a task by ID, branch, title, or PR number', category: 'tasks' },
   { name: 'kangentic_get_current_task', label: 'Current Task', blurb: 'resolve the task for the current directory or branch', category: 'tasks' },
   { name: 'kangentic_get_task_stats', label: 'Task Stats', blurb: 'token usage, cost, duration, and lines changed per task', category: 'tasks' },
-  { name: 'kangentic_update_task', label: 'Update Task', blurb: 'edit title, description, PR info, agent, priority, labels, base branch, worktree, and attachments', category: 'tasks' },
+  { name: 'kangentic_update_task', label: 'Update Task', blurb: 'edit title, description (full, in-place find/replace, or append), PR info, agent, priority, labels, base branch, worktree, and attachments', category: 'tasks' },
   { name: 'kangentic_move_task', label: 'Move Task', blurb: 'move a task between columns, running the same lifecycle as a drag', category: 'tasks' },
   { name: 'kangentic_link_pr', label: 'Link PR', blurb: 'resolve and attach a task pull request via the gh CLI', category: 'tasks' },
   { name: 'kangentic_delete_task', label: 'Delete Task', blurb: 'permanently remove a task, its attachments, and session records', category: 'tasks' },
