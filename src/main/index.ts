@@ -35,6 +35,7 @@ import { loadVecExtension } from './retrieval/vec-extension';
 import { restoreShellEnv } from './shell-env';
 import { isFirstPartyPermissionAllowed } from './permission-policy';
 import { MIN_ZOOM, MAX_ZOOM } from '../shared/zoom-steps';
+import { defaultDeveloperFlag, type DeveloperFlagKey } from '../shared/developer-flag-defaults';
 
 initStartupTimer(PROCESS_START);
 mark('process_start');
@@ -63,42 +64,18 @@ installDiagnostics({
     safeReadDeveloperFlag('recordIpcTraffic'),
 });
 
-function safeReadDeveloperFlag(
-  key:
-    | 'activityDebugOverlay'
-    | 'persistConsoleLogs'
-    | 'recordIpcTraffic'
-    | 'previewInspectionServer'
-    | 'previewEvalEnabled',
-): boolean {
+function safeReadDeveloperFlag(key: DeveloperFlagKey): boolean {
   try {
     const ctx = getOptionalIpcContext();
     const manager = ctx?.configManager ?? windowConfigManager;
     const stored = manager.load().developer?.[key];
     if (stored !== undefined) return stored === true;
-    // Default values when the user has never touched the toggle. The
-    // inspection bridge AND its eval/unsafe gate default ON in dev builds:
-    // anyone running `npm start` / `/preview` is by definition a kangentic dev
-    // session and almost certainly wants the agent-driven inspection bridge
-    // (including eval, inject-event, raw-PTY) available without flipping a
-    // toggle each launch. Both are localhost-only and dropped from production
-    // builds via `__KANGENTIC_DEV__`. An explicit stored value always wins.
-    if (key === 'previewInspectionServer' || key === 'previewEvalEnabled') return __KANGENTIC_DEV__;
-    // Persistent console logs default ON in ANY dev build (npm start dogfooding
-    // AND /preview): the write path is already async-queued (queueAppend in
-    // log-mirror.ts defers the actual disk write to the next setImmediate turn,
-    // no per-call blocking appendFileSync/mkdirSync), so this has no measurable
-    // dogfooding performance cost, and having the trace already captured is far
-    // more useful than remembering to flip it before a debugging session starts.
-    if (key === 'persistConsoleLogs') return __KANGENTIC_DEV__;
-    // The IPC recorder is different: it has a real, documented disk-I/O cost per
-    // call ("non-trivial disk impact"). Default it ON only for the ephemeral
-    // `/preview` instance, whose entire data dir (including .kangentic/logs/) is
-    // wiped on close, bounding the growth. The regular npm start dogfooding
-    // session runs for days, so it stays opt-in there to avoid unbounded trace
-    // accumulation the user did not ask for.
-    if (key === 'recordIpcTraffic') return __KANGENTIC_DEV__ && isEphemeral;
-    return false;
+    // Default values when the user has never touched the toggle. An explicit
+    // stored value always wins (checked above). The decision logic itself
+    // lives in the dependency-free `defaultDeveloperFlag` (src/shared/) so it
+    // is unit-testable without importing this Electron entry-point module -
+    // see the doc comment there for the reasoning behind each key's default.
+    return defaultDeveloperFlag(key, __KANGENTIC_DEV__, isEphemeral);
   } catch {
     return false;
   }
