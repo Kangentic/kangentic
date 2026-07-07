@@ -23,8 +23,13 @@ session. Choosing it (or its alternatives) wrong makes skills slow, lossy, or un
   admin-merge) that needs main-loop visibility and confirmations; it is a knowledge-injection
   skill whose whole purpose is to enrich the MAIN context (`session-lifecycle`, `cross-platform`,
   `ipc-bridge`, `debug-activity`); it is active implementation tied to the current conversation;
-  or it already delegates heavy work to a subagent (forking the driver risks subagent nesting,
-  which is undocumented). `test` and `sync-docs` stay inline for this reason.
+  it already delegates heavy work to a subagent (forking the driver risks subagent nesting, which
+  is undocumented); or it is spawned as an incidental side-check (e.g. "check on a background
+  agent's status") while a gated/mutating skill remains active in the same conversation - the
+  fork inherits that skill's instructions in full, and an ambiguous prompt can cause it to
+  complete the skill's remaining steps independently (this shipped a duplicate PR during
+  `/pull-request`; see that skill's Rules section). `test` and `sync-docs` stay inline for this
+  reason.
 - **Active-implementation skills** verify by auto-spawning their auditor agent (delegation), not
   by forking: `add-ipc-endpoint` to `ipc-auditor`, `add-migration` to `migration-safety`, and
   `code-review` to its dimension auditors (`ipc-auditor`, `hmr-parity`, `platform-guard`,

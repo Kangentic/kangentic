@@ -319,3 +319,10 @@ half-finished rebase. Report concrete, learned recommendations so a human can fi
 **CRITICAL: No chained commands.** Every Bash call must contain exactly ONE command. Never use
 `&&`, `||`, `|`, or `;`. For git commands in another directory, use `git -C <path>` - never `cd
 <path> && git ...`. Conventional commit messages. No em-dashes or `--` as punctuation.
+
+**Never fork a side-check while this skill is active.** A `subagent_type: "fork"` agent inherits
+the full conversation context, including these very instructions. Spawning one to "check on" a
+background agent (e.g. the Step 1.3 `doc-auditor`) with an ambiguous prompt can cause it to pick
+up and independently execute the REST of this skill (commit, push, create a duplicate PR). To
+check on a background agent, wait for its natural `<task-notification>` instead of spawning
+another agent.
