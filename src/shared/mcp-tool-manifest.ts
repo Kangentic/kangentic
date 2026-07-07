@@ -56,10 +56,11 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_find_task', label: 'Find Task', blurb: 'look up a task by ID, branch, title, or PR number', category: 'tasks' },
   { name: 'kangentic_get_current_task', label: 'Current Task', blurb: 'resolve the task for the current directory or branch', category: 'tasks' },
   { name: 'kangentic_get_task_stats', label: 'Task Stats', blurb: 'token usage, cost, duration, and lines changed per task', category: 'tasks' },
-  { name: 'kangentic_update_task', label: 'Update Task', blurb: 'edit title, description, PR info, agent, priority, labels, base branch, and worktree', category: 'tasks' },
+  { name: 'kangentic_update_task', label: 'Update Task', blurb: 'edit title, description, PR info, agent, priority, labels, base branch, worktree, and attachments', category: 'tasks' },
   { name: 'kangentic_move_task', label: 'Move Task', blurb: 'move a task between columns, running the same lifecycle as a drag', category: 'tasks' },
   { name: 'kangentic_link_pr', label: 'Link PR', blurb: 'resolve and attach a task pull request via the gh CLI', category: 'tasks' },
   { name: 'kangentic_delete_task', label: 'Delete Task', blurb: 'permanently remove a task, its attachments, and session records', category: 'tasks' },
+  { name: 'kangentic_remove_task_attachment', label: 'Remove Attachment', blurb: 'detach a file from a board task or backlog item by attachment ID', category: 'tasks' },
 
   // ── Board (columns from task-tools.ts, backlog from session-tools.ts, projects/search from project-tools.ts + search-tools.ts) ──
   { name: 'kangentic_list_columns', label: 'List Columns', blurb: 'see every board column with its task counts', category: 'board' },
@@ -68,7 +69,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_board_summary', label: 'Board Summary', blurb: 'counts, active sessions, and aggregate cost across the board', category: 'board' },
   { name: 'kangentic_list_backlog', label: 'List Backlog', blurb: 'see items staged in the backlog', category: 'board' },
   { name: 'kangentic_promote_backlog', label: 'Promote Backlog', blurb: 'move backlog items onto the board as tasks', category: 'board' },
-  { name: 'kangentic_update_backlog_item', label: 'Update Backlog Item', blurb: 'edit a backlog item title, description, priority, or labels', category: 'board' },
+  { name: 'kangentic_update_backlog_item', label: 'Update Backlog Item', blurb: 'edit a backlog item title, description, priority, labels, or attachments', category: 'board' },
   { name: 'kangentic_delete_backlog_item', label: 'Delete Backlog Item', blurb: 'permanently remove a backlog item and its attachments', category: 'board' },
   { name: 'kangentic_list_projects', label: 'List Projects', blurb: 'every Kangentic project registered on this machine', category: 'board' },
   { name: 'kangentic_search_everything', label: 'Search Everything', blurb: 'unified search across tasks, backlog, sessions, and projects', category: 'board' },

@@ -208,7 +208,7 @@ Get detailed column configuration: description, auto-spawn, permission mode, pla
 
 ### kangentic_update_task
 
-Update a task's title, description, PR info, agent assignment, priority, labels, base branch, or worktree toggle. To move a task between columns, use `kangentic_move_task` instead.
+Update a task's title, description, PR info, agent assignment, priority, labels, base branch, worktree toggle, or attachments. To move a task between columns, use `kangentic_move_task` instead.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -222,6 +222,7 @@ Update a task's title, description, PR info, agent assignment, priority, labels,
 | `labels` | string[] | No | Replace the task's label list. Pass `[]` to clear. |
 | `baseBranch` | string | No | Base branch the task's worktree branches from (e.g. `"main"`) |
 | `useWorktree` | boolean | No | Whether the task uses an isolated git worktree |
+| `attachments` | array | No | File attachments to ADD to the task: `[{ filePath: string, filename?: string }]`. Additive - existing attachments are kept, not replaced. Use `kangentic_remove_task_attachment` to remove one. |
 
 At least one updatable field is required.
 
@@ -277,6 +278,16 @@ Permanently delete a task from the board. Removes the task, its attachments, and
 
 Find task IDs with `kangentic_find_task` or `kangentic_search_tasks`.
 
+### kangentic_remove_task_attachment
+
+Remove one attachment by its attachment ID, from a board task or a backlog item - the ID alone determines which surface owns it. This cannot be undone.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `attachmentId` | string | Yes | Attachment UUID (board `task_attachments.id` or backlog `backlog_attachments.id`) |
+
+Find attachment IDs with `kangentic_query_db`, e.g. `SELECT id, filename, task_id FROM task_attachments` for board tasks, or `SELECT id, filename, backlog_task_id FROM backlog_attachments` for backlog items.
+
 ### kangentic_list_backlog
 
 List items in the backlog staging area. Items have priority levels and labels for organization.
@@ -312,7 +323,7 @@ Attachments on promoted backlog tasks are automatically copied to the new task. 
 
 ### kangentic_update_backlog_item
 
-Update a backlog item's title, description, priority, or labels. Only the fields you provide are changed; omitted fields are left as-is. The `labels` parameter is a full replacement (not additive) - pass the complete new label set.
+Update a backlog item's title, description, priority, labels, or attachments. Only the fields you provide are changed; omitted fields are left as-is. The `labels` parameter is a full replacement (not additive) - pass the complete new label set. `attachments` is additive - existing attachments are kept, not replaced.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -321,6 +332,7 @@ Update a backlog item's title, description, priority, or labels. Only the fields
 | `description` | string | No | New description (max 10,000 characters) |
 | `priority` | number | No | New priority: 0=none, 1=low, 2=medium, 3=high, 4=urgent |
 | `labels` | array | No | Full replacement label set. Strings, or `{name, color}` objects to also set the label color. |
+| `attachments` | array | No | File attachments to ADD to the item: `[{ filePath: string, filename?: string }]`. Additive - existing attachments are kept. Use `kangentic_remove_task_attachment` to remove one. |
 
 Find item IDs with `kangentic_list_backlog` or `kangentic_search_tasks` (with `scope: "backlog"`).
 
@@ -524,7 +536,7 @@ The committed `.claude/settings.json` `mcp__kangentic` entry remains for humans 
 - **Runaway-loop safeguard** - task creations are capped at a fixed 500 per app launch, enforced atomically by the shared `TaskCounter`. This is an internal circuit breaker against a looping agent, not a user-tunable knob; the count resets on restart.
 - **Input validation** - Zod schemas enforce title (200 chars) and description (10000 chars) limits at the protocol level; the command handlers validate again.
 - **Column safety** - `kangentic_create_task` defaults to the To Do column; creating in an auto_spawn column intentionally triggers agent spawn.
-- **Destructive operations are explicit** - `kangentic_delete_task`, `kangentic_delete_backlog_item`, and `kangentic_move_task` mutate the board. Agents must invoke them by name; there is no implicit fallback.
+- **Destructive operations are explicit** - `kangentic_delete_task`, `kangentic_delete_backlog_item`, `kangentic_remove_task_attachment`, and `kangentic_move_task` mutate the board. Agents must invoke them by name; there is no implicit fallback.
 - **Honest mutating annotations** - mutating tools carry `readOnlyHint: false`, so the plan-mode auto-approval surface is exactly the read-only set. Deletes, moves, and creates always prompt while planning, even though the auto-allow injection pre-approves them in default mode.
 
 ## Build

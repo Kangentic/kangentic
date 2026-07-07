@@ -147,6 +147,7 @@ export const handleUpdateBacklogItem: CommandHandler = (
   const newDescription = (params.description ?? null) as string | null;
   const newPriority = (params.priority ?? null) as number | null;
   const rawLabels = (params.labels ?? null) as Array<string | { name: string; color: string }> | null;
+  const newAttachments = (params.attachments ?? null) as Array<{ filePath: string; filename?: string }> | null;
 
   // Observability for the "labels dropped on a large description" bug
   // (task #229). See the matching note in handleCreateBacklogTask.
@@ -207,11 +208,40 @@ export const handleUpdateBacklogItem: CommandHandler = (
     changedFields.push('labels');
   }
 
-  if (changedFields.length === 0) {
-    return { success: false, error: 'No fields provided to update' };
+  // Attach files if provided (additive - existing attachments are untouched).
+  let attachmentsAdded = 0;
+  if (newAttachments && newAttachments.length > 0) {
+    const backlogAttachmentRepo = new BacklogAttachmentRepository(db);
+    const projectPath = context.getProjectPath();
+    for (const entry of newAttachments) {
+      try {
+        const fileData = readFileAsAttachment(entry.filePath, entry.filename);
+        backlogAttachmentRepo.add(projectPath, existing.id, fileData.filename, fileData.base64Data, fileData.mediaType);
+        attachmentsAdded += 1;
+      } catch (error) {
+        console.error(`[update_backlog_item] Failed to attach file "${entry.filePath}":`, error);
+      }
+    }
+    if (attachmentsAdded > 0) changedFields.push('attachments');
   }
 
-  const updated = backlogRepo.update(updates as unknown as BacklogTaskUpdateInput);
+  if (changedFields.length === 0) {
+    const attachmentsRequested = newAttachments?.length ?? 0;
+    return {
+      success: false,
+      error: attachmentsRequested > 0
+        ? `Failed to attach any of the ${attachmentsRequested} requested file(s); no other fields were updated.`
+        : 'No fields provided to update',
+    };
+  }
+
+  // The attach loop above must run BEFORE this update/getById: backlog
+  // attachment_count is a stored column synced inside BacklogAttachmentRepository.add,
+  // so re-reading the row here picks up the fresh count. (Contrast handleUpdateTask,
+  // where attachment_count is a computed JOIN aggregate, so its re-fetch happens
+  // after the loop instead.)
+  const hasScalarChange = Object.keys(updates).length > 1;
+  const updated = hasScalarChange ? backlogRepo.update(updates as unknown as BacklogTaskUpdateInput) : (backlogRepo.getById(existing.id) ?? existing);
 
   if (Object.keys(labelColorMap).length > 0) {
     context.onLabelColorsChanged(labelColorMap);
@@ -230,6 +260,7 @@ export const handleUpdateBacklogItem: CommandHandler = (
       priority: updated.priority,
       priorityLabel,
       labels: updated.labels,
+      ...(newAttachments !== null ? { attachmentCount: updated.attachment_count, attachmentsAdded } : {}),
     },
   };
 };

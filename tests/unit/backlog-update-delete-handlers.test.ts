@@ -31,16 +31,30 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Hoisted mocks - must be registered before any import under test
 // ---------------------------------------------------------------------------
 
-// Spy handles configured per test inside beforeEach
-const mockBacklogRepoGetById = vi.fn();
-const mockBacklogRepoUpdate = vi.fn();
-const mockBacklogRepoDelete = vi.fn();
-
-const mockBacklogAttachmentRepoDeleteByTaskId = vi.fn();
-const mockBacklogAttachmentRepoList = vi.fn(() => []);
-
-// Used by handlePromoteBacklog to create the promoted board task.
-const mockTaskRepoCreate = vi.fn();
+// Spy handles configured per test inside beforeEach. Wrapped in vi.hoisted
+// because vi.mock factories below reference them directly - vi.mock calls
+// are hoisted above plain top-level statements, so an un-hoisted const would
+// hit a TDZ ReferenceError the moment a factory is invoked.
+const {
+  mockBacklogRepoGetById,
+  mockBacklogRepoUpdate,
+  mockBacklogRepoDelete,
+  mockBacklogAttachmentRepoDeleteByTaskId,
+  mockBacklogAttachmentRepoList,
+  mockBacklogAttachmentRepoAdd,
+  mockReadFileAsAttachment,
+  mockTaskRepoCreate,
+} = vi.hoisted(() => ({
+  mockBacklogRepoGetById: vi.fn(),
+  mockBacklogRepoUpdate: vi.fn(),
+  mockBacklogRepoDelete: vi.fn(),
+  mockBacklogAttachmentRepoDeleteByTaskId: vi.fn(),
+  mockBacklogAttachmentRepoList: vi.fn(() => []),
+  mockBacklogAttachmentRepoAdd: vi.fn(),
+  mockReadFileAsAttachment: vi.fn(),
+  // Used by handlePromoteBacklog to create the promoted board task.
+  mockTaskRepoCreate: vi.fn(),
+}));
 
 vi.mock('../../src/main/db/repositories/backlog-repository', () => ({
   BacklogRepository: class {
@@ -56,13 +70,12 @@ vi.mock('../../src/main/db/repositories/backlog-attachment-repository', () => ({
   BacklogAttachmentRepository: class {
     deleteByTaskId = mockBacklogAttachmentRepoDeleteByTaskId;
     list = mockBacklogAttachmentRepoList;
-    add = vi.fn();
+    add = mockBacklogAttachmentRepoAdd;
   },
 }));
 
-// Silence the attachment-utils import (not used by update/delete handlers)
 vi.mock('../../src/main/db/repositories/attachment-utils', () => ({
-  readFileAsAttachment: vi.fn(),
+  readFileAsAttachment: mockReadFileAsAttachment,
 }));
 
 // Task repository - used by handlePromoteBacklog to create the promoted board task.
@@ -246,6 +259,105 @@ describe('handleUpdateBacklogItem', () => {
         labels: [],
       },
     });
+  });
+
+  it('attachments-only call does not touch BacklogRepository.update, but attaches and reports attachmentsAdded', () => {
+    const existing = makeBacklogItem({ id: 'item-001' });
+    mockBacklogRepoGetById.mockReturnValue(existing);
+    mockReadFileAsAttachment.mockReturnValue({
+      filename: 'notes.txt',
+      base64Data: 'ZmFrZS1kYXRh',
+      mediaType: 'text/plain',
+    });
+
+    const result = handleUpdateBacklogItem(
+      { itemId: 'item-001', attachments: [{ filePath: 'C:/mock/notes.txt' }] },
+      context,
+    );
+
+    expect(mockBacklogRepoUpdate).not.toHaveBeenCalled();
+    expect(mockBacklogAttachmentRepoAdd).toHaveBeenCalledOnce();
+    expect(mockBacklogAttachmentRepoAdd).toHaveBeenCalledWith(
+      '/mock/project', 'item-001', 'notes.txt', 'ZmFrZS1kYXRh', 'text/plain',
+    );
+    expect(context.onBacklogChanged).toHaveBeenCalledOnce();
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('attachments');
+    expect(result.data).toMatchObject({ attachmentsAdded: 1 });
+  });
+
+  it('combined title + attachments call updates both', () => {
+    const existing = makeBacklogItem({ id: 'item-001', title: 'Old title' });
+    mockBacklogRepoGetById.mockReturnValue(existing);
+    mockBacklogRepoUpdate.mockReturnValue({ ...existing, title: 'New title' });
+    mockReadFileAsAttachment.mockReturnValue({
+      filename: 'notes.txt',
+      base64Data: 'ZmFrZS1kYXRh',
+      mediaType: 'text/plain',
+    });
+
+    const result = handleUpdateBacklogItem(
+      { itemId: 'item-001', title: 'New title', attachments: [{ filePath: 'C:/mock/notes.txt' }] },
+      context,
+    );
+
+    expect(mockBacklogRepoUpdate).toHaveBeenCalledOnce();
+    expect(mockBacklogAttachmentRepoAdd).toHaveBeenCalledOnce();
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('title');
+    expect(result.message).toContain('attachments');
+  });
+
+  it('attachments-only call where every readFileAsAttachment throws returns a structured error and touches nothing else', () => {
+    const existing = makeBacklogItem({ id: 'item-001' });
+    mockBacklogRepoGetById.mockReturnValue(existing);
+    mockReadFileAsAttachment.mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
+
+    const result = handleUpdateBacklogItem(
+      { itemId: 'item-001', attachments: [{ filePath: 'C:/mock/missing.txt' }] },
+      context,
+    );
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Failed to attach any of the 1 requested file(s); no other fields were updated.',
+    });
+    expect(mockBacklogAttachmentRepoAdd).not.toHaveBeenCalled();
+    expect(mockBacklogRepoUpdate).not.toHaveBeenCalled();
+    expect(context.onBacklogChanged).not.toHaveBeenCalled();
+  });
+
+  it('partial attachment failure: continues past a throwing entry and attaches the rest', () => {
+    const existing = makeBacklogItem({ id: 'item-001' });
+    mockBacklogRepoGetById.mockReturnValue(existing);
+    mockReadFileAsAttachment
+      .mockImplementationOnce(() => {
+        throw new Error('ENOENT');
+      })
+      .mockImplementationOnce(() => ({
+        filename: 'good.txt',
+        base64Data: 'Z29vZC1kYXRh',
+        mediaType: 'text/plain',
+      }));
+
+    const result = handleUpdateBacklogItem(
+      {
+        itemId: 'item-001',
+        attachments: [{ filePath: 'C:/mock/bad.txt' }, { filePath: 'C:/mock/good.txt' }],
+      },
+      context,
+    );
+
+    expect(mockBacklogAttachmentRepoAdd).toHaveBeenCalledOnce();
+    expect(mockBacklogAttachmentRepoAdd).toHaveBeenCalledWith(
+      '/mock/project', 'item-001', 'good.txt', 'Z29vZC1kYXRh', 'text/plain',
+    );
+    expect(context.onBacklogChanged).toHaveBeenCalledOnce();
+    expect(result.success).toBe(true);
+    expect(result.message).toContain('attachments');
+    expect(result.data).toMatchObject({ attachmentsAdded: 1 });
   });
 
   it('fires onLabelColorsChanged with extracted color map when labels have {name, color} objects', () => {

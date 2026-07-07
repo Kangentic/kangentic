@@ -355,7 +355,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_update_task',
     {
-      description: 'Update an existing task. Supports title, description, PR info, agent assignment, priority, labels, base branch, and worktree toggle. To move a task between columns, use kangentic_move_task instead. Find the task ID first with kangentic_find_task. Pass `project` to update a task in a different project.',
+      description: 'Update an existing task. Supports title, description, PR info, agent assignment, priority, labels, base branch, worktree toggle, and attaching files. To move a task between columns, use kangentic_move_task instead. Find the task ID first with kangentic_find_task. Pass `project` to update a task in a different project.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         title: z.string().max(200).optional().describe('New task title (max 200 characters).'),
@@ -367,14 +367,19 @@ export function registerTaskTools(
         labels: z.array(z.string()).optional().describe('Replace the task\'s label list. Pass [] to clear all labels. If this same call also sets a long description (roughly 1KB or more), set labels in a separate labels-only update instead, or they may be dropped before reaching the server.'),
         baseBranch: z.string().optional().describe('Base branch the task\'s worktree branches from (e.g. "main").'),
         useWorktree: z.boolean().optional().describe('Whether the task uses an isolated git worktree.'),
+        attachments: z.array(z.object({
+          filePath: z.string().describe('Absolute path to the file to attach'),
+          filename: z.string().optional().describe('Override display filename'),
+        })).optional().describe('File attachments to ADD to the task. This is additive - existing attachments are kept, not replaced. Each entry needs `filePath` (absolute) and may override the display `filename`. Use kangentic_remove_task_attachment to remove one.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ taskId, title, description, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, project }) => {
+    async ({ taskId, title, description, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, attachments, project }) => {
       if (
         title === undefined && description === undefined && prUrl === undefined && prNumber === undefined &&
-        agent === undefined && priority === undefined && labels === undefined && baseBranch === undefined && useWorktree === undefined
+        agent === undefined && priority === undefined && labels === undefined && baseBranch === undefined &&
+        useWorktree === undefined && attachments === undefined
       ) {
         return { content: [{ type: 'text' as const, text: 'Provide at least one field to update.' }], isError: true };
       }
@@ -389,6 +394,7 @@ export function registerTaskTools(
         labels: labels ?? null,
         baseBranch: baseBranch ?? null,
         useWorktree: useWorktree ?? null,
+        attachments: attachments ?? null,
       }, ctx, 'Failed to update task'));
     },
   );
@@ -474,5 +480,19 @@ export function registerTaskTools(
       annotations: MUTATING_ANNOTATIONS,
     },
     async ({ taskId, project }) => withProject(resolver, project, (ctx) => callHandler('delete_task', { taskId }, ctx, 'Failed to delete task')),
+  );
+
+  // --- kangentic_remove_task_attachment ---
+  server.registerTool(
+    'kangentic_remove_task_attachment',
+    {
+      description: 'Remove one attachment by its attachment ID, from a board task or a backlog item - the ID alone determines which. Find attachment IDs with kangentic_query_db (e.g. `SELECT id, filename, task_id FROM task_attachments` for board tasks, or `SELECT id, filename, backlog_task_id FROM backlog_attachments` for backlog items). Pass `project` to remove an attachment in a different project.',
+      inputSchema: z.object({
+        attachmentId: z.string().describe('Attachment UUID (board task_attachments.id or backlog backlog_attachments.id).'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ attachmentId, project }) => withProject(resolver, project, (ctx) => callHandler('remove_attachment', { attachmentId }, ctx, 'Failed to remove attachment')),
   );
 }
