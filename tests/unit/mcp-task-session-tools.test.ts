@@ -519,3 +519,159 @@ describe('list_sessions project routing via withProject', () => {
     expect((params as Record<string, unknown>).taskId).toBe('task-uuid');
   });
 });
+
+// ---------------------------------------------------------------------------
+// kangentic_update_task - "at least one field" guard must accept an
+// attachments-only call (the guard is evaluated at the Zod-validated tool
+// handler in task-tools.ts, BEFORE callHandler/handleUpdateTask ever run -
+// mcp-attachment-handlers.test.ts only covers the command-handler layer
+// underneath, so this closes the tool-layer gap).
+// ---------------------------------------------------------------------------
+
+describe('kangentic_update_task "at least one field" guard - attachments wiring', () => {
+  let server: ReturnType<typeof makeFakeServer>;
+  let resolver: RequestResolver;
+  let taskCounter: TaskCounter;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    server = makeFakeServer();
+    resolver = makeResolver();
+    taskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
+  });
+
+  it('accepts an attachments-only call through the guard and forwards attachments to callHandler', async () => {
+    const result = await server.getHandler('kangentic_update_task')({
+      taskId: 'task-1',
+      attachments: [{ filePath: '/mock/screenshot.png' }],
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [handlerName, params] = mockCallHandler.mock.calls[0];
+    expect(handlerName).toBe('update_task');
+    const typedParams = params as Record<string, unknown>;
+    expect(typedParams.attachments).toEqual([{ filePath: '/mock/screenshot.png' }]);
+    // Every other field forwards as null, matching the "omitted -> null" contract
+    // handleUpdateTask's `field !== null` checks depend on.
+    expect(typedParams.title).toBeNull();
+    expect(typedParams.description).toBeNull();
+  });
+
+  it('still rejects when taskId is the only field (attachments and everything else omitted)', async () => {
+    const result = await server.getHandler('kangentic_update_task')({ taskId: 'task-1' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Provide at least one field to update.');
+    expect(mockCallHandler).not.toHaveBeenCalled();
+  });
+
+  it('forwards attachments: null when attachments is omitted but another field is present', async () => {
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', title: 'New title' });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [, params] = mockCallHandler.mock.calls[0];
+    expect((params as Record<string, unknown>).attachments).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// kangentic_remove_task_attachment - tool registration and wiring at the
+// mcp-http layer (as opposed to handleRemoveAttachment's command-handler
+// logic, already covered in mcp-attachment-handlers.test.ts).
+// ---------------------------------------------------------------------------
+
+describe('kangentic_remove_task_attachment wiring', () => {
+  let server: ReturnType<typeof makeFakeServer>;
+  let resolver: RequestResolver;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    server = makeFakeServer();
+    resolver = makeResolver();
+    const taskCounter: TaskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
+  });
+
+  it('is registered on the server', () => {
+    expect(() => server.getHandler('kangentic_remove_task_attachment')).not.toThrow();
+  });
+
+  it('routes attachmentId and the project selector through withProject to callHandler("remove_attachment", ...)', async () => {
+    await server.getHandler('kangentic_remove_task_attachment')({ attachmentId: 'att-1', project: 'Beta' });
+
+    expect(mockWithProject).toHaveBeenCalledOnce();
+    const [passedResolver, passedSelector] = mockWithProject.mock.calls[0];
+    expect(passedResolver).toBe(resolver);
+    expect(passedSelector).toBe('Beta');
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [handlerName, params] = mockCallHandler.mock.calls[0];
+    expect(handlerName).toBe('remove_attachment');
+    expect(params).toEqual({ attachmentId: 'att-1' });
+  });
+
+  it('returns an error result and does not call callHandler when the project selector is invalid', async () => {
+    mockCallHandler.mockClear();
+
+    const result = await server.getHandler('kangentic_remove_task_attachment')({
+      attachmentId: 'att-1',
+      project: 'INVALID_PROJECT',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('No project matching "INVALID_PROJECT"');
+    expect(mockCallHandler).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// kangentic_update_backlog_item - attachments wiring at the mcp-http layer
+// (session-tools.ts). backlog-update-delete-handlers.test.ts already covers
+// the command-handler behavior underneath; this closes the tool-layer gap.
+// ---------------------------------------------------------------------------
+
+describe('kangentic_update_backlog_item attachments wiring', () => {
+  let server: ReturnType<typeof makeFakeServer>;
+  let resolver: RequestResolver;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    server = makeFakeServer();
+    resolver = makeResolver();
+    registerSessionTools(server as never, resolver);
+  });
+
+  it('forwards the attachments array through to callHandler when provided', async () => {
+    await server.getHandler('kangentic_update_backlog_item')({
+      itemId: 'item-001',
+      attachments: [{ filePath: '/mock/notes.txt' }],
+    });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [handlerName, params] = mockCallHandler.mock.calls[0];
+    expect(handlerName).toBe('update_backlog_item');
+    expect((params as Record<string, unknown>).attachments).toEqual([{ filePath: '/mock/notes.txt' }]);
+  });
+
+  it('forwards attachments: null when the attachments field is omitted', async () => {
+    await server.getHandler('kangentic_update_backlog_item')({ itemId: 'item-001', title: 'New title' });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [, params] = mockCallHandler.mock.calls[0];
+    expect((params as Record<string, unknown>).attachments).toBeNull();
+  });
+
+  it('routes the project selector through withProject alongside attachments', async () => {
+    await server.getHandler('kangentic_update_backlog_item')({
+      itemId: 'item-001',
+      attachments: [{ filePath: '/mock/notes.txt' }],
+      project: 'Beta',
+    });
+
+    expect(mockWithProject).toHaveBeenCalledOnce();
+    const [, passedSelector] = mockWithProject.mock.calls[0];
+    expect(passedSelector).toBe('Beta');
+  });
+});
