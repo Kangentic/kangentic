@@ -9,6 +9,7 @@ import { detectSnapEdge, snapEdgeToGeometry } from '../../src/renderer/window-ma
 import { useWindowStore } from '../../src/renderer/window-manager/store/window-store';
 import { findWindowTreeViolations } from '../../src/renderer/window-manager/store/tree-invariants';
 import type { ManagedWindow, TileNode } from '../../src/renderer/window-manager/store/types';
+import type { SerializedTileNode } from '../../src/shared/types';
 
 describe('window-manager geometry', () => {
   it('projects fractional geometry to pixels against the container', () => {
@@ -857,3 +858,78 @@ describe('window-store maintains the tiling invariant across every operation', (
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// serializeWorkspace (the store's OWN method, distinct from the pure
+// `serializeWorkspace` function in persistence/workspace.ts already covered by
+// tests/unit/window-workspace.test.ts): before this diff it filtered out every
+// `kind === 'conversation'` window and defensively pruned it from the tile tree
+// before handing off to the pure serializer. That filtering/pruning is now gone
+// - every window kind passes through untouched - so a docked conversation panel
+// persists like a task-detail window. This exercises the store wrapper directly
+// (no browser needed) rather than only through the full-app UI round trip in
+// tests/ui/conversation-window-workspace-restore.spec.ts.
+// ---------------------------------------------------------------------------
+
+describe('window-store serializeWorkspace includes conversation windows', () => {
+  it('a lone conversation window is included in the snapshot, not filtered out', () => {
+    const instance = createWindowManagerStore({ idPrefix: 'board', kind: 'task-detail' });
+    const conversationId = instance.store.getState().openWindow({
+      kind: 'conversation',
+      anchor: 'sess-solo',
+      sessionId: 'sess-solo',
+      title: 'Conversation',
+    });
+
+    const snapshot = instance.store.getState().serializeWorkspace();
+
+    expect(snapshot.windows).toHaveLength(1);
+    expect(snapshot.windows[0]).toMatchObject({ taskId: 'sess-solo', kind: 'conversation' });
+    // Sanity: the window is still live in the store under its own id (the
+    // wrapper only snapshots; it never mutates the live windows map).
+    expect(instance.store.getState().windows[conversationId]).toBeDefined();
+  });
+
+  it('a conversation window tiled with a task-detail sibling is kept in BOTH the windows array and the tile tree (never pruned)', () => {
+    const instance = createWindowManagerStore({ idPrefix: 'board', kind: 'task-detail' });
+    const taskDetailId = instance.store.getState().openWindow({
+      kind: 'task-detail',
+      anchor: 'task-a',
+      sessionId: 'sess-a',
+      title: 'Task A',
+    });
+    instance.store.getState().snapWindow(taskDetailId, { x: 0, y: 0, w: 0.5, h: 1 });
+    const conversationId = instance.store.getState().openWindow({
+      kind: 'conversation',
+      anchor: 'sess-b',
+      sessionId: 'sess-b',
+      title: 'Conversation B',
+    });
+    instance.store.getState().dockWindow(conversationId, 'right');
+
+    const snapshot = instance.store.getState().serializeWorkspace();
+
+    expect(snapshot.windows).toHaveLength(2);
+    const byKind = Object.fromEntries(snapshot.windows.map((window) => [window.kind, window]));
+    expect(byKind['task-detail']).toMatchObject({ taskId: 'task-a' });
+    expect(byKind.conversation).toMatchObject({ taskId: 'sess-b' });
+
+    // Before this fix, the conversation leaf would have been pruned from the tile
+    // tree here (serializeWorkspace's own pruning loop), which would have
+    // orphaned the task-detail sibling's leaf reference too. Both windows'
+    // ids must still resolve to leaves in the serialized tile tree.
+    expect(snapshot.tileTree).not.toBeNull();
+    const serializedLeafTaskIds = collectSerializedLeafTaskIds(snapshot.tileTree);
+    expect(serializedLeafTaskIds.sort()).toEqual(['sess-b', 'task-a']);
+  });
+});
+
+/** Walk a SERIALIZED tile tree (leaves keyed by `taskId`, per
+ *  `serializeNode` in persistence/workspace.ts) and collect every leaf's
+ *  anchor. Distinct from `collectLeafWindowIds` above, which walks the LIVE
+ *  tree (leaves keyed by `windowId`). */
+function collectSerializedLeafTaskIds(node: SerializedTileNode | null): string[] {
+  if (!node) return [];
+  if (node.kind === 'leaf') return [node.taskId];
+  return node.children.flatMap((child) => collectSerializedLeafTaskIds(child));
+}
