@@ -992,6 +992,20 @@ export interface TranscriptUsage {
   outputTokens: number;
 }
 
+/**
+ * Cumulative tool-call count + per-tool breakdown parsed from an agent's own
+ * transcript. Backfills the live UsageAccumulator count for sessions whose
+ * ToolStart/ToolEnd hook events never reached it (e.g. a suspended/parked
+ * session), which otherwise reports 0 despite real cost/tokens. Produced by
+ * `AgentAdapter.transcriptToolCounts`. `toolBreakdown` entries are
+ * callCount-only (`totalDurationMs`/`interruptedCount` are 0 - the transcript
+ * has no ToolStart/ToolEnd pairing to derive them from).
+ */
+export interface TranscriptToolCounts {
+  toolCallCount: number;
+  toolBreakdown: PerToolStat[];
+}
+
 // === Usage Time Period Stats ===
 
 export type UsageTimePeriod = 'live' | 'today' | 'week' | 'month' | 'all';

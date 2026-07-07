@@ -82,6 +82,7 @@ vi.mock('../../src/main/ipc/handlers/task-move', () => ({
 vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({
   captureSessionMetrics: vi.fn(),
   refineTranscriptTokens: vi.fn(),
+  refineTranscriptToolCounts: vi.fn(),
 }));
 vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({
   applySuspendDbWrites: vi.fn(),

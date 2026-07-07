@@ -375,6 +375,27 @@ export class SessionRepository {
     ).run(tokens.totalInputTokens, tokens.totalOutputTokens, id);
   }
 
+  /**
+   * Backfill ONLY the tool-count columns from the transcript-derived
+   * cumulative, fire-and-forget after `captureSessionMetrics` (see
+   * `refineTranscriptToolCounts` in `session-metrics.ts`). Guarded to fill
+   * ONLY an empty count (NULL or 0) so a working live accumulator - higher
+   * fidelity when it worked (real durations + a separate interrupted tally) -
+   * is never overwritten by the transcript's coarser callCount-only figure.
+   * Count and breakdown are written together so
+   * `SUM(breakdown.callCount) == tool_call_count` stays consistent.
+   */
+  updateTranscriptToolCounts(id: string, counts: { toolCallCount: number; toolBreakdown: PerToolStat[] }): void {
+    this.db.prepare(
+      `UPDATE sessions SET tool_call_count = ?, tool_breakdown = ?
+       WHERE id = ? AND (tool_call_count IS NULL OR tool_call_count = 0)`,
+    ).run(
+      counts.toolCallCount,
+      counts.toolBreakdown.length > 0 ? JSON.stringify(counts.toolBreakdown) : null,
+      id,
+    );
+  }
+
   /** Update git diff stats for a session record. */
   updateGitStats(id: string, stats: { linesAdded: number; linesRemoved: number; filesChanged: number }): void {
     this.db.prepare(`

@@ -11,7 +11,8 @@ import { resolveProjectContext } from '../helpers/project-repos';
 import { getCachedTaskTitle } from './task-title-cache';
 import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
-import { captureSessionMetrics, refineTranscriptTokens } from './session-metrics';
+import { parseModelId } from '../../../shared/model-id';
+import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
 import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessionId } from '../../transition-engine/session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
@@ -511,19 +512,22 @@ export function registerSessionHandlers(context: IpcContext): void {
       const exitProps: Record<string, string | number | boolean> = { exitCode, durationSeconds };
       const exitAgentName = context.sessionManager.getSessionAgentName(sessionId);
       if (exitAgentName) exitProps.agent = exitAgentName;
-      // Read model/cost/toolCalls from the in-memory usage cache (still
-      // populated at this point; captureSessionMetrics below clears it). The
-      // DB record's fields are not written until captureSessionMetrics runs,
-      // so we cannot read them from the repo here. Token counts are
-      // deliberately omitted: the cache's contextWindow figures are a
-      // current-context snapshot, not the cumulative lifetime totals (those
-      // are covered by task_complete's DB-sourced numbers instead).
+      // Read model/cost from the in-memory usage cache (still populated at
+      // this point; captureSessionMetrics below clears it). The DB record's
+      // fields are not written until captureSessionMetrics runs, so we
+      // cannot read them from the repo here. Token counts are deliberately
+      // omitted: the cache's contextWindow figures are a current-context
+      // snapshot, not the cumulative lifetime totals (those are covered by
+      // task_complete's DB-sourced numbers instead). toolCalls reads the
+      // live UsageAccumulator counter directly (same source
+      // captureSessionMetrics uses) rather than the cache's stamped
+      // toolCallCount, so it never reports staler than the DB.
       const usageForExit = context.sessionManager.getUsageCache()[sessionId];
-      if (usageForExit?.model?.id) exitProps.model = usageForExit.model.id;
+      if (usageForExit?.model?.id) exitProps.model = parseModelId(usageForExit.model.id).baseId;
       if (usageForExit?.cost?.totalCostUsd != null) {
         exitProps.costUsd = Math.round(usageForExit.cost.totalCostUsd * 10000) / 10000;
       }
-      if (usageForExit?.toolCallCount != null) exitProps.toolCalls = usageForExit.toolCallCount;
+      exitProps.toolCalls = context.sessionManager.getToolCallCount(sessionId);
       trackEvent('session_exit', exitProps);
       sessionStartTimes.delete(sessionId);
       sessionSpawnAnalyticsFired.delete(sessionId);
@@ -612,6 +616,7 @@ export function registerSessionHandlers(context: IpcContext): void {
             metricsRecord.session_type,
           );
           refineTranscriptTokens(context.sessionManager, sessionRepo, sessionId, metricsRecord.id);
+          refineTranscriptToolCounts(context.sessionManager, sessionRepo, sessionId, metricsRecord.id);
         }
       } catch {
         // DB may be closed during shutdown

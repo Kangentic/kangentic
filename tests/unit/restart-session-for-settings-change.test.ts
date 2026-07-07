@@ -79,6 +79,7 @@ vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
 vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({
   captureSessionMetrics: (...args: unknown[]) => hoisted.captureSessionMetrics(...args),
   refineTranscriptTokens: vi.fn(),
+  refineTranscriptToolCounts: vi.fn(),
 }));
 
 vi.mock('../../src/main/pty/session-registry', () => ({

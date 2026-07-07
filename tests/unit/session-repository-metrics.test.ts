@@ -460,6 +460,68 @@ describe('SessionRepository.updateTranscriptTokens', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Hole 2 (DB layer): SessionRepository.updateTranscriptToolCounts
+// Pins the SQL shape, positional binding, and the backfill-only-when-empty
+// guard for the transcript-tool-count-only UPDATE that
+// `refineTranscriptToolCounts` calls fire-and-forget after a session ends.
+// ---------------------------------------------------------------------------
+
+describe('SessionRepository.updateTranscriptToolCounts', () => {
+  it('binds toolCallCount, the serialized breakdown, and record id in that positional order', () => {
+    const { db, capturedCalls } = createSqlCaptureMockDb();
+    const repo = new SessionRepository(db);
+
+    repo.updateTranscriptToolCounts('session-abc', {
+      toolCallCount: 5,
+      toolBreakdown: [{ toolName: 'Bash', callCount: 5, totalDurationMs: 0, interruptedCount: 0 }],
+    });
+
+    expect(capturedCalls).toHaveLength(1);
+    // UPDATE sessions SET tool_call_count = ?, tool_breakdown = ? WHERE id = ? AND (...)
+    expect(capturedCalls[0].params[0]).toBe(5);
+    expect(capturedCalls[0].params[1]).toBe(
+      JSON.stringify([{ toolName: 'Bash', callCount: 5, totalDurationMs: 0, interruptedCount: 0 }]),
+    );
+    expect(capturedCalls[0].params[2]).toBe('session-abc');
+  });
+
+  it('writes a NULL breakdown when toolBreakdown is empty', () => {
+    const { db, capturedCalls } = createSqlCaptureMockDb();
+    const repo = new SessionRepository(db);
+
+    repo.updateTranscriptToolCounts('session-abc', { toolCallCount: 0, toolBreakdown: [] });
+
+    expect(capturedCalls[0].params[1]).toBeNull();
+  });
+
+  it('issues an UPDATE touching ONLY the two tool-count columns, not cost/tokens/model', () => {
+    const { db, capturedCalls } = createSqlCaptureMockDb();
+    const repo = new SessionRepository(db);
+
+    repo.updateTranscriptToolCounts('session-abc', { toolCallCount: 1, toolBreakdown: [] });
+
+    const { sql } = capturedCalls[0];
+    expect(sql).toMatch(/UPDATE\s+sessions/i);
+    expect(sql).toMatch(/tool_call_count\s*=/i);
+    expect(sql).toMatch(/tool_breakdown\s*=/i);
+    expect(sql).not.toMatch(/total_cost_usd/i);
+    expect(sql).not.toMatch(/model_id/i);
+    expect(sql).not.toMatch(/total_input_tokens/i);
+    expect(sql).not.toMatch(/total_output_tokens/i);
+  });
+
+  it('carries the backfill-only-when-empty guard so a healthy live count is never overwritten', () => {
+    const { db, capturedCalls } = createSqlCaptureMockDb();
+    const repo = new SessionRepository(db);
+
+    repo.updateTranscriptToolCounts('session-abc', { toolCallCount: 1, toolBreakdown: [] });
+
+    const { sql } = capturedCalls[0];
+    expect(sql).toMatch(/WHERE\s+id\s*=\s*\?\s*AND\s*\(\s*tool_call_count\s+IS\s+NULL\s+OR\s+tool_call_count\s*=\s*0\s*\)/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Hole 3: listAllSummaries lifetime rollup
 // Verifies the JS-level aggregation logic for a task that has two rows sharing
 // the same agent_session_id (a `--resume` pair) plus a row with a distinct one.

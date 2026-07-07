@@ -108,6 +108,7 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({
   captureSessionMetrics: vi.fn(),
   refineTranscriptTokens: vi.fn(),
+  refineTranscriptToolCounts: vi.fn(),
 }));
 
 vi.mock('../../src/main/ipc/handlers/backlog', () => ({
@@ -185,6 +186,7 @@ function buildMockContext(sessionId: string, agentName: string | undefined) {
       getSessionProjectId: vi.fn(() => 'proj-test' as string | undefined),
       getSessionAgentName: vi.fn((id: string) => (id === sessionId ? agentName : undefined)),
       getUsageCache: vi.fn(() => ({} as Record<string, unknown>)),
+      getToolCallCount: vi.fn(() => 0),
       getUsageCacheForProject: vi.fn(() => ({})),
       getActivityCache: vi.fn(() => ({})),
       getActivityCacheForProject: vi.fn(() => ({})),
@@ -391,16 +393,21 @@ describe('exit listener - session_exit attaches costUsd/toolCalls from the usage
    * Runs the running -> exit sequence and returns the props object passed to
    * the `session_exit` trackEvent call. Fails loudly if session_exit was
    * never tracked (e.g. because sessionStartTimes was never populated).
+   * `liveToolCallCount` seeds `sessionManager.getToolCallCount` - the source
+   * `toolCalls` reads from directly (not the usage cache's stamped
+   * `toolCallCount`, which this listener no longer reads).
    */
   function fireRunningThenExit(
     sessionId: string,
     agentName: string,
     usageCacheEntry: Record<string, unknown> | undefined,
+    liveToolCallCount = 0,
   ): Record<string, string | number | boolean> {
     const context = createMockContext(sessionId, agentName);
     context.sessionManager.getUsageCache.mockReturnValue(
       usageCacheEntry !== undefined ? { [sessionId]: usageCacheEntry } : {},
     );
+    context.sessionManager.getToolCallCount.mockReturnValue(liveToolCallCount);
     registerSessionHandlers(context as never);
 
     const sessionChangedHandler = capturedSessionEventHandlers.get('session-changed');
@@ -420,21 +427,37 @@ describe('exit listener - session_exit attaches costUsd/toolCalls from the usage
     return exitCall[1] as Record<string, string | number | boolean>;
   }
 
-  it('attaches costUsd (rounded to 4 decimals) and toolCalls when the usage cache has both', () => {
+  it('attaches costUsd (rounded to 4 decimals) and toolCalls from the live counter', () => {
     const sessionId = 'analytics-exit-usage-populated-005';
 
-    const props = fireRunningThenExit(sessionId, 'claude', {
-      cost: { totalCostUsd: 1.23456 },
-      toolCallCount: 7,
-      model: { id: 'claude-opus-4-8' },
-    });
+    const props = fireRunningThenExit(
+      sessionId,
+      'claude',
+      { cost: { totalCostUsd: 1.23456 }, model: { id: 'claude-opus-4-8' } },
+      7,
+    );
 
     expect(props.costUsd).toBe(1.2346);
     expect(props.toolCalls).toBe(7);
     expect(props.model).toBe('claude-opus-4-8');
   });
 
-  it('omits costUsd and toolCalls when the usage cache entry lacks cost/toolCallCount', () => {
+  it('toolCalls reads the live counter, not the usage cache\'s stamped toolCallCount', () => {
+    const sessionId = 'analytics-exit-live-vs-stamped-008';
+
+    // Cache entry carries a stale/stamped toolCallCount; the live counter
+    // (getToolCallCount) is the source of truth and must win.
+    const props = fireRunningThenExit(
+      sessionId,
+      'claude',
+      { toolCallCount: 2, model: { id: 'claude-opus-4-8' } } as unknown as Record<string, unknown>,
+      9,
+    );
+
+    expect(props.toolCalls).toBe(9);
+  });
+
+  it('omits costUsd when the usage cache entry lacks cost, but toolCalls is still unconditionally emitted', () => {
     const sessionId = 'analytics-exit-usage-missing-fields-006';
 
     const props = fireRunningThenExit(sessionId, 'claude', {
@@ -442,18 +465,30 @@ describe('exit listener - session_exit attaches costUsd/toolCalls from the usage
     });
 
     expect(props).not.toHaveProperty('costUsd');
-    expect(props).not.toHaveProperty('toolCalls');
+    // toolCalls now reads the live counter directly and is unconditionally
+    // emitted (default 0 when nothing was seeded).
+    expect(props.toolCalls).toBe(0);
     // model is independently gated and still attaches when present.
     expect(props.model).toBe('claude-opus-4-8');
   });
 
-  it('omits costUsd and toolCalls when getUsageCache() has no entry for the session', () => {
+  it('omits costUsd and model when getUsageCache() has no entry for the session', () => {
     const sessionId = 'analytics-exit-usage-empty-cache-007';
 
     const props = fireRunningThenExit(sessionId, 'claude', undefined);
 
     expect(props).not.toHaveProperty('costUsd');
-    expect(props).not.toHaveProperty('toolCalls');
     expect(props).not.toHaveProperty('model');
+    expect(props.toolCalls).toBe(0);
+  });
+
+  it('collapses a [1m] context-window model id to its base id', () => {
+    const sessionId = 'analytics-exit-model-1m-009';
+
+    const props = fireRunningThenExit(sessionId, 'claude', {
+      model: { id: 'claude-opus-4-8[1m]' },
+    });
+
+    expect(props.model).toBe('claude-opus-4-8');
   });
 });

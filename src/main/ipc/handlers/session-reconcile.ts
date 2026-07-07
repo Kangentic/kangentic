@@ -2,7 +2,7 @@ import { SessionRepository } from '../../db/repositories/session-repository';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, createTransitionEngine, resolveSpawnOverrides } from '../helpers';
-import { captureSessionMetrics, refineTranscriptTokens } from './session-metrics';
+import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
 import { markRecordExited, markRecordSuspended } from '../../transition-engine/session-lifecycle';
 import { decideSuspendDbAction, isLiveSession } from '../../pty/session-registry';
 import { isAbortError } from '../../../shared/abort-utils';
@@ -48,6 +48,7 @@ export function applySuspendDbWrites(
     // Refine the snapshot tokens with the transcript-derived cumulative
     // (fire-and-forget; does not block this synchronous, lock-held path).
     refineTranscriptTokens(context.sessionManager, sessionRepo, task.session_id, record.id);
+    refineTranscriptToolCounts(context.sessionManager, sessionRepo, task.session_id, record.id);
     markRecordSuspended(sessionRepo, record.id, source);
   } else if (record && action === 'exit-queued') {
     markRecordExited(sessionRepo, record.id);

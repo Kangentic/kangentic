@@ -1,7 +1,14 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { TranscriptEntry, TranscriptBlock, TranscriptUsage, TranscriptTurnUsage } from '../../../../shared/types';
+import type {
+  TranscriptEntry,
+  TranscriptBlock,
+  TranscriptUsage,
+  TranscriptTurnUsage,
+  TranscriptToolCounts,
+  PerToolStat,
+} from '../../../../shared/types';
 
 // Maximum slug length before Claude Code truncates and appends a hash suffix.
 // Matches the `jgH`/`NmK` constant in the shipped CLI (Claude Code 2.x).
@@ -281,6 +288,68 @@ export async function parseClaudeTranscriptUsage(filePath: string): Promise<Tran
     outputTokens += entry.output;
   }
   return { inputTokens, outputTokens };
+}
+
+/**
+ * Parse Claude's native session JSONL into a cumulative tool-call count + a
+ * callCount-only per-tool breakdown. Backfills `UsageAccumulator.getToolCallCount`
+ * for sessions whose ToolStart/ToolEnd hook events never reached the live
+ * accumulator (e.g. a suspended/parked session reports 0 despite real work).
+ *
+ * Counts DISTINCT `tool_use.id` values, not raw blocks: parallel tool calls in
+ * one assistant message have distinct ids and are all counted, but a single
+ * assistant message re-emitted across several JSONL lines (the same pattern
+ * `parseClaudeTranscriptUsage` dedups by `message.id` for) carries the same
+ * `tool_use.id` on each re-emission and must not be double-counted. MCP tools
+ * and `TodoWrite` are ordinary `tool_use` blocks and are counted like any other
+ * tool. Returns null when the file is missing/unreadable or the transcript has
+ * no tool_use blocks, so the caller keeps the live count.
+ */
+export async function parseClaudeTranscriptToolCounts(filePath: string): Promise<TranscriptToolCounts | null> {
+  let content: string;
+  try {
+    content = await fs.readFile(filePath, 'utf-8');
+  } catch {
+    return null; // transcript rotated/absent -> caller falls back to the live count
+  }
+
+  const countByTool = new Map<string, number>();
+  const seenToolUseIds = new Set<string>();
+  let toolCallCount = 0;
+
+  for (const line of content.split(/\r?\n/)) {
+    if (line.length === 0) continue;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isRecord(raw) || raw.type !== 'assistant') continue;
+    const message = raw.message;
+    if (!isRecord(message) || !Array.isArray(message.content)) continue;
+
+    for (const block of message.content) {
+      if (!isRecord(block) || block.type !== 'tool_use') continue;
+      const toolUseId = typeof block.id === 'string' ? block.id : '';
+      if (toolUseId.length > 0) {
+        if (seenToolUseIds.has(toolUseId)) continue;
+        seenToolUseIds.add(toolUseId);
+      }
+      const toolName = typeof block.name === 'string' && block.name.length > 0 ? block.name : 'tool';
+      countByTool.set(toolName, (countByTool.get(toolName) ?? 0) + 1);
+      toolCallCount += 1;
+    }
+  }
+
+  if (toolCallCount === 0) return null;
+  const toolBreakdown: PerToolStat[] = Array.from(countByTool, ([toolName, callCount]) => ({
+    toolName,
+    callCount,
+    totalDurationMs: 0,
+    interruptedCount: 0,
+  }));
+  return { toolCallCount, toolBreakdown };
 }
 
 /**

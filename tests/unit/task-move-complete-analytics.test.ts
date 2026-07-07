@@ -88,7 +88,7 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
 }));
 
 vi.mock('../../src/main/ipc/handlers/backlog', () => ({ abortBacklogPromotion: vi.fn() }));
-vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({ captureSessionMetrics: vi.fn(), refineTranscriptTokens: vi.fn() }));
+vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({ captureSessionMetrics: vi.fn(), refineTranscriptTokens: vi.fn(), refineTranscriptToolCounts: vi.fn() }));
 
 vi.mock('../../src/main/agent/shared', () => ({
   interpolateTemplate: vi.fn((template: string) => template),
@@ -285,6 +285,17 @@ describe('handleTaskMove task_complete analytics', () => {
     expect(props).not.toHaveProperty('toolCalls');
     expect(props.model).toBe('claude-opus-4-8');
     expect(props.agent).toBe('claude');
+  });
+
+  it('collapses a [1m] context-window model id to its base id', async () => {
+    hoisted.latestRecord = { id: 'rec-1', model_id: 'claude-opus-4-8[1m]', agent_session_id: null, status: 'suspended', session_type: 'claude_agent' } as unknown as SessionRecord;
+    hoisted.summary = null;
+
+    const task = makeTask({ swimlane_id: DOING_LANE_ID, session_id: null, worktree_path: null, agent: 'claude' });
+    await moveTaskToDone(task);
+
+    const props = getTaskCompleteProps();
+    expect(props.model).toBe('claude-opus-4-8');
   });
 
   it('rounds costUsd from the summary to 4 decimal places', async () => {

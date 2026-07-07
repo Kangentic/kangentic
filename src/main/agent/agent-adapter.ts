@@ -11,6 +11,7 @@ import type {
   AgentCapabilities,
   TranscriptEntry,
   TranscriptUsage,
+  TranscriptToolCounts,
 } from '../../shared/types';
 
 /**
@@ -248,6 +249,29 @@ export interface AgentAdapter {
     agentSessionId?: string | null;
     cwd?: string | null;
   }): Promise<TranscriptUsage | null>;
+
+  /**
+   * Optional: cumulative tool-call count + per-tool breakdown parsed from the
+   * agent's own transcript. Backfills the live UsageAccumulator count for
+   * sessions whose ToolStart/ToolEnd hook events never reached it (a
+   * parked/suspended session reports 0 despite real cost/tokens).
+   *
+   * Same location/format contract as `transcriptUsage`: prefer the explicit
+   * `transcriptPath`, else locate from `agentSessionId` + `cwd`. Must NOT
+   * throw on a missing/tool-less transcript: return null so the caller keeps
+   * the live count. Counts DISTINCT `tool_use` ids (parallel tool calls in one
+   * message count separately; a streamed re-emission of the same message does
+   * not double-count). The returned breakdown is callCount-only
+   * (`totalDurationMs`/`interruptedCount` are 0 - the transcript has no
+   * ToolStart/ToolEnd pairing to derive them from). Implemented only by
+   * adapters whose CLI writes a parseable transcript (Claude today); other
+   * adapters are a no-op.
+   */
+  transcriptToolCounts?(input: {
+    transcriptPath?: string | null;
+    agentSessionId?: string | null;
+    cwd?: string | null;
+  }): Promise<TranscriptToolCounts | null>;
 
   /**
    * Optional: return a callback that confirms a submission was processed.

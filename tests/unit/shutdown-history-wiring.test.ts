@@ -72,6 +72,7 @@ const mockCaptureSessionMetrics = vi.fn();
 vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({
   captureSessionMetrics: (...args: unknown[]) => mockCaptureSessionMetrics(...args),
   refineTranscriptTokens: vi.fn(),
+  refineTranscriptToolCounts: vi.fn(),
 }));
 
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({

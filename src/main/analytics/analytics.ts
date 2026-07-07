@@ -5,19 +5,27 @@ const APTABASE_APP_KEY = 'A-US-7825295071';
 
 let enabled = false;
 
-/** Properties merged into every subsequent tracked event. Currently just the
- *  anonymous client id (see setAnalyticsClientId) - a plain object is fine
- *  since it is only ever populated once, at startup. */
-const sharedProps: Record<string, string | number | boolean> = {};
+/** The anonymous client id (see setAnalyticsClientId). Attached only to the
+ *  `app_launch` event, not merged into every event - see getAnalyticsClientId. */
+let analyticsClientId: string | undefined;
 
 /**
- * Attach the anonymous client id to every subsequent tracked event. Called
- * once at startup (see analytics/client-id.ts) so events can be rolled up
- * into a unique-installs count ourselves. Aptabase's own identity model
- * rotates daily and cannot do this.
+ * Record the anonymous client id, resolved once at startup (see
+ * analytics/client-id.ts). Read it back with getAnalyticsClientId and attach
+ * it explicitly to app_launch, the one authoritative per-launch install
+ * signal, so unique installs can be rolled up ourselves as
+ * COUNT(DISTINCT clientId) over that event. Aptabase's own identity model
+ * rotates daily and cannot do this; it is deliberately NOT merged into every
+ * event, to avoid inflating high-cardinality string-prop volume on events
+ * (like app_heartbeat) where it adds no install-counting value.
  */
 export function setAnalyticsClientId(clientId: string): void {
-  sharedProps.clientId = clientId;
+  analyticsClientId = clientId;
+}
+
+/** Read back the anonymous client id set by setAnalyticsClientId. */
+export function getAnalyticsClientId(): string | undefined {
+  return analyticsClientId;
 }
 
 /**
@@ -67,7 +75,7 @@ export function initAnalytics(): void {
  */
 export function trackEvent(eventName: string, props?: Record<string, string | number | boolean>): void {
   if (!enabled) return;
-  aptabaseTrack(eventName, { ...sharedProps, ...props }).catch(() => {
+  aptabaseTrack(eventName, props ?? {}).catch(() => {
     // Silently ignore tracking failures -- analytics should never disrupt the app
   });
 }
@@ -92,5 +100,5 @@ export function trackEventAsync(
   props?: Record<string, string | number | boolean>
 ): Promise<void> {
   if (!enabled) return Promise.resolve();
-  return aptabaseTrack(eventName, { ...sharedProps, ...props }).catch(() => {});
+  return aptabaseTrack(eventName, props ?? {}).catch(() => {});
 }

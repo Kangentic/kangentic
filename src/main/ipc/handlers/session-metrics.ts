@@ -141,3 +141,67 @@ export function refineTranscriptTokens(
     // Best-effort: never break the calling suspend/move/reconcile flow.
   }
 }
+
+/**
+ * Fire-and-forget backfill of a session record's tool-count columns from the
+ * agent's transcript. Mirrors {@link refineTranscriptTokens} exactly (same
+ * adapter-resolution, path-sourcing, and best-effort structure); call it right
+ * after that function on the same run-ending paths.
+ *
+ * Backfills ONLY an empty live count (see
+ * `SessionRepository.updateTranscriptToolCounts`'s guard) - it corrects
+ * sessions whose ToolStart/ToolEnd hook events never reached the live
+ * `UsageAccumulator` (a parked/suspended session reads 0 despite real cost and
+ * tokens) without ever regressing a healthy live count.
+ *
+ * SCOPE NOTE: a record whose `total_cost_usd` stayed NULL (a session that exited
+ * before any status.json appeared) is excluded from the `getSummaryForTask` /
+ * `listAllSummaries` lifetime aggregates by their `total_cost_usd IS NOT NULL`
+ * filter, so a count backfilled onto such a cost-less record is written but not
+ * surfaced there. The intended target - a parked/suspended session with real
+ * cost - has non-null cost and does surface, so this is a boundary of the
+ * aggregates, not a regression.
+ *
+ * KNOWN LIMITATION: on a same-action move of a still-running session straight
+ * to Done, `task_complete` reads `getSummaryForTask` synchronously before this
+ * async backfill lands, so that one event leg may under-report. The dominant
+ * path (suspend earlier, move to Done later) has the backfill long landed by
+ * the time `task_complete` fires, and every later DB read is accurate. This is
+ * NOT awaited deliberately: awaiting it here would put file I/O back inside
+ * the `withTaskLock` region the split-out design (see the JSDoc above) exists
+ * to avoid, for a marginal gain on one analytics event leg.
+ *
+ * The adapter is resolved generically from the session's recorded agent name -
+ * no agent-name branching (agent-adapters-boundary rule); adapters without a
+ * `transcriptToolCounts` capability are a no-op.
+ */
+export function refineTranscriptToolCounts(
+  sessionManager: SessionManager,
+  sessionRepo: SessionRepository,
+  sessionId: string,
+  recordId: string,
+): void {
+  try {
+    const agentName = sessionManager.getSessionAgentName(sessionId);
+    const adapter = agentName ? agentRegistry.get(agentName) : undefined;
+    if (!adapter?.transcriptToolCounts) return;
+
+    const transcriptPath = sessionManager.getUsageCache()[sessionId]?.transcriptPath ?? null;
+    const record = sessionRepo.findByAnyId(recordId);
+    const agentSessionId = record?.agent_session_id ?? null;
+    const cwd = record?.cwd ?? null;
+    if (!transcriptPath && !(agentSessionId && cwd)) return;
+
+    void adapter
+      .transcriptToolCounts({ transcriptPath, agentSessionId, cwd })
+      .then((counts) => {
+        if (!counts) return;
+        sessionRepo.updateTranscriptToolCounts(recordId, counts);
+      })
+      .catch(() => {
+        // Best-effort: leave the live/0 count in place.
+      });
+  } catch {
+    // Best-effort: never break the calling suspend/move/reconcile flow.
+  }
+}

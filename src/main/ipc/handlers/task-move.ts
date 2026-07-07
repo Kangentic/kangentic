@@ -22,7 +22,8 @@ import { autoLinkPRForTask } from '../../pr/pr-linking';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { interpolateTemplate } from '../../agent/shared';
 import { trackEvent } from '../../analytics/analytics';
-import { captureSessionMetrics, refineTranscriptTokens } from './session-metrics';
+import { parseModelId } from '../../../shared/model-id';
+import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
 import { markRecordExited, markRecordSuspended } from '../../transition-engine/session-lifecycle';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
@@ -104,6 +105,7 @@ async function suspendLiveSessionForRespawn(args: {
       record.session_type,
     );
     refineTranscriptTokens(context.sessionManager, sessionRepo, liveSessionId, record.id);
+    refineTranscriptToolCounts(context.sessionManager, sessionRepo, liveSessionId, record.id);
     markRecordSuspended(sessionRepo, record.id, 'system');
   } else if (record && record.status === 'queued') {
     markRecordExited(sessionRepo, record.id);
@@ -262,7 +264,9 @@ export async function handleTaskMove(
         const completeProps: Record<string, string | number | boolean> = {};
         if (task.agent) completeProps.agent = task.agent;
         const latestSessionRecord = sessionRepo.getLatestForTask(task.id);
-        if (latestSessionRecord?.model_id) completeProps.model = latestSessionRecord.model_id;
+        if (latestSessionRecord?.model_id) {
+          completeProps.model = parseModelId(latestSessionRecord.model_id).baseId;
+        }
         const lifetimeSummary = sessionRepo.getSummaryForTask(task.id);
         if (lifetimeSummary) {
           completeProps.durationSeconds = Math.round(lifetimeSummary.durationMs / 1000);
@@ -329,6 +333,7 @@ export async function handleTaskMove(
               record.session_type,
             );
             refineTranscriptTokens(context.sessionManager, sessionRepo, task.session_id, record.id);
+            refineTranscriptToolCounts(context.sessionManager, sessionRepo, task.session_id, record.id);
             markRecordSuspended(sessionRepo, record.id, 'system');
             console.log(`[TASK_MOVE] Suspended session record ${record.id.slice(0, 8)} for task ${task.id.slice(0, 8)}`);
           } else if (record && record.status === 'queued') {
@@ -398,6 +403,7 @@ export async function handleTaskMove(
               record.session_type,
             );
             refineTranscriptTokens(context.sessionManager, sessionRepo, task.session_id, record.id);
+            refineTranscriptToolCounts(context.sessionManager, sessionRepo, task.session_id, record.id);
             markRecordSuspended(sessionRepo, record.id, 'system');
           } else if (record && record.status === 'queued') {
             markRecordExited(sessionRepo, record.id);
@@ -468,6 +474,7 @@ export async function handleTaskMove(
               activeRecord.session_type,
             );
             refineTranscriptTokens(context.sessionManager, sessionRepo, task.session_id, activeRecord.id);
+            refineTranscriptToolCounts(context.sessionManager, sessionRepo, task.session_id, activeRecord.id);
             markRecordSuspended(sessionRepo, activeRecord.id, 'system');
           } else if (activeRecord && activeRecord.status === 'queued') {
             markRecordExited(sessionRepo, activeRecord.id);
@@ -517,6 +524,7 @@ export async function handleTaskMove(
               sessionRecord.session_type,
             );
             refineTranscriptTokens(context.sessionManager, sessionRepo, task.session_id, sessionRecord.id);
+            refineTranscriptToolCounts(context.sessionManager, sessionRepo, task.session_id, sessionRecord.id);
             markRecordSuspended(sessionRepo, sessionRecord.id, 'system');
           } else if (sessionRecord && sessionRecord.status === 'queued') {
             markRecordExited(sessionRepo, sessionRecord.id);

@@ -72,6 +72,7 @@ vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
 vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({
   captureSessionMetrics: vi.fn(),
   refineTranscriptTokens: vi.fn(),
+  refineTranscriptToolCounts: vi.fn(),
 }));
 
 // getProjectRepos is the entry point for repository access. We intercept

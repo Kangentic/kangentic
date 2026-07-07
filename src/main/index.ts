@@ -835,9 +835,8 @@ app.whenReady().then(async () => {
     });
   }
 
-  // Resolve the anonymous client id before the first event so every event
-  // (starting with app_launch) carries it. Best-effort: resolveClientId
-  // never throws (it falls back to a random id internally).
+  // Resolve the anonymous client id before the first event. Best-effort:
+  // resolveClientId never throws (it falls back to a random id internally).
   const clientId = await resolveClientId(
     app.getPath('home'),
     path.join(PATHS.configDir, 'analytics-client-id.json')
@@ -846,7 +845,9 @@ app.whenReady().then(async () => {
 
   // Fire app_launch event (analytics initialized before app.whenReady above).
   // trackEvent is a no-op if analytics is disabled, so no guard needed here.
-  trackEvent('app_launch', { platform: process.platform, arch: process.arch });
+  // clientId is attached here only - the one authoritative per-launch install
+  // signal - not merged into every event (see analytics.ts).
+  trackEvent('app_launch', { platform: process.platform, arch: process.arch, clientId });
   heartbeatInterval = setInterval(trackHeartbeat, 30 * 60 * 1000);
 
   // Load React DevTools extension in development (fire-and-forget, after window is visible)

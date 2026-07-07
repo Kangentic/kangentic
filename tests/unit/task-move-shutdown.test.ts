@@ -105,6 +105,7 @@ vi.mock('../../src/main/ipc/handlers/backlog', () => ({
 vi.mock('../../src/main/ipc/handlers/session-metrics', () => ({
   captureSessionMetrics: vi.fn(),
   refineTranscriptTokens: vi.fn(),
+  refineTranscriptToolCounts: vi.fn(),
 }));
 
 vi.mock('../../src/main/agent/shared', () => ({

@@ -1,0 +1,9 @@
+{"type":"user","uuid":"u1","timestamp":"2026-04-01T10:00:00Z","message":{"role":"user","content":"run some tools"}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-04-01T10:00:05Z","message":{"id":"msg_01ABC","model":"claude-opus-4","role":"assistant","content":[{"type":"tool_use","id":"tu_bash","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"assistant","uuid":"a2","timestamp":"2026-04-01T10:00:06Z","message":{"id":"msg_02DEF","model":"claude-opus-4","role":"assistant","content":[{"type":"tool_use","id":"tu_grep","name":"Grep","input":{"pattern":"foo"}}]}}
+{"type":"assistant","uuid":"a2b","timestamp":"2026-04-01T10:00:07Z","message":{"id":"msg_02DEF","model":"claude-opus-4","role":"assistant","content":[{"type":"tool_use","id":"tu_grep","name":"Grep","input":{"pattern":"foo"}}]}}
+{"type":"system","subtype":"compact_boundary","uuid":"s1","timestamp":"2026-04-01T10:05:00Z","compactMetadata":{"trigger":"auto","preTokens":150000}}
+{"type":"assistant","uuid":"a3","timestamp":"2026-04-01T10:06:00Z","message":{"id":"msg_03GHI","model":"claude-opus-4","role":"assistant","content":[{"type":"tool_use","id":"tu_read","name":"Read","input":{"file_path":"a.ts"}},{"type":"tool_use","id":"tu_write","name":"Write","input":{"file_path":"b.ts"}}]}}
+this line is not valid json and must be skipped
+{"type":"assistant","uuid":"a4","timestamp":"2026-04-01T10:07:00Z","message":{"id":"msg_04JKL","model":"claude-opus-4","role":"assistant","content":[{"type":"tool_use","id":"tu_mcp","name":"mcp__github__create_issue","input":{}},{"type":"tool_use","id":"tu_todo","name":"TodoWrite","input":{}}]}}
+{"type":"assistant","uuid":"a5","timestamp":"2026-04-01T10:08:00Z","message":{"id":"msg_05MNO","model":"claude-opus-4","role":"assistant","content":[{"type":"text","text":"no tools here"}]}}

@@ -2,7 +2,12 @@ import fs from 'node:fs';
 import { ClaudeDetector } from './detector';
 import { CommandBuilder } from './command-builder';
 import { ClaudeStatusParser } from './status-parser';
-import { locateClaudeTranscriptFile, parseClaudeTranscript, parseClaudeTranscriptUsage } from './transcript-parser';
+import {
+  locateClaudeTranscriptFile,
+  parseClaudeTranscript,
+  parseClaudeTranscriptUsage,
+  parseClaudeTranscriptToolCounts,
+} from './transcript-parser';
 import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { ensureWorktreeTrust, ensureMcpServerTrust } from './trust-manager';
 import { migrateClaudeProjectData } from './project-relocation';
@@ -28,6 +33,7 @@ import type {
   SubmissionVerifier,
   SubmissionContext,
   TranscriptUsage,
+  TranscriptToolCounts,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
 
@@ -213,6 +219,19 @@ export class ClaudeAdapter implements AgentAdapter {
         : null);
     if (!filePath) return null;
     return parseClaudeTranscriptUsage(filePath);
+  }
+
+  async transcriptToolCounts(input: {
+    transcriptPath?: string | null;
+    agentSessionId?: string | null;
+    cwd?: string | null;
+  }): Promise<TranscriptToolCounts | null> {
+    const filePath = input.transcriptPath
+      ?? (input.agentSessionId && input.cwd
+        ? locateClaudeTranscriptFile(input.agentSessionId, input.cwd)
+        : null);
+    if (!filePath) return null;
+    return parseClaudeTranscriptToolCounts(filePath);
   }
 
   async summarize(prompt: string, cliPath: string, cwd: string): Promise<string> {

@@ -12,7 +12,13 @@ vi.mock('@aptabase/electron/main', () => ({
   trackEvent: mocks.trackEvent,
 }));
 
-import { initAnalytics, trackEvent, setAnalyticsClientId, shouldEmitHeartbeat } from '../../src/main/analytics/analytics';
+import {
+  initAnalytics,
+  trackEvent,
+  setAnalyticsClientId,
+  getAnalyticsClientId,
+  shouldEmitHeartbeat,
+} from '../../src/main/analytics/analytics';
 
 describe('shouldEmitHeartbeat', () => {
   it('emits when at least one session is active', () => {
@@ -25,26 +31,33 @@ describe('shouldEmitHeartbeat', () => {
   });
 });
 
-describe('trackEvent shared props', () => {
+describe('trackEvent clientId scoping', () => {
   beforeEach(() => {
     mocks.trackEvent.mockClear();
     initAnalytics();
   });
 
-  it('merges the client id into every tracked event once set', () => {
+  it('does not merge the client id into a generic event', () => {
     setAnalyticsClientId('deadbeef');
-    trackEvent('app_launch', { platform: 'win32' });
+    trackEvent('app_heartbeat', { active: 1 });
 
-    expect(mocks.trackEvent).toHaveBeenCalledWith('app_launch', {
-      clientId: 'deadbeef',
-      platform: 'win32',
-    });
+    expect(mocks.trackEvent).toHaveBeenCalledWith('app_heartbeat', { active: 1 });
   });
 
-  it('lets per-call props win on key collision with shared props', () => {
+  it('does not merge the client id into session_exit', () => {
     setAnalyticsClientId('deadbeef');
-    trackEvent('app_launch', { clientId: 'override' });
+    trackEvent('session_exit', { exitCode: 0 });
 
-    expect(mocks.trackEvent).toHaveBeenCalledWith('app_launch', { clientId: 'override' });
+    expect(mocks.trackEvent).toHaveBeenCalledWith('session_exit', { exitCode: 0 });
+  });
+
+  it('attaches the client id to app_launch only when the caller passes it explicitly', () => {
+    setAnalyticsClientId('deadbeef');
+    trackEvent('app_launch', { platform: 'win32', clientId: getAnalyticsClientId() });
+
+    expect(mocks.trackEvent).toHaveBeenCalledWith('app_launch', {
+      platform: 'win32',
+      clientId: 'deadbeef',
+    });
   });
 });
