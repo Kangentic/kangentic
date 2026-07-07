@@ -240,12 +240,13 @@ export interface WindowStoreState {
   /** Snapshot the current layout into the persisted, anchor-anchored form. */
   serializeWorkspace: () => SerializedWorkspace;
   /** Replace the layout with a restored one: re-resolve each window's live
-   *  sessionId from its anchor, drop windows whose anchor is gone, and regenerate
-   *  window + tile-node ids. */
+   *  sessionId from its anchor (kind-aware: a window's own persisted `kind`, or
+   *  this layer's kind when absent), drop windows whose anchor is gone for their
+   *  kind, and regenerate window + tile-node ids. */
   applyWorkspace: (
     workspace: SerializedWorkspace,
-    resolveSessionId: (anchor: string) => string | null,
-    isKnownAnchor: (anchor: string) => boolean,
+    resolveSessionId: (anchor: string, kind: WindowContentKind) => string | null,
+    isKnownAnchor: (anchor: string, kind: WindowContentKind) => boolean,
   ) => void;
 }
 
@@ -784,24 +785,15 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
 
     serializeWorkspace: () => {
       const current = get();
-      // Conversation windows are transient in v1: never persisted. Exclude them
-      // from the snapshot, and defensively prune any that somehow ended up in the
-      // tile tree so a persisted leaf never dangles on restore (the board layer's
-      // `isKnownAnchor` treats an anchor as a taskId, and a session-id anchor would
-      // otherwise drop the WHOLE tree). Task-detail windows are unaffected.
-      const persistableWindows = Object.values(current.windows).filter(
-        (managedWindow) => managedWindow.kind !== 'conversation',
-      );
-      let tileTree = current.tileTree;
-      for (const managedWindow of Object.values(current.windows)) {
-        if (managedWindow.kind !== 'conversation') continue;
-        if (tileTree && treeContainsWindow(tileTree, managedWindow.id)) {
-          tileTree = removeWindowFromTree(tileTree, managedWindow.id);
-        }
-      }
+      // Every window kind is persisted (conversation windows included, each
+      // stamped with its own `kind` by toSerializedWorkspace), so a docked
+      // conversation panel restores like a task-detail window on a project
+      // switch. Restore's `isKnownAnchor` is kind-aware (a conversation leaf's
+      // session-id anchor is never mistaken for a taskId), so a persisted
+      // conversation leaf no longer needs to be pruned from the tile tree here.
       return toSerializedWorkspace(
-        persistableWindows,
-        tileTree,
+        Object.values(current.windows),
+        current.tileTree,
         current.tileTreeRect,
         current.focusedWindowId,
       );

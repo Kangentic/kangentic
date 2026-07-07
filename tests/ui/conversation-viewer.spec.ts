@@ -190,6 +190,45 @@ function preConfig(): string {
         sessions: [{ sessionId: 'sess-conv-cmdanchor', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited' }],
       };
 
+      // Regression fixture (Defect A): a markdown table with many columns, plus a
+      // standalone long unbreakable word with no spaces or punctuation. The
+      // table forces overflow via COLUMN COUNT (each column's padding + border
+      // is a fixed floor no amount of text-wrapping can shrink away), not via
+      // unbreakable cell text - overflow-wrap:anywhere (this fix's own
+      // long-token wrap behavior) lets even a very long single-token cell wrap
+      // to fit its column, so a handful of long-word columns alone would NOT
+      // reliably reproduce table-level overflow. Many short columns' fixed
+      // per-column chrome sums past a narrow docked panel regardless. The
+      // table must be contained in its own horizontal-scroll wrapper (never
+      // clip unreachably or push the panel wider); the lone word must wrap via
+      // overflow-wrap instead of overflowing.
+      // A generous column count (30) so the per-column padding+border floor
+      // alone sums well past a narrow docked panel, with margin to spare.
+      var wideColumnCount = 30;
+      var wideColumnHeaders = [];
+      var wideColumnCells = [];
+      for (var wideColumnIndex = 1; wideColumnIndex <= wideColumnCount; wideColumnIndex += 1) {
+        wideColumnHeaders.push('Col' + wideColumnIndex);
+        wideColumnCells.push('Val' + wideColumnIndex);
+      }
+      var wideTableMarkdown = [
+        '| ' + wideColumnHeaders.join(' | ') + ' |',
+        '| ' + wideColumnHeaders.map(function () { return '---'; }).join(' | ') + ' |',
+        '| ' + wideColumnCells.join(' | ') + ' |',
+        '',
+        'WidetableUnbreakableTokenThisIsADeliberatelyUnbreakableWordWithNoSpacesOrPunctuationWhatsoeverAndItKeepsGoingAndGoingUntilItIsFarWiderThanAnyReasonableDockedPanelWidthSoItMustWrapInsteadOfOverflowingThePanelBoundaryEndMarker',
+      ].join('\\n');
+      var transcriptWideTable = {
+        sessionId: 'sess-conv-widetable', taskId: null, taskTitle: 'Wide table containment',
+        agentName: 'Claude Code', startedAt: ts, source: 'live', sourcePath: '/mock/widetable.jsonl',
+        entries: [
+          { kind: 'assistant', uuid: 'turn-widetable', ts: nowMs, model: 'claude-opus-4-8',
+            blocks: [{ type: 'text', text: wideTableMarkdown }] },
+        ],
+        degraded: false,
+        sessions: [{ sessionId: 'sess-conv-widetable', agentName: 'Claude Code', startedAt: ts, exitedAt: null, isolatedSwimlaneId: null, status: 'running' }],
+      };
+
       var transcriptSeeds = {};
       // Both of the task's session ids resolve to the SAME unified response -
       // the real backend always returns a task's full lifecycle regardless of
@@ -197,6 +236,7 @@ function preConfig(): string {
       transcriptSeeds['${SESSION_A}'] = transcriptUnified;
       transcriptSeeds['${SESSION_B}'] = transcriptUnified;
       transcriptSeeds['sess-conv-multiblock'] = transcriptMultiBlock;
+      transcriptSeeds['sess-conv-widetable'] = transcriptWideTable;
       transcriptSeeds['sess-conv-cmdanchor'] = transcriptCommandAnchor;
       transcriptSeeds['sess-conv-dupuuid'] = transcriptDuplicateUuid;
       transcriptSeeds['sess-conv-liveswitch-old'] = transcriptLiveSwitchInitial;
@@ -684,6 +724,63 @@ test.describe('Conversation Viewer', () => {
         .poll(async () => page.locator('[data-turn-uuid="turn-after-cmd"] [data-highlighted="true"]').count())
         .toBeGreaterThan(0);
       await expect(page.locator('[data-turn-uuid="turn-cmd"] [data-highlighted="true"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a wide markdown table is contained in its own scroll block, and a long unbreakable word wraps, instead of overflowing the panel', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, 'sess-conv-widetable');
+      await expect(page.getByText('WidetableUnbreakableToken', { exact: false })).toBeVisible();
+
+      // Narrow the docked window - mirrors the reported "docked next to the
+      // terminal" width - so the wide table and long word would overflow
+      // without containment.
+      await page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: {
+            window: {
+              getState: () => {
+                windows: Record<string, { id: string; kind: string }>;
+                setGeometry: (id: string, geometry: { x: number; y: number; w: number; h: number }) => void;
+              };
+            };
+          };
+        }).__zustandStores;
+        const windowState = stores?.window.getState();
+        const conversationWindow = Object.values(windowState?.windows ?? {}).find((managedWindow) => managedWindow.kind === 'conversation');
+        if (conversationWindow) {
+          windowState?.setGeometry(conversationWindow.id, { x: 0.05, y: 0.05, w: 0.25, h: 0.8 });
+        }
+      });
+
+      const conversationView = page.getByTestId('conversation-view');
+      const wideRow = page.locator('[data-turn-uuid="turn-widetable"]');
+      await expect(wideRow).toBeVisible();
+
+      // The transcript surface itself never scrolls horizontally - wide content
+      // is contained inside its own block, not the surface (a tolerance of a
+      // couple pixels absorbs scrollbar/subpixel rounding, per the
+      // cross-platform no-pixel-exact convention).
+      await expect
+        .poll(async () => conversationView.evaluate((el) => el.scrollWidth - el.clientWidth))
+        .toBeLessThanOrEqual(2);
+
+      // The message row itself never grows wider than the panel (the long
+      // unbreakable word wraps via overflow-wrap instead of pushing it out).
+      await expect
+        .poll(async () => wideRow.evaluate((el) => el.scrollWidth - el.clientWidth))
+        .toBeLessThanOrEqual(2);
+
+      // The table's own wrapper is what actually contains the overflow: its
+      // content is wider than its visible box, so IT is scrollable, not the panel.
+      const tableScroll = page.locator('.md-table-scroll').first();
+      await expect(tableScroll).toBeVisible();
+      await expect
+        .poll(async () => tableScroll.evaluate((el) => el.scrollWidth - el.clientWidth))
+        .toBeGreaterThan(0);
     } finally {
       await browser.close();
     }

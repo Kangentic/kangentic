@@ -1,9 +1,11 @@
 /**
  * Restore the persisted window layout for the just-loaded project. Reads this
  * project's entry from `AppConfig.workspaceByProject` and rebuilds the windows via the
- * window-store, re-resolving each window's live session from its durable taskId and
- * dropping windows whose task is no longer on the board. A no-op when no layout was
- * persisted for the project.
+ * window-store, re-resolving each window's live session from its durable anchor
+ * (kind-aware: a taskId for task-detail, a session id for conversation) and
+ * dropping task-detail windows whose task is no longer on the board (conversation
+ * windows always restore; a gone session shows the viewer's own empty state). A
+ * no-op when no layout was persisted for the project.
  *
  * Called from useProjectSwitchEffect (warm + cold paths) AFTER the incoming
  * project's board, config, and sessions have resolved, so session re-binding and
@@ -27,11 +29,22 @@ export function restoreWorkspaceForProject(projectId: string): void {
   if (!workspace) return;
   useWindowStore.getState().applyWorkspace(
     workspace,
-    // The window's live session, re-resolved from its durable taskId - the same
-    // lookup the normal window-open path uses (useTaskDetailWindowBridge).
-    (taskId) => useSessionStore.getState()._sessionByTaskId.get(taskId)?.id ?? null,
-    // Only restore windows whose task is still on the live board; a task archived
-    // or deleted since the layout was saved is dropped (no restore-then-autoclose).
-    (taskId) => useBoardStore.getState().tasks.some((task) => task.id === taskId),
+    // The window's live session, re-resolved from its durable anchor. A
+    // conversation window's anchor IS its session id (matching the live-open
+    // path in useConversationWindowBridge); a task-detail window's anchor is a
+    // taskId, re-resolved the same way useTaskDetailWindowBridge does.
+    (anchor, kind) => kind === 'conversation'
+      ? anchor
+      : useSessionStore.getState()._sessionByTaskId.get(anchor)?.id ?? null,
+    // Task-detail: only restore windows whose task is still on the live board; a
+    // task archived or deleted since the layout was saved is dropped (no
+    // restore-then-autoclose). Conversation: a session-id anchor is never a
+    // board task, so it is always "known" here - a session that no longer
+    // exists still restores the window, which then shows its own empty /
+    // unavailable state (ConversationWindow resolves its transcript from the
+    // anchor directly) rather than silently vanishing.
+    (anchor, kind) => kind === 'conversation'
+      ? true
+      : useBoardStore.getState().tasks.some((task) => task.id === anchor),
   );
 }

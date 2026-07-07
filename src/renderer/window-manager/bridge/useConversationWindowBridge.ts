@@ -8,8 +8,13 @@
  * existing window for the same session instead of duplicating. It also mirrors a
  * window close back to clearing the signal.
  *
- * Conversation windows are transient (excluded from workspace persistence), so
- * there is no restore path to worry about here.
+ * The signal means "open/focus this conversation now", not "this window should
+ * exist" - existence is owned by the workspace blob (`serializeWorkspace` /
+ * `restoreWorkspaceForProject`), same as task-detail windows. So a cleared
+ * signal (e.g. a project switch nulling it) does NOT close the window here;
+ * `useProjectSwitchEffect` closes the outgoing project's conversation windows
+ * explicitly, after persisting them, so a restored one is never mistaken for
+ * an untracked ghost.
  *
  * Mounted once by `WindowLayer` alongside the task-detail bridge.
  */
@@ -30,11 +35,9 @@ export function useConversationWindowBridge(): void {
   // windows (task-detail or other conversations) are left untouched.
   useEffect(() => {
     if (!conversationSessionId) {
-      // Signal cleared (e.g. a project switch nulls it): close the window we
-      // opened so it does not linger as an untracked ghost on the new project
-      // (where its session id resolves to an empty transcript).
-      const previousWindowId = conversationWindowIdRef.current;
-      if (previousWindowId) useWindowStore.getState().closeWindow(previousWindowId);
+      // Signal cleared (e.g. a project switch nulls it): the window's existence
+      // is not tied to this signal (see header comment), so just drop the ref -
+      // leave the window open if one is.
       conversationWindowIdRef.current = null;
       return;
     }

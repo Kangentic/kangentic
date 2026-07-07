@@ -31,13 +31,42 @@ function makeWindow(
   };
 }
 
+/** A conversation window's anchor is a Kangentic session id, not a taskId. */
+function makeConversationWindow(
+  id: string,
+  sessionId: string,
+  state: WindowState,
+  geometry: FractionalRect,
+  leafId: string | null = null,
+): ManagedWindow {
+  return {
+    id,
+    kind: 'conversation',
+    anchor: sessionId,
+    sessionId,
+    geometry,
+    state,
+    zIndex: 1,
+    leafId,
+    sessionStatus: 'live',
+    restoreGeometry: null,
+    title: 'Conversation',
+  };
+}
+
+/** Board-layer restore context: kind-aware, mirroring
+ *  `restore-workspace.ts`'s real resolvers. A conversation window's anchor is
+ *  its own session id (always "known", re-resolved to itself); a task-detail
+ *  window's anchor is a taskId, checked/resolved against `knownTasks`. */
 function makeContext(knownTasks: string[]): RestoreContext {
   let windowCounter = 0;
   let tileCounter = 0;
   return {
     kind: 'task-detail',
-    resolveSessionId: (anchor) => (knownTasks.includes(anchor) ? `live-${anchor}` : null),
-    isKnownAnchor: (anchor) => knownTasks.includes(anchor),
+    resolveSessionId: (anchor, kind) => (kind === 'conversation'
+      ? anchor
+      : (knownTasks.includes(anchor) ? `live-${anchor}` : null)),
+    isKnownAnchor: (anchor, kind) => (kind === 'conversation' ? true : knownTasks.includes(anchor)),
     makeWindowId: () => `w${(windowCounter += 1)}`,
     makeTileId: (kind) => `${kind}-${(tileCounter += 1)}`,
   };
@@ -164,6 +193,62 @@ describe('workspace serialize / deserialize', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Conversation window persistence (Defect B): a conversation window's anchor
+// is a session id, not a taskId, so it must survive restore even when the
+// board's known-task list has never heard of it, and must never drop a tile
+// tree it shares with a task-detail sibling.
+// ---------------------------------------------------------------------------
+
+describe('conversation window persistence', () => {
+  it('round-trips a conversation window by session id, re-resolving sessionId to the anchor itself', () => {
+    const windows = [makeConversationWindow('win-1', 'sess-123', 'floating', HALF_LEFT)];
+    const serialized = serializeWorkspace(windows, null, FULL, 'win-1');
+    expect(serialized.windows[0]).toMatchObject({ taskId: 'sess-123', kind: 'conversation' });
+
+    // No known board tasks at all - a conversation window's session-id anchor
+    // must still survive (it is never checked against the board).
+    const restored = deserializeWorkspace(serialized, makeContext([]))!;
+    expect(restored).not.toBeNull();
+    const restoredWindow = Object.values(restored.windows)[0];
+    expect(restoredWindow.kind).toBe('conversation');
+    expect(restoredWindow.anchor).toBe('sess-123');
+    expect(restoredWindow.sessionId).toBe('sess-123');
+    expect(restoredWindow.skipEnterAnimation).toBe(true);
+  });
+
+  it('keeps a tiled conversation leaf (an anchor unknown to the board) alongside a task-detail leaf, instead of dropping the whole tree', () => {
+    const tree: TileNode = {
+      kind: 'split',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [
+        { kind: 'leaf', id: 'leaf-1', windowId: 'win-1' },
+        { kind: 'leaf', id: 'leaf-2', windowId: 'win-2' },
+      ],
+      sizes: [0.5, 0.5],
+    };
+    const windows = [
+      makeConversationWindow('win-1', 'sess-abc', 'tiled', HALF_LEFT, 'leaf-1'),
+      makeWindow('win-2', 'task-a', 'tiled', HALF_RIGHT, 'leaf-2'),
+    ];
+    const serialized = serializeWorkspace(windows, tree, FULL, null);
+
+    // 'sess-abc' is not in the known-task list; only 'task-a' is. Before this
+    // fix, a session-id leaf here would fail isKnownAnchor and rebuildNode
+    // would drop the WHOLE tree (including the surviving task-detail leaf).
+    const restored = deserializeWorkspace(serialized, makeContext(['task-a']))!;
+    expect(restored).not.toBeNull();
+    expect(restored.tileTree).not.toBeNull();
+    const tiled = Object.values(restored.windows).filter((window) => window.state === 'tiled');
+    expect(tiled).toHaveLength(2);
+    expect(tiled.every((window) => window.leafId)).toBe(true);
+    const byKind = Object.fromEntries(tiled.map((window) => [window.kind, window]));
+    expect(byKind.conversation.anchor).toBe('sess-abc');
+    expect(byKind['task-detail'].anchor).toBe('task-a');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Restore hardening: a layout read back from an on-disk config is never trusted.
 // ---------------------------------------------------------------------------
 
@@ -238,6 +323,19 @@ describe('deserializeWorkspace hardening', () => {
     expect(Object.values(restored.windows).map((window) => window.anchor)).toEqual(['task-a']);
   });
 
+  it('falls back to the restore context kind when a window\'s persisted kind is out of enum', () => {
+    // A garbage `kind` read off the on-disk blob is not trusted (mirrors the
+    // state/geometry sanitization): it normalizes to the restoring layer's own
+    // kind rather than passing an untyped value through to ManagedWindow.kind.
+    const serialized = serializedWith([
+      { ...VALID_PERSISTED, kind: 'not-a-real-kind' },
+    ]);
+    const restored = deserializeWorkspace(serialized, makeContext(['task-a']))!;
+    const window = Object.values(restored.windows)[0];
+    expect(window.kind).toBe('task-detail');
+    expect(window.anchor).toBe('task-a');
+  });
+
   it('returns null when windows is not an array', () => {
     const hostile = {
       version: WORKSPACE_SCHEMA_VERSION,
@@ -274,19 +372,65 @@ function makeCommandContext(): RestoreContext {
   };
 }
 
+/** A command-terminal window's anchor is a durable slot id, not a taskId. */
+function makeCommandWindow(
+  id: string,
+  slot: string,
+  state: WindowState,
+  geometry: FractionalRect,
+  leafId: string | null = null,
+): ManagedWindow {
+  return {
+    id,
+    kind: 'command-terminal',
+    anchor: slot,
+    sessionId: null,
+    geometry,
+    state,
+    zIndex: 1,
+    leafId,
+    sessionStatus: 'live',
+    restoreGeometry: null,
+    title: 'Command Terminal',
+  };
+}
+
 describe('command-terminal restore path', () => {
-  it('stamps every restored window with kind=command-terminal from the restore context', () => {
-    // Serialize a workspace as if it came from the task-detail layer (makeWindow uses kind: 'task-detail'
-    // internally), then restore with the command-terminal context and verify the kind is overridden.
-    const windows = [makeWindow('win-1', 'slot-1', 'floating', { x: 0.1, y: 0.1, w: 0.4, h: 0.5 })];
-    const serialized = serializeWorkspace(windows, null, FULL, 'win-1');
+  it('a legacy blob with no persisted kind (pre-dating the per-window field) falls back to the restore context\'s kind', () => {
+    // Build a blob shaped like one saved before `kind` was added to SerializedWorkspace: every
+    // window entry omits the field entirely.
+    const legacy: SerializedWorkspace = {
+      version: WORKSPACE_SCHEMA_VERSION,
+      windows: [{
+        taskId: 'slot-1',
+        title: 'Command Terminal',
+        geometry: { x: 0.1, y: 0.1, w: 0.4, h: 0.5 },
+        restoreGeometry: null,
+        state: 'floating',
+      }],
+      tileTree: null,
+      tileTreeRect: { ...FULL },
+      focusedTaskId: null,
+    };
 
-    const restored = deserializeWorkspace(serialized, makeCommandContext())!;
+    const restored = deserializeWorkspace(legacy, makeCommandContext())!;
     const restoredWindow = Object.values(restored.windows)[0];
-
-    // The kind must come from context.kind, not from the serialized form (which has no kind field).
     expect(restoredWindow.kind).toBe('command-terminal');
-    // The anchor round-trips correctly via the taskId field.
+    expect(restoredWindow.anchor).toBe('slot-1');
+  });
+
+  it('honors a window\'s OWN persisted kind over the restore context\'s kind', () => {
+    // The reverse of the legacy case: a blob that DOES carry a per-window kind keeps it, even
+    // when restored through a context whose own `kind` differs. This is what lets a single
+    // board-layer blob mix task-detail and conversation windows and have each restore as itself.
+    const windows = [makeCommandWindow('win-1', 'slot-1', 'floating', { x: 0.1, y: 0.1, w: 0.4, h: 0.5 })];
+    const serialized = serializeWorkspace(windows, null, FULL, 'win-1');
+    expect(serialized.windows[0].kind).toBe('command-terminal');
+
+    // Restored through a task-detail context: the window's own persisted kind wins.
+    const restored = deserializeWorkspace(serialized, makeContext(['slot-1']))!;
+    const restoredWindow = Object.values(restored.windows)[0];
+    expect(restoredWindow.kind).toBe('command-terminal');
     expect(restoredWindow.anchor).toBe('slot-1');
   });
 
@@ -294,7 +438,7 @@ describe('command-terminal restore path', () => {
     // 'slot-never-a-real-task' would be dropped by makeContext([]) since it has no known tasks,
     // but the command-terminal filter always returns true.
     const windows = [
-      makeWindow('win-1', 'slot-never-a-real-task', 'floating', HALF_LEFT),
+      makeCommandWindow('win-1', 'slot-never-a-real-task', 'floating', HALF_LEFT),
     ];
     const serialized = serializeWorkspace(windows, null, FULL, null);
 

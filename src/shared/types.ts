@@ -1716,13 +1716,20 @@ export type DictationConfig = NonNullable<AppConfig['dictation']>;
 
 /** A persisted in-app window-manager layout (one entry per project in
  *  `AppConfig.workspaceByProject`). taskId-anchored and fractional, so it survives
- *  session respawns and viewport resizes. */
+ *  session respawns and viewport resizes. The `taskId` field is the durable
+ *  anchor: a board taskId for a `task-detail` window, a Kangentic session id for
+ *  a `conversation` window. */
 export interface SerializedWorkspace {
   /** Schema version of this persisted layout. Stamped on save and checked on
    *  restore so an older / unknown-shaped blob is ignored rather than mis-applied. */
   version: number;
   windows: Array<{
     taskId: string;
+    /** The window's content kind. Optional for back-compat with pre-existing
+     *  blobs (all of which were 'task-detail' windows on the board layer, or
+     *  'command-terminal' windows on the command layer): a restored window with
+     *  no stamped kind defaults to the restoring layer's own kind. */
+    kind?: 'task-detail' | 'command-terminal' | 'conversation';
     title: string;
     geometry: { x: number; y: number; w: number; h: number };
     restoreGeometry: { x: number; y: number; w: number; h: number } | null;

@@ -76,6 +76,22 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         useWindowStore.getState().serializeWorkspace(),
       );
 
+      // Now that the outgoing project's conversation windows are captured in its
+      // blob, close them promptly: unlike task-detail windows (removed by
+      // useWindowAutoCloseOnDone's board-membership check, which deliberately
+      // skips conversation windows since their anchor is a session id, not a
+      // taskId), nothing else removes a conversation window on switch. Closing
+      // here - synchronously, before the incoming restore runs - means a
+      // carried-over window never appears on the destination project, with no
+      // cold-path flash. The destination's own conversation windows (if any)
+      // are added back by restoreWorkspaceForProject below.
+      const closeWindow = useWindowStore.getState().closeWindow;
+      for (const managedWindow of Object.values(useWindowStore.getState().windows)) {
+        if (managedWindow.kind === 'conversation') {
+          closeWindow(managedWindow.id);
+        }
+      }
+
       const boardState = useBoardStore.getState();
       const backlogState = useBacklogStore.getState();
       const configState = useConfigStore.getState();
@@ -115,10 +131,16 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
       // synchronously even on a cold switch. Arming to null for a no-window destination also
       // disarms any prior arm, so it can never leak into a switch to an expanded project. The arm
       // is cleared once the restore for this project completes (warm + cold below).
-      const destinationHasPersistedWindows =
-        (useConfigStore.getState().config.workspaceByProject?.[currentProject.id]?.windows?.length ?? 0) > 0;
+      //
+      // Only a `task-detail` window (default kind for a window with no persisted `kind`, i.e.
+      // every pre-existing blob) claims a PTY and forces the collapse - a persisted conversation
+      // window never claims `dialogSessionIds` (useWindowSessionClaims skips it), so it must not
+      // arm this signal or the panel would collapse-then-reopen for no reason while it restores.
+      const destinationHasPersistedDetailWindows = (
+        useConfigStore.getState().config.workspaceByProject?.[currentProject.id]?.windows ?? []
+      ).some((window) => (window.kind ?? 'task-detail') === 'task-detail');
       useSessionStore.getState().setPendingDetailWindowsProjectId(
-        destinationHasPersistedWindows ? currentProject.id : null,
+        destinationHasPersistedDetailWindows ? currentProject.id : null,
       );
 
       const warmCacheHit = isWarmProject(currentProject.id);
@@ -160,9 +182,10 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           // detail window re-renders against the live session list, so they
           // need no separate restore - clear them on switch.
           dialogSessionIds: [],
-          // Conversation windows are transient (per-project session), so drop any
-          // open conversation signal on switch; a cross-project handoff re-arms it
-          // via `_pendingOpenConversation` below.
+          // The conversation signal ("open/focus this conversation now") is
+          // per-project, so drop it on switch; the window itself persists via the
+          // workspace blob and restores below. A cross-project handoff re-arms the
+          // signal via `_pendingOpenConversation` below.
           conversationSessionId: null,
           scrollToTurnUuid: null,
         });

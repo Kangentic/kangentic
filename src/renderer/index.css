@@ -569,6 +569,7 @@
   color: var(--kng-fg-muted);
   font-size: 0.875rem;
   line-height: 1.625;
+  overflow-wrap: anywhere;
 }
 
 .markdown-body > :first-child {
@@ -651,10 +652,15 @@
   text-decoration: underline;
 }
 
+.markdown-body .md-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin-bottom: 0.75em;
+}
+
 .markdown-body table {
   width: 100%;
   border-collapse: collapse;
-  margin-bottom: 0.75em;
 }
 
 .markdown-body th,

@@ -18,6 +18,14 @@ const markdownComponents: Components = {
       {children}
     </a>
   ),
+  // A table's intrinsic width (many columns / long cell text) can exceed the
+  // panel; contain it in its own horizontal-scroll box rather than letting it
+  // overflow and get clipped by the transcript's overflow-hidden ancestor.
+  table: ({ children, ...rest }) => (
+    <div className="md-table-scroll">
+      <table {...rest}>{children}</table>
+    </div>
+  ),
 };
 
 interface MarkdownRendererProps {

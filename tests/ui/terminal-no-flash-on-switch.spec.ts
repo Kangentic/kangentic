@@ -29,10 +29,17 @@ const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}
 const PROJECT_A_ID = 'proj-flash-a';
 const PROJECT_B_ID = 'proj-flash-b';
 const PROJECT_C_ID = 'proj-flash-c';
+const PROJECT_D_ID = 'proj-flash-d';
 const TASK_B_ID = 'task-flash-b';
+const SESSION_D_ID = 'sess-flash-d';
 
 // A valid persisted workspace (schema version 1) with a single detail window for B's task, so the
-// cold switch to B arms the pending-collapse flag.
+// cold switch to B arms the pending-collapse flag. D's workspace holds a single CONVERSATION
+// window (kind: 'conversation') and no task-detail window at all - a conversation window never
+// claims `dialogSessionIds` (useWindowSessionClaims skips it), so a switch to D must never arm the
+// collapse signal. Before `destinationHasPersistedDetailWindows` replaced a bare
+// `windows.length > 0` count, D would have wrongly armed the flag and collapsed the panel for no
+// reason while it restores.
 const WORKSPACE_OVERRIDES = JSON.stringify({
   workspaceByProject: {
     [PROJECT_B_ID]: {
@@ -50,13 +57,29 @@ const WORKSPACE_OVERRIDES = JSON.stringify({
       tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
       focusedTaskId: null,
     },
+    [PROJECT_D_ID]: {
+      version: 1,
+      windows: [
+        {
+          taskId: SESSION_D_ID,
+          kind: 'conversation',
+          title: 'Flash D Conversation',
+          geometry: { x: 0.2, y: 0.2, w: 0.4, h: 0.4 },
+          restoreGeometry: null,
+          state: 'floating',
+        },
+      ],
+      tileTree: null,
+      tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+      focusedTaskId: null,
+    },
   },
 });
 
 const preConfigScript = `
   window.__mockPreConfigure(function (state) {
     var ts = new Date().toISOString();
-    ['${PROJECT_A_ID}', '${PROJECT_B_ID}', '${PROJECT_C_ID}'].forEach(function (id, i) {
+    ['${PROJECT_A_ID}', '${PROJECT_B_ID}', '${PROJECT_C_ID}', '${PROJECT_D_ID}'].forEach(function (id, i) {
       state.projects.push({
         id: id,
         name: 'Flash Project ' + id,
@@ -197,6 +220,37 @@ test.describe('terminal panel - no flash on project switch', () => {
         .toBe(true);
 
       // Only null and B's arm may appear: the no-windows destination C must never have armed.
+      const log = await readPendingLog(page);
+      expect(log.filter((value) => value !== null && value !== PROJECT_B_ID)).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('cold switch to a project whose persisted workspace has ONLY a conversation window never arms the flag', async () => {
+    const { browser, page } = await launch();
+    try {
+      await startPendingLog(page);
+
+      // D's persisted workspace has exactly one window and it is `kind: 'conversation'` - zero
+      // task-detail windows. A conversation window never claims dialogSessionIds
+      // (useWindowSessionClaims skips it), so switching to D must never arm the collapse signal;
+      // only `destinationHasPersistedDetailWindows` counting a `task-detail` window should.
+      // Reverting to a bare `windows.length > 0` count would wrongly arm this. Switch to D, then to
+      // B (which DOES have a persisted task-detail window): B's arm appearing in the log is a
+      // deterministic barrier proving D's full switch lifecycle has flushed (no bare timeout), so
+      // we can then assert D never armed at any point.
+      await switchToProject(page, PROJECT_D_ID);
+      await switchToProject(page, PROJECT_B_ID);
+
+      await expect
+        .poll(async () => (await readPendingLog(page)).includes(PROJECT_B_ID), {
+          timeout: 8000,
+          intervals: [100, 200, 300],
+        })
+        .toBe(true);
+
+      // Only null and B's arm may appear: the conversation-only destination D must never have armed.
       const log = await readPendingLog(page);
       expect(log.filter((value) => value !== null && value !== PROJECT_B_ID)).toEqual([]);
     } finally {

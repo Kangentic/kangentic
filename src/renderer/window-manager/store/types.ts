@@ -35,8 +35,10 @@ export type WindowSessionStatus = 'live' | 'suspended' | 'closed';
  *  `WindowContent` routes on this; `anchor` is interpreted per kind.
  *
  *  `conversation` windows live on the board task-detail layer alongside
- *  `task-detail` windows; their `anchor` is the Kangentic session id. They are
- *  transient (never persisted in the workspace) in v1. */
+ *  `task-detail` windows; their `anchor` is the Kangentic session id. Like
+ *  `task-detail` windows they persist in the workspace blob and restore on a
+ *  project switch (a kind-aware `isKnownAnchor` always treats their session-id
+ *  anchor as known). */
 export type WindowContentKind = 'task-detail' | 'command-terminal' | 'conversation';
 
 export interface ManagedWindow {
