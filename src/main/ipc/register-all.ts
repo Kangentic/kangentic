@@ -38,6 +38,7 @@ import { registerGitDiffHandlers } from './handlers/git-diff';
 import { registerBrowserHandlers } from './handlers/browser';
 import { registerSearchHandlers } from './handlers/search';
 import { registerTranscriptHandlers } from './handlers/transcripts';
+import { retrievalService } from '../retrieval/retrieval-service';
 import type { IpcContext } from './ipc-context';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 
@@ -140,6 +141,13 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerSearchHandlers(context);
   registerTranscriptHandlers(context);
   registerSystemHandlers(context);
+
+  // Start the central embedding engine's background drain loop at boot, not
+  // lazily on the first project:open. attach() is idempotent, so the later
+  // startForProject() call on project open just no-ops this part; what
+  // matters is the drain loop is alive even before any project is open (it
+  // parks on an empty dirty-set until markDirty wakes it).
+  retrievalService.attach(context);
 
   // Periodically flush live-session metrics so an app/OS kill mid-run doesn't
   // lose that run's cost/duration/compactions (stopped on before-quit).

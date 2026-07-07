@@ -336,6 +336,105 @@ describe('EmbedClient', () => {
     }
   });
 
+  it('waitForInteractiveIdle resolves immediately when nothing is pending', async () => {
+    const client = new EmbedClient(TEST_MODEL);
+    await expect(client.waitForInteractiveIdle()).resolves.toBeUndefined();
+    client.dispose();
+  });
+
+  it('waitForInteractiveIdle resolves immediately when only background requests are pending', async () => {
+    const client = new EmbedClient(TEST_MODEL);
+    const promise = client.embed(['x'], { timeoutMs: 5000, background: true });
+    const child = lastChild();
+    child.emit('message', { type: 'ready' });
+    await flush();
+
+    // A background-only pending request must not block interactive idle -
+    // the whole point of the flag is that the background drain never counts
+    // as "the worker is busy with something interactive".
+    await expect(client.waitForInteractiveIdle()).resolves.toBeUndefined();
+
+    child.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
+    await promise;
+    client.dispose();
+  });
+
+  it('waitForInteractiveIdle waits until an in-flight interactive (non-background) request settles', async () => {
+    const client = new EmbedClient(TEST_MODEL);
+    const interactivePromise = client.embed(['query'], { timeoutMs: 5000 });
+    const child = lastChild();
+    child.emit('message', { type: 'ready' });
+    await flush();
+
+    let idleResolved = false;
+    const idlePromise = client.waitForInteractiveIdle().then(() => {
+      idleResolved = true;
+    });
+
+    // Still pending: the interactive request has not settled yet.
+    await flush();
+    expect(idleResolved).toBe(false);
+
+    child.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.2])] });
+    await interactivePromise;
+    await idlePromise;
+    expect(idleResolved).toBe(true);
+
+    client.dispose();
+  });
+
+  it('does not resolve waitForInteractiveIdle while an interactive request is still inside the cold-start ensureReady() window (before ready)', async () => {
+    // Pins the interactiveInFlightCount fix: the counter increments BEFORE
+    // ensureReady() so a live query counts as in-flight during a cold worker
+    // spawn/init, not only once the request reaches `pending` in sendEmbed().
+    // If the counter were removed (falling back to a `pending`-only scan),
+    // hasInteractiveInFlight() would see an empty `pending` during this
+    // window and waitForInteractiveIdle() would resolve immediately here --
+    // exactly the regression this test catches. Unlike the other
+    // waitForInteractiveIdle tests, this one deliberately does NOT emit
+    // 'ready' before calling waitForInteractiveIdle(), so it actually
+    // exercises the cold-start window instead of the post-ready pending one.
+    const client = new EmbedClient(TEST_MODEL);
+    const interactivePromise = client.embed(['cold-query'], { timeoutMs: 5000 });
+
+    let idleResolved = false;
+    const idlePromise = client.waitForInteractiveIdle().then(() => {
+      idleResolved = true;
+    });
+
+    // No 'ready' emitted yet -- the request is still inside ensureReady().
+    await flush();
+    expect(idleResolved).toBe(false);
+
+    const child = lastChild();
+    child.emit('message', { type: 'ready' });
+    await flush();
+    // Ready fired, but the interactive request itself has not settled (no
+    // result reply yet), so idle must still not be resolved.
+    expect(idleResolved).toBe(false);
+
+    child.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.3])] });
+    await interactivePromise;
+    await idlePromise;
+    expect(idleResolved).toBe(true);
+
+    client.dispose();
+  });
+
+  it('waitForInteractiveIdle resolves once an interactive request times out with no reply', async () => {
+    const client = new EmbedClient(TEST_MODEL);
+    const interactivePromise = client.embed(['query'], { timeoutMs: 10 });
+    const child = lastChild();
+    child.emit('message', { type: 'ready' });
+    await flush();
+    const idlePromise = client.waitForInteractiveIdle();
+
+    await expect(interactivePromise).resolves.toBeNull();
+    await expect(idlePromise).resolves.toBeUndefined();
+
+    client.dispose();
+  });
+
   it('degrades cleanly to null when the worker reports an init error before ready (no throw)', async () => {
     // An init/model-load failure surfaces as an 'error' message with no `id`,
     // before 'ready'. ensureReady()/embed() must degrade to null without

@@ -404,8 +404,28 @@ export class RetrievalStore {
     this.vecReady = true;
   }
 
+  /**
+   * Write embedding vectors for chunks fetched earlier via
+   * `chunksNeedingEmbedding`. `contentHash` is each row's hash AT FETCH TIME;
+   * it is re-validated against the live row inside this same transaction
+   * before writing, and the row is skipped (left pending) on a mismatch or if
+   * the chunk no longer exists.
+   *
+   * This guard closes a race introduced by decoupling the background
+   * embedding drain from the indexer's serial job chain: `memory_chunks.id`
+   * is `INTEGER PRIMARY KEY` WITHOUT `AUTOINCREMENT`, so a concurrent
+   * `upsertDocument` that deletes-then-reinserts a churning chunk's row (e.g.
+   * a live session actively being re-indexed) can have SQLite reuse the freed
+   * rowid for a DIFFERENT chunk before this write lands. Without the guard,
+   * `writeEmbeddings` would stamp a stale vector onto that new chunk and mark
+   * it embedded - a silent, wrong embedding that never gets corrected. Because
+   * this whole method is one synchronous better-sqlite3 transaction and the
+   * only `await` in the drain loop happens before it is called, the
+   * check-and-write here is atomic with respect to any concurrent
+   * `upsertDocument`.
+   */
   writeEmbeddings(
-    rows: Array<{ chunkId: number; vector: Float32Array }>,
+    rows: Array<{ chunkId: number; vector: Float32Array; contentHash: string }>,
     modelTag: string,
   ): void {
     if (!this.vecReady || rows.length === 0) return;
@@ -415,10 +435,13 @@ export class RetrievalStore {
       // virtual table". Re-embedding a chunk (a model switch, or a rowid reused
       // after a content change) is therefore a DELETE followed by a plain
       // INSERT, which is sqlite-vec's documented update path.
+      const checkHash = this.db.prepare('SELECT content_hash FROM memory_chunks WHERE id = ?');
       const deleteVec = this.db.prepare('DELETE FROM memory_chunks_vec WHERE rowid = ?');
       const insertVec = this.db.prepare('INSERT INTO memory_chunks_vec(rowid, embedding) VALUES (?, ?)');
       const markChunk = this.db.prepare('UPDATE memory_chunks SET embedded_model = ? WHERE id = ?');
-      for (const { chunkId, vector } of rows) {
+      for (const { chunkId, vector, contentHash } of rows) {
+        const current = checkHash.get(chunkId) as { content_hash: string } | undefined;
+        if (!current || current.content_hash !== contentHash) continue;
         // vec0 rejects a JS number for its rowid ("Only integers are allowed
         // for primary key values") - it must be bound as a BigInt (verified
         // against sqlite-vec 0.1.9 under Electron).
@@ -456,6 +479,21 @@ export class RetrievalStore {
       )
       .all(modelTag, limit) as StoredChunkRow[];
     return rows.map(toStoredChunk);
+  }
+
+  /** Cheap count of chunks still pending embedding for `modelTag` (same WHERE
+   *  clause as `chunksNeedingEmbedding`, backed by `idx_memory_chunks_embedded`).
+   *  Not yet wired to a caller: exposed for a future embedding status/telemetry
+   *  surface that needs a pending count without fetching full rows. */
+  countChunksNeedingEmbedding(modelTag: string): number {
+    if (!this.vecReady) return 0;
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM memory_chunks
+         WHERE embedded_model IS NULL OR embedded_model != ?`,
+      )
+      .get(modelTag) as { count: number };
+    return row.count;
   }
 
   /** Startup GC: drop vec rows whose chunk was removed while the extension was

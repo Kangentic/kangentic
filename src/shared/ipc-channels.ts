@@ -19,6 +19,7 @@ export const IPC = {
   // Dev-only (preview): build-excluded from production via __KANGENTIC_DEV__.
   DEV_CREATE_EPHEMERAL_PROJECT: 'dev:createEphemeralProject',
   DEV_SEED_GIT_CHANGES: 'dev:seedGitChanges',
+  DEV_SEED_EMBEDDING_BACKLOG: 'dev:seedEmbeddingBacklog',
 
   // Project Groups
   PROJECT_GROUP_LIST: 'projectGroup:list',

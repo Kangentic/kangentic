@@ -16,10 +16,17 @@
  */
 
 import { useState } from 'react';
-import { Plus, FolderPlus, FileDiff } from 'lucide-react';
+import { Plus, FolderPlus, FileDiff, Database } from 'lucide-react';
 import { useBoardStore } from '../../renderer/stores/board-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useToastStore } from '../../renderer/stores/toast-store';
+
+/** Default seed count for "Seed Embedding Backlog": large enough to force
+ *  hundreds of real drain-loop round-robin iterations against the live embed
+ *  worker (a multi-minute soak test, not an instant no-op), in the same
+ *  ballpark as a real one-time model-switch backfill, while staying well
+ *  short of a full multi-hour history backfill. */
+const EMBEDDING_BACKLOG_SEED_COUNT = 3000;
 
 // Lorem source. Titles/descriptions are deliberately meaningless so that
 // dragging a seeded task to an executing column gives the agent nothing real to
@@ -118,6 +125,7 @@ export function TestHarness() {
   const [creating, setCreating] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  const [seedingBacklog, setSeedingBacklog] = useState(false);
 
   const handleCreateTask = async () => {
     const todoSwimlane = useBoardStore.getState().swimlanes.find((lane) => lane.role === 'todo');
@@ -209,6 +217,38 @@ export function TestHarness() {
     }
   };
 
+  // Dev-only: seed a realistic embedding backlog (thousands of pending chunks)
+  // into the current project so the central embedding engine's drain loop can
+  // be exercised under sustained real-worker load. The engine only cares
+  // about memory_chunks.embedded_model IS NULL, not where the row came from,
+  // so this needs no real tasks or agent sessions to reach that scale.
+  const handleSeedEmbeddingBacklog = async () => {
+    const project = useProjectStore.getState().currentProject;
+    if (!project) {
+      useToastStore.getState().addToast({ message: 'Open a project first to seed an embedding backlog', variant: 'warning' });
+      return;
+    }
+    setSeedingBacklog(true);
+    try {
+      const result = await window.electronAPI.dev?.seedEmbeddingBacklog(EMBEDDING_BACKLOG_SEED_COUNT);
+      if (!result) {
+        useToastStore.getState().addToast({ message: 'Seeding an embedding backlog is dev-preview only', variant: 'warning' });
+        return;
+      }
+      useToastStore.getState().addToast({
+        message: `Seeded ${result.seeded} pending chunks - enable Semantic search (Settings > Memory) to watch the drain`,
+        variant: 'success',
+      });
+    } catch (error) {
+      useToastStore.getState().addToast({
+        message: `Failed to seed embedding backlog: ${error instanceof Error ? error.message : 'unknown error'}`,
+        variant: 'error',
+      });
+    } finally {
+      setSeedingBacklog(false);
+    }
+  };
+
   return (
     <div
       className="fixed left-6 top-1/2 -translate-y-1/2 z-[2147483600] flex flex-col gap-1.5 rounded-lg border border-edge bg-surface-raised/95 p-1.5 shadow-2xl backdrop-blur"
@@ -245,6 +285,17 @@ export function TestHarness() {
       >
         <FileDiff size={16} />
         {seeding ? 'Seeding...' : 'Seed File Changes'}
+      </button>
+      <button
+        type="button"
+        onClick={handleSeedEmbeddingBacklog}
+        disabled={seedingBacklog}
+        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
+        data-testid="dev-seed-embedding-backlog"
+        title={`Seed ${EMBEDDING_BACKLOG_SEED_COUNT} synthetic pending chunks to stress-test the background embedding engine's drain loop`}
+      >
+        <Database size={16} />
+        {seedingBacklog ? 'Seeding...' : 'Seed Embedding Backlog'}
       </button>
     </div>
   );

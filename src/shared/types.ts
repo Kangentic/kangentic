@@ -2828,6 +2828,14 @@ export interface DevSeedGitChangesResult {
   working: number;
 }
 
+/** Summary of a dev test-harness embedding-backlog seed (see DEV_SEED_EMBEDDING_BACKLOG). */
+export interface DevSeedEmbeddingBacklogResult {
+  /** Number of synthetic pending chunks inserted. */
+  seeded: number;
+  /** The synthetic document id the chunks were written under (e.g. 'dev-seed-embedding-backlog-3'). */
+  docId: string;
+}
+
 export interface ElectronAPI {
   // Dev-only (preview): present only when __KANGENTIC_DEV__ (build-excluded in prod).
   dev?: {
@@ -2840,6 +2848,15 @@ export interface ElectronAPI {
      * preview-projects root.
      */
     seedGitChanges: (targetPaths: string[]) => Promise<DevSeedGitChangesResult>;
+    /**
+     * Seed `count` synthetic pending chunks (embedded_model = NULL) into the
+     * current project's conversation-memory index via the real chunk-write
+     * path, then flag the project dirty - the fast path to a realistic
+     * embedding backlog (thousands of pending chunks) for exercising the
+     * central embedding engine's drain loop under sustained real-worker load,
+     * without needing that many real agent turns to produce it.
+     */
+    seedEmbeddingBacklog: (count: number) => Promise<DevSeedEmbeddingBacklogResult>;
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;
     /**

@@ -10,6 +10,7 @@ import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
 import { resolvePreviewTaskTitle } from '../devtools/main/preview-task-title';
 import { registerSeedGitChangesDevIpc } from '../devtools/main/seed-git-changes';
+import { registerSeedEmbeddingBacklogDevIpc } from '../devtools/main/seed-embedding-backlog';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
 import { readBrowserAutomationConfig } from './browser/browser-automation-config';
@@ -81,10 +82,22 @@ function safeReadDeveloperFlag(
     // session and almost certainly wants the agent-driven inspection bridge
     // (including eval, inject-event, raw-PTY) available without flipping a
     // toggle each launch. Both are localhost-only and dropped from production
-    // builds via `__KANGENTIC_DEV__`. The other toggles (overlay, log mirror,
-    // IPC recorder) still default OFF because they have a visible/disk cost the
-    // user should opt into deliberately. An explicit stored value always wins.
+    // builds via `__KANGENTIC_DEV__`. An explicit stored value always wins.
     if (key === 'previewInspectionServer' || key === 'previewEvalEnabled') return __KANGENTIC_DEV__;
+    // Persistent console logs default ON in ANY dev build (npm start dogfooding
+    // AND /preview): the write path is already async-queued (queueAppend in
+    // log-mirror.ts defers the actual disk write to the next setImmediate turn,
+    // no per-call blocking appendFileSync/mkdirSync), so this has no measurable
+    // dogfooding performance cost, and having the trace already captured is far
+    // more useful than remembering to flip it before a debugging session starts.
+    if (key === 'persistConsoleLogs') return __KANGENTIC_DEV__;
+    // The IPC recorder is different: it has a real, documented disk-I/O cost per
+    // call ("non-trivial disk impact"). Default it ON only for the ephemeral
+    // `/preview` instance, whose entire data dir (including .kangentic/logs/) is
+    // wiped on close, bounding the growth. The regular npm start dogfooding
+    // session runs for days, so it stays opt-in there to avoid unbounded trace
+    // accumulation the user did not ask for.
+    if (key === 'recordIpcTraffic') return __KANGENTIC_DEV__ && isEphemeral;
     return false;
   } catch {
     return false;
@@ -611,6 +624,10 @@ const createWindow = () => {
           // registered in ephemeral preview, the one place its safety guard
           // (preview-projects root) has clones to operate on.
           registerSeedGitChangesDevIpc();
+          // Seed-embedding-backlog dev IPC for the TestHarness "Seed Embedding
+          // Backlog" button - a realistic pending-chunk count for exercising the
+          // central embedding engine's drain loop under sustained real-worker load.
+          registerSeedEmbeddingBacklogDevIpc(getOptionalIpcContext);
           // Adopt the two clones the /preview script pre-cloned (overlapping the
           // build); add more on demand via the TestHarness "Create Project" button.
           const project1 = await createPreviewClone(ephemeralContext, cwd); // adopts "Project 1"
@@ -642,6 +659,25 @@ const createWindow = () => {
       const project = await openProjectByPath(projectPath);
       endPhase('openProjectByPath');
       mark('project_opened');
+      // openProjectByPath is deliberately lighter than the project:open IPC
+      // handler (project:open is what fires on every manual sidebar switch)
+      // and does not start conversation-memory indexing or flag the project's
+      // embedding backlog dirty. Without this, a project auto-restored on cold
+      // boot would never resume an embedding backlog left mid-drain from a
+      // prior session - the engine's drain loop is alive but stays parked on
+      // an empty dirty-set until something marks this project dirty, and nothing
+      // else does for THIS specific path (getStatus()'s self-heal only fires if
+      // the user happens to open Quick Find or Settings -> Memory).
+      //
+      // This call site fires exactly ONCE per app launch (preloadPromise is a
+      // one-shot IIFE inside createWindow, structurally separate from the
+      // project:open handler that already handles every subsequent switch) -
+      // it does not run again on project switching, so it does not reintroduce
+      // navigation-triggered embedding. startForProject itself is switch-safe
+      // regardless (it only does a deferred sweep + markDirty, never inline
+      // embedding - the background engine alone decides when to actually embed).
+      const context = getOptionalIpcContext();
+      if (project && context) retrievalService.startForProject(context, project);
       return project;
     } catch (err) {
       endPhase('openProjectByPath');

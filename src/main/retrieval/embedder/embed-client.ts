@@ -80,6 +80,17 @@ export class EmbedClient implements Embedder {
   /** True while an intentional teardown (idle recycle or dispose) is in flight,
    *  so the resulting 'exit' is not miscounted as a crash. */
   private intentionalShutdown = false;
+  /** Resolved (and cleared) whenever no interactive (non-background) request
+   *  is in flight. See waitForInteractiveIdle(). */
+  private interactiveIdleWaiters: Array<() => void> = [];
+  /** Count of interactive (non-background) embed() calls currently anywhere in
+   *  flight - INCLUDING the ensureReady() worker-spawn/init window, before the
+   *  request reaches `this.pending` in sendEmbed(). This is what
+   *  hasInteractiveInFlight() consults: scanning `pending` alone would miss a
+   *  live query still blocked in ensureReady() on a cold worker start, letting
+   *  the background drain post ahead of it and break the "a live query always
+   *  preempts the drain" invariant. */
+  private interactiveInFlightCount = 0;
 
   get crashed(): boolean {
     return this.crashCount >= MAX_CRASHES;
@@ -93,21 +104,64 @@ export class EmbedClient implements Embedder {
 
   async embed(
     texts: string[],
-    opts?: { timeoutMs?: number; isQuery?: boolean },
+    opts?: { timeoutMs?: number; isQuery?: boolean; background?: boolean },
   ): Promise<Float32Array[] | null> {
     if (texts.length === 0) return [];
     if (this.disposed || this.crashed) return null;
     if (this.pending.size >= QUEUE_CAP) return null;
 
-    const ready = await this.ensureReady();
-    if (!ready || this.disposed) return null;
-
-    this.clearIdleTimer();
+    const background = opts?.background ?? false;
+    // Track interactive intent BEFORE ensureReady() so a live query counts as
+    // in-flight during the cold-start worker-spawn window, not only once it
+    // reaches sendEmbed(). Cleared in the finally, which also wakes any waiters.
+    if (!background) this.interactiveInFlightCount += 1;
     try {
-      return await this.sendEmbed(texts, opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS, opts?.isQuery ?? false);
+      const ready = await this.ensureReady();
+      if (!ready || this.disposed) return null;
+
+      this.clearIdleTimer();
+      try {
+        return await this.sendEmbed(
+          texts,
+          opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          opts?.isQuery ?? false,
+        );
+      } finally {
+        this.armIdleShutdown();
+      }
     } finally {
-      this.armIdleShutdown();
+      if (!background) {
+        this.interactiveInFlightCount -= 1;
+        this.notifyInteractiveIdleIfClear();
+      }
     }
+  }
+
+  /** Resolves once no interactive (non-background) request is in flight.
+   *  The background drain (embed-engine) awaits this before every post so it
+   *  never sits in front of a live search / MCP recall query. Resolves
+   *  immediately when nothing interactive is pending. */
+  waitForInteractiveIdle(): Promise<void> {
+    if (!this.hasInteractiveInFlight()) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.interactiveIdleWaiters.push(resolve);
+    });
+  }
+
+  private hasInteractiveInFlight(): boolean {
+    // Counter, not a `pending` scan: it also covers the ensureReady() window
+    // before an interactive request is recorded in `pending`, and it spans the
+    // full embed() call for every non-background request, so it strictly
+    // subsumes the old scan.
+    return this.interactiveInFlightCount > 0;
+  }
+
+  private notifyInteractiveIdleIfClear(): void {
+    if (this.interactiveIdleWaiters.length === 0) return;
+    if (this.hasInteractiveInFlight()) return;
+    const waiters = this.interactiveIdleWaiters;
+    this.interactiveIdleWaiters = [];
+    for (const resolve of waiters) resolve();
   }
 
   /** Spawn + init the worker if needed. Memoized; returns false on failure. */
@@ -157,12 +211,17 @@ export class EmbedClient implements Embedder {
 
   private readyResolver: ((ok: boolean) => void) | null = null;
 
-  private sendEmbed(texts: string[], timeoutMs: number, isQuery: boolean): Promise<Float32Array[] | null> {
+  private sendEmbed(
+    texts: string[],
+    timeoutMs: number,
+    isQuery: boolean,
+  ): Promise<Float32Array[] | null> {
     if (!this.child) return Promise.resolve(null);
     const requestId = this.nextRequestId++;
     return new Promise<Float32Array[] | null>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
+        this.notifyInteractiveIdleIfClear();
         resolve(null);
       }, timeoutMs);
       timer.unref();
@@ -194,6 +253,7 @@ export class EmbedClient implements Embedder {
       if (!entry) return;
       clearTimeout(entry.timer);
       this.pending.delete(record.id);
+      this.notifyInteractiveIdleIfClear();
       entry.resolve(record.type === 'result' ? record.vectors ?? null : null);
     }
   }
@@ -209,6 +269,7 @@ export class EmbedClient implements Embedder {
       entry.resolve(null);
     }
     this.pending.clear();
+    this.notifyInteractiveIdleIfClear();
     // An idle recycle or dispose is not a crash; only an unexpected exit counts.
     if (!this.disposed && !this.intentionalShutdown) this.crashCount += 1;
     this.intentionalShutdown = false;
@@ -262,6 +323,7 @@ export class EmbedClient implements Embedder {
       entry.resolve(null);
     }
     this.pending.clear();
+    this.notifyInteractiveIdleIfClear();
     this.killChild();
   }
 }

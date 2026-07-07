@@ -471,6 +471,7 @@ if (__KANGENTIC_DEV__) {
   api.dev = {
     createEphemeralProject: () => ipcRenderer.invoke(IPC.DEV_CREATE_EPHEMERAL_PROJECT),
     seedGitChanges: (targetPaths: string[]) => ipcRenderer.invoke(IPC.DEV_SEED_GIT_CHANGES, targetPaths),
+    seedEmbeddingBacklog: (count: number) => ipcRenderer.invoke(IPC.DEV_SEED_EMBEDDING_BACKLOG, count),
     isEphemeralPreview,
     previewTaskTitle,
   };

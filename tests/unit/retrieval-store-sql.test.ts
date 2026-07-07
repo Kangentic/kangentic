@@ -171,12 +171,17 @@ describe('RetrievalStore.writeEmbeddings (vec0 has no UPSERT)', () => {
     // then INSERT. Force vecReady: mark the fake connection vec-capable and have
     // the constructor's sqlite_master probe report the table already exists.
     const { db, calls } = makeRecordingDb({
-      get: (sql) => (sql.includes('sqlite_master') ? { name: 'memory_chunks_vec' } : undefined),
+      get: (sql) =>
+        sql.includes('sqlite_master')
+          ? { name: 'memory_chunks_vec' }
+          : sql.includes('content_hash')
+            ? { content_hash: 'hash-7' }
+            : undefined,
     });
     markVecCapable(db);
 
     new RetrievalStore(db).writeEmbeddings(
-      [{ chunkId: 7, vector: new Float32Array([0.1, 0.2, 0.3]) }],
+      [{ chunkId: 7, vector: new Float32Array([0.1, 0.2, 0.3]), contentHash: 'hash-7' }],
       'bge-base@q8',
     );
 
@@ -197,6 +202,75 @@ describe('RetrievalStore.writeEmbeddings (vec0 has no UPSERT)', () => {
     // The chunk is marked embedded with the model tag.
     const markCall = findRun(calls, 'UPDATE memory_chunks SET embedded_model');
     expect(markCall?.args).toEqual(['bge-base@q8', 7]);
+  });
+
+  it('skips a chunk whose content_hash changed since it was fetched, without writing a stale vector', () => {
+    // Guards the concurrency-correctness fix for the background embedding
+    // drain: memory_chunks.id is INTEGER PRIMARY KEY WITHOUT AUTOINCREMENT, so
+    // a concurrent re-index (upsertDocument) can delete-then-reinsert a
+    // churning chunk's row and have SQLite reuse the freed rowid for a
+    // DIFFERENT chunk before this write lands. Re-validating content_hash
+    // inside the same transaction must skip the row rather than stamp a
+    // stale vector onto the new chunk's rowid.
+    const { db, calls } = makeRecordingDb({
+      get: (sql) =>
+        sql.includes('sqlite_master')
+          ? { name: 'memory_chunks_vec' }
+          : sql.includes('content_hash')
+            ? { content_hash: 'hash-NEW' } // the row changed after the fetch
+            : undefined,
+    });
+    markVecCapable(db);
+
+    new RetrievalStore(db).writeEmbeddings(
+      [{ chunkId: 7, vector: new Float32Array([0.1, 0.2, 0.3]), contentHash: 'hash-STALE' }],
+      'bge-base@q8',
+    );
+
+    expect(findRun(calls, 'DELETE FROM memory_chunks_vec')).toBeUndefined();
+    expect(findRun(calls, 'INSERT INTO memory_chunks_vec')).toBeUndefined();
+    expect(findRun(calls, 'UPDATE memory_chunks SET embedded_model')).toBeUndefined();
+  });
+
+  it('skips a chunk that no longer exists (deleted concurrently)', () => {
+    const { db, calls } = makeRecordingDb({
+      get: (sql) => (sql.includes('sqlite_master') ? { name: 'memory_chunks_vec' } : undefined),
+    });
+    markVecCapable(db);
+
+    new RetrievalStore(db).writeEmbeddings(
+      [{ chunkId: 7, vector: new Float32Array([0.1, 0.2, 0.3]), contentHash: 'hash-7' }],
+      'bge-base@q8',
+    );
+
+    expect(findRun(calls, 'INSERT INTO memory_chunks_vec')).toBeUndefined();
+    expect(findRun(calls, 'UPDATE memory_chunks SET embedded_model')).toBeUndefined();
+  });
+});
+
+describe('RetrievalStore.countChunksNeedingEmbedding', () => {
+  it('returns the COUNT(*) for the same WHERE clause as chunksNeedingEmbedding', () => {
+    const { db, calls } = makeRecordingDb({
+      get: (sql) =>
+        sql.includes('sqlite_master')
+          ? { name: 'memory_chunks_vec' }
+          : sql.includes('COUNT(*)')
+            ? { count: 3 }
+            : undefined,
+    });
+    markVecCapable(db);
+
+    const count = new RetrievalStore(db).countChunksNeedingEmbedding('bge-base@q8');
+
+    expect(count).toBe(3);
+    const countCall = calls.find((call) => call.method === 'get' && call.sql.includes('COUNT(*)'));
+    expect(countCall?.sql).toContain('embedded_model IS NULL OR embedded_model != ?');
+    expect(countCall?.args).toEqual(['bge-base@q8']);
+  });
+
+  it('returns 0 when the vec table is not ready', () => {
+    const { db } = makeRecordingDb({});
+    expect(new RetrievalStore(db).countChunksNeedingEmbedding('bge-base@q8')).toBe(0);
   });
 });
 

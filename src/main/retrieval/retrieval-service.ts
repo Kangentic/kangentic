@@ -7,10 +7,18 @@
  *  - a live turn-boundary hook (SessionManager 'activity' -> idle/permission) that
  *    re-indexes the active session so an in-progress conversation is searchable,
  *  - the per-open backfill sweep,
- *  - the embedding pass (Phase 2): local model download + embedding of chunks
- *    into the vec index, gated on memory.semanticEnabled + sqlite-vec,
- *  - a serial job chain (one indexing/embedding job in flight at a time),
- *  - config gating and synchronous shutdown (also disposes the embed worker).
+ *  - local model-file download orchestration,
+ *  - a serial job chain (one indexing job in flight at a time - INDEXING only;
+ *    embedding is owned entirely by `embedEngine`, see embedder/embed-engine.ts),
+ *  - config gating and synchronous shutdown (also disposes the embed worker,
+ *    via embedEngine.dispose()).
+ *
+ * Indexing (this file) and embedding (embed-engine.ts) are deliberately split:
+ * lifecycle/navigation events here only INDEX (a cheap diff-upsert) and flag a
+ * project dirty via `embedEngine.markDirty()`. They never embed inline, so a
+ * project switch performs zero synchronous embedding work - the felt hardware
+ * spike on switching back to a churning project is impossible by construction.
+ * The central engine alone drains pending embeddings, duty-cycle throttled.
  *
  * It reuses the existing SessionManager events rather than patching the four
  * PTY-layer finalize call sites, keeping all agent knowledge behind the adapter
@@ -22,13 +30,13 @@ import { RetrievalStore } from './retrieval-store';
 import { hasVecSupport } from './vec-support';
 import { lastVecLoadError } from './vec-extension';
 import { ConversationIndexer } from './conversation/conversation-indexer';
-import { EmbedClient } from './embedder/embed-client';
-import { EMBEDDING_MAX_BATCH, resolveEmbeddingModel, type EmbeddingModelDef } from './embedder/embedding-config';
+import { embedEngine } from './embedder/embed-engine';
+import { resolveEmbeddingModel, type EmbeddingModelDef } from './embedder/embedding-config';
 import { isEmbeddingModelPresent, downloadEmbeddingModel } from './embedder/embedding-model';
 import { requiresUserInteraction } from '../../shared/activity-state';
 import type { IpcContext } from '../ipc/ipc-context';
 import type { Embedder } from './types';
-import type { MemoryStatus, MemorySemanticState, MemoryModelState, MemoryAcceleration, Project, ActivityState } from '../../shared/types';
+import type { MemoryStatus, MemorySemanticState, MemoryModelState, Project, ActivityState } from '../../shared/types';
 
 /** Grace period after a finalize event before indexing, so the agent CLI has
  *  flushed its native history file. */
@@ -37,26 +45,22 @@ const FINALIZE_DEBOUNCE_MS = 2000;
  *  before a live re-index, so a burst of activity transitions within a turn
  *  coalesces into one index and the CLI has flushed the new turn to disk. */
 const LIVE_INDEX_DEBOUNCE_MS = 1500;
-/** Chunks fetched per embedding batch pass (each embed call is <= MAX_BATCH). */
-const EMBED_PASS_LIMIT = 128;
 
 const indexer = new ConversationIndexer();
 
 let attached = false;
 let disposed = false;
 let activeSweepProjectId: string | null = null;
-/** Serial job chain: one indexing/embedding job runs at a time. */
+/** Serial job chain: one INDEXING job runs at a time. Embedding is no longer
+ *  chained here - it is owned entirely by embedEngine's own drain loop. */
 let jobChain: Promise<void> = Promise.resolve();
 const pendingTimers = new Set<NodeJS.Timeout>();
 /** Per-session trailing-debounce timers for live (turn-boundary) re-indexing. */
 const liveIndexTimers = new Map<string, NodeJS.Timeout>();
 
-// Semantic layer state.
-let embedClient: EmbedClient | null = null;
-/** Which model id `embedClient` was created for (so a model switch recreates it). */
-let activeModelId: string | null = null;
-/** Which acceleration `embedClient` was created for (a change recreates it). */
-let activeAcceleration: MemoryAcceleration | null = null;
+// Model-file download state (downloading the local embedding model to disk).
+// The embed WORKER and its warm-hold / crash / device state live in
+// embedEngine, not here.
 let modelDownloadState: 'idle' | 'downloading' | 'error' = 'idle';
 let modelDownloadProgress = 0;
 /** Which model id is currently downloading (a switch mid-download retriggers). */
@@ -70,8 +74,8 @@ let downloadingModelId: string | null = null;
  * set by `startForProject`, which runs from the `project:open` IPC handler but NOT
  * from `openProjectByPath` (the lighter path used by cold start and the ephemeral
  * dev preview). On those paths the DB is vec-capable yet the flag stayed false, so
- * the status reported "unavailable" while the model downloaded fine. `embedPass`
- * and `resolveEmbedder` already gate on the live `hasVecSupport(db)`; this aligns
+ * the status reported "unavailable" while the model downloaded fine. embedEngine's
+ * drain and query paths already gate on the live `hasVecSupport(db)`; this aligns
  * the status surface with them.
  */
 function currentProjectHasVec(context: IpcContext): boolean {
@@ -100,28 +104,12 @@ function isSemanticEnabled(context: IpcContext): boolean {
   }
 }
 
-/** Whether the embed worker should stay warm (never idle-recycle): semantic is
- *  enabled and a project is open. Gates every cold-load spike - task-detail
- *  opens, Quick Find smart queries, and the MCP recall path - the same way. */
-function shouldWarmHoldEmbedWorker(context: IpcContext): boolean {
-  return !disposed && isSemanticEnabled(context) && context.currentProjectId != null;
-}
-
 /** The user-selected embedding model (or the default). */
 function selectedModel(context: IpcContext): EmbeddingModelDef {
   try {
     return resolveEmbeddingModel(context.configManager.load().memory?.embeddingModel);
   } catch {
     return resolveEmbeddingModel(undefined);
-  }
-}
-
-/** The user-selected embedding acceleration (or the default 'auto'). */
-function selectedAcceleration(context: IpcContext): MemoryAcceleration {
-  try {
-    return context.configManager.load().memory?.acceleration ?? 'auto';
-  } catch {
-    return 'auto';
   }
 }
 
@@ -135,21 +123,6 @@ function humanizeBackend(device: string | null | undefined): string | undefined 
   }
 }
 
-/** The embed client for `model` + `acceleration`, recreating it when either the
- *  selected model or the acceleration preference changed. */
-function getEmbedClientFor(model: EmbeddingModelDef, acceleration: MemoryAcceleration): EmbedClient {
-  if (embedClient && (activeModelId !== model.id || activeAcceleration !== acceleration)) {
-    embedClient.dispose();
-    embedClient = null;
-  }
-  if (!embedClient) {
-    embedClient = new EmbedClient(model, acceleration);
-    activeModelId = model.id;
-    activeAcceleration = acceleration;
-  }
-  return embedClient;
-}
-
 function chain(job: () => Promise<unknown>): void {
   jobChain = jobChain.then(() => job()).then(
     () => undefined,
@@ -157,36 +130,6 @@ function chain(job: () => Promise<unknown>): void {
       console.warn('[retrieval] job failed:', error);
     },
   );
-}
-
-/** The embedder the search path should use, or null for lexical-only. Non-null
- *  only when semantic is enabled, the selected model is present, and the worker
- *  has not crashed past its cap. */
-function resolveEmbedder(context: IpcContext): Embedder | null {
-  if (disposed || !isSemanticEnabled(context)) return null;
-  const model = selectedModel(context);
-  if (!isEmbeddingModelPresent(model)) return null;
-  const client = getEmbedClientFor(model, selectedAcceleration(context));
-  client.setWarmHold(shouldWarmHoldEmbedWorker(context));
-  return client.crashed ? null : client;
-}
-
-/** Re-evaluate the warm-hold gate: hold the resident worker when semantic is
- *  enabled and a project is open, otherwise dispose it so its ~100MB+ model and
- *  GPU backend are freed promptly. Called when either input changes -
- *  semantic toggled off, or the current project closes - since neither has its
- *  own embed() call to piggyback the gate check on. */
-function reconcileEmbedWorker(context: IpcContext): void {
-  if (shouldWarmHoldEmbedWorker(context)) {
-    embedClient?.setWarmHold(true);
-    return;
-  }
-  if (embedClient) {
-    embedClient.dispose();
-    embedClient = null;
-    activeModelId = null;
-    activeAcceleration = null;
-  }
 }
 
 function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
@@ -200,8 +143,10 @@ function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
     if (!projectId) return;
     chain(async () => {
       await indexer.indexSession(projectId, sessionId);
-      // Embed the freshly indexed chunks when the semantic layer is active.
-      if (isSemanticEnabled(context)) await embedPass(context, projectId);
+      // Flag the project dirty; embedEngine's own drain loop embeds the
+      // freshly indexed chunks in the background, duty-cycle throttled. This
+      // does NOT embed inline - that is the whole point of the split.
+      embedEngine.markDirty(projectId);
     });
   }, FINALIZE_DEBOUNCE_MS);
   timer.unref();
@@ -215,8 +160,9 @@ function scheduleFinalizeIndex(context: IpcContext, sessionId: string): void {
  * ~1.5s instead of only after the session finalizes. This is a per-session
  * TRAILING debounce: rapid transitions within one turn reset the timer, so an
  * active session is indexed once per settled turn, never per event. It stays
- * cheap because `indexSession` diff-upserts (an unchanged transcript is a no-op)
- * and `embedPass` only embeds the new chunks (off the main thread, in the worker).
+ * cheap because `indexSession` diff-upserts (an unchanged transcript is a
+ * no-op) and embedding the new chunks happens later, in the background, via
+ * embedEngine's own duty-cycle-throttled drain loop - never inline here.
  */
 function scheduleLiveIndex(context: IpcContext, sessionId: string): void {
   if (disposed || !isIndexingEnabled(context)) return;
@@ -231,60 +177,11 @@ function scheduleLiveIndex(context: IpcContext, sessionId: string): void {
     if (!projectId) return;
     chain(async () => {
       await indexer.indexSession(projectId, sessionId);
-      if (isSemanticEnabled(context)) await embedPass(context, projectId);
+      embedEngine.markDirty(projectId);
     });
   }, LIVE_INDEX_DEBOUNCE_MS);
   timer.unref();
   liveIndexTimers.set(sessionId, timer);
-}
-
-/** Embed any chunks in a project that still need an embedding for the selected
- *  model. Recreates the vec table at the model's dimension on a model switch.
- *  No-op unless semantic is enabled, the model is present, sqlite-vec loaded for
- *  this DB, and the worker is healthy. Passages embed WITHOUT a query prefix. */
-async function embedPass(context: IpcContext, projectId: string): Promise<void> {
-  if (disposed || !isSemanticEnabled(context)) return;
-  const model = selectedModel(context);
-  if (!isEmbeddingModelPresent(model)) return;
-  let db;
-  try {
-    db = getProjectDb(projectId);
-  } catch {
-    return;
-  }
-  if (!hasVecSupport(db)) return;
-  const store = new RetrievalStore(db);
-
-  // Sync the vec table to the selected model's dimension. A dimension change
-  // (e.g. bge-base's 768 vs 384) needs a full reset; same-dimension model
-  // switches are handled by the model-tag re-embed below.
-  const storedDims = store.getMeta('vec_dims');
-  if (storedDims !== String(model.dimensions)) {
-    store.resetVec(model.dimensions);
-    store.setMeta('vec_dims', String(model.dimensions));
-  } else {
-    store.ensureVecTable(model.dimensions);
-  }
-  if (!store.hasVec) return;
-
-  const client = getEmbedClientFor(model, selectedAcceleration(context));
-  client.setWarmHold(shouldWarmHoldEmbedWorker(context));
-  for (;;) {
-    if (disposed || client.crashed) return;
-    const chunks = store.chunksNeedingEmbedding(model.modelTag, EMBED_PASS_LIMIT);
-    if (chunks.length === 0) return;
-    for (let offset = 0; offset < chunks.length; offset += EMBEDDING_MAX_BATCH) {
-      if (disposed || client.crashed) return;
-      const batch = chunks.slice(offset, offset + EMBEDDING_MAX_BATCH);
-      const vectors = await client.embed(batch.map((chunk) => chunk.text), { isQuery: false });
-      if (!vectors) return; // embedder unavailable: retried on a later pass
-      store.writeEmbeddings(
-        batch.map((chunk, index) => ({ chunkId: chunk.id, vector: vectors[index] })),
-        model.modelTag,
-      );
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-  }
 }
 
 /** Ensure the selected model is downloaded when semantic is enabled. Runs the
@@ -303,10 +200,12 @@ function ensureModelDownload(context: IpcContext): void {
     () => {
       modelDownloadState = 'idle';
       modelDownloadProgress = 1;
-      // The model just landed - embed the already-indexed chunks now so
-      // semantic search lights up without waiting for the next project open.
+      // The model just landed - flag the current project dirty so embedEngine's
+      // background drain embeds the already-indexed chunks without waiting for
+      // the next project open. This is a markDirty, not an inline embed: the
+      // drain is duty-cycle throttled, so even this one-time backfill is paced.
       const projectId = context.currentProjectId;
-      if (projectId) chain(() => embedPass(context, projectId));
+      if (projectId) embedEngine.markDirty(projectId);
     },
     (error) => {
       console.warn('[retrieval] embedding model download failed:', error);
@@ -315,32 +214,11 @@ function ensureModelDownload(context: IpcContext): void {
   );
 }
 
-let embedHealPending = false;
-
-/** Embed any already-indexed-but-unembedded chunks for the current project. This
- *  self-heals the case where semantic was enabled while the model was ALREADY on
- *  disk: the download-complete embed trigger never fires, so existing
- *  conversations would stay indexed-but-unembedded and semantic would find
- *  nothing. Polled from getStatus. embedPass no-ops once everything is embedded;
- *  a single pass runs at a time, and the next poll re-schedules if more remain. */
-function scheduleEmbedHeal(context: IpcContext): void {
-  if (embedHealPending || disposed) return;
-  const projectId = context.currentProjectId;
-  if (!projectId) return;
-  embedHealPending = true;
-  chain(async () => {
-    try {
-      await embedPass(context, projectId);
-    } finally {
-      embedHealPending = false;
-    }
-  });
-}
-
 export const retrievalService = {
-  /** Subscribe to session lifecycle + turn-boundary events. Idempotent; call
-   *  once at startup. */
+  /** Subscribe to session lifecycle + turn-boundary events, and start the
+   *  central embedding engine's drain loop. Idempotent; call once at startup. */
   attach(context: IpcContext): void {
+    embedEngine.attach(context);
     if (attached) return;
     attached = true;
     context.sessionManager.on('exit', (sessionId: string) => {
@@ -359,8 +237,9 @@ export const retrievalService = {
   },
 
   /** Run a deferred, project-switch-guarded backfill sweep for a project, then
-   *  (when semantic is enabled) ensure the model and embed its chunks. Called on
-   *  every PROJECT_OPEN and after a memory-config change. */
+   *  flag it dirty so embedEngine's background drain embeds its chunks. Called
+   *  on every PROJECT_OPEN and after a memory-config change. Never embeds
+   *  inline - a project open performs zero synchronous embedding work. */
   startForProject(context: IpcContext, project: Project): void {
     if (disposed) return;
     this.attach(context);
@@ -385,23 +264,30 @@ export const retrievalService = {
           project.id,
           () => !disposed && context.currentProjectId === project.id && activeSweepProjectId === project.id,
         );
-        if (isSemanticEnabled(context)) await embedPass(context, project.id);
+        // Covers project open, the startup backlog, AND crash-resume: the
+        // sweep re-indexed whatever changed, and this flags it for the
+        // background drain regardless of whether anything actually changed
+        // (markDirty is cheap and idempotent).
+        embedEngine.markDirty(project.id);
       });
     });
   },
 
   /** The embedder for the search path, or null for lexical-only. Consulted by
    *  the search IPC handler / MCP recall tool when the caller asks for semantic
-   *  or hybrid results. */
+   *  or hybrid results. Interactive queries through this path always preempt
+   *  the background drain in the shared worker. */
   getEmbedder(context: IpcContext): Embedder | null {
-    return resolveEmbedder(context);
+    return embedEngine.getEmbedder(context);
   },
 
-  /** Re-evaluate the embed-worker warm-hold. Call after a change to
-   *  `memory.semanticEnabled` or to the current project (open/close), since
-   *  those paths have no embed() call of their own to piggyback the gate on. */
+  /** Re-evaluate the embed-worker warm-hold, and (when semantic just became
+   *  viable) flag the current project dirty. Call after a change to
+   *  `memory.semanticEnabled`/model/acceleration or to the current project
+   *  (open/close), since those paths have no embed() call of their own to
+   *  piggyback the gate on. */
   reconcileEmbedWorker(context: IpcContext): void {
-    reconcileEmbedWorker(context);
+    embedEngine.reconcile(context);
   },
 
   /** Current conversation-memory status for the renderer's Smart-mode UI and
@@ -418,11 +304,15 @@ export const retrievalService = {
     // error (no retry spam - the user re-toggles to retry).
     if (indexingEnabled && semanticOn && !isEmbeddingModelPresent(model) && modelDownloadState !== 'error') {
       ensureModelDownload(context);
-    } else if (indexingEnabled && semanticOn && isEmbeddingModelPresent(model) && !embedClient?.crashed) {
-      // Model already on disk: self-heal the embeddings too, so enabling semantic
-      // (or switching model / acceleration) embeds the already-indexed chunks
-      // without waiting for a project re-open or a rebuild.
-      scheduleEmbedHeal(context);
+    } else if (indexingEnabled && semanticOn && isEmbeddingModelPresent(model) && !embedEngine.workerCrashed) {
+      // Model already on disk: flag the current project dirty too, so enabling
+      // semantic (or switching model / acceleration) drains the already-indexed
+      // chunks in the background without waiting for a project re-open or a
+      // rebuild. Cheap and idempotent - the engine self-clears a project from
+      // its dirty set once nothing remains, so this is a no-op safety net once
+      // caught up, continuously re-armed by every getStatus poll.
+      const projectId = context.currentProjectId;
+      if (projectId) embedEngine.markDirty(projectId);
     }
 
     const modelPresent = isEmbeddingModelPresent(model);
@@ -437,7 +327,7 @@ export const retrievalService = {
     } else if (isDownloadingThis || !modelPresent) {
       // Enabled, but the model is still downloading / not ready yet.
       semantic = 'downloading';
-    } else if (embedClient?.crashed) {
+    } else if (embedEngine.workerCrashed) {
       semantic = 'error';
     } else if (!currentProjectHasVec(context)) {
       semantic = 'lexical';
@@ -455,7 +345,7 @@ export const retrievalService = {
     return {
       indexingEnabled,
       semantic,
-      activeBackend: humanizeBackend(embedClient?.activeDevice),
+      activeBackend: humanizeBackend(embedEngine.activeDevice),
       modelProgress: showProgress ? modelDownloadProgress : undefined,
       vecError: semantic === 'lexical' ? lastVecLoadError() ?? undefined : undefined,
       model: {
@@ -492,8 +382,8 @@ export const retrievalService = {
    *  transcript while keeping the existing chunks as a fallback. A session whose
    *  transcript is gone or unparseable keeps its chunks (indexSession replaces a
    *  session's chunks only on a successful parse), so a rebuild can never drop a
-   *  past conversation. The re-sweep and, when semantic is on, the embed pass run
-   *  in the background via `startForProject`. */
+   *  past conversation. The re-sweep runs via `startForProject`, which flags the
+   *  project dirty so embedEngine's background drain embeds it afterward. */
   rebuildProjectIndex(context: IpcContext, project: Project): void {
     if (disposed) return;
     this.stop(project.id);
@@ -505,8 +395,9 @@ export const retrievalService = {
     this.startForProject(context, project);
   },
 
-  /** Synchronous shutdown: stop scheduling, drop pending timers, kill the embed
-   *  worker, mark disposed. In-flight work is abandoned; the next open recovers it. */
+  /** Synchronous shutdown: stop scheduling, drop pending timers, dispose the
+   *  embedding engine (which synchronously kills the embed worker), mark
+   *  disposed. In-flight work is abandoned; the next open recovers it. */
   dispose(): void {
     disposed = true;
     activeSweepProjectId = null;
@@ -514,8 +405,6 @@ export const retrievalService = {
     pendingTimers.clear();
     for (const timer of liveIndexTimers.values()) clearTimeout(timer);
     liveIndexTimers.clear();
-    embedClient?.dispose();
-    embedClient = null;
-    activeModelId = null;
+    embedEngine.dispose();
   },
 };

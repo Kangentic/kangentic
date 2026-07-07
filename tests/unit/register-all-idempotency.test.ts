@@ -112,6 +112,27 @@ vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
 vi.mock('simple-git', () => ({ default: vi.fn(() => ({})) }));
 
+// registerAllIpc calls retrievalService.attach(context) directly at startup
+// (so the central embedding engine's drain loop is alive from boot, not just
+// on the first project:open). Left unmocked, the real
+// retrievalService.attach() pulls in the full retrieval subsystem
+// (ConversationIndexer -> the real agent-registry -> every agent adapter) and
+// subscribes to context.sessionManager events - the same isolation problem
+// config-handler-wiring.test.ts hit and stubs away for the same reason.
+vi.mock('../../src/main/retrieval/retrieval-service', () => ({
+  retrievalService: {
+    attach: vi.fn(),
+    startForProject: vi.fn(),
+    reconcileEmbedWorker: vi.fn(),
+    getStatus: vi.fn(),
+    getEmbedder: vi.fn(),
+    stop: vi.fn(),
+    purgeProjectIndex: vi.fn(),
+    rebuildProjectIndex: vi.fn(),
+    dispose: vi.fn(),
+  },
+}));
+
 // Mock every handler-registration function that `registerAllIpc` imports.
 // If `register-all.ts` grows a new `registerXxxHandlers` call, add a mock
 // here - otherwise the real implementation runs, pulls its full dependency
@@ -189,6 +210,7 @@ describe('registerAllIpc idempotency', () => {
     const { registerTaskMoveHandlers } = await import('../../src/main/ipc/handlers/task-move');
     const { registerTaskBranchHandlers } = await import('../../src/main/ipc/handlers/task-branch');
     const { registerTaskRuntimeOverrideHandlers } = await import('../../src/main/ipc/handlers/task-runtime-override');
+    const { retrievalService } = await import('../../src/main/retrieval/retrieval-service');
 
     const window = makeMockWindow(1);
     registerAllIpc(window);
@@ -200,6 +222,11 @@ describe('registerAllIpc idempotency', () => {
     expect(registerTaskMoveHandlers).toHaveBeenCalledTimes(1);
     expect(registerTaskBranchHandlers).toHaveBeenCalledTimes(1);
     expect(registerTaskRuntimeOverrideHandlers).toHaveBeenCalledTimes(1);
+
+    // The central embedding engine's drain loop is started at boot (not just
+    // lazily on the first project:open), so the drain loop is already alive
+    // before any project is opened.
+    expect(retrievalService.attach).toHaveBeenCalledTimes(1);
 
     // Context is initialized (wrappers don't throw)
     expect(() => getSessionManager()).not.toThrow();
@@ -219,6 +246,7 @@ describe('registerAllIpc idempotency', () => {
     const { registerBacklogHandlers } = await import('../../src/main/ipc/handlers/backlog');
     const { registerGitDiffHandlers } = await import('../../src/main/ipc/handlers/git-diff');
     const { registerSystemHandlers } = await import('../../src/main/ipc/handlers/system');
+    const { retrievalService } = await import('../../src/main/retrieval/retrieval-service');
 
     const window1 = makeMockWindow(1);
     const window2 = makeMockWindow(2);
@@ -249,6 +277,10 @@ describe('registerAllIpc idempotency', () => {
     expect(registerBacklogHandlers).toHaveBeenCalledTimes(1);
     expect(registerGitDiffHandlers).toHaveBeenCalledTimes(1);
     expect(registerSystemHandlers).toHaveBeenCalledTimes(1);
+
+    // The second call short-circuits before reaching retrievalService.attach,
+    // so it stays called exactly once total across both registerAllIpc calls.
+    expect(retrievalService.attach).toHaveBeenCalledTimes(1);
   }, 30000);
 
   it('second call preserves existing services', async () => {

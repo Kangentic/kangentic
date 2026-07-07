@@ -20,8 +20,18 @@ export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
   const developerConfig = globalConfig.developer ?? {};
   const overlayEnabled = developerConfig.activityDebugOverlay === true;
-  const persistConsoleLogsEnabled = developerConfig.persistConsoleLogs === true;
-  const recordIpcTrafficEnabled = developerConfig.recordIpcTraffic === true;
+  // Defaults ON in any dev build when the user has never touched the toggle
+  // (mirrors the Inspection Bridge / Allow Unsafe Operations default in
+  // DevToolsSections.tsx). `??` only falls through on null/undefined, so an
+  // explicit stored `false` is respected. Off (both `??` operands false) in
+  // production builds. Mirror of `safeReadDeveloperFlag` in src/main/index.ts
+  // so the displayed toggle state matches the actual persistence behavior.
+  const persistConsoleLogsEnabled = developerConfig.persistConsoleLogs ?? __KANGENTIC_DEV__;
+  // Narrower than persistConsoleLogs: the IPC recorder has a real disk-I/O cost,
+  // so it defaults on only for the ephemeral /preview instance (wiped on close,
+  // bounding growth), not the long-running npm start dogfooding session.
+  const recordIpcTrafficEnabled =
+    developerConfig.recordIpcTraffic ?? (__KANGENTIC_DEV__ && window.electronAPI.dev?.isEphemeralPreview === true);
 
   return (
     <div className="space-y-3">
@@ -56,6 +66,7 @@ export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {
           Errors and warnings are <strong>always</strong> persisted; this toggle additionally captures
           info / debug / log levels. NDJSON, one file per day at{' '}
           <Code>.kangentic/logs/&lt;YYYY-MM-DD&gt;.log</Code>. Read via <Code>kangentic_tail_logs</Code>.
+          {__KANGENTIC_DEV__ && ' On by default in dev builds (npm start / /preview) - the write path is async, so it has no measurable performance cost.'}
         </Description>
       </section>
 
@@ -86,8 +97,10 @@ export function DeveloperTab({ globalConfig }: { globalConfig: AppConfig }) {
         <Description>
           Records channel, args, result, durationMs, and any thrown errors. Mutating channels
           (settings writes, MCP config, attachments) are stored as{' '}
-          <Code>{'{ redacted: true, channel }'}</Code> to keep secrets out of disk logs. Off by default
-          (non-trivial disk impact). Read via <Code>kangentic_get_ipc_log</Code>.
+          <Code>{'{ redacted: true, channel }'}</Code> to keep secrets out of disk logs. Non-trivial
+          disk impact, so it is off by default - except in <Code>/preview</Code>, where it defaults
+          on since that instance's data (including its logs) is wiped on close. Read via{' '}
+          <Code>kangentic_get_ipc_log</Code>.
         </Description>
       </section>
 
