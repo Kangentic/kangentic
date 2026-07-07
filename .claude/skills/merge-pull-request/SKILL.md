@@ -1,6 +1,6 @@
 ---
 description: Merge an already-green PR (rebase merge, delete branch) and fast-forward the local main checkout for HMR. This is the Ship It column skill. It assumes the Tests column (/pull-request) already drove the PR to green. Not for creating a PR (use /pull-request) or a direct quick-push (use /merge-back).
-allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(gh:*), Agent, mcp__kangentic__kangentic_get_current_task
+allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(gh:*), Agent, mcp__kangentic__kangentic_get_current_task, mcp__kangentic__kangentic_link_pr
 ---
 
 # Merge Pull Request
@@ -44,7 +44,9 @@ to the head branch only when there is no stored number.
    operations (the worktree realign), NEVER for `gh pr` lookups.
 2. Resolve the PR number `<pr>`:
    - Call `kangentic_get_current_task` (it reads the worktree's task) and take its `pr_number`. If
-     present, that is `<pr>` (the reliable, branch-independent path).
+     present, that is `<pr>` (the reliable, branch-independent path). Also record the returned
+     task's ID as `<taskId>` - it is reused in Step 3 to force an immediate board refresh after the
+     merge. If no task is found, `<taskId>` stays unset and that refresh is skipped.
    - If absent, fall back to the head branch: `gh pr list --head <branch> --state open --json number`
      (covers older PRs where the local branch IS the head); `<pr>` is the first match's number.
 3. Run `gh pr view <pr> --json number,url,state,mergeable,mergeStateStatus,statusCheckRollup,headRefName`.
@@ -113,6 +115,21 @@ Record `<mergeMethod>` (rebase or squash) - it selects the realign below.
 **If the merge fails** for any OTHER reason than the expected missing-review block (e.g. the branch
 is behind and needs a rebase first, or a required check actually went red), do NOT force past it -
 report the unmet requirement and stop.
+
+### Refresh the board's PR status
+
+The board caches each task's PR state and only re-resolves it on a background timer (default 5 min)
+or on project open, so the Ship It card would otherwise keep showing "PR #<pr> open" for minutes
+after this merge. Force an immediate re-resolve so the card flips to "merged" right away:
+
+- If Step 0 resolved a `<taskId>`, call `kangentic_link_pr` with that task ID. It re-resolves the PR
+  by number (branch-independent, so it works after `--delete-branch`), writes the fresh `merged`
+  state, and pushes the update so the board card re-renders at once.
+- If no `<taskId>` was resolved (the worktree has no linked task), skip this - there is no board card
+  tracking the PR, so nothing is stale.
+
+Run this right after the merge succeeds, before the realign below, so the board updates even if the
+realign later needs to stop for a conflict.
 
 ### Realign the worktree branch (so move-to-Done reads clean)
 
