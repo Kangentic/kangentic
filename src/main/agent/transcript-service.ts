@@ -194,6 +194,25 @@ function toSessionMeta(record: SessionRecord, agentName: string): ConversationSe
  * task_id (a rare orphan/transient record) has nothing to unify across, so it
  * degrades to just its own entries. Returns null only when the anchor session
  * id resolves to no record at all.
+ *
+ * DEDUP: a `--resume` session's native transcript REPLAYS its parent session's
+ * full history (identical messages, identical per-message uuids), so naively
+ * concatenating every session double-counts every shared turn. We deduplicate
+ * by uuid keeping the FIRST occurrence. Unique uuids are also what the viewer
+ * keys its rows and its virtualizer measurement cache on, so a duplicate would
+ * otherwise break React reconciliation and stack rows on top of each other.
+ *
+ * CHRONOLOGY: a session's turns are NOT contiguous in time. A main session is
+ * suspended for an isolated-swimlane excursion and then RESUMED into the same
+ * transcript, so its post-excursion turns are timestamped AFTER the isolated
+ * session's turns. Grouping the timeline by session would bury those newest
+ * turns in the middle (and make live growth look frozen). So we merge every
+ * deduped turn by its own `ts` and insert a `session_boundary` divider wherever
+ * consecutive turns cross a session - including the return to a session seen
+ * earlier, not just the switch into an isolated one. The divider reads simply
+ * "New session" the first time a session appears and "Resumed session" when the
+ * timeline crosses back into one it already showed. The initial run of turns has
+ * no leading divider.
  */
 export async function resolveTaskTranscript(
   db: Database.Database,
@@ -207,54 +226,68 @@ export async function resolveTaskTranscript(
     ? sessionRepo.listForTaskNewestFirst(anchor.task_id).reverse() // oldest first
     : [anchor];
 
-  // Swimlane names for a readable boundary message ("isolated: Executing").
-  const swimlaneIds = [
-    ...new Set(
-      sessions
-        .map((session) => session.isolated_swimlane_id)
-        .filter((id): id is string => id !== null),
-    ),
-  ];
-  const swimlaneNames = new Map<string, string>();
-  if (swimlaneIds.length > 0) {
-    const placeholders = swimlaneIds.map(() => '?').join(',');
-    const rows = db
-      .prepare(`SELECT id, name FROM swimlanes WHERE id IN (${placeholders})`)
-      .all(...swimlaneIds) as Array<{ id: string; name: string }>;
-    for (const row of rows) swimlaneNames.set(row.id, row.name);
+  // Collect every deduped turn, tagged with the session that first contributed
+  // it (for the chronological merge + transition boundaries below).
+  interface TaggedEntry {
+    entry: TranscriptEntry;
+    sessionId: string;
   }
-
-  const entries: TranscriptEntry[] = [];
+  const tagged: TaggedEntry[] = [];
   const sessionMetas: ConversationSessionMeta[] = [];
+  const seenUuids = new Set<string>();
   let anyDegraded = false;
   let latest: ResolvedTranscript | null = null;
 
-  for (const [index, session] of sessions.entries()) {
+  for (const session of sessions) {
     const resolved = await resolveSessionTranscript(db, session.id);
     if (!resolved) continue;
     latest = resolved;
     anyDegraded = anyDegraded || resolved.degraded;
     sessionMetas.push(toSessionMeta(session, resolved.agentName));
 
-    if (index > 0) {
-      const swimlaneLabel = session.isolated_swimlane_id
-        ? ` (isolated: ${swimlaneNames.get(session.isolated_swimlane_id) ?? 'unknown column'})`
-        : '';
-      entries.push({
-        kind: 'system',
-        uuid: `session-boundary-${session.id}`,
-        ts: new Date(session.started_at).getTime(),
-        subtype: 'session_boundary',
-        text: `New session - ${resolved.agentName}${swimlaneLabel}`,
-      });
-    }
-
     for (const entry of resolved.entries) {
-      entries.push(entry.kind === 'assistant' ? { ...entry, agentName: resolved.agentName } : entry);
+      if (seenUuids.has(entry.uuid)) continue; // a resume replays parent turns verbatim
+      seenUuids.add(entry.uuid);
+      tagged.push({
+        entry: entry.kind === 'assistant' ? { ...entry, agentName: resolved.agentName } : entry,
+        sessionId: session.id,
+      });
     }
   }
 
   if (!latest) return null;
+
+  // Merge chronologically by each turn's own ts (stable: equal-ts turns keep
+  // oldest-session-first order via the index tiebreaker), then walk the sorted
+  // turns emitting a boundary at every session crossing.
+  const orderedTagged = tagged
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => a.item.entry.ts - b.item.entry.ts || a.index - b.index)
+    .map((wrapped) => wrapped.item);
+
+  const entries: TranscriptEntry[] = [];
+  const enteredSessions = new Set<string>();
+  let previousSessionId: string | null = null;
+  for (const item of orderedTagged) {
+    if (previousSessionId !== null && item.sessionId !== previousSessionId) {
+      // "Resumed" when the timeline crosses back into a session it already
+      // showed (a suspended session picked back up); "New" the first time a
+      // session appears.
+      const resumed = enteredSessions.has(item.sessionId);
+      entries.push({
+        kind: 'system',
+        // Unique per crossing: the same session can be re-entered (main ->
+        // isolated -> main), so the entered session id alone is not unique.
+        uuid: `session-boundary-${item.sessionId}-${item.entry.uuid}`,
+        ts: item.entry.ts,
+        subtype: 'session_boundary',
+        text: resumed ? 'Resumed session' : 'New session',
+      });
+    }
+    enteredSessions.add(item.sessionId);
+    entries.push(item.entry);
+    previousSessionId = item.sessionId;
+  }
 
   return {
     record: latest.record,

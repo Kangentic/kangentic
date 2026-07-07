@@ -44,6 +44,33 @@ interface ConversationWindowProps {
  *  open viewer follows new turns as the agent produces them. */
 const LIVE_REFRESH_MS = 2500;
 
+/**
+ * Cheap fingerprint of a transcript response, so a live poll that returns
+ * identical content skips the state update entirely (the common case between
+ * actual new turns). Without this, every 2.5s tick replaces the whole entries
+ * array, re-runs the viewer's O(n) memos, and re-renders the visible rows -
+ * a periodic hitch that fights smooth scrolling on a long transcript. Captures
+ * appends (entry count), a streaming last turn (its content length grows in
+ * place), and status/degraded/source flips - the changes that actually warrant
+ * a repaint. A mid-transcript edit with an unchanged length is not detected,
+ * but transcripts are append-and-stream, so that does not occur in practice. */
+function transcriptSignature(response: TranscriptGetResponse | null): string {
+  if (!response) return 'null';
+  const count = response.entries.length;
+  const last = count > 0 ? response.entries[count - 1] : null;
+  let lastLen = 0;
+  if (last) {
+    if (last.kind === 'assistant') {
+      lastLen = last.blocks.reduce((sum, block) => sum + (block.type === 'tool_use' ? 0 : block.text.length), 0);
+    } else if (last.kind === 'tool_result') {
+      lastLen = last.content.length;
+    } else {
+      lastLen = last.text.length;
+    }
+  }
+  return `${count}:${last?.uuid ?? ''}:${last?.ts ?? 0}:${lastLen}:${response.sessionStatus ?? ''}:${response.degraded ? 1 : 0}:${response.source}`;
+}
+
 // Controls whose own click/drag must win over a window drag or maximize toggle
 // (mirrors TaskDetailWindow's selector).
 const INTERACTIVE_SELECTOR =
@@ -73,6 +100,7 @@ export function ConversationWindow({
   const scrollToTurnUuid = useSessionStore((state) => state.scrollToTurnUuid);
   const setScrollToTurnUuid = useSessionStore((state) => state.setScrollToTurnUuid);
   const conversationSessionId = useSessionStore((state) => state.conversationSessionId);
+  const sessions = useSessionStore((state) => state.sessions);
 
   const useStore = useLayerStore();
   const toggleMaximizeWindow = useStore((state) => state.toggleMaximizeWindow);
@@ -113,21 +141,38 @@ export function ConversationWindow({
     };
   }, [managedWindow.anchor, currentProjectId]);
 
-  // Live-follow: while the LATEST contributing session is still
-  // running/queued its transcript can grow, so silently re-fetch on an
-  // interval (no loading spinner). The effect depends only on the primitive
-  // status, so each refresh does not re-arm the timer; when the session goes
-  // non-live the effect re-runs and stops polling.
+  const taskId = response?.taskId ?? null;
+
+  // Live-follow: re-fetch on an interval (no loading spinner) while EITHER the
+  // latest contributing session is still running/queued, OR the reactive
+  // session store shows any live session for this task at all. The second
+  // check is load-bearing for an isolated-swimlane move: the anchor session
+  // can go 'suspended' and a brand-new isolated session can spawn moments
+  // later, and there is a real gap between those two events where the poll's
+  // own last-fetched sessionStatus is stale (still the old, now-suspended
+  // session) - without the store check, polling would stop right there and
+  // never resume, even though a new session starts seconds later. The effect
+  // depends only on primitives/derived booleans, so a refresh that leaves
+  // "still live" true does not re-arm the timer.
   const sessionStatus = response?.sessionStatus ?? null;
+  const taskHasLiveSession = taskId
+    ? sessions.some((session) => session.taskId === taskId && (session.status === 'running' || session.status === 'queued'))
+    : false;
   useEffect(() => {
-    const live = sessionStatus === 'running' || sessionStatus === 'queued';
+    const live = sessionStatus === 'running' || sessionStatus === 'queued' || taskHasLiveSession;
     if (!live) return;
     let cancelled = false;
     const interval = setInterval(() => {
       window.electronAPI.transcripts
         .get({ sessionId: managedWindow.anchor, projectId: currentProjectId })
         .then((result) => {
-          if (!cancelled) setResponse(result);
+          if (cancelled) return;
+          // Returning the SAME reference when nothing changed makes React bail
+          // out of the re-render, so an idle live session does not repaint the
+          // viewer every 2.5s.
+          setResponse((previous) =>
+            transcriptSignature(previous) === transcriptSignature(result) ? previous : result,
+          );
         })
         .catch(() => undefined);
     }, LIVE_REFRESH_MS);
@@ -135,9 +180,7 @@ export function ConversationWindow({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [sessionStatus, managedWindow.anchor, currentProjectId]);
-
-  const taskId = response?.taskId ?? null;
+  }, [sessionStatus, taskHasLiveSession, managedWindow.anchor, currentProjectId]);
 
   const handleCopyMarkdown = useCallback(() => {
     if (!response) return;

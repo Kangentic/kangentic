@@ -8,6 +8,7 @@ import type { SessionRecord, TranscriptEntry } from '../../../shared/types';
 import { RetrievalStore } from '../retrieval-store';
 import type { ChunkInput, IndexStateRow } from '../types';
 import { chunkTranscript, CHUNKER_VERSION } from './transcript-chunker';
+import { ConversationUsageStore, extractTurnUsageRecords } from './conversation-usage-store';
 
 const CORPUS = 'conversation';
 const CHUNKER_VERSION_KEY = 'chunker_version';
@@ -203,6 +204,25 @@ export class ConversationIndexer {
       },
       chunks,
     );
+
+    // Durable per-turn token-usage ledger (conversation_turn_usage): captured
+    // here from the parsed transcript so it survives the agent pruning its native
+    // JSONL. Best-effort - a usage-write failure must not fail the search index or
+    // drop the 'ok' state below (the class contract is "never throws to callers").
+    try {
+      new ConversationUsageStore(db).recordTurns(
+        {
+          agentSessionId: record.agent_session_id,
+          sessionId: record.id,
+          taskId: record.task_id,
+        },
+        extractTurnUsageRecords(parsed.entries),
+        this.deps.now(),
+      );
+    } catch (error) {
+      console.warn(`[retrieval] turn-usage record failed for session ${record.id}:`, error);
+    }
+
     this.writeState(
       store,
       record,

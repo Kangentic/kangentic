@@ -14,7 +14,7 @@
  * the one-shot signal via `onConsumedScroll`.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ChevronRight, ChevronDown, Wrench, MessageSquareWarning, Bot, User, Terminal, Copy, Check } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { MarkdownRenderer } from '../MarkdownRenderer';
@@ -42,6 +42,15 @@ interface DisplayRow {
   /** The TranscriptEntry uuid; used as the React key AND the scroll-to target. */
   uuid: string;
   entry: TranscriptEntry;
+}
+
+/** A user turn that is nothing but a slash-command invocation (e.g. "/code-review",
+ *  "/model opus"). These are legitimate messages but low-signal as a search
+ *  scroll ANCHOR - a chunk match that starts on one should skip to the real
+ *  content it precedes. Requires whitespace/end after the command word so a
+ *  path like "/usr/bin/foo" is not mistaken for a command. */
+function isSlashCommandRow(entry: TranscriptEntry): boolean {
+  return entry.kind === 'user' && /^\/[a-zA-Z][\w-]*(?:\s|$)/.test(entry.text.trim());
 }
 
 /** Classifies an entry's speaker for the row box color / system divider. */
@@ -121,6 +130,12 @@ export function ConversationView({
   // Display rows = every entry except tool_results folded into a card.
   const displayRows = useMemo<DisplayRow[]>(() => {
     const rows: DisplayRow[] = [];
+    // Defense in depth: the uuid is the React key AND the virtualizer's
+    // measurement-cache key, so a duplicate collapses reconciliation (stale
+    // rows pile up, boxes overlap). resolveTaskTranscript already dedups the
+    // stitched multi-session timeline, but guard here too so no upstream source
+    // (a resume replay, an index-fallback collision) can ever break the render.
+    const seenUuids = new Set<string>();
     for (const entry of entries) {
       if (
         entry.kind === 'tool_result'
@@ -129,6 +144,8 @@ export function ConversationView({
       ) {
         continue; // folded into its owning tool_use card
       }
+      if (seenUuids.has(entry.uuid)) continue;
+      seenUuids.add(entry.uuid);
       rows.push({ uuid: entry.uuid, entry });
     }
     return rows;
@@ -138,6 +155,14 @@ export function ConversationView({
     count: displayRows.length,
     getScrollElement: () => containerRef.current,
     estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    // Key the virtualizer's measurement cache by the entry's stable uuid, not
+    // the default raw index. The live-poll can stitch new rows into the
+    // MIDDLE of this array (a session_boundary divider plus a newly-live
+    // session's entries), shifting every later row's index - without this,
+    // the cache keeps applying an earlier row's already-measured height to
+    // whatever new content now sits at that index, which visibly overlaps
+    // rendered text until a scroll forces a full remeasure.
+    getItemKey: (index) => displayRows[index].uuid,
     overscan: 8,
   });
 
@@ -170,6 +195,20 @@ export function ConversationView({
       // Not present in this transcript: clear so a later render doesn't re-try.
       onConsumedScroll();
       return;
+    }
+
+    // A conversation search hit anchors on its matched chunk's FIRST turn, which
+    // can be a bare slash-command (a chunk that opens with "/code-review" then
+    // covers the exchange after it). Landing on the command instead of the
+    // content that actually matched is confusing, so advance past any leading
+    // command turns to the first substantive one. Bounded and never targets a
+    // folded tool_result redirect (expandKey), which is already the right row.
+    if (!expandKey) {
+      let skip = 0;
+      while (index + 1 < displayRows.length && isSlashCommandRow(displayRows[index].entry) && skip < 4) {
+        index += 1;
+        skip += 1;
+      }
     }
 
     if (expandKey) {
@@ -295,7 +334,7 @@ export function ConversationView({
                 >
                   {isSystem ? (
                     <div className={gapClass}>
-                      <ConversationRow
+                      <MemoConversationRow
                         entry={row.entry}
                         agentName={agentName}
                         resultsByUseId={resultsByUseId}
@@ -311,7 +350,7 @@ export function ConversationView({
                           isHighlighted ? 'border-amber-400/60 bg-amber-400/10' : boxClass
                         }`}
                       >
-                        <ConversationRow
+                        <MemoConversationRow
                           entry={row.entry}
                           agentName={agentName}
                           resultsByUseId={resultsByUseId}
@@ -375,6 +414,19 @@ function ConversationRow({ entry, agentName, resultsByUseId, expandedKeys, toggl
     />
   );
 }
+
+/**
+ * Memoized row. `useVirtualizer` re-renders the whole list on every scroll
+ * frame; without this, each visible row re-runs its body (markdown sanitize,
+ * the eager copy-text serialization, JSX construction) on every frame - the
+ * jank that shows up on long transcripts. All five props are referentially
+ * stable while scrolling (the entries array, `resultsByUseId`, and
+ * `expandedKeys` only change on a poll that grows the transcript or on a toggle,
+ * never on scroll), so the default shallow compare bails the entire subtree out
+ * of scroll re-renders. `isHighlighted` deliberately lives on the OUTER box, not
+ * here, so a highlight flash never busts this memo.
+ */
+const MemoConversationRow = memo(ConversationRow);
 
 /** The speaker badge (accent for you, neutral for the agent / tool), with the
  *  agent's friendly model name beside it. Rendered inside a MessageHeader. */
@@ -529,6 +581,10 @@ interface AssistantRowProps {
 }
 
 function AssistantRow({ model, blocks, uuid, agentName, ts, resultsByUseId, expandedKeys, toggleExpanded }: AssistantRowProps) {
+  // The copy button needs this turn's full markdown, but serializing every
+  // block (plus its tool results) is not free - memoize it so it is built once
+  // per turn, not eagerly on every render.
+  const copyText = useMemo(() => renderAssistantBlocksMarkdown(blocks, resultsByUseId), [blocks, resultsByUseId]);
   // Every turn shows its own badge (agent name + model) and timestamp - a
   // tool-calling stretch is exactly where knowing which agent/model ran each
   // step (without scrolling back to find the last header) matters most.
@@ -537,7 +593,7 @@ function AssistantRow({ model, blocks, uuid, agentName, ts, resultsByUseId, expa
       <MessageHeader
         badge={<RoleBadge icon={<Bot size={12} />} label={agentName || 'Agent'} model={model} />}
         ts={ts}
-        copyText={renderAssistantBlocksMarkdown(blocks, resultsByUseId)}
+        copyText={copyText}
       />
       <div className="space-y-2">
         {blocks.map((block, index) => {

@@ -160,10 +160,8 @@ describe('resolveTaskTranscript', () => {
       expect(oldTurn.agentName).toBe('Claude Code (old)');
       expect(oldTurn.blocks[0]).toMatchObject({ text: 'from the old session' });
     }
-    expect(boundary).toMatchObject({ kind: 'system', subtype: 'session_boundary' });
-    if (boundary.kind === 'system') {
-      expect(boundary.text).toContain('Claude Code (new)');
-    }
+    // First appearance of the newer session reads simply "New session".
+    expect(boundary).toMatchObject({ kind: 'system', subtype: 'session_boundary', text: 'New session' });
     expect(newTurn.kind).toBe('assistant');
     if (newTurn.kind === 'assistant') {
       expect(newTurn.agentName).toBe('Claude Code (new)');
@@ -173,32 +171,34 @@ describe('resolveTaskTranscript', () => {
     expect(result!.sessions.map((s) => s.sessionId)).toEqual(['session-old', 'session-new']);
   });
 
-  it('labels the session_boundary with the isolated swimlane name when the newer session is isolated', async () => {
-    const older = makeRecord({ id: 'session-old', started_at: '2026-06-01T10:00:00Z', session_type: 'claude_agent_a' });
+  it('labels a first-time session crossing simply "New session" (no agent name or swimlane detail), even for an isolated session', async () => {
+    const older = makeRecord({ id: 'session-old', started_at: '2026-06-01T10:00:00Z', session_type: 'claude_agent_a', agent_session_id: 'agent-old' });
     const newer = makeRecord({
       id: 'session-new',
       started_at: '2026-06-01T12:00:00Z',
       session_type: 'claude_agent_a',
+      agent_session_id: 'agent-new',
       isolated_swimlane_id: 'lane-executing',
     });
     const db = makeFakeDb({
       sessionsById: { 'session-old': older, 'session-new': newer },
       sessionsByTask: { 'task-1': [newer, older] },
       taskTitle: 'Wire the auth flow',
-      swimlaneNames: { 'lane-executing': 'Executing' },
     });
+    // Each session contributes a distinct turn so a boundary is genuinely
+    // emitted between them (a boundary only precedes real new content).
     getBySessionType.mockReturnValue({
       displayName: 'Claude Code',
-      parseTranscript: vi.fn(async () => ({ entries: [], sourcePath: null })),
+      parseTranscript: vi.fn(async (agentSessionId: string) => ({
+        entries: [{ kind: 'user' as const, uuid: `turn-${agentSessionId}`, ts: 1, text: 'a turn' }],
+        sourcePath: '/history/x.jsonl',
+      })),
     } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
 
     const result = await resolveTaskTranscript(db, 'session-new');
 
     const boundary = result!.entries.find((entry) => entry.kind === 'system' && entry.subtype === 'session_boundary');
-    expect(boundary).toBeDefined();
-    if (boundary?.kind === 'system') {
-      expect(boundary.text).toContain('isolated: Executing');
-    }
+    expect(boundary).toMatchObject({ kind: 'system', text: 'New session' });
   });
 
   it('degrades gracefully to just its own entries for a session with no task_id (an orphan/transient record)', async () => {
@@ -224,6 +224,182 @@ describe('resolveTaskTranscript', () => {
     expect(result!.entries.some((entry) => entry.kind === 'system')).toBe(false);
     expect(result!.sessions).toHaveLength(1);
     expect(result!.sessions[0].sessionId).toBe('session-orphan');
+  });
+
+  it('preserves an assistant turn\'s per-turn token usage through the stitch (so burn-rate analysis can read it off the unified conversation)', async () => {
+    const record = makeRecord({ id: 'session-usage', task_id: 'task-1', agent_session_id: 'agent-usage' });
+    const db = makeFakeDb({
+      sessionsById: { 'session-usage': record },
+      sessionsByTask: { 'task-1': [record] },
+      taskTitle: 'Wire the auth flow',
+    });
+    getBySessionType.mockReturnValue({
+      displayName: 'Claude Code',
+      parseTranscript: vi.fn(async () => ({
+        entries: [
+          { kind: 'assistant' as const, uuid: 'a1', ts: 1, model: 'claude-opus-4-8',
+            usage: { inputTokens: 120, outputTokens: 45, cacheCreationInputTokens: 2000, cacheReadInputTokens: 18000 },
+            blocks: [{ type: 'text' as const, text: 'reply' }] },
+        ],
+        sourcePath: '/history/usage.jsonl',
+      })),
+    } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+    const result = await resolveTaskTranscript(db, 'session-usage');
+
+    const assistant = result!.entries.find((entry) => entry.kind === 'assistant');
+    expect(assistant).toBeDefined();
+    if (assistant?.kind === 'assistant') {
+      // Survives both truncateEntries and the agentName stamp.
+      expect(assistant.agentName).toBe('Claude Code');
+      expect(assistant.usage).toEqual({ inputTokens: 120, outputTokens: 45, cacheCreationInputTokens: 2000, cacheReadInputTokens: 18000 });
+    }
+  });
+
+  it('orders turns chronologically across an isolated excursion, with a boundary INTO the isolated session AND back to the main one, so resumed main-session turns land last (not buried mid-timeline)', async () => {
+    // The real isolated-swimlane round-trip: the main session runs, is suspended
+    // for an isolated Code Review excursion, then RESUMES into the same
+    // transcript. Its post-excursion turns (ts 100/110) are timestamped AFTER
+    // the isolated session's turns (ts 40/50), even though session-grouping
+    // would lump them with the pre-excursion main turns. The merge must be
+    // chronological, and a divider must appear at BOTH crossings.
+    const main = makeRecord({ id: 'session-main', started_at: '2026-06-01T10:00:00Z', session_type: 'claude_agent_a', agent_session_id: 'agent-main' });
+    const iso = makeRecord({
+      id: 'session-iso',
+      started_at: '2026-06-01T11:00:00Z',
+      session_type: 'claude_agent_a',
+      agent_session_id: 'agent-iso',
+      isolated_swimlane_id: 'lane-code-review',
+    });
+    const db = makeFakeDb({
+      sessionsById: { 'session-main': main, 'session-iso': iso },
+      sessionsByTask: { 'task-1': [iso, main] }, // newest-first; service reverses to oldest-first
+      taskTitle: 'Wire the auth flow',
+    });
+    getBySessionType.mockReturnValue({
+      displayName: 'Claude Code',
+      parseTranscript: vi.fn(async (agentSessionId: string) =>
+        agentSessionId === 'agent-main'
+          ? {
+              // The shared/resumed main transcript: turns before AND after the excursion.
+              entries: [
+                { kind: 'user', uuid: 'm1', ts: 10, text: 'pre-excursion prompt' },
+                { kind: 'assistant', uuid: 'm2', ts: 20, blocks: [{ type: 'text', text: 'pre-excursion reply' }] },
+                { kind: 'user', uuid: 'm3', ts: 100, text: 'post-resume prompt' },
+                { kind: 'assistant', uuid: 'm4', ts: 110, blocks: [{ type: 'text', text: 'post-resume reply' }] },
+              ],
+              sourcePath: '/history/main.jsonl',
+            }
+          : {
+              entries: [
+                { kind: 'user', uuid: 'i1', ts: 40, text: 'code-review prompt' },
+                { kind: 'assistant', uuid: 'i2', ts: 50, blocks: [{ type: 'text', text: 'code-review reply' }] },
+              ],
+              sourcePath: '/history/iso.jsonl',
+            },
+      ),
+    } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+    const result = await resolveTaskTranscript(db, 'session-iso');
+
+    // Chronological order by ts, with a boundary at each session crossing:
+    // "New session" into the never-seen isolated one, "Resumed session" back
+    // into the main one it already showed.
+    const shape = result!.entries.map((entry) =>
+      entry.kind === 'system' ? `boundary:${entry.text}` : entry.uuid,
+    );
+    expect(shape).toEqual(['m1', 'm2', 'boundary:New session', 'i1', 'i2', 'boundary:Resumed session', 'm3', 'm4']);
+
+    // The two newest turns (the resumed main session's) are dead last, not
+    // buried in the middle where the viewer would never scroll to them.
+    expect(result!.entries[result!.entries.length - 1]).toMatchObject({ uuid: 'm4' });
+    expect(result!.entries[result!.entries.length - 2]).toMatchObject({ uuid: 'm3' });
+
+    // Boundary uuids are unique even though main is entered twice conceptually.
+    const boundaries = result!.entries.filter((entry) => entry.kind === 'system');
+    expect(boundaries).toHaveLength(2);
+    expect(boundaries[0].uuid).not.toBe(boundaries[1].uuid);
+  });
+
+  it('deduplicates turns a resumed session replays from its parent, keeping each once at its original position and only stitching the resume\'s genuinely-new turns', async () => {
+    // The classic --resume shape: the newer session's native transcript
+    // REPLAYS the older session's turns verbatim (same uuids), then appends a
+    // new one. Naive concatenation would double-count every replayed turn,
+    // producing duplicate uuids that break the viewer's React keys / measurement
+    // cache (rows stack on top of each other).
+    const older = makeRecord({ id: 'session-old', started_at: '2026-06-01T10:00:00Z', session_type: 'claude_agent_a', agent_session_id: 'agent-old' });
+    const newer = makeRecord({ id: 'session-new', started_at: '2026-06-01T12:00:00Z', session_type: 'claude_agent_a', agent_session_id: 'agent-new', status: 'running' });
+    const db = makeFakeDb({
+      sessionsById: { 'session-old': older, 'session-new': newer },
+      sessionsByTask: { 'task-1': [newer, older] },
+      taskTitle: 'Wire the auth flow',
+    });
+    getBySessionType.mockReturnValue({
+      displayName: 'Claude Code',
+      parseTranscript: vi.fn(async (agentSessionId: string) =>
+        agentSessionId === 'agent-old'
+          ? {
+              entries: [
+                { kind: 'user', uuid: 'shared-1', ts: 1, text: 'first prompt' },
+                { kind: 'assistant', uuid: 'shared-2', ts: 2, blocks: [{ type: 'text', text: 'first reply' }] },
+              ],
+              sourcePath: '/history/old.jsonl',
+            }
+          : {
+              // Replays shared-1 + shared-2, then adds one genuinely-new turn.
+              entries: [
+                { kind: 'user', uuid: 'shared-1', ts: 1, text: 'first prompt' },
+                { kind: 'assistant', uuid: 'shared-2', ts: 2, blocks: [{ type: 'text', text: 'first reply' }] },
+                { kind: 'user', uuid: 'new-3', ts: 3, text: 'second prompt' },
+              ],
+              sourcePath: '/history/new.jsonl',
+            },
+      ),
+    } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+    const result = await resolveTaskTranscript(db, 'session-new');
+
+    // No duplicate uuids survive the stitch.
+    const uuids = result!.entries.map((entry) => entry.uuid);
+    expect(new Set(uuids).size).toBe(uuids.length);
+
+    // The two shared turns appear once (at their original position), then a
+    // single boundary, then only the resume's new turn.
+    const kinds = result!.entries.map((entry) =>
+      entry.kind === 'system' ? `boundary` : `${entry.kind}:${entry.uuid}`,
+    );
+    expect(kinds).toEqual(['user:shared-1', 'assistant:shared-2', 'boundary', 'user:new-3']);
+  });
+
+  it('emits NO session_boundary for a wholly-replayed resume that adds no new turns (nothing to divide, no dangling divider)', async () => {
+    // The exact bug from an isolated-swimlane round-trip: the "latest" session
+    // is a --resume of the original and its transcript is an EXACT replay with
+    // no new content yet. It must contribute nothing - no duplicate turns, and
+    // no orphaned "New session" divider with an empty body under it.
+    const older = makeRecord({ id: 'session-old', started_at: '2026-06-01T10:00:00Z', session_type: 'claude_agent_a', agent_session_id: 'agent-old' });
+    const newer = makeRecord({ id: 'session-new', started_at: '2026-06-01T12:00:00Z', session_type: 'claude_agent_a', agent_session_id: 'agent-new', status: 'running' });
+    const db = makeFakeDb({
+      sessionsById: { 'session-old': older, 'session-new': newer },
+      sessionsByTask: { 'task-1': [newer, older] },
+      taskTitle: 'Wire the auth flow',
+    });
+    const replayed = [
+      { kind: 'user' as const, uuid: 'shared-1', ts: 1, text: 'only prompt' },
+      { kind: 'assistant' as const, uuid: 'shared-2', ts: 2, blocks: [{ type: 'text' as const, text: 'only reply' }] },
+    ];
+    getBySessionType.mockReturnValue({
+      displayName: 'Claude Code',
+      parseTranscript: vi.fn(async () => ({ entries: replayed, sourcePath: '/history/x.jsonl' })),
+    } as unknown as ReturnType<typeof agentRegistry.getBySessionType>);
+
+    const result = await resolveTaskTranscript(db, 'session-new');
+
+    // Exactly the two unique turns, no boundary at all.
+    expect(result!.entries.map((entry) => entry.uuid)).toEqual(['shared-1', 'shared-2']);
+    expect(result!.entries.some((entry) => entry.kind === 'system')).toBe(false);
+    // Both sessions are still listed as metadata (the resume is real, it just
+    // contributed no new turns).
+    expect(result!.sessions.map((s) => s.sessionId)).toEqual(['session-old', 'session-new']);
   });
 
   it('aggregates degraded=true when an EARLIER session fell back to the index, even though the latest session is live', async () => {

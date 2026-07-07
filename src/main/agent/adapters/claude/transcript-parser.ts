@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import type { TranscriptEntry, TranscriptBlock, TranscriptUsage } from '../../../../shared/types';
+import type { TranscriptEntry, TranscriptBlock, TranscriptUsage, TranscriptTurnUsage } from '../../../../shared/types';
 
 // Maximum slug length before Claude Code truncates and appends a hash suffix.
 // Matches the `jgH`/`NmK` constant in the shipped CLI (Claude Code 2.x).
@@ -62,6 +62,11 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
 
   const entries: TranscriptEntry[] = [];
   const lines = content.split(/\r?\n/);
+  // A single assistant message (one `message.id`) can be written across several
+  // JSONL lines; its `usage` must be attributed to exactly one turn, not every
+  // line, or per-turn burn analysis double-counts it. Track which message ids
+  // have already carried their usage onto an entry.
+  const usageAttributedMessageIds = new Set<string>();
 
   for (const line of lines) {
     if (line.length === 0) continue;
@@ -159,6 +164,8 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
       const message = raw.message;
       if (!isRecord(message)) continue;
       const model = typeof message.model === 'string' ? message.model : undefined;
+      const messageId = typeof message.id === 'string' ? message.id : null;
+
       const blocks: TranscriptBlock[] = [];
 
       const messageContent = message.content;
@@ -187,8 +194,32 @@ export async function parseClaudeTranscript(filePath: string): Promise<Transcrip
         }
       }
 
+      // A line that yields no blocks produces no entry, so skip it BEFORE
+      // claiming this message's usage. With extended thinking, Claude writes a
+      // turn as two lines under one message id - a thinking-only line (which we
+      // drop, since persisted thinking is empty) followed by the text line. If
+      // usage were claimed on the dropped thinking line, the message id would be
+      // marked "attributed" and the following text entry (same id) would be
+      // deduped out of its own usage, silently losing the whole turn's per-turn
+      // tokens. Claiming usage only when an entry is actually emitted keeps it on
+      // the first VISIBLE line of each message id.
       if (blocks.length === 0) continue;
-      entries.push({ kind: 'assistant', uuid, ts, model, blocks });
+
+      // Attribute this turn's usage to exactly one emitted entry per message id
+      // (a single message can still span several emitted lines, e.g. text +
+      // tool_use); the first emitted line claims it so a burn-rate sum never
+      // double-counts a turn.
+      let usage: TranscriptTurnUsage | undefined;
+      if (!messageId || !usageAttributedMessageIds.has(messageId)) {
+        usage = extractTurnUsage(message);
+        if (usage && messageId) usageAttributedMessageIds.add(messageId);
+      }
+
+      entries.push(
+        usage
+          ? { kind: 'assistant', uuid, ts, model, usage, blocks }
+          : { kind: 'assistant', uuid, ts, model, blocks },
+      );
     }
   }
 
@@ -277,29 +308,51 @@ function numberOrZero(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
+/** Extract one assistant message's per-turn token usage, or undefined when the
+ *  message carries no `usage` object. Keeps the raw component counts (fresh
+ *  input, output, cache write, cache read) rather than a single sum. */
+function extractTurnUsage(message: Record<string, unknown>): TranscriptTurnUsage | undefined {
+  const usage = message.usage;
+  if (!isRecord(usage)) return undefined;
+  return {
+    inputTokens: numberOrZero(usage.input_tokens),
+    outputTokens: numberOrZero(usage.output_tokens),
+    cacheCreationInputTokens: numberOrZero(usage.cache_creation_input_tokens),
+    cacheReadInputTokens: numberOrZero(usage.cache_read_input_tokens),
+  };
+}
+
 function parseTimestamp(value: unknown): number {
   if (typeof value !== 'string') return Date.now();
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : Date.now();
 }
 
-// Whole-message slash-command invocation, e.g.
-//   <command-name>/exit</command-name>
-//   <command-message>exit</command-message>
-//   <command-args></command-args>
-// The message/args blocks are optional and may carry leading indentation.
-const COMMAND_MESSAGE_RE =
-  /^<command-name>([\s\S]*?)<\/command-name>\s*(?:<command-message>[\s\S]*?<\/command-message>)?\s*(?:<command-args>([\s\S]*?)<\/command-args>)?\s*$/;
+// The command-name / command-message / command-args blocks of a whole-message
+// slash-command invocation. Claude emits these in EITHER order (older
+// transcripts led with <command-name>, current ones lead with
+// <command-message>), and they may carry leading indentation, so each is
+// matched independently rather than pinned to a fixed sequence.
+const COMMAND_NAME_RE = /<command-name>([\s\S]*?)<\/command-name>/;
+const COMMAND_ARGS_RE = /<command-args>([\s\S]*?)<\/command-args>/;
+// Strips every recognized command-* block; if nothing but whitespace remains,
+// the message was purely a command invocation (not command-plus-prose).
+const COMMAND_BLOCKS_RE = /<(command-name|command-message|command-args)>[\s\S]*?<\/\1>/g;
 
 // Whole-message local command stdout, e.g. <local-command-stdout>Goodbye!</local-command-stdout>
 const COMMAND_STDOUT_RE = /^<local-command-stdout>([\s\S]*?)<\/local-command-stdout>$/;
 
 /**
- * Recognize a user entry whose ENTIRE text is slash-command XML and collapse
- * it to a compact system entry. Returns the entry to push, the sentinel
- * `'drop'` for an empty command stdout (no useful content), or `null` when the
- * text is not a whole-message command (so normal user-text handling applies).
- * Mixed command-plus-prose text is intentionally left to the caller.
+ * Recognize a user entry whose ENTIRE text is slash-command XML and clean it up.
+ * A slash-command invocation IS a user-role message (the user, or the board on
+ * their behalf, ran the command), so it is returned as a normal `user` entry
+ * carrying just the command as typed ("/code-review") rather than the raw
+ * `<command-message>/<command-name>` wrapper - it should read as a message from
+ * You, not a system divider. A local command's stdout stays a `command_output`
+ * system entry. Returns the entry to push, the sentinel `'drop'` for empty
+ * command stdout (no useful content), or `null` when the text is not a
+ * whole-message command (so normal user-text handling applies). Mixed
+ * command-plus-prose text is intentionally left to the caller.
  */
 function parseCommandEntry(
   text: string,
@@ -308,12 +361,18 @@ function parseCommandEntry(
 ): TranscriptEntry | 'drop' | null {
   const trimmed = text.trim();
 
-  const commandMatch = COMMAND_MESSAGE_RE.exec(trimmed);
-  if (commandMatch) {
-    const name = commandMatch[1].trim();
-    const args = (commandMatch[2] ?? '').trim();
-    const label = args ? `${name} ${args}` : name;
-    return { kind: 'system', uuid, ts, subtype: 'command', text: label };
+  const nameMatch = COMMAND_NAME_RE.exec(trimmed);
+  if (nameMatch) {
+    // Confirm the WHOLE message is command-* blocks (in any order) - anything
+    // left after stripping them means it is command-plus-prose, which the
+    // caller handles as normal user text.
+    const residue = trimmed.replace(COMMAND_BLOCKS_RE, '').trim();
+    if (residue.length === 0) {
+      const name = nameMatch[1].trim();
+      const args = (COMMAND_ARGS_RE.exec(trimmed)?.[1] ?? '').trim();
+      const label = args ? `${name} ${args}` : name;
+      return { kind: 'user', uuid, ts, text: label };
+    }
   }
 
   const stdoutMatch = COMMAND_STDOUT_RE.exec(trimmed);

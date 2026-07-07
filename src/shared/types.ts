@@ -2620,6 +2620,50 @@ export interface SessionHistoryParseResult {
 }
 
 /**
+ * Per-turn token usage for one assistant turn, captured from the agent's native
+ * transcript (Claude records `message.usage` on each assistant message). Kept as
+ * the raw component counts, not a single sum, so downstream cost analysis can
+ * weight fresh input vs. the much cheaper cache reads. Deduped by the agent's
+ * message id at parse time, so a turn split across multiple JSONL lines is
+ * counted once. Undefined when the agent/turn reported no usage. This is the
+ * full-fidelity per-turn data that session-level `sessions.total_*_tokens`
+ * aggregates - persisted here so burn-rate / cost analysis can tap it from the
+ * conversation itself, not only the session summary.
+ */
+export interface TranscriptTurnUsage {
+  /** Fresh (non-cached) input tokens. */
+  inputTokens: number;
+  outputTokens: number;
+  /** Tokens written to the prompt cache this turn (billed at the write rate). */
+  cacheCreationInputTokens: number;
+  /** Tokens served from the prompt cache this turn (billed at the cheap read rate). */
+  cacheReadInputTokens: number;
+}
+
+/**
+ * A durably-stored per-turn usage row from the per-project `conversation_turn_usage`
+ * ledger. Unlike the in-transcript `TranscriptTurnUsage` (re-derived on every parse
+ * and gone the moment the agent prunes its native JSONL), these rows are written to
+ * the database at index time and persist independently of the source file, so
+ * cost / burn-rate analysis can read a task's or a project's full token history long
+ * after the transcript is deleted. Keyed by the turn's own uuid: a `--resume` replays
+ * its parent's turns verbatim under the same uuid, so a replayed turn maps back onto
+ * the same row (token totals never double-count a shared turn).
+ */
+export interface ConversationTurnUsageRecord {
+  turnUuid: string;
+  agentSessionId: string | null;
+  sessionId: string | null;
+  taskId: string | null;
+  model: string | null;
+  /** Epoch ms of the turn, or null when the agent reported no timestamp. */
+  ts: number | null;
+  usage: TranscriptTurnUsage;
+  /** When this row was last written (UTC ISO 8601). */
+  recordedAt: string;
+}
+
+/**
  * One entry in a parsed agent transcript. Distinct from `SessionEvent`
  * (telemetry only) - this preserves the actual conversation content for
  * display in the Transcript tab.
@@ -2631,7 +2675,12 @@ export type TranscriptEntry =
   // agents - the role badge prefers it over the response's single top-level
   // agentName, which only describes the latest session. Absent for an
   // ordinary single-session transcript.
-  | { kind: 'assistant'; uuid: string; ts: number; model?: string; agentName?: string; blocks: TranscriptBlock[] }
+  //
+  // usage carries this turn's per-turn token counts when the agent reported
+  // them (see TranscriptTurnUsage). It is not shown in the viewer today; it is
+  // captured so consumption/burn-rate analysis can read it straight off the
+  // conversation. Absent when the agent/turn reported no usage.
+  | { kind: 'assistant'; uuid: string; ts: number; model?: string; agentName?: string; usage?: TranscriptTurnUsage; blocks: TranscriptBlock[] }
   | { kind: 'tool_result'; uuid: string; ts: number; toolUseId: string; content: string; isError?: boolean }
   // Non-conversation events surfaced explicitly instead of being rendered as
   // misleading "## User" turns: conversation-compaction boundaries/summaries,

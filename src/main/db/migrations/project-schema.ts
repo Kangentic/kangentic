@@ -789,6 +789,44 @@ export function runProjectMigrations(db: Database.Database): void {
 
   db.exec('CREATE TABLE IF NOT EXISTS memory_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
 
+  // Durable per-turn token-usage ledger. Each assistant turn that reported usage
+  // gets one row, keyed by the turn's own uuid. This is the long-lived record that
+  // cost / burn-rate analysis reads from: it is populated by ConversationIndexer
+  // from the parsed transcript at index time, so it SURVIVES the agent pruning its
+  // native JSONL - unlike the in-transcript `usage` field, which is re-derived on
+  // each parse and vanishes with the source file. Counts are kept as raw
+  // components (fresh input, output, cache-creation, cache-read) so downstream
+  // analysis can weight fresh input against the much cheaper cache reads.
+  //
+  // Keyed by turn_uuid because a `--resume` REPLAYS its parent's turns verbatim
+  // under the same uuid; the PK dedups a replayed turn back onto one row so
+  // per-task / per-project totals never double-count a shared turn.
+  //
+  // Deliberately NO sessions-DELETE cascade (unlike memory_chunks below): this is a
+  // durable ledger, not a rebuildable index. A shared turn attributed to a resuming
+  // session must not be wiped when that session row is deleted while the turn still
+  // lives in another session's transcript, and the token history is meant to
+  // outlive the sessions it describes. Orphan tolerance is the intended durability
+  // behavior; each row is a handful of integers.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_turn_usage (
+      turn_uuid TEXT PRIMARY KEY,
+      agent_session_id TEXT,
+      session_id TEXT,
+      task_id TEXT,
+      model TEXT,
+      ts INTEGER,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_creation_input_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_read_input_tokens INTEGER NOT NULL DEFAULT 0,
+      recorded_at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_turn_usage_task ON conversation_turn_usage(task_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON conversation_turn_usage(session_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_turn_usage_ts ON conversation_turn_usage(ts)');
+
   // Cascade cleanup when a session is deleted (mirrors trg_sessions_delete_transcript).
   db.exec(`
     CREATE TRIGGER IF NOT EXISTS trg_sessions_delete_memory

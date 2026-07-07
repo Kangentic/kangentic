@@ -520,10 +520,11 @@ Config key: `mcpServer.enabled` (boolean, default `true`)
 
 ### Permissions
 
-Agents Kangentic spawns never see a permission prompt for Kangentic's own tools. Two layers cover the two axes (which mode, which project):
+Agents Kangentic spawns never see a permission prompt for Kangentic's own tools. Three layers cover the axes (which mode, which project):
 
 1. **Auto-allow injection (all projects, default / acceptEdits mode).** Whenever the MCP server is attached, `CommandBuilder.createMergedSettings()` appends `mcp__kangentic` to `permissions.allow` in the per-session merged `settings.json` (`.kangentic/sessions/<sessionId>/settings.json`). This is gated on the same condition as the session `mcp.json` write and is append-if-absent, so a committed project rule or a Claude "always allow" grant is not duplicated. It lives only in the regenerated per-session settings, never written back to the user's own settings files, and an explicit user `deny` of `mcp__kangentic` still wins (deny outranks allow). So the no-prompt behavior holds for every project, not just ones that committed a rule.
 2. **Read-only annotations (all projects, plan mode).** Allow rules do not punch through plan mode. Plan-mode auto-approval comes from the tools' `readOnlyHint` annotations (see the Tool annotations note under Available Tools): read-only tools run without a prompt while planning; mutating tools still prompt, by design.
+3. **Auto-mode classifier allow rule (all projects, auto mode).** `--permission-mode auto` runs its OWN natural-language classifier that does not honor `permissions.allow`, so the same `createMergedSettings()` also appends a plain-language rule (`KANGENTIC_AUTO_MODE_ALLOW_RULE`) to `autoMode.allow`, seeding the array with `$defaults` when absent so the classifier's built-in rules are preserved. Without it a headless, board-driven auto-mode session (e.g. a Code Review column) could soft-deny Kangentic's own board/session tools even though they are allowed by default. Append-if-absent, per-session only, and the built-in `$defaults` stay in effect.
 
 The committed `.claude/settings.json` `mcp__kangentic` entry remains for humans running `claude` outside Kangentic; inside Kangentic the injection makes it redundant but harmless (deduped).
 

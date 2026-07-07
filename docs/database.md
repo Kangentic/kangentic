@@ -384,7 +384,27 @@ Key/value bookkeeping for the memory index. Holds `chunker_version`; a mismatch 
 | key | TEXT | PRIMARY KEY |
 | value | TEXT | NOT NULL |
 
-Module: `src/main/retrieval/` (store `RetrievalStore`, indexer `ConversationIndexer`, service `retrievalService`, query `searchConversationMemory`).
+### conversation_turn_usage table
+
+Durable per-turn token-usage ledger. One row per assistant turn that reported usage, written by `ConversationIndexer` from the parsed transcript at index time so it persists after the agent prunes its native JSONL (unlike the in-transcript `usage` field, which is re-derived on each parse). Counts are kept as raw components so cost analysis can weight fresh input against the cheaper cache reads. Read via `ConversationUsageStore` (`getForTask` / `getForSession` / `getForTurns`).
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| turn_uuid | TEXT | PRIMARY KEY | |
+| agent_session_id | TEXT | | NULL |
+| session_id | TEXT | | NULL |
+| task_id | TEXT | | NULL |
+| model | TEXT | | NULL |
+| ts | INTEGER | | NULL |
+| input_tokens | INTEGER | NOT NULL | 0 |
+| output_tokens | INTEGER | NOT NULL | 0 |
+| cache_creation_input_tokens | INTEGER | NOT NULL | 0 |
+| cache_read_input_tokens | INTEGER | NOT NULL | 0 |
+| recorded_at | TEXT | NOT NULL | |
+
+Keyed by `turn_uuid` because a `--resume` replays its parent's turns verbatim under the same uuid; the PK dedups a replayed turn back onto one row so per-task / per-project totals never double-count a shared turn. Indices: `idx_turn_usage_task` (task_id), `idx_turn_usage_session` (session_id), `idx_turn_usage_ts` (ts). Deliberately has NO `sessions` DELETE cascade (unlike `memory_chunks`): it is a durable ledger, not a rebuildable index, so token history outlives the session rows it describes.
+
+Module: `src/main/retrieval/` (store `RetrievalStore`, usage ledger `ConversationUsageStore`, indexer `ConversationIndexer`, service `retrievalService`, query `searchConversationMemory`).
 
 ## Migration Strategy
 
@@ -449,6 +469,7 @@ Listed in execution order within `runProjectMigrations()`:
 44. **`compaction_count` columns on sessions and usage_history** - adds `compaction_count INTEGER NOT NULL DEFAULT 0` to `sessions` (via the metrics-columns loop, migration 17) and the same to `usage_history` (in the `CREATE TABLE` block plus a guarded `ALTER TABLE` for existing DBs). Counts context compactions per CLI run (Claude `PreCompact` hook -> `EventType.Compact`, counted in `UsageAccumulator`); the per-task lifetime "sessions compacted" total is the SUM across the task's session rows. NOT NULL DEFAULT 0 so existing rows and never-compacted runs aggregate correctly.
 45. **`detail_view_state` column on tasks** - adds `detail_view_state TEXT DEFAULT NULL`, a per-task JSON blob (`TaskDetailViewState`) holding the task-detail dialog's layout (divider ratio, which side panel is open, Changes view mode, selected diff file, reviewed files, diff scope, file-tree width). Hydrated into the session store on board load and saved debounced via the task-scoped `TASK_SET_DETAIL_VIEW_STATE` IPC so reopening a task restores its layout across restarts. The dedicated `setDetailViewState` writer deliberately does not bump `updated_at` (view-state churn must not reorder the board). Idempotent guarded `ALTER TABLE`.
 46. **Conversation-memory index (`memory_chunks` + FTS + `memory_index_state` + `memory_meta`)** - creates the per-project retrieval store over the structured transcript: `memory_chunks` (corpus-generic chunk store, `UNIQUE(corpus, doc_id, seq)`), the `memory_chunks_fts` FTS5 external-content shadow (with `_ai`/`_ad`/`_au` sync triggers), `memory_index_state` (per-doc staleness signature + status), and `memory_meta` (chunker version). Cascade cleanup via `trg_sessions_delete_memory` on `sessions`. The `memory_chunks_vec` (vec0) table is created at runtime by `RetrievalStore.ensureVecTable()` only when the sqlite-vec extension loaded, never by migrations, and no trigger references it. Idempotent `CREATE ... IF NOT EXISTS`.
+47. **Durable per-turn token-usage ledger (`conversation_turn_usage`)** - creates the table plus its `idx_turn_usage_task` / `idx_turn_usage_session` / `idx_turn_usage_ts` indices. One row per assistant turn that reported usage, keyed by `turn_uuid` (so a `--resume` replay dedups back onto one row), populated by `ConversationIndexer` from the parsed transcript at index time so token counts survive the agent pruning its native JSONL. Deliberately has NO `sessions` DELETE cascade (unlike `memory_chunks`): it is a long-lived ledger, not a rebuildable index, so token history outlives the session rows it describes. See the `conversation_turn_usage table` section above. Idempotent `CREATE ... IF NOT EXISTS`.
 
 ### Key Migrations (Global DB)
 

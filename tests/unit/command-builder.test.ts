@@ -1601,6 +1601,66 @@ describe('Merged Settings - kangentic MCP allow-rule injection', () => {
     const occurrences = (merged.permissions?.allow ?? []).filter((rule: string) => rule === 'mcp__kangentic');
     expect(occurrences).toHaveLength(1);
   });
+
+  it('also injects an autoMode.allow classifier rule for kangentic tools, since --permission-mode auto does not honor permissions.allow', () => {
+    const builder = new CommandBuilder();
+    const statusOutput = path.join(tmpDir, '.kangentic', 'sessions', 'inject-automode', 'status.json');
+    fs.mkdirSync(path.dirname(statusOutput), { recursive: true });
+    builder.buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: 'inject-automode-task',
+      cwd: tmpDir,
+      permissionMode: 'auto',
+      sessionId: 'inject-automode',
+      statusOutputPath: statusOutput,
+      mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project',
+      mcpServerToken: 'deadbeef-test-token',
+    });
+    const settingsPath = path.join(tmpDir, '.kangentic', 'sessions', 'inject-automode', 'settings.json');
+    const merged = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    expect(merged.autoMode?.allow).toEqual(
+      expect.arrayContaining(['$defaults', "Kangentic's own board and session tools (mcp__kangentic__*) are always allowed: they only read or mutate this local Kanban board's own state (tasks, columns, sessions) inside a project the user has already opened in Kangentic, never external systems or files outside the project."]),
+    );
+  });
+
+  it('does not duplicate the autoMode.allow rule, and preserves a project-authored autoMode config without adding $defaults', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.claude', 'settings.json'),
+      JSON.stringify({ autoMode: { allow: ['Deploying to staging is allowed'] } }),
+    );
+    const builder = new CommandBuilder();
+    const statusOutput = path.join(tmpDir, '.kangentic', 'sessions', 'inject-automode-dedup', 'status.json');
+    fs.mkdirSync(path.dirname(statusOutput), { recursive: true });
+    builder.buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: 'inject-automode-dedup-task',
+      cwd: tmpDir,
+      permissionMode: 'auto',
+      sessionId: 'inject-automode-dedup',
+      statusOutputPath: statusOutput,
+      mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project',
+      mcpServerToken: 'deadbeef-test-token',
+    });
+    builder.buildClaudeCommand({
+      cliPath: '/usr/bin/claude',
+      taskId: 'inject-automode-dedup-task',
+      cwd: tmpDir,
+      permissionMode: 'auto',
+      sessionId: 'inject-automode-dedup',
+      resume: true,
+      statusOutputPath: statusOutput,
+      mcpServerUrl: 'http://127.0.0.1:54321/mcp/test-project',
+      mcpServerToken: 'deadbeef-test-token',
+    });
+    const settingsPath = path.join(tmpDir, '.kangentic', 'sessions', 'inject-automode-dedup', 'settings.json');
+    const merged = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    // The project's own list is preserved as-is (no injected '$defaults'),
+    // the kangentic rule is appended exactly once even across a resume.
+    expect(merged.autoMode?.allow).toEqual([
+      'Deploying to staging is allowed',
+      "Kangentic's own board and session tools (mcp__kangentic__*) are always allowed: they only read or mutate this local Kanban board's own state (tasks, columns, sessions) inside a project the user has already opened in Kangentic, never external systems or files outside the project.",
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------

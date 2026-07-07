@@ -64,7 +64,7 @@ function preConfig(): string {
       // seeds below are the SAME object.
       var sessionBoundaryEntry = {
         kind: 'system', uuid: 'session-boundary-${SESSION_B}', ts: nowMs + 10,
-        subtype: 'session_boundary', text: 'New session - Claude Code',
+        subtype: 'session_boundary', text: 'New session',
       };
       var transcriptUnified = {
         sessionId: '${SESSION_B}', taskId: '${TASK_ID}', taskTitle: 'Wire the auth flow',
@@ -143,6 +143,53 @@ function preConfig(): string {
         sessions: [{ sessionId: 'sess-conv-multiblock', agentName: 'Claude Code', startedAt: ts, exitedAt: null, isolatedSwimlaneId: null, status: 'running' }],
       };
 
+      // Regression fixture: the window is anchored to a session that has
+      // ALREADY gone 'suspended' by the time of its first fetch (an isolated
+      // swimlane move suspended it), while a DIFFERENT, brand-new session for
+      // the SAME task is live in the reactive session store. The live-poll
+      // must keep running off that store signal, not just the anchor's own
+      // (stale) sessionStatus.
+      var transcriptLiveSwitchInitial = {
+        sessionId: 'sess-conv-liveswitch-old', taskId: 'task-conv-liveswitch', taskTitle: 'Live session switch',
+        agentName: 'Claude Code', startedAt: ts, sessionStatus: 'suspended', source: 'live', sourcePath: '/mock/liveswitch-old.jsonl',
+        entries: [{ kind: 'user', uuid: 'turn-liveswitch-1', ts: nowMs, text: 'LIVESWITCH_INITIAL_TEXT' }],
+        degraded: false,
+        sessions: [{ sessionId: 'sess-conv-liveswitch-old', agentName: 'Claude Code', startedAt: ts, exitedAt: null, isolatedSwimlaneId: null, status: 'suspended' }],
+      };
+
+      // Regression fixture: a response that (pathologically) carries a DUPLICATE
+      // uuid across two entries. The backend dedups the stitched multi-session
+      // timeline, but the viewer must ALSO guard against it - the uuid is the
+      // React key and the virtualizer's measurement-cache key, so a duplicate
+      // would otherwise pile up stale rows and stack them on top of each other.
+      var transcriptDuplicateUuid = {
+        sessionId: 'sess-conv-dupuuid', taskId: null, taskTitle: 'Duplicate uuid guard',
+        agentName: 'Claude Code', startedAt: ts, sessionStatus: 'exited', source: 'live', sourcePath: '/mock/dupuuid.jsonl',
+        entries: [
+          { kind: 'user', uuid: 'dup-uuid-shared', ts: nowMs, text: 'DUPUUID_FIRST' },
+          { kind: 'assistant', uuid: 'dup-uuid-unique', ts: nowMs, model: 'claude-opus-4-8', blocks: [{ type: 'text', text: 'DUPUUID_MIDDLE' }] },
+          // Same uuid as the first entry - must be dropped by the viewer.
+          { kind: 'user', uuid: 'dup-uuid-shared', ts: nowMs, text: 'DUPUUID_REPLAY' },
+        ],
+        degraded: false,
+        sessions: [{ sessionId: 'sess-conv-dupuuid', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited' }],
+      };
+
+      // Regression fixture: a chunk that opens with a bare slash-command turn.
+      // A conversation search hit anchors on the matched chunk's FIRST turn, so
+      // it would land on "/code-review"; the viewer must advance the scroll to
+      // the first substantive turn after it (what actually matched).
+      var transcriptCommandAnchor = {
+        sessionId: 'sess-conv-cmdanchor', taskId: null, taskTitle: 'Command anchor',
+        agentName: 'Claude Code', startedAt: ts, sessionStatus: 'exited', source: 'live', sourcePath: '/mock/cmdanchor.jsonl',
+        entries: [
+          { kind: 'user', uuid: 'turn-cmd', ts: nowMs, text: '/code-review' },
+          { kind: 'user', uuid: 'turn-after-cmd', ts: nowMs + 1, text: 'CMDANCHOR_CONTENT' },
+        ],
+        degraded: false,
+        sessions: [{ sessionId: 'sess-conv-cmdanchor', agentName: 'Claude Code', startedAt: ts, exitedAt: ts, isolatedSwimlaneId: null, status: 'exited' }],
+      };
+
       var transcriptSeeds = {};
       // Both of the task's session ids resolve to the SAME unified response -
       // the real backend always returns a task's full lifecycle regardless of
@@ -150,6 +197,9 @@ function preConfig(): string {
       transcriptSeeds['${SESSION_A}'] = transcriptUnified;
       transcriptSeeds['${SESSION_B}'] = transcriptUnified;
       transcriptSeeds['sess-conv-multiblock'] = transcriptMultiBlock;
+      transcriptSeeds['sess-conv-cmdanchor'] = transcriptCommandAnchor;
+      transcriptSeeds['sess-conv-dupuuid'] = transcriptDuplicateUuid;
+      transcriptSeeds['sess-conv-liveswitch-old'] = transcriptLiveSwitchInitial;
       transcriptSeeds['sess-conv-consecutive'] = transcriptConsecutive;
       transcriptSeeds['sess-degraded'] = transcriptDegraded;
       transcriptSeeds['sess-empty-unsupported'] = emptyResp('sess-empty-unsupported', 'unsupported_agent');
@@ -169,13 +219,42 @@ function preConfig(): string {
   `;
 }
 
-async function launch(permissions?: string[]): Promise<{ browser: Browser; page: Page }> {
+/**
+ * A task + a 'running' session for it, isolated to its own init script rather
+ * than folded into the shared `preConfig()` fixture: adding even a properly
+ * matched extra task/session there was enough to break an unrelated test's
+ * real-clipboard Ctrl+C assertion (some global app behavior reacts to board
+ * composition). Kept minimal and opt-in per test via `launch()`'s
+ * `extraPreConfig` param.
+ */
+function liveSessionPreConfig(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.tasks.push({
+        id: 'task-conv-liveswitch', title: 'Live session switch', description: '',
+        swimlane_id: 'lane-conv-0', position: 1, agent: null, session_id: 'sess-conv-liveswitch-new',
+        worktree_path: null, branch_name: null, pr_number: null, pr_url: null,
+        base_branch: null, archived_at: null, created_at: ts, updated_at: ts,
+      });
+      state.sessions.push({
+        id: 'sess-conv-liveswitch-new', taskId: 'task-conv-liveswitch', projectId: '${PROJECT_ID}',
+        pid: 9999, status: 'running', shell: 'bash', cwd: '/mock/liveswitch-new',
+        startedAt: ts, exitCode: null,
+      });
+      return {};
+    });
+  `;
+}
+
+async function launch(permissions?: string[], extraPreConfig?: string): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady();
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1920, height: 1080 }, permissions });
   const page = await context.newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
   await page.addInitScript(preConfig());
+  if (extraPreConfig) await page.addInitScript(extraPreConfig);
   await page.goto(VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
@@ -282,7 +361,7 @@ test.describe('Conversation Viewer', () => {
       // The session_boundary divider marks the seam between the two sessions,
       // and there is no picker to switch away from this view - which session
       // shows is not a setting.
-      await expect(page.getByText('New session - Claude Code')).toBeVisible();
+      await expect(page.getByText('New session')).toBeVisible();
       await expect(page.getByTestId('conversation-session-picker')).toHaveCount(0);
     } finally {
       await browser.close();
@@ -518,4 +597,96 @@ test.describe('Conversation Viewer', () => {
       await browser.close();
     }
   });
+
+  test('live-polling continues past the anchor session going suspended, once a new session for the same task is live', async () => {
+    const { browser, page } = await launch(undefined, liveSessionPreConfig());
+    try {
+      await openConversation(page, 'sess-conv-liveswitch-old');
+      await expect(page.getByText('LIVESWITCH_INITIAL_TEXT')).toBeVisible();
+
+      // From here on, transcripts.get returns a response with a NEW entry - the
+      // same anchor session id, since the real backend always resolves by task
+      // regardless of which session id was queried. The reactive session store
+      // (seeded with a second, 'running' session for this task) is what should
+      // keep the poll alive despite the anchor's own sessionStatus being
+      // 'suspended' the whole time.
+      await page.evaluate(() => {
+        window.__mockTranscriptsGetOverride = (input) => {
+          if (input.sessionId !== 'sess-conv-liveswitch-old') return undefined;
+          return {
+            sessionId: 'sess-conv-liveswitch-old',
+            taskId: 'task-conv-liveswitch',
+            taskTitle: 'Live session switch',
+            agentName: 'Claude Code',
+            startedAt: new Date().toISOString(),
+            sessionStatus: 'suspended',
+            source: 'live',
+            sourcePath: '/mock/liveswitch-old.jsonl',
+            entries: [
+              { kind: 'user', uuid: 'turn-liveswitch-1', ts: Date.now(), text: 'LIVESWITCH_INITIAL_TEXT' },
+              { kind: 'user', uuid: 'turn-liveswitch-2', ts: Date.now(), text: 'LIVESWITCH_NEW_SESSION_TEXT' },
+            ],
+            degraded: false,
+            sessions: [
+              { sessionId: 'sess-conv-liveswitch-old', agentName: 'Claude Code', startedAt: new Date().toISOString(), exitedAt: new Date().toISOString(), isolatedSwimlaneId: null, status: 'suspended' },
+              { sessionId: 'sess-conv-liveswitch-new', agentName: 'Claude Code', startedAt: new Date().toISOString(), exitedAt: null, isolatedSwimlaneId: null, status: 'running' },
+            ],
+          };
+        };
+      });
+
+      // The poll interval is 2500ms; a 10s timeout gives several ticks of margin.
+      await expect(page.getByText('LIVESWITCH_NEW_SESSION_TEXT')).toBeVisible({ timeout: 10_000 });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a duplicate uuid in the transcript is rendered once, not piled up as a stale overlapping row', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, 'sess-conv-dupuuid');
+      await expect(page.getByTestId('conversation-view')).toBeVisible({ timeout: 5000 });
+      // The unique middle turn confirms the view rendered.
+      await expect(page.getByText('DUPUUID_MIDDLE')).toBeVisible();
+
+      // The shared uuid appears on TWO entries in the response; the viewer must
+      // render exactly one row for it (keeping the first). Without the dedup
+      // guard, React would mount both under a colliding key, leaving two
+      // [data-turn-uuid] nodes for the same id (the pile-up that stacks rows).
+      await expect(page.locator('[data-turn-uuid="dup-uuid-shared"]')).toHaveCount(1);
+      // First occurrence wins, so its text is the first one, not the replay.
+      await expect(page.getByText('DUPUUID_FIRST')).toBeVisible();
+      await expect(page.getByText('DUPUUID_REPLAY')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a search hit that anchors on a leading slash-command turn scrolls to the content after it, not the command', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openConversation(page, 'sess-conv-cmdanchor');
+      await expect(page.getByText('CMDANCHOR_CONTENT')).toBeVisible();
+
+      // Drive the scroll-to-turn signal at the COMMAND turn, as a conversation
+      // search hit does when the matched chunk opens with "/code-review".
+      await page.evaluate(() => {
+        const stores = (window as unknown as {
+          __zustandStores?: { session: { getState: () => { setScrollToTurnUuid: (id: string) => void } } };
+        }).__zustandStores;
+        stores?.session.getState().setScrollToTurnUuid('turn-cmd');
+      });
+
+      // The highlight must land on the content turn AFTER the command, never on
+      // the command turn itself.
+      await expect
+        .poll(async () => page.locator('[data-turn-uuid="turn-after-cmd"] [data-highlighted="true"]').count())
+        .toBeGreaterThan(0);
+      await expect(page.locator('[data-turn-uuid="turn-cmd"] [data-highlighted="true"]')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
 });

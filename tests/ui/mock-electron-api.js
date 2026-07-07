@@ -2503,6 +2503,13 @@
 
     transcripts: {
       get: function (input) {
+        // Test hook: window.__mockTranscriptsGetOverride(input) => response | undefined,
+        // for a live-poll test where later calls must return different content
+        // than the first (a static transcriptSeeds entry can't vary per call).
+        if (typeof window !== 'undefined' && typeof window.__mockTranscriptsGetOverride === 'function') {
+          var overridden = window.__mockTranscriptsGetOverride(input);
+          if (overridden) return Promise.resolve(overridden);
+        }
         var seed = transcriptSeeds[input.sessionId];
         if (seed) return Promise.resolve(seed);
         // Default: nothing indexed / no native file for this session.

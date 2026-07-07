@@ -123,6 +123,120 @@ describe('parseClaudeTranscript', () => {
     expect(entries[3]).toMatchObject({ kind: 'assistant', blocks: [{ type: 'text', text: 'Two files found.' }] });
   });
 
+  it('captures per-turn token usage (raw component counts) on the assistant entry', async () => {
+    tmpFile = writeFixture([
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        timestamp: '2026-04-09T00:00:01Z',
+        message: {
+          id: 'msg_1',
+          model: 'claude-opus-4-6',
+          usage: {
+            input_tokens: 120,
+            output_tokens: 45,
+            cache_creation_input_tokens: 2000,
+            cache_read_input_tokens: 18000,
+          },
+          content: [{ type: 'text', text: 'Answer.' }],
+        },
+      },
+      {
+        // No usage object at all: the entry must simply omit `usage`.
+        type: 'assistant',
+        uuid: 'a2',
+        timestamp: '2026-04-09T00:00:02Z',
+        message: { id: 'msg_2', model: 'claude-opus-4-6', content: [{ type: 'text', text: 'No usage here.' }] },
+      },
+    ]);
+
+    const entries = await parseClaudeTranscript(tmpFile);
+    expect(entries[0]).toMatchObject({
+      kind: 'assistant',
+      usage: { inputTokens: 120, outputTokens: 45, cacheCreationInputTokens: 2000, cacheReadInputTokens: 18000 },
+    });
+    expect(entries[1].kind).toBe('assistant');
+    if (entries[1].kind === 'assistant') expect(entries[1].usage).toBeUndefined();
+  });
+
+  it('attributes a message id\'s usage to a single turn, so a message split across lines is not double-counted', async () => {
+    tmpFile = writeFixture([
+      {
+        type: 'assistant',
+        uuid: 'a1',
+        timestamp: '2026-04-09T00:00:01Z',
+        message: {
+          id: 'msg_shared',
+          model: 'claude-opus-4-6',
+          usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+          content: [{ type: 'text', text: 'First part.' }],
+        },
+      },
+      {
+        // Same message id (a streamed continuation): its usage must NOT be
+        // attached again, or a burn-rate sum would count this turn twice.
+        type: 'assistant',
+        uuid: 'a2',
+        timestamp: '2026-04-09T00:00:02Z',
+        message: {
+          id: 'msg_shared',
+          model: 'claude-opus-4-6',
+          usage: { input_tokens: 10, output_tokens: 5, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+          content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }],
+        },
+      },
+    ]);
+
+    const entries = await parseClaudeTranscript(tmpFile);
+    expect(entries[0]).toMatchObject({ kind: 'assistant', usage: { inputTokens: 10, outputTokens: 5 } });
+    expect(entries[1].kind).toBe('assistant');
+    if (entries[1].kind === 'assistant') expect(entries[1].usage).toBeUndefined();
+  });
+
+  it('keeps usage on the text turn when an extended-thinking turn leads with a dropped empty-thinking line (same message id)', async () => {
+    // Real high-effort shape (captured from a live Claude session): one turn is
+    // written as two JSONL lines under ONE message id - a thinking-only line
+    // (persisted thinking is empty/signature-only, so the parser drops it) then
+    // the text line. Both lines carry identical usage. The usage must land on the
+    // emitted text entry; if it were claimed by the dropped thinking line, the
+    // text entry would be deduped out of its own usage and the whole turn's
+    // per-turn tokens would vanish from the ledger.
+    tmpFile = writeFixture([
+      {
+        type: 'assistant',
+        uuid: 'think-line',
+        timestamp: '2026-04-09T00:00:01Z',
+        message: {
+          id: 'msg_thinking_turn',
+          model: 'claude-sonnet-5',
+          usage: { input_tokens: 2, output_tokens: 49, cache_creation_input_tokens: 4138, cache_read_input_tokens: 81395 },
+          // Empty (signature-only) thinking block: dropped, so this line emits nothing.
+          content: [{ type: 'thinking', thinking: '', signature: 'enc' }],
+        },
+      },
+      {
+        type: 'assistant',
+        uuid: 'text-line',
+        timestamp: '2026-04-09T00:00:01Z',
+        message: {
+          id: 'msg_thinking_turn',
+          model: 'claude-sonnet-5',
+          usage: { input_tokens: 2, output_tokens: 49, cache_creation_input_tokens: 4138, cache_read_input_tokens: 81395 },
+          content: [{ type: 'text', text: 'Hello! What can I help you with?' }],
+        },
+      },
+    ]);
+
+    const entries = await parseClaudeTranscript(tmpFile);
+    // Only the text line produced an entry (the empty-thinking line was dropped).
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      kind: 'assistant',
+      uuid: 'text-line',
+      usage: { inputTokens: 2, outputTokens: 49, cacheCreationInputTokens: 4138, cacheReadInputTokens: 81395 },
+    });
+  });
+
   it('preserves non-empty thinking blocks but drops the empty signature-only blocks Claude actually persists', async () => {
     tmpFile = writeFixture([
       // Realistic shape: real Claude Code session JSONL only stores
@@ -368,22 +482,36 @@ describe('parseClaudeTranscript', () => {
     expect(entries[0]).toMatchObject({ kind: 'user', text: 'real prompt' });
   });
 
-  it('collapses a whole-message slash-command into a system command entry', async () => {
+  it('renders a whole-message slash-command as a plain user message showing just the command', async () => {
+    // A slash-command invocation is a user-role turn: show it as a message from
+    // You carrying "/exit", not a system divider and not the raw XML wrapper.
     tmpFile = writeFixture([
       { type: 'user', uuid: 'c', timestamp: '2026-06-12T00:00:00Z', message: { content: '<command-name>/exit</command-name>\n            <command-message>exit</command-message>\n            <command-args></command-args>' } },
     ]);
     const entries = await parseClaudeTranscript(tmpFile);
     expect(entries).toEqual([
-      { kind: 'system', uuid: 'c', ts: expect.any(Number), subtype: 'command', text: '/exit' },
+      { kind: 'user', uuid: 'c', ts: expect.any(Number), text: '/exit' },
     ]);
   });
 
-  it('includes command args in the system command label when present', async () => {
+  it('includes command args in the user-message command text when present', async () => {
     tmpFile = writeFixture([
       { type: 'user', uuid: 'c', timestamp: '2026-06-12T00:00:00Z', message: { content: '<command-name>/model</command-name>\n<command-args>opus</command-args>' } },
     ]);
     const entries = await parseClaudeTranscript(tmpFile);
-    expect(entries[0]).toMatchObject({ kind: 'system', subtype: 'command', text: '/model opus' });
+    expect(entries[0]).toMatchObject({ kind: 'user', text: '/model opus' });
+  });
+
+  it('cleans a slash-command when <command-message> leads (current Claude order), not just <command-name>-first', async () => {
+    // Real transcripts now emit the message block BEFORE the name block; the
+    // parser must not leave the raw XML wrapper as visible user text.
+    tmpFile = writeFixture([
+      { type: 'user', uuid: 'c', timestamp: '2026-06-12T00:00:00Z', message: { content: '<command-message>code-review</command-message> <command-name>/code-review</command-name>' } },
+    ]);
+    const entries = await parseClaudeTranscript(tmpFile);
+    expect(entries).toEqual([
+      { kind: 'user', uuid: 'c', ts: expect.any(Number), text: '/code-review' },
+    ]);
   });
 
   it('surfaces non-empty local-command-stdout and drops empty stdout', async () => {
@@ -439,7 +567,7 @@ describe('parseClaudeTranscript', () => {
       'assistant',  // text
       'assistant',  // tool_use
       'tool_result',
-      'system',     // /exit command
+      'user',       // /exit command - a user-role turn, shown as a plain "/exit" message
       'system',     // local-command-stdout
       'system',     // compact_boundary
       'system',     // isCompactSummary
@@ -451,7 +579,7 @@ describe('parseClaudeTranscript', () => {
     expect(markdown).not.toContain('<system-reminder>');
     expect(markdown).not.toContain('Base directory for this skill'); // isMeta dropped
     expect(markdown.match(/## Conversation compacted/g) ?? []).toHaveLength(2);
-    expect(markdown).toContain('`[command: /exit]`');
+    expect(markdown).toContain('/exit'); // the command, rendered as a user message
     expect(markdown).toContain('**Command output:**');
     expect(markdown).toContain('Goodbye!');
   });

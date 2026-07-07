@@ -314,7 +314,7 @@ For every session, a merged settings file is built at `.kangentic/sessions/<clau
    - Hooks from the worktree are skipped (may be stale leftovers)
 4. Inject `statusLine` config pointing to the status bridge script
 5. Inject event-bridge hooks into all registered hook points
-6. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode
+6. When the MCP server is attached, append `mcp__kangentic` to `permissions.allow` (append-if-absent) so kangentic's own tools never prompt in default mode. `--permission-mode auto` runs a SEPARATE natural-language classifier that does not honor `permissions.allow`, so a plain-language allow rule (`KANGENTIC_AUTO_MODE_ALLOW_RULE`) is also appended to `autoMode.allow` (seeded with `$defaults` when the array is absent, preserving the classifier's built-in rules) so a board-driven auto-mode session does not soft-deny Kangentic's own board/session tools
 7. Write merged file to session directory
 8. Pass `--settings <mergedSettingsPath>` to the CLI
 

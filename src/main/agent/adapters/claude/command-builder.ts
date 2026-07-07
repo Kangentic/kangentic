@@ -30,17 +30,38 @@ const STATUS_LINE_REFRESH_INTERVAL_SECONDS = 10;
  * see a permission prompt for Kangentic's own in-process tools in default /
  * acceptEdits mode, regardless of the project's committed settings.
  *
- * Allow rules cover default mode only. Plan mode does NOT honor allow rules;
- * plan-mode auto-approval of the read-only tools comes from their
- * `readOnlyHint` annotations (see src/main/agent/mcp-http/annotations.ts).
+ * Allow rules cover default/acceptEdits mode only. Plan mode does NOT honor
+ * allow rules; plan-mode auto-approval of the read-only tools comes from
+ * their `readOnlyHint` annotations (see src/main/agent/mcp-http/annotations.ts).
+ *
+ * `--permission-mode auto` ALSO does not honor this list: auto mode runs an
+ * entirely separate natural-language classifier (`autoMode.allow` /
+ * `soft_deny` / `hard_deny`, evaluated against a policy description, not a
+ * tool-name match - see https://code.claude.com/docs/en/auto-mode-config).
+ * Without an explicit `autoMode.allow` entry, a mutating kangentic tool
+ * (e.g. kangentic_move_task) falls through to the classifier's built-in
+ * defaults, which do not know Kangentic's own board tools are safe, and can
+ * soft-deny them - surfacing as a rejected tool call with nobody present in
+ * a headless, board-driven session to answer the resulting prompt. See
+ * KANGENTIC_AUTO_MODE_ALLOW_RULE below.
  */
 const KANGENTIC_MCP_ALLOW_RULE = 'mcp__kangentic';
+
+/**
+ * Auto-mode classifier allow rule for Kangentic's own MCP tools (see the
+ * KANGENTIC_MCP_ALLOW_RULE comment above for why this is needed separately
+ * from `permissions.allow`). Natural language, not a tool-name pattern - this
+ * is what the auto-mode classifier itself expects.
+ */
+const KANGENTIC_AUTO_MODE_ALLOW_RULE =
+  "Kangentic's own board and session tools (mcp__kangentic__*) are always allowed: they only read or mutate this local Kanban board's own state (tasks, columns, sessions) inside a project the user has already opened in Kangentic, never external systems or files outside the project.";
 
 /** Subset of Claude Code settings.json that we read/write. */
 interface ClaudeSettings {
   statusLine?: { type: string; command: string; refreshInterval?: number };
   hooks?: Record<string, ClaudeHookEntry[]>;
   permissions?: { allow?: string[]; deny?: string[] };
+  autoMode?: { environment?: string[]; allow?: string[]; soft_deny?: string[]; hard_deny?: string[] };
   [key: string]: unknown; // preserve unknown keys from user's settings
 }
 
@@ -358,6 +379,18 @@ export class CommandBuilder {
       const allowEntries = permissions.allow ?? [];
       if (!allowEntries.includes(KANGENTIC_MCP_ALLOW_RULE)) {
         merged.permissions = { ...permissions, allow: [...allowEntries, KANGENTIC_MCP_ALLOW_RULE] };
+      }
+
+      // Auto-mode's classifier is a separate rule set from `permissions.allow`
+      // (see KANGENTIC_MCP_ALLOW_RULE's comment). `$defaults` preserves the
+      // classifier's built-in allow rules; only add it when the allow array
+      // does not already exist, so a project's own `autoMode.allow` list
+      // (which may deliberately omit `$defaults`) is never altered, only
+      // appended to.
+      const autoMode = merged.autoMode ?? {};
+      const autoModeAllowEntries = autoMode.allow ?? ['$defaults'];
+      if (!autoModeAllowEntries.includes(KANGENTIC_AUTO_MODE_ALLOW_RULE)) {
+        merged.autoMode = { ...autoMode, allow: [...autoModeAllowEntries, KANGENTIC_AUTO_MODE_ALLOW_RULE] };
       }
     }
 
