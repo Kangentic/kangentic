@@ -2209,21 +2209,60 @@ describe('ActivityEngine', () => {
 
     it('the stale-thinking watchdog reset clears turnForcedByHeartbeat', () => {
       // The only watchdog hold reachable with turnForcedByHeartbeat=true via
-      // the real forceThinking(sessionId, true) API: forceThinking always sets
-      // turnActive=true alongside it, which matches only the stale-thinking
-      // predicate (turnActive, no pending tools/subagents/bg shells). The
-      // stuck-pending-tools and stuck-subagent holds both require
-      // turnActive===false, a combination forceThinking(true) cannot produce,
-      // so they are not driven here - they would need the same direct-seed
-      // workaround as the permission-resume case above, for the identical
-      // `state.turnForcedByHeartbeat = false;` reset line already pinned by
-      // this test.
+      // the real forceThinking(sessionId, true) API: forceThinking never
+      // touches pendingToolCount/subagentDepth, and its only production caller
+      // (SessionTelemetry.processStatusUpdate) gates on `state.activity ===
+      // 'idle'`, which itself requires pendingToolCount===0 and
+      // subagentDepth===0 - so a real forceThinking(true) call can never land
+      // with either counter already > 0. That leaves only the stale-thinking
+      // predicate (turnActive, no pending tools/subagents/bg shells) reachable
+      // here. The stuck-pending-tools and stuck-subagent holds are not driven
+      // by this test - see the two direct-seed tests below for the identical
+      // `state.turnForcedByHeartbeat = false;` reset line at those two sites.
       engine.initSession(SESSION_ID);
       engine.forceThinking(SESSION_ID, true);
       expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
       expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(true);
 
       vi.advanceTimersByTime(TEST_STALE_TIMEOUT_MS + 100);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(false);
+    });
+
+    it('the stuck-pending-tools watchdog reset clears turnForcedByHeartbeat (defensive - unreachable via the real API, see note above)', () => {
+      // pendingToolCount>0 with turnForcedByHeartbeat=true cannot arise from
+      // real callers (see the stale-thinking test above), because a real
+      // ToolStart is itself a turn-initiating event that clears
+      // turnForcedByHeartbeat in the same processEvent call, before
+      // incrementing pendingToolCount. Direct-seed the combination (same
+      // technique as the permission-resume test above) to pin the defensive
+      // `state.turnForcedByHeartbeat = false;` reset at the stuck-pending-tools
+      // hold - identical line to the tested stale-thinking reset, so a future
+      // refactor that drops it from only one site is still caught.
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Bash' }));
+      const state = engine.getState(SESSION_ID);
+      if (!state) throw new Error('expected session state after ToolStart');
+      state.turnForcedByHeartbeat = true;
+
+      vi.advanceTimersByTime(TEST_BG_SHELL_HATCH_MS + TEST_STABILITY_WINDOW_MS + 50);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(false);
+    });
+
+    it('the stuck-subagent watchdog reset clears turnForcedByHeartbeat (defensive - unreachable via the real API, see note above)', () => {
+      // Same rationale as the stuck-pending-tools test above: a real
+      // SubagentStart is turn-initiating and clears turnForcedByHeartbeat
+      // before subagentDepth increments, so this combination is direct-seeded
+      // to pin the defensive reset at the stuck-subagent hold.
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'Explore' }));
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStop, { detail: '' }));
+      const state = engine.getState(SESSION_ID);
+      if (!state) throw new Error('expected session state after SubagentStart/Stop');
+      state.turnForcedByHeartbeat = true;
+
+      vi.advanceTimersByTime(TEST_BG_SHELL_HATCH_MS + TEST_STABILITY_WINDOW_MS + 50);
       expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
       expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(false);
     });
