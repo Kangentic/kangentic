@@ -1,11 +1,14 @@
 /**
- * UI tests for the shared PR link affordance (PrLink / PrStateBadge).
+ * UI tests for the shared PR link affordance (PrLink / PrStateBadge) and its
+ * detail-header counterpart (the "View PR #N" kebab entry).
  *
  * Seeds a Code Review task with a linked, open PR and a running session (so the
- * detail dialog opens on TaskDetailHeader, not the edit form), then asserts both
- * surfaces that render the linked PR: the board card and the detail header. Each
- * must show the PR number, an `open` state badge (not inline text), a trailing
- * external-link icon, and an "Open PR #287 in browser" tooltip.
+ * detail dialog opens on TaskDetailHeader, not the edit form), then asserts the
+ * two surfaces that let a user open the linked PR: the board card's PrLink badge
+ * (PR number, an `open` state badge, a trailing external-link icon, and an "Open
+ * PR #287 in browser" tooltip) and the detail header's `...` kebab "View PR #287"
+ * entry (which opens the same URL). The header's compact icon bar itself has no
+ * PR pill - that affordance is intentionally only on the card and in the kebab.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -127,7 +130,7 @@ test.describe('PR link: state badge and clickable affordance', () => {
     await expect(prLink).toHaveAttribute('title', 'Open PR #287 in browser');
   });
 
-  test('detail header shows the same PR badge and affordance', async () => {
+  test('detail header has no PR pill; the kebab "View PR" entry opens the same URL', async () => {
     const card = page
       .locator('[data-swimlane-name="Code Review"]')
       .locator('text=PR Link Task')
@@ -137,12 +140,33 @@ test.describe('PR link: state badge and clickable affordance', () => {
     const dialog = page.locator('[data-testid="task-detail-dialog"]');
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
-    const prPill = page.locator('[data-testid="pr-pill"]');
-    await expect(prPill).toBeVisible();
-    await expect(prPill).toContainText('PR #287');
-    await expect(prPill.locator('[data-testid="pr-state-badge"]')).toHaveText('open');
-    await expect(prPill.locator('.lucide-external-link')).toBeVisible();
-    await expect(prPill).toHaveAttribute('title', 'Open PR #287 in browser');
+    // The compact icon bar itself has no PR pill; that affordance lives only on
+    // the card and in the overflow kebab.
+    await expect(page.locator('[data-testid="pr-pill"]')).toHaveCount(0);
+
+    await page.evaluate(() => {
+      window.__openedExternalUrls = [];
+      window.electronAPI.shell.openExternal = async (url: string) => {
+        window.__openedExternalUrls?.push(url);
+      };
+    });
+
+    await dialog.locator('[title="Actions"]').click();
+    const viewPrItem = page.getByRole('button', { name: 'View PR #287' });
+    await expect(viewPrItem).toBeVisible();
+    await viewPrItem.click();
+
+    await expect
+      .poll(() => page.evaluate(() => window.__openedExternalUrls))
+      .toEqual(['https://github.com/owner/repo/pull/287']);
+
+    // Restore the mock's default no-op so this patch does not leak into later
+    // tests on the shared page (matches mock-electron-api.js shell.openExternal).
+    await page.evaluate(() => {
+      window.electronAPI.shell.openExternal = async () => {
+        return;
+      };
+    });
 
     // Close the dialog so state does not leak to other tests.
     // Use Control+Shift+W (capture-phase) rather than Escape: the task-detail

@@ -6,7 +6,6 @@ import { useFormattedCombo } from '../../../hooks/useKeybinding';
 import { getSwimlaneIcon } from '../../../utils/swimlane-icons';
 import { ICON_REGISTRY } from '../../../utils/swimlane-icons';
 import { HeaderActionButton } from '../../HeaderActionButton';
-import { PrLink } from '../../PrLink';
 import { IsolatedBadge } from '../../IsolatedBadge';
 import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../../KebabMenu';
 import { CommandSearchList } from './CommandSearchList';
@@ -246,7 +245,7 @@ export function TaskDetailHeader({
   // Quick-access pills, highest priority collapses LAST. The title is reserved only
   // up to a ~50ch floor (useHeaderPillOverflow); these compete for whatever is left
   // above the floor. Among the built-in defaults the order is Conversation ->
-  // Browser -> PR -> Changes -> Folder (Conversation drops first). Custom header
+  // Browser -> Changes -> Folder (Conversation drops first). Custom header
   // shortcuts rank LOWEST (priority 10), so they fold BEFORE any built-in default -
   // an unbounded number of shortcuts can never bury the defaults. A folded pill /
   // header shortcut that is not already a menu item folds into the kebab (Commands,
@@ -256,14 +255,13 @@ export function TaskDetailHeader({
     const specs: HeaderPillSpec[] = [];
     if (task.worktree_path || projectPath) specs.push({ id: 'folder', priority: 40 });
     if (canShowChanges) specs.push({ id: 'changes', priority: 30 });
-    if (task.pr_url) specs.push({ id: 'pr', priority: 25 });
     if (canShowBrowser) specs.push({ id: 'browser', priority: 20 });
     specs.push({ id: 'conversation', priority: 18 });
     for (const action of headerShortcuts) {
       specs.push({ id: `shortcut:${action.id ?? action.label}`, priority: 10 });
     }
     return specs;
-  }, [task.worktree_path, task.pr_url, projectPath, canShowChanges, canShowBrowser, headerShortcuts]);
+  }, [task.worktree_path, projectPath, canShowChanges, canShowBrowser, headerShortcuts]);
 
   const hiddenPillIds = useHeaderPillOverflow(headerRef, leadingRef, trailingRef, titleSpanRef, pillsRef, pillSpecs);
   const showPill = (id: string) => !hiddenPillIds.has(id);
@@ -375,18 +373,6 @@ export function TaskDetailHeader({
                 title={task.worktree_path ? 'Open Worktree' : 'Open Folder'}
                 ariaLabel={task.worktree_path ? 'Open worktree folder' : 'Open project folder'}
                 testId="branch-pill"
-              />
-            </div>
-          )}
-
-          {/* PR pill */}
-          {showPill('pr') && task.pr_url && (
-            <div data-pill-id="pr" className="flex-shrink-0">
-              <PrLink
-                prUrl={task.pr_url}
-                prNumber={task.pr_number}
-                prState={task.pr_state}
-                testId="pr-pill"
               />
             </div>
           )}
