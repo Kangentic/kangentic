@@ -1,6 +1,5 @@
 ---
 description: Version bump, changelog, tag, and push release
-disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*), Agent
 argument-hint: [patch|minor|major]
 ---
@@ -19,10 +18,6 @@ Release pipeline: version bump, changelog generation, git tag, and push to trigg
 **Release type (optional):** $ARGUMENTS
 
 This command does NOT use `/merge-back`. The release flow is fundamentally different: no rebase, creates tags, and pushes to main directly.
-
-**This skill performs irreversible, public actions** (a git tag plus a push that triggers
-`release.yml`). Do not skip the confirmation gates: the bump-type confirmation (Step 0) and the
-pre-push confirmation (Step 4.5).
 
 ## Step 0 -- Determine Bump Type
 
@@ -165,21 +160,6 @@ Generate a concise, user-friendly summary for the GitHub Release draft body. Thi
    chore(release): vX.Y.Z
    ```
 3. Commit: `git commit -F .kangentic/COMMIT_MSG.tmp`
-
-## Step 4.5 -- Confirm Release (irreversible)
-
-This is the last reversible point: the release commit exists locally but nothing is public yet.
-This gate applies to every invocation path (a human-typed `/release` or the board's
-`autoCommand: /release`) - even an auto-injected invocation pauses here.
-
-1. Show the user: the version (vX.Y.Z), the tag that will be created, the number of commits
-   included, and that pushing the tag triggers `release.yml` (builds platform artifacts and
-   creates a public draft GitHub Release).
-2. Ask: "Tag and push vX.Y.Z? This creates a public release and cannot be undone.
-   [confirm/cancel]"
-3. **On confirm:** proceed to Step 5.
-4. **On cancel:** STOP. Report that the release commit is local-only, no tag was created, and
-   nothing was pushed. Do not tag, do not push.
 
 ## Step 5 -- Tag
 

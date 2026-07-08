@@ -237,7 +237,6 @@ session; rules with one load when you touch matching files. Each rule names its 
 - `browser-automation-driver.md` - the shipped CDP driver is singular and ships; every `kangentic_browser_*` tool routes through `withGuest`; no `src/devtools/` import from shipped code (`src/main/browser/`).
 - `mcp-tool-list-parity.md` - every MCP tool registered under `src/main/agent/mcp-http/*-tools.ts` stays in sync with `MCP_TOOL_MANIFEST` (the settings panel's source) and `docs/mcp-server.md` (`src/main/agent/mcp-http/`, `src/shared/mcp-tool-manifest.ts`).
 - `central-embedding-engine.md` - only `embed-engine.ts` embeds; lifecycle/IPC call sites index and `markDirty()`, never embed inline (`src/main/retrieval/**`, `src/main/ipc/handlers/**`).
-- `release-explicit-only.md` - release actions (version bump, changelog entry, tag, push tags) only inside an explicit `/release` invocation (`.claude/skills/release/`, `kangentic.json`).
 
 **Local overrides:** there is no per-rule local file. Put machine-specific instruction
 overrides in a gitignored `CLAUDE.local.md` at the project root.
