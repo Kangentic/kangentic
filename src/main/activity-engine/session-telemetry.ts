@@ -389,12 +389,20 @@ export class SessionTelemetry {
     // hook-authoritative - preserving its real job (waking a fallback/watchdog
     // idle whose agent is actually generating) while ignoring housekeeping on a
     // session the agent explicitly told us was done.
+    //
+    // `forceThinking(sessionId, true)`: this is the ONLY caller that passes
+    // `forcedByHeartbeat=true`, recording that the resulting `turnActive` has NO
+    // turn-hook confirmation (e.g. a `--resume` resume-picker reload, which
+    // fires no turn hooks and so can never later produce an `idle_hint`). The
+    // stale-thinking watchdog reads this provenance to narrow its anchor to
+    // `signal` for this turn too - closing the residual PTY-repaint pin a
+    // hook-less parked turn would otherwise hold indefinitely (task #364).
     if (previousUsage && state.activity === 'idle' && !state.idleAuthoritative) {
       const previousOutputTokens = previousUsage.contextWindow.totalOutputTokens;
       const currentOutputTokens = usage.contextWindow.totalOutputTokens;
       const idleStart = state.idleTimestamp;
       if (currentOutputTokens > previousOutputTokens && idleStart && (Date.now() - idleStart) > 1000) {
-        this.activityEngine.forceThinking(sessionId);
+        this.activityEngine.forceThinking(sessionId, true);
       }
     }
   }

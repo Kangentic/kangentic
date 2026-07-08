@@ -25,7 +25,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { ActivityEngine } from '../../src/main/activity-engine/engine';
+import { ActivityEngine, DEFAULT_STALE_THINKING_TIMEOUT_MS } from '../../src/main/activity-engine/engine';
 import type { TransitionRecord, ActivityStatsSnapshot } from '../../src/main/activity-engine/engine';
 import type { ActivityState, SessionEvent } from '../../src/shared/types';
 
@@ -123,8 +123,12 @@ function mergeStreams(bundle: TraceBundle): TimedItem[] {
  * force-recover to thinking, but ONLY when the idle is not hook-authoritative
  * (background housekeeping must not re-wake a parked agent). Output only, never
  * input: Claude's input total is context-window occupancy that climbs while
- * parked with no generation (see the production comment). If the production rule
- * changes, update this function.
+ * parked with no generation (see the production comment). The `true` on
+ * `forceThinking` records heartbeat provenance (`turnForcedByHeartbeat`, task
+ * #364): this is the ONLY caller in production that passes it, so the mirror
+ * must too or a replayed resume-picker turn would never exercise the
+ * provenance-narrowed stale-thinking anchor. If the production rule changes,
+ * update this function.
  */
 function applyStatusDelta(
   engine: ActivityEngine,
@@ -143,7 +147,7 @@ function applyStatusDelta(
   if (state.activity === 'idle' && !state.idleAuthoritative && previous) {
     const idleStart = state.idleTimestamp;
     if (current.outputTokens > previous.outputTokens && idleStart && Date.now() - idleStart > 1000) {
-      engine.forceThinking(sessionId);
+      engine.forceThinking(sessionId, true);
     }
   }
 }
@@ -452,15 +456,20 @@ describe('ActivityEngine trace-bundle replay', () => {
   // later). While the reload summary generated, status.json output grew and the
   // heartbeat correctly force-thinked (idle -> thinking, forceThinking: 1). Then
   // the reload finished and Claude parked with NO Stop/idle_hint to clear
-  // turnActive. Pre-fix the parked-TUI statusline rewrote status.json every ~10s
+  // turnActive. Pre-#331 the parked-TUI statusline rewrote status.json every ~10s
   // and each write re-warmed lastSignalAt (thinking && !idleHintPending ->
   // markThinkingSignal), starving the 180s stale-thinking watchdog so the card
-  // pinned ACTIVE indefinitely. The fix gates keep-warm on OUTPUT-token growth:
+  // pinned ACTIVE indefinitely. #331 gates keep-warm on OUTPUT-token growth:
   // frozen-output churn (output stuck at 1144) stops re-warming, so once the
   // parked-statusline PTY chunks fall silent for >180s the signal-or-pty-output
-  // anchor freezes and stale-thinking self-heals to idle. Pre-fix
+  // anchor freezes and stale-thinking self-heals to idle. Pre-#331
   // (keep-warm gated on !idleHintPending only) this replays staleThinking: 0
-  // (the churn re-warms lastSignalAt for the whole parked window).
+  // (the churn re-warms lastSignalAt for the whole parked window). Post-#364 this
+  // bundle ALSO heals via the provenance-narrowed `signal` anchor (turnActive is
+  // heartbeat-forced, so the net no longer needs the PTY-quiet gap at all) -
+  // earlier than the pre-#364 PTY-quiet-gap path, but the assertions below don't
+  // pin exact timing, so they stay green either way. See session-022 for the
+  // chatty-TUI case #331 left open (indefinite pin absent a PTY-quiet gap).
   describe('session-021-false-active-resume-picker', () => {
     let result: ReplayResult;
     beforeEach(() => {
@@ -502,6 +511,71 @@ describe('ActivityEngine trace-bundle replay', () => {
     });
 
     it('settles idle after the trailing real turn ends cleanly', () => {
+      expect(result.finalActivity).toBe('idle');
+    });
+  });
+
+  // Reconstructed for task #364 (session d1d25784 / task #290, the residual leg
+  // #331 left open): a --resume 'full session' launch runs the resume-picker
+  // context-reload (session_start source=resume, no turn hooks). The heartbeat
+  // force-thinks once on the reload's output growth (forceThinking: 1,
+  // provenance recorded via forceThinking(sessionId, true)). Then Claude parks
+  // with NO idle_hint (a hook-less turn can never fire one), and the parked TUI
+  // keeps repainting its statusline every 10s with NO gap ever exceeding 180s -
+  // the chatty-TUI case #331 left open. Pre-#364 the stale-thinking anchor stays
+  // signal-or-pty-output, so the continuous repaints keep lastPtyOutputAt fresh
+  // and the 180s net NEVER fires: the card pins ACTIVE indefinitely
+  // (staleThinking: 0, finalActivity 'thinking'). Post-#364 the heartbeat's
+  // provenance flag (turnForcedByHeartbeat) narrows the anchor to `signal`
+  // (lastSignalAt only, which froze the moment output stopped growing), so the
+  // net fires ~180s after output froze regardless of the continuing PTY
+  // repaints.
+  describe('session-022-false-active-repainting-past-180s', () => {
+    let result: ReplayResult;
+    beforeEach(() => {
+      const bundle = loadTraceBundle(
+        path.join(FIXTURES_DIR, 'session-022-false-active-repainting-past-180s'),
+      );
+      result = replayBundle(bundle);
+    });
+
+    it('force-thinks once on the resume-summary output growth (the genuine flip is preserved)', () => {
+      // Guards against over-fixing: the heartbeat SHOULD wake the reload turn
+      // (real output growth); only the parked keep-warm/anchor afterwards is
+      // the bug.
+      expect(result.compensationCounters.forceThinking).toBe(1);
+    });
+
+    it('self-heals the parked turn to idle via the stale-thinking watchdog despite continuous PTY repaints', () => {
+      // The reliable signal: pre-#364 this is 0 (the continuous repaints keep
+      // lastPtyOutputAt fresh under the signal-or-pty-output anchor, so the net
+      // never fires - the indefinite pin); post-#364 it is 1 (the
+      // provenance-narrowed `signal` anchor ignores the repaints once output
+      // froze).
+      expect(result.compensationCounters.staleThinking).toBe(1);
+    });
+
+    it('fires the stale-thinking net ~180s after output froze, not after the last PTY repaint', () => {
+      const staleIdles = result.transitions.filter(
+        (transition) =>
+          transition.from === 'thinking'
+          && transition.to === 'idle'
+          && transition.trigger === 'timer:stale-thinking',
+      );
+      expect(staleIdles).toHaveLength(1);
+      // Output froze at the growth delta's ts (fixture: status-deltas.jsonl line 2).
+      const outputFrozeAtTs = 1783515975712;
+      expect(staleIdles[0].ts).toBe(outputFrozeAtTs + DEFAULT_STALE_THINKING_TIMEOUT_MS);
+      // Frozen-output churn after the heal must not force-think it back active.
+      const staleIdleTs = staleIdles[0].ts;
+      const laterForceThinks = result.transitions.filter(
+        (transition) =>
+          transition.trigger === 'force-thinking' && transition.ts > staleIdleTs,
+      );
+      expect(laterForceThinks).toEqual([]);
+    });
+
+    it('settles idle, not pinned active by the chatty parked TUI', () => {
       expect(result.finalActivity).toBe('idle');
     });
   });

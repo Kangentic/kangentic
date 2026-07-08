@@ -2127,6 +2127,108 @@ describe('ActivityEngine', () => {
     });
   });
 
+  // Task #364: turnForcedByHeartbeat records provenance for the ONE caller
+  // that can never produce a hook - status-heartbeat recovery. While it is
+  // true, the stale-thinking watchdog narrows its anchor to `signal`
+  // (ignoring lastPtyOutputAt, see believedParked in watchdogBaseTime). Every
+  // real turn-confirmation / turn-end path must clear it back to false, or a
+  // genuinely-active resumed turn keeps the narrowed anchor and risks being
+  // force-idled early (the #246 long-tool-less-generation regression class).
+  describe('turn-forced-by-heartbeat provenance (turnForcedByHeartbeat)', () => {
+    it('forceThinking(sessionId, true) sets turnForcedByHeartbeat; the default (no 2nd arg) leaves it false', () => {
+      // The status-heartbeat caller is the ONLY caller that passes true. The
+      // PTY tracker's forceThinking(sessionId) call (no 2nd arg) must NOT
+      // narrow the stale-thinking anchor - it already has its own
+      // lastPtyOutputAt liveness signal (task #364).
+      engine.initSession(SESSION_ID);
+      engine.forceThinking(SESSION_ID);
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(false);
+
+      engine.forceThinking(SESSION_ID, true);
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(true);
+    });
+
+    it('a turn-initiating event (Prompt) clears turnForcedByHeartbeat (a real turn hook confirms the turn)', () => {
+      engine.initSession(SESSION_ID);
+      engine.forceThinking(SESSION_ID, true);
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(true);
+
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(false);
+    });
+
+    it('a depth-0 Idle (real Stop hook) clears turnForcedByHeartbeat', () => {
+      engine.initSession(SESSION_ID);
+      engine.forceThinking(SESSION_ID, true);
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(true);
+
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(false);
+    });
+
+    it('an idle_hint that ends the turn clears turnForcedByHeartbeat', () => {
+      engine.initSession(SESSION_ID);
+      engine.forceThinking(SESSION_ID, true); // turnActive=true, nothing else holds
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(true);
+
+      engine.processEvent(SESSION_ID, event(EventType.IdleHint, { detail: 'Claude is waiting for your input' }));
+      // Cleared immediately, before the deferred stability-window idle commits
+      // (same "set the instant the hook clears the turn" contract as
+      // idleAuthoritative above).
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(false);
+    });
+
+    it('the permission-resume tool_end path clears turnForcedByHeartbeat', () => {
+      // turnForcedByHeartbeat=true cannot co-occur with permissionPending=true
+      // through real production callers (forceThinking(true) unconditionally
+      // clears permissionPending in the same call), so this seeds the field
+      // directly on the state to pin the defensive reset at the
+      // permission-resume clear site (activity-engine.ts, the
+      // before.permissionPending && !state.permissionPending branch)
+      // independent of how the flag got set.
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'AskUserQuestion' }));
+      engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission }));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('permission');
+      const permissionState = engine.getState(SESSION_ID);
+      if (!permissionState) throw new Error('expected session state after permission Idle');
+      permissionState.turnForcedByHeartbeat = true;
+
+      engine.processEvent(SESSION_ID, event(EventType.ToolEnd, { tool: 'AskUserQuestion' }));
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(false);
+    });
+
+    it('forceIdle clears turnForcedByHeartbeat', () => {
+      engine.initSession(SESSION_ID);
+      engine.forceThinking(SESSION_ID, true);
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(true);
+
+      engine.forceIdle(SESSION_ID);
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(false);
+    });
+
+    it('the stale-thinking watchdog reset clears turnForcedByHeartbeat', () => {
+      // The only watchdog hold reachable with turnForcedByHeartbeat=true via
+      // the real forceThinking(sessionId, true) API: forceThinking always sets
+      // turnActive=true alongside it, which matches only the stale-thinking
+      // predicate (turnActive, no pending tools/subagents/bg shells). The
+      // stuck-pending-tools and stuck-subagent holds both require
+      // turnActive===false, a combination forceThinking(true) cannot produce,
+      // so they are not driven here - they would need the same direct-seed
+      // workaround as the permission-resume case above, for the identical
+      // `state.turnForcedByHeartbeat = false;` reset line already pinned by
+      // this test.
+      engine.initSession(SESSION_ID);
+      engine.forceThinking(SESSION_ID, true);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(true);
+
+      vi.advanceTimersByTime(TEST_STALE_TIMEOUT_MS + 100);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getState(SESSION_ID)?.turnForcedByHeartbeat).toBe(false);
+    });
+  });
+
   // Task #294 part 2 (defense-in-depth): once the agent reports waiting-for-input
   // (idle_hint), parked-TUI statusline repaints (PTY bytes) must stop deferring
   // the stale-thinking net, so a stuck turnActive self-heals at 180s. A live
@@ -2156,8 +2258,8 @@ describe('ActivityEngine', () => {
       driveToStuckTurnWithIdleHint(localEngine);
 
       // Statusline repaints stream PTY bytes more frequently than the stale
-      // window. RED before the idleHintAnchor change: signal-or-pty-output keeps
-      // deferring it (staleThinking 0, stuck thinking forever).
+      // window. RED before the parkedAnchor change (#294): signal-or-pty-output
+      // keeps deferring it (staleThinking 0, stuck thinking forever).
       const stepMs = 200;
       for (let elapsed = 0; elapsed < TEST_STALE_TIMEOUT_MS + 400; elapsed += stepMs) {
         vi.advanceTimersByTime(stepMs);

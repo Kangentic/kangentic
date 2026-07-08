@@ -17,9 +17,11 @@ import type { SessionEngineState, TransitionTrigger } from './shapes';
  *   turn is held by a foreground tool (stuck-pending-tools), a subagent
  *   (stuck-subagent), or tool-less generation (stale-thinking).
  * - `signal`: `lastSignalAt` only. Used by stale-thinking as its
- *   `idleHintAnchor` (active while `idleHintPending`): once the agent reports
- *   waiting-for-input, parked-TUI statusline repaints stream PTY bytes that
- *   must NOT defer the 180s net, so it ignores `lastPtyOutputAt`.
+ *   `parkedAnchor` (active while the agent is BELIEVED parked -
+ *   `idleHintPending`, or `turnForcedByHeartbeat` for a hook-less resume turn
+ *   that can never fire an idle_hint, task #364): once the agent is believed
+ *   parked, parked-TUI statusline repaints stream PTY bytes that must NOT
+ *   defer the 180s net, so it ignores `lastPtyOutputAt`.
  */
 export type WatchdogAnchor =
   | 'bg-shell-hold-since'
@@ -69,16 +71,19 @@ export interface WatchdogHold {
    */
   anchor: WatchdogAnchor;
   /**
-   * Optional anchor used INSTEAD of `anchor` while `state.idleHintPending` is
-   * set (parallel to `idleHintThresholdMs` for the threshold). Only stale-thinking
-   * sets it (`'signal'`): once the agent reports waiting-for-input, parked-TUI
-   * statusline repaints (PTY bytes) must stop deferring the 180s net, so the
-   * hold ignores `lastPtyOutputAt` and anchors to `lastSignalAt` alone. A live
-   * long-generation turn never fires `idle_hint`, so its anchor stays
+   * Optional anchor used INSTEAD of `anchor` while the agent is BELIEVED
+   * parked - `state.idleHintPending` OR `state.turnForcedByHeartbeat` (parallel
+   * to `idleHintThresholdMs` for the threshold, but broader: a hook-less resume
+   * turn is genuinely parked yet can never fire an `idle_hint`, task #364). Only
+   * stale-thinking sets it (`'signal'`): once the agent is believed parked,
+   * parked-TUI statusline repaints (PTY bytes) must stop deferring the 180s net,
+   * so the hold ignores `lastPtyOutputAt` and anchors to `lastSignalAt` alone. A
+   * live long-generation turn never fires `idle_hint` and is never
+   * heartbeat-forced (it is thinking via a real turn hook), so its anchor stays
    * `signal-or-pty-output` and the PTY anchor still defers it (#246). Undefined
    * holds always use `anchor`.
    */
-  idleHintAnchor?: WatchdogAnchor;
+  parkedAnchor?: WatchdogAnchor;
   /** Mutates state to clear the stuck holder. Called once threshold fires. */
   reset(state: SessionEngineState): void;
   /**
@@ -218,6 +223,7 @@ export function buildWatchdogHolds(config: WatchdogConfig): readonly WatchdogHol
         // PostToolUse, so leaving turnActive set would leave the
         // session stuck even after the tools clear.
         state.turnActive = false;
+        state.turnForcedByHeartbeat = false;
       },
       applyStabilityWindow: true,
     },
@@ -236,15 +242,19 @@ export function buildWatchdogHolds(config: WatchdogConfig): readonly WatchdogHol
       // at the threshold. A blinking cursor is xterm-rendered terminal state,
       // not PTY data, so it never calls `markPtyOutput` and cannot defer it.
       //
-      // Exception: once the agent reports waiting-for-input (`idleHintPending`),
-      // even genuine statusline-repaint PTY bytes are noise, not liveness - a
-      // parked Claude TUI repaints its rate-limit/context meter forever, which
-      // is exactly what kept this net blinded past 180s (task #294). So while an
-      // idle_hint is pending the anchor narrows to `signal` (lastSignalAt only),
-      // ignoring `lastPtyOutputAt`; with the heartbeat's `markThinkingSignal`
-      // gated off under the same condition, lastSignalAt freezes at the last
-      // genuine hook and the net self-heals. A live long-generation turn never
-      // idle-hints, so it keeps the PTY anchor (#246).
+      // Exception: once the agent is BELIEVED parked (`idleHintPending`, OR
+      // `turnForcedByHeartbeat` - a hook-less resume-picker turn that can never
+      // fire an idle_hint, task #364), even genuine statusline-repaint PTY bytes
+      // are noise, not liveness - a parked Claude TUI repaints its
+      // rate-limit/context meter forever, which is exactly what kept this net
+      // blinded past 180s (task #294, and via the heartbeat-only path, #364). So
+      // while believed-parked the anchor narrows to `signal` (lastSignalAt
+      // only), ignoring `lastPtyOutputAt`; with the heartbeat's
+      // `markThinkingSignal` gated off under the same condition (and its
+      // output-growth gate, task #331), lastSignalAt freezes at the last genuine
+      // hook / output growth and the net self-heals. A live long-generation turn
+      // never idle-hints and is never heartbeat-forced (it is thinking via a
+      // real turn hook), so it keeps the PTY anchor (#246).
       predicate: (state) =>
         state.turnActive
         && state.pendingToolCount === 0
@@ -254,9 +264,10 @@ export function buildWatchdogHolds(config: WatchdogConfig): readonly WatchdogHol
       thresholdMs: config.staleThinkingTimeoutMs,
       trigger: 'timer:stale-thinking',
       anchor: 'signal-or-pty-output',
-      idleHintAnchor: 'signal',
+      parkedAnchor: 'signal',
       reset: (state) => {
         state.turnActive = false;
+        state.turnForcedByHeartbeat = false;
       },
       applyStabilityWindow: false,
     },
@@ -294,6 +305,7 @@ export function buildWatchdogHolds(config: WatchdogConfig): readonly WatchdogHol
         // the parent's own Stop, so clear turnActive too - otherwise the
         // predicate would still read thinking after depth zeroes.
         state.turnActive = false;
+        state.turnForcedByHeartbeat = false;
       },
       applyStabilityWindow: true,
     },

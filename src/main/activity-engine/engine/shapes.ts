@@ -349,6 +349,28 @@ export interface SessionEngineState {
    */
   idleAuthoritative: boolean;
   /**
+   * Provenance of the CURRENT `turnActive=true`: true iff it was set by the
+   * status-heartbeat's `forceThinking(sessionId, true)` (output-token growth
+   * while idle, e.g. a `--resume` resume-picker context-reload, which fires NO
+   * turn hooks) and has not since been confirmed by a real turn-initiating hook.
+   * False for a hook-confirmed turn (`TURN_INITIATING_EVENTS`, permission-resume)
+   * and for a PTY-tracker-forced turn (non-hooks agents), and reset false on
+   * every turn-end, turn-ending watchdog reset, and `forceIdle` (the bg-shell
+   * hatches leave it untouched - their predicate already requires `!turnActive`,
+   * so it is `false` by the time they fire).
+   *
+   * Read by `watchdogBaseTime`: the stale-thinking hold's `signal` narrow-anchor
+   * (which makes the 180s net ignore parked-TUI PTY repaints) engages while
+   * EITHER `idleHintPending` OR this flag is set - the latter covers a hook-less
+   * resume turn that can never fire an `idle_hint` (task #364). With the
+   * heartbeat's output-growth-gated keep-warm (`markThinkingSignal`, task #331),
+   * `lastSignalAt` stays fresh while output grows and freezes the moment it
+   * stops, so the narrowed anchor still self-heals ~180s after output froze
+   * rather than ~180s after the last PTY repaint. Only meaningful while
+   * `turnActive` is true.
+   */
+  turnForcedByHeartbeat: boolean;
+  /**
    * Pending stability-window idle. When non-null, an idle transition
    * is scheduled to commit at this wall-clock ms. A thinking signal
    * arriving before then cancels it.

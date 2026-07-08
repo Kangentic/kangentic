@@ -231,6 +231,9 @@ export class ActivityEngine {
 
     if (TURN_INITIATING_EVENTS.has(event.type)) {
       state.turnActive = true;
+      // A real turn hook confirms the turn - it is no longer merely
+      // heartbeat-forced (task #364).
+      state.turnForcedByHeartbeat = false;
       // A fresh thinking signal cancels any pending stability-window idle.
       state.pendingIdleAt = null;
       // Genuine new work invalidates any earlier "waiting for input" hint, so
@@ -256,6 +259,7 @@ export class ActivityEngine {
         || state.subagentDepth === 0
       ) {
         state.turnActive = false;
+        state.turnForcedByHeartbeat = false;
         // The agent told us the turn ended (a real Idle / Interrupted /
         // TurnFailed hook), so the resulting idle is hook-authoritative - the
         // heartbeat recovery must NOT later force-think it on background
@@ -285,6 +289,7 @@ export class ActivityEngine {
         // through the normal stability window - instead of waiting out the 180s
         // stale-thinking watchdog because the Stop/Idle hook was dropped.
         state.turnActive = false;
+        state.turnForcedByHeartbeat = false;
         // The agent reported it is waiting for input AND nothing else holds the
         // turn, so this idle is hook-authoritative (same provenance as a real
         // Idle hook): the heartbeat recovery must not force-think it.
@@ -305,6 +310,7 @@ export class ActivityEngine {
       && !TURN_ENDING_EVENTS.has(event.type)
     ) {
       state.turnActive = true;
+      state.turnForcedByHeartbeat = false;
       state.pendingIdleAt = null;
     }
 
@@ -360,12 +366,20 @@ export class ActivityEngine {
    * data while idle) and heartbeat recovery (status.json tokens-up
    * while idle). Sets `turnActive=true` to match the semantics of an
    * external "agent is alive" signal.
+   *
+   * `forcedByHeartbeat` records provenance on `turnForcedByHeartbeat`: true only
+   * for the status-heartbeat caller (its turn fired no turn-initiating hook, so
+   * it can never produce an `idle_hint` when it parks - task #364). The PTY
+   * tracker's callers leave it false, since a non-hooks agent already anchors
+   * the stale-thinking hold on its own `lastPtyOutputAt` liveness signal and
+   * must not have that anchor narrowed away.
    */
-  forceThinking(sessionId: string): void {
+  forceThinking(sessionId: string, forcedByHeartbeat = false): void {
     if (this.disposed) return;
     const state = this.getOrCreateState(sessionId);
     const before = snapshotCounters(state);
     state.turnActive = true;
+    state.turnForcedByHeartbeat = forcedByHeartbeat;
     state.lastSignalAt = this.now();
     state.permissionPending = false;
     state.permissionAwaitedToolId = null;
@@ -386,6 +400,7 @@ export class ActivityEngine {
     const state = this.getOrCreateState(sessionId);
     const before = snapshotCounters(state);
     state.turnActive = false;
+    state.turnForcedByHeartbeat = false;
     state.permissionPending = false;
     state.permissionAwaitedToolId = null;
     state.lastSignalAt = null;
@@ -707,24 +722,28 @@ export class ActivityEngine {
    *   streaming TUI output keeps a genuinely-running turn from being
    *   force-idled even when hooks and the status heartbeat are both silent.
    * - `signal`: `lastSignalAt` only. Used by stale-thinking as its
-   *   `idleHintAnchor`: once the agent reports waiting-for-input, parked-TUI
-   *   statusline repaints (PTY bytes) must stop deferring the 180s net, so it
-   *   ignores `lastPtyOutputAt`.
+   *   `parkedAnchor`: once the agent is BELIEVED parked, parked-TUI statusline
+   *   repaints (PTY bytes) must stop deferring the 180s net, so it ignores
+   *   `lastPtyOutputAt`.
    *
-   * A hold's `idleHintAnchor` (when set) replaces `anchor` while
-   * `state.idleHintPending` is true. `fallback` is returned when the relevant
-   * anchor(s) are null.
+   * A hold's `parkedAnchor` (when set) replaces `anchor` while the agent is
+   * BELIEVED parked: `state.idleHintPending` (it said so), OR
+   * `state.turnForcedByHeartbeat` (a hook-less resume-picker turn that can
+   * never fire an idle_hint - task #364). `fallback` is returned when the
+   * relevant anchor(s) are null.
    */
   private watchdogBaseTime(
     state: SessionEngineState,
     hold: WatchdogHold,
     fallback: number,
   ): number {
-    // While an idle_hint is pending, a hold may switch to a stricter anchor
-    // (stale-thinking -> `signal`) so statusline PTY repaints stop deferring it.
-    // Mirrors `effectiveThreshold`'s idle_hint short-grace selection.
-    const anchor = state.idleHintPending && hold.idleHintAnchor !== undefined
-      ? hold.idleHintAnchor
+    // While the agent is believed parked, a hold may switch to a stricter
+    // anchor (stale-thinking -> `signal`) so statusline PTY repaints stop
+    // deferring it. Mirrors `effectiveThreshold`'s idle_hint short-grace
+    // selection, but broadened beyond `idleHintPending` (see field doc above).
+    const believedParked = state.idleHintPending || state.turnForcedByHeartbeat;
+    const anchor = believedParked && hold.parkedAnchor !== undefined
+      ? hold.parkedAnchor
       : hold.anchor;
     switch (anchor) {
       case 'bg-shell-hold-since':
