@@ -657,8 +657,9 @@ if (import.meta.hot) {
     // hide the snap preview and clear any leftover frame transforms.
     clearSnapPreviewDom();
 
-    // ChangesPanel Pattern D: an HMR mid file-tree-resize drag fires no mouseup,
-    // so the body cursor / userSelect overrides set on mousedown would stick.
+    // ChangesPanel Pattern D: an HMR mid file-tree-resize or history-resize drag
+    // fires no mouseup, so the body cursor / userSelect overrides set on mousedown
+    // would stick.
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
 

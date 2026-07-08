@@ -5,9 +5,11 @@ import { DiffService } from '../../git/diff-service';
 import { readWorktreeHead } from '../../git/worktree-head';
 import { getBranchSummary } from '../../git/branch-summary';
 import { getCommitGraph } from '../../git/commit-graph';
+import { getFileHistory } from '../../git/file-history';
+import { getBlame } from '../../git/blame';
 import { fetchAllRemotesIfStale } from '../../git/fetch-throttle';
 import { countLocalOnlyCommits } from '../../git/local-only-commits';
-import type { GitBranchSummaryInput, GitCommitGraphInput, GitDiffFilesInput, GitFileContentInput, GitPendingChangesInput, GitPendingChangesResult, PRState } from '../../../shared/types';
+import type { GitBlameInput, GitBranchSummaryInput, GitCommitGraphInput, GitDiffFilesInput, GitFileContentInput, GitFileHistoryInput, GitPendingChangesInput, GitPendingChangesResult, PRState } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
 /**
@@ -138,6 +140,14 @@ export function registerGitDiffHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.GIT_COMMIT_GRAPH, (_, input: GitCommitGraphInput) => {
     return getCommitGraph(input);
+  });
+
+  ipcMain.handle(IPC.GIT_FILE_HISTORY, (_, input: GitFileHistoryInput) => {
+    return getFileHistory(input);
+  });
+
+  ipcMain.handle(IPC.GIT_BLAME, (_, input: GitBlameInput) => {
+    return getBlame(input);
   });
 
   ipcMain.on(IPC.GIT_DIFF_UNSUBSCRIBE, (_, worktreePath: string) => {

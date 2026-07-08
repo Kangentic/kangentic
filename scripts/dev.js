@@ -13,6 +13,22 @@ const port = portArg ? parseInt(portArg.split('=')[1], 10) : 5173;
 const ephemeral = process.argv.includes('--ephemeral');
 const fresh = process.argv.includes('--fresh');
 
+// PID file: this process (not the launcher's terminal/shell, which is several
+// process-tree hops away and not what you actually want to kill) is the real
+// long-running dev server - it hosts Vite in-process and owns the Electron
+// child, so its PID is the one tooling needs to identify and later tear down
+// a specific preview instance. Keyed by port so multiple simultaneous
+// previews from the same worktree (different ports) never collide. Written
+// as early as possible (module scope, before the slow Vite/esbuild work
+// below) so a launcher polling for it doesn't wait on the build.
+const pidFilePath = path.join(projectDir, '.kangentic', `preview-${port}.pid`);
+try {
+  fs.mkdirSync(path.dirname(pidFilePath), { recursive: true });
+  fs.writeFileSync(pidFilePath, String(process.pid));
+} catch (pidWriteError) {
+  console.warn('[dev] could not write preview PID file:', pidWriteError);
+}
+
 // Detect Electron executable path per-platform
 const electronExe = process.platform === 'win32'
   ? path.join(projectDir, 'node_modules', 'electron', 'dist', 'electron.exe')
@@ -244,6 +260,14 @@ function cleanup(exitCode) {
   if (electronProc) {
     electronProc.kill();
     electronProc = null;
+  }
+  // Best-effort: remove this instance's PID file so tooling never finds a
+  // stale entry for a preview that already exited. A no-op if ephemeral mode
+  // is about to remove the whole .kangentic/ dir below anyway.
+  try {
+    fs.rmSync(pidFilePath, { force: true });
+  } catch {
+    // best-effort
   }
   // Ephemeral mode: remove the worktree's .kangentic/ and .vite/ on exit.
   // With the junction approach, dev.js runs from the worktree itself so

@@ -155,11 +155,19 @@ Click a task card to open the detail dialog. From here you can:
 
 ### Changes Panel
 
-The Changes tab in the task detail dialog shows a git diff of all files modified by the task's branch compared to its base branch. The file tree on the left lists changed files with insertion/deletion counts. Click a file to view a side-by-side or inline diff on the right. Toggle between split and inline view modes using the button in the toolbar. The panel persists its expanded/collapsed state and selected file across dialog reopens.
+The Changes tab in the task detail dialog is a commit-history browser stacked vertically: a commit-history region on top, and a detail pane (file tree + diff) below, split by a resizable divider.
+
+The history region is a **pinned "Uncommitted changes" row** above the branch's commit graph (a visual DAG: commit nodes down a vertical axis, lane columns for parallel branches, and edges to each commit's parents). Each commit row shows the short SHA, subject, author, and relative time; the branch tip is marked `HEAD`, the fork point is labelled with the base branch, and a linked pull request's head commit is tagged with its PR number. The graph reads git directly (no session required), refreshes live as you commit or the branch's refs change, and is capped at the most recent 200 commits with a note when older commits are trimmed.
+
+**Uncommitted changes** is selected by default and shows the branch-wide diff: the file tree on the left lists changed files with insertion/deletion counts, a scope selector (working / staged / branch) picks which changes to diff, and a base-branch label shows whether the branch diverged from the default base or a custom one. Click a file to view a side-by-side or inline diff on the right. Toggle between split and inline view modes using the button in the toolbar.
+
+**Selecting a commit** in the history region scopes the detail pane to that commit's own diff (`<oid>^..<oid>`) instead - a compact header identifies the commit, with a back button that returns to Uncommitted changes.
+
+Right-click a file in the tree for **View history**, a popover listing the commits that touched that file (`git log --follow`); selecting one jumps the detail pane to that commit. The diff toolbar also has a **blame** toggle (off by default, per file) that annotates each line of the modified editor with its short hash and author via a left-gutter column, with the full hash/author/date on hover; blame is only available for the Uncommitted detail (it reflects the file's current content, so it doesn't apply while browsing a historical commit).
+
+The panel persists its expanded/collapsed state, selected file, selected commit, and divider positions across dialog reopens.
 
 The Changes panel is available for all tasks, whether or not worktrees are enabled. It uses `git merge-base` to show only branch-specific changes, excluding upstream commits.
-
-The panel has two views, switched with the **Files | Graph** toggle in its header. **Files** is the diff view described above. **Graph** renders the branch's commit history as a visual DAG: commit nodes down a vertical axis, lane columns for parallel branches, and edges to each commit's parents. Each row shows the short SHA, subject, author, and relative time; the branch tip is marked `HEAD`, the fork point is labelled with the base branch, and a linked pull request's head commit is tagged with its PR number. The graph reads git directly (no session required), refreshes live as you commit or the branch's refs change, and is capped at the most recent 200 commits with a note when older commits are trimmed.
 
 When the dialog is open, it claims the terminal session. The bottom panel releases it. When you close the dialog, the bottom panel reclaims the session.
 

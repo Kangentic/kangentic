@@ -231,8 +231,6 @@ export interface TaskDetailViewState {
   changesOpen?: boolean;
   /** Browser side panel open. */
   browserOpen?: boolean;
-  /** Which view the Changes panel is showing: the file diffs or the commit graph. */
-  changesViewTab?: 'files' | 'graph';
   /** Changes panel split-vs-expanded mode. */
   changesViewMode?: 'split' | 'expanded';
   /** Selected diff file path in the Changes panel. */
@@ -243,6 +241,10 @@ export interface TaskDetailViewState {
   changesScope?: GitDiffScope;
   /** Manually-set file-tree width (px) in the Changes panel. */
   changesFileTreeWidth?: number;
+  /** Selected commit OID in the Changes panel's history browser. Absent means "Uncommitted changes" (the default). */
+  changesSelectedCommit?: string;
+  /** Manually-set commit-history region height (px) in the Changes panel's vertical split. */
+  changesHistoryHeight?: number;
 }
 
 export interface TaskAttachment {
@@ -1181,6 +1183,11 @@ export interface GitDiffFilesInput {
   baseBranch: string;
   /** Defaults to 'branch' (the full branch-vs-base diff) when omitted. */
   scope?: GitDiffScope;
+  /**
+   * When set, diff this single commit (`<commitOid>^..<commitOid>`) instead of
+   * `scope` - the history browser's commit-detail selection. Overrides `scope`.
+   */
+  commitOid?: string;
 }
 
 export interface GitDiffFilesResult {
@@ -1198,12 +1205,60 @@ export interface GitFileContentInput {
   oldPath?: string;
   /** Must match the scope the file list was fetched with. Defaults to 'branch'. */
   scope?: GitDiffScope;
+  /** Must match the `commitOid` the file list was fetched with, if any. */
+  commitOid?: string;
 }
 
 export interface GitFileContentResult {
   original: string;
   modified: string;
   language: string;
+}
+
+/**
+ * Input for the per-file history reader (commits touching a single file, via
+ * `git log --follow`). Local-only and fail-safe, mirroring {@link GitCommitGraphInput}.
+ */
+export interface GitFileHistoryInput {
+  worktreePath?: string;
+  projectPath: string;
+  filePath: string;
+  /** Hard cap on commits returned (defaults to 100). */
+  maxCommits?: number;
+}
+
+/** One commit touching a file, newest first. */
+export interface GitFileHistoryCommit {
+  hash: string;
+  shortHash: string;
+  authorName: string;
+  authorTimestamp: string;
+  subject: string;
+}
+
+export interface GitFileHistoryResult {
+  commits: GitFileHistoryCommit[];
+}
+
+/** Input for the per-line blame reader (`git blame --line-porcelain`). */
+export interface GitBlameInput {
+  worktreePath?: string;
+  projectPath: string;
+  filePath: string;
+}
+
+/** Blame info for one line (1-indexed) of a file's current content. */
+export interface GitBlameLine {
+  line: number;
+  hash: string;
+  shortHash: string;
+  author: string;
+  /** Author date as a strict ISO 8601 string; empty for an uncommitted line. */
+  date: string;
+}
+
+export interface GitBlameResult {
+  lines: GitBlameLine[];
 }
 
 // === Configuration ===
@@ -2834,7 +2889,9 @@ export interface DevSeedGitChangesResult {
   repos: number;
   /** The seed directory created in each repo (e.g. 'seed-3'). */
   dir: string;
-  /** Files added in the baseline commit (ahead of base), per repo. */
+  /** Commits in the seed chain ahead of base, per repo (a rich commit-history browser fixture, not one giant commit). */
+  commits: number;
+  /** Distinct fixture files committed ahead of base across the whole chain, per repo. */
   committed: number;
   /** Files staged in the index (M/A/D/R), per repo. */
   staged: number;
@@ -3198,6 +3255,8 @@ export interface ElectronAPI {
     checkPendingChanges: (input: GitPendingChangesInput) => Promise<GitPendingChangesResult>;
     branchSummary: (input: GitBranchSummaryInput) => Promise<GitBranchSummaryResult>;
     commitGraph: (input: GitCommitGraphInput) => Promise<GitCommitGraphResult>;
+    fileHistory: (input: GitFileHistoryInput) => Promise<GitFileHistoryResult>;
+    blame: (input: GitBlameInput) => Promise<GitBlameResult>;
   };
 
   // Dialog

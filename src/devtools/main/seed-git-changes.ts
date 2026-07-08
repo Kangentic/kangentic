@@ -4,10 +4,26 @@
  * starts clean, so this is the fast path to "give me a diff to look at" without
  * hand-editing files in a clone.
  *
- * The changeset is shaped to exercise EVERY scope, status, AND diff-viewer
- * feature in one click:
- *   - one commit ahead of base       -> the 'Full branch vs base' scope, the
- *                                        ahead/behind badge, and the last-commit line
+ * The changeset is shaped to exercise EVERY scope, status, diff-viewer, AND
+ * commit-history-browser feature in one click:
+ *   - a chain of commits ahead of base -> the 'Full branch vs base' scope, the
+ *                                        ahead/behind badge, the last-commit line,
+ *                                        AND a rich commit-history browser: many
+ *                                        rows to scroll (COMMIT_CHAIN.length,
+ *                                        comfortably over 10), varied synthetic
+ *                                        authors and backdated timestamps (so the
+ *                                        graph's relative-time column and each
+ *                                        commit's ref badges look real rather
+ *                                        than "all just now"), and distinct
+ *                                        per-commit diffs to click through
+ *   - history-shared.ts               -> committed across FOUR of those commits
+ *                                        by four different synthetic authors, so
+ *                                        the per-file "View history" popover has
+ *                                        more than one row, and the blame gutter
+ *                                        shows more than one hash/author (every
+ *                                        other fixture file is touched by exactly
+ *                                        one commit, so blame on it alone would
+ *                                        never exercise multi-author rendering)
  *   - staged changes (index vs HEAD) -> the 'Staged' scope: Modified / Added /
  *                                        Deleted / Renamed
  *   - working changes (vs index)     -> the 'Working changes' scope, deliberately
@@ -25,6 +41,12 @@
  *                     reset can be exercised by switching between the two
  *       removed.md    a deleted markdown file (D) -> preview falls back to the
  *                     old content instead of rendering blank
+ *
+ * The commit-history chain never touches big.ts / inline.ts / whitespace.ts /
+ * notes.md / changelog.markdown after their single initial commit (each stays
+ * exactly the content the working-tree mutation below expects to diff against)
+ * - only staged-mod.ts and history-shared.ts get extra chain-only revisions, so
+ * none of the precision-tuned diff-viewer fixtures above are disturbed.
  *
  * Seeds MULTIPLE repos in one click (every active task worktree the renderer
  * passes, plus the project), all sharing one `seed-N` directory so a single
@@ -55,14 +77,31 @@ const execFileAsync = promisify(execFile);
 // user config. No personal info (the repo is public). See no-personal-info.md.
 const SEED_IDENTITY = ['-c', 'user.name=Kangentic Dev', '-c', 'user.email=dev@kangentic.local'];
 
+// Synthetic (fictional) author identities so the seeded commit chain exercises
+// multi-author rendering in the commit graph, per-file history, and blame
+// gutter - a single-author seed never shows more than one hash/author per
+// line. No personal info (see no-personal-info.md); same spirit as the
+// 'Kangentic Dev' committer identity above, just varied per commit via
+// `--author` (which drives `%an`/blame authorship independently of the
+// committer config that makes the commit itself succeed).
+const SEED_AUTHORS = [
+  { name: 'Ada Lin', email: 'ada@kangentic.local' },
+  { name: 'Bea Osei', email: 'bea@kangentic.local' },
+  { name: 'Chidi Okoro', email: 'chidi@kangentic.local' },
+  { name: 'Dana Volkov', email: 'dana@kangentic.local' },
+];
+
 // A tiny 1x1 PNG (has null bytes, so the diff service detects it as binary).
 const BINARY_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
   'base64',
 );
 
-// Per-repo file counts for the toast summary (kept in sync with seedOneRepo).
-const COMMITTED_COUNT = 10;
+// Per-repo counts for the toast summary (kept in sync with seedOneRepo's
+// COMMIT_CHAIN). COMMITTED_COUNT is the distinct fixture files that end up
+// committed ahead of base, spread across the chain (not all in one commit).
+const COMMIT_CHAIN_LENGTH = 11;
+const COMMITTED_COUNT = 11;
 const STAGED_COUNT = 4;
 const WORKING_COUNT = 9;
 
@@ -78,8 +117,16 @@ function isUnderPreviewRoot(targetPath: string): boolean {
   return resolved === root || resolved.startsWith(root + path.sep);
 }
 
-function runGit(repoPath: string, args: string[]): Promise<unknown> {
-  return execFileAsync('git', ['-C', repoPath, ...args]);
+function runGit(repoPath: string, args: string[], env?: NodeJS.ProcessEnv): Promise<unknown> {
+  return execFileAsync('git', ['-C', repoPath, ...args], env ? { env: { ...process.env, ...env } } : undefined);
+}
+
+/** ISO timestamp `hoursAgo` hours before now, for backdating seed commits
+ *  (via GIT_AUTHOR_DATE/GIT_COMMITTER_DATE) so the commit graph's relative-time
+ *  column and blame dates show a realistic spread instead of every commit
+ *  landing in the same second. */
+function hoursAgoIso(hoursAgo: number): string {
+  return new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString();
 }
 
 /** A long file. With `mutate`, two far-apart fields change, producing two hunks
@@ -174,6 +221,65 @@ function removedMarkdown(index: number): string {
   ].join('\n');
 }
 
+/** Grows by one exported constant per revision (1-4), each added in a separate
+ *  chain commit by a different SEED_AUTHORS entry. Never touched again after
+ *  revision 4, so it stays part of the stable committed baseline: the fixture
+ *  for testing multi-commit file history and multi-author blame (every other
+ *  fixture file is created in exactly one commit). */
+function historySharedFile(revision: number, index: number): string {
+  const lines = [
+    '// Shared history fixture: built up across several commits by different',
+    '// authors, to exercise multi-commit file history and multi-author blame.',
+    `export const historyRevision${index} = ${revision};`,
+  ];
+  if (revision >= 2) lines.push(`export const historyStepTwo${index} = 'added by the second revision';`);
+  if (revision >= 3) lines.push(`export const historyStepThree${index} = 'added by the third revision';`);
+  if (revision >= 4) lines.push(`export const historyStepFour${index} = 'added by the fourth revision';`);
+  lines.push('');
+  return lines.join('\n');
+}
+
+/** A small file re-committed once before Step 2 stages its real edit, purely
+ *  to add one more commit-chain entry - Step 2 fully overwrites its content
+ *  afterward, so this revision never affects the staged/working diff. */
+function stagedModRevision(revision: number, index: number): string {
+  return revision === 1
+    ? `export const stagedMod${index} = ${index};\n`
+    : `export const stagedMod${index} = ${index}; // seed chain revision ${revision}\n`;
+}
+
+/** One commit in the seed history chain: writes its files, stages exactly
+ *  those paths, and commits with a distinct synthetic author + backdated
+ *  timestamp (via GIT_AUTHOR_DATE/GIT_COMMITTER_DATE) so the resulting graph,
+ *  file-history popover, and blame gutter all show realistic variety instead
+ *  of one commit repeated with the same author "just now". */
+interface ChainStep {
+  author: { name: string; email: string };
+  hoursAgo: number;
+  message: string;
+  writes: Array<{ relative: string; content: string }>;
+}
+
+async function commitChainStep(
+  repoPath: string,
+  writeFile: (relative: string, content: string) => Promise<void>,
+  step: ChainStep,
+): Promise<void> {
+  for (const write of step.writes) {
+    await writeFile(write.relative, write.content);
+  }
+  await runGit(repoPath, ['add', ...step.writes.map((write) => write.relative)]);
+  const dateIso = hoursAgoIso(step.hoursAgo);
+  await runGit(
+    repoPath,
+    // --author belongs to the `commit` subcommand, so it must come AFTER
+    // 'commit' - placing it among the global -c flags (before the
+    // subcommand) makes git reject it as "unknown option".
+    [...SEED_IDENTITY, 'commit', '-m', step.message, `--author=${step.author.name} <${step.author.email}>`],
+    { GIT_AUTHOR_DATE: dateIso, GIT_COMMITTER_DATE: dateIso },
+  );
+}
+
 /** Seed one repo with the full fixture under `seed-<index>/`. */
 async function seedOneRepo(repoPath: string, dir: string, index: number): Promise<void> {
   const absolute = (relative: string): string => path.join(repoPath, relative);
@@ -182,20 +288,76 @@ async function seedOneRepo(repoPath: string, dir: string, index: number): Promis
     await fs.promises.writeFile(absolute(relative), content, 'utf-8');
   };
 
-  // Step 1: baseline commit (ahead of base). These are the originals the working
-  // and staged diffs compare against, and they populate the branch-vs-base scope.
-  await writeFile(`${dir}/big.ts`, bigFile(index, false));
-  await writeFile(`${dir}/inline.ts`, `export const greeting${index} = 'hello world from kangentic';\n`);
-  await writeFile(`${dir}/whitespace.ts`, `export function compute${index}() {\n  return 1 + 2;\n}\n`);
-  await writeFile(`${dir}/gone.ts`, `export const gone${index} = ${index};\n`);
-  await writeFile(`${dir}/staged-mod.ts`, `export const stagedMod${index} = ${index};\n`);
-  await writeFile(`${dir}/staged-del.ts`, `export const stagedDel${index} = ${index};\n`);
-  await writeFile(`${dir}/staged-old.ts`, `export const stagedRen${index} = ${index};\n`);
-  await writeFile(`${dir}/notes.md`, notesMarkdown(index, false));
-  await writeFile(`${dir}/changelog.markdown`, changelogMarkdown(index, false));
-  await writeFile(`${dir}/removed.md`, removedMarkdown(index));
-  await runGit(repoPath, ['add', dir]);
-  await runGit(repoPath, [...SEED_IDENTITY, 'commit', '-m', `test(seed): baseline files ${index}`]);
+  // Step 1: a chain of commits ahead of base (COMMIT_CHAIN.length, well over
+  // 10) instead of one giant commit - the originals the working and staged
+  // diffs compare against, and they populate the branch-vs-base scope AND the
+  // commit-history browser with real rows to click through. Author + hoursAgo
+  // vary per step so the graph/blame show realistic spread rather than one
+  // author "just now". Every file other than staged-mod.ts and
+  // history-shared.ts is written exactly once here and never touched again by
+  // the chain, so none of the working-tree mutations in Step 3 change what
+  // they diff against.
+  const [ada, bea, chidi, dana] = SEED_AUTHORS;
+  const COMMIT_CHAIN: ChainStep[] = [
+    {
+      author: ada, hoursAgo: 48, message: `chore(seed): scaffold small fixtures ${index}`,
+      writes: [
+        { relative: `${dir}/gone.ts`, content: `export const gone${index} = ${index};\n` },
+        { relative: `${dir}/staged-del.ts`, content: `export const stagedDel${index} = ${index};\n` },
+        { relative: `${dir}/staged-old.ts`, content: `export const stagedRen${index} = ${index};\n` },
+      ],
+    },
+    {
+      author: bea, hoursAgo: 43, message: `feat(seed): add long baseline config ${index}`,
+      writes: [{ relative: `${dir}/big.ts`, content: bigFile(index, false) }],
+    },
+    {
+      author: chidi, hoursAgo: 36, message: `feat(seed): add greeting + compute helpers ${index}`,
+      writes: [
+        { relative: `${dir}/inline.ts`, content: `export const greeting${index} = 'hello world from kangentic';\n` },
+        { relative: `${dir}/whitespace.ts`, content: `export function compute${index}() {\n  return 1 + 2;\n}\n` },
+      ],
+    },
+    {
+      author: dana, hoursAgo: 29, message: `docs(seed): add project notes ${index}`,
+      writes: [{ relative: `${dir}/notes.md`, content: notesMarkdown(index, false) }],
+    },
+    {
+      author: ada, hoursAgo: 24, message: `docs(seed): add changelog + deprecated notes ${index}`,
+      writes: [
+        { relative: `${dir}/changelog.markdown`, content: changelogMarkdown(index, false) },
+        { relative: `${dir}/removed.md`, content: removedMarkdown(index) },
+      ],
+    },
+    {
+      author: bea, hoursAgo: 20, message: `feat(seed): scaffold staged-mod helper ${index}`,
+      writes: [{ relative: `${dir}/staged-mod.ts`, content: stagedModRevision(1, index) }],
+    },
+    {
+      author: chidi, hoursAgo: 15, message: `feat(seed): introduce shared history file ${index}`,
+      writes: [{ relative: `${dir}/history-shared.ts`, content: historySharedFile(1, index) }],
+    },
+    {
+      author: dana, hoursAgo: 10, message: `feat(seed): extend shared history file ${index}`,
+      writes: [{ relative: `${dir}/history-shared.ts`, content: historySharedFile(2, index) }],
+    },
+    {
+      author: ada, hoursAgo: 6, message: `refactor(seed): tidy staged-mod helper ${index}`,
+      writes: [{ relative: `${dir}/staged-mod.ts`, content: stagedModRevision(2, index) }],
+    },
+    {
+      author: bea, hoursAgo: 3, message: `feat(seed): extend shared history file again ${index}`,
+      writes: [{ relative: `${dir}/history-shared.ts`, content: historySharedFile(3, index) }],
+    },
+    {
+      author: { name: 'Kangentic Dev', email: 'dev@kangentic.local' }, hoursAgo: 0.08,
+      message: `test(seed): baseline files ${index}`,
+      writes: [{ relative: `${dir}/history-shared.ts`, content: historySharedFile(4, index) }],
+    },
+  ];
+  for (const step of COMMIT_CHAIN) {
+    await commitChainStep(repoPath, writeFile, step);
+  }
 
   // Step 2: staged changes (index vs HEAD) -> Modified / Added / Deleted / Renamed.
   await writeFile(`${dir}/staged-mod.ts`, `export const stagedMod${index} = ${index};\nexport const stagedExtra = true;\n`);
@@ -242,7 +404,7 @@ export async function seedGitChanges(targetPaths: string[]): Promise<DevSeedGitC
   if (repos === 0) {
     throw new Error('No ephemeral preview repo to seed - open a project or an active task first');
   }
-  return { repos, dir, committed: COMMITTED_COUNT, staged: STAGED_COUNT, working: WORKING_COUNT };
+  return { repos, dir, commits: COMMIT_CHAIN_LENGTH, committed: COMMITTED_COUNT, staged: STAGED_COUNT, working: WORKING_COUNT };
 }
 
 let devIpcRegistered = false;

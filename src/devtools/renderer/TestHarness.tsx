@@ -204,7 +204,7 @@ export function TestHarness() {
         return;
       }
       useToastStore.getState().addToast({
-        message: `Seeded ${result.dir} into ${result.repos} repo${result.repos === 1 ? '' : 's'}: ${result.staged} staged, ${result.working} working, +1 commit`,
+        message: `Seeded ${result.dir} into ${result.repos} repo${result.repos === 1 ? '' : 's'}: ${result.commits} commits, ${result.staged} staged, ${result.working} working`,
         variant: 'success',
       });
     } catch (error) {

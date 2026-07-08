@@ -709,4 +709,160 @@ describe('DiffService', () => {
       });
     });
   });
+
+  describe('commitOid (single-commit diff, the history browser)', () => {
+    const EMPTY_TREE_HASH = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+    describe('getDiffFiles', () => {
+      it('diffs <oid>^..<oid> and never consults git status (no untracked concept for a commit)', async () => {
+        mockGit.raw.mockResolvedValue('parent999\n');
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([{ file: 'src/a.ts', insertions: 1, deletions: 0 }]));
+        mockGit.diff.mockResolvedValue('M\tsrc/a.ts\n');
+
+        const result = await service.getDiffFiles({
+          projectPath: '/project',
+          baseBranch: 'main',
+          commitOid: 'commit123',
+        });
+
+        expect(mockGit.raw).toHaveBeenCalledWith(['rev-parse', '--verify', 'commit123^']);
+        expect(mockGit.diffSummary).toHaveBeenCalledWith(['parent999', 'commit123']);
+        expect(mockGit.diff).toHaveBeenCalledWith(['--name-status', 'parent999', 'commit123']);
+        expect(mockGit.status).not.toHaveBeenCalled();
+        expect(result.files[0].status).toBe('M');
+      });
+
+      it('root commit: rev-parse <oid>^ fails, falls back to the empty tree', async () => {
+        mockGit.raw.mockRejectedValue(new Error('fatal: ambiguous argument \'root123^\': unknown revision'));
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([{ file: 'src/a.ts', insertions: 5, deletions: 0 }]));
+        mockGit.diff.mockResolvedValue('A\tsrc/a.ts\n');
+
+        const result = await service.getDiffFiles({
+          projectPath: '/project',
+          baseBranch: 'main',
+          commitOid: 'root123',
+        });
+
+        expect(mockGit.diffSummary).toHaveBeenCalledWith([EMPTY_TREE_HASH, 'root123']);
+        // Every file in a root commit reads as added against the empty tree.
+        expect(result.files[0].status).toBe('A');
+      });
+
+      it('commitOid takes precedence over scope', async () => {
+        mockGit.raw.mockResolvedValue('parent999\n');
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
+        mockGit.diff.mockResolvedValue('');
+
+        await service.getDiffFiles({
+          projectPath: '/project',
+          baseBranch: 'main',
+          scope: 'staged',
+          commitOid: 'commit123',
+        });
+
+        // The commit-diff args are used, not the staged-scope args (--cached).
+        expect(mockGit.diffSummary).toHaveBeenCalledWith(['parent999', 'commit123']);
+        expect(mockGit.diffSummary).not.toHaveBeenCalledWith(['--cached']);
+      });
+    });
+
+    describe('getFileContent', () => {
+      it('reads both original and modified from the commit tree, never disk', async () => {
+        mockGit.raw.mockResolvedValue('parent999\n');
+        mockGit.show.mockImplementation(async (args: string[]) => {
+          const ref = args[0];
+          if (ref.startsWith('parent999:')) return 'parent content';
+          if (ref.startsWith('commit123:')) return 'commit content';
+          return 'other';
+        });
+
+        const result = await service.getFileContent({
+          projectPath: '/project',
+          worktreePath: '/project/wt',
+          baseBranch: 'main',
+          filePath: 'src/a.ts',
+          status: 'M',
+          commitOid: 'commit123',
+        });
+
+        expect(mockGit.show).toHaveBeenCalledWith(['parent999:src/a.ts']);
+        expect(mockGit.show).toHaveBeenCalledWith(['commit123:src/a.ts']);
+        expect(fs.promises.readFile).not.toHaveBeenCalled();
+        expect(result.original).toBe('parent content');
+        expect(result.modified).toBe('commit content');
+      });
+
+      it('added file in a commit: original is skipped (empty), modified still reads from the commit tree', async () => {
+        mockGit.show.mockResolvedValue('new file content');
+
+        const result = await service.getFileContent({
+          projectPath: '/project',
+          baseBranch: 'main',
+          filePath: 'src/new.ts',
+          status: 'A',
+          commitOid: 'commit123',
+        });
+
+        expect(result.original).toBe('');
+        expect(mockGit.show).toHaveBeenCalledWith(['commit123:src/new.ts']);
+        expect(result.modified).toBe('new file content');
+      });
+
+      it('deleted file in a commit: modified is skipped (empty), original still reads from the parent tree', async () => {
+        mockGit.raw.mockResolvedValue('parent999\n');
+        mockGit.show.mockResolvedValue('old file content');
+
+        const result = await service.getFileContent({
+          projectPath: '/project',
+          baseBranch: 'main',
+          filePath: 'src/removed.ts',
+          status: 'D',
+          commitOid: 'commit123',
+        });
+
+        expect(mockGit.show).toHaveBeenCalledWith(['parent999:src/removed.ts']);
+        expect(result.original).toBe('old file content');
+        expect(result.modified).toBe('');
+      });
+
+      it('root commit: original reads from the empty tree', async () => {
+        mockGit.raw.mockRejectedValue(new Error('fatal: unknown revision'));
+        mockGit.show.mockResolvedValue('root file content');
+
+        const result = await service.getFileContent({
+          projectPath: '/project',
+          baseBranch: 'main',
+          filePath: 'src/a.ts',
+          status: 'M',
+          commitOid: 'root123',
+        });
+
+        expect(mockGit.show).toHaveBeenCalledWith([`${EMPTY_TREE_HASH}:src/a.ts`]);
+        expect(result.original).toBe('root file content');
+      });
+
+      it('caches the resolved parent ref across calls for the same commitOid', async () => {
+        mockGit.raw.mockResolvedValue('parent999\n');
+        mockGit.show.mockResolvedValue('content');
+
+        await service.getFileContent({
+          projectPath: '/project',
+          baseBranch: 'main',
+          filePath: 'src/a.ts',
+          status: 'M',
+          commitOid: 'commit123',
+        });
+        await service.getFileContent({
+          projectPath: '/project',
+          baseBranch: 'main',
+          filePath: 'src/b.ts',
+          status: 'M',
+          commitOid: 'commit123',
+        });
+
+        // rev-parse is only spawned once for the same commitOid across calls.
+        expect(mockGit.raw).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
 });

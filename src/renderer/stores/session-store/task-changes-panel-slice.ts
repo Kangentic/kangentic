@@ -41,11 +41,19 @@ export interface TaskChangesPanelSlice {
   /** Task IDs whose Browser pane is open (persists across dialog open/close). */
   browserOpenTasks: Set<string>;
   /**
-   * Which view each task's Changes panel is showing: the file diffs ('files',
-   * the default) or the commit graph ('graph'). Keyed by task ID; persists
-   * across dialog open/close.
+   * Selected commit OID in the Changes panel's history browser, keyed by task
+   * ID. `null` (or absent) means "Uncommitted changes" (the default, top-of-list
+   * row) - the branch-wide working diff. A non-null value scopes the detail
+   * pane (file tree + diff) to that single commit's `<oid>^..<oid>` diff.
+   * Persists across dialog open/close.
    */
-  changesViewTab: Record<string, 'files' | 'graph'>;
+  changesSelectedCommit: Record<string, string | null>;
+  /**
+   * Manually-set Changes panel commit-history region height (px), keyed by task
+   * ID, for the vertical split between the history list and the detail pane.
+   * Absent means the default height. Mirrors {@link changesFileTreeWidth}.
+   */
+  changesHistoryHeight: Record<string, number>;
   /**
    * Entity IDs whose dialog is maximized (persists across dialog open/close).
    * Keyed by task ID for the task detail dialog, and by a non-task sentinel id
@@ -70,7 +78,8 @@ export interface TaskChangesPanelSlice {
   setChangesViewMode: (taskId: string, mode: 'split' | 'expanded') => void;
   setDividerRatio: (taskId: string, ratio: number) => void;
   toggleBrowserOpen: (taskId: string) => void;
-  setChangesViewTab: (taskId: string, tab: 'files' | 'graph') => void;
+  setChangesSelectedCommit: (taskId: string, commitOid: string | null) => void;
+  setChangesHistoryHeight: (taskId: string, height: number) => void;
   toggleMaximized: (taskId: string) => void;
   /**
    * Seed the per-task detail-view fields above from each task's persisted
@@ -115,7 +124,10 @@ function buildDetailViewBlob(state: SessionStore, taskId: string): TaskDetailVie
   if (ratio !== undefined) blob.dividerRatio = ratio;
   if (state.changesOpenTasks.has(taskId)) blob.changesOpen = true;
   if (state.browserOpenTasks.has(taskId)) blob.browserOpen = true;
-  if (state.changesViewTab[taskId] === 'graph') blob.changesViewTab = 'graph';
+  const selectedCommit = state.changesSelectedCommit[taskId];
+  if (selectedCommit) blob.changesSelectedCommit = selectedCommit;
+  const historyHeight = state.changesHistoryHeight[taskId];
+  if (historyHeight !== undefined) blob.changesHistoryHeight = historyHeight;
   const viewMode = state.changesViewMode[taskId];
   if (viewMode !== undefined) blob.changesViewMode = viewMode;
   const selectedFile = state.changesSelectedFile[taskId];
@@ -177,7 +189,8 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
   changesViewMode: {},
   dividerRatio: {},
   browserOpenTasks: new Set<string>(),
-  changesViewTab: {},
+  changesSelectedCommit: {},
+  changesHistoryHeight: {},
   maximizedTasks: new Set<string>(),
   hydratedDetailViewTasks: new Set<string>(),
 
@@ -206,8 +219,13 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
     scheduleDetailViewSave(taskId, get);
   },
 
-  setChangesViewTab: (taskId, tab) => {
-    set({ changesViewTab: { ...get().changesViewTab, [taskId]: tab } });
+  setChangesSelectedCommit: (taskId, commitOid) => {
+    set({ changesSelectedCommit: { ...get().changesSelectedCommit, [taskId]: commitOid } });
+    scheduleDetailViewSave(taskId, get);
+  },
+
+  setChangesHistoryHeight: (taskId, height) => {
+    set({ changesHistoryHeight: { ...get().changesHistoryHeight, [taskId]: height } });
     scheduleDetailViewSave(taskId, get);
   },
 
@@ -293,7 +311,8 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
 
     const changesOpenTasks = new Set(get().changesOpenTasks);
     const browserOpenTasks = new Set(get().browserOpenTasks);
-    const changesViewTab = { ...get().changesViewTab };
+    const changesSelectedCommit = { ...get().changesSelectedCommit };
+    const changesHistoryHeight = { ...get().changesHistoryHeight };
     const changesViewMode = { ...get().changesViewMode };
     const changesSelectedFile = { ...get().changesSelectedFile };
     const changesViewedFiles = { ...get().changesViewedFiles };
@@ -311,7 +330,8 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       if (blob.dividerRatio !== undefined) dividerRatio[task.id] = blob.dividerRatio;
       if (blob.changesOpen) changesOpenTasks.add(task.id);
       if (blob.browserOpen) browserOpenTasks.add(task.id);
-      if (blob.changesViewTab !== undefined) changesViewTab[task.id] = blob.changesViewTab;
+      if (blob.changesSelectedCommit !== undefined) changesSelectedCommit[task.id] = blob.changesSelectedCommit;
+      if (blob.changesHistoryHeight !== undefined) changesHistoryHeight[task.id] = blob.changesHistoryHeight;
       if (blob.changesViewMode !== undefined) changesViewMode[task.id] = blob.changesViewMode;
       if (blob.changesSelectedFile !== undefined) changesSelectedFile[task.id] = blob.changesSelectedFile;
       if (blob.changesViewedFiles && blob.changesViewedFiles.length > 0) {
@@ -325,7 +345,8 @@ export const createTaskChangesPanelSlice: StateCreator<SessionStore, [], [], Tas
       hydratedDetailViewTasks,
       changesOpenTasks,
       browserOpenTasks,
-      changesViewTab,
+      changesSelectedCommit,
+      changesHistoryHeight,
       changesViewMode,
       changesSelectedFile,
       changesViewedFiles,

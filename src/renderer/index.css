@@ -563,6 +563,21 @@
   background-color: color-mix(in srgb, var(--drop-color, var(--kng-accent)) 5%, transparent);
 }
 
+/* Blame gutter annotation: a Monaco `before`-content decoration on the
+   DiffViewer's modified editor (see DiffViewer.tsx applyBlameDecorations),
+   reading "<shortHash>  <author>" at the start of each line. Rendered as
+   editor content (not a Tailwind-scoped DOM node), so it is styled globally
+   here rather than with utility classes. */
+.blame-gutter-annotation {
+  color: var(--color-fg-faint);
+  opacity: 0.85;
+  margin-right: 12px;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  white-space: pre;
+  user-select: none;
+}
+
 /* ── Markdown body styles ── */
 
 .markdown-body {

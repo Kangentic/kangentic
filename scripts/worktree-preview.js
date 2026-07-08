@@ -198,6 +198,44 @@ function openTerminal(cwd, command) {
 }
 
 // ---------------------------------------------------------------------------
+// PID discovery
+// ---------------------------------------------------------------------------
+
+/**
+ * Poll for the PID file dev.js writes for itself (see scripts/dev.js) at the
+ * start of its own process, keyed by port. The terminal this script opens is
+ * several process-tree hops away from the actual dev-server process (through
+ * wt.exe / cmd.exe /c start), so there is no reliable way to derive that PID
+ * from spawn() here - dev.js reporting its own process.pid is the only
+ * trustworthy source. Written near-instantly on dev.js startup (well before
+ * the Vite/esbuild build finishes), so this resolves in well under a second
+ * in the common case; the timeout is just a generous safety net.
+ */
+function waitForPidFile(worktreeDir, port, timeoutMs = 30000) {
+  const pidFilePath = path.join(worktreeDir, '.kangentic', `preview-${port}.pid`);
+  const pollIntervalMs = 200;
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve) => {
+    const poll = () => {
+      if (fs.existsSync(pidFilePath)) {
+        const raw = fs.readFileSync(pidFilePath, 'utf-8').trim();
+        const pid = parseInt(raw, 10);
+        if (Number.isInteger(pid) && pid > 0) {
+          resolve(pid);
+          return;
+        }
+      }
+      if (Date.now() >= deadline) {
+        resolve(null);
+        return;
+      }
+      setTimeout(poll, pollIntervalMs);
+    };
+    poll();
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -234,6 +272,13 @@ async function main() {
   }
 
   console.log(`[preview] Preview terminal opened on port ${port}`);
+
+  const pid = await waitForPidFile(worktreeDir, port);
+  if (pid) {
+    console.log(`[preview]   PID:     ${pid}`);
+  } else {
+    console.log('[preview]   PID:     unknown (dev server did not report one within 30s - check the terminal window)');
+  }
 }
 
 main().catch((err) => {

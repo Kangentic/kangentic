@@ -1,15 +1,14 @@
 /**
- * UI tests for the Task Detail Changes panel's Files | Graph view toggle.
+ * UI tests for the Task Detail Changes panel's commit-history browser.
  *
- * The commit graph moved from a standalone right-panel pane into a view
- * toggle inside the Changes panel (`data-testid="changes-view-toggle"`):
- * opening Changes (via the `changes-toggle` pill) shows the Files view by
- * default, and clicking `changes-view-graph` swaps the panel body to
- * <CommitGraphPanel> (SVG DAG + one row per commit). Clicking
- * `changes-view-files` swaps back. The graph inherits the Changes panel's
- * own `canShowChanges` gate - there is no separate lifecycle gate for it
- * anymore, and it is no longer mutually exclusive with anything (it IS the
- * Changes panel, just a different view inside it). The commit graph is
+ * The commit graph is the top region of a vertical split: a pinned
+ * "Uncommitted changes" row (`data-testid="commit-history-uncommitted"`,
+ * selected by default) above the commit list (SVG DAG + one row per commit,
+ * `data-testid="commit-graph-row"`), always visible once Changes is opened
+ * (via the `changes-toggle` pill) - there is no separate Files | Graph toggle.
+ * Selecting a commit row scopes the detail pane below (file tree + diff) to
+ * that commit's diff and shows a `commit-detail-header` with a back button
+ * (`commit-detail-back`) that returns to Uncommitted. The commit graph is
  * seeded through the mock via window.__mockCommitGraph.
  */
 import { test, expect } from '@playwright/test';
@@ -123,40 +122,46 @@ test.afterAll(async () => {
   await browser?.close();
 });
 
-/** Open the task dialog and the Changes panel (assumed closed on entry). */
+/** Open the task dialog and the Changes panel (assumed closed on entry). The
+ *  commit-history browser renders immediately - there is no separate toggle. */
 async function openDialogWithChangesPanel(taskLocatorText: string, swimlaneName: string): Promise<Page> {
   const card = page.locator(`[data-swimlane-name="${swimlaneName}"]`).locator(`text=${taskLocatorText}`).first();
   await card.click();
   const dialog = page.locator('[data-testid="task-detail-dialog"]');
   await dialog.waitFor({ state: 'visible', timeout: 5000 });
   await page.locator('[data-testid="changes-toggle"]').click();
-  await page.locator('[data-testid="changes-view-toggle"]').waitFor({ state: 'visible', timeout: 10000 });
+  await page.locator('[data-testid="commit-graph-panel"]').waitFor({ state: 'visible', timeout: 10000 });
   return dialog;
 }
 
-/** Close the Changes panel and the dialog, leaving the view tab on 'files' so
- *  the next test's dialog reopen starts from the same known state (persisted
- *  per-task in the session store's changesOpenTasks / changesViewTab). */
+/** Close the Changes panel and the dialog, leaving the selection on
+ *  "Uncommitted changes" so the next test's dialog reopen starts from the
+ *  same known state (persisted per-task in the session store's
+ *  changesOpenTasks / changesSelectedCommit). */
 async function closeChangesPanelAndDialog(dialog: Locator): Promise<void> {
-  const filesButton = page.locator('[data-testid="changes-view-files"]');
-  if (await filesButton.isVisible()) await filesButton.click();
+  const uncommittedRow = page.locator('[data-testid="commit-history-uncommitted"]');
+  if (await uncommittedRow.isVisible() && (await uncommittedRow.getAttribute('aria-pressed')) !== 'true') {
+    await uncommittedRow.click();
+  }
   await page.locator('[data-testid="changes-toggle"]').click();
   await page.keyboard.press('Control+Shift+W');
   await expect(dialog).not.toBeVisible({ timeout: 8000 });
 }
 
-test.describe('Task Detail Changes panel - Files | Graph view toggle', () => {
-  test('defaults to Files, switches to Graph (rendering the DAG + ref badges), and back to Files', async () => {
+test.describe('Task Detail Changes panel - commit-history browser', () => {
+  test('shows the graph immediately with Uncommitted selected by default, selecting a commit shows its detail, and Uncommitted returns to the working diff', async () => {
     const dialog = await openDialogWithChangesPanel('Commit Graph Task', 'Code Review');
 
-    // Files is the default view: the toggle bar is visible but the graph SVG is not.
-    await expect(page.locator('[data-testid="commit-graph-svg"]')).not.toBeVisible();
-
-    // Switch to Graph: the SVG plus one row per fixture commit render. React
-    // re-render after the button click can be slow on CI Linux, so give a budget.
-    await page.locator('[data-testid="changes-view-graph"]').click();
+    // The graph renders immediately - no toggle click needed.
     await expect(page.locator('[data-testid="commit-graph-svg"]')).toBeVisible({ timeout: 10000 });
     await expect(page.locator('[data-testid="commit-graph-row"]')).toHaveCount(3, { timeout: 10000 });
+
+    // Uncommitted changes is the default selection; the scope selector is
+    // visible (Uncommitted's detail exposes working/staged/branch).
+    const uncommittedRow = page.locator('[data-testid="commit-history-uncommitted"]');
+    await expect(uncommittedRow).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('[data-testid="changes-scope-select"]')).toBeVisible();
+    await expect(page.locator('[data-testid="commit-detail-header"]')).not.toBeVisible();
 
     // The tip commit is marked HEAD; the branch base is labelled with the base branch.
     const tipCommitRow = page.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'third commit' });
@@ -164,14 +169,25 @@ test.describe('Task Detail Changes panel - Files | Graph view toggle', () => {
     const baseCommitRow = page.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'first commit' });
     await expect(baseCommitRow.locator('[data-testid="commit-ref-badge"]').filter({ hasText: 'main' })).toBeVisible();
 
-    // Switch back to Files: the graph SVG is gone, the file view returns.
-    await page.locator('[data-testid="changes-view-files"]').click();
-    await expect(page.locator('[data-testid="commit-graph-svg"]')).not.toBeVisible({ timeout: 10000 });
+    // Select a commit: the detail pane shows the commit-detail header instead
+    // of the scope selector, and the row is marked selected.
+    await tipCommitRow.click();
+    await expect(page.locator('[data-testid="commit-detail-header"]')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('[data-testid="commit-detail-header"]')).toContainText('aaaaaaa');
+    await expect(page.locator('[data-testid="changes-scope-select"]')).not.toBeVisible();
+    await expect(tipCommitRow).toHaveAttribute('aria-pressed', 'true');
+    await expect(uncommittedRow).toHaveAttribute('aria-pressed', 'false');
+
+    // The back button returns to Uncommitted.
+    await page.locator('[data-testid="commit-detail-back"]').click();
+    await expect(page.locator('[data-testid="commit-detail-header"]')).not.toBeVisible({ timeout: 10000 });
+    await expect(page.locator('[data-testid="changes-scope-select"]')).toBeVisible();
+    await expect(uncommittedRow).toHaveAttribute('aria-pressed', 'true');
 
     await closeChangesPanelAndDialog(dialog);
   });
 
-  test('shows "No git history available." then "No commits on this branch yet." for the two empty-graph fixtures', async () => {
+  test('shows "No git history available." then "No commits on this branch yet." for the two empty-graph fixtures, with Uncommitted still selectable', async () => {
     await page.evaluate(() => {
       (window as unknown as { __mockCommitGraph?: unknown }).__mockCommitGraph = {
         commits: [],
@@ -184,12 +200,12 @@ test.describe('Task Detail Changes panel - Files | Graph view toggle', () => {
     });
 
     const dialog = await openDialogWithChangesPanel('Commit Graph Task', 'Code Review');
-    await page.locator('[data-testid="changes-view-graph"]').click();
     await expect(page.getByText('No git history available.')).toBeVisible({ timeout: 10000 });
+    // The Uncommitted row still renders above the empty state.
+    await expect(page.locator('[data-testid="commit-history-uncommitted"]')).toBeVisible();
 
-    // Re-seed a fixture with a tip/branch but zero commits, then re-toggle
-    // Files -> Graph: CommitGraphPanel unmounts on the Files view and remounts
-    // (refetching) on Graph, mirroring the old spec's close+reopen reseed.
+    // Re-seed a fixture with a tip/branch but zero commits, then fire the
+    // diff-changed push (CommitGraphPanel refetches without unmounting).
     await page.evaluate(() => {
       (window as unknown as { __mockCommitGraph?: unknown }).__mockCommitGraph = {
         commits: [],
@@ -199,9 +215,8 @@ test.describe('Task Detail Changes panel - Files | Graph view toggle', () => {
         currentBranch: 'feature/x',
         truncated: false,
       };
+      (window as unknown as { __mockFireDiffChanged?: () => void }).__mockFireDiffChanged?.();
     });
-    await page.locator('[data-testid="changes-view-files"]').click();
-    await page.locator('[data-testid="changes-view-graph"]').click();
     await expect(page.getByText('No commits on this branch yet.')).toBeVisible({ timeout: 10000 });
     // The other empty-state copy (both tipHash and currentBranch null) must
     // not also be showing.
@@ -225,13 +240,12 @@ test.describe('Task Detail Changes panel - Files | Graph view toggle', () => {
     });
 
     const dialog = await openDialogWithChangesPanel('Commit Graph Task', 'Code Review');
-    await page.locator('[data-testid="changes-view-graph"]').click();
     await expect(page.getByText(/Showing latest \d+ commits/)).toBeVisible({ timeout: 10000 });
 
     await closeChangesPanelAndDialog(dialog);
   });
 
-  test('live-refreshes the commit rows via the diff-changed watcher without leaving the Graph view', async () => {
+  test('live-refreshes the commit rows via the diff-changed watcher while browsing a commit', async () => {
     await page.evaluate(() => {
       const ts = new Date().toISOString();
       (window as unknown as { __mockCommitGraph?: unknown }).__mockCommitGraph = {
@@ -247,15 +261,17 @@ test.describe('Task Detail Changes panel - Files | Graph view toggle', () => {
     });
 
     const dialog = await openDialogWithChangesPanel('Commit Graph Task', 'Code Review');
-    await page.locator('[data-testid="changes-view-graph"]').click();
     await expect(page.getByText('before refresh')).toBeVisible({ timeout: 10000 });
     await expect(page.locator('[data-testid="commit-graph-row"]')).toHaveCount(1);
 
-    // Update the fixture WITHOUT switching views, then fire the diff-changed
+    // Select the commit, then update the fixture and fire the diff-changed
     // push - the same signal a real fs.watch-driven GIT_DIFF_CHANGED event
     // delivers (see preload.ts's onDiffChanged / GIT_DIFF_CHANGED, and the
-    // main-process push in git-diff.ts). CommitGraphPanel still subscribes to
-    // onDiffChanged even though it now lives inside the Changes panel.
+    // main-process push in git-diff.ts). The graph list updates in place
+    // without kicking the selection back to Uncommitted.
+    await page.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'before refresh' }).click();
+    await expect(page.locator('[data-testid="commit-detail-header"]')).toBeVisible({ timeout: 10000 });
+
     await page.evaluate(() => {
       const ts = new Date().toISOString();
       (window as unknown as { __mockCommitGraph?: unknown }).__mockCommitGraph = {
@@ -272,11 +288,12 @@ test.describe('Task Detail Changes panel - Files | Graph view toggle', () => {
       (window as unknown as { __mockFireDiffChanged?: () => void }).__mockFireDiffChanged?.();
     });
 
-    // The view never left Graph - the row list updates in place.
     await expect(page.locator('[data-testid="commit-graph-row"]')).toHaveCount(2, { timeout: 10000 });
     await expect(page.getByText('after refresh')).toBeVisible();
     await expect(dialog).toBeVisible();
     await expect(page.locator('[data-testid="commit-graph-svg"]')).toBeVisible();
+    // The selection survives the refresh (commit-detail stays open).
+    await expect(page.locator('[data-testid="commit-detail-header"]')).toBeVisible();
 
     await closeChangesPanelAndDialog(dialog);
   });
@@ -382,9 +399,7 @@ test.describe('Commit graph PR-head ref badge', () => {
     await dialog.waitFor({ state: 'visible', timeout: 5000 });
 
     await prBadgePage.locator('[data-testid="changes-toggle"]').click();
-    await prBadgePage.locator('[data-testid="changes-view-toggle"]').waitFor({ state: 'visible', timeout: 10000 });
-    await prBadgePage.locator('[data-testid="changes-view-graph"]').click();
-    await expect(prBadgePage.locator('[data-testid="commit-graph-svg"]')).toBeVisible({ timeout: 10000 });
+    await prBadgePage.locator('[data-testid="commit-graph-svg"]').waitFor({ state: 'visible', timeout: 10000 });
 
     const headCommitRow = prBadgePage.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'PR head commit' });
     await expect(headCommitRow.locator('[data-testid="commit-ref-badge"]').filter({ hasText: 'PR #42' })).toBeVisible();
@@ -393,7 +408,6 @@ test.describe('Commit graph PR-head ref badge', () => {
     const baseCommitRow = prBadgePage.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'PR base commit' });
     await expect(baseCommitRow.locator('[data-testid="commit-ref-badge"]').filter({ hasText: 'PR #42' })).toHaveCount(0);
 
-    await prBadgePage.locator('[data-testid="changes-view-files"]').click();
     await prBadgePage.locator('[data-testid="changes-toggle"]').click();
     await prBadgePage.keyboard.press('Control+Shift+W');
     await expect(dialog).not.toBeVisible({ timeout: 8000 });

@@ -164,6 +164,8 @@ export const IPC = {
   GIT_CHECK_PENDING_CHANGES: 'git:checkPendingChanges',
   GIT_BRANCH_SUMMARY: 'git:branchSummary',
   GIT_COMMIT_GRAPH: 'git:commitGraph',
+  GIT_FILE_HISTORY: 'git:fileHistory',
+  GIT_BLAME: 'git:blame',
 
   // Dialog
   DIALOG_SELECT_FOLDER: 'dialog:selectFolder',

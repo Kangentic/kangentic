@@ -215,6 +215,72 @@ describe('markChangesFileViewed', () => {
 });
 
 // ---------------------------------------------------------------------------
+// setChangesSelectedCommit
+// ---------------------------------------------------------------------------
+
+describe('setChangesSelectedCommit', () => {
+  it('starts empty (panel falls back to Uncommitted changes)', () => {
+    const { getState } = createTestStore();
+    expect(getState().changesSelectedCommit).toEqual({});
+  });
+
+  it('records the selected commit OID per task id', () => {
+    const { actions, getState } = createTestStore();
+    actions.setChangesSelectedCommit('task-1', 'commit-abc');
+    expect(getState().changesSelectedCommit['task-1']).toBe('commit-abc');
+  });
+
+  it('overwrites the selection on a subsequent change', () => {
+    const { actions, getState } = createTestStore();
+    actions.setChangesSelectedCommit('task-1', 'commit-abc');
+    actions.setChangesSelectedCommit('task-1', 'commit-def');
+    expect(getState().changesSelectedCommit['task-1']).toBe('commit-def');
+  });
+
+  it('setting null returns to Uncommitted changes', () => {
+    const { actions, getState } = createTestStore();
+    actions.setChangesSelectedCommit('task-1', 'commit-abc');
+    actions.setChangesSelectedCommit('task-1', null);
+    expect(getState().changesSelectedCommit['task-1']).toBeNull();
+  });
+
+  it('keys selection independently per task id', () => {
+    const { actions, getState } = createTestStore();
+    actions.setChangesSelectedCommit('task-1', 'commit-abc');
+    actions.setChangesSelectedCommit('task-2', 'commit-xyz');
+    expect(getState().changesSelectedCommit['task-1']).toBe('commit-abc');
+    expect(getState().changesSelectedCommit['task-2']).toBe('commit-xyz');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setChangesHistoryHeight
+// ---------------------------------------------------------------------------
+
+describe('setChangesHistoryHeight', () => {
+  it('starts empty (panel uses the default history-region height)', () => {
+    const { getState } = createTestStore();
+    expect(getState().changesHistoryHeight).toEqual({});
+  });
+
+  it('records and updates a per-task height', () => {
+    const { actions, getState } = createTestStore();
+    actions.setChangesHistoryHeight('task-1', 240);
+    expect(getState().changesHistoryHeight['task-1']).toBe(240);
+    actions.setChangesHistoryHeight('task-1', 300);
+    expect(getState().changesHistoryHeight['task-1']).toBe(300);
+  });
+
+  it('keys height independently per task id', () => {
+    const { actions, getState } = createTestStore();
+    actions.setChangesHistoryHeight('task-1', 200);
+    actions.setChangesHistoryHeight('task-2', 260);
+    expect(getState().changesHistoryHeight['task-1']).toBe(200);
+    expect(getState().changesHistoryHeight['task-2']).toBe(260);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // toggleMaximized
 // ---------------------------------------------------------------------------
 

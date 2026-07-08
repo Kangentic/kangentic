@@ -1,13 +1,15 @@
 import '../../../../monacoConfig';
 import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
-import { RefreshCw, ChevronsLeftRight, ChevronsRightLeft, Loader2, FileText, Waypoints } from 'lucide-react';
+import { ChevronsLeftRight, ChevronsRightLeft, Loader2, ArrowLeft } from 'lucide-react';
 import { FileTreePanel } from './FileTreePanel';
 import { DiffViewer } from './DiffViewer';
+import { DiffErrorBoundary } from './DiffErrorBoundary';
 import { CommitGraphPanel } from '../graph/CommitGraphPanel';
 import { useSessionStore } from '../../../../stores/session-store';
 import { useConfigStore } from '../../../../stores/config-store';
 import { useKeybinding } from '../../../../hooks/useKeybinding';
-import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileContentResult, Task } from '../../../../../shared/types';
+import { formatRelativeTime } from '../../../../lib/datetime';
+import type { GitBranchSummaryResult, GitCommitGraphCommit, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileContentResult, GitFileHistoryCommit, Task } from '../../../../../shared/types';
 
 // Stable empty set so a task with no viewed files keeps a referentially-constant
 // prop (avoids re-rendering the file tree every render).
@@ -23,44 +25,11 @@ const DIFF_PANE_DRAG_MIN = 240;               // minimum diff-pane width while d
 const BRANCH_NAME_FIT_PADDING = 100;          // room beside the branch name (git icon, ahead/behind badges)
 const LAST_COMMIT_FIT_PADDING = 28;           // room beside the last-commit line
 
-// Scoped error boundary prevents Monaco failures from crashing the entire app.
-class DiffErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { hasError: boolean; error: Error | null }
-> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('DiffViewer error:', error, info.componentStack);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full gap-2 p-4">
-          <span className="text-xs text-red-400">
-            {this.state.error?.message || 'Failed to load diff viewer'}
-          </span>
-          <button
-            onClick={() => this.setState({ hasError: false, error: null })}
-            className="flex items-center gap-1.5 text-xs px-3 py-1 rounded bg-surface-raised hover:bg-surface-raised/80 text-fg-secondary transition-colors"
-          >
-            <RefreshCw size={12} />
-            Retry
-          </button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
+// Vertical-split constraints (px) between the commit-history region (top) and
+// the detail pane (bottom).
+const HISTORY_DEFAULT_HEIGHT = 200;
+const HISTORY_DRAG_MIN = 88;
+const DETAIL_REGION_DRAG_MIN = 160;
 
 interface ChangesPanelProps {
   entityId: string;
@@ -86,9 +55,10 @@ interface ChangesPanelProps {
   panelMode?: 'split' | 'expanded';
   onExpand?: () => void;
   onCollapse?: () => void;
-  /** When provided, the panel shows a Files | Graph view toggle in its header and
-   *  can render the commit-graph view. The task supplies the graph's PR marker
-   *  (pr_number / head_sha). Omitted for the command-terminal Changes embed. */
+  /** When provided, the panel shows the commit-history browser (a pinned
+   *  "Uncommitted changes" row plus the commit graph) above the detail pane.
+   *  The task supplies the graph's PR marker (pr_number / head_sha). Omitted
+   *  for the command-terminal Changes embed, which stays Uncommitted-only. */
   task?: Task;
 }
 
@@ -145,15 +115,39 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   const selectedFile = useSessionStore((state) => state.changesSelectedFile[entityId] ?? null);
   const setChangesSelectedFile = useSessionStore((state) => state.setChangesSelectedFile);
   const setSelectedFile = useCallback((filePath: string | null) => setChangesSelectedFile(entityId, filePath), [entityId, setChangesSelectedFile]);
-  // Which view this panel is showing: the file diffs ('files', default) or the
-  // commit graph ('graph'). Only offered when a `task` is provided (the graph
-  // needs its PR marker); the command-terminal embed stays files-only.
-  const changesViewTab = useSessionStore((state) => state.changesViewTab[entityId] ?? 'files');
-  const setChangesViewTab = useSessionStore((state) => state.setChangesViewTab);
+  // Selected commit in the history browser. null (the default) means
+  // "Uncommitted changes" - the branch-wide working diff. Only offered when a
+  // `task` is provided (the history browser needs the graph's PR marker); the
+  // command-terminal embed stays Uncommitted-only (no history region rendered).
+  const changesSelectedCommit = useSessionStore((state) => state.changesSelectedCommit[entityId] ?? null);
+  const setChangesSelectedCommitStore = useSessionStore((state) => state.setChangesSelectedCommit);
+  // Metadata (subject/author/time) for the selected commit, set on click. On a
+  // restored (persisted) selection this starts null - the commit-detail header
+  // falls back to the short hash alone until the user re-clicks the row.
+  const [selectedCommitMeta, setSelectedCommitMeta] = useState<GitCommitGraphCommit | null>(null);
+  const handleSelectCommit = useCallback((commit: GitCommitGraphCommit) => {
+    setSelectedCommitMeta(commit);
+    setChangesSelectedCommitStore(entityId, commit.hash);
+  }, [entityId, setChangesSelectedCommitStore]);
+  const handleSelectUncommitted = useCallback(() => {
+    setChangesSelectedCommitStore(entityId, null);
+  }, [entityId, setChangesSelectedCommitStore]);
+  // A per-file history popover row jumps straight to that file's diff at that
+  // commit. `parents` is unused by the commit-detail header, so a per-file
+  // history commit (which has no parent data) fills it empty.
+  const handleSelectHistoryCommit = useCallback((filePath: string, commit: GitFileHistoryCommit) => {
+    setSelectedCommitMeta({ ...commit, parents: [] });
+    setChangesSelectedCommitStore(entityId, commit.hash);
+    setSelectedFile(filePath);
+  }, [entityId, setChangesSelectedCommitStore, setSelectedFile]);
   const [fileContent, setFileContent] = useState<DisplayedFileContent | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [branchSummary, setBranchSummary] = useState<GitBranchSummaryResult | null>(null);
+  // File count for the "Uncommitted changes" row badge, fetched independently of
+  // the current selection (scope-based, never commitOid) so the count stays live
+  // while the user is browsing a commit's detail.
+  const [uncommittedFileCount, setUncommittedFileCount] = useState(0);
   // Split-vs-inline diff rendering is a single global preference: the in-diff
   // toggle and the Layout settings tab read and write the same config key, so
   // the choice sticks across every diff, all mount points, and restarts.
@@ -204,6 +198,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         projectPath,
         baseBranch,
         scope,
+        commitOid: changesSelectedCommit ?? undefined,
       });
       setFiles(result.files);
       setTotalInsertions(result.totalInsertions);
@@ -217,12 +212,12 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         setError(fetchError instanceof Error ? fetchError.message : 'Failed to load diff');
       }
     }
-  }, [worktreePath, projectPath, baseBranch, scope]);
+  }, [worktreePath, projectPath, baseBranch, scope, changesSelectedCommit]);
 
   const fetchFileContent = useCallback(async (filePath: string) => {
-    // Key the cache by scope so a file's working/staged/branch diffs never
-    // bleed into one another when the user switches scope.
-    const cacheKey = `${scope}:${filePath}`;
+    // Key the cache by selection (commit OID or scope) so a file's diffs never
+    // bleed across a scope switch or a different commit selection.
+    const cacheKey = changesSelectedCommit ? `commit:${changesSelectedCommit}:${filePath}` : `scope:${scope}:${filePath}`;
     const cached = contentCacheRef.current.get(cacheKey);
     if (cached) {
       // Always serve cached content immediately (stale-while-revalidate)
@@ -241,6 +236,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         status: fileEntry?.status ?? 'M',
         oldPath: fileEntry?.oldPath,
         scope,
+        commitOid: changesSelectedCommit ?? undefined,
       }).then((freshResult) => {
         contentCacheRef.current.set(cacheKey, { result: freshResult, generation: currentGeneration });
         // Only update UI if this file is still selected and content actually changed
@@ -267,6 +263,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         status: file.status,
         oldPath: file.oldPath,
         scope,
+        commitOid: changesSelectedCommit ?? undefined,
       });
       contentCacheRef.current.set(cacheKey, { result, generation: cacheGenerationRef.current });
       // Guard against a slow fetch resolving after the user switched away: only
@@ -280,7 +277,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         setFileContent({ result: { original: '', modified: '', language: 'plaintext' }, filePath });
       }
     }
-  }, [worktreePath, projectPath, baseBranch, scope]);
+  }, [worktreePath, projectPath, baseBranch, scope, changesSelectedCommit]);
 
   // Lightweight, local-only branch context for the header (name, ahead/behind,
   // last commit). Cheap enough to re-run on every fs.watch fire and manual
@@ -294,6 +291,18 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     }
   }, [worktreePath, projectPath, baseBranch]);
 
+  // Working-diff file count for the history browser's "Uncommitted changes" row
+  // badge. Always scope-based (never commitOid) so the badge stays accurate even
+  // while the user is browsing a different commit's detail.
+  const fetchUncommittedCount = useCallback(async () => {
+    try {
+      const result = await window.electronAPI.git.diffFiles({ worktreePath, projectPath, baseBranch, scope });
+      setUncommittedFileCount(result.files.length);
+    } catch {
+      // Best-effort: leave the previous count in place on failure.
+    }
+  }, [worktreePath, projectPath, baseBranch, scope]);
+
   // Stable refs for fetch callbacks - used in the subscription effect and
   // handleSelectFile to avoid re-subscribing or re-creating on every render.
   const fetchFilesRef = useRef(fetchFiles);
@@ -302,13 +311,20 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   fetchFileContentRef.current = fetchFileContent;
   const fetchBranchSummaryRef = useRef(fetchBranchSummary);
   fetchBranchSummaryRef.current = fetchBranchSummary;
+  const fetchUncommittedCountRef = useRef(fetchUncommittedCount);
+  fetchUncommittedCountRef.current = fetchUncommittedCount;
+  // Selection ref for the fs.watch subscription effect below, which must not
+  // re-subscribe on every commit-selection change (see that effect's comment).
+  const selectedCommitRef = useRef(changesSelectedCommit);
+  selectedCommitRef.current = changesSelectedCommit;
 
-  // Fetch file list + branch context on mount, and re-fetch the list whenever
-  // the scope changes (working / staged / branch show different file sets).
+  // Fetch file list + branch context + the Uncommitted-row count on mount, and
+  // re-fetch whenever the scope, base branch, or commit selection changes.
   useEffect(() => {
     fetchFilesRef.current();
     fetchBranchSummaryRef.current();
-  }, [worktreePath, projectPath, baseBranch, scope]);
+    fetchUncommittedCountRef.current();
+  }, [worktreePath, projectPath, baseBranch, scope, changesSelectedCommit]);
 
   // Restore content for the persisted selected file after files load.
   // `files` is in the dependency array so this re-evaluates after the initial
@@ -342,6 +358,17 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     cacheGenerationRef.current += 1;
   }, [scope]);
 
+  // Same reset on a commit-selection change (Uncommitted <-> a commit, or
+  // switching between two commits): the file list is a different set, so the
+  // restore effect must re-select rather than keep pointing at a stale file.
+  const previousSelectedCommitRef = useRef(changesSelectedCommit);
+  useEffect(() => {
+    if (previousSelectedCommitRef.current === changesSelectedCommit) return;
+    previousSelectedCommitRef.current = changesSelectedCommit;
+    restoredRef.current = false;
+    cacheGenerationRef.current += 1;
+  }, [changesSelectedCommit]);
+
   // Subscribe to live updates via fs.watch.
   // Uses refs for selectedFile/files/fetchers to avoid re-subscribing.
   useEffect(() => {
@@ -353,11 +380,16 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       // Mark all cache entries stale by advancing the generation counter.
       // Entries are not deleted - they're served immediately as stale-while-revalidate.
       cacheGenerationRef.current += 1;
-      fetchFilesRef.current();
       fetchBranchSummaryRef.current();
-      const currentFile = selectedFileRef.current;
-      if (currentFile) {
-        fetchFileContentRef.current(currentFile);
+      fetchUncommittedCountRef.current();
+      // A selected commit's diff is immutable - skip the file/content refetch
+      // while browsing one; only the Uncommitted (working-diff) detail needs it.
+      if (!selectedCommitRef.current) {
+        fetchFilesRef.current();
+        const currentFile = selectedFileRef.current;
+        if (currentFile) {
+          fetchFileContentRef.current(currentFile);
+        }
       }
     });
 
@@ -511,15 +543,106 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
 
   const selectedFileEntry = useMemo(() => files.find((file) => file.path === selectedFile), [files, selectedFile]);
 
-  const showGraphView = !!task && changesViewTab === 'graph';
+  // Base-branch badge, shown in the Uncommitted detail's branch header: just
+  // the base branch name, tone-coded (see FileTreePanel's baseLabelCustom) so
+  // a custom base is what draws the eye - the full "based on / off" sentence
+  // lives in the badge's hover tooltip instead of the visible pill. Reconciled
+  // with the graph's own base-ref badge by scope: the badge marks WHERE the
+  // base commit sits in the history list; this one states the divergence
+  // relationship in the working-diff context, so it only renders there (never
+  // in commit-detail).
+  const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
+  const isCustomBase = !!task?.base_branch && task.base_branch !== (defaultBaseBranch || 'main');
+  const baseLabel = baseBranch;
 
-  // The file-diff view (error / empty / two-pane). Rendered as a helper so the
-  // Files|Graph toggle bar stays mounted above it and the file-list fetch keeps
-  // running even while the graph view is showing (switching back is instant).
+  // Commit-detail header info: metadata for the selected commit if it was set
+  // by a click this session, else just the short hash (a restored selection
+  // has no metadata until the user re-clicks the row).
+  const commitHeaderMeta = selectedCommitMeta && selectedCommitMeta.hash === changesSelectedCommit ? selectedCommitMeta : null;
+
+  // Vertical-split state between the commit-history region (top) and the
+  // detail pane (bottom), per task, mirroring the file-tree width resize below.
+  const changesPanelRootRef = useRef<HTMLDivElement>(null);
+  const storedHistoryHeight = useSessionStore((state) => state.changesHistoryHeight[entityId]);
+  const setChangesHistoryHeightStore = useSessionStore((state) => state.setChangesHistoryHeight);
+  const [historyHeight, setHistoryHeight] = useState<number>(storedHistoryHeight ?? HISTORY_DEFAULT_HEIGHT);
+  const historyHeightRef = useRef<number>(storedHistoryHeight ?? HISTORY_DEFAULT_HEIGHT);
+  const [isResizingHistory, setIsResizingHistory] = useState(false);
+
+  useEffect(() => {
+    if (storedHistoryHeight === undefined) return;
+    setHistoryHeight(storedHistoryHeight);
+    historyHeightRef.current = storedHistoryHeight;
+  }, [storedHistoryHeight]);
+
+  const handleHistoryResizeStart = useCallback((event: React.MouseEvent) => {
+    event.preventDefault();
+    const container = changesPanelRootRef.current;
+    if (!container) return;
+    setIsResizingHistory(true);
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const rect = container.getBoundingClientRect();
+      if (rect.height === 0) return;
+      // Keep at least HISTORY_DRAG_MIN for the history list and DETAIL_REGION_DRAG_MIN for the detail pane.
+      const next = Math.max(HISTORY_DRAG_MIN, Math.min(rect.height - DETAIL_REGION_DRAG_MIN, moveEvent.clientY - rect.top));
+      setHistoryHeight(next);
+      historyHeightRef.current = next;
+    };
+    const onMouseUp = () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      setIsResizingHistory(false);
+      setChangesHistoryHeightStore(entityId, historyHeightRef.current);
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, [setChangesHistoryHeightStore, entityId]);
+
+  // The detail pane (error / empty / two-pane), scoped to the current
+  // selection (Uncommitted or a commit). Rendered as a helper so the history
+  // region above stays mounted regardless of which branch renders below.
   const renderFilesBody = (): React.ReactNode => {
+  // Compact header identifying the selected commit, shown above the detail
+  // pane whenever a commit (not Uncommitted) is selected.
+  const commitDetailHeader = changesSelectedCommit ? (
+    <div
+      className="flex items-center gap-2 border-b border-edge px-3 py-1.5 flex-shrink-0"
+      data-testid="commit-detail-header"
+    >
+      <button
+        type="button"
+        onClick={handleSelectUncommitted}
+        title="Back to Uncommitted changes"
+        className="p-1 -ml-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors flex-shrink-0"
+        data-testid="commit-detail-back"
+      >
+        <ArrowLeft size={14} />
+      </button>
+      <span className="font-mono text-xs text-fg-secondary flex-shrink-0">
+        {commitHeaderMeta?.shortHash ?? changesSelectedCommit.slice(0, 7)}
+      </span>
+      {commitHeaderMeta && <span className="truncate text-xs text-fg">{commitHeaderMeta.subject}</span>}
+      {commitHeaderMeta && (
+        <span className="truncate text-[11px] text-fg-faint flex-shrink-0">
+          {commitHeaderMeta.authorName}
+          {commitHeaderMeta.authorTimestamp && ` · ${formatRelativeTime(commitHeaderMeta.authorTimestamp)}`}
+        </span>
+      )}
+      <span className="ml-auto flex-shrink-0 text-[11px] text-fg-faint">
+        +{totalInsertions}/-{totalDeletions}
+      </span>
+    </div>
+  ) : null;
+
   if (error) {
     return (
       <div className="flex flex-col h-full">
+        {commitDetailHeader}
         {fallbackControlsRow}
         <div className="flex flex-col items-center justify-center flex-1 gap-2 p-4">
           <span className="text-xs text-red-400">{error}</span>
@@ -536,14 +659,18 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
 
   if (emptyMessage && loaded && files.length === 0) {
     return (
-      <div className="flex items-center justify-center h-full text-sm text-fg-disabled">
-        {emptyMessage}
+      <div className="flex flex-col h-full">
+        {commitDetailHeader}
+        <div className="flex items-center justify-center flex-1 text-sm text-fg-disabled">
+          {emptyMessage}
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col h-full relative">
+      {commitDetailHeader}
       {/* Hold the panel hidden (behind the spinner) until the auto-fit width is
           measured, so it reveals already at the correct width - no snap, no animate. */}
       <div ref={panelRowRef} className="flex-1 min-h-0 flex" style={{ opacity: autoFitReady ? 1 : 0 }}>
@@ -555,13 +682,16 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
             onSelect={handleSelectFile}
             totalInsertions={totalInsertions}
             totalDeletions={totalDeletions}
-            branchSummary={branchSummary}
+            branchSummary={changesSelectedCommit ? undefined : branchSummary}
             viewedFiles={viewedFiles}
             onToggleViewed={handleToggleViewed}
-            scope={scope}
-            onScopeChange={handleScopeChange}
+            scope={changesSelectedCommit ? undefined : scope}
+            onScopeChange={changesSelectedCommit ? undefined : handleScopeChange}
+            baseLabel={changesSelectedCommit ? undefined : baseLabel}
+            baseLabelCustom={changesSelectedCommit ? undefined : isCustomBase}
             worktreePath={worktreePath}
             projectPath={projectPath}
+            onSelectHistoryCommit={handleSelectHistoryCommit}
           />
         </div>
 
@@ -601,6 +731,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
                 onCrossFile={handleCrossFile}
                 pendingChangeFocus={pendingChangeFocus}
                 onPendingChangeFocusConsumed={() => setPendingChangeFocus(null)}
+                worktreePath={worktreePath}
+                projectPath={projectPath}
+                blameEligible={!changesSelectedCommit && scope !== 'staged'}
               />
             </DiffErrorBoundary>
           )}
@@ -618,52 +751,41 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   );
   };
 
-  // Slim header toggle between the file diffs and the commit graph. Only shown
-  // when a `task` is provided (the command-terminal embed omits it).
-  const viewToggleBar = task ? (
-    <div className="flex items-center gap-1 border-b border-edge px-2 py-1.5 flex-shrink-0" data-testid="changes-view-toggle">
-      <button
-        type="button"
-        onClick={() => setChangesViewTab(entityId, 'files')}
-        className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors ${
-          showGraphView ? 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover' : 'bg-accent/15 text-accent-fg'
-        }`}
-        title="Show file changes"
-        data-testid="changes-view-files"
-      >
-        <FileText size={13} />
-        Files
-      </button>
-      <button
-        type="button"
-        onClick={() => setChangesViewTab(entityId, 'graph')}
-        className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors ${
-          showGraphView ? 'bg-accent/15 text-accent-fg' : 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover'
-        }`}
-        title="Show commit graph"
-        data-testid="changes-view-graph"
-      >
-        <Waypoints size={13} />
-        Graph
-      </button>
-    </div>
-  ) : null;
-
   return (
-    <div className="flex flex-col h-full min-h-0">
-      {viewToggleBar}
-      <div className="flex-1 min-h-0">
-        {showGraphView && task ? (
-          <CommitGraphPanel
-            projectPath={projectPath}
-            worktreePath={worktreePath}
-            baseBranch={baseBranch}
-            task={task}
-            isFocused={isFocused}
+    <div ref={changesPanelRootRef} className="flex flex-col h-full min-h-0">
+      {/* Commit-history region (top): the master browse surface. Only shown when
+          a `task` is provided (the history browser needs the graph's PR marker);
+          the command-terminal embed stays Uncommitted-only, filling the whole panel. */}
+      {task && (
+        <>
+          <div className="flex-shrink-0 overflow-hidden" style={{ height: historyHeight }}>
+            <CommitGraphPanel
+              projectPath={projectPath}
+              worktreePath={worktreePath}
+              baseBranch={baseBranch}
+              task={task}
+              isFocused={isFocused}
+              onSelectCommit={handleSelectCommit}
+              onSelectUncommitted={handleSelectUncommitted}
+              selectedCommit={changesSelectedCommit}
+              uncommittedCount={uncommittedFileCount}
+            />
+          </div>
+
+          {/* Drag handle: resize the history region vs. the detail pane below. */}
+          <div
+            onMouseDown={handleHistoryResizeStart}
+            className={`h-1 flex-shrink-0 cursor-row-resize transition-colors ${isResizingHistory ? 'bg-accent' : 'bg-edge hover:bg-accent/50'}`}
+            role="separator"
+            aria-orientation="horizontal"
+            data-testid="changes-history-resize"
           />
-        ) : (
-          renderFilesBody()
-        )}
+        </>
+      )}
+
+      {/* Detail pane (bottom): the selected row's diff (Uncommitted or a commit). */}
+      <div className="flex-1 min-h-0">
+        {renderFilesBody()}
       </div>
     </div>
   );

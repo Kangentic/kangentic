@@ -1,7 +1,7 @@
 import { useMemo, useState, useRef, useCallback, useEffect, memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
-import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check } from 'lucide-react';
+import { Search, Plus, Pencil, Minus, ArrowRight, Copy, ChevronRight, ChevronDown, FileQuestion, GitBranch, ArrowUp, ArrowDown, ArrowDownUp, ListTree, List, FoldVertical, UnfoldVertical, FolderOpen, ExternalLink, Check, History, Loader2 } from 'lucide-react';
 import { useConfigStore } from '../../../../stores/config-store';
-import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus } from '../../../../../shared/types';
+import type { GitBranchSummaryResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileHistoryCommit } from '../../../../../shared/types';
 import { formatRelativeTime } from '../../../../lib/datetime';
 import { useToastStore } from '../../../../stores/toast-store';
 
@@ -28,10 +28,21 @@ interface FileTreePanelProps {
   scope?: GitDiffScope;
   /** Change the diff scope. */
   onScopeChange?: (scope: GitDiffScope) => void;
+  /** Base branch name, shown beside the branch name as a badge (the full
+   *  "based on" / "off" sentence lives in the badge's hover tooltip, not the
+   *  visible text). Only meaningful alongside `branchSummary`. */
+  baseLabel?: string;
+  /** Whether `baseLabel` reflects a custom (non-default) base branch - the
+   *  more surprising case, rendered with a stronger accent tone than the
+   *  default-base case so it actually draws the eye. */
+  baseLabelCustom?: boolean;
   /** Worktree directory, used to resolve a file's absolute path for OS actions. */
   worktreePath?: string;
   /** Project directory, the fallback base when there is no worktree. */
   projectPath?: string;
+  /** Fires when the user picks a commit from a file's "View history" popover -
+   *  jumps the Changes panel to that file's diff at that commit. */
+  onSelectHistoryCommit?: (filePath: string, commit: GitFileHistoryCommit) => void;
 }
 
 const STATUS_CONFIG: Record<GitDiffStatus, { icon: typeof Plus; colorClass: string; label: string }> = {
@@ -466,11 +477,13 @@ function FileContextMenu({
   state,
   worktreePath,
   projectPath,
+  onViewHistory,
   onClose,
 }: {
   state: FileContextMenuState;
   worktreePath?: string;
   projectPath?: string;
+  onViewHistory?: () => void;
   onClose: () => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -543,6 +556,128 @@ function FileContextMenu({
         <Copy size={14} className="text-fg-faint" />
         Copy path
       </button>
+      {onViewHistory && (
+        <button
+          type="button"
+          onClick={onViewHistory}
+          className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
+          data-testid="context-file-history"
+        >
+          <History size={14} className="text-fg-faint" />
+          View history
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// File history popover
+// ---------------------------------------------------------------------------
+
+interface FileHistoryPopoverState {
+  file: GitDiffFileEntry;
+  x: number;
+  y: number;
+}
+
+/** Per-file commit history popover, triggered from the file context menu's
+ *  "View history" item. Fetches directly (mirrors CommitGraphPanel's own
+ *  fetch, since this is a lazily-triggered, self-contained widget rather than
+ *  part of the panel's main render-loop data flow). Selecting a row jumps the
+ *  Changes panel to that file's diff at that commit. */
+function FileHistoryPopover({
+  state,
+  worktreePath,
+  projectPath,
+  onSelectCommit,
+  onClose,
+}: {
+  state: FileHistoryPopoverState;
+  worktreePath?: string;
+  projectPath?: string;
+  onSelectCommit: (commit: GitFileHistoryCommit) => void;
+  onClose: () => void;
+}) {
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const [commits, setCommits] = useState<GitFileHistoryCommit[] | null>(null);
+  const { file } = state;
+
+  useEffect(() => {
+    let cancelled = false;
+    setCommits(null);
+    window.electronAPI.git.fileHistory({ worktreePath, projectPath: projectPath ?? '', filePath: file.path })
+      .then((result) => {
+        if (!cancelled) setCommits(result.commits);
+      })
+      .catch(() => {
+        if (!cancelled) setCommits([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [file.path, worktreePath, projectPath]);
+
+  useEffect(() => {
+    const handleClick = (event: globalThis.MouseEvent) => {
+      if (popoverRef.current && !popoverRef.current.contains(event.target as Node)) onClose();
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('mousedown', handleClick, true);
+    document.addEventListener('keydown', handleEscape, true);
+    return () => {
+      document.removeEventListener('mousedown', handleClick, true);
+      document.removeEventListener('keydown', handleEscape, true);
+    };
+  }, [onClose]);
+
+  const popoverStyle: CSSProperties = {
+    left: Math.min(state.x, window.innerWidth - 280),
+    top: Math.min(state.y, window.innerHeight - 320),
+  };
+
+  return (
+    <div
+      ref={popoverRef}
+      className="fixed z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 w-[280px] max-h-80 overflow-y-auto overlay-popover-in"
+      style={{ ...popoverStyle, transformOrigin: 'top left' }}
+      data-dismissable-layer
+      data-testid="changes-file-history"
+    >
+      <div
+        className="px-3 py-1.5 text-[11px] font-medium text-fg-faint truncate border-b border-edge-subtle"
+        title={file.path}
+      >
+        History: {file.path.split('/').pop() ?? file.path}
+      </div>
+      {commits === null ? (
+        <div className="flex items-center justify-center py-4">
+          <Loader2 size={14} className="animate-spin text-fg-faint" />
+        </div>
+      ) : commits.length === 0 ? (
+        <div className="px-3 py-3 text-xs text-fg-disabled text-center">No history found</div>
+      ) : (
+        commits.map((commit) => (
+          <button
+            key={commit.hash}
+            type="button"
+            onClick={() => onSelectCommit(commit)}
+            className="w-full px-3 py-1.5 text-left hover:bg-surface-hover/40 transition-colors"
+            data-testid="changes-file-history-row"
+          >
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[11px] text-fg-faint flex-shrink-0">{commit.shortHash}</span>
+              <span className="truncate text-xs text-fg">{commit.subject}</span>
+            </div>
+            <div className="text-[11px] text-fg-faint truncate">
+              {commit.authorName}
+              {commit.authorTimestamp && ` · ${formatRelativeTime(commit.authorTimestamp)}`}
+            </div>
+          </button>
+        ))
+      )}
     </div>
   );
 }
@@ -555,7 +690,15 @@ function FileContextMenu({
  * Current branch, ahead/behind vs base, and the tip commit. The panel refreshes
  * automatically (working-tree + git-metadata watch), so there is no manual button.
  */
-function BranchHeader({ branchSummary }: { branchSummary?: GitBranchSummaryResult | null }) {
+function BranchHeader({
+  branchSummary,
+  baseLabel,
+  baseLabelCustom,
+}: {
+  branchSummary?: GitBranchSummaryResult | null;
+  baseLabel?: string;
+  baseLabelCustom?: boolean;
+}) {
   const branch = branchSummary?.currentBranch;
   const ahead = branchSummary?.ahead ?? 0;
   const behind = branchSummary?.behind ?? 0;
@@ -571,6 +714,17 @@ function BranchHeader({ branchSummary }: { branchSummary?: GitBranchSummaryResul
         <span className="text-fg-secondary font-medium truncate" title={branch ?? undefined} data-testid="changes-branch-name">
           {branch ?? 'Detached HEAD'}
         </span>
+        {baseLabel && (
+          <span
+            className={`shrink-0 rounded border px-1 py-px text-[11px] font-medium leading-none truncate ${
+              baseLabelCustom ? 'border-accent/50 text-accent-fg' : 'border-edge-subtle text-fg-faint'
+            }`}
+            data-testid="changes-base-label"
+            title={baseLabelCustom ? `Based on ${baseLabel}, not the project default` : `Based on ${baseLabel}, the project default`}
+          >
+            {baseLabel}
+          </span>
+        )}
         {(ahead > 0 || behind > 0) && (
           <span className="flex items-center gap-1.5 text-fg-muted flex-shrink-0" title={`${ahead} ahead, ${behind} behind base branch`}>
             {ahead > 0 && (
@@ -618,11 +772,15 @@ export function FileTreePanel({
   onToggleViewed,
   scope,
   onScopeChange,
+  baseLabel,
+  baseLabelCustom,
   worktreePath,
   projectPath,
+  onSelectHistoryCommit,
 }: FileTreePanelProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
+  const [historyPopover, setHistoryPopover] = useState<FileHistoryPopoverState | null>(null);
 
   const sort = useConfigStore((state) => state.config.diffFileSort);
   const flat = useConfigStore((state) => state.config.diffFlatList);
@@ -656,10 +814,16 @@ export function FileTreePanel({
     setContextMenu({ file, x: event.clientX, y: event.clientY });
   }, []);
 
+  const handleViewHistory = useCallback(() => {
+    if (!contextMenu) return;
+    setHistoryPopover({ file: contextMenu.file, x: contextMenu.x, y: contextMenu.y });
+    setContextMenu(null);
+  }, [contextMenu]);
+
   return (
     <div className="flex flex-col h-full" data-testid="changes-file-tree">
       {/* Branch context + refresh */}
-      <BranchHeader branchSummary={branchSummary} />
+      <BranchHeader branchSummary={branchSummary} baseLabel={baseLabel} baseLabelCustom={baseLabelCustom} />
 
       {/* Diff scope: working changes / staged / full branch. A segmented control
           (single-select among 3 fixed options) rather than a dropdown. */}
@@ -790,7 +954,21 @@ export function FileTreePanel({
           state={contextMenu}
           worktreePath={worktreePath}
           projectPath={projectPath}
+          onViewHistory={onSelectHistoryCommit ? handleViewHistory : undefined}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {historyPopover && onSelectHistoryCommit && (
+        <FileHistoryPopover
+          state={historyPopover}
+          worktreePath={worktreePath}
+          projectPath={projectPath}
+          onSelectCommit={(commit) => {
+            onSelectHistoryCommit(historyPopover.file.path, commit);
+            setHistoryPopover(null);
+          }}
+          onClose={() => setHistoryPopover(null)}
         />
       )}
     </div>

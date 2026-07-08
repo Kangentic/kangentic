@@ -52,7 +52,9 @@ function inferLanguage(filePath: string): string {
  */
 function parseNameStatus(output: string): Map<string, { status: GitDiffStatus; oldPath?: string }> {
   const result = new Map<string, { status: GitDiffStatus; oldPath?: string }>();
-  for (const line of output.split('\n')) {
+  // Split on `\r?\n` so a Windows CRLF terminator never leaves a trailing `\r`
+  // on the parsed path (mirrors commit-graph.ts / blame.ts / file-history.ts).
+  for (const line of output.split(/\r?\n/)) {
     if (!line.trim()) continue;
     const parts = line.split('\t');
     if (parts.length < 2) continue;
@@ -81,12 +83,39 @@ function parseNameStatus(output: string): Map<string, { status: GitDiffStatus; o
   return result;
 }
 
+/** The empty tree object every git repo has - used as the "parent" of a root commit. */
+const EMPTY_TREE_HASH = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
 export class DiffService {
   private readonly gitDirectory: string;
   private mergeBaseCache: Map<string, string> = new Map();
+  private parentRefCache: Map<string, string> = new Map();
 
   constructor(gitDirectory: string) {
     this.gitDirectory = gitDirectory;
+  }
+
+  /**
+   * Resolve `<oid>^` (the commit's first parent) for a single-commit diff. A
+   * root commit has no parent, so `<oid>^` fails to resolve - fall back to the
+   * empty tree, which makes every file in the root commit appear as added.
+   * Only a SUCCESSFUL resolution is cached (commit history is immutable); the
+   * empty-tree fallback is deliberately not cached, so a transient rev-parse
+   * failure (a momentary git error rather than a genuine root commit) is
+   * retried on the next fetch instead of permanently poisoning this commit's
+   * diff to "every file added against the empty tree".
+   */
+  private async resolveParentRef(git: ReturnType<typeof simpleGit>, commitOid: string): Promise<string> {
+    const cached = this.parentRefCache.get(commitOid);
+    if (cached) return cached;
+    try {
+      const result = await git.raw(['rev-parse', '--verify', `${commitOid}^`]);
+      const parentRef = result.trim();
+      this.parentRefCache.set(commitOid, parentRef);
+      return parentRef;
+    } catch {
+      return EMPTY_TREE_HASH;
+    }
   }
 
   /**
@@ -143,12 +172,31 @@ export class DiffService {
     return { summaryArgs: [mergeBase], nameStatusArgs: ['--name-status', mergeBase], includeUntracked: true };
   }
 
+  /**
+   * Resolve the `git diff` arguments for a single-commit diff (`<oid>^..<oid>`),
+   * the history browser's commit-detail selection. Commit history is immutable,
+   * so there is no untracked-files concept here.
+   */
+  private async resolveCommitDiffArgs(
+    git: ReturnType<typeof simpleGit>,
+    commitOid: string,
+  ): Promise<{ summaryArgs: string[]; nameStatusArgs: string[]; includeUntracked: boolean }> {
+    const parentRef = await this.resolveParentRef(git, commitOid);
+    return {
+      summaryArgs: [parentRef, commitOid],
+      nameStatusArgs: ['--name-status', parentRef, commitOid],
+      includeUntracked: false,
+    };
+  }
+
   async getDiffFiles(input: GitDiffFilesInput): Promise<GitDiffFilesResult> {
     const git = simpleGit(this.gitDirectory);
-    const { baseBranch } = input;
+    const { baseBranch, commitOid } = input;
     const scope = input.scope ?? 'branch';
 
-    const { summaryArgs, nameStatusArgs, includeUntracked } = await this.resolveScopeDiffArgs(git, scope, baseBranch);
+    const { summaryArgs, nameStatusArgs, includeUntracked } = commitOid
+      ? await this.resolveCommitDiffArgs(git, commitOid)
+      : await this.resolveScopeDiffArgs(git, scope, baseBranch);
 
     // Run git commands in parallel for faster initial load.
     // git.status() fetches untracked files that git diff ignores - only needed
@@ -235,7 +283,7 @@ export class DiffService {
 
   async getFileContent(input: GitFileContentInput): Promise<GitFileContentResult> {
     const git = simpleGit(this.gitDirectory);
-    const { baseBranch, filePath, status, oldPath } = input;
+    const { baseBranch, filePath, status, oldPath, commitOid } = input;
     const scope = input.scope ?? 'branch';
     const language = inferLanguage(filePath);
 
@@ -245,18 +293,22 @@ export class DiffService {
 
     // Resolve the "original" (left) side per scope. The revision is joined with
     // `:path`: '' yields ":path" (the staged/index blob), 'HEAD' yields
-    // "HEAD:path", and the merge-base yields "<base>:path".
+    // "HEAD:path", and the merge-base yields "<base>:path". A commit selection
+    // overrides scope entirely: original is that commit's parent tree.
+    //   commit  -> <oid>^ (or the empty tree for a root commit)
     //   working -> index   (vs working tree on disk)
     //   staged  -> HEAD    (vs the index blob)
     //   branch  -> base    (vs working tree on disk)
     const resolveOriginalRevision = async (): Promise<string> => {
+      if (commitOid) return this.resolveParentRef(git, commitOid);
       if (scope === 'working') return '';
       if (scope === 'staged') return 'HEAD';
       return this.getMergeBase(git, baseBranch);
     };
-    // The "modified" (right) side reads from disk for working/branch, but from
-    // the staged index blob for the staged scope.
-    const modifiedFromIndex = scope === 'staged';
+    // The "modified" (right) side reads from disk for working/branch, from the
+    // staged index blob for the staged scope, and from the commit tree itself
+    // (never disk) for a commit selection - history is immutable.
+    const modifiedFromIndex = !commitOid && scope === 'staged';
 
     // Fetch original and modified in parallel - independent I/O whose overlap
     // cuts latency for modified files (the common case) by ~30-50%.
@@ -274,6 +326,9 @@ export class DiffService {
       needsModified
         ? (async () => {
             try {
+              if (commitOid) {
+                return await git.show([`${commitOid}:${filePath}`]);
+              }
               if (modifiedFromIndex) {
                 return await git.show([`:${filePath}`]);
               }

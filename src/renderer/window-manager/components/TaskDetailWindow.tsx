@@ -296,8 +296,8 @@ export function TaskDetailWindow({
   // mutually exclusive and share the terminal split: opening one closes the
   // other two. The close is computed before the open (never inside a setState
   // updater, which React can double-invoke in StrictMode). The commit graph is
-  // NOT a fourth view here - it lives inside the Changes panel as a Files | Graph
-  // toggle.
+  // NOT a fourth view here - it lives inside the Changes panel's commit-history
+  // browser region, above the file-tree + diff detail pane.
   const handleToggleDescription = useCallback(() => {
     const opening = !descriptionPeekOpen;
     if (opening) {

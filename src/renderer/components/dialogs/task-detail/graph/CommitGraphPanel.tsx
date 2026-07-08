@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, GitBranch } from 'lucide-react';
+import { Loader2, GitBranch, Circle } from 'lucide-react';
 import { layoutCommitGraph } from '../../../../lib/commit-graph-layout';
 import { CommitGraphSvg, ROW_HEIGHT_PX, laneColor } from './CommitGraphSvg';
 import { formatRelativeTime } from '../../../../lib/datetime';
-import type { GitCommitGraphResult, Task } from '../../../../../shared/types';
+import { CountBadge } from '../../../CountBadge';
+import type { GitCommitGraphCommit, GitCommitGraphResult, Task } from '../../../../../shared/types';
 
 interface CommitGraphPanelProps {
   projectPath: string;
@@ -12,6 +13,14 @@ interface CommitGraphPanelProps {
   task: Task;
   /** Whether the containing task window is focused (unused today; kept for parity with ChangesPanel). */
   isFocused?: boolean;
+  /** Fires when the user clicks a commit row - scopes the detail pane to that commit's diff. */
+  onSelectCommit: (commit: GitCommitGraphCommit) => void;
+  /** Fires when the user clicks the pinned "Uncommitted changes" row - returns the detail pane to the branch-wide working diff. */
+  onSelectUncommitted: () => void;
+  /** The currently-selected commit OID, or null when "Uncommitted changes" is selected. */
+  selectedCommit: string | null;
+  /** File count for the working diff, shown on the "Uncommitted changes" row. */
+  uncommittedCount: number;
 }
 
 /** A small ref label chip (HEAD / base branch / PR number) shown on a commit row. */
@@ -32,7 +41,16 @@ function RefBadge({ label, tone }: { label: string; tone: 'tip' | 'base' | 'pr' 
   );
 }
 
-export function CommitGraphPanel({ projectPath, worktreePath, baseBranch, task }: CommitGraphPanelProps) {
+export function CommitGraphPanel({
+  projectPath,
+  worktreePath,
+  baseBranch,
+  task,
+  onSelectCommit,
+  onSelectUncommitted,
+  selectedCommit,
+  uncommittedCount,
+}: CommitGraphPanelProps) {
   const [result, setResult] = useState<GitCommitGraphResult | null>(null);
   const [loaded, setLoaded] = useState(false);
   const initialFetchDoneRef = useRef(false);
@@ -86,10 +104,38 @@ export function CommitGraphPanel({ projectPath, worktreePath, baseBranch, task }
   const baseHash = result?.baseHash ?? null;
   const prHash = task.pr_number != null ? task.head_sha : null;
 
+  const isUncommittedSelected = !selectedCommit;
+
+  // Pinned top row: the working diff, selectable like any commit. Always
+  // rendered regardless of load/empty state, so the branch-wide diff stays one
+  // click away even on a brand-new branch with no commits yet.
+  const uncommittedRow = (
+    <button
+      type="button"
+      onClick={onSelectUncommitted}
+      aria-pressed={isUncommittedSelected}
+      data-testid="commit-history-uncommitted"
+      data-selected={isUncommittedSelected || undefined}
+      className={`flex w-full items-center gap-2 border-b border-edge-subtle px-3 text-left transition-colors ${
+        isUncommittedSelected ? 'bg-accent/10' : 'hover:bg-surface-hover'
+      }`}
+      style={{ height: ROW_HEIGHT_PX }}
+    >
+      <Circle size={9} className={isUncommittedSelected ? 'text-accent' : 'text-fg-faint'} fill="currentColor" />
+      <span className={`flex-1 truncate text-xs ${isUncommittedSelected ? 'font-medium text-fg' : 'text-fg-secondary'}`}>
+        Uncommitted changes
+      </span>
+      <CountBadge count={uncommittedCount} variant={isUncommittedSelected ? 'accent' : 'muted'} size="sm" />
+    </button>
+  );
+
   if (!loaded) {
     return (
-      <div className="flex h-full items-center justify-center" data-testid="commit-graph-panel">
-        <Loader2 size={18} className="animate-spin text-fg-faint" />
+      <div className="flex h-full min-h-0 flex-col" data-testid="commit-graph-panel">
+        {uncommittedRow}
+        <div className="flex flex-1 items-center justify-center">
+          <Loader2 size={18} className="animate-spin text-fg-faint" />
+        </div>
       </div>
     );
   }
@@ -98,18 +144,19 @@ export function CommitGraphPanel({ projectPath, worktreePath, baseBranch, task }
   if (commits.length === 0) {
     const message = tipHash || result?.currentBranch ? 'No commits on this branch yet.' : 'No git history available.';
     return (
-      <div
-        className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center"
-        data-testid="commit-graph-panel"
-      >
-        <GitBranch size={22} className="text-fg-disabled" />
-        <span className="text-sm text-fg-muted">{message}</span>
+      <div className="flex h-full min-h-0 flex-col" data-testid="commit-graph-panel">
+        {uncommittedRow}
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
+          <GitBranch size={22} className="text-fg-disabled" />
+          <span className="text-sm text-fg-muted">{message}</span>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="commit-graph-panel">
+      {uncommittedRow}
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="flex">
           <div className="shrink-0 pl-2" style={{ minHeight: commits.length * ROW_HEIGHT_PX }}>
@@ -119,12 +166,19 @@ export function CommitGraphPanel({ projectPath, worktreePath, baseBranch, task }
             {commits.map((commit, index) => {
               const node = layout.nodes[index];
               const color = node ? laneColor(node.lane) : undefined;
+              const isSelected = commit.hash === selectedCommit;
               return (
-                <div
+                <button
                   key={commit.hash}
-                  className="flex flex-col justify-center gap-0.5 border-b border-edge-subtle px-3"
-                  style={{ height: ROW_HEIGHT_PX }}
+                  type="button"
+                  onClick={() => onSelectCommit(commit)}
+                  aria-pressed={isSelected}
                   data-testid="commit-graph-row"
+                  data-selected={isSelected || undefined}
+                  className={`flex w-full flex-col justify-center gap-0.5 border-b border-edge-subtle px-3 text-left transition-colors ${
+                    isSelected ? 'bg-accent/10' : 'hover:bg-surface-hover'
+                  }`}
+                  style={{ height: ROW_HEIGHT_PX }}
                 >
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="shrink-0 font-mono text-[11px]" style={{ color }}>
@@ -146,7 +200,7 @@ export function CommitGraphPanel({ projectPath, worktreePath, baseBranch, task }
                       </>
                     )}
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>

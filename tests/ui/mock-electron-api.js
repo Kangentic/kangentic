@@ -45,9 +45,14 @@
   let browserPaneCalls = [];
 
   // Resolve the git diff fixture for a request. A test can seed a single fixture
-  // via window.__mockGitDiff, or per-scope fixtures via window.__mockGitDiffByScope
-  // = { working: {...}, staged: {...}, branch: {...} }.
+  // via window.__mockGitDiff, per-scope fixtures via window.__mockGitDiffByScope
+  // = { working: {...}, staged: {...}, branch: {...} }, or per-commit fixtures
+  // via window.__mockGitDiffByCommit = { '<oid>': {...} } (checked first, since a
+  // commit selection overrides scope).
   function resolveGitDiffFixture(request) {
+    var commitOid = request && request.commitOid;
+    var byCommit = (typeof window !== 'undefined' && window.__mockGitDiffByCommit) || null;
+    if (commitOid && byCommit && byCommit[commitOid]) return byCommit[commitOid];
     var scope = (request && request.scope) || 'branch';
     var byScope = (typeof window !== 'undefined' && window.__mockGitDiffByScope) || null;
     if (byScope && byScope[scope]) return byScope[scope];
@@ -1979,6 +1984,19 @@
         return { files: [], totalInsertions: 0, totalDeletions: 0 };
       },
       fileContent: async function (request) {
+        // Test hook: make fileContent() return a controlled promise so a test
+        // can observe a synchronous stale-cache-serve before the corrective
+        // background fetch resolves (see the ContentCacheEntry
+        // stale-while-revalidate path in ChangesPanel.tsx). Set
+        // window.__mockGitFileContentDeferred = true before triggering the
+        // call; it hangs until window.__mockGitFileContentResolve() is called.
+        if (typeof window !== 'undefined' && window.__mockGitFileContentDeferred) {
+          window.__mockGitFileContentDeferred = false;
+          var resolveRef;
+          var pending = new Promise(function (res) { resolveRef = res; });
+          window.__mockGitFileContentResolve = resolveRef;
+          await pending;
+        }
         var fixture = resolveGitDiffFixture(request);
         if (fixture && Array.isArray(fixture.files)) {
           var match = fixture.files.find(function (entry) { return entry.path === (request && request.filePath); });
@@ -2040,6 +2058,22 @@
           return window.__mockCommitGraph;
         }
         return { commits: [], tipHash: null, baseHash: null, mergeBaseHash: null, currentBranch: null, truncated: false };
+      },
+      fileHistory: async function () {
+        // Test hook: seed the file-history popover via window.__mockFileHistory =
+        // { commits: [{ hash, shortHash, authorName, authorTimestamp, subject }] }.
+        if (typeof window !== 'undefined' && window.__mockFileHistory) {
+          return window.__mockFileHistory;
+        }
+        return { commits: [] };
+      },
+      blame: async function () {
+        // Test hook: seed the blame gutter via window.__mockBlame =
+        // { lines: [{ line, hash, shortHash, author, date }] }.
+        if (typeof window !== 'undefined' && window.__mockBlame) {
+          return window.__mockBlame;
+        }
+        return { lines: [] };
       },
     },
 

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
 import type { DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
-import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Pilcrow, FoldVertical, Eye } from 'lucide-react';
+import type { editor as MonacoEditorNamespace } from 'monaco-editor';
+import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Pilcrow, FoldVertical, Eye, UserRound } from 'lucide-react';
 import { MarkdownRenderer } from '../../../MarkdownRenderer';
 import { useConfigStore } from '../../../../stores/config-store';
 import { useKeybinding } from '../../../../hooks/useKeybinding';
+import { formatRelativeTime } from '../../../../lib/datetime';
 import { NAMED_THEMES } from '../../../../../shared/types';
-import type { GitDiffStatus } from '../../../../../shared/types';
+import type { GitBlameLine, GitDiffStatus } from '../../../../../shared/types';
 import {
   getSavedDiffScroll,
   makeDiffScrollKey,
@@ -43,6 +45,19 @@ interface DiffViewerProps {
   pendingChangeFocus?: 'first' | 'last' | null;
   /** Called once the pending change-focus has been applied, so the panel clears it. */
   onPendingChangeFocusConsumed?: () => void;
+  /** Worktree directory, used to fetch this file's blame. */
+  worktreePath?: string;
+  /** Project directory, the fallback base when there is no worktree. */
+  projectPath: string;
+  /**
+   * Whether blame can be shown for the currently displayed diff. Blame always
+   * reflects the file's CURRENT (working-tree) content and line numbers, so it
+   * only lines up when `modified` is that same current content - true for the
+   * Uncommitted detail, false while browsing a historical commit (whose
+   * content and line numbers may not match the file's current state).
+   * Defaults to true.
+   */
+  blameEligible?: boolean;
 }
 
 const STATUS_LABELS: Record<GitDiffStatus, { label: string; colorClass: string }> = {
@@ -90,6 +105,9 @@ export function DiffViewer({
   onCrossFile,
   pendingChangeFocus = null,
   onPendingChangeFocusConsumed,
+  worktreePath,
+  projectPath,
+  blameEligible = true,
 }: DiffViewerProps) {
   const theme = useConfigStore((state) => state.config.theme);
   const themeBase = NAMED_THEMES.find((namedTheme) => namedTheme.id === theme)?.base ?? 'dark';
@@ -106,17 +124,53 @@ export function DiffViewer({
   const [showMarkdownPreview, setShowMarkdownPreview] = useState(false);
   const previewActive = isMarkdown && showMarkdownPreview;
 
-  // Reset the preview toggle whenever the selected file changes, so each file
-  // opens on its diff - like changeIndexRef / pendingRevealRef, which also reset
-  // per file. DiffViewer is never re-keyed per file (Monaco stays mounted), so the
-  // reset is manual. Adjust state during render (React's supported reset-on-prop-
-  // change pattern) rather than in an effect, so switching between two markdown
-  // files never paints a frame of the previous file's preview.
+  // Blame gutter: off by default, toggled per file (reset below on file switch).
+  const [blameOn, setBlameOn] = useState(false);
+  const [blame, setBlame] = useState<GitBlameLine[] | null>(null);
+  const blameDecorationsRef = useRef<MonacoEditorNamespace.IEditorDecorationsCollection | null>(null);
+  const blameUnavailable = binary || status === 'D' || !blameEligible;
+
+  // Reset the preview toggle and blame whenever the selected file changes, so
+  // each file opens on its diff - like changeIndexRef / pendingRevealRef,
+  // which also reset per file. DiffViewer is never re-keyed per file (Monaco
+  // stays mounted), so the reset is manual. Adjust state during render
+  // (React's supported reset-on-prop-change pattern) rather than in an
+  // effect, so switching files never paints a frame of the previous file's
+  // preview or blame.
   const previousFilePathRef = useRef(filePath);
   if (previousFilePathRef.current !== filePath) {
     previousFilePathRef.current = filePath;
     setShowMarkdownPreview(false);
+    setBlameOn(false);
   }
+
+  // Fetch blame when toggled on. `cancelled` guards against a slow fetch
+  // landing after the user switched files or toggled blame off; the effect
+  // re-runs (cancelling the previous request) on any of those changes.
+  useEffect(() => {
+    if (!blameOn || blameUnavailable) {
+      setBlame(null);
+      return;
+    }
+    let cancelled = false;
+    window.electronAPI.git.blame({ worktreePath, projectPath, filePath })
+      .then((result) => {
+        if (!cancelled) setBlame(result.lines);
+      })
+      .catch(() => {
+        if (!cancelled) setBlame([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [blameOn, blameUnavailable, worktreePath, projectPath, filePath]);
+
+  // Turn blame back off when it becomes unavailable (a binary/deleted file, or
+  // browsing a historical commit), so re-entering an eligible file or scope
+  // starts from the "off by default" state rather than a stale "on".
+  useEffect(() => {
+    if (blameUnavailable) setBlameOn(false);
+  }, [blameUnavailable]);
 
   // Diff-rendering preferences are single global config keys (the toolbar
   // toggles and the Layout settings tab read and write the same keys), so the
@@ -153,6 +207,60 @@ export function DiffViewer({
   pendingChangeFocusRef.current = pendingChangeFocus;
   const onPendingChangeFocusConsumedRef = useRef(onPendingChangeFocusConsumed);
   onPendingChangeFocusConsumedRef.current = onPendingChangeFocusConsumed;
+
+  // Mirror blame state into refs so the once-subscribed onDidUpdateDiff
+  // listener (below) always reads the latest values.
+  const blameRef = useRef(blame);
+  blameRef.current = blame;
+  const blameOnRef = useRef(blameOn);
+  blameOnRef.current = blameOn;
+
+  // Apply (or clear) the blame gutter as `before`-content decorations on the
+  // modified editor: a fixed-width column at the start of each line reading
+  // "<shortHash>  <author>", with the full hash/author/date on hover. Re-run
+  // on every diff update (a file switch swaps Monaco's model in place) and
+  // whenever blame data or the toggle changes.
+  const applyBlameDecorations = useCallback(() => {
+    const diffEditor = diffEditorRef.current;
+    const monacoInstance = monacoRef.current;
+    if (diffEditor === null || monacoInstance === null) return;
+    const modifiedEditor = diffEditor.getModifiedEditor();
+    const blameLines = blameOnRef.current ? blameRef.current : null;
+    if (!blameLines) {
+      blameDecorationsRef.current?.clear();
+      return;
+    }
+    const lineCount = modifiedEditor.getModel()?.getLineCount() ?? 0;
+    const decorations: MonacoEditorNamespace.IModelDeltaDecoration[] = blameLines
+      .filter((line) => line.line >= 1 && line.line <= lineCount)
+      .map((line) => ({
+        range: new monacoInstance.Range(line.line, 1, line.line, 1),
+        options: {
+          // Monaco does not render a decoration on a collapsed (zero-width)
+          // range unless this is set - and every blame decoration targets a
+          // single point (the start of the line), so the range is collapsed.
+          showIfCollapsed: true,
+          before: {
+            content: `${line.shortHash}  ${line.author}`.slice(0, 32),
+            inlineClassName: 'blame-gutter-annotation',
+          },
+          hoverMessage: {
+            value: line.date
+              ? `\`${line.shortHash}\` ${line.author} · ${formatRelativeTime(line.date)}`
+              : `\`${line.shortHash}\` ${line.author}`,
+          },
+        },
+      }));
+    if (blameDecorationsRef.current) {
+      blameDecorationsRef.current.set(decorations);
+    } else {
+      blameDecorationsRef.current = modifiedEditor.createDecorationsCollection(decorations);
+    }
+  }, []);
+
+  useEffect(() => {
+    applyBlameDecorations();
+  }, [blame, blameOn, applyBlameDecorations]);
 
   // Apply (or clear) the unchanged-region fold on the live editor. Monaco folds
   // only on a false->true transition of hideUnchangedRegions, so a diff that
@@ -344,11 +452,14 @@ export function DiffViewer({
       // Re-apply the fold for the freshly computed diff (a file switch keeps the
       // editor mounted, so the option never transitions on its own).
       applyCollapseFold();
+      // Re-target the blame gutter at the freshly swapped model.
+      applyBlameDecorations();
     });
     // The diff may have finished before onMount attached these listeners.
     if (!consumePendingChangeFocus()) consumePendingReveal(true);
     applyCollapseFold();
-  }, [consumePendingReveal, consumePendingChangeFocus, applyCollapseFold]);
+    applyBlameDecorations();
+  }, [consumePendingReveal, consumePendingChangeFocus, applyCollapseFold, applyBlameDecorations]);
 
   // Arm on entering a file; on leaving, commit the tracked scroll under the
   // outgoing key. One cleanup path covers file switch, panel close, dialog
@@ -392,6 +503,7 @@ export function DiffViewer({
   useEffect(() => {
     if (binary || previewActive) {
       diffEditorRef.current = null;
+      blameDecorationsRef.current = null;
     }
   }, [binary, previewActive]);
 
@@ -504,6 +616,16 @@ export function DiffViewer({
                 data-testid="diff-collapse-unchanged"
               >
                 <FoldVertical size={16} />
+              </button>
+              <button
+                onClick={() => setBlameOn((value) => !value)}
+                disabled={blameUnavailable}
+                className={`${toolbarButtonClass(blameOn)} disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-fg-muted`}
+                title={blameUnavailable ? 'Blame unavailable for this file' : 'Toggle blame'}
+                aria-pressed={blameOn}
+                data-testid="diff-blame-toggle"
+              >
+                <UserRound size={16} />
               </button>
 
               <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />

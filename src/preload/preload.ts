@@ -303,6 +303,8 @@ const api: ElectronAPI = {
     checkPendingChanges: (input) => ipcRenderer.invoke(IPC.GIT_CHECK_PENDING_CHANGES, input),
     branchSummary: (input) => ipcRenderer.invoke(IPC.GIT_BRANCH_SUMMARY, input),
     commitGraph: (input) => ipcRenderer.invoke(IPC.GIT_COMMIT_GRAPH, input),
+    fileHistory: (input) => ipcRenderer.invoke(IPC.GIT_FILE_HISTORY, input),
+    blame: (input) => ipcRenderer.invoke(IPC.GIT_BLAME, input),
     onDiffChanged: (callback) => {
       const handler = () => callback();
       ipcRenderer.on(IPC.GIT_DIFF_CHANGED, handler);

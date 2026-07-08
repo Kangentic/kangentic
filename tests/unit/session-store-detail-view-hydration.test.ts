@@ -17,25 +17,26 @@
  *    Red condition: change `continue` in the catch block to `throw` and the
  *    test fails with an exception.
  *
- * 3. changesViewTab round-trips through the persisted detail_view_state blob
- *    (buildDetailViewBlob's write side, hydrateDetailViewStateForTasks's read
- *    side): setChangesViewTab(id, 'graph') schedules a debounced save whose
- *    blob carries `changesViewTab: 'graph'`; the 'files' default is never
- *    written (mirrors changesOpen/browserOpen, which also only persist when
- *    set). Hydrating a blob with `changesViewTab: 'graph'` restores it.
+ * 3. changesSelectedCommit round-trips through the persisted detail_view_state
+ *    blob (buildDetailViewBlob's write side, hydrateDetailViewStateForTasks's
+ *    read side): setChangesSelectedCommit(id, '<oid>') schedules a debounced
+ *    save whose blob carries `changesSelectedCommit: '<oid>'`; the default
+ *    (null - "Uncommitted changes") is never written (mirrors
+ *    changesOpen/browserOpen, which also only persist when set). Hydrating a
+ *    blob with `changesSelectedCommit: '<oid>'` restores it.
  *    Red condition (write): remove the
- *    `if (state.changesViewTab[taskId] === 'graph') blob.changesViewTab = 'graph';`
+ *    `if (selectedCommit) blob.changesSelectedCommit = selectedCommit;`
  *    line from buildDetailViewBlob and the persist test's captured blob loses
  *    the key. Red condition (read): remove the
- *    `if (blob.changesViewTab !== undefined) changesViewTab[task.id] = blob.changesViewTab;`
+ *    `if (blob.changesSelectedCommit !== undefined) changesSelectedCommit[task.id] = blob.changesSelectedCommit;`
  *    line from hydrateDetailViewStateForTasks and the hydrate test fails.
  *
  * All tests drive the Zustand store directly. window.electronAPI is stubbed
  * before importing the store. vi.useFakeTimers() prevents the debounced-save
  * setTimeout (triggered by setter calls like toggleChangesOpen) from
  * firing during or between tests unless a test explicitly advances timers
- * (the changesViewTab persistence tests do, to flush the debounced save and
- * inspect the blob it would have sent over IPC).
+ * (the changesSelectedCommit persistence tests do, to flush the debounced save
+ * and inspect the blob it would have sent over IPC).
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterAll, vi } from 'vitest';
@@ -47,8 +48,8 @@ import type { Task, TaskDetailViewState } from '../../src/shared/types';
 // hydrateDetailViewStateForTasks is synchronous and does not call any IPC,
 // but the store module reads window.electronAPI at module load time.
 // setDetailViewStateMock captures every debounced-save payload so the
-// changesViewTab persistence tests can inspect the blob that would have been
-// sent to the main process.
+// changesSelectedCommit persistence tests can inspect the blob that would
+// have been sent to the main process.
 // ---------------------------------------------------------------------------
 
 const setDetailViewStateMock = vi.fn(async (_taskId: string, _state: TaskDetailViewState | null, _projectId?: string | null) => {});
@@ -113,7 +114,8 @@ function resetSliceState(): void {
     changesFileTreeWidth: {},
     changesViewedFiles: {},
     changesViewMode: {},
-    changesViewTab: {},
+    changesSelectedCommit: {},
+    changesHistoryHeight: {},
     dividerRatio: {},
     browserOpenTasks: new Set<string>(),
     maximizedTasks: new Set<string>(),
@@ -271,10 +273,10 @@ describe('hydrateDetailViewStateForTasks - malformed-blob skip', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Behavior 3: changesViewTab round-trips through the persisted blob
+// Behavior 3: changesSelectedCommit round-trips through the persisted blob
 // ---------------------------------------------------------------------------
 
-describe('changesViewTab - persists to and hydrates from detail_view_state', () => {
+describe('changesSelectedCommit - persists to and hydrates from detail_view_state', () => {
   beforeEach(() => {
     // Flush any debounced saves left pending by earlier tests first: the
     // save-scheduling maps in task-changes-panel-slice.ts (detailViewPendingSaves /
@@ -288,41 +290,41 @@ describe('changesViewTab - persists to and hydrates from detail_view_state', () 
     resetSliceState();
   });
 
-  it('persists changesViewTab: "graph" into the saved blob after setChangesViewTab(id, "graph")', () => {
-    useSessionStore.getState().setChangesViewTab('task-graph', 'graph');
+  it('persists changesSelectedCommit into the saved blob after setChangesSelectedCommit(id, oid)', () => {
+    useSessionStore.getState().setChangesSelectedCommit('task-commit', 'a1b2c3d');
 
     // Flush the debounced save (500ms in the real slice); advance well past it.
     vi.advanceTimersByTime(1000);
 
     expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
     const [taskId, blob] = setDetailViewStateMock.mock.calls[0];
-    expect(taskId).toBe('task-graph');
-    expect(blob).toMatchObject({ changesViewTab: 'graph' });
+    expect(taskId).toBe('task-commit');
+    expect(blob).toMatchObject({ changesSelectedCommit: 'a1b2c3d' });
   });
 
-  it('does not persist changesViewTab when set to the default "files"', () => {
-    useSessionStore.getState().setChangesViewTab('task-files', 'files');
+  it('does not persist changesSelectedCommit when set to null (Uncommitted changes, the default)', () => {
+    useSessionStore.getState().setChangesSelectedCommit('task-uncommitted', null);
 
     vi.advanceTimersByTime(1000);
 
     expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
     const [, blob] = setDetailViewStateMock.mock.calls[0];
-    expect(blob?.changesViewTab).toBeUndefined();
+    expect(blob?.changesSelectedCommit).toBeUndefined();
   });
 
-  it('hydrates changesViewTab: "graph" from a persisted blob back into the store', () => {
-    const task = makeTask('task-hydrate-graph', JSON.stringify({ changesViewTab: 'graph' }));
+  it('hydrates changesSelectedCommit from a persisted blob back into the store', () => {
+    const task = makeTask('task-hydrate-commit', JSON.stringify({ changesSelectedCommit: 'a1b2c3d' }));
 
     useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
 
-    expect(useSessionStore.getState().changesViewTab['task-hydrate-graph']).toBe('graph');
+    expect(useSessionStore.getState().changesSelectedCommit['task-hydrate-commit']).toBe('a1b2c3d');
   });
 
-  it('leaves changesViewTab unset when the persisted blob omits it (files stays the effective default)', () => {
+  it('leaves changesSelectedCommit unset when the persisted blob omits it (Uncommitted stays the effective default)', () => {
     const task = makeTask('task-hydrate-default', JSON.stringify({ dividerRatio: 0.5 }));
 
     useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
 
-    expect(useSessionStore.getState().changesViewTab['task-hydrate-default']).toBeUndefined();
+    expect(useSessionStore.getState().changesSelectedCommit['task-hydrate-default']).toBeUndefined();
   });
 });
