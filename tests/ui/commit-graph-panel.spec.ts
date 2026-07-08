@@ -187,6 +187,27 @@ test.describe('Task Detail Changes panel - commit-history browser', () => {
     await closeChangesPanelAndDialog(dialog);
   });
 
+  test('the commit-history region is drag-resizable', async () => {
+    const dialog = await openDialogWithChangesPanel('Commit Graph Task', 'Code Review');
+
+    const historyPanel = page.locator('[data-testid="commit-graph-panel"]');
+    await historyPanel.waitFor({ state: 'visible', timeout: 10000 });
+    const beforeHeight = (await historyPanel.boundingBox())!.height;
+
+    // Drag the divider 80px down to grow the history region (mirrors the
+    // file-tree's "drag-resizable" test in changes-panel-scope.spec.ts).
+    const handleBox = (await page.locator('[data-testid="changes-history-resize"]').boundingBox())!;
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 80, { steps: 6 });
+    await page.mouse.up();
+
+    // The history region grew by roughly the drag distance (tolerance for clamping/rounding).
+    await expect.poll(async () => (await historyPanel.boundingBox())!.height, { timeout: 5000 }).toBeGreaterThan(beforeHeight + 40);
+
+    await closeChangesPanelAndDialog(dialog);
+  });
+
   test('shows "No git history available." then "No commits on this branch yet." for the two empty-graph fixtures, with Uncommitted still selectable', async () => {
     await page.evaluate(() => {
       (window as unknown as { __mockCommitGraph?: unknown }).__mockCommitGraph = {

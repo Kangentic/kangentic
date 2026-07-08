@@ -41,6 +41,7 @@ const preConfig = `
     files: [
       { path: 'src/blamed.ts', status: 'M', insertions: 2, deletions: 1, original: 'line one\\nline two\\n', modified: 'line one\\nline two changed\\nline three\\n', language: 'typescript' },
       { path: 'assets/deleted.ts', status: 'D', insertions: 0, deletions: 3, original: 'gone\\n', modified: '', language: 'typescript' },
+      { path: 'assets/logo.png', status: 'M', insertions: 0, deletions: 0, binary: true, original: '', modified: '', language: 'plaintext' },
     ],
     totalInsertions: 2,
     totalDeletions: 4,
@@ -52,6 +53,31 @@ const preConfig = `
       { line: 2, hash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', shortHash: 'bbbbbbb', author: 'Bea', date: new Date().toISOString() },
       { line: 3, hash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', shortHash: 'aaaaaaa', author: 'Ada', date: new Date().toISOString() },
     ],
+  };
+
+  // A single historical commit, whose diff repeats blamed.ts, so a test can
+  // select it and confirm blame becomes unavailable while browsing (DiffViewer's
+  // blameEligible prop - blame always reflects the file's CURRENT working-tree
+  // content/line numbers, which do not necessarily match a historical commit).
+  window.__mockGitDiffByCommit = {
+    'commit-blame-eligible': {
+      files: [
+        { path: 'src/blamed.ts', status: 'M', insertions: 1, deletions: 0, original: 'line one\\n', modified: 'line one\\nline two\\n', language: 'typescript' },
+      ],
+      totalInsertions: 1,
+      totalDeletions: 0,
+    },
+  };
+
+  window.__mockCommitGraph = {
+    commits: [
+      { hash: 'commit-blame-eligible', shortHash: 'blame01', parents: [], authorName: 'Ada', authorTimestamp: new Date().toISOString(), subject: 'touch blamed.ts' },
+    ],
+    tipHash: 'commit-blame-eligible',
+    baseHash: 'commit-blame-eligible',
+    mergeBaseHash: 'commit-blame-eligible',
+    currentBranch: 'feature/blame-gutter',
+    truncated: false,
   };
 
   window.__mockPreConfigure(function (state) {
@@ -187,6 +213,62 @@ test.describe('DiffViewer: blame gutter', () => {
 
     await fileTree.locator('text=deleted.ts').click();
     await expect(page.locator('[data-testid="diff-blame-toggle"]')).toBeDisabled();
+
+    await page.locator('[data-testid="changes-toggle"]').click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('blame is unavailable for a binary file', async () => {
+    const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=Blame Gutter Task').first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
+
+    const fileTree = page.locator('[data-testid="changes-file-tree"]');
+    if (!(await fileTree.isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
+
+    await fileTree.locator('text=logo.png').click();
+    await expect(page.locator('[data-testid="diff-blame-toggle"]')).toBeDisabled();
+
+    await page.locator('[data-testid="changes-toggle"]').click();
+    await page.keyboard.press('Control+Shift+W');
+    await expect(dialog).not.toBeVisible({ timeout: 8000 });
+  });
+
+  test('blame is unavailable while browsing a historical commit, and re-enables when returning to Uncommitted', async () => {
+    const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=Blame Gutter Task').first();
+    await card.click();
+
+    const dialog = page.locator('[data-testid="task-detail-dialog"]');
+    await dialog.waitFor({ state: 'visible', timeout: 8000 });
+
+    const fileTree = page.locator('[data-testid="changes-file-tree"]');
+    if (!(await fileTree.isVisible())) {
+      await page.locator('[data-testid="changes-toggle"]').click();
+    }
+
+    // Sanity: on Uncommitted, blamed.ts's toggle starts enabled.
+    await fileTree.locator('text=blamed.ts').click();
+    const blameToggle = page.locator('[data-testid="diff-blame-toggle"]');
+    await expect(blameToggle).toBeEnabled();
+
+    // Select the historical commit that also touches blamed.ts - the same
+    // file path, but blame is not eligible while browsing a commit (content
+    // and line numbers may not match the file's current working-tree state).
+    await page.locator('[data-testid="commit-graph-row"]').filter({ hasText: 'touch blamed.ts' }).click();
+    await expect(page.locator('[data-testid="commit-detail-header"]')).toBeVisible({ timeout: 10000 });
+    await fileTree.locator('text=blamed.ts').click();
+    await expect(blameToggle).toBeDisabled();
+
+    // Returning to Uncommitted re-enables blame for the same file.
+    await page.locator('[data-testid="commit-detail-back"]').click();
+    await expect(page.locator('[data-testid="commit-detail-header"]')).not.toBeVisible({ timeout: 10000 });
+    await fileTree.locator('text=blamed.ts').click();
+    await expect(blameToggle).toBeEnabled();
 
     await page.locator('[data-testid="changes-toggle"]').click();
     await page.keyboard.press('Control+Shift+W');

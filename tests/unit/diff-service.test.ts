@@ -863,6 +863,41 @@ describe('DiffService', () => {
         // rev-parse is only spawned once for the same commitOid across calls.
         expect(mockGit.raw).toHaveBeenCalledTimes(1);
       });
+
+      it('does NOT cache a failed (empty-tree fallback) parent-ref resolution: a transient error is retried on the next call', async () => {
+        // First call: rev-parse fails transiently (not a genuine root commit) -
+        // falls back to the empty tree but must not poison the cache for
+        // commit123, per resolveParentRef's doc comment ("only a SUCCESSFUL
+        // resolution is cached").
+        mockGit.raw.mockRejectedValueOnce(new Error('fatal: transient git error'));
+        mockGit.show.mockResolvedValue('content');
+
+        await service.getFileContent({
+          projectPath: '/project',
+          baseBranch: 'main',
+          filePath: 'src/a.ts',
+          status: 'M',
+          commitOid: 'commit123',
+        });
+        expect(mockGit.show).toHaveBeenCalledWith([`${EMPTY_TREE_HASH}:src/a.ts`]);
+
+        // Second call for the SAME commitOid: rev-parse now succeeds. If the
+        // empty-tree fallback had been (incorrectly) cached, this would still
+        // resolve to the empty tree instead of the real parent.
+        mockGit.raw.mockResolvedValueOnce('parent999\n');
+        await service.getFileContent({
+          projectPath: '/project',
+          baseBranch: 'main',
+          filePath: 'src/b.ts',
+          status: 'M',
+          commitOid: 'commit123',
+        });
+
+        // rev-parse was retried (spawned twice total), and the second call's
+        // successful resolution is used for the original side.
+        expect(mockGit.raw).toHaveBeenCalledTimes(2);
+        expect(mockGit.show).toHaveBeenCalledWith(['parent999:src/b.ts']);
+      });
     });
   });
 });
