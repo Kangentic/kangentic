@@ -1,5 +1,6 @@
 ---
 description: Version bump, changelog, tag, and push release
+disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*), Agent
 argument-hint: [patch|minor|major]
 ---
@@ -18,6 +19,10 @@ Release pipeline: version bump, changelog generation, git tag, and push to trigg
 **Release type (optional):** $ARGUMENTS
 
 This command does NOT use `/merge-back`. The release flow is fundamentally different: no rebase, creates tags, and pushes to main directly.
+
+**This skill performs irreversible, public actions** (a git tag plus a push that triggers
+`release.yml`). Do not skip the confirmation gates: the bump-type confirmation (Step 0) and the
+pre-push confirmation (Step 4.5).
 
 ## Step 0 -- Determine Bump Type
 
@@ -59,15 +64,18 @@ Run these checks sequentially. Stop on the first failure.
 
 ## Step 1.5 -- Documentation Audit
 
-Full anchor point verification before release:
+Full anchor point verification before release. The audit is read-only; this step always applies
+what it finds. There is no skip and no confirmation prompt here.
 
-1. Spawn a `doc-auditor` agent with scope "all" (verify every anchor)
-2. If gaps are found:
-   - List each gap with source file, target doc, and missing items
-   - Ask the user: "N documentation gaps found. Fix before release, or skip?"
-   - If the user wants to fix: run the update pass (add missing items to docs, remove extras), stage the doc changes, and continue
-   - If the user skips: proceed without fixing (soft gate)
-3. Scan for undocumented `feat:` commits since the previous tag. If any features are not covered in `docs/`, list them and ask the user whether to document them now or skip.
+1. Spawn a `doc-auditor` agent with scope "all" (verify every anchor).
+2. **Apply every gap it reports - unconditionally.** For each gap: add missing items, remove
+   extras, fix stale references. Do not ask the user; do not offer a skip.
+3. **Document every undocumented `feat:` commit** since the previous tag: scan for features not
+   covered in `docs/` and write the missing coverage. Unconditional - do not ask.
+4. Stage the changed doc files (e.g. `git add docs/foo.md docs/bar.md`). They ride into the
+   release commit in Step 4.
+5. Report what was fixed: list the changed doc files. A large doc pass folded into the
+   version-bump commit is expected and desired - do not treat it as scope creep.
 
 ## Step 2 -- Version Bump
 
@@ -157,6 +165,21 @@ Generate a concise, user-friendly summary for the GitHub Release draft body. Thi
    chore(release): vX.Y.Z
    ```
 3. Commit: `git commit -F .kangentic/COMMIT_MSG.tmp`
+
+## Step 4.5 -- Confirm Release (irreversible)
+
+This is the last reversible point: the release commit exists locally but nothing is public yet.
+This gate applies to every invocation path (a human-typed `/release` or the board's
+`autoCommand: /release`) - even an auto-injected invocation pauses here.
+
+1. Show the user: the version (vX.Y.Z), the tag that will be created, the number of commits
+   included, and that pushing the tag triggers `release.yml` (builds platform artifacts and
+   creates a public draft GitHub Release).
+2. Ask: "Tag and push vX.Y.Z? This creates a public release and cannot be undone.
+   [confirm/cancel]"
+3. **On confirm:** proceed to Step 5.
+4. **On cancel:** STOP. Report that the release commit is local-only, no tag was created, and
+   nothing was pushed. Do not tag, do not push.
 
 ## Step 5 -- Tag
 
