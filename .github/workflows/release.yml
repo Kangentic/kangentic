@@ -231,5 +231,15 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
 
+      # Idempotent: re-running an already-published tag (e.g. backfilling a green
+      # run after a transient failure) must not fail on npm's "cannot publish
+      # over the previously published version". Skip when the version is already
+      # on the registry so the re-run stays green.
       - name: Publish launcher to npm
-        run: npm publish --access public --provenance -w packages/launcher
+        run: |
+          PUBLISHED_VERSION=$(node -p "require('./packages/launcher/package.json').version")
+          if npm view "kangentic@$PUBLISHED_VERSION" version >/dev/null 2>&1; then
+            echo "kangentic@$PUBLISHED_VERSION is already on npm; skipping publish (idempotent re-run)."
+            exit 0
+          fi
+          npm publish --access public --provenance -w packages/launcher
