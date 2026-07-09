@@ -2,6 +2,7 @@ import { boardWindowManager, commandWindowManager } from '../window-manager';
 import { useSessionStore } from '../stores/session-store';
 import { useProjectStore } from '../stores/project-store';
 import { derivePanelSessionId } from './focused-sessions';
+import { transientKey, type TransientSessionEntry } from '../stores/session-store/transient-session-slice';
 
 /**
  * Resolving the ONE terminal that dictated text should be injected into. The
@@ -50,6 +51,37 @@ function focusedWindowSessionId(manager: typeof boardWindowManager): string | nu
   return focusedWindow.sessionId ?? null;
 }
 
+/** Resolve the focused Command Terminal window's live session by its durable slot
+ *  anchor. Gated on layer visibility because hiding the layer keeps the window,
+ *  focusedWindowId, and PTY alive; a hidden terminal must never win injection over
+ *  a visible one. Resolved by anchor (not the window's stored sessionId, which is
+ *  always null for command windows - it is never written back on spawn/reattach/
+ *  respawn) so a branch-switch respawn is picked up. */
+export function resolveFocusedCommandSessionId(input: {
+  commandBarVisible: boolean;
+  focusedCommandAnchor: string | null;
+  currentProjectId: string | null;
+  transientSessions: Record<string, TransientSessionEntry>;
+}): string | null {
+  if (!input.commandBarVisible) return null;
+  if (!input.focusedCommandAnchor || !input.currentProjectId) return null;
+  const entry = input.transientSessions[transientKey(input.currentProjectId, input.focusedCommandAnchor)];
+  return entry?.sessionId ?? null;
+}
+
+function focusedCommandSessionId(): string | null {
+  const windowState = commandWindowManager.store.getState();
+  const focusedId = windowState.focusedWindowId;
+  const focusedWindow = focusedId ? windowState.windows[focusedId] : null;
+  const sessionState = useSessionStore.getState();
+  return resolveFocusedCommandSessionId({
+    commandBarVisible: sessionState.commandBarVisible,
+    focusedCommandAnchor: focusedWindow?.anchor ?? null,
+    currentProjectId: useProjectStore.getState().currentProject?.id ?? null,
+    transientSessions: sessionState.transientSessions,
+  });
+}
+
 /**
  * Resolve the single injection target via a priority chain. Returns null when
  * no live terminal can be determined, so the caller can refuse to commit rather
@@ -57,7 +89,7 @@ function focusedWindowSessionId(manager: typeof boardWindowManager): string | nu
  */
 export function resolveDictationTarget(): string | null {
   // 1. The focused Command Terminal window.
-  const commandTarget = focusedWindowSessionId(commandWindowManager);
+  const commandTarget = focusedCommandSessionId();
   if (isRunningSession(commandTarget)) return commandTarget;
 
   // 2. The focused task-detail (board) window.
