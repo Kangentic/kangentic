@@ -181,13 +181,16 @@ test.describe('Fullscreen TUI select prompt - input/focus survives a scrollback 
       })
       .toContain(HIGHLIGHT_FIRST);
 
-    // Open the task-detail window and focus its terminal with a real click,
-    // targeting xterm's own focusable textarea directly (not the outer
-    // container) so the click is guaranteed to land on the focusable element.
+    // Open the task-detail window and focus its terminal with a real click on
+    // the OUTER xterm container, mirroring an actual user click. xterm's own
+    // mousedown handler then focuses its hidden helper textarea. Clicking the
+    // textarea directly is not viable here: xterm deliberately renders it
+    // near-invisible (it exists only to capture keystrokes), so Playwright's
+    // actionability check ("element is not visible") can time out on it,
+    // particularly under CI's headless Linux/xvfb renderer.
     await openTaskWindow(page, taskTitle);
     const dialog = page.locator('[data-testid="task-detail-dialog"]').first();
-    const textarea = dialog.locator('.xterm-helper-textarea').first();
-    await textarea.click();
+    await dialog.locator('.xterm').first().click();
     await expect
       .poll(() => page.evaluate(() => document.activeElement?.className ?? null), {
         timeout: 5000,
