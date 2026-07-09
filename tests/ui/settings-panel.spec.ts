@@ -299,7 +299,8 @@ test.describe('Settings Panel', () => {
     // needs `exact: true` - without it, the substring match also hits "Search Tasks".
     await expect(page.getByRole('heading', { name: 'Tasks', exact: true })).toBeVisible();
     await expect(page.getByText('Create Task')).toBeVisible();
-    await expect(page.getByText('Move Task')).toBeVisible();
+    // exact: true - without it, the substring match also hits "Move Task to Project".
+    await expect(page.getByText('Move Task', { exact: true })).toBeVisible();
     await expect(page.getByText('Delete Task')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Board', exact: true })).toBeVisible();
     await expect(page.getByText('List Backlog')).toBeVisible();
