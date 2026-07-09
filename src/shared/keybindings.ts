@@ -310,6 +310,20 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     defaultCombo: 'Alt+Shift+ArrowUp',
     rebindable: true,
   },
+  // Not rebindable: Mod+C is terminal-consumed (terminal.copy), and a rebindable
+  // entry on that combo would trip detectConflicts' terminal-warn. Mirrors
+  // terminal.copy's own non-rebindable treatment; NOT terminalUnsafe (this
+  // combo is handled by the diff editor, not the embedded terminal, so it must
+  // stay out of the terminalUnsafe set the "in sync" test locks).
+  {
+    id: 'changes.copy',
+    label: 'Copy Selection',
+    description: 'Copy the selected diff text to the clipboard.',
+    group: 'Git Changes',
+    scope: 'task-dialog',
+    defaultCombo: 'Mod+C',
+    rebindable: false,
+  },
 
   // ── Windows ──
   // Win11-style STATEFUL snap: each arrow's result depends on the window's current

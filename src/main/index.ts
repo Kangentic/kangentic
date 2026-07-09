@@ -345,9 +345,14 @@ function getCwdArg(): string | null {
 export { resolveIconPath } from './window-utils';
 
 // Build and show the standard (non-image) right-click context menu with Copy,
-// Paste, and Select All. When the click lands inside a terminal, the actions are
-// dispatched as CustomEvents the renderer's terminal handlers act on; otherwise
-// they fall back to the document's native execCommand.
+// Paste, and Select All. When the click lands inside a terminal or a Monaco
+// diff editor, Copy and Select All are dispatched as CustomEvents the
+// renderer's own handlers act on: document.execCommand is unreliable for Copy
+// there (Menu.popup steals document focus before the click handler runs) and
+// simply does not work for Select All (Monaco keeps its own selection model
+// entirely outside the browser's native document Selection, so
+// execCommand('selectAll') is a no-op over it). Everywhere else falls back to
+// the document's native execCommand.
 function showTerminalAwareContextMenu(
   wc: Electron.WebContents,
   params: Electron.ContextMenuParams,
@@ -367,6 +372,8 @@ function showTerminalAwareContextMenu(
             var el = document.elementFromPoint(${x}, ${y});
             if (el && el.closest('.xterm')) {
               window.dispatchEvent(new CustomEvent('terminal-copy', { detail: { x: ${x}, y: ${y} } }));
+            } else if (el && el.closest('.monaco-diff-editor')) {
+              window.dispatchEvent(new CustomEvent('diff-copy', { detail: { x: ${x}, y: ${y} } }));
             } else {
               document.execCommand('copy');
             }
@@ -400,6 +407,8 @@ function showTerminalAwareContextMenu(
             var el = document.elementFromPoint(${x}, ${y});
             if (el && el.closest('.xterm')) {
               window.dispatchEvent(new CustomEvent('terminal-select-all', { detail: { x: ${x}, y: ${y} } }));
+            } else if (el && el.closest('.monaco-diff-editor')) {
+              window.dispatchEvent(new CustomEvent('diff-select-all', { detail: { x: ${x}, y: ${y} } }));
             } else {
               document.execCommand('selectAll');
             }

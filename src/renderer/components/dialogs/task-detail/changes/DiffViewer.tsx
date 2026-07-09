@@ -15,6 +15,7 @@ import {
   resolveDiffScrollAction,
   saveDiffScroll,
 } from '../../../../utils/diff-scroll-memory';
+import { copyDiffSelection } from '../../../../utils/diff-clipboard';
 
 interface DiffViewerProps {
   original: string;
@@ -182,6 +183,7 @@ export function DiffViewer({
 
   const diffEditorRef = useRef<MonacoDiffEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
+  const editorContainerRef = useRef<HTMLDivElement | null>(null);
 
   // Live diff-rendering options derived from the global config. ignoreTrimWhitespace
   // is a diff-COMPUTATION option, so it applies when the diff loads. The diff
@@ -550,6 +552,97 @@ export function DiffViewer({
   useKeybinding('changes.nextChange', () => navigateChange('next'), { capture: true, enabled: isFocused && !previewActive });
   useKeybinding('changes.prevChange', () => navigateChange('prev'), { capture: true, enabled: isFocused && !previewActive });
 
+  // Reliable copy: Monaco's own Ctrl+C routes through the web clipboard, which
+  // rejects once the document loses focus. Capture ahead of Monaco (capture
+  // phase + default preventDefault) and write via the focus-independent
+  // main-process clipboard instead. Scoped to when a diff sub-editor actually
+  // holds focus so it never hijacks Ctrl+C elsewhere (e.g. the file filter).
+  useKeybinding('changes.copy', () => {
+    const diffEditor = diffEditorRef.current;
+    if (diffEditor) copyDiffSelection(diffEditor);
+  }, {
+    capture: true,
+    enabled: isFocused && !previewActive,
+    when: () => {
+      const diffEditor = diffEditorRef.current;
+      return !!diffEditor
+        && (diffEditor.getModifiedEditor().hasTextFocus() || diffEditor.getOriginalEditor().hasTextFocus());
+    },
+  });
+
+  // Right-click Copy / Select All: the main process's showTerminalAwareContextMenu
+  // shows the native OS Copy/Paste/Select All menu (same as everywhere else in
+  // the app - Monaco no longer preempts it now that contextmenu:false is set
+  // below). Its Copy and Select All items dispatch 'diff-copy' / 'diff-select-all'
+  // CustomEvents when the click lands over a '.monaco-diff-editor' rather than
+  // running document.execCommand, which is unreliable for Copy (focus loss) and
+  // a no-op for Select All (Monaco's selection model is outside the browser's
+  // native document Selection) - mirroring the terminal's 'terminal-copy' /
+  // 'terminal-select-all' handling in useTerminal.ts. Scope to THIS instance's
+  // container (isInside) so two co-mounted DiffViewers (two task windows open
+  // on Changes) don't both react to one right-click.
+  useEffect(() => {
+    // The click coordinates the main-process context menu forwarded, or null
+    // when the event carries no positional detail.
+    const pointOf = (event: Event): { x: number; y: number } | null => {
+      const { x, y } = (event as CustomEvent).detail || {};
+      if (x == null || y == null) return null;
+      return { x, y };
+    };
+    const isInside = (point: { x: number; y: number }): boolean => {
+      const el = editorContainerRef.current;
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
+    };
+    // Which sub-editor the user right-clicked in, resolved from the click POINT
+    // rather than hasTextFocus(): the native context menu (Menu.popup) steals
+    // document focus before this handler runs, so both sub-editors report no
+    // text focus and a focus-based check would always fall back to the modified
+    // pane (silently mistargeting the original pane in split view). The click
+    // point is reliable whether or not focus was restored. Falls back to the
+    // modified editor, which is the only pane laid out in inline view.
+    const subEditorAtPoint = (
+      diffEditor: MonacoDiffEditor,
+      point: { x: number; y: number },
+    ): MonacoEditorNamespace.ICodeEditor => {
+      const originalEditor = diffEditor.getOriginalEditor();
+      const originalNode = originalEditor.getDomNode();
+      if (originalNode) {
+        const rect = originalNode.getBoundingClientRect();
+        if (rect.width > 0
+          && point.x >= rect.left && point.x <= rect.right
+          && point.y >= rect.top && point.y <= rect.bottom) {
+          return originalEditor;
+        }
+      }
+      return diffEditor.getModifiedEditor();
+    };
+    const handleDiffCopy = (event: Event) => {
+      const point = pointOf(event);
+      if (!point || !isInside(point)) return;
+      const diffEditor = diffEditorRef.current;
+      if (diffEditor) copyDiffSelection(diffEditor, subEditorAtPoint(diffEditor, point));
+    };
+    const handleDiffSelectAll = (event: Event) => {
+      const point = pointOf(event);
+      if (!point || !isInside(point)) return;
+      const diffEditor = diffEditorRef.current;
+      if (!diffEditor) return;
+      const editor = subEditorAtPoint(diffEditor, point);
+      const model = editor.getModel();
+      if (!model) return;
+      editor.focus();
+      editor.setSelection(model.getFullModelRange());
+    };
+    window.addEventListener('diff-copy', handleDiffCopy);
+    window.addEventListener('diff-select-all', handleDiffSelectAll);
+    return () => {
+      window.removeEventListener('diff-copy', handleDiffCopy);
+      window.removeEventListener('diff-select-all', handleDiffSelectAll);
+    };
+  }, []);
+
   return (
     <div className="flex flex-col h-full">
       {/* Toolbar */}
@@ -697,36 +790,43 @@ export function DiffViewer({
           // list in src/shared/benign-renderer-errors.ts) so it no longer renders
           // red in the console, and the test harness filters the same message.
           // Upstream: https://github.com/suren-atoyan/monaco-react/issues/647
-          <DiffEditor
-            height="100%"
-            language={language}
-            original={original}
-            modified={modified}
-            theme={monacoTheme}
-            // Set the theme BEFORE the editor is created. Without this, Monaco
-            // creates the editor under its default light theme and only swaps to
-            // the prop theme afterwards, painting one white frame. A fade hid
-            // that frame; the slide-in reveal does not, so we prevent it here.
-            beforeMount={(monacoInstance) => monacoInstance.editor.setTheme(monacoTheme)}
-            onMount={handleEditorMount}
-            options={{
-              readOnly: true,
-              originalEditable: false,
-              renderSideBySide: viewMode === 'split',
-              automaticLayout: true,
-              scrollBeyondLastLine: false,
-              minimap: { enabled: false },
-              renderWhitespace: 'boundary',
-              fontSize: 12,
-              lineHeight: 18,
-              ...diffRenderOptions,
-            }}
-            loading={
-              <div className="flex items-center justify-center h-full">
-                <Loader2 size={20} className="animate-spin text-fg-muted" />
-              </div>
-            }
-          />
+          <div ref={editorContainerRef} className="h-full w-full">
+            <DiffEditor
+              height="100%"
+              language={language}
+              original={original}
+              modified={modified}
+              theme={monacoTheme}
+              // Set the theme BEFORE the editor is created. Without this, Monaco
+              // creates the editor under its default light theme and only swaps to
+              // the prop theme afterwards, painting one white frame. A fade hid
+              // that frame; the slide-in reveal does not, so we prevent it here.
+              beforeMount={(monacoInstance) => monacoInstance.editor.setTheme(monacoTheme)}
+              onMount={handleEditorMount}
+              options={{
+                readOnly: true,
+                originalEditable: false,
+                renderSideBySide: viewMode === 'split',
+                automaticLayout: true,
+                scrollBeyondLastLine: false,
+                minimap: { enabled: false },
+                renderWhitespace: 'boundary',
+                fontSize: 12,
+                lineHeight: 18,
+                // Monaco's default context menu also surfaces "Command Palette",
+                // which is meaningless on a read-only embedded diff, and its Copy
+                // action is unreliable (see copyDiffSelection). Disabling it lets
+                // the native contextmenu event through to showTerminalAwareContextMenu.
+                contextmenu: false,
+                ...diffRenderOptions,
+              }}
+              loading={
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 size={20} className="animate-spin text-fg-muted" />
+                </div>
+              }
+            />
+          </div>
         )}
       </div>
     </div>
