@@ -315,6 +315,12 @@ if (process.env.MOCK_CLAUDE_FULLSCREEN_SELECT === '1') {
   const drawFullScreen = () => {
     let out = '\x1b[?1049h'; // enter the alt screen buffer
     out += '\x1b[?1h'; // DECCKM: application cursor keys
+    // Hide the cursor while the TUI manages its own visual indicators. This
+    // is also Kangentic's detectFirstOutput heuristic for Claude (see
+    // src/main/agent/adapters/claude/claude-adapter.ts) -- without it the
+    // renderer's launch overlay never lifts and the terminal stays hidden
+    // behind the shimmer indefinitely.
+    out += '\x1b[?25l';
     out += '\x1b[2J'; // clear screen - marks where the TUI takes over
     out += cursorTo(1, 1) + 'Select an option:';
     for (let i = 0; i < FULLSCREEN_SELECT_OPTIONS.length; i++) {
