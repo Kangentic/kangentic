@@ -13,7 +13,7 @@
  */
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { resolveFocusedCommandSessionId, resolveDictationTarget } from '../../src/renderer/utils/dictation-target';
-import { commandWindowManager } from '../../src/renderer/window-manager';
+import { boardWindowManager, commandWindowManager } from '../../src/renderer/window-manager';
 import { useSessionStore } from '../../src/renderer/stores/session-store';
 import { useProjectStore } from '../../src/renderer/stores/project-store';
 import { transientKey, type TransientSessionEntry } from '../../src/renderer/stores/session-store/transient-session-slice';
@@ -65,14 +65,23 @@ function makeProject(id: string, overrides: Partial<Project> = {}): Project {
 }
 
 /**
- * Blank the three real stores `resolveDictationTarget()` reads from directly
- * (the command window-manager store, the session store, and the project
- * store), so each integration test below starts from a clean slate and
- * neither leaks into the other nor into the pure-function tests above (which
- * never touch these stores, so they are unaffected either way).
+ * Blank the four real stores `resolveDictationTarget()` reads from directly
+ * (the command window-manager store, the board window-manager store, the
+ * session store, and the project store), so each integration test below
+ * starts from a clean slate and neither leaks into the other nor into the
+ * pure-function tests above (which never touch these stores, so they are
+ * unaffected either way).
  */
 function resetIntegrationStores(): void {
   commandWindowManager.store.setState({
+    windows: {},
+    order: [],
+    focusedWindowId: null,
+    zCounter: 0,
+    tileTree: null,
+    tileTreeRect: { x: 0, y: 0, w: 1, h: 1 },
+  });
+  boardWindowManager.store.setState({
     windows: {},
     order: [],
     focusedWindowId: null,
@@ -262,5 +271,84 @@ describe('resolveDictationTarget - Command Terminal priority (real stores)', () 
     // transient so it is excluded from the bottom-panel derivation), so the
     // chain falls all the way through to null.
     expect(result).toBeNull();
+  });
+
+  it('falls through to the focused board (task-detail) window when the command layer does not resolve', () => {
+    // Priority 2's positive path was entirely untested: every prior case here
+    // either had no board window open, or had the command layer win. This
+    // proves the board leg still resolves correctly on its own so the "both
+    // resolve" test below is meaningfully checking priority ORDER, not just
+    // that priority 2 happens to work.
+    const projectId = 'proj-board-1';
+    const boardSessionId = 'sess-board-1';
+
+    useProjectStore.setState({ currentProject: makeProject(projectId) });
+
+    boardWindowManager.store.getState().openWindow({
+      anchor: 'task-1',
+      sessionId: boardSessionId,
+      title: 'Task One',
+    });
+
+    // Command layer hidden: priority 1 must not resolve, so the chain falls
+    // through to priority 2.
+    useSessionStore.setState({
+      commandBarVisible: false,
+      sessions: [makeSession({ id: boardSessionId, projectId, taskId: 'task-1', status: 'running' })],
+    });
+
+    expect(resolveDictationTarget()).toBe(boardSessionId);
+  });
+
+  it('lets a focused Command Terminal window win priority 1 over a focused board window with a running session', () => {
+    // This is the exact regression scenario from the bug report: a task-detail
+    // window was focused (so priority 2 fully resolves), but the visible,
+    // focused Command Terminal is the one dictation should target. Before the
+    // fix, priority 1 read `focusedWindow.sessionId` off the command manager,
+    // which command windows never populate, so this case silently fell
+    // through to the board window instead of the terminal the user was
+    // actually dictating into.
+    const projectId = 'proj-both-1';
+    const commandSessionId = 'sess-cmd-both-1';
+    const boardSessionId = 'sess-board-both-1';
+
+    useProjectStore.setState({ currentProject: makeProject(projectId) });
+
+    // Board window is open and focused with a resolvable, running session -
+    // priority 2 alone would happily resolve to it.
+    boardWindowManager.store.getState().openWindow({
+      anchor: 'task-1',
+      sessionId: boardSessionId,
+      title: 'Task One',
+    });
+
+    // Each window layer tracks its own `focusedWindowId` independently, so
+    // opening the Command Terminal window afterward does not touch the board
+    // manager's focus - both managers report a focused window at once, which
+    // is the real shape of "task-detail window focused, Command Terminal also
+    // focused" that this scenario needs.
+    commandWindowManager.store.getState().openWindow({
+      anchor: 'slot-1',
+      sessionId: null,
+      title: 'Command Terminal',
+    });
+
+    useSessionStore.setState({
+      commandBarVisible: true,
+      transientSessions: {
+        [transientKey(projectId, 'slot-1')]: {
+          projectId,
+          slot: 'slot-1',
+          sessionId: commandSessionId,
+          branch: 'main',
+        },
+      },
+      sessions: [
+        makeSession({ id: commandSessionId, projectId, transient: true, status: 'running' }),
+        makeSession({ id: boardSessionId, projectId, taskId: 'task-1', status: 'running' }),
+      ],
+    });
+
+    expect(resolveDictationTarget()).toBe(commandSessionId);
   });
 });
