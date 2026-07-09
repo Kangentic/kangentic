@@ -190,6 +190,14 @@ test.describe('Fullscreen TUI select prompt - input/focus survives a scrollback 
     // particularly under CI's headless Linux/xvfb renderer.
     await openTaskWindow(page, taskTitle);
     const dialog = page.locator('[data-testid="task-detail-dialog"]').first();
+    // The LaunchOverlay (a z-10 shimmer covering the terminal until
+    // terminalReady) can still be up here even though scrollback already has
+    // the marker: overlay-lift is a separate renderer-side race (live
+    // 'data'-driven first-output detection), not tied to the getScrollback
+    // poll above. Wait for it to clear so the click isn't racing it -
+    // otherwise Playwright's own click-retry loop absorbs the wait and can
+    // exceed its 30s action timeout under CI's slower, contended runners.
+    await dialog.locator('[data-testid="launch-overlay"]').waitFor({ state: 'hidden', timeout: 15000 });
     await dialog.locator('.xterm').first().click();
     await expect
       .poll(() => page.evaluate(() => document.activeElement?.className ?? null), {

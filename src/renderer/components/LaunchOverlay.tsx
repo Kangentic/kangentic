@@ -13,7 +13,7 @@ interface LaunchOverlayProps {
  */
 export function LaunchOverlay({ label }: LaunchOverlayProps) {
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center bg-surface">
+    <div data-testid="launch-overlay" className="absolute inset-0 z-10 flex items-center justify-center bg-surface">
       <span className="flex items-center gap-2 text-sm text-fg-muted">
         <Loader2 size={14} className="animate-spin" />
         {label}
