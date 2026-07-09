@@ -117,7 +117,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'notifications.toasts.maxCount', tabId: 'notifications', label: 'Max Visible Toasts', description: 'Maximum simultaneous toasts on screen', scope: 'global', keywords: ['limit', 'count'] },
 
   // ── Hotkeys ──
-  { id: 'hotkeys', tabId: 'hotkeys', label: 'Hotkeys', description: 'Keyboard shortcuts and key bindings', scope: 'global', keywords: ['keyboard', 'shortcut', 'hotkey', 'keybind', 'rebind', 'key', 'ctrl', 'cmd', 'shift', 'combo'] },
+  { id: 'hotkeys', tabId: 'hotkeys', label: 'Hotkeys', description: 'Rebind keyboard hotkeys', scope: 'global', keywords: ['keyboard', 'hotkey', 'keybind', 'rebind', 'key', 'ctrl', 'cmd', 'shift', 'combo'] },
 
   // ── Dictation ──
   { id: 'dictation.enabled', tabId: 'dictation', label: 'Voice dictation', description: 'Hold a key to dictate into the focused terminal. On-device by default; choose a Cloud refinement model to use your own endpoint.', scope: 'global', section: 'Transcription', keywords: ['enable', 'off', 'disable', 'on', 'toggle', 'engine', 'streaming', 'live', 'whisper', 'parakeet', 'sherpa', 'remote', 'cloud', 'on-device', 'local', 'model', 'voice', 'dictation', 'speech', 'microphone', 'mic', 'transcribe', 'stt', 'push to talk'] },

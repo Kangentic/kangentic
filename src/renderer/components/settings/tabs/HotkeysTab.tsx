@@ -18,7 +18,7 @@ import { OsHotkeyBanner } from '../keybindings/OsHotkeyBanner';
 type ProbeStatus = 'available' | 'taken' | 'unsupported';
 
 /**
- * Hotkeys settings tab: lists every keyboard shortcut grouped by area, lets the
+ * Hotkeys settings tab: lists every keyboard hotkey grouped by area, lets the
  * user rebind each rebindable one, flags conflicts and combos already owned by
  * the OS/another app, and resets to defaults. Overrides persist to the global
  * config (`hotkeyOverrides`). devOnly bindings appear only in dev builds.
@@ -127,7 +127,7 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
               <CountBadge count={customCount} variant="accent" size="sm" /> custom
             </span>
           ) : (
-            <span className="text-fg-faint">All shortcuts at their defaults</span>
+            <span className="text-fg-faint">All hotkeys at their defaults</span>
           )}
         </div>
         <Pill
@@ -166,9 +166,9 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
 
       {showResetAll && (
         <ConfirmDialog
-          title="Reset all shortcuts?"
+          title="Reset all hotkeys?"
           variant="warning"
-          message="This restores every keyboard shortcut to its default. Your custom bindings will be removed."
+          message="This restores every hotkey to its default. Your custom bindings will be removed."
           confirmLabel="Reset all"
           onConfirm={() => {
             updateGlobal({ hotkeyOverrides: {} });

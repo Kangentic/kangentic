@@ -21,9 +21,9 @@ interface HotkeyRowProps {
 }
 
 /**
- * One shortcut row: label + description, the current combo, a state pill, and
- * (for rebindable shortcuts) the capture widget plus a reset-to-default button.
- * Non-rebindable shortcuts render read-only with a lock. All controls are always
+ * One hotkey row: label + description, the current combo, a state pill, and
+ * (for rebindable hotkeys) the capture widget plus a reset-to-default button.
+ * Non-rebindable hotkeys render read-only with a lock. All controls are always
  * visible (no hover-only affordances).
  */
 export function HotkeyRow({
@@ -75,7 +75,7 @@ export function HotkeyRow({
       {readOnly ? (
         <div
           className="flex items-center gap-2 flex-shrink-0"
-          title="This shortcut is fixed and cannot be rebound"
+          title="This hotkey is fixed and cannot be rebound"
         >
           <KeyCombo combo={effective} />
           {/* Spacer matching the Rebind button so the lock aligns with the reset column. */}

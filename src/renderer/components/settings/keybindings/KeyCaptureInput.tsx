@@ -39,7 +39,7 @@ interface KeyCaptureInputProps {
  * actively probes whether the combo is already owned by the OS or another app
  * (via the main-process global-shortcut probe) and reports that as an error
  * instead of committing a binding that would silently never fire. Escape cancels,
- * clicking away cancels. Listens on its own element so the app's own shortcuts do
+ * clicking away cancels. Listens on its own element so the app's own hotkeys do
  * not fire while capturing.
  */
 export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
@@ -67,7 +67,7 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
   useEffect(() => {
     if (!capturing) return;
     boxRef.current?.focus();
-    // Suspend every app shortcut while capturing so pressing a combo that is
+    // Suspend every app hotkey while capturing so pressing a combo that is
     // already bound (e.g. the mouse button currently driving push-to-talk) is
     // recorded instead of triggering its action.
     setRebindCaptureActive(true);
@@ -164,7 +164,7 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
       ? error
       : noKeyHint
         ? 'No key detected. It may be reserved by your OS or another app.'
-        : 'Press a shortcut, or hold one or more mouse buttons (middle / side) together, then release. Esc to cancel.';
+        : 'Press a hotkey, or hold one or more mouse buttons (middle / side) together, then release. Esc to cancel.';
     return (
       <div className="flex flex-col items-end gap-1 max-w-[260px]">
         <button
@@ -172,10 +172,10 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
           type="button"
           onKeyDown={handleKeyDown}
           data-testid="key-capture-box"
-          aria-label="Press the new shortcut or mouse button. Escape to cancel."
+          aria-label="Press the new hotkey or mouse button. Escape to cancel."
           className="px-2.5 py-1 rounded border border-accent bg-surface text-xs text-fg-secondary ring-1 ring-accent focus:outline-none whitespace-nowrap"
         >
-          {checking ? 'Checking...' : 'Press a shortcut'}
+          {checking ? 'Checking...' : 'Press a hotkey'}
         </button>
         <span className={`text-[11px] text-right ${error ? 'text-red-400' : 'text-fg-faint'}`} aria-live="polite">
           {hint}
