@@ -75,6 +75,7 @@ export class TaskRepository {
 
   create(input: TaskCreateInput): Task {
     const now = new Date().toISOString();
+    const createdAt = input.createdAt ?? now;
     const id = uuidv4();
     // Get next position in the target swimlane
     const maxPos = this.db.prepare('SELECT COALESCE(MAX(position), -1) as max FROM tasks WHERE swimlane_id = ?').get(input.swimlane_id) as { max: number };
@@ -115,7 +116,7 @@ export class TaskRepository {
       attachment_count: 0,
       detail_view_state: null,
       archived_at: null,
-      created_at: now,
+      created_at: createdAt,
       updated_at: now,
     };
 

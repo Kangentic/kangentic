@@ -65,6 +65,8 @@ When `project` is set the tool response is prefixed with `[Project: <name> (<sho
 
 `kangentic_get_current_task` is intentionally excluded: it resolves the agent's own CWD/branch, so cross-project lookup makes no sense there.
 
+`kangentic_move_task_to_project` is also excluded from the `[Project: ...]` prefix: it resolves two projects at once (source via `project`, destination via `targetProject`) rather than routing a single call through one target, so its response message already states the source and destination context directly (e.g. "was #7 ... now #12 in the To Do column").
+
 Use `kangentic_list_projects` (below) to discover valid selectors.
 
 ### kangentic_list_projects
@@ -247,6 +249,17 @@ Move a task to a different column. Triggers the same lifecycle as a UI drag: spa
 |-----------|------|----------|-------------|
 | `taskId` | string | Yes | Task ID (numeric display ID or full UUID) |
 | `column` | string | Yes | Target column name (case-insensitive, e.g. `"Review"`, `"Done"`) |
+
+### kangentic_move_task_to_project
+
+Relocate a task from the To Do column of one project's board to a different project's board. Only tasks in To Do can be moved - a task outside To Do may have a live session or worktree that cannot cross projects, so move it to To Do first. Preserves title, description, labels, priority, creation time, and attachments; assigns a new task ID and display number in the target project. Lands in the target board's To Do column by default. Landing in an `auto_spawn`-enabled `column` on the destination board spawns an agent there, the same as `kangentic_create_task`.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `taskId` | string | Yes | Task ID (numeric display ID or full UUID) of the To Do task in the source project |
+| `targetProject` | string | Yes | Destination project name (case-insensitive) or UUID. Must differ from the source project. |
+| `column` | string | No | Target column on the destination board (case-insensitive). Defaults to the destination board's To Do column. |
+| `project` | string | No | Source project name (case-insensitive) or UUID - not the destination. Omit to target the active project. |
 
 ### kangentic_update_column
 
@@ -550,8 +563,9 @@ The committed `.claude/settings.json` `mcp__kangentic` entry remains for humans 
 - **Project routing via URL path** - the URL embeds the project ID (`/mcp/<projectId>`). A stale `mcp.json` for a different project cannot be reused against the current launch.
 - **Runaway-loop safeguard** - task creations are capped at a fixed 500 per app launch, enforced atomically by the shared `TaskCounter`. This is an internal circuit breaker against a looping agent, not a user-tunable knob; the count resets on restart.
 - **Input validation** - Zod schemas enforce title (200 chars) and description (50000 chars for tasks; 10000 chars for backlog item descriptions) limits at the protocol level, and the command handlers validate again. A backlog item created via `kangentic_create_task` shares the task 50000-char Zod schema, so `handleCreateTask` enforces the 10000 backlog cap itself and rejects an over-cap backlog description rather than truncating it.
-- **Column safety** - `kangentic_create_task` defaults to the To Do column; creating in an auto_spawn column intentionally triggers agent spawn.
-- **Destructive operations are explicit** - `kangentic_delete_task`, `kangentic_delete_backlog_item`, `kangentic_remove_task_attachment`, and `kangentic_move_task` mutate the board. Agents must invoke them by name; there is no implicit fallback.
+- **Column safety** - `kangentic_create_task` defaults to the To Do column; creating in an auto_spawn column intentionally triggers agent spawn. `kangentic_move_task_to_project` follows the same rule on the destination board: landing in an auto_spawn `column` there spawns an agent.
+- **Destructive operations are explicit** - `kangentic_delete_task`, `kangentic_delete_backlog_item`, `kangentic_remove_task_attachment`, `kangentic_move_task`, and `kangentic_move_task_to_project` mutate the board. Agents must invoke them by name; there is no implicit fallback.
+- **Cross-project relocation is scoped to To Do** - `kangentic_move_task_to_project` refuses to relocate a task outside the To Do column, since only a To Do task is guaranteed to have no live session or worktree that would be stranded in the source project's repo.
 - **Honest mutating annotations** - mutating tools carry `readOnlyHint: false`, so the plan-mode auto-approval surface is exactly the read-only set. Deletes, moves, and creates always prompt while planning, even though the auto-allow injection pre-approves them in default mode.
 
 ## Build

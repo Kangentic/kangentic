@@ -1,7 +1,9 @@
+import fs from 'node:fs';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
 import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attachment-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
+import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
@@ -456,6 +458,121 @@ export const handleMoveTask: CommandHandler = (
     data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name },
   };
 };
+
+/**
+ * Relocate a To Do task to a different project's board: creates an equivalent
+ * task in the target project's DB (preserving title, description, labels,
+ * priority, creation time, and attachments) then deletes the original from
+ * the source project's DB. Takes two `CommandContext`s (source and target)
+ * because it operates on two separate per-project SQLite databases at once -
+ * unlike every other command handler, which is dispatched through the
+ * single-context `commandHandlers` registry. Not registered there; called
+ * directly by the `kangentic_move_task_to_project` tool.
+ *
+ * Scoped to To Do because entering a `role: 'todo'` column already resets a
+ * task's live state (session killed, worktree removed, branch deleted - see
+ * handleTaskMove's Priority 1 branch), so a To Do task is a pure metadata +
+ * attachment relocation with no live git/PTY state that would need to cross
+ * the project boundary. A task outside To Do may still hold a live session or
+ * worktree that cannot be moved, so the move is rejected.
+ */
+export function handleMoveTaskToProject(
+  params: { taskId: string; column?: string | null },
+  source: CommandContext,
+  target: CommandContext,
+): CommandResponse {
+  const taskId = params.taskId;
+  if (!taskId) {
+    return { success: false, error: 'taskId is required' };
+  }
+
+  const sourceDb = source.getProjectDb();
+  const sourceTaskRepo = new TaskRepository(sourceDb);
+  const task = resolveTask(sourceTaskRepo, taskId);
+  if (!task) {
+    return { success: false, error: `Task "${taskId}" not found` };
+  }
+
+  const sourceSwimlane = new SwimlaneRepository(sourceDb).getById(task.swimlane_id);
+  if (!sourceSwimlane || sourceSwimlane.role !== 'todo') {
+    return {
+      success: false,
+      error: `Only tasks in a To Do column can be moved to another project. Task #${task.display_id} is in "${sourceSwimlane?.name ?? 'an unknown column'}". Move it to To Do first.`,
+    };
+  }
+  if (task.session_id) {
+    return { success: false, error: `Task #${task.display_id} has an active session and cannot be moved to another project.` };
+  }
+  if (task.worktree_path && fs.existsSync(task.worktree_path)) {
+    return { success: false, error: `Task #${task.display_id} still has a worktree on disk and cannot be moved to another project.` };
+  }
+
+  const targetDb = target.getProjectDb();
+  const resolution = resolveColumn(targetDb, params.column ?? null, 'todo');
+  if ('error' in resolution) {
+    return { success: false, error: resolution.error };
+  }
+  const { swimlane: targetSwimlane } = resolution;
+
+  const targetTaskRepo = new TaskRepository(targetDb);
+  const newTask = targetTaskRepo.create({
+    title: task.title,
+    description: task.description,
+    swimlane_id: targetSwimlane.id,
+    labels: task.labels,
+    priority: task.priority,
+    createdAt: task.created_at,
+  });
+
+  const sourceAttachmentRepo = new AttachmentRepository(sourceDb);
+  const targetAttachmentRepo = new AttachmentRepository(targetDb);
+  const targetProjectPath = target.getProjectPath();
+  const failedAttachments: string[] = [];
+  for (const attachment of sourceAttachmentRepo.list(task.id)) {
+    try {
+      const base64Data = fs.readFileSync(attachment.file_path).toString('base64');
+      targetAttachmentRepo.add(targetProjectPath, newTask.id, attachment.filename, base64Data, attachment.media_type);
+    } catch (error) {
+      console.error(`[move_task_to_project] Failed to copy attachment "${attachment.filename}":`, error);
+      failedAttachments.push(attachment.filename);
+    }
+  }
+
+  // If any attachment failed to copy, roll back the just-created target task
+  // (and its copied attachments) and leave the source untouched. Without this,
+  // the unconditional source delete below would destroy the attachments that
+  // never reached the target - silent, unrecoverable data loss.
+  if (failedAttachments.length > 0) {
+    targetAttachmentRepo.deleteByTaskId(newTask.id);
+    targetTaskRepo.delete(newTask.id);
+    return {
+      success: false,
+      error: `Failed to copy ${failedAttachments.length} attachment(s) (${failedAttachments.join(', ')}) to the target project. Move aborted; task #${task.display_id} stays in the source project.`,
+    };
+  }
+
+  // Delete the source task in FK-safe order (attachments, sessions, then the
+  // task row), mirroring handleDeleteTask.
+  sourceAttachmentRepo.deleteByTaskId(task.id);
+  new SessionRepository(sourceDb).deleteByTaskId(task.id);
+  source.onTaskDeleted(task);
+  sourceTaskRepo.delete(task.id);
+
+  target.onTaskCreated(newTask, targetSwimlane.name, targetSwimlane.id);
+
+  return {
+    success: true,
+    message: `Moved "${task.title}" (was #${task.display_id}) to the ${targetSwimlane.name} column (now #${newTask.display_id}, id: ${newTask.id}).`,
+    data: {
+      sourceTaskId: task.id,
+      sourceDisplayId: task.display_id,
+      newTaskId: newTask.id,
+      newDisplayId: newTask.display_id,
+      title: newTask.title,
+      column: targetSwimlane.name,
+    },
+  };
+}
 
 export const handleDeleteTask: CommandHandler = (
   params: Record<string, unknown>,

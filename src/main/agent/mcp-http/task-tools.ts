@@ -4,7 +4,7 @@ import { callHandler, runHandler, withProject, detectCrossProjectMention, saniti
 import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
 import type { BoardHit, BacklogHit, SearchScope } from '../commands/search-commands';
-import { TASK_DESCRIPTION_MAX_LENGTH } from '../commands/task-commands';
+import { TASK_DESCRIPTION_MAX_LENGTH, handleMoveTaskToProject } from '../commands/task-commands';
 
 /**
  * Build the create_task routing-check refusal shown when the call
@@ -438,6 +438,45 @@ export function registerTaskTools(
       annotations: MUTATING_ANNOTATIONS,
     },
     async ({ taskId, column, project }) => withProject(resolver, project, (ctx) => callHandler('move_task', { taskId, column }, ctx, 'Failed to move task')),
+  );
+
+  // --- kangentic_move_task_to_project ---
+  server.registerTool(
+    'kangentic_move_task_to_project',
+    {
+      description: 'Relocate a task from the To Do column of one project\'s board to a different project\'s board. Only tasks in To Do can be moved (a task outside To Do may have a live session or worktree that cannot cross projects - move it to To Do first). Preserves title, description, labels, priority, creation time, and attachments; assigns a new task ID and display number in the target project. Lands in the target board\'s To Do column by default, or pass `column` to land in a different target column. `targetProject` is required - use kangentic_list_projects to find valid names. `project` optionally selects the source project (defaults to the active one) the same way it does on other tools.',
+      inputSchema: z.object({
+        taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID) of the To Do task in the source project.'),
+        targetProject: z.string().min(1, 'targetProject is required and must name a different project than the source.').describe('Destination project name (case-insensitive) or UUID. Must be a different project than the source.'),
+        column: z.string().optional().describe('Target column on the destination board (case-insensitive). Defaults to the destination board\'s To Do column.'),
+        project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
+      }),
+      annotations: MUTATING_ANNOTATIONS,
+    },
+    async ({ taskId, targetProject, column, project }) => {
+      const target = resolver.resolveProject(targetProject);
+      if ('error' in target) {
+        return { content: [{ type: 'text' as const, text: target.error }], isError: true };
+      }
+      const sourceResolved = resolver.resolveProject(project);
+      if ('error' in sourceResolved) {
+        return { content: [{ type: 'text' as const, text: sourceResolved.error }], isError: true };
+      }
+      if (sourceResolved.projectId === target.projectId) {
+        return {
+          content: [{ type: 'text' as const, text: 'Source and target are the same project. Use kangentic_move_task to move a task between columns within a project.' }],
+          isError: true,
+        };
+      }
+      try {
+        const response = handleMoveTaskToProject({ taskId, column }, sourceResolved.context, target.context);
+        return response.success
+          ? { content: [{ type: 'text' as const, text: response.message ?? JSON.stringify(response.data ?? {}) }] }
+          : { content: [{ type: 'text' as const, text: response.error ?? 'Failed to move task to project' }], isError: true };
+      } catch (error) {
+        return { content: [{ type: 'text' as const, text: error instanceof Error ? error.message : String(error) }], isError: true };
+      }
+    },
   );
 
   // --- kangentic_update_column ---

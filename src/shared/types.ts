@@ -2179,6 +2179,8 @@ export interface TaskCreateInput {
     data: string; // base64
     media_type: string;
   }>;
+  /** Preserve an original creation timestamp (UTC ISO 8601) instead of stamping "now". Used when relocating a task to a different project's board. */
+  createdAt?: string;
 }
 
 export interface TaskUpdateInput {

@@ -22,6 +22,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // vi.hoisted lifts these initializers above the vi.mock calls so the factory
 // closures can reference the spy instances without a TDZ error.
+const { mockHandleMoveTaskToProject } = vi.hoisted(() => ({
+  mockHandleMoveTaskToProject: vi.fn(() => ({ success: true, message: 'moved', data: {} })),
+}));
+
 const { mockCallHandler, mockRunHandler, mockWithProject, mockDetectCrossProjectMention } = vi.hoisted(() => {
   const mockCallHandler = vi.fn(() =>
     Promise.resolve({ content: [{ type: 'text' as const, text: 'ok' }] }),
@@ -90,6 +94,17 @@ vi.mock('../../src/main/agent/mcp-http/handler-helpers', () => ({
     };
   },
   PROJECT_SELECTOR_DESCRIPTION: 'optional project selector',
+}));
+
+// task-tools.ts imports handleMoveTaskToProject directly from task-commands
+// (it is a two-context handler that bypasses the single-context
+// commandHandlers registry, so it cannot go through the mocked callHandler
+// above). Mock it here to keep this wiring-only suite DB-free; its real
+// logic against actual per-project SQLite DBs is covered by
+// mcp-move-task-to-project.test.ts.
+vi.mock('../../src/main/agent/commands/task-commands', () => ({
+  TASK_DESCRIPTION_MAX_LENGTH: 50_000,
+  handleMoveTaskToProject: mockHandleMoveTaskToProject,
 }));
 
 import { registerTaskTools } from '../../src/main/agent/mcp-http/task-tools';
@@ -472,6 +487,110 @@ describe('routing-cue hints in tool descriptions', () => {
     expect(fieldDescription).toBeDefined();
     expect(fieldDescription).toMatch(/any local files the user referenced/i);
     expect(fieldDescription).toContain('absolute path');
+  });
+});
+
+describe('kangentic_move_task_to_project wiring', () => {
+  let server: ReturnType<typeof makeFakeServer>;
+  let resolver: RequestResolver;
+
+  // Bypasses withProject/makeResolver (which only understand a single default
+  // project) since this tool resolves TWO distinct projects at once.
+  function makeMultiProjectResolver(): RequestResolver {
+    const defaultResolved = makeDefaultContextResolved();
+    const targetResolved = {
+      context: { getProjectPath: () => '/projects/target' },
+      projectId: '22222222-2222-4222-8222-222222222222',
+      projectName: 'Target',
+      isDefault: false,
+    };
+    return {
+      resolveProject: vi.fn((selector: string | null | undefined) => {
+        if (!selector) return defaultResolved;
+        if (selector === 'Target') return targetResolved;
+        if (selector === 'Active') return defaultResolved;
+        return { error: `No project matching "${selector}"` };
+      }),
+      listProjects: vi.fn(() => []),
+      defaultContextResolved: vi.fn(() => defaultResolved),
+    } as unknown as RequestResolver;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockHandleMoveTaskToProject.mockReturnValue({ success: true, message: 'moved', data: {} });
+    server = makeFakeServer();
+    resolver = makeMultiProjectResolver();
+    const taskCounter: TaskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
+  });
+
+  it('declares MUTATING_ANNOTATIONS and the expected input schema keys', () => {
+    const config = server.getConfig('kangentic_move_task_to_project');
+    expect(config.annotations).toEqual({ readOnlyHint: false, idempotentHint: false });
+    expect(Object.keys(config.inputSchema?.shape ?? {})).toEqual(
+      expect.arrayContaining(['taskId', 'targetProject', 'column', 'project']),
+    );
+  });
+
+  it('resolves source and target then delegates to handleMoveTaskToProject', async () => {
+    const result = await server.getHandler('kangentic_move_task_to_project')({
+      taskId: '42',
+      targetProject: 'Target',
+    });
+
+    expect(mockHandleMoveTaskToProject).toHaveBeenCalledTimes(1);
+    const [params] = mockHandleMoveTaskToProject.mock.calls[0] as [Record<string, unknown>];
+    expect(params).toEqual({ taskId: '42', column: undefined });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe('moved');
+  });
+
+  it('returns isError without calling the handler when targetProject fails to resolve', async () => {
+    const result = await server.getHandler('kangentic_move_task_to_project')({
+      taskId: '42',
+      targetProject: 'INVALID_PROJECT',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(mockHandleMoveTaskToProject).not.toHaveBeenCalled();
+  });
+
+  it('returns isError without calling the handler when the source project fails to resolve', async () => {
+    const result = await server.getHandler('kangentic_move_task_to_project')({
+      taskId: '42',
+      targetProject: 'Target',
+      project: 'INVALID_PROJECT',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(mockHandleMoveTaskToProject).not.toHaveBeenCalled();
+  });
+
+  it('rejects when source and target resolve to the same project', async () => {
+    const result = await server.getHandler('kangentic_move_task_to_project')({
+      taskId: '42',
+      targetProject: 'Active',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/same project/i);
+    expect(mockHandleMoveTaskToProject).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a failure response from handleMoveTaskToProject as isError', async () => {
+    mockHandleMoveTaskToProject.mockReturnValue({
+      success: false,
+      error: 'Only tasks in a To Do column can be moved to another project.',
+    });
+
+    const result = await server.getHandler('kangentic_move_task_to_project')({
+      taskId: '42',
+      targetProject: 'Target',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('To Do');
   });
 });
 
