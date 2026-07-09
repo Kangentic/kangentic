@@ -201,6 +201,7 @@ export class ActivityEngine {
       msSincePtyOutput: lastPtyOutputAt === null ? null : this.now() - lastPtyOutputAt,
       pendingIdleArmed: state.pendingIdleAt !== null,
       idleHintPending: state.idleHintPending,
+      retryFailurePending: state.retryFailurePending,
       recentTransitions: state.recentTransitions.slice(),
       compensationCounters: { ...state.compensationCounters },
       recentPtyChunks: state.recentPtyChunks.slice(),
@@ -239,6 +240,10 @@ export class ActivityEngine {
       // Genuine new work invalidates any earlier "waiting for input" hint, so
       // the stuck-counter watchdogs return to their full 5-min cap.
       state.idleHintPending = false;
+      // A real turn hook confirms the retry resolved (the agent resumed) - the
+      // stale-thinking watchdog's anchor-narrowing for a live retry hold no
+      // longer applies.
+      state.retryFailurePending = false;
     } else if (TURN_ENDING_EVENTS.has(event.type)) {
       // A subagent's inner-loop Stop arrives as `Idle` while the parent is
       // still blocked on the live subagent (subagentDepth > 0): it must NOT end
@@ -314,33 +319,57 @@ export class ActivityEngine {
       state.pendingIdleAt = null;
     }
 
+    // TurnRetrying (a transient StopFailure error the agent is auto-retrying,
+    // classified at the source by the adapter - see EventType.TurnRetrying) is
+    // deliberately NOT in TURN_ENDING_EVENTS (the live-retry path below must
+    // not touch turnActive), so it reaches here with turnActive/idleHintPending
+    // still at their pre-event values. Decide liveness before dispatching:
+    //   - genuinely live (turn still active, no preceding idle_hint) -> hold
+    //     the session thinking through the retry (applyRetryableFailureHold).
+    //   - the turn had already wound down (idle_hint) or already ended
+    //     (!turnActive) -> treat exactly like a terminal TurnFailed: clear
+    //     turnActive/permission and mark the idle hook-authoritative the same
+    //     way the TURN_ENDING_EVENTS block does above for Interrupted/TurnFailed
+    //     (this event never entered that block, so nothing has cleared them yet).
+    if (event.type === EventType.TurnRetrying) {
+      if (!state.idleHintPending && state.turnActive) {
+        this.applyRetryableFailureHold(sessionId, state, before, event);
+      } else {
+        state.turnActive = false;
+        state.turnForcedByHeartbeat = false;
+        state.permissionPending = false;
+        state.permissionAwaitedToolId = null;
+        state.idleAuthoritative = true;
+        this.applyInterruptedBypass(sessionId, state, before, event);
+      }
+      return;
+    }
+
     if (event.type === EventType.Interrupted || event.type === EventType.TurnFailed) {
       this.applyInterruptedBypass(sessionId, state, before, event);
       return;
     }
 
-    const trigger: TransitionTrigger = event.detail !== undefined && event.detail !== ''
-      ? `event:${event.type}:${event.detail}`
-      : `event:${event.type}`;
+    const trigger = this.eventTrigger(event);
     const delta = formatCounterDelta(before, snapshotCounters(state));
     this.reevaluate(sessionId, state, trigger, delta);
   }
 
+  /** Build the generic `event:<type>[:<detail>]` trigger label for an event. */
+  private eventTrigger(event: SessionEvent): TransitionTrigger {
+    return event.detail !== undefined && event.detail !== ''
+      ? `event:${event.type}:${event.detail}`
+      : `event:${event.type}`;
+  }
+
   /**
-   * Interrupted (user Esc / Ctrl+C synthesizer) and TurnFailed (a Claude
-   * service-error abort) both force immediate idle, bypassing the stability
-   * window - reset all counters and clear pending state. Matches forceIdle
-   * semantics: a hard turn-end that should leave the session in a clean idle
-   * state regardless of mid-flight tools, a stuck subagent, or detached
-   * background work. The trigger label distinguishes the two causes in the
-   * audit log (`interrupted` vs `event:turn_failed:<error>`).
+   * Reset every in-flight counter/flag a hard turn-end or a retry-hold must
+   * clear: pending tools, subagent depth, background shells, the pending
+   * stability-window idle, and the idle-hint / retry-failure provenance
+   * flags. Shared by `applyInterruptedBypass` (which additionally commits
+   * idle) and `applyRetryableFailureHold` (which keeps the session thinking).
    */
-  private applyInterruptedBypass(
-    sessionId: string,
-    state: SessionEngineState,
-    before: ReturnType<typeof snapshotCounters>,
-    event: SessionEvent,
-  ): void {
+  private resetInFlightCounters(state: SessionEngineState): void {
     state.pendingIdleAt = null;
     state.pendingToolCount = 0;
     state.pendingToolStack.length = 0;
@@ -349,14 +378,63 @@ export class ActivityEngine {
     state.anonymousBackgroundShellCount = 0;
     state.currentTool = null;
     state.idleHintPending = false;
+    state.retryFailurePending = false;
+  }
+
+  /**
+   * Interrupted (user Esc / Ctrl+C synthesizer), TurnFailed (a Claude
+   * service-error abort), and a TurnRetrying whose turn had already wound
+   * down or ended all force immediate idle, bypassing the stability window -
+   * reset all counters and clear pending state. Matches forceIdle semantics:
+   * a hard turn-end that should leave the session in a clean idle state
+   * regardless of mid-flight tools, a stuck subagent, or detached background
+   * work. The trigger label distinguishes the causes in the audit log
+   * (`interrupted` vs `event:turn_failed:<error>` / `event:turn_retrying:<error>`).
+   */
+  private applyInterruptedBypass(
+    sessionId: string,
+    state: SessionEngineState,
+    before: ReturnType<typeof snapshotCounters>,
+    event: SessionEvent,
+  ): void {
+    this.resetInFlightCounters(state);
     // permissionPending and permissionAwaitedToolId are already cleared by
-    // updatePermissionFlag, which processEvent runs before this bypass (both
-    // Interrupted and TurnFailed are permission-clearing signals).
-    const trigger: TransitionTrigger = event.type === EventType.TurnFailed
-      ? (event.detail ? `event:turn_failed:${event.detail}` : 'event:turn_failed')
-      : 'interrupted';
+    // updatePermissionFlag, which processEvent runs before this bypass
+    // (Interrupted and TurnFailed are permission-clearing signals;
+    // TurnRetrying deliberately is not - see updatePermissionFlag).
+    const trigger: TransitionTrigger = event.type === EventType.Interrupted
+      ? 'interrupted'
+      : this.eventTrigger(event);
     const delta = formatCounterDelta(before, snapshotCounters(state));
     this.commitTransition(sessionId, state, 'idle', trigger, delta);
+  }
+
+  /**
+   * Hold the session `thinking` through a LIVE `turn_retrying` retry: reset
+   * the in-flight counters (decoupled cleanup, same as `applyInterruptedBypass`)
+   * but KEEP `turnActive` so `turnActive` becomes the sole watchdog holder and
+   * the existing 180s stale-thinking watchdog - not an immediate idle - is the
+   * arbiter of whether the turn is actually still alive. Each subsequent retry
+   * refreshes `lastSignalAt` (TurnRetrying is not in `LOG_ONLY_EVENTS`), so the
+   * net fires ~180s after the LAST retry, not the first. Sets
+   * `retryFailurePending` so the watchdog's `signal`-anchor narrowing engages
+   * (see `watchdogBaseTime`) - a parked-TUI retry countdown must not defer the
+   * net forever if the error turns out to be terminal.
+   */
+  private applyRetryableFailureHold(
+    sessionId: string,
+    state: SessionEngineState,
+    before: ReturnType<typeof snapshotCounters>,
+    event: SessionEvent,
+  ): void {
+    this.resetInFlightCounters(state);
+    // resetInFlightCounters clears retryFailurePending (it is shared with the
+    // idle-committing bypass, which wants it off); re-arm it here for the
+    // live-hold path so the watchdog's `signal`-anchor narrowing engages.
+    state.retryFailurePending = true;
+    const trigger = this.eventTrigger(event);
+    const delta = formatCounterDelta(before, snapshotCounters(state));
+    this.reevaluate(sessionId, state, trigger, delta);
   }
 
   // ==== External force paths (PTY tracker, heartbeat recovery) ====
@@ -385,6 +463,7 @@ export class ActivityEngine {
     state.permissionAwaitedToolId = null;
     state.pendingIdleAt = null;
     state.idleHintPending = false;
+    state.retryFailurePending = false;
     state.compensationCounters.forceThinking += 1;
     const delta = formatCounterDelta(before, snapshotCounters(state));
     this.commitTransition(sessionId, state, 'thinking', 'force-thinking', delta);
@@ -413,6 +492,7 @@ export class ActivityEngine {
     state.currentTool = null;
     state.pendingIdleAt = null;
     state.idleHintPending = false;
+    state.retryFailurePending = false;
     // PTY-silence / shutdown idle is a fallback, not a hook turn-end: leave the
     // heartbeat recovery free to wake a session that resumes generating.
     state.idleAuthoritative = false;
@@ -729,8 +809,10 @@ export class ActivityEngine {
    * A hold's `parkedAnchor` (when set) replaces `anchor` while the agent is
    * BELIEVED parked: `state.idleHintPending` (it said so), OR
    * `state.turnForcedByHeartbeat` (a hook-less resume-picker turn that can
-   * never fire an idle_hint - task #364). `fallback` is returned when the
-   * relevant anchor(s) are null.
+   * never fire an idle_hint - task #364), OR `state.retryFailurePending` (a
+   * live `turn_retrying` hold - a parked-TUI "retrying in Ns..." repaint
+   * during backoff must not defer the net forever if the error is actually
+   * terminal). `fallback` is returned when the relevant anchor(s) are null.
    */
   private watchdogBaseTime(
     state: SessionEngineState,
@@ -741,7 +823,8 @@ export class ActivityEngine {
     // anchor (stale-thinking -> `signal`) so statusline PTY repaints stop
     // deferring it. Mirrors `effectiveThreshold`'s idle_hint short-grace
     // selection, but broadened beyond `idleHintPending` (see field doc above).
-    const believedParked = state.idleHintPending || state.turnForcedByHeartbeat;
+    const believedParked =
+      state.idleHintPending || state.turnForcedByHeartbeat || state.retryFailurePending;
     const anchor = believedParked && hold.parkedAnchor !== undefined
       ? hold.parkedAnchor
       : hold.anchor;

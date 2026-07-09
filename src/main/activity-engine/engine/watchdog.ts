@@ -18,8 +18,9 @@ import type { SessionEngineState, TransitionTrigger } from './shapes';
  *   (stuck-subagent), or tool-less generation (stale-thinking).
  * - `signal`: `lastSignalAt` only. Used by stale-thinking as its
  *   `parkedAnchor` (active while the agent is BELIEVED parked -
- *   `idleHintPending`, or `turnForcedByHeartbeat` for a hook-less resume turn
- *   that can never fire an idle_hint, task #364): once the agent is believed
+ *   `idleHintPending`, `turnForcedByHeartbeat` for a hook-less resume turn
+ *   that can never fire an idle_hint (task #364), or `retryFailurePending` for
+ *   a live `turn_retrying` hold (task #367)): once the agent is believed
  *   parked, parked-TUI statusline repaints stream PTY bytes that must NOT
  *   defer the 180s net, so it ignores `lastPtyOutputAt`.
  */
@@ -72,9 +73,11 @@ export interface WatchdogHold {
   anchor: WatchdogAnchor;
   /**
    * Optional anchor used INSTEAD of `anchor` while the agent is BELIEVED
-   * parked - `state.idleHintPending` OR `state.turnForcedByHeartbeat` (parallel
+   * parked - `state.idleHintPending`, `state.turnForcedByHeartbeat` (parallel
    * to `idleHintThresholdMs` for the threshold, but broader: a hook-less resume
-   * turn is genuinely parked yet can never fire an `idle_hint`, task #364). Only
+   * turn is genuinely parked yet can never fire an `idle_hint`, task #364), OR
+   * `state.retryFailurePending` (a live `turn_retrying` hold whose parked-TUI
+   * "retrying in Ns..." repaints must not defer the net, task #367). Only
    * stale-thinking sets it (`'signal'`): once the agent is believed parked,
    * parked-TUI statusline repaints (PTY bytes) must stop deferring the 180s net,
    * so the hold ignores `lastPtyOutputAt` and anchors to `lastSignalAt` alone. A

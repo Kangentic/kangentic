@@ -850,6 +850,49 @@ describe('ActivityEngine replay tests', () => {
     });
   });
 
+  describe('session-023-false-idle-server-error-retry', () => {
+    // Modeled on the real false-idle incident (kangentic.com session
+    // fc2f1446): a prompt with an open Agent orchestrator + 3 Explore
+    // subagents + an in-flight TaskOutput tool, then several
+    // `turn_retrying:server_error`/`overloaded_error` events (the Claude
+    // adapter's classification of a transient StopFailure the API auto-
+    // retries), then the API recovers and the tool/turn resumes. Sibling of
+    // `session-019-service-error-stuck-subagent`, which pins the DISTINCT and
+    // correct case: a `turn_failed`-shaped abort AFTER the turn already wound
+    // down, where forcing idle is the right cleanup.
+    const FIXTURE = 'session-023-false-idle-server-error-retry.jsonl';
+    // Index 10 is the third (last) turn_retrying event - the mid-backoff
+    // snapshot, before the API recovers and the tool/turn resume.
+    const MID_RETRY_SLICE_LENGTH = 10;
+
+    it('stays thinking through the retry storm (no false idle mid-backoff)', () => {
+      const midRetry = loadFixture(FIXTURE).slice(0, MID_RETRY_SLICE_LENGTH);
+      const result = replay(midRetry);
+      expect(result.finalActivity).toBe('thinking');
+      expect(result.finalState.subagentDepth).toBe(0);
+      expect(result.finalState.pendingToolCount).toBe(0);
+      expect(result.finalState.turnActive).toBe(true);
+    });
+
+    it('the same mid-retry snapshot idles if the events were terminal turn_failed instead (mechanical red-green)', () => {
+      // Retyping ONLY the event type (not the error string) proves the
+      // outcome pivots on the retryable-vs-terminal classification, not on
+      // which error string was carried.
+      const midRetryAsTerminal = loadFixture(FIXTURE)
+        .slice(0, MID_RETRY_SLICE_LENGTH)
+        .map((event) => (event.type === EventType.TurnRetrying ? { ...event, type: EventType.TurnFailed } : event));
+      const result = replay(midRetryAsTerminal);
+      expect(result.finalActivity).toBe('idle');
+    });
+
+    it('resumes cleanly once the API recovers (full replay)', () => {
+      const result = replay(loadFixture(FIXTURE));
+      expect(result.finalActivity).toBe('thinking');
+      expect(result.finalState.pendingToolCount).toBe(0);
+      expect(result.finalState.turnActive).toBe(true);
+    });
+  });
+
   describe('cross-fixture invariants', () => {
     it('all fixtures produce a deterministic outcome (no flakiness)', () => {
       const fixtures = [
@@ -869,6 +912,7 @@ describe('ActivityEngine replay tests', () => {
         'session-017-false-idle-during-live-subagent.jsonl',
         'session-018-parallel-subagent-false-idle.jsonl',
         'session-019-service-error-stuck-subagent.jsonl',
+        'session-023-false-idle-server-error-retry.jsonl',
       ];
       for (const name of fixtures) {
         const events = loadFixture(name);

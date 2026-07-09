@@ -1,0 +1,13 @@
+{"ts":1000,"type":"session_start"}
+{"ts":1100,"type":"prompt"}
+{"ts":1200,"type":"tool_start","tool":"Agent","toolId":"orch1"}
+{"ts":1300,"type":"subagent_start","detail":"Explore"}
+{"ts":1400,"type":"subagent_start","detail":"Explore"}
+{"ts":1500,"type":"subagent_start","detail":"Explore"}
+{"ts":2000,"type":"tool_start","tool":"TaskOutput","toolId":"tout1"}
+{"ts":3000,"type":"turn_retrying","detail":"server_error"}
+{"ts":4000,"type":"turn_retrying","detail":"server_error"}
+{"ts":5000,"type":"turn_retrying","detail":"overloaded_error"}
+{"ts":6000,"type":"tool_end","tool":"TaskOutput","toolId":"tout1"}
+{"ts":6100,"type":"tool_start","tool":"Read","toolId":"r1"}
+{"ts":6200,"type":"tool_end","tool":"Read","toolId":"r1"}

@@ -405,6 +405,22 @@ export interface SessionEngineState {
    */
   idleHintPending: boolean;
   /**
+   * True while the session is held `thinking` through a LIVE `turn_retrying`
+   * retry (a transient StopFailure error, e.g. 529 overloaded, that the agent
+   * is auto-retrying mid-turn - see `ActivityEngine.applyRetryableFailureHold`).
+   * Feeds the stale-thinking watchdog's `believedParked` check
+   * (`watchdogBaseTime`) alongside `idleHintPending` / `turnForcedByHeartbeat`:
+   * without it, a parked-TUI "retrying in Ns..." repaint during backoff would
+   * stream real PTY bytes and defer the 180s net indefinitely for a retryable
+   * error that turns out to be terminal (reintroducing the #294/#364 parked-
+   * repaint class). Narrowing the anchor to `signal` while this is set lets the
+   * net still fire ~180s after the last genuine hook/output-growth signal.
+   * Cleared by the same events that clear `idleHintPending`: a genuine
+   * turn-initiating event, the Interrupted/TurnFailed/TurnRetrying bypass
+   * (`resetInFlightCounters`), and `forceThinking`/`forceIdle`.
+   */
+  retryFailurePending: boolean;
+  /**
    * Ring buffer of recent transitions for the debug overlay. Mutated
    * only by `recordTransition`; external observers via `getState` /
    * `forEachState` see this through `Readonly<SessionEngineState>`,
@@ -499,6 +515,12 @@ export interface ActivityStatsSnapshot {
    *  the stuck-subagent / stuck-pending-tools watchdogs are on their short grace,
    *  not the 5-min cap. Lets the debug overlay explain a fast watchdog fire. */
   idleHintPending: boolean;
+  /** True while the session is held `thinking` through a live `turn_retrying`
+   *  retry (see `SessionEngineState.retryFailurePending`): the stale-thinking
+   *  watchdog's anchor is narrowed to `signal`, so parked-TUI retry repaints do
+   *  not defer the 180s net. Lets the debug overlay explain a narrowed retry
+   *  hold, the retry-side analog of `idleHintPending`. */
+  retryFailurePending: boolean;
   recentTransitions: ReadonlyArray<TransitionRecord>;
   compensationCounters: CompensationCounters;
   recentPtyChunks: ReadonlyArray<PtyChunkTick>;

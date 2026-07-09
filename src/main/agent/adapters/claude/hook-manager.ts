@@ -214,15 +214,31 @@ export function buildHooks(
     // errored turn that aborted mid-subagent/mid-tool drops its closing hooks:
     // the lost named subagent_stop / tool_end leaves subagentDepth or
     // pendingToolCount stuck > 0, and the board stays falsely "thinking" until
-    // the 5-min watchdog. We emit `turn_failed`, which the activity engine
-    // treats as a hard turn-end (counter reset + immediate idle, via the
-    // Interrupted bypass), with the error type carried in `detail` (Claude's
-    // payload fields are `error` then `error_details`). See
-    // docs.claude.com/docs/en/hooks (StopFailure, changelog 2.1.78).
+    // the 5-min watchdog. We emit `turn_failed` by default, with the error type
+    // carried in `detail` (Claude's payload fields are `error` then
+    // `error_details`). See docs.claude.com/docs/en/hooks (StopFailure,
+    // changelog 2.1.78).
+    //
+    // Claude also fires StopFailure for a TRANSIENT error it auto-retries
+    // internally (529 overloaded / server_error / rate_limit / api_error), not
+    // only a final abort - during that retry backoff the turn is still alive.
+    // Reclassify those into the generic `turn_retrying` event (matching the
+    // already-extracted `detail`, exactly like the Notification -> `idle_hint`
+    // precedent below: the Claude-specific error strings live here, not in the
+    // engine), so the activity engine can hold the session thinking through
+    // the backoff instead of force-idling it (see EventType.TurnRetrying /
+    // ActivityEngine.applyRetryableFailureHold). A terminal error (e.g.
+    // authentication_error) falls through and stays `turn_failed`: a hard
+    // turn-end that resets counters and idles immediately (the Interrupted
+    // bypass).
     [H.StopFailure]: [
       ...(existingHooks[H.StopFailure] || []),
       { matcher: '', hooks: [{ type: 'command', command: buildBridgeCommand(eventBridge, eventsPath, E.TurnFailed,
-        extractDetail(['error', 'error_details'])) }] },
+        extractDetail(['error', 'error_details']),
+        setTypeWhenDetailContains('overloaded', E.TurnRetrying),
+        setTypeWhenDetailContains('server_error', E.TurnRetrying),
+        setTypeWhenDetailContains('rate_limit', E.TurnRetrying),
+        setTypeWhenDetailContains('api_error', E.TurnRetrying)) }] },
     ],
     [H.PermissionRequest]: [
       ...(existingHooks[H.PermissionRequest] || []),

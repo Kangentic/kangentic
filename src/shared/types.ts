@@ -623,6 +623,15 @@ export interface ActivityStatsSnapshot {
    * case.
    */
   idleHintPending: boolean;
+  /**
+   * True while the session is held `thinking` through a live `turn_retrying`
+   * retry (a transient StopFailure error the agent is auto-retrying mid-turn).
+   * While set, the stale-thinking watchdog narrows its anchor to `lastSignalAt`
+   * alone so parked-TUI retry repaints do not defer the 180s net. Surfaced so
+   * the debug overlay can explain a narrowed retry hold, the retry-side analog
+   * of `idleHintPending`. False in the common case.
+   */
+  retryFailurePending: boolean;
   recentTransitions: ReadonlyArray<{
     ts: number;
     from: ActivityState;
@@ -695,8 +704,27 @@ export const EventType = {
    * aborted turn cannot leave the session falsely "thinking" until a watchdog.
    * Kept DISTINCT from `Interrupted` (user Esc) so the activity log reads
    * "service error", with the error type carried in `detail` (e.g. "rate_limit").
+   *
+   * Reserved for a TERMINAL abort. A TRANSIENT, auto-retried error (529
+   * overloaded / server_error / rate_limit) is classified at the source into
+   * `TurnRetrying` instead - see that entry.
    */
   TurnFailed: 'turn_failed',
+  /**
+   * Claude Code fired `StopFailure` for a TRANSIENT, auto-retried API error
+   * (overloaded / server_error / rate_limit / api_error) rather than a final
+   * abort. Classified at the source by the Claude adapter's hook directive
+   * (the Claude-specific error-string vocabulary lives there, not in the
+   * engine - mirrors the `IdleHint` precedent), with the error type carried in
+   * `detail`. Unlike `TurnFailed`, this does NOT force an immediate idle: while
+   * the turn is genuinely live (no preceding `idle_hint`, `turnActive` still
+   * set) the engine keeps the session `thinking` through the retry backoff and
+   * defers the idle decision to the 180s stale-thinking watchdog, so a task
+   * mid-retry no longer shows a false "needs you" idle. If the turn had already
+   * wound down (an `idle_hint` preceded it) or already ended, it is treated
+   * exactly like `TurnFailed` (immediate idle).
+   */
+  TurnRetrying: 'turn_retrying',
   SessionStart: 'session_start',
   SessionEnd: 'session_end',
   SubagentStart: 'subagent_start',
@@ -784,6 +812,11 @@ export const EventTypeActivity: Record<EventType, ActivityState | null> = {
   // signal is holding it thinking, otherwise it is log-only. There is no
   // single static activity for it, so it maps to null here.
   [EventType.IdleHint]: null,
+  // turn_retrying is conditional, like idle_hint: the engine keeps the session
+  // thinking for a live retry, or idles immediately if the turn had already
+  // wound down. No single static activity, so it maps to null here (this map
+  // is vestigial at runtime - see activity-engine.ts's isTurnInitiatingEvent).
+  [EventType.TurnRetrying]: null,
   [EventType.SubagentStop]: null,
   [EventType.ToolEnd]: null,
   [EventType.SessionStart]: null,

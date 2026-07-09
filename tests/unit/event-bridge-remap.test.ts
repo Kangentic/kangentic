@@ -506,6 +506,49 @@ describe('event-bridge setTypeWhenDetailMatches (regex classification on extract
   });
 });
 
+describe('event-bridge StopFailure -> turn_failed / turn_retrying (retryable-error classification)', () => {
+  // The exact directive set the Claude adapter wires for StopFailure: extract
+  // the error type, then reclassify to the generic turn_retrying event for a
+  // transient/auto-retried error class, leaving turn_failed for everything
+  // else (a terminal abort). detail is populated identically either way.
+  const STOPFAILURE_DIRECTIVES = [
+    extractDetail(['error', 'error_details']),
+    setTypeWhenDetailContains('overloaded', EventType.TurnRetrying),
+    setTypeWhenDetailContains('server_error', EventType.TurnRetrying),
+    setTypeWhenDetailContains('rate_limit', EventType.TurnRetrying),
+    setTypeWhenDetailContains('api_error', EventType.TurnRetrying),
+  ];
+
+  it.each([
+    ['overloaded_error', 'overloaded_error'],
+    ['server_error', 'server_error'],
+    ['rate_limit_error', 'rate_limit_error'],
+    ['api_error', 'api_error'],
+  ])('retypes to turn_retrying for a transient error (%s)', (errorValue) => {
+    const stdinContent = JSON.stringify({ error: errorValue });
+    runBridge(stdinContent, [outputFile, 'turn_failed', ...STOPFAILURE_DIRECTIVES]);
+    const emitted = readEvent();
+    expect(emitted.type).toBe('turn_retrying');
+    expect(emitted.detail).toBe(errorValue);
+  });
+
+  it('stays turn_failed for a terminal error class (authentication_error)', () => {
+    const stdinContent = JSON.stringify({ error: 'authentication_error' });
+    runBridge(stdinContent, [outputFile, 'turn_failed', ...STOPFAILURE_DIRECTIVES]);
+    const emitted = readEvent();
+    expect(emitted.type).toBe('turn_failed');
+    expect(emitted.detail).toBe('authentication_error');
+  });
+
+  it('falls back to error_details and still classifies correctly', () => {
+    const stdinContent = JSON.stringify({ error_details: 'server_error: upstream connect error' });
+    runBridge(stdinContent, [outputFile, 'turn_failed', ...STOPFAILURE_DIRECTIVES]);
+    const emitted = readEvent();
+    expect(emitted.type).toBe('turn_retrying');
+    expect(emitted.detail).toBe('server_error: upstream connect error');
+  });
+});
+
 describe('event-bridge UserPromptSubmit task-notification -> background_shell_end (Incident A)', () => {
   // The exact directive set the Claude adapter wires as a SECOND UserPromptSubmit
   // entry (alongside the bare Prompt entry). When a NAMED bg shell reaches a

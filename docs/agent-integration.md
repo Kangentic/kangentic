@@ -353,7 +353,7 @@ Kangentic subscribes to 18 Claude Code hook points via the event bridge (19 entr
 | `UserPromptSubmit` | `prompt` | User submitted a prompt |
 | `UserPromptSubmit` | `background_shell_end` | A `<task-notification>` terminal status (`completed`/`failed`/`killed`/`cancelled`/`aborted`) drains the named bg shell; suppressed for all other prompts via `emitOnlyWhenDetailMatches` (fail-closed) |
 | `Stop` | `idle` | Agent stopped naturally |
-| `StopFailure` | `turn_failed` | Turn aborted by a service/API error (fires instead of `Stop`); carries the error type in `detail`, routed through the Interrupted bypass to reset stale counters and idle at once |
+| `StopFailure` | `turn_failed` or `turn_retrying` | Fires instead of `Stop` on a service/API error; carries the error type in `detail`. A TERMINAL error stays `turn_failed` (routed through the Interrupted bypass to reset stale counters and idle at once); a TRANSIENT, auto-retried error (overloaded/server_error/rate_limit/api_error) is reclassified to `turn_retrying`, which holds the session thinking through a live retry instead of force-idling it - see [Activity Detection](activity-detection.md) |
 | `PermissionRequest` | `idle` | Agent hit a permission wall |
 | `SessionStart` | `session_start` | Session began |
 | `SessionEnd` | `session_end` | Session ended |

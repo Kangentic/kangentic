@@ -1309,6 +1309,166 @@ describe('ActivityEngine', () => {
     });
   });
 
+  describe('turn_retrying (live-retry hold for a transient StopFailure error)', () => {
+    // The false-idle bug: Claude fires StopFailure for a TRANSIENT, auto-
+    // retried API error (529 overloaded / server_error), not only a final
+    // abort. The Claude adapter classifies that into the generic
+    // `turn_retrying` event (see hook-manager.ts); the engine must NOT
+    // force-idle a genuinely live retry the way it does a terminal
+    // `turn_failed` - it should hold `thinking` and let the 180s
+    // stale-thinking watchdog be the arbiter of whether the turn actually
+    // died. Empirically confirmed against kangentic.com session `fc2f1446`.
+    beforeEach(() => {
+      engine.initSession(SESSION_ID);
+      transitions.length = 0;
+      syntheticEvents.length = 0;
+    });
+
+    it('keeps the session thinking through a live retry, resetting the stuck counters', () => {
+      // An open subagent + tool, exactly like the false-idle incident's
+      // in-flight TaskOutput tool and Explore subagents.
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'test-builder' }));
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'TaskOutput', toolId: 't1' }));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'server_error' }));
+
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.activity).toBe('thinking');
+      expect(state.turnActive).toBe(true);
+      expect(state.subagentDepth).toBe(0);
+      expect(state.pendingToolCount).toBe(0);
+      expect(state.retryFailurePending).toBe(true);
+      expect(state.recentTransitions.at(-1)?.trigger).toBe('event:turn_retrying:server_error');
+    });
+
+    it('the 180s stale-thinking watchdog is the safety net when the retry never resumes', () => {
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'overloaded' }));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+
+      vi.advanceTimersByTime(TEST_STALE_TIMEOUT_MS + TEST_STABILITY_WINDOW_MS + 50);
+
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.staleThinking).toBe(1);
+    });
+
+    it('a retry storm (several retries under the watchdog window) never false-idles; a resumed tool clears the hold', () => {
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'server_error' }));
+      vi.advanceTimersByTime(TEST_STALE_TIMEOUT_MS / 2);
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'server_error' }));
+      vi.advanceTimersByTime(TEST_STALE_TIMEOUT_MS / 2);
+      // Each retry refreshed lastSignalAt, so the watchdog deadline kept
+      // sliding forward and never crossed the threshold.
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Read' }));
+      engine.processEvent(SESSION_ID, event(EventType.ToolEnd, { tool: 'Read' }));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+      expect(engine.getState(SESSION_ID)?.retryFailurePending).toBe(false);
+    });
+
+    it('a retry while the turn had already wound down (idle_hint pending) idles immediately, exactly like a terminal turn_failed (session-019 shape)', () => {
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'test-builder' }));
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStop, { detail: '' }));
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      engine.processEvent(SESSION_ID, event(EventType.IdleHint, { detail: 'Claude is waiting for your input' }));
+      expect(engine.getStatsSnapshot(SESSION_ID)?.idleHintPending).toBe(true);
+      transitions.length = 0;
+
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'overloaded' }));
+
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.activity).toBe('idle');
+      expect(state.subagentDepth).toBe(0);
+      expect(state.turnActive).toBe(false);
+      expect(state.recentTransitions.at(-1)?.trigger).toBe('event:turn_retrying:overloaded');
+    });
+
+    it('a retry after the turn already ended (no turnActive) also idles immediately', () => {
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.Idle));
+      // The plain Idle goes through the normal stability window (not the
+      // bypass), so let it commit before asserting.
+      vi.advanceTimersByTime(TEST_STABILITY_WINDOW_MS + 50);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'server_error' }));
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+    });
+
+    it('does not defer the stale-thinking net forever on parked-TUI PTY repaints during a retry hold (prevents reintroducing #294/#364)', () => {
+      // RED without retryFailurePending narrowing the anchor to `signal`:
+      // a parked "retrying in Ns..." repaint would stream real PTY bytes and
+      // defer the net indefinitely, even for an error that turns out to be
+      // terminal.
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'server_error' }));
+      expect(engine.getState(SESSION_ID)?.retryFailurePending).toBe(true);
+
+      const stepMs = 200;
+      for (let elapsed = 0; elapsed < TEST_STALE_TIMEOUT_MS + 400; elapsed += stepMs) {
+        vi.advanceTimersByTime(stepMs);
+        engine.markPtyOutput(SESSION_ID);
+      }
+      expect(engine.getState(SESSION_ID)?.activity).toBe('idle');
+      expect(engine.getStatsSnapshot(SESSION_ID)?.compensationCounters.staleThinking).toBe(1);
+    });
+
+    it('forceThinking clears a live retryFailurePending hold (PTY tracker / heartbeat sees fresh activity mid-retry)', () => {
+      // Red-green: delete the `state.retryFailurePending = false;` line in
+      // forceThinking (activity-engine.ts) and this goes red - the flag would
+      // stay stuck true, keeping the watchdog's `signal`-anchor narrowing
+      // engaged even though forceThinking is proof the agent is alive again.
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'server_error' }));
+      expect(engine.getState(SESSION_ID)?.retryFailurePending).toBe(true);
+
+      engine.forceThinking(SESSION_ID);
+
+      expect(engine.getState(SESSION_ID)?.retryFailurePending).toBe(false);
+    });
+
+    it('forceIdle clears a live retryFailurePending hold (PTY tracker declares definitive idle mid-retry)', () => {
+      // Red-green: delete the `state.retryFailurePending = false;` line in
+      // forceIdle (activity-engine.ts) and this goes red - a subsequent
+      // markThinkingSignal/forceThinking cycle could re-derive
+      // watchdogBaseTime's believedParked as still true from the stale flag.
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'overloaded' }));
+      expect(engine.getState(SESSION_ID)?.retryFailurePending).toBe(true);
+
+      engine.forceIdle(SESSION_ID);
+
+      expect(engine.getState(SESSION_ID)?.retryFailurePending).toBe(false);
+    });
+
+    it('does NOT clear a pending permission prompt for a live retry hold (updatePermissionFlag deliberately excludes turn_retrying)', () => {
+      // Depth>0 so the Idle/permission event (itself a TURN_ENDING_EVENTS
+      // entry) does not clear turnActive - same setup as the sibling
+      // "subagent ToolStart at depth>0 does NOT clear permissionPending" test,
+      // adapted to get turnActive=true AND permissionPending=true
+      // simultaneously ahead of the retry, so the live-hold branch (not the
+      // idle-wound-down branch) is the one exercised.
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'test-builder' }));
+      engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission }));
+      expect(engine.getState(SESSION_ID)?.permissionPending).toBe(true);
+      expect(engine.getState(SESSION_ID)?.turnActive).toBe(true);
+
+      engine.processEvent(SESSION_ID, event(EventType.TurnRetrying, { detail: 'server_error' }));
+
+      const state = engine.getState(SESSION_ID)!;
+      // Unlike Interrupted/TurnFailed/Prompt/SubagentStart (all listed as
+      // permission-clearing signals in updatePermissionFlag), turn_retrying is
+      // deliberately absent from that list: a live retry must not dismiss a
+      // pending permission prompt the user hasn't acted on yet.
+      expect(state.permissionPending).toBe(true);
+      expect(state.retryFailurePending).toBe(true);
+    });
+  });
+
   describe('user Ctrl+C interrupt synthesis', () => {
     // The synthesis itself is wired in SessionTelemetry, not the engine,
     // but the engine MUST handle a synthetic Interrupted event the same

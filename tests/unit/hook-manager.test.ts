@@ -86,11 +86,28 @@ describe('hook-manager', () => {
       expect(hooks.Stop).toHaveLength(1);
       expect(hooks.Stop[0].hooks[0].command).toContain('idle');
 
-      // StopFailure: turn_failed (fires INSTEAD of Stop on an API-error abort),
-      // carrying the error type so the activity engine can reset stale counters.
+      // StopFailure: turn_failed by default (fires INSTEAD of Stop on an
+      // API-error abort), carrying the error type so the activity engine can
+      // reset stale counters. Reclassified to the generic turn_retrying when
+      // the error is a transient/auto-retried class (overloaded, server_error,
+      // rate_limit, api_error) - mirrors the idle_hint Notification precedent
+      // below (Claude-specific match strings live in the adapter, not the
+      // engine).
       expect(hooks.StopFailure).toHaveLength(1);
       expect(hooks.StopFailure[0].hooks[0].command).toContain('turn_failed');
       expect(hooks.StopFailure[0].hooks[0].command).toContain(extractDetail(['error', 'error_details']));
+      expect(hooks.StopFailure[0].hooks[0].command).toContain(
+        setTypeWhenDetailContains('overloaded', EventType.TurnRetrying),
+      );
+      expect(hooks.StopFailure[0].hooks[0].command).toContain(
+        setTypeWhenDetailContains('server_error', EventType.TurnRetrying),
+      );
+      expect(hooks.StopFailure[0].hooks[0].command).toContain(
+        setTypeWhenDetailContains('rate_limit', EventType.TurnRetrying),
+      );
+      expect(hooks.StopFailure[0].hooks[0].command).toContain(
+        setTypeWhenDetailContains('api_error', EventType.TurnRetrying),
+      );
 
       // PermissionRequest: idle
       expect(hooks.PermissionRequest).toHaveLength(1);
