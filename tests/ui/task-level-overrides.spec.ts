@@ -1,7 +1,7 @@
 import { test, expect, chromium } from '@playwright/test';
 import path from 'node:path';
 import { launchPage, createProject, createTask, waitForViteReady } from './helpers';
-import type { Browser, Page } from '@playwright/test';
+import type { Browser, Locator, Page } from '@playwright/test';
 
 // Each describe is isolated per worker (separate process; per-test page launch / goto reset),
 // so the file's tests can fan out across the UI workers safely.
@@ -481,7 +481,10 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     await groupedPage.locator('input[placeholder="Task title"]').fill('One Million Task');
     await groupedPage.locator('input[data-testid="task-model-override"]').click();
     await groupedPage.locator('[data-model-1m]').click();
-    await expect(groupedPage.locator('input[data-testid="task-model-override"]')).toHaveValue('claude-opus-4-8[1m]');
+    // The closed input shows the committed value's friendly label (from the
+    // fixture's modelDisplayNames), not the raw spawn id - matches the
+    // dropdown row and the inherited-default placeholder.
+    await expect(groupedPage.locator('input[data-testid="task-model-override"]')).toHaveValue('Opus 4.8 (1M)');
 
     await groupedPage.locator('button[type="submit"]:has-text("Create")').click();
     await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -504,7 +507,9 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     const pinnedRow = groupedPage.locator('[data-model-pinned-option][title="claude-haiku-4-5-20251001"]');
     await expect(pinnedRow).toHaveText('Haiku 4.5 · 2025-10-01');
     await pinnedRow.click();
-    await expect(groupedPage.locator('input[data-testid="task-model-override"]')).toHaveValue('claude-haiku-4-5-20251001');
+    // Closed input shows the same humanized-with-date label as the row did,
+    // not the raw dated id.
+    await expect(groupedPage.locator('input[data-testid="task-model-override"]')).toHaveValue('Haiku 4.5 · 2025-10-01');
 
     await groupedPage.locator('button[type="submit"]:has-text("Create")').click();
     await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -524,7 +529,8 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     const olderOpusRow = groupedPage.locator('[data-model-option][title="claude-opus-4-7"]');
     await expect(olderOpusRow).toHaveText('Opus 4.7');
     await olderOpusRow.click();
-    await expect(groupedPage.locator('input[data-testid="task-model-override"]')).toHaveValue('claude-opus-4-7');
+    // Closed input shows the friendly label, not the raw superseded id.
+    await expect(groupedPage.locator('input[data-testid="task-model-override"]')).toHaveValue('Opus 4.7');
 
     await groupedPage.locator('button[type="submit"]:has-text("Create")').click();
     await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -546,7 +552,8 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     // build is selectable without touching the toggle.
     await expect(groupedPage.locator('[data-model-pinned-option]')).toHaveText(['Haiku 4.5 · 2025-10-01']);
     await groupedPage.locator('[data-model-pinned-option]').click();
-    await expect(modelInput).toHaveValue('claude-haiku-4-5-20251001');
+    // Closed input shows the humanized-with-date label, not the raw dated id.
+    await expect(modelInput).toHaveValue('Haiku 4.5 · 2025-10-01');
 
     // Escape closes the suggestion popover and (the form is dirty) opens the
     // discard confirm; Discard then closes the dialog.
@@ -573,7 +580,8 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     const supersededRow = groupedPage.locator('[data-model-option][title="claude-opus-4-7"]');
     await expect(supersededRow).toHaveText('Opus 4.7');
     await supersededRow.click();
-    await expect(modelInput).toHaveValue('claude-opus-4-7');
+    // Closed input shows the friendly label, not the raw superseded id.
+    await expect(modelInput).toHaveValue('Opus 4.7');
 
     await groupedPage.keyboard.press('Escape');
     await groupedPage.locator('button:has-text("Discard")').click();
@@ -591,7 +599,8 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     // with the dialog's own Escape-to-discard handling), leaving the value set.
     await modelInput.fill('claude-opus-4-7');
     await titleInput.click();
-    await expect(modelInput).toHaveValue('claude-opus-4-7');
+    // Closed input shows the friendly label for the committed raw id.
+    await expect(modelInput).toHaveValue('Opus 4.7');
 
     // Reopen the dropdown: the section is expanded WITHOUT the user touching
     // the toggle, and the toggle stays visible (still collapsible) since this
@@ -605,6 +614,29 @@ test.describe('NewTaskDialog Advanced - grouped model dropdown (suffixed fixture
     await groupedPage.keyboard.press('Escape');
     await groupedPage.locator('button:has-text("Discard")').click();
     await titleInput.waitFor({ state: 'hidden', timeout: 2000 });
+  });
+
+  test('reopening the dropdown on an already-selected model shows the friendly label immediately, with no raw-id flash', async () => {
+    await openDialog();
+
+    const modelInput = groupedPage.locator('input[data-testid="task-model-override"]');
+    await modelInput.click();
+    await groupedPage.locator('[data-model-option][title="claude-haiku-4-5"]').click();
+    await expect(modelInput).toHaveValue('Haiku 4.5');
+
+    // Reopen: filterText is empty until the user types, so the open-state
+    // display (`filterText || selectedLabel`) falls back to the friendly
+    // label - never the raw id - the instant the dropdown opens, before any
+    // typing happens.
+    await modelInput.click();
+    await expect(modelInput).toHaveValue('Haiku 4.5');
+    await expect(groupedPage.locator('[data-model-option]').first()).toBeVisible();
+
+    // Close the dropdown via an outside click, then discard the dirty form.
+    await groupedPage.locator('input[placeholder="Task title"]').click();
+    await groupedPage.keyboard.press('Escape');
+    await groupedPage.locator('button:has-text("Discard")').click();
+    await groupedPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
   });
 });
 
@@ -955,5 +987,253 @@ test.describe('NewTaskDialog Advanced - context-window badge on a demoted supers
 
     await demotedBadgePage.keyboard.press('Escape');
     await demotedBadgePage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+});
+
+/**
+ * The closed-enumeration `Combobox` (Effort/Agent/Permission) is a CLOSED set:
+ * unlike `ModelCombobox`'s free-form model ids, typed text is never a valid
+ * value by itself. Typing only filters the option list; a selection commits
+ * exclusively via a click or an Enter press on a keyboard-focused option
+ * button (native button activation). Enter pressed while the INPUT itself is
+ * focused (not an option) just closes the popover and reverts the display -
+ * it does not commit the typed text. These specs exercise that contract via
+ * the Effort field, which is the same `Combobox` widget Agent/Permission use.
+ * Own browser instance: the assertions require an undirtied dialog so Escape
+ * closes cleanly, and no other test in this file should share that state.
+ */
+test.describe('Combobox (Effort field) - typing filters, never auto-commits', () => {
+  let filterBrowser: Browser;
+  let filterPage: Page;
+
+  test.beforeAll(async () => {
+    await waitForViteReady();
+    filterBrowser = await chromium.launch({ headless: true });
+    const context = await filterBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+    filterPage = await context.newPage();
+    await filterPage.addInitScript({ path: MOCK_SCRIPT });
+    await filterPage.goto(VITE_URL);
+    await filterPage.waitForLoadState('load');
+    await filterPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+    await createProject(filterPage, `ComboboxFilter ${Date.now()}`);
+  });
+
+  test.afterAll(async () => {
+    await filterBrowser?.close();
+  });
+
+  async function openDialog() {
+    const column = filterPage.locator('[data-swimlane-name="To Do"]');
+    await column.locator('text=Add task').click();
+    await filterPage.locator('input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    await filterPage.locator('[data-testid="task-advanced-toggle"]').click();
+  }
+
+  test('typing filters the option list; clicking away without picking one leaves the value uncommitted', async () => {
+    await openDialog();
+
+    const effortInput = filterPage.locator('input[data-testid="task-effort-override"]');
+    await effortInput.click();
+    await effortInput.fill('xh');
+
+    const options = filterPage.locator('[data-combobox-option]');
+    await expect(options).toHaveCount(1);
+    await expect(options.first()).toHaveText('xhigh');
+
+    // Click elsewhere in the dialog (the outside-click handler just closes
+    // the popover and clears filterText - it never calls onChange), so the
+    // typed "xh" never became the committed value.
+    await filterPage.locator('input[placeholder="Task title"]').click();
+    await expect(effortInput).toHaveValue('');
+    await expect(effortInput).toHaveAttribute('placeholder', 'Agent default');
+
+    await filterPage.keyboard.press('Escape');
+    await filterPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+
+  test('pressing Enter while the input itself is focused reverts without committing the typed text', async () => {
+    await openDialog();
+
+    const effortInput = filterPage.locator('input[data-testid="task-effort-override"]');
+    await effortInput.click();
+    await effortInput.fill('not-a-real-effort-level');
+    await effortInput.press('Enter');
+
+    await expect(filterPage.locator('[data-combobox-option]')).toHaveCount(0);
+    await expect(effortInput).toHaveValue('');
+    await expect(effortInput).toHaveAttribute('placeholder', 'Agent default');
+
+    await filterPage.keyboard.press('Escape');
+    await filterPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+
+  test('pressing Enter on a keyboard-focused option commits it, same as a mouse click', async () => {
+    await openDialog();
+
+    const effortInput = filterPage.locator('input[data-testid="task-effort-override"]');
+    await effortInput.click();
+    // ArrowDown moves focus off the input onto the first option button
+    // (handleInputKeyDown blurs the input and focuses the first
+    // `[data-combobox-option]`).
+    await effortInput.press('ArrowDown');
+    await filterPage.keyboard.press('Enter');
+
+    await expect(effortInput).toHaveValue('low');
+    await expect(filterPage.locator('[data-combobox-option]')).toHaveCount(0);
+
+    // The form is now dirty (a real override was committed); discard on close.
+    await filterPage.keyboard.press('Escape');
+    await filterPage.locator('button:has-text("Discard")').click();
+    await filterPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  });
+});
+
+/**
+ * Structural check for `placeholderVariant`. The prop only changes the
+ * placeholder's CSS class (`placeholder-fg-faint` for 'muted' vs
+ * `placeholder-fg` for 'resolved' - see Combobox.tsx / ModelCombobox.tsx), so
+ * a hover-style assertion is unnecessary here; reading the class list is a
+ * reliable, non-flaky structural signal. Covers both the AgentTab call site
+ * (Settings > Agent's Default Model/Effort are hardcoded 'muted' - top of the
+ * resolution chain) and the AdvancedOverridesSection call site (New Task's
+ * Model/Effort flip to 'resolved' once a project default gives them a real
+ * fallback value), closing the gap that neither call site had any coverage.
+ * Own browser instance: mutates the project's default_model/default_effort,
+ * which no other test in this file may observe.
+ */
+test.describe('placeholderVariant: muted vs resolved', () => {
+  let variantBrowser: Browser;
+  let variantPage: Page;
+
+  test.beforeAll(async () => {
+    await waitForViteReady();
+    variantBrowser = await chromium.launch({ headless: true });
+    const context = await variantBrowser.newContext({ viewport: { width: 1920, height: 1080 } });
+    variantPage = await context.newPage();
+    await variantPage.addInitScript({ path: MOCK_SCRIPT });
+    await variantPage.goto(VITE_URL);
+    await variantPage.waitForLoadState('load');
+    await variantPage.waitForSelector('text=Kangentic', { timeout: 15000 });
+    await createProject(variantPage, `PlaceholderVariant ${Date.now()}`);
+  });
+
+  test.afterAll(async () => {
+    await variantBrowser?.close();
+  });
+
+  /** Reads which placeholder-weight class is present: 'placeholder-fg-faint'
+   *  is the exact muted class; 'resolved' is everything else that carries
+   *  the plain 'placeholder-fg' token (checked as a whitespace-delimited
+   *  class, not a substring match, since 'placeholder-fg' is itself a
+   *  substring of 'placeholder-fg-faint'). */
+  async function placeholderVariantOf(input: Locator): Promise<'resolved' | 'muted'> {
+    const classAttribute = (await input.getAttribute('class')) ?? '';
+    const classes = classAttribute.split(/\s+/);
+    if (classes.includes('placeholder-fg-faint')) return 'muted';
+    if (classes.includes('placeholder-fg')) return 'resolved';
+    throw new Error(`Neither placeholder-weight class found on input: "${classAttribute}"`);
+  }
+
+  async function openSettingsAgentTab() {
+    await variantPage.locator('[data-testid="settings-button"]').click();
+    await variantPage.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
+    await variantPage.getByRole('button', { name: 'Agent', exact: true }).click();
+  }
+
+  async function closeSettings() {
+    await variantPage.keyboard.press('Escape');
+    await variantPage.locator('h2:has-text("Settings")').waitFor({ state: 'hidden', timeout: 2000 });
+  }
+
+  async function openNewTaskAdvanced() {
+    const column = variantPage.locator('[data-swimlane-name="To Do"]');
+    await column.locator('text=Add task').click();
+    await variantPage.locator('input[placeholder="Task title"]').waitFor({ state: 'visible' });
+    await variantPage.locator('[data-testid="task-advanced-toggle"]').click();
+  }
+
+  async function closeNewTaskDialog() {
+    await variantPage.keyboard.press('Escape');
+    await variantPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
+  }
+
+  test('with no project default set, Settings > Agent Default Model/Effort are always muted, and New Task Advanced Model/Effort start muted while Agent stays resolved', async () => {
+    await openSettingsAgentTab();
+
+    const settingsModelInput = variantPage.locator('input[data-testid="project-default-model"]');
+    const settingsEffortInput = variantPage.locator('input[data-testid="project-default-effort"]');
+    await expect(settingsModelInput).toHaveAttribute('placeholder', 'Agent default');
+    await expect(settingsEffortInput).toHaveAttribute('placeholder', 'Agent default');
+    expect(await placeholderVariantOf(settingsModelInput)).toBe('muted');
+    expect(await placeholderVariantOf(settingsEffortInput)).toBe('muted');
+
+    await closeSettings();
+
+    await openNewTaskAdvanced();
+    const taskModelInput = variantPage.locator('input[data-testid="task-model-override"]');
+    const taskEffortInput = variantPage.locator('input[data-testid="task-effort-override"]');
+
+    // Agent's inherit label is always a resolved app default (there is
+    // always SOME agent, even with nothing configured), so
+    // AdvancedOverridesSection never passes a placeholderVariant for it -
+    // the Agent field is out of scope here (it needs a multi-agent fixture
+    // to render at all; see the "Agent picker" describe block above).
+    // Model/Effort have no column or project default here, so their
+    // fallback computation bottoms out with no concrete value: muted.
+    await expect(taskModelInput).toHaveAttribute('placeholder', 'Agent default');
+    await expect(taskEffortInput).toHaveAttribute('placeholder', 'Agent default');
+    expect(await placeholderVariantOf(taskModelInput)).toBe('muted');
+    expect(await placeholderVariantOf(taskEffortInput)).toBe('muted');
+
+    await closeNewTaskDialog();
+  });
+
+  test('setting a project default model/effort flips the New Task Advanced placeholders to resolved with the concrete value', async () => {
+    await openSettingsAgentTab();
+
+    // Pick a project default model (raw id 'opus', no display-name fixture
+    // here, so its friendly label equals the raw id).
+    await variantPage.locator('input[data-testid="project-default-model"]').click();
+    await variantPage.locator('[data-model-option]:has-text("opus")').click();
+    await variantPage.locator('input[data-testid="project-default-effort"]').click();
+    await variantPage.locator('[data-testid="project-default-effort-option-medium"]').click();
+
+    await closeSettings();
+
+    await openNewTaskAdvanced();
+    const taskModelInput = variantPage.locator('input[data-testid="task-model-override"]');
+    const taskEffortInput = variantPage.locator('input[data-testid="task-effort-override"]');
+
+    // The inherit placeholder now names the concrete project default
+    // directly - no "Use ... default" framing - and is styled at full
+    // weight (resolved) since it is exactly what will run.
+    await expect(taskModelInput).toHaveAttribute('placeholder', 'opus');
+    await expect(taskEffortInput).toHaveAttribute('placeholder', 'medium');
+    expect(await placeholderVariantOf(taskModelInput)).toBe('resolved');
+    expect(await placeholderVariantOf(taskEffortInput)).toBe('resolved');
+
+    await closeNewTaskDialog();
+
+    // Cleanup: clear both project defaults directly via IPC + a store
+    // reload (mirroring AgentTab's own refreshCurrentProject() call), rather
+    // than the Combobox clear (X) buttons - clicking Clear on ModelCombobox
+    // refocuses its input, which reopens its own suggestion dropdown
+    // (handleInputFocus) and then overlaps/intercepts the Effort field's
+    // Clear button directly below it in the settings list.
+    await variantPage.evaluate(async () => {
+      const stores = (window as unknown as {
+        __zustandStores?: { project: { getState: () => { currentProject: { id: string } | null; loadCurrent: () => Promise<void> } } };
+      }).__zustandStores;
+      const projectId = stores?.project.getState().currentProject?.id;
+      if (!projectId) throw new Error('No current project to clean up');
+      await window.electronAPI.projects.setDefaultModel(projectId, null);
+      await window.electronAPI.projects.setDefaultEffort(projectId, null);
+      await stores?.project.getState().loadCurrent();
+    });
+
+    await openSettingsAgentTab();
+    await expect(variantPage.locator('input[data-testid="project-default-model"]')).toHaveAttribute('placeholder', 'Agent default');
+    await expect(variantPage.locator('input[data-testid="project-default-effort"]')).toHaveAttribute('placeholder', 'Agent default');
+    await closeSettings();
   });
 });
