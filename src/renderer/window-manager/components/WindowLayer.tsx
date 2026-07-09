@@ -19,6 +19,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { useBoardStore } from '../../stores/board-store';
 import { boardWindowManager } from '../store/window-store';
 import type { WindowManager } from '../store/window-store';
 import { WindowManagerProvider, useLayerStore, useSnapPreviewController } from '../context';
@@ -233,21 +234,33 @@ const BOARD_LAYER_OPTIONS: WindowManagerLayerOptions = {
   minSize: { width: DEFAULT_MIN_WIDTH_PX, height: DEFAULT_MIN_HEIGHT_PX },
 };
 
+const BOARD_OVERLAY_BASE_CLASS = 'fixed left-0 right-0 top-10 bottom-9 z-40 pointer-events-none';
+
 /**
  * The board task-detail window layer. Modeless: `pointer-events:none` so clicks
  * in the gaps fall through to the live board; each `WindowFrame` is
  * `pointer-events:auto`. Sits between the app chrome (title bar h-10, status bar
  * h-9) at `z-40`, BELOW true modal dialogs (`BaseDialog` is `z-50`). Mounted once
  * in `AppLayout`.
+ *
+ * Stays mounted even when the Backlog view is active (so live agent sessions and
+ * the board bridges never tear down) but the overlay goes `invisible` off the
+ * board, so windows don't bleed over the backlog. `visibility:hidden` (not
+ * `display:none`) keeps the overlay's measured size and each frame's layout
+ * intact, so returning to the board needs no re-fit and replays no entrance
+ * animation.
  */
 export function WindowLayer() {
+  const activeView = useBoardStore((state) => state.activeView);
+  const overlayClassName =
+    activeView === 'board' ? BOARD_OVERLAY_BASE_CLASS : `${BOARD_OVERLAY_BASE_CLASS} invisible`;
   return (
     <WindowManagerLayer
       manager={boardWindowManager}
       layer={BOARD_LAYER_OPTIONS}
       portalHostId="window-layer-root"
       overlayTestId="window-overlay"
-      overlayClassName="fixed left-0 right-0 top-10 bottom-9 z-40 pointer-events-none"
+      overlayClassName={overlayClassName}
       bridges={<BoardBridges />}
     />
   );
