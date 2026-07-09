@@ -219,15 +219,27 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref }}
 
+      # Trusted publishing (OIDC) needs npm >= 11.5.1. Node 24 ships npm 11.16+,
+      # so this job pins Node 24 and skips the `npm install -g npm@latest`
+      # self-upgrade. That self-upgrade tracked whatever npm@latest shipped that
+      # day; a bad build pruned the bundled `sigstore` module and broke
+      # provenance publishing (the v0.29.0 release failure). This job builds no
+      # Electron, so it is isolated from the Node-22 pin the platform build jobs
+      # require.
       - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          node-version: 24
           registry-url: https://registry.npmjs.org
 
-      # Trusted publishing (OIDC) needs npm >= 11.5.1; Node 22 ships 10.9.x.
-      # This job builds no Electron, so it is isolated from the Node-22 pin.
-      - name: Upgrade npm for trusted publishing
-        run: npm install -g npm@latest
-
+      # Idempotent: re-running an already-published tag (e.g. backfilling a green
+      # run after a transient failure) must not fail on npm's "cannot publish
+      # over the previously published version". Skip when the version is already
+      # on the registry so the re-run stays green.
       - name: Publish launcher to npm
-        run: npm publish --access public --provenance -w packages/launcher
+        run: |
+          PUBLISHED_VERSION=$(node -p "require('./packages/launcher/package.json').version")
+          if npm view "kangentic@$PUBLISHED_VERSION" version >/dev/null 2>&1; then
+            echo "kangentic@$PUBLISHED_VERSION is already on npm; skipping publish (idempotent re-run)."
+            exit 0
+          fi
+          npm publish --access public --provenance -w packages/launcher

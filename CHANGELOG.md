@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.29.0] - 2026-07-09
+
+### Features
+
+- Smooth long transcripts, in-viewer search, open-at-position (41b288ae)
+- Project-level model/effort defaults, per-task permission override, and MCP support (55e92fe7)
+- Add kangentic_move_task_to_project tool for cross-project relocation (2c478259)
+- Add repo-history views: commit browser, file history, blame (76c8df65)
+
+### Fixes
+
+- Mark TranscriptBlock.type thinking checks as activity-state-ok (a1a69e50)
+- Disentangle Hotkeys terminology from Shortcuts feature (6f500b7b)
+- Stop false idle during a live StopFailure retry (76d594d8)
+- Make diff-viewer copy and select-all reliable (db544cde)
+- Disambiguate Move Task pill assertion in settings-panel.spec.ts (e4b9dbde)
+- Emit the real first-output cursor-hide sequence in the mock (6af74757)
+- Wait for the launch overlay before clicking the terminal (3038bcb5)
+- Click the xterm container, not its hidden helper textarea (044f53dd)
+- Fullscreen TUI select-prompt input/focus freeze (9552881e)
+- Narrow stale-thinking anchor for heartbeat-forced turns (32806fef)
+- Remove redundant PR pill from task detail header (64d5c16d)
+
+### Other
+
+- Cover scrollbar-reveal padding reclaim and settle-loop math (7a233a75)
+- Fix remaining shortcut/hotkey terminology in configuration.md (16532b75)
+- Cover Combobox/ModelCombobox friendly-label and placeholderVariant behavior (76d2ac25)
+- Document move-task-to-project rollback and same-project rejection (cdba281f)
+- Cover move-task-to-project thrown-error path and createdAt param (7e935297)
+- Cover DiffViewer copy and select-all (d21afcd1)
+- Cover transient rev-parse failure, blame gating, and history-divider resize (69119966)
+- Cover dangling synchronized-output frame on reset (170e11b4)
+- Close turnForcedByHeartbeat reset coverage gap (1411899a)
+- Remove Release column from board config (4b6dd0ca)
+- Revert explicit-invocation gate, keep doc auto-fix (b96abb01)
+- Gate /release to explicit invocation, auto-fix doc gaps (e1f2b6a4)
+
 ## [v0.28.0] - 2026-07-07
 
 ### Features

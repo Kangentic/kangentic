@@ -30,7 +30,7 @@ New projects start with seven columns:
 
 Click the **+** button on any column header or use the "New Task" button. Enter a title and optional description. You can set a priority level, add labels, and attach files (images, documents, or any file type) by pasting from the clipboard or dragging files onto the dialog. Attachments are included in the agent's prompt.
 
-Pasted screenshots are automatically compressed to fit Claude's per-image budget. Kangentic re-encodes large pastes to JPEG and steps quality / dimensions down until each image lands under the budget, so a multi-monitor screen grab does not get rejected by the API.
+Pasted screenshots are automatically compressed to fit Claude's per-image budget. Kangentic resizes large pastes to a 1568px long edge (matching the API's own downscale) and re-encodes them as WebP, stepping quality down until each image lands under a ~1.5MB target, so a multi-monitor screen grab does not get rejected by the API. Small pastes (under 500KB), GIFs, and SVGs are attached as-is.
 
 In the description field, type `@` to trigger file autocomplete. A dropdown lists files and directories from the project root, which you can navigate with arrow keys and select with Enter to insert the path.
 
@@ -77,7 +77,7 @@ Dragging between active columns (e.g., Executing to Code Review) keeps the sessi
 
 ### Complete a Task
 
-Drag to Done. A confirmation dialog asks you to approve deleting the local worktree (with a "Delete automatically in the future" checkbox to suppress future prompts). On confirm, the worktree directory is removed to reclaim disk, the session is suspended (not destroyed), the task is archived, and both the branch and conversation ID are preserved. If you later unarchive the task and drag it to an active column, Kangentic recreates the worktree from the preserved branch and the agent resumes with full conversation context.
+Drag to Done. The worktree directory is removed to reclaim disk, the session is suspended (not destroyed), the task is archived, and the conversation ID is preserved. The branch is deleted too when **git.autoCleanup** is on (the default) and kept when it is off. A clean move happens silently; a confirmation dialog appears only when the move would destroy real work - uncommitted files, or commits that exist only on the local branch about to be deleted - and it spells out exactly what is at risk (worktree deleted, branch kept or deleted, session history kept). If you later unarchive the task and drag it to an active column, Kangentic recreates the worktree and the agent resumes with full conversation context.
 
 Clicking a completed task opens a session summary showing: duration, model, cost, token usage, tool call count, files changed, and lines added/removed. A collapsible "By tool" section breaks the count down per tool name (calls, total duration, average duration, plus a Failed column when any tool was interrupted). Cost / input / output columns appear only for adapters that emit per-tool telemetry. The Done column also supports searching completed tasks by title and sorting by date, cost, tokens, or duration.
 
@@ -93,7 +93,7 @@ Right-click any task card on the board to open a context menu with:
 
 ### Return to To Do
 
-Drag to To Do to kill the session. The worktree is preserved (code stays on disk), but the session is ended. If you drag back to an active column, a fresh session starts.
+Drag to To Do to reset the task to "not started": the session is killed and its history wiped, and the worktree is removed (the branch too, when **git.autoCleanup** is on). When the reset would destroy pending changes, a confirmation dialog warns that the worktree and session history will be lost before anything happens. If you drag back to an active column, a fresh session starts in a fresh worktree.
 
 ## Terminal Panel
 
@@ -143,9 +143,11 @@ Click a task card to open the detail dialog. From here you can:
 - Pause or resume the agent session using the circular play/pause button in the header
 - Run shortcuts from the header bar (configurable pills that launch external tools)
 - Open the **Commands & Skills** popover to browse and run Claude Code commands (`.claude/commands/`) and skills (`.claude/skills/`) from the project directory. Search by name, navigate with arrow keys, press Enter to invoke.
+- Open the task's transcript in the read-only [conversation viewer](#the-conversation-viewer) via the **View conversation** pill (speech-bubble icon). Muted until the task has session history, live or historical.
 - Access the kebab menu (three-dot icon) for additional actions:
   - **Edit** - switch to edit mode for title and description
   - **Open folder** - open the worktree or project directory in your file manager
+  - **View conversation** - same as the header pill
   - **View PR** - open the associated pull request. PR URLs are populated automatically when an agent runs `gh pr create` or `gh pr view` (GitHub), explicitly via the `kangentic_update_task` MCP tool (any platform), or manually through the PR URL field in edit mode. Also shown as a pill in the header bar and a clickable badge on the task card.
   - **Commands & Skills** - submenu of available Claude Code commands and skills (same as the header popover)
   - **Pause / Resume session** - manually suspend or resume the agent
@@ -173,7 +175,9 @@ When the dialog is open, it claims the terminal session. The bottom panel releas
 
 ### Browser Pane
 
-Tasks can host an embedded browser inside the task detail dialog. Use it to preview your dev server, capture screenshots with annotations, and submit framed prompts back to the agent without leaving Kangentic. The pane uses a shared Electron webview partition so cookies and storage persist across all task browsers.
+Tasks can host an embedded browser inside the task detail dialog. Use it to preview your dev server, capture screenshots with annotations, and submit framed prompts back to the agent without leaving Kangentic. Each worktree gets its own persistent webview partition (cookie jar), so two tasks logged into dev servers on the same localhost host don't clobber each other's sessions; tasks without a worktree share a single fallback jar.
+
+Agents can drive the pane themselves through the `kangentic_browser_*` MCP tools (navigate, screenshot, DOM queries, click, type, eval), governed by the [Agent Browser](#agent-browser) settings tab.
 
 | Action | Shortcut |
 |--------|----------|
@@ -276,8 +280,9 @@ Press **Ctrl+Shift+F** (Cmd+Shift+F on macOS) or **Ctrl+F** (Cmd+F) to open the 
 - Backlog items by title and description
 - Session events (tool calls, agent activity from `events.jsonl`)
 - Registered projects by name and path
+- Past agent conversations, by keyword or by meaning (Smart mode, when semantic search is enabled in Settings > Memory) - see [Conversation Memory](#conversation-memory)
 
-Default scope is the current project; toggle to **All projects** to widen the search across every registered project. Selecting a hit jumps to the right place: tasks open the detail dialog, session events scroll the Activity Log to the matched event with a brief highlight, backlog hits switch to the backlog view and open the item's edit dialog, and project hits switch projects.
+Default scope is the current project; toggle to **All projects** to widen the search across every registered project. Selecting a hit jumps to the right place: tasks open the detail dialog, session events scroll the Activity Log to the matched event with a brief highlight, backlog hits switch to the backlog view and open the item's edit dialog, project hits switch projects, and conversation hits open the read-only [conversation viewer](#the-conversation-viewer) scrolled to the matched turn (or route to the live terminal if that session is still running).
 
 ### Filter Popover
 
@@ -497,7 +502,7 @@ The sidebar shows all your projects. Click to switch between them. Each project 
 
 The selected project shows action buttons (Open, Settings, Delete) directly on the row. Right-click any project to open a context menu with Rename, Open in Explorer, Project Settings, and Delete. Inline rename is supported via the context menu - press Enter to save, Escape to cancel.
 
-If a project's folder is moved or renamed while Kangentic is closed, opening it shows a "Project Folder Not Found" dialog with a "Locate Folder..." button to re-point the project at its new location. Project Settings > General > Change does the same thing on demand. Because tasks and board history are keyed by project id, they are preserved across a relocation. Each agent's session data and per-project settings that live outside the project folder keyed by the old path (Claude transcripts, Codex/Gemini/Qwen trust and chats, OpenCode's session DB, Kimi/Droid session dirs, Copilot workspaces) are migrated automatically, so suspended sessions still resume at the new location. See [Project relocation](agent-integration.md#project-relocation) for the per-agent details.
+If a project's folder is moved or renamed while Kangentic is closed, opening it shows a "Project Folder Not Found" dialog with a "Locate Folder..." button to re-point the project at its new location. To relocate proactively, Project Settings > General > **Move...** has Kangentic move the folder itself (see [Moving a project](#moving-a-project)). Because tasks and board history are keyed by project id, they are preserved across a relocation. Each agent's session data and per-project settings that live outside the project folder keyed by the old path (Claude transcripts, Codex/Gemini/Qwen trust and chats, OpenCode's session DB, Kimi/Droid session dirs, Copilot workspaces) are migrated automatically, so suspended sessions still resume at the new location. See [Project relocation](agent-integration.md#project-relocation) for the per-agent details.
 
 ### Idle Badges
 
@@ -526,11 +531,11 @@ The Developer tab exposes power-user diagnostics for the activity-detection subs
 Open a project directly from the terminal:
 
 ```bash
-npx kangentic            # Open the current directory
 npx kangentic /path/to   # Open a specific project path
+npx kangentic            # No path: reopen your last project
 ```
 
-If the project doesn't exist yet, it's created automatically.
+If the project doesn't exist yet, it's created automatically. Without a path, Kangentic reopens the project you last had active (or shows the welcome screen on a first run).
 
 ## Session Persistence
 
@@ -545,6 +550,30 @@ Because Claude Code supports `--resume`, conversation context is fully preserved
 ### User-Paused Sessions
 
 Sessions paused manually by the user (via the pause button in the task detail dialog or kebab menu) are remembered across restarts. On relaunch, user-paused sessions remain paused instead of auto-resuming. This respects user intent. If you paused an agent, it will not start back up on its own. Only system-suspended sessions (those suspended by shutdown or column moves) auto-resume.
+
+## Conversation Memory
+
+Kangentic indexes every session's conversation into a per-project, on-device search index, so past agent conversations are recallable without scrolling through old terminals. Indexing is on by default; turn it off or tune it in Settings > Memory.
+
+### What Gets Indexed
+
+The structured transcript of each session: user turns, assistant replies, thinking blocks, and tool-call summaries. Raw terminal scrollback is never indexed (for TUI agents it is mostly cursor and redraw noise). A session is indexed when it finishes or suspends, an in-progress conversation is re-indexed at each turn boundary, and older history is backfilled in small sweeps when a project opens.
+
+### Keyword and Semantic Search
+
+Keyword (full-text) search is always available while indexing is on. Enabling **Semantic search** in Settings > Memory downloads a small embedding model once (three quality tiers from the `bge` family) and then runs fully offline; searches become hybrid, fusing keyword and meaning-based rankings. Embedding runs in an isolated background process, duty-cycle throttled so backfills never peg the CPU, with a **Hardware acceleration** setting (Auto / GPU / CPU) and a **Rebuild index** button for a stale index. Every failure path (no model yet, slow embedding) degrades transparently to keyword-only.
+
+### Where It Surfaces
+
+- The [Search Palette](#search-palette) shows a **Conversations** group; a hit opens the viewer at the matched turn.
+- The **View conversation** pill in the [Task Detail Dialog](#task-detail-dialog) opens the task's newest session directly, no search needed.
+- Agents can recall past conversations themselves via the `kangentic_search` MCP tool (`mode: "hybrid"` for semantic) and drill into a cited turn with `kangentic_get_transcript` - see [mcp-server.md](mcp-server.md).
+
+### The Conversation Viewer
+
+A read-only window on the same layer as task detail windows: drag, resize, snap, tile, and maximize it like any other window. Open viewers persist in the workspace across project switches and app restarts. Each turn renders cleanly with per-message copy buttons, and the header keeps two one-tap actions, **Open task** (jump to the owning task's detail window) and **Copy conversation as Markdown**, both also available from the window's kebab menu.
+
+The viewer opens positioned at the latest message, or centered on the turn matching where you had scrolled in the live terminal, so it lands where you were looking. A search bar at the top does debounced substring search across the transcript with snippet results and prev/next navigation; press **Mod+F** (Ctrl+F on Windows/Linux, Cmd+F on macOS) to focus it, and click a result to jump straight to that turn. Very long transcripts (tens of thousands of messages) stay smooth via row virtualization and a custom overlay scrollbar with a "jump to latest" pill.
 
 ## Command Terminal
 
