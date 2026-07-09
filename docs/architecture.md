@@ -57,6 +57,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `dev:createEphemeralProject` | invoke | Clone the current worktree into an isolated, throwaway preview project (TestHarness "Create Project" button); fills its working tree in the background and returns the usable `Project` |
 | `dev:seedGitChanges` | invoke | Seed a realistic all-scopes / all-statuses git changeset (committed, staged, working) into each ephemeral preview repo (active task worktrees plus the project) so the Changes tab has content to exercise; silently skips any path outside the preview-projects root. Returns `DevSeedGitChangesResult` |
 | `dev:seedEmbeddingBacklog` | invoke | Seed synthetic pending chunks (`embedded_model = NULL`) into the current project's conversation-memory index via the real chunk-write path, then flag the project dirty (TestHarness "Seed Embedding Backlog" button) - a fast path to a realistic embedding backlog for exercising the central embedding engine's drain loop without needing that many real agent turns. Returns `DevSeedEmbeddingBacklogResult` |
+| `dev:seedLargeConversation` | invoke | Seed a throwaway task backed by a synthetic multi-thousand-turn Claude JSONL transcript (TestHarness "Seed Large Conversation" button; appends more turns on re-click) and open it in the Conversation viewer, for exercising the viewer's virtualization, in-viewer search, and open-at-position behavior against a realistic long transcript. Returns `DevSeedLargeConversationResult` |
 
 ### Project Groups (6 channels)
 | Channel | Pattern | Purpose |

@@ -3,7 +3,7 @@ import { ACTIVITY_TAB, type Session, type SessionUsage, type SessionEvent } from
 import { requiresUserInteraction, isActive } from '../../shared/activity-state';
 import { useProjectStore } from './project-store';
 import { useConfigStore } from './config-store';
-import type { SessionStore } from './session-store/types';
+import type { SessionStore, PendingTuiAnchor } from './session-store/types';
 import { buildSessionByTaskId } from './session-store/session-index';
 import { createTaskChangesPanelSlice } from './session-store/task-changes-panel-slice';
 import { createUsagePeriodSlice } from './session-store/usage-period-slice';
@@ -172,6 +172,8 @@ const preservedPendingCommandLabel: Record<string, string> = import.meta.hot?.da
 const preservedConversationSessionId: string | null = import.meta.hot?.data?.conversationSessionId ?? null;
 // @ts-expect-error -- Vite handles import.meta.hot
 const preservedScrollToTurnUuid: string | null = import.meta.hot?.data?.scrollToTurnUuid ?? null;
+// @ts-expect-error -- Vite handles import.meta.hot
+const preservedPendingTuiAnchor: PendingTuiAnchor | null = import.meta.hot?.data?.pendingTuiAnchor ?? null;
 
 // @ts-expect-error -- Vite handles import.meta.hot
 if (import.meta.hot) {
@@ -186,6 +188,7 @@ if (import.meta.hot) {
     data.pendingCommandLabel = state.pendingCommandLabel;
     data.conversationSessionId = state.conversationSessionId;
     data.scrollToTurnUuid = state.scrollToTurnUuid;
+    data.pendingTuiAnchor = state.pendingTuiAnchor;
   });
 }
 
@@ -230,6 +233,7 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   // switch; dropping it on a coincident HMR only skips an auto-open, no visible close.
   _pendingOpenConversation: null,
   _pendingScrollToTurnUuid: null,
+  pendingTuiAnchor: preservedPendingTuiAnchor,
   sessionUsage: {},
   latestRateLimits: null,
   sessionFirstOutput: {},
@@ -590,6 +594,7 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   setScrollToTurnUuid: (uuid) => set({ scrollToTurnUuid: uuid }),
   setPendingOpenConversation: (id) => set({ _pendingOpenConversation: id }),
   setPendingScrollToTurnUuid: (uuid) => set({ _pendingScrollToTurnUuid: uuid }),
+  setPendingTuiAnchor: (anchor) => set({ pendingTuiAnchor: anchor }),
 
   upsertSession: (session) => {
     set((state) => {

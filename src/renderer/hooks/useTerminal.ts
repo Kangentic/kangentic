@@ -7,6 +7,7 @@ import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
 import { isBoardDragActive, onBoardDragEnd } from '../lib/session-update-coalescer';
 import { noteTerminalFocus } from '../utils/dictation-target';
+import { registerTerminalCapture, unregisterTerminalCapture, type TerminalCaptureReader } from '../utils/terminal-capture-registry';
 import '@xterm/xterm/css/xterm.css';
 
 /** Delay before forwarding a resize to the PTY. Coalesces rapid resizes
@@ -418,6 +419,40 @@ export function useTerminal(options: UseTerminalOptions) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount-only teardown; adding options.sessionId would dispose and recreate the xterm on every session switch. The scroll-save reads sessionId from the disposing render, which is correct because the component remounts per session (terminal ownership handoff)
   }, []);
+
+  // Register a scrollback-viewport reader for the open-at-position feature:
+  // captured at the moment a conversation viewer is opened from the task
+  // header, so it can match the visible lines to a transcript turn (see
+  // tui-anchor.ts). Deliberately its OWN effect, keyed only on sessionId -
+  // NOT folded into initTerminal's one-shot creation, which guards itself
+  // with `if (xtermRef.current) return` and so would only ever attempt this
+  // once per component instance. A session-owning terminal's dimensions can
+  // still be 0x0 on the first initTerminal() attempt (a task-detail dialog
+  // that isn't laid out yet), in which case initTerminal defers its real
+  // creation to a later ResizeObserver-driven retry - by which point
+  // initTerminal's own registration attempt would already have been skipped
+  // for good. Reading `xtermRef.current` lazily (inside the reader, not at
+  // registration time) means this effect only needs sessionId to be known,
+  // not the terminal to already exist yet.
+  useEffect(() => {
+    if (!options.sessionId) return undefined;
+    const captureSessionId = options.sessionId;
+    const reader: TerminalCaptureReader = () => {
+      const terminal = xtermRef.current;
+      if (!terminal) return { visibleLines: [], atBottom: true };
+      const buffer = terminal.buffer.active;
+      const visibleLines: string[] = [];
+      for (let row = 0; row < terminal.rows; row += 1) {
+        const line = buffer.getLine(buffer.viewportY + row);
+        visibleLines.push(line ? line.translateToString(true) : '');
+      }
+      return { visibleLines, atBottom: buffer.viewportY >= buffer.baseY };
+    };
+    registerTerminalCapture(captureSessionId, reader);
+    return () => {
+      unregisterTerminalCapture(captureSessionId, reader);
+    };
+  }, [options.sessionId]);
 
   // fit() only refits xterm visually. The debounced onResize callback
   // forwards dimensions to the PTY automatically when cols/rows change.

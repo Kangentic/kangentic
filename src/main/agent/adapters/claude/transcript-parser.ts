@@ -49,188 +49,368 @@ export function claudeProjectSlug(cwd: string): string {
 }
 
 /**
+ * Parse one JSONL line into zero or more transcript entries, appending to
+ * `entries` and mutating `usageAttributedMessageIds` in place. Extracted so
+ * both the full-file parse and the incremental append parse below share
+ * IDENTICAL per-line semantics - the only difference between them is which
+ * bytes get fed to this function and whether `entries`/`usageAttributedMessageIds`
+ * start fresh or carry over from a prior increment.
+ */
+function parseTranscriptLine(
+  line: string,
+  entries: TranscriptEntry[],
+  usageAttributedMessageIds: Set<string>,
+): void {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (!isRecord(raw)) return;
+
+  const uuid = typeof raw.uuid === 'string' ? raw.uuid : '';
+  const ts = parseTimestamp(raw.timestamp);
+  const type = raw.type;
+
+  // Conversation-compaction boundary: a system entry Claude writes when it
+  // compacts the context. Surface it explicitly so the post-compaction
+  // summary that follows is not read as a fresh start.
+  if (type === 'system' && raw.subtype === 'compact_boundary') {
+    entries.push({
+      kind: 'system',
+      uuid,
+      ts,
+      subtype: 'compaction',
+      text: describeCompactBoundary(raw),
+    });
+    return;
+  }
+
+  if (type === 'user') {
+    // Skip Claude's own meta injections (skill preambles, queued-message
+    // bookkeeping). They are not real user turns and otherwise render as
+    // "## User" noise.
+    if (raw.isMeta === true) return;
+
+    const message = raw.message;
+    if (!isRecord(message)) return;
+    const messageContent = message.content;
+
+    // Collect the user-authored text (string shorthand or text blocks) and
+    // emit any tool_result blocks the SDK injected as synthetic user turns.
+    let userText = '';
+    if (typeof messageContent === 'string') {
+      userText = messageContent;
+    } else if (Array.isArray(messageContent)) {
+      const textParts: string[] = [];
+      for (const block of messageContent) {
+        if (!isRecord(block)) continue;
+        if (block.type === 'tool_result') {
+          entries.push({
+            kind: 'tool_result',
+            uuid,
+            ts,
+            toolUseId: typeof block.tool_use_id === 'string' ? block.tool_use_id : '',
+            content: stringifyToolResultContent(block.content),
+            isError: block.is_error === true,
+          });
+        } else if (block.type === 'text' && typeof block.text === 'string') {
+          textParts.push(block.text);
+        }
+      }
+      userText = textParts.join('\n');
+    }
+
+    // Compaction summary: Claude writes the post-compaction recap as a
+    // single user entry flagged isCompactSummary. Surface it as a
+    // compaction system entry, not a "## User" turn.
+    if (raw.isCompactSummary === true) {
+      if (userText.length > 0) {
+        entries.push({ kind: 'system', uuid, ts, subtype: 'compaction', text: userText });
+      }
+      return;
+    }
+
+    if (userText.length === 0) return;
+
+    // Slash-command invocations: when the ENTIRE message is command XML,
+    // collapse it to a compact marker (or drop empty local stdout) instead
+    // of rendering raw <command-name>/<local-command-stdout> tags.
+    const commandEntry = parseCommandEntry(userText, uuid, ts);
+    if (commandEntry !== null) {
+      if (commandEntry !== 'drop') entries.push(commandEntry);
+      return;
+    }
+
+    // Strip <system-reminder> spans from real user text; drop the entry
+    // entirely if nothing meaningful remains (a reminder-only injection).
+    const stripped = stripSystemReminders(userText);
+    if (stripped.length === 0) return;
+    entries.push({ kind: 'user', uuid, ts, text: stripped });
+    return;
+  }
+
+  if (type === 'assistant') {
+    const message = raw.message;
+    if (!isRecord(message)) return;
+    const model = typeof message.model === 'string' ? message.model : undefined;
+    const messageId = typeof message.id === 'string' ? message.id : null;
+
+    const blocks: TranscriptBlock[] = [];
+
+    const messageContent = message.content;
+    if (Array.isArray(messageContent)) {
+      for (const block of messageContent) {
+        if (!isRecord(block)) continue;
+        if (block.type === 'text' && typeof block.text === 'string') {
+          blocks.push({ type: 'text', text: block.text });
+        } else if (block.type === 'thinking') {
+          // Real Claude Code session JSONL never persists thinking text
+          // (it stores only an encrypted `signature`). Empty thinking
+          // blocks would render as useless empty disclosures, so skip
+          // them. Kept the branch in case a future Claude version starts
+          // persisting plaintext thinking - then it will be captured.
+          if (typeof block.thinking === 'string' && block.thinking.length > 0) {
+            blocks.push({ type: 'thinking', text: block.thinking });
+          }
+        } else if (block.type === 'tool_use') {
+          blocks.push({
+            type: 'tool_use',
+            id: typeof block.id === 'string' ? block.id : '',
+            name: typeof block.name === 'string' ? block.name : 'tool',
+            input: block.input,
+          });
+        }
+      }
+    }
+
+    // A line that yields no blocks produces no entry, so skip it BEFORE
+    // claiming this message's usage. With extended thinking, Claude writes a
+    // turn as two lines under one message id - a thinking-only line (which we
+    // drop, since persisted thinking is empty) followed by the text line. If
+    // usage were claimed on the dropped thinking line, the message id would be
+    // marked "attributed" and the following text entry (same id) would be
+    // deduped out of its own usage, silently losing the whole turn's per-turn
+    // tokens. Claiming usage only when an entry is actually emitted keeps it on
+    // the first VISIBLE line of each message id.
+    if (blocks.length === 0) return;
+
+    // Attribute this turn's usage to exactly one emitted entry per message id
+    // (a single message can still span several emitted lines, e.g. text +
+    // tool_use); the first emitted line claims it so a burn-rate sum never
+    // double-counts a turn. Persisted on `usageAttributedMessageIds` across
+    // incremental append calls (not just within one parse), so a turn split
+    // across TWO SEPARATE poll ticks (the thinking-only line landing in one
+    // increment, the text line in the next) still attributes usage exactly
+    // once.
+    let usage: TranscriptTurnUsage | undefined;
+    if (!messageId || !usageAttributedMessageIds.has(messageId)) {
+      usage = extractTurnUsage(message);
+      if (usage && messageId) usageAttributedMessageIds.add(messageId);
+    }
+
+    entries.push(
+      usage
+        ? { kind: 'assistant', uuid, ts, model, usage, blocks }
+        : { kind: 'assistant', uuid, ts, model, blocks },
+    );
+  }
+}
+
+/** Per-file incremental-append parse state, keyed by the transcript's
+ *  absolute path. A resume replay writes to a NEW path (a fresh agent session
+ *  id), so its state starts clean and never mixes with its parent's. */
+interface IncrementalParseState {
+  mtimeMs: number;
+  size: number;
+  /** Bytes fully consumed (parsed or explicitly carried) as of this state. */
+  byteOffset: number;
+  /** Trailing bytes after the last complete `\n` seen so far, not yet part
+   *  of a complete line - re-prepended to the next increment's read. */
+  carry: Buffer;
+  entries: TranscriptEntry[];
+  usageAttributedMessageIds: Set<string>;
+}
+
+const incrementalStateByPath = new Map<string, IncrementalParseState>();
+
+/** Cap on the number of distinct transcript files whose incremental-parse
+ *  state is retained, mirroring the LRU caps on the sibling caches introduced
+ *  alongside this one (`CACHE_LIMIT` in `transcript-cache.ts`,
+ *  `STITCH_MEMO_LIMIT` in `transcript-service.ts`). Each record holds a full
+ *  `entries` array, so an uncapped map would grow with every distinct session
+ *  ever parsed over the process lifetime (conversation viewer, Transcript tab,
+ *  MCP `get_transcript`). */
+const INCREMENTAL_STATE_LIMIT = 32;
+
+/** Re-insert `state` at the most-recently-used end and evict the oldest past
+ *  the cap. Map iteration order is insertion order, so a delete-then-set is
+ *  enough for LRU without a separate list (same idiom as `transcript-cache`'s
+ *  `touch`). Called on every parse of a path so an actively-growing session
+ *  stays hot and is never evicted out from under its own live poll. */
+function touchIncrementalState(filePath: string, state: IncrementalParseState): void {
+  incrementalStateByPath.delete(filePath);
+  incrementalStateByPath.set(filePath, state);
+  while (incrementalStateByPath.size > INCREMENTAL_STATE_LIMIT) {
+    const oldestPath = incrementalStateByPath.keys().next().value;
+    if (oldestPath === undefined) break;
+    incrementalStateByPath.delete(oldestPath);
+  }
+}
+
+/** Splits `buffer` at the LAST `\n` byte (0x0A) it contains. UTF-8 continuation
+ *  bytes are always >= 0x80, so 0x0A can only ever be a genuine newline,
+ *  never the tail of a multi-byte character - a byte-level split is safe.
+ *  `completeLinesText` retains any `\r` immediately preceding a `\n` (a CRLF
+ *  file, possible on Windows where the team dogfoods); downstream
+ *  `parseTranscriptLine` runs `JSON.parse`, which tolerates the trailing `\r`
+ *  as insignificant whitespace, so the byte-level split needs no `\r` strip to
+ *  match the full-parse path's `split(/\r?\n/)`. */
+function splitCompleteLines(buffer: Buffer): { completeLinesText: string; carry: Buffer } {
+  let lastNewlineIndex = -1;
+  for (let index = buffer.length - 1; index >= 0; index -= 1) {
+    if (buffer[index] === 0x0a) {
+      lastNewlineIndex = index;
+      break;
+    }
+  }
+  if (lastNewlineIndex === -1) {
+    return { completeLinesText: '', carry: Buffer.from(buffer) };
+  }
+  return {
+    completeLinesText: buffer.subarray(0, lastNewlineIndex + 1).toString('utf-8'),
+    carry: Buffer.from(buffer.subarray(lastNewlineIndex + 1)),
+  };
+}
+
+/** Reads exactly the bytes in `[start, end)` from `filePath` via a single
+ *  positioned read, so an append-parse never re-reads bytes already consumed
+ *  by a prior call. */
+async function readByteRange(filePath: string, start: number, end: number): Promise<Buffer> {
+  const length = end - start;
+  if (length <= 0) return Buffer.alloc(0);
+  const handle = await fs.open(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, start);
+    if (bytesRead < length) {
+      // The file was truncated/rewritten between the caller's fs.stat and this
+      // positioned read (a concurrent rotate). The unread tail of `buffer`
+      // stays zero-filled and would corrupt the next increment's carry, so
+      // throw to trigger the caller's fall-through to a full reparse rather
+      // than silently returning NUL bytes.
+      throw new Error(`short read on ${filePath}: expected ${length} bytes, got ${bytesRead}`);
+    }
+    return buffer;
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * Parse Claude Code's native session JSONL into a list of full transcript
  * entries (user prompts, assistant turns with text/thinking/tool_use blocks,
- * and tool results). Runs on demand from the renderer's Transcript tab.
+ * and tool results). Runs on demand from the renderer's Transcript tab and
+ * (wrapped in the stat-validated cache) the conversation viewer's live poll.
  *
  * Claude's authoritative live telemetry comes from the hook-driven
  * `statusFile` pipeline (status.json + events.jsonl). The native session
  * JSONL is a secondary source: read on demand here (Transcript tab,
  * lifetime-token refinement) and tailed as a background-session fallback by
  * `session-history-parser.ts` until status.json starts flowing.
+ *
+ * Incremental append: when this path's size GREW and its mtime did not go
+ * backwards since the last call, only the new bytes `[byteOffset, size)` are
+ * read and parsed, appended onto the SAME `entries` array reference from last
+ * time - the file-level cache in `transcript-cache.ts` relies on this array
+ * staying referentially append-only so its own stat-validated cache and the
+ * task-level stitch memo both see a stable identity for unrelated sessions.
+ * Any other case (first call for this path, a shrink, mtime going backwards,
+ * or a failed incremental read) falls back to a full re-parse of the whole
+ * file, which also resets the incremental state.
  */
 export async function parseClaudeTranscript(filePath: string): Promise<TranscriptEntry[]> {
+  let stat: { mtimeMs: number; size: number };
+  try {
+    stat = await fs.stat(filePath);
+  } catch {
+    incrementalStateByPath.delete(filePath);
+    return [];
+  }
+
+  const previous = incrementalStateByPath.get(filePath);
+  const canIncrement = !!previous && stat.size > previous.size && stat.mtimeMs >= previous.mtimeMs;
+
+  if (canIncrement && previous) {
+    try {
+      // `previous.byteOffset` tracks how much of the file has been READ so
+      // far (not how much has been fully consumed into complete lines) -
+      // `previous.carry` already holds whatever trailing partial bytes that
+      // last read did not complete, so reading starts strictly AFTER it,
+      // never re-reading (and thereby duplicating) those carried bytes.
+      const appended = await readByteRange(filePath, previous.byteOffset, stat.size);
+      const combined = Buffer.concat([previous.carry, appended]);
+      const { completeLinesText, carry } = splitCompleteLines(combined);
+      if (completeLinesText.length > 0) {
+        for (const line of completeLinesText.split('\n')) {
+          if (line.length === 0) continue;
+          parseTranscriptLine(line, previous.entries, previous.usageAttributedMessageIds);
+        }
+      }
+      previous.mtimeMs = stat.mtimeMs;
+      previous.size = stat.size;
+      previous.byteOffset = stat.size;
+      previous.carry = carry;
+      touchIncrementalState(filePath, previous);
+      return previous.entries;
+    } catch {
+      // Tolerate a read race (a concurrent truncate/rotate between the stat
+      // and the read) by falling through to a full reparse below.
+    }
+  }
+
+  // Full (re)parse: first call for this path, a shrink/rewind, or a
+  // just-failed incremental read.
   let content: string;
   try {
     content = await fs.readFile(filePath, 'utf-8');
   } catch {
+    incrementalStateByPath.delete(filePath);
     return [];
   }
 
   const entries: TranscriptEntry[] = [];
-  const lines = content.split(/\r?\n/);
-  // A single assistant message (one `message.id`) can be written across several
-  // JSONL lines; its `usage` must be attributed to exactly one turn, not every
-  // line, or per-turn burn analysis double-counts it. Track which message ids
-  // have already carried their usage onto an entry.
   const usageAttributedMessageIds = new Set<string>();
-
-  for (const line of lines) {
+  for (const line of content.split(/\r?\n/)) {
     if (line.length === 0) continue;
-    let raw: unknown;
-    try {
-      raw = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (!isRecord(raw)) continue;
-
-    const uuid = typeof raw.uuid === 'string' ? raw.uuid : '';
-    const ts = parseTimestamp(raw.timestamp);
-    const type = raw.type;
-
-    // Conversation-compaction boundary: a system entry Claude writes when it
-    // compacts the context. Surface it explicitly so the post-compaction
-    // summary that follows is not read as a fresh start.
-    if (type === 'system' && raw.subtype === 'compact_boundary') {
-      entries.push({
-        kind: 'system',
-        uuid,
-        ts,
-        subtype: 'compaction',
-        text: describeCompactBoundary(raw),
-      });
-      continue;
-    }
-
-    if (type === 'user') {
-      // Skip Claude's own meta injections (skill preambles, queued-message
-      // bookkeeping). They are not real user turns and otherwise render as
-      // "## User" noise.
-      if (raw.isMeta === true) continue;
-
-      const message = raw.message;
-      if (!isRecord(message)) continue;
-      const messageContent = message.content;
-
-      // Collect the user-authored text (string shorthand or text blocks) and
-      // emit any tool_result blocks the SDK injected as synthetic user turns.
-      let userText = '';
-      if (typeof messageContent === 'string') {
-        userText = messageContent;
-      } else if (Array.isArray(messageContent)) {
-        const textParts: string[] = [];
-        for (const block of messageContent) {
-          if (!isRecord(block)) continue;
-          if (block.type === 'tool_result') {
-            entries.push({
-              kind: 'tool_result',
-              uuid,
-              ts,
-              toolUseId: typeof block.tool_use_id === 'string' ? block.tool_use_id : '',
-              content: stringifyToolResultContent(block.content),
-              isError: block.is_error === true,
-            });
-          } else if (block.type === 'text' && typeof block.text === 'string') {
-            textParts.push(block.text);
-          }
-        }
-        userText = textParts.join('\n');
-      }
-
-      // Compaction summary: Claude writes the post-compaction recap as a
-      // single user entry flagged isCompactSummary. Surface it as a
-      // compaction system entry, not a "## User" turn.
-      if (raw.isCompactSummary === true) {
-        if (userText.length > 0) {
-          entries.push({ kind: 'system', uuid, ts, subtype: 'compaction', text: userText });
-        }
-        continue;
-      }
-
-      if (userText.length === 0) continue;
-
-      // Slash-command invocations: when the ENTIRE message is command XML,
-      // collapse it to a compact marker (or drop empty local stdout) instead
-      // of rendering raw <command-name>/<local-command-stdout> tags.
-      const commandEntry = parseCommandEntry(userText, uuid, ts);
-      if (commandEntry !== null) {
-        if (commandEntry !== 'drop') entries.push(commandEntry);
-        continue;
-      }
-
-      // Strip <system-reminder> spans from real user text; drop the entry
-      // entirely if nothing meaningful remains (a reminder-only injection).
-      const stripped = stripSystemReminders(userText);
-      if (stripped.length === 0) continue;
-      entries.push({ kind: 'user', uuid, ts, text: stripped });
-      continue;
-    }
-
-    if (type === 'assistant') {
-      const message = raw.message;
-      if (!isRecord(message)) continue;
-      const model = typeof message.model === 'string' ? message.model : undefined;
-      const messageId = typeof message.id === 'string' ? message.id : null;
-
-      const blocks: TranscriptBlock[] = [];
-
-      const messageContent = message.content;
-      if (Array.isArray(messageContent)) {
-        for (const block of messageContent) {
-          if (!isRecord(block)) continue;
-          if (block.type === 'text' && typeof block.text === 'string') {
-            blocks.push({ type: 'text', text: block.text });
-          } else if (block.type === 'thinking') {
-            // Real Claude Code session JSONL never persists thinking text
-            // (it stores only an encrypted `signature`). Empty thinking
-            // blocks would render as useless empty disclosures, so skip
-            // them. Kept the branch in case a future Claude version starts
-            // persisting plaintext thinking - then it will be captured.
-            if (typeof block.thinking === 'string' && block.thinking.length > 0) {
-              blocks.push({ type: 'thinking', text: block.thinking });
-            }
-          } else if (block.type === 'tool_use') {
-            blocks.push({
-              type: 'tool_use',
-              id: typeof block.id === 'string' ? block.id : '',
-              name: typeof block.name === 'string' ? block.name : 'tool',
-              input: block.input,
-            });
-          }
-        }
-      }
-
-      // A line that yields no blocks produces no entry, so skip it BEFORE
-      // claiming this message's usage. With extended thinking, Claude writes a
-      // turn as two lines under one message id - a thinking-only line (which we
-      // drop, since persisted thinking is empty) followed by the text line. If
-      // usage were claimed on the dropped thinking line, the message id would be
-      // marked "attributed" and the following text entry (same id) would be
-      // deduped out of its own usage, silently losing the whole turn's per-turn
-      // tokens. Claiming usage only when an entry is actually emitted keeps it on
-      // the first VISIBLE line of each message id.
-      if (blocks.length === 0) continue;
-
-      // Attribute this turn's usage to exactly one emitted entry per message id
-      // (a single message can still span several emitted lines, e.g. text +
-      // tool_use); the first emitted line claims it so a burn-rate sum never
-      // double-counts a turn.
-      let usage: TranscriptTurnUsage | undefined;
-      if (!messageId || !usageAttributedMessageIds.has(messageId)) {
-        usage = extractTurnUsage(message);
-        if (usage && messageId) usageAttributedMessageIds.add(messageId);
-      }
-
-      entries.push(
-        usage
-          ? { kind: 'assistant', uuid, ts, model, usage, blocks }
-          : { kind: 'assistant', uuid, ts, model, blocks },
-      );
-    }
+    parseTranscriptLine(line, entries, usageAttributedMessageIds);
   }
 
+  // A full parse just consumed everything available in the read, INCLUDING a
+  // trailing line with no final newline (content.split above parses it like
+  // any other segment) - so the next increment starts from the current size
+  // with no carry, regardless of whether the file physically ends in `\n`.
+  touchIncrementalState(filePath, {
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    byteOffset: stat.size,
+    carry: Buffer.alloc(0),
+    entries,
+    usageAttributedMessageIds,
+  });
   return entries;
+}
+
+/** Test-only: clear the module-scope incremental-parse cache between test cases. */
+export function resetIncrementalParseStateForTests(): void {
+  incrementalStateByPath.clear();
+}
+
+/** Test-only: current number of distinct paths retained in the incremental-parse
+ *  cache, so a test can assert the `INCREMENTAL_STATE_LIMIT` LRU cap holds. */
+export function incrementalStateSizeForTests(): number {
+  return incrementalStateByPath.size;
 }
 
 /**

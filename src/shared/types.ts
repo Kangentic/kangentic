@@ -2956,6 +2956,20 @@ export interface DevSeedEmbeddingBacklogResult {
   docId: string;
 }
 
+/** Summary of a dev test-harness large-conversation seed (see DEV_SEED_LARGE_CONVERSATION). */
+export interface DevSeedLargeConversationResult {
+  /** The throwaway task's Kangentic session record id. */
+  sessionId: string;
+  /** The throwaway task's id. */
+  taskId: string;
+  /** Turns written by this click. */
+  turnsAdded: number;
+  /** Running total of turns written to the transcript file across every click for this seed. */
+  totalTurns: number;
+  /** The Claude session JSONL file the turns were written to. */
+  filePath: string;
+}
+
 export interface ElectronAPI {
   // Dev-only (preview): present only when __KANGENTIC_DEV__ (build-excluded in prod).
   dev?: {
@@ -2977,6 +2991,14 @@ export interface ElectronAPI {
      * without needing that many real agent turns to produce it.
      */
     seedEmbeddingBacklog: (count: number) => Promise<DevSeedEmbeddingBacklogResult>;
+    /**
+     * Seed (or, on a re-click for the same project, append to) a throwaway
+     * task + session backed by a real synthetic Claude session JSONL
+     * transcript file, `count` turns long - the fast path to a huge realistic
+     * transcript for exercising the Conversation viewer's
+     * scrolling/search/performance, without running a real agent for hours.
+     */
+    seedLargeConversation: (count: number) => Promise<DevSeedLargeConversationResult>;
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;
     /**
@@ -3428,7 +3450,7 @@ export interface ElectronAPI {
 
   // Conversation viewer (structured transcripts)
   transcripts: {
-    get: (input: TranscriptGetRequest) => Promise<TranscriptGetResponse>;
+    get: (input: TranscriptGetRequest) => Promise<TranscriptGetResponse | TranscriptUnchangedResponse>;
     listSessions: (
       taskId: string,
       projectId?: string | null,
@@ -3654,6 +3676,12 @@ export interface TranscriptGetRequest {
   /** Interaction-time project id. Read-only, but preferred over the ambient
    *  current project (a conversation hit can target another project). */
   projectId?: string | null;
+  /** The `revision` of the last `TranscriptGetResponse` this caller received
+   *  for this task. When it matches the task's CURRENT revision, the handler
+   *  returns a `TranscriptUnchangedResponse` instead of the full payload,
+   *  skipping the multi-MB structured clone on an idle live-poll tick. Omit
+   *  on the first fetch for a session (nothing to compare against yet). */
+  knownRevision?: number;
 }
 
 /** Where a rendered conversation's content came from. `none` = neither the
@@ -3695,6 +3723,19 @@ export interface TranscriptGetResponse {
   /** Every session that contributed entries, oldest first - lets the viewer's
    *  session picker jump to where each one begins in the unified scroll. */
   sessions: ConversationSessionMeta[];
+  /** Bumps only when `entries` actually changed content (see
+   *  `resolveTaskTranscript`'s stitch memo). Round-trip this as the next
+   *  request's `knownRevision` to get a `TranscriptUnchangedResponse` on an
+   *  idle poll instead of the full payload. */
+  revision: number;
+}
+
+/** Returned by `transcripts.get` instead of a full `TranscriptGetResponse`
+ *  when the caller's `knownRevision` matches the task's current revision -
+ *  nothing has changed, so there is nothing to ship over IPC. */
+export interface TranscriptUnchangedResponse {
+  unchanged: true;
+  revision: number;
 }
 
 /** One selectable session in the conversation viewer's session picker. */

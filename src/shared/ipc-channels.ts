@@ -22,6 +22,7 @@ export const IPC = {
   DEV_CREATE_EPHEMERAL_PROJECT: 'dev:createEphemeralProject',
   DEV_SEED_GIT_CHANGES: 'dev:seedGitChanges',
   DEV_SEED_EMBEDDING_BACKLOG: 'dev:seedEmbeddingBacklog',
+  DEV_SEED_LARGE_CONVERSATION: 'dev:seedLargeConversation',
 
   // Project Groups
   PROJECT_GROUP_LIST: 'projectGroup:list',

@@ -188,6 +188,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           // signal via `_pendingOpenConversation` below.
           conversationSessionId: null,
           scrollToTurnUuid: null,
+          pendingTuiAnchor: null,
         });
 
         // Re-derive the active tab from config rather than the live
@@ -282,6 +283,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
           detailTaskId: null,
           conversationSessionId: null,
           scrollToTurnUuid: null,
+          pendingTuiAnchor: null,
           sessionEvents: preservedEvents,
         });
 
@@ -372,6 +374,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         detailTaskId: null,
         conversationSessionId: null,
         scrollToTurnUuid: null,
+        pendingTuiAnchor: null,
         pendingDetailWindowsProjectId: null,
       });
       // Reset effective config to global defaults (no project overrides)

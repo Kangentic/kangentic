@@ -3,23 +3,38 @@
  *
  * Renders the structured `TranscriptEntry[]` (agent-agnostic) with dynamic row
  * measurement (turn heights vary, unlike the fixed-row ActivityLog). tool_result
- * entries are folded into their owning tool_use card via `buildResultsByUseId`;
- * a tool_result with no owning tool_use in this parse (an orphan, e.g. after a
- * resume) renders as its own standalone row.
+ * entries are folded into their owning tool_use card via `reconcileDisplayRows`
+ * (`display-rows.ts`); a tool_result with no owning tool_use in this parse (an
+ * orphan, e.g. after a resume) renders as its own standalone row.
  *
  * Stateless with respect to fetching: the owning ConversationWindow fetches and
- * passes the loaded entries down. Scroll-to-turn mirrors ActivityLog: map
- * `scrollToTurnUuid` to a display-row index, scroll it to center, flash a 4s
- * amber highlight, auto-expand a folded card containing the target, then clear
- * the one-shot signal via `onConsumedScroll`.
+ * passes the loaded entries down. `reconcileDisplayRows` reuses a previous
+ * row's object identity whenever its uuid and content are unchanged, which is
+ * what lets `MemoConversationRow`'s default shallow-compare skip re-rendering
+ * (and re-parsing markdown) rows a live-poll tick did not actually change.
+ *
+ * Three things can move the scroll position, coordinated through one bounded
+ * rAF "settle loop" (`useScrollSettle`) so they never fight each other:
+ *   1. Mount-time initial positioning (`initialPosition` / `scrollToTurnUuid`
+ *      already set at open) - the container stays `visibility: hidden` for the
+ *      few settle frames so the viewer opens already positioned, no top-flash.
+ *   2. A later `scrollToTurnUuid` (search palette, or the in-viewer search bar
+ *      via `navigateToUuid`) - centers + flashes the target for 4s.
+ *   3. Auto-follow-to-bottom on a live-poll append - suppressed while a settle
+ *      loop is active, and cancelled itself by any user wheel/pointerdown.
  */
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { ChevronRight, ChevronDown, Wrench, MessageSquareWarning, Bot, User, Terminal, Copy, Check } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { HeaderActionButton } from '../HeaderActionButton';
-import { buildResultsByUseId, renderAssistantBlocksMarkdown } from '../../../shared/transcript-format';
+import { useKeybinding } from '../../hooks/useKeybinding';
+import { ConversationSearchBar, type ConversationSearchBarHandle } from './ConversationSearchBar';
+import { ConversationScrollbar, CONTENT_RIGHT_CLEARANCE_PX, ROW_LEFT_INSET_PX } from './ConversationScrollbar';
+import { reconcileDisplayRows, isSlashCommandRow, speakerGroup, type DisplayRow, type DisplayRowResult } from './display-rows';
+import { FAR_FROM_BOTTOM_PX } from './scrollbar-math';
+import { renderAssistantBlocksMarkdown } from '../../../shared/transcript-format';
 import { sanitizeTranscriptText } from '../../../shared/ansi-strip';
 import { humanizeModelId } from '../../../shared/model-id';
 import { parseFileEditTool, computeLineDiff, diffStats, type FileEdit } from '../../../shared/tool-diff';
@@ -36,36 +51,10 @@ const RESULT_CLAMP_CHARS = 4000;
 const HIGHLIGHT_DURATION_MS = 4000;
 const ESTIMATED_ROW_HEIGHT = 96;
 
-type ToolResultEntry = Extract<TranscriptEntry, { kind: 'tool_result' }>;
-
-interface DisplayRow {
-  /** The TranscriptEntry uuid; used as the React key AND the scroll-to target. */
-  uuid: string;
-  entry: TranscriptEntry;
-}
-
-/** A user turn that is nothing but a slash-command invocation (e.g. "/code-review",
- *  "/model opus"). These are legitimate messages but low-signal as a search
- *  scroll ANCHOR - a chunk match that starts on one should skip to the real
- *  content it precedes. Requires whitespace/end after the command word so a
- *  path like "/usr/bin/foo" is not mistaken for a command. */
-function isSlashCommandRow(entry: TranscriptEntry): boolean {
-  return entry.kind === 'user' && /^\/[a-zA-Z][\w-]*(?:\s|$)/.test(entry.text.trim());
-}
-
-/** Classifies an entry's speaker for the row box color / system divider. */
-function speakerGroup(entry: TranscriptEntry): 'user' | 'agent' | 'tool' | 'system' {
-  switch (entry.kind) {
-    case 'user':
-      return 'user';
-    case 'system':
-      return 'system';
-    case 'tool_result':
-      return 'tool';
-    default:
-      return 'agent';
-  }
-}
+/** Where the viewer opens by default (no `scrollToTurnUuid`): the latest
+ *  message, or centered on the row matching the terminal's visible
+ *  scrollback (see `tui-anchor.ts`). Computed by `ConversationWindow`. */
+export type InitialPosition = { kind: 'bottom' } | { kind: 'uuid'; uuid: string };
 
 interface ConversationViewProps {
   entries: TranscriptEntry[];
@@ -84,6 +73,183 @@ interface ConversationViewProps {
    *  user NOT focusing or hovering it, so reading an earlier part of the
    *  transcript is never yanked out from under them. */
   autoFollowNewMessages: boolean;
+  /** Where to position on first paint, when no `scrollToTurnUuid` wins first. */
+  initialPosition: InitialPosition;
+  /** Whether the owning window is focused - gates the Mod+F keybinding that
+   *  focuses the (always-visible) in-viewer search bar. */
+  isFocused: boolean;
+}
+
+/** Sum of `rows[0..index)`'s estimated heights - the row's approximate
+ *  offset from the top of the virtual content, independent of the
+ *  virtualizer's own (asynchronous, reconcile-driven) internal scroll state.
+ *  Used only as a bootstrap guess before the target row has ever been
+ *  rendered (see `useScrollSettle`'s `getVirtualItems` fallback below) - the
+ *  per-row heuristic in `display-rows.ts` is a rough line-count estimate, so
+ *  a target many rows deep can accumulate a large enough error that this
+ *  alone is not a reliable final position. */
+function estimatedOffsetForIndex(rows: DisplayRow[], index: number): number {
+  let offset = 0;
+  for (let rowIndex = 0; rowIndex < index && rowIndex < rows.length; rowIndex += 1) {
+    offset += rows[rowIndex]?.estimatedHeight ?? ESTIMATED_ROW_HEIGHT;
+  }
+  return offset;
+}
+
+/** The subset of `@tanstack/react-virtual`'s `VirtualItem` this settle loop
+ *  needs - narrowed so the hook does not have to import the virtualizer's
+ *  full generic type. */
+interface SettleVirtualItem {
+  index: number;
+  start: number;
+  size: number;
+}
+
+/**
+ * Bounded settle loop that drives the scroll container's `scrollTop`
+ * DIRECTLY (never through `virtualizer.scrollToIndex`/`scrollToEnd`) until it
+ * stabilizes across two ticks (or a tick cap is hit).
+ *
+ * For `align: 'center' | 'start'`, each tick first checks whether the target
+ * row is currently among the virtualizer's OWN rendered `getVirtualItems()` -
+ * if so, its `start`/`size` are real, measured values (accurate regardless of
+ * how far off the row's static `estimatedHeight` heuristic was), and this
+ * loop uses them directly instead of the heuristic. A target far from the
+ * current scroll position is not yet rendered on tick 1, so that tick falls
+ * back to the heuristic-summed estimate purely to get CLOSE - close enough
+ * that the browser's own scrollTop clamping settles near the target's real
+ * rows, which the virtualizer then renders, which the NEXT tick picks up via
+ * getVirtualItems(). This is what actually fulfills convergence: the
+ * heuristic alone never improves across retries (it is static per row), so
+ * without this real-measurement readback the loop would just rewrite the
+ * same wrong value every tick and call it "stable".
+ *
+ * This bypasses `@tanstack/virtual-core`'s own scroll-to + reconcile
+ * machinery on purpose: that reconcile path schedules its OWN
+ * `requestAnimationFrame`-driven correction keyed off asynchronous
+ * scroll/resize-observer callbacks, and on a freshly-mounted virtualizer (no
+ * prior real measurements yet) that correction can race the browser's own
+ * scroll-offset reporting and silently reset `scrollTop` back to 0 - exactly
+ * the "opens at the top instead of the bottom" bug this feature exists to
+ * fix. A raw, self-computed `scrollTop` write plus a `setTimeout`-based retry
+ * (never `requestAnimationFrame`, which is throttled or never fires for a
+ * backgrounded / not-yet-visible window) sidesteps that path entirely while
+ * still converging on the real, measured position within a few ticks.
+ * Cancelled by any user wheel/pointerdown on the scroll container.
+ */
+function useScrollSettle(
+  containerRef: RefObject<HTMLDivElement | null>,
+  rows: DisplayRow[],
+  getVirtualItems: () => SettleVirtualItem[],
+) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isSettlingRef = useRef(false);
+
+  const cancel = useCallback(() => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    isSettlingRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+    const handleUserScroll = () => cancel();
+    container.addEventListener('wheel', handleUserScroll, { passive: true });
+    container.addEventListener('pointerdown', handleUserScroll);
+    return () => {
+      container.removeEventListener('wheel', handleUserScroll);
+      container.removeEventListener('pointerdown', handleUserScroll);
+    };
+  }, [containerRef, cancel]);
+
+  // Deliberately NO unmount-cleanup effect calling cancel() here. React
+  // StrictMode's development-only double-invoke simulates an unmount+remount
+  // of every effect immediately after mount (synchronously, within the same
+  // task) - an unmount-cleanup effect here would cancel the settle loop's
+  // pending correction tick before it ever fires, permanently leaving the
+  // FIRST (imprecise, pre-measurement) position on screen. A genuinely
+  // unmounted component already makes this safe without an explicit cancel:
+  // React clears `containerRef.current` to null on unmount, and `step()`
+  // below bails immediately when the container is gone.
+  const settleToIndex = useCallback(
+    (index: number, options?: { align?: 'center' | 'start' | 'end'; onSettled?: () => void; instant?: boolean }) => {
+      cancel();
+      isSettlingRef.current = true;
+      const align = options?.align ?? 'center';
+      const MAX_TICKS = 12;
+      const TICK_MS = 16;
+      const STABLE_TICKS_NEEDED = 2;
+      let previousScrollTop: number | null = null;
+      let stableTicks = 0;
+      let tick = 0;
+
+      const step = () => {
+        const container = containerRef.current;
+        if (!container) return;
+        if (align === 'end') {
+          // Browsers clamp an over-large scrollTop assignment to the real
+          // max automatically, so this always lands exactly at the tail
+          // regardless of how precise the estimate is.
+          container.scrollTop = container.scrollHeight;
+        } else {
+          // Prefer the virtualizer's OWN item for this index when available.
+          // The item exists from the first tick if the target is already
+          // within the render range, but its start/size are only the static
+          // estimateSize() substitutes until @tanstack/react-virtual's
+          // ResizeObserver actually measures the rendered row (asynchronous,
+          // typically ready by the NEXT tick) - at that point start/size flip
+          // to real values and this converges to the true position, which the
+          // static heuristic alone never would (see this function's doc
+          // comment above).
+          const virtualItem = getVirtualItems().find((item) => item.index === index);
+          const rowOffset = virtualItem ? virtualItem.start : estimatedOffsetForIndex(rows, index);
+          const rowHeight = virtualItem ? virtualItem.size : (rows[index]?.estimatedHeight ?? ESTIMATED_ROW_HEIGHT);
+          const targetOffset = align === 'center'
+            ? rowOffset - Math.max(0, (container.clientHeight - rowHeight) / 2)
+            : rowOffset;
+          container.scrollTop = Math.max(0, Math.round(targetOffset));
+        }
+
+        // `instant` (search-result navigation) skips the retry loop entirely:
+        // a single synchronous jump, no visible multi-tick correction. This is
+        // safe here specifically because it targets an already-mounted,
+        // already-measured virtualizer (unlike the mount-time positioning this
+        // loop also drives, which genuinely needs the retries - see the loop's
+        // own doc comment above).
+        if (options?.instant) {
+          isSettlingRef.current = false;
+          options?.onSettled?.();
+          return;
+        }
+
+        const currentScrollTop = container.scrollTop;
+        if (previousScrollTop !== null && Math.abs(currentScrollTop - previousScrollTop) < 1) {
+          stableTicks += 1;
+        } else {
+          stableTicks = 0;
+        }
+        previousScrollTop = currentScrollTop;
+        tick += 1;
+        if (stableTicks >= STABLE_TICKS_NEEDED || tick >= MAX_TICKS) {
+          isSettlingRef.current = false;
+          timerRef.current = null;
+          options?.onSettled?.();
+          return;
+        }
+        timerRef.current = setTimeout(step, TICK_MS);
+      };
+      // The first step runs SYNCHRONOUSLY so the target is positioned
+      // immediately in the common case; the timer-based retries correct it
+      // once the container's real (measured) dimensions have settled.
+      step();
+    },
+    [containerRef, rows, cancel, getVirtualItems],
+  );
+
+  return { settleToIndex, isSettlingRef };
 }
 
 export function ConversationView({
@@ -95,10 +261,17 @@ export function ConversationView({
   scrollToTurnUuid,
   onConsumedScroll,
   autoFollowNewMessages,
+  initialPosition,
+  isFocused,
 }: ConversationViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const searchBarRef = useRef<ConversationSearchBarHandle>(null);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set());
   const [highlightedUuid, setHighlightedUuid] = useState<string | null>(null);
+  // Whether the custom scrollbar rail is currently showing (content
+  // overflows the viewport) - reported by ConversationScrollbar so rows can
+  // reclaim their extra right-side clearance when there's no rail to clear.
+  const [hasScrollbar, setHasScrollbar] = useState(false);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const toggleExpanded = useCallback((key: string) => {
@@ -110,51 +283,22 @@ export function ConversationView({
     });
   }, []);
 
-  // Map tool_use id -> its tool_result, so cards can inline their result.
-  const resultsByUseId = useMemo(() => buildResultsByUseId(entries), [entries]);
-
-  // The set of tool_use ids actually produced by an assistant turn: a tool_result
-  // whose owner is in this set is FOLDED (inlined under the card); one without an
-  // owner is a standalone orphan row.
-  const ownedToolUseIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const entry of entries) {
-      if (entry.kind !== 'assistant') continue;
-      for (const block of entry.blocks) {
-        if (block.type === 'tool_use') ids.add(block.id);
-      }
-    }
-    return ids;
+  // Reuses row object identity across renders whenever a row's uuid + content
+  // are unchanged (see display-rows.ts) - this is what lets MemoConversationRow
+  // bail out of re-rendering. Mutating a ref during render to "remember last
+  // result" is the same pattern React's own memoization guidance uses; it
+  // never schedules a render itself, only caches for the NEXT call.
+  const previousRowsRef = useRef<DisplayRow[]>([]);
+  const rows = useMemo(() => {
+    const next = reconcileDisplayRows(previousRowsRef.current, entries);
+    previousRowsRef.current = next;
+    return next;
   }, [entries]);
 
-  // Display rows = every entry except tool_results folded into a card.
-  const displayRows = useMemo<DisplayRow[]>(() => {
-    const rows: DisplayRow[] = [];
-    // Defense in depth: the uuid is the React key AND the virtualizer's
-    // measurement-cache key, so a duplicate collapses reconciliation (stale
-    // rows pile up, boxes overlap). resolveTaskTranscript already dedups the
-    // stitched multi-session timeline, but guard here too so no upstream source
-    // (a resume replay, an index-fallback collision) can ever break the render.
-    const seenUuids = new Set<string>();
-    for (const entry of entries) {
-      if (
-        entry.kind === 'tool_result'
-        && entry.toolUseId
-        && ownedToolUseIds.has(entry.toolUseId)
-      ) {
-        continue; // folded into its owning tool_use card
-      }
-      if (seenUuids.has(entry.uuid)) continue;
-      seenUuids.add(entry.uuid);
-      rows.push({ uuid: entry.uuid, entry });
-    }
-    return rows;
-  }, [entries, ownedToolUseIds]);
-
   const virtualizer = useVirtualizer({
-    count: displayRows.length,
+    count: rows.length,
     getScrollElement: () => containerRef.current,
-    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    estimateSize: (index) => rows[index]?.estimatedHeight ?? ESTIMATED_ROW_HEIGHT,
     // Key the virtualizer's measurement cache by the entry's stable uuid, not
     // the default raw index. The live-poll can stitch new rows into the
     // MIDDLE of this array (a session_boundary divider plus a newly-live
@@ -162,86 +306,146 @@ export function ConversationView({
     // the cache keeps applying an earlier row's already-measured height to
     // whatever new content now sits at that index, which visibly overlaps
     // rendered text until a scroll forces a full remeasure.
-    getItemKey: (index) => displayRows[index].uuid,
+    getItemKey: (index) => rows[index].uuid,
     overscan: 8,
   });
 
-  // Scroll-to-turn: map the one-shot uuid to a display-row index (or the owning
-  // assistant row for a folded tool_result), scroll it into view, flash the
-  // highlight, and clear the signal. Mirrors ActivityLog.tsx:188-213.
+  const getVirtualItems = useCallback(() => virtualizer.getVirtualItems(), [virtualizer]);
+  const { settleToIndex, isSettlingRef } = useScrollSettle(containerRef, rows, getVirtualItems);
+
+  // Core navigate-to-turn logic, shared by the scrollToTurnUuid prop effect,
+  // the mount-time initial-position effect, and the in-viewer search bar's
+  // result-click / prev-next navigation. Mirrors ActivityLog.tsx:188-213.
+  const navigateToUuid = useCallback(
+    (targetUuid: string, options?: { flash?: boolean; onSettled?: () => void; instant?: boolean }): boolean => {
+      const flash = options?.flash ?? true;
+      let index = rows.findIndex((row) => row.uuid === targetUuid);
+      let expandKey: string | null = null;
+      if (index < 0) {
+        // The target may be a folded tool_result: scroll to its owning
+        // assistant row and auto-expand the card that holds it.
+        const target = entries.find((entry) => entry.uuid === targetUuid);
+        if (target && target.kind === 'tool_result' && target.toolUseId) {
+          const ownerToolUseId = target.toolUseId;
+          index = rows.findIndex(
+            (row) =>
+              row.entry.kind === 'assistant'
+              && row.entry.blocks.some(
+                (block) => block.type === 'tool_use' && block.id === ownerToolUseId,
+              ),
+          );
+          if (index >= 0) expandKey = ownerToolUseId;
+        }
+      }
+      if (index < 0) return false;
+
+      // A conversation search hit anchors on its matched chunk's FIRST turn,
+      // which can be a bare slash-command. Landing on the command instead of
+      // the content that actually matched is confusing, so advance past any
+      // leading command turns to the first substantive one. Bounded and never
+      // targets a folded tool_result redirect (expandKey), which is already
+      // the right row.
+      if (!expandKey) {
+        let skip = 0;
+        while (index + 1 < rows.length && isSlashCommandRow(rows[index].entry) && skip < 4) {
+          index += 1;
+          skip += 1;
+        }
+      }
+
+      if (expandKey) {
+        const key = expandKey;
+        setExpandedKeys((previous) => new Set(previous).add(key));
+      }
+      settleToIndex(index, { align: 'center', onSettled: options?.onSettled, instant: options?.instant });
+      if (flash) {
+        const targetRowUuid = rows[index].uuid;
+        setHighlightedUuid(targetRowUuid);
+        if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+        highlightTimerRef.current = setTimeout(() => {
+          highlightTimerRef.current = undefined;
+          setHighlightedUuid(null);
+        }, HIGHLIGHT_DURATION_MS);
+      }
+      return true;
+    },
+    [rows, entries, settleToIndex],
+  );
+
+  // The in-viewer search bar's own navigation (result click / prev / next)
+  // always snaps instantly - no multi-tick settle animation. Distinct from
+  // navigateToUuid's other callers (mount-time positioning, the search
+  // palette's scrollToTurnUuid), which keep the settle loop's retries.
+  const navigateToUuidFromSearch = useCallback(
+    (targetUuid: string) => navigateToUuid(targetUuid, { flash: true, instant: true }),
+    [navigateToUuid],
+  );
+
+  // Mod+F focuses the always-visible search bar (it has no open/close state
+  // to toggle - see conversation.find's registry comment for the deliberate
+  // scope shadow over the board's global Mod+F).
+  useKeybinding(
+    'conversation.find',
+    () => searchBarRef.current?.focus(),
+    { capture: true, enabled: isFocused, stopPropagation: true },
+  );
+
+  // Mount-time positioning: applied once on the first render with non-empty
+  // rows. Runs in a LAYOUT effect (synchronously after DOM mutation, before
+  // the browser paints) and the settle loop's first jump is itself
+  // synchronous (see useScrollSettle above), so the very first paint already
+  // shows the target position - no separate "hide the container" step is
+  // needed to avoid a top-flash. Precedence: an already-set `scrollToTurnUuid`
+  // (opened from the search palette) wins, WITH the flash; else
+  // `initialPosition` (the TUI-anchor match or bottom), with no flash - a
+  // quiet open.
+  const hasAppliedInitialPositionRef = useRef(false);
+  const initialScrollHandledUuidRef = useRef<string | null>(null);
+
+  useLayoutEffect(() => {
+    if (hasAppliedInitialPositionRef.current) return;
+    if (rows.length === 0) return;
+    hasAppliedInitialPositionRef.current = true;
+
+    if (scrollToTurnUuid) {
+      initialScrollHandledUuidRef.current = scrollToTurnUuid;
+      const found = navigateToUuid(scrollToTurnUuid, { flash: true });
+      onConsumedScroll();
+      if (found) return;
+    }
+    if (initialPosition.kind === 'uuid') {
+      const found = navigateToUuid(initialPosition.uuid, { flash: false });
+      if (found) return;
+    }
+    settleToIndex(rows.length - 1, { align: 'end' });
+  }, [rows.length, scrollToTurnUuid, initialPosition, navigateToUuid, onConsumedScroll, settleToIndex]);
+
+  // Post-mount scrollToTurnUuid changes (a search-palette navigate while this
+  // window is already open). Skips the value the mount effect already
+  // consumed this tick, so the two never double-navigate on open.
   useEffect(() => {
     if (!scrollToTurnUuid) return;
-
-    let index = displayRows.findIndex((row) => row.uuid === scrollToTurnUuid);
-    let expandKey: string | null = null;
-    if (index < 0) {
-      // The target may be a folded tool_result: scroll to its owning assistant
-      // row and auto-expand the card that holds it.
-      const target = entries.find((entry) => entry.uuid === scrollToTurnUuid);
-      if (target && target.kind === 'tool_result' && target.toolUseId) {
-        const ownerToolUseId = target.toolUseId;
-        index = displayRows.findIndex(
-          (row) =>
-            row.entry.kind === 'assistant'
-            && row.entry.blocks.some(
-              (block) => block.type === 'tool_use' && block.id === ownerToolUseId,
-            ),
-        );
-        if (index >= 0) expandKey = ownerToolUseId;
-      }
-    }
-
-    if (index < 0) {
-      // Not present in this transcript: clear so a later render doesn't re-try.
-      onConsumedScroll();
-      return;
-    }
-
-    // A conversation search hit anchors on its matched chunk's FIRST turn, which
-    // can be a bare slash-command (a chunk that opens with "/code-review" then
-    // covers the exchange after it). Landing on the command instead of the
-    // content that actually matched is confusing, so advance past any leading
-    // command turns to the first substantive one. Bounded and never targets a
-    // folded tool_result redirect (expandKey), which is already the right row.
-    if (!expandKey) {
-      let skip = 0;
-      while (index + 1 < displayRows.length && isSlashCommandRow(displayRows[index].entry) && skip < 4) {
-        index += 1;
-        skip += 1;
-      }
-    }
-
-    if (expandKey) {
-      const key = expandKey;
-      setExpandedKeys((previous) => new Set(previous).add(key));
-    }
-    virtualizer.scrollToIndex(index, { align: 'center' });
-    setHighlightedUuid(displayRows[index].uuid);
-    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
-    highlightTimerRef.current = setTimeout(() => {
-      highlightTimerRef.current = undefined;
-      setHighlightedUuid(null);
-    }, HIGHLIGHT_DURATION_MS);
+    if (scrollToTurnUuid === initialScrollHandledUuidRef.current) return;
+    navigateToUuid(scrollToTurnUuid, { flash: true });
     onConsumedScroll();
-  }, [scrollToTurnUuid, displayRows, entries, virtualizer, onConsumedScroll]);
+  }, [scrollToTurnUuid, navigateToUuid, onConsumedScroll]);
 
-  // Auto-follow: while the window isn't focused/hovered, smoothly scroll to the
-  // bottom whenever the live-refresh poll grows the transcript, so the newest
-  // turn stays in view. Tracks the previous row count in a ref rather than
-  // state so this never fires on the initial load (previousCount starts null)
-  // - only on a genuine append after the view is already showing something.
-  // Declared after the scrollToTurnUuid effect so an explicit turn-navigation
-  // (rare same-tick coincidence with a live append) wins the final scroll
-  // position - effects run in declaration order.
+  // Auto-follow: while the window isn't focused/hovered AND no settle loop is
+  // active, smoothly scroll to the bottom whenever the live-refresh poll grows
+  // the transcript, so the newest turn stays in view. Tracks the previous row
+  // count in a ref rather than state so this never fires on the initial load
+  // (previousCount starts null) - only on a genuine append after the view is
+  // already showing something.
   const previousRowCountRef = useRef<number | null>(null);
   useEffect(() => {
     const previousCount = previousRowCountRef.current;
-    previousRowCountRef.current = displayRows.length;
+    previousRowCountRef.current = rows.length;
     if (previousCount === null) return;
-    if (displayRows.length <= previousCount) return;
+    if (rows.length <= previousCount) return;
     if (!autoFollowNewMessages) return;
+    if (isSettlingRef.current) return;
     virtualizer.scrollToEnd({ behavior: 'smooth' });
-  }, [displayRows.length, autoFollowNewMessages, virtualizer]);
+  }, [rows.length, autoFollowNewMessages, virtualizer, isSettlingRef]);
 
   useEffect(() => {
     return () => {
@@ -261,6 +465,16 @@ export function ConversationView({
     event.preventDefault();
     event.clipboardData.setData('text/plain', text.replace(/\n{3,}/g, '\n\n').trim());
   }, []);
+
+  // "Jump to latest" pill: near the tail, a smooth scroll reads as a natural
+  // continuation; far away, smooth-scrolling the whole distance takes an
+  // uncomfortably long time, so snap instantly instead.
+  const handleJumpToLatest = useCallback(() => {
+    const container = containerRef.current;
+    const totalSize = virtualizer.getTotalSize();
+    const distanceFromBottom = container ? totalSize - (container.scrollTop + container.clientHeight) : 0;
+    virtualizer.scrollToEnd({ behavior: distanceFromBottom > FAR_FROM_BOTTOM_PX ? 'auto' : 'smooth' });
+  }, [virtualizer]);
 
   // source === 'none': no content at all. Explain why per unavailable reason.
   if (source === 'none') {
@@ -292,15 +506,21 @@ export function ConversationView({
           <span>Original transcript file is gone - showing indexed text.</span>
         </div>
       )}
-      {displayRows.length === 0 ? (
+      <ConversationSearchBar ref={searchBarRef} rows={rows} onNavigate={navigateToUuidFromSearch} />
+      {rows.length === 0 ? (
         <div className="flex-1 min-h-0 flex items-center justify-center text-sm text-fg-muted">
           This conversation has no messages yet.
         </div>
       ) : (
-        <div ref={containerRef} className="flex-1 min-h-0 overflow-y-auto">
+        <div className="relative flex-1 min-h-0">
+        <div
+          ref={containerRef}
+          className="conversation-scroll-hide-native h-full overflow-y-auto"
+          data-testid="conversation-scroll-container"
+        >
           <div style={{ height: totalSize, position: 'relative', width: '100%' }}>
             {virtualItems.map((virtualRow) => {
-              const row = displayRows[virtualRow.index];
+              const row = rows[virtualRow.index];
               const isHighlighted = highlightedUuid === row.uuid;
               // Each message is a discrete rounded box, filled AND bordered in a
               // theme-adaptive role color (accent for you, neutral for the agent),
@@ -312,12 +532,22 @@ export function ConversationView({
               const boxClass = speaker === 'user'
                 ? 'border-accent/40 bg-accent/10'
                 : 'border-edge bg-fg/[0.05]';
-              // 12px sides; 6px top/bottom per row so adjacent rows sum to a 12px
-              // gap; the first/last rows get the full 12px so the top and bottom
-              // edges match that rhythm.
-              const gapClass = `px-3 ${virtualRow.index === 0 ? 'pt-3' : 'pt-1.5'} ${
-                virtualRow.index === displayRows.length - 1 ? 'pb-3' : 'pb-1.5'
+              // 12px on the left; 6px top/bottom per row so adjacent rows sum to a
+              // 12px gap, with the first/last rows getting the full 12px so the top
+              // and bottom edges match that rhythm. The right side is handled
+              // separately (see rowStyle below) - it must clear the overlaid
+              // scrollbar rail, not just match the left inset.
+              const gapClass = `pl-3 ${virtualRow.index === 0 ? 'pt-3' : 'pt-1.5'} ${
+                virtualRow.index === rows.length - 1 ? 'pb-3' : 'pb-1.5'
               }`;
+              // Right padding clears the overlaid scrollbar rail with the same
+              // visual gap the thumb keeps from the window's own right edge, so
+              // the thumb reads as evenly inset from the message content on one
+              // side and the window edge on the other (see
+              // CONTENT_RIGHT_CLEARANCE_PX's doc comment in ConversationScrollbar).
+              // When there's no rail (content doesn't overflow), that extra
+              // clearance is reclaimed back down to the plain left-matching inset.
+              const rowStyle = { paddingRight: hasScrollbar ? CONTENT_RIGHT_CLEARANCE_PX : ROW_LEFT_INSET_PX };
               return (
                 <div
                   key={row.uuid}
@@ -333,17 +563,16 @@ export function ConversationView({
                   }}
                 >
                   {isSystem ? (
-                    <div className={gapClass}>
+                    <div className={gapClass} style={rowStyle}>
                       <MemoConversationRow
-                        entry={row.entry}
+                        row={row}
                         agentName={agentName}
-                        resultsByUseId={resultsByUseId}
                         expandedKeys={expandedKeys}
                         toggleExpanded={toggleExpanded}
                       />
                     </div>
                   ) : (
-                    <div className={gapClass}>
+                    <div className={gapClass} style={rowStyle}>
                       <div
                         data-highlighted={isHighlighted ? 'true' : undefined}
                         className={`group/message rounded-lg border px-3 py-2 transition-colors duration-700 ${
@@ -351,9 +580,8 @@ export function ConversationView({
                         }`}
                       >
                         <MemoConversationRow
-                          entry={row.entry}
+                          row={row}
                           agentName={agentName}
-                          resultsByUseId={resultsByUseId}
                           expandedKeys={expandedKeys}
                           toggleExpanded={toggleExpanded}
                         />
@@ -364,6 +592,13 @@ export function ConversationView({
               );
             })}
           </div>
+        </div>
+        <ConversationScrollbar
+          containerRef={containerRef}
+          rows={rows}
+          onJumpToLatest={handleJumpToLatest}
+          onShowRailChange={setHasScrollbar}
+        />
         </div>
       )}
     </div>
@@ -386,14 +621,14 @@ function emptyReasonText(reason: TranscriptUnavailableReason | undefined): strin
 /* ── Per-kind rows ── */
 
 interface ConversationRowProps {
-  entry: TranscriptEntry;
+  row: DisplayRow;
   agentName?: string;
-  resultsByUseId: Map<string, { content: string; isError: boolean }>;
   expandedKeys: Set<string>;
   toggleExpanded: (key: string) => void;
 }
 
-function ConversationRow({ entry, agentName, resultsByUseId, expandedKeys, toggleExpanded }: ConversationRowProps) {
+function ConversationRow({ row, agentName, expandedKeys, toggleExpanded }: ConversationRowProps) {
+  const { entry, results } = row;
   if (entry.kind === 'user') return <UserRow text={entry.text} ts={entry.ts} />;
   if (entry.kind === 'system') return <SystemRow subtype={entry.subtype} text={entry.text} />;
   if (entry.kind === 'tool_result') return <OrphanToolResultRow entry={entry} expandedKeys={expandedKeys} toggleExpanded={toggleExpanded} />;
@@ -408,7 +643,7 @@ function ConversationRow({ entry, agentName, resultsByUseId, expandedKeys, toggl
       // single-session transcript where entries don't carry their own.
       agentName={entry.agentName ?? agentName}
       ts={entry.ts}
-      resultsByUseId={resultsByUseId}
+      resultsByUseId={results}
       expandedKeys={expandedKeys}
       toggleExpanded={toggleExpanded}
     />
@@ -419,12 +654,14 @@ function ConversationRow({ entry, agentName, resultsByUseId, expandedKeys, toggl
  * Memoized row. `useVirtualizer` re-renders the whole list on every scroll
  * frame; without this, each visible row re-runs its body (markdown sanitize,
  * the eager copy-text serialization, JSX construction) on every frame - the
- * jank that shows up on long transcripts. All five props are referentially
- * stable while scrolling (the entries array, `resultsByUseId`, and
- * `expandedKeys` only change on a poll that grows the transcript or on a toggle,
- * never on scroll), so the default shallow compare bails the entire subtree out
- * of scroll re-renders. `isHighlighted` deliberately lives on the OUTER box, not
- * here, so a highlight flash never busts this memo.
+ * jank that shows up on long transcripts. All four props are referentially
+ * stable while scrolling AND while a live-poll tick does not touch this
+ * particular row: `row` is reused by `reconcileDisplayRows` whenever its uuid
+ * and content (including its OWN folded tool results) are unchanged, and
+ * `expandedKeys` only changes on a toggle. So the default shallow compare
+ * bails the entire subtree out of both scroll re-renders and poll re-renders
+ * for every row a tick did not actually change. `isHighlighted` deliberately
+ * lives on the OUTER box, not here, so a highlight flash never busts this memo.
  */
 const MemoConversationRow = memo(ConversationRow);
 
@@ -575,7 +812,7 @@ interface AssistantRowProps {
   /** Agent CLI display name for the role pill; falls back to "Agent". */
   agentName?: string;
   ts: number;
-  resultsByUseId: Map<string, { content: string; isError: boolean }>;
+  resultsByUseId: Map<string, DisplayRowResult>;
   expandedKeys: Set<string>;
   toggleExpanded: (key: string) => void;
 }
@@ -658,7 +895,7 @@ function ThinkingBlock({ text, expanded, onToggle }: { text: string; expanded: b
 interface ToolCallCardProps {
   name: string;
   input: unknown;
-  result: { content: string; isError: boolean } | null;
+  result: DisplayRowResult | null;
   expanded: boolean;
   onToggle: () => void;
 }
@@ -771,7 +1008,7 @@ function DiffView({ fileEdit }: { fileEdit: FileEdit }) {
                 <span className="select-none opacity-50">
                   {line.type === 'add' ? '+ ' : line.type === 'remove' ? '- ' : '  '}
                 </span>
-                {line.text.length > 0 ? line.text : ' '}
+                {line.text.length > 0 ? line.text : ' '}
               </div>
             ))}
           </div>
@@ -786,7 +1023,7 @@ function OrphanToolResultRow({
   expandedKeys,
   toggleExpanded,
 }: {
-  entry: ToolResultEntry;
+  entry: Extract<TranscriptEntry, { kind: 'tool_result' }>;
   expandedKeys: Set<string>;
   toggleExpanded: (key: string) => void;
 }) {

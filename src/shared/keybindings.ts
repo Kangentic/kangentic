@@ -34,7 +34,8 @@ export type KeyScope =
   | 'panel' // a maximizable dialog/overlay panel (command terminal or task detail)
   | 'browser-pane' // BrowserPane visible inside a task dialog
   | 'terminal' // xterm-owned combos; display-only
-  | 'dialog'; // generic dialog-local keys (Escape dismissal, Board Manager save)
+  | 'dialog' // generic dialog-local keys (Escape dismissal, Board Manager save)
+  | 'conversation'; // a focused Conversation viewer window (capture phase, deliberately does NOT overlap 'global' - see conversation.find)
 
 /** Display grouping in the settings panel. Cosmetic, independent of scope. */
 export type KeyGroup =
@@ -159,6 +160,20 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     description: 'Focus the board search, or open Quick Find if not on the board.',
     group: 'General',
     scope: 'global',
+    defaultCombo: 'Mod+F',
+    rebindable: true,
+  },
+  {
+    id: 'conversation.find',
+    label: 'Find in Conversation',
+    description: 'Open in-viewer search inside the focused Conversation window.',
+    group: 'General',
+    // Deliberately shares Mod+F with search.plainFind: 'conversation' is NOT
+    // in scopesOverlap's overlapping list, so this intentionally shadows the
+    // global binding (same pattern as the documented task-dialog shadow) -
+    // bound capture-phase + focus-gated, it wins over the board's bubble-phase
+    // Mod+F while a Conversation window is focused, without a registry conflict.
+    scope: 'conversation',
     defaultCombo: 'Mod+F',
     rebindable: true,
   },

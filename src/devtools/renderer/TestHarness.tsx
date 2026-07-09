@@ -16,10 +16,11 @@
  */
 
 import { useState } from 'react';
-import { Plus, FolderPlus, FileDiff, Database } from 'lucide-react';
+import { Plus, FolderPlus, FileDiff, Database, MessagesSquare } from 'lucide-react';
 import { useBoardStore } from '../../renderer/stores/board-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useToastStore } from '../../renderer/stores/toast-store';
+import { useSessionStore } from '../../renderer/stores/session-store';
 
 /** Default seed count for "Seed Embedding Backlog": large enough to force
  *  hundreds of real drain-loop round-robin iterations against the live embed
@@ -27,6 +28,11 @@ import { useToastStore } from '../../renderer/stores/toast-store';
  *  ballpark as a real one-time model-switch backfill, while staying well
  *  short of a full multi-hour history backfill. */
 const EMBEDDING_BACKLOG_SEED_COUNT = 3000;
+
+/** Turns written per click of "Seed Large Conversation": large enough to
+ *  stress the Conversation viewer's virtualization/scrolling/search on a
+ *  huge file, without hanging the UI for many seconds on a single click. */
+const LARGE_CONVERSATION_SEED_TURNS = 3000;
 
 // Lorem source. Titles/descriptions are deliberately meaningless so that
 // dragging a seeded task to an executing column gives the agent nothing real to
@@ -126,6 +132,7 @@ export function TestHarness() {
   const [creatingProject, setCreatingProject] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const [seedingBacklog, setSeedingBacklog] = useState(false);
+  const [seedingConversation, setSeedingConversation] = useState(false);
 
   const handleCreateTask = async () => {
     const todoSwimlane = useBoardStore.getState().swimlanes.find((lane) => lane.role === 'todo');
@@ -249,6 +256,40 @@ export function TestHarness() {
     }
   };
 
+  // Dev-only: seed (or, on a re-click for the same project, append to) a
+  // throwaway task + session backed by a real synthetic multi-thousand-turn
+  // Claude session JSONL transcript file, so the Conversation viewer can be
+  // exercised on a huge transcript without running a real agent for hours.
+  // Opens the seeded conversation immediately so there is no need to hunt
+  // for the throwaway task on the board.
+  const handleSeedLargeConversation = async () => {
+    const project = useProjectStore.getState().currentProject;
+    if (!project) {
+      useToastStore.getState().addToast({ message: 'Open a project first to seed a large conversation', variant: 'warning' });
+      return;
+    }
+    setSeedingConversation(true);
+    try {
+      const result = await window.electronAPI.dev?.seedLargeConversation(LARGE_CONVERSATION_SEED_TURNS);
+      if (!result) {
+        useToastStore.getState().addToast({ message: 'Seeding a large conversation is dev-preview only', variant: 'warning' });
+        return;
+      }
+      useSessionStore.getState().setConversationSessionId(result.sessionId);
+      useToastStore.getState().addToast({
+        message: `Seeded ${result.turnsAdded} turns (${result.totalTurns} total) into ${result.filePath}`,
+        variant: 'success',
+      });
+    } catch (error) {
+      useToastStore.getState().addToast({
+        message: `Failed to seed large conversation: ${error instanceof Error ? error.message : 'unknown error'}`,
+        variant: 'error',
+      });
+    } finally {
+      setSeedingConversation(false);
+    }
+  };
+
   return (
     <div
       className="fixed left-6 top-1/2 -translate-y-1/2 z-[2147483600] flex flex-col gap-1.5 rounded-lg border border-edge bg-surface-raised/95 p-1.5 shadow-2xl backdrop-blur"
@@ -296,6 +337,17 @@ export function TestHarness() {
       >
         <Database size={16} />
         {seedingBacklog ? 'Seeding...' : 'Seed Embedding Backlog'}
+      </button>
+      <button
+        type="button"
+        onClick={handleSeedLargeConversation}
+        disabled={seedingConversation}
+        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
+        data-testid="dev-seed-large-conversation"
+        title={`Seed ${LARGE_CONVERSATION_SEED_TURNS} synthetic transcript turns (append on re-click) and open it in the Conversation viewer`}
+      >
+        <MessagesSquare size={16} />
+        {seedingConversation ? 'Seeding...' : 'Seed Large Conversation'}
       </button>
     </div>
   );

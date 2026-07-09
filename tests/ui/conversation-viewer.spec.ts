@@ -682,6 +682,59 @@ test.describe('Conversation Viewer', () => {
     }
   });
 
+  test('a live poll reporting { unchanged: true } (the IPC revision short-circuit) leaves the rendered content untouched across several ticks', async () => {
+    const { browser, page } = await launch(undefined, liveSessionPreConfig());
+    try {
+      await openConversation(page, 'sess-conv-liveswitch-old');
+      await expect(page.getByText('LIVESWITCH_INITIAL_TEXT')).toBeVisible();
+
+      // First override call returns full content WITH an explicit revision;
+      // every call after that reports unchanged for the SAME revision - the
+      // shape `transcripts.get` returns once main's stitch-memo revision has
+      // not moved since the caller's last-known revision.
+      await page.evaluate(() => {
+        (window as unknown as { __unchangedPollCallCount?: number }).__unchangedPollCallCount = 0;
+        window.__mockTranscriptsGetOverride = (input) => {
+          if (input.sessionId !== 'sess-conv-liveswitch-old') return undefined;
+          const state = window as unknown as { __unchangedPollCallCount: number };
+          state.__unchangedPollCallCount += 1;
+          if (state.__unchangedPollCallCount === 1) {
+            return {
+              sessionId: 'sess-conv-liveswitch-old',
+              taskId: 'task-conv-liveswitch',
+              taskTitle: 'Live session switch',
+              agentName: 'Claude Code',
+              startedAt: new Date().toISOString(),
+              sessionStatus: 'suspended',
+              source: 'live',
+              sourcePath: '/mock/liveswitch-old.jsonl',
+              entries: [{ kind: 'user', uuid: 'turn-liveswitch-1', ts: Date.now(), text: 'LIVESWITCH_INITIAL_TEXT' }],
+              degraded: false,
+              sessions: [
+                { sessionId: 'sess-conv-liveswitch-old', agentName: 'Claude Code', startedAt: new Date().toISOString(), exitedAt: new Date().toISOString(), isolatedSwimlaneId: null, status: 'suspended' },
+                { sessionId: 'sess-conv-liveswitch-new', agentName: 'Claude Code', startedAt: new Date().toISOString(), exitedAt: null, isolatedSwimlaneId: null, status: 'running' },
+              ],
+              revision: 7,
+            };
+          }
+          return { unchanged: true, revision: 7 };
+        };
+      });
+
+      // Let several poll ticks (2500ms interval) land on the unchanged branch.
+      await expect
+        .poll(async () => page.evaluate(() => (window as unknown as { __unchangedPollCallCount: number }).__unchangedPollCallCount), { timeout: 12_000 })
+        .toBeGreaterThanOrEqual(3);
+
+      // The viewer never blanked, errored, or lost its content across those
+      // unchanged ticks.
+      await expect(page.getByText('LIVESWITCH_INITIAL_TEXT')).toBeVisible();
+      await expect(page.getByTestId('conversation-view')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('a duplicate uuid in the transcript is rendered once, not piled up as a stale overlapping row', async () => {
     const { browser, page } = await launch();
     try {

@@ -2547,30 +2547,50 @@
 
     transcripts: {
       get: function (input) {
+        var response = null;
         // Test hook: window.__mockTranscriptsGetOverride(input) => response | undefined,
         // for a live-poll test where later calls must return different content
         // than the first (a static transcriptSeeds entry can't vary per call).
+        // The override may itself return an explicit `{ unchanged: true, revision }`
+        // shape to drive the revision-short-circuit path directly.
         if (typeof window !== 'undefined' && typeof window.__mockTranscriptsGetOverride === 'function') {
           var overridden = window.__mockTranscriptsGetOverride(input);
-          if (overridden) return Promise.resolve(overridden);
+          if (overridden) response = overridden;
         }
-        var seed = transcriptSeeds[input.sessionId];
-        if (seed) return Promise.resolve(seed);
-        // Default: nothing indexed / no native file for this session.
-        return Promise.resolve({
-          sessionId: input.sessionId,
-          taskId: null,
-          taskTitle: '',
-          agentName: '',
-          startedAt: new Date().toISOString(),
-          sessionStatus: null,
-          source: 'none',
-          sourcePath: null,
-          entries: [],
-          degraded: false,
-          unavailableReason: 'file_missing',
-          sessions: [],
-        });
+        if (!response) {
+          var seed = transcriptSeeds[input.sessionId];
+          response = seed || {
+            // Default: nothing indexed / no native file for this session.
+            sessionId: input.sessionId,
+            taskId: null,
+            taskTitle: '',
+            agentName: '',
+            startedAt: new Date().toISOString(),
+            sessionStatus: null,
+            source: 'none',
+            sourcePath: null,
+            entries: [],
+            degraded: false,
+            unavailableReason: 'file_missing',
+            sessions: [],
+            revision: 0,
+          };
+        }
+        if (response.unchanged === true) return Promise.resolve(response);
+        // Only apply the knownRevision short-circuit when the seed/override
+        // EXPLICITLY set a numeric revision - most fixtures (and the
+        // pre-revision override tests) don't manage revision at all and
+        // expect every call to return the full current content, relying on
+        // the real client-side transcriptSignature dedup instead. Defaulting
+        // an implicit revision to a fixed value would incorrectly make a
+        // later poll with a matching knownRevision look "unchanged" forever.
+        if (typeof response.revision === 'number') {
+          if (input.knownRevision !== undefined && input.knownRevision === response.revision) {
+            return Promise.resolve({ unchanged: true, revision: response.revision });
+          }
+          return Promise.resolve(response);
+        }
+        return Promise.resolve(Object.assign({}, response, { revision: 0 }));
       },
       listSessions: function (taskId, _projectId) {
         var list = transcriptSessionsByTask[taskId];

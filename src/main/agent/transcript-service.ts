@@ -2,6 +2,11 @@ import type Database from 'better-sqlite3';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { agentRegistry } from './agent-registry';
 import { RetrievalStore } from '../retrieval/retrieval-store';
+import {
+  clampSpan,
+  getCachedTranscript,
+  resetForTests as resetTranscriptCacheForTests,
+} from './transcript-cache';
 import type {
   ConversationSessionMeta,
   SessionRecord,
@@ -9,10 +14,6 @@ import type {
   TranscriptSource,
   TranscriptUnavailableReason,
 } from '../../shared/types';
-
-/** Per-block/content clamp so a multi-MB transcript never ships whole over IPC
- *  into React state. Individual spans over this are truncated with a marker. */
-const MAX_SPAN_CHARS = 20_000;
 
 export interface ResolvedTranscript {
   record: SessionRecord;
@@ -28,7 +29,10 @@ export interface ResolvedTranscript {
 /** A task's entire lifecycle, stitched from every session it has ever
  *  accumulated. The "latest" fields (record/agentName/source/sourcePath)
  *  describe the newest contributing session, since that is the one live
- *  polling watches; `entries` and `sessions` span all of them. */
+ *  polling watches; `entries` and `sessions` span all of them. `revision`
+ *  bumps only when the stitched `entries` array actually changes content
+ *  (see the stitch memo below), letting the IPC layer short-circuit an idle
+ *  poll. */
 export interface ResolvedTaskTranscript {
   record: SessionRecord;
   taskTitle: string;
@@ -39,32 +43,7 @@ export interface ResolvedTaskTranscript {
   degraded: boolean;
   unavailableReason?: TranscriptUnavailableReason;
   sessions: ConversationSessionMeta[];
-}
-
-function clampSpan(text: string): string {
-  if (text.length <= MAX_SPAN_CHARS) return text;
-  return `${text.slice(0, MAX_SPAN_CHARS)}\n[truncated ${text.length - MAX_SPAN_CHARS} chars]`;
-}
-
-/** Apply the per-span clamp across every entry's text/blocks/content. */
-function truncateEntries(entries: TranscriptEntry[]): TranscriptEntry[] {
-  return entries.map((entry) => {
-    switch (entry.kind) {
-      case 'user':
-        return { ...entry, text: clampSpan(entry.text) };
-      case 'assistant':
-        return {
-          ...entry,
-          blocks: entry.blocks.map((block) =>
-            block.type === 'tool_use' ? block : { ...block, text: clampSpan(block.text) },
-          ),
-        };
-      case 'tool_result':
-        return { ...entry, content: clampSpan(entry.content) };
-      case 'system':
-        return { ...entry, text: clampSpan(entry.text) };
-    }
-  });
+  revision: number;
 }
 
 /** Reconstruct lossy display entries from indexed chunks when the native
@@ -119,23 +98,31 @@ export async function resolveSessionTranscript(
     agentName,
   };
 
-  // Live parse via the adapter's structured-parse capability.
+  // Live parse via the adapter's structured-parse capability, wrapped in the
+  // stat-validated cache so an unchanged file costs one fs.stat instead of a
+  // full re-parse.
   if (adapter?.parseTranscript && record.agent_session_id) {
+    const agentSessionId = record.agent_session_id;
     let entries: TranscriptEntry[] = [];
     let sourcePath: string | null = null;
     try {
-      const parsed = await adapter.parseTranscript(record.agent_session_id, record.cwd);
-      entries = parsed.entries;
-      sourcePath = parsed.sourcePath;
+      const cached = await getCachedTranscript(
+        record.session_type,
+        agentSessionId,
+        () => adapter.parseTranscript!(agentSessionId, record.cwd),
+      );
+      entries = cached.entries;
+      sourcePath = cached.sourcePath;
     } catch (error) {
       // A genuine parser failure (permission error, corrupt JSONL, adapter
       // regression) must not look identical to "session has no transcript yet":
       // log it, then fall through to the index fallback.
-      console.warn(`transcript live-parse failed for session ${record.agent_session_id}:`, error);
+      console.warn(`transcript live-parse failed for session ${agentSessionId}:`, error);
       entries = [];
     }
     if (entries.length > 0) {
-      return { ...base, source: 'live', sourcePath, entries: truncateEntries(entries), degraded: false };
+      // Already truncated inside the cache.
+      return { ...base, source: 'live', sourcePath, entries, degraded: false };
     }
     // Native file located but empty/pruned: try the index fallback.
     const indexed = entriesFromIndex(db, record.agent_session_id ?? record.id);
@@ -165,6 +152,58 @@ export async function resolveSessionTranscript(
     degraded: false,
     unavailableReason: adapter?.parseTranscript ? 'no_agent_session_id' : 'unsupported_agent',
   };
+}
+
+/**
+ * Identity token for a resolved session's `entries` array, used to build the
+ * task-level stitch memo's dependency fingerprint below. `getCachedTranscript`
+ * returns the SAME array reference across calls when the underlying file is
+ * unchanged, so tokening by reference (not content) is both cheap and exact
+ * for the 'live' source - a genuine content change always produces a new
+ * array from the cache. The index/none sources build a fresh array on every
+ * call (no file-level cache backs them), so their token changes every poll;
+ * that is an acceptable cost since a degraded session's entries are rare and
+ * few.
+ */
+const entriesArrayTokens = new WeakMap<TranscriptEntry[], number>();
+let nextEntriesArrayToken = 1;
+function tokenForEntries(entries: TranscriptEntry[]): number {
+  let token = entriesArrayTokens.get(entries);
+  if (token === undefined) {
+    token = nextEntriesArrayToken;
+    nextEntriesArrayToken += 1;
+    entriesArrayTokens.set(entries, token);
+  }
+  return token;
+}
+
+interface StitchMemoRecord {
+  depsFingerprint: string;
+  revision: number;
+  entries: TranscriptEntry[];
+}
+
+/** Task-level stitch memo, capped so a long-running app does not grow this
+ *  unbounded across many opened tasks. */
+const STITCH_MEMO_LIMIT = 64;
+const stitchMemoByTaskId = new Map<string, StitchMemoRecord>();
+
+function touchStitchMemo(taskId: string, record: StitchMemoRecord): void {
+  stitchMemoByTaskId.delete(taskId);
+  stitchMemoByTaskId.set(taskId, record);
+  while (stitchMemoByTaskId.size > STITCH_MEMO_LIMIT) {
+    const oldestTaskId = stitchMemoByTaskId.keys().next().value;
+    if (oldestTaskId === undefined) break;
+    stitchMemoByTaskId.delete(oldestTaskId);
+  }
+}
+
+/** Test-only: clear both the file-level transcript cache and the task-level
+ *  stitch memo between test cases. */
+export function resetForTests(): void {
+  resetTranscriptCacheForTests();
+  stitchMemoByTaskId.clear();
+  nextEntriesArrayToken = 1;
 }
 
 function toSessionMeta(record: SessionRecord, agentName: string): ConversationSessionMeta {
@@ -226,15 +265,9 @@ export async function resolveTaskTranscript(
     ? sessionRepo.listForTaskNewestFirst(anchor.task_id).reverse() // oldest first
     : [anchor];
 
-  // Collect every deduped turn, tagged with the session that first contributed
-  // it (for the chronological merge + transition boundaries below).
-  interface TaggedEntry {
-    entry: TranscriptEntry;
-    sessionId: string;
-  }
-  const tagged: TaggedEntry[] = [];
   const sessionMetas: ConversationSessionMeta[] = [];
-  const seenUuids = new Set<string>();
+  const depsParts: string[] = [];
+  const resolvedBySession: Array<{ session: SessionRecord; resolved: ResolvedTranscript }> = [];
   let anyDegraded = false;
   let latest: ResolvedTranscript | null = null;
 
@@ -244,7 +277,49 @@ export async function resolveTaskTranscript(
     latest = resolved;
     anyDegraded = anyDegraded || resolved.degraded;
     sessionMetas.push(toSessionMeta(session, resolved.agentName));
+    resolvedBySession.push({ session, resolved });
+    depsParts.push(`${session.id}:${tokenForEntries(resolved.entries)}`);
+  }
 
+  if (!latest) return null;
+
+  const taskId = anchor.task_id;
+  const depsFingerprint = depsParts.join('|');
+
+  // The expensive part (dedup by uuid, chronological sort, boundary-divider
+  // insertion) is memoized per task: when every contributing session's
+  // entries array is unchanged (same reference, per the token above), skip
+  // straight to the SAME stitched `entries` array and `revision` - this is
+  // what keeps `entries` referentially stable across an idle live-poll tick,
+  // letting both the IPC revision short-circuit and the renderer's row
+  // reconciler bail out cheaply.
+  if (taskId) {
+    const memo = stitchMemoByTaskId.get(taskId);
+    if (memo && memo.depsFingerprint === depsFingerprint) {
+      return {
+        record: latest.record,
+        taskTitle: latest.taskTitle,
+        agentName: latest.agentName,
+        source: latest.source,
+        sourcePath: latest.sourcePath,
+        entries: memo.entries,
+        degraded: anyDegraded,
+        unavailableReason: latest.unavailableReason,
+        sessions: sessionMetas,
+        revision: memo.revision,
+      };
+    }
+  }
+
+  // Collect every deduped turn, tagged with the session that first contributed
+  // it (for the chronological merge + transition boundaries below).
+  interface TaggedEntry {
+    entry: TranscriptEntry;
+    sessionId: string;
+  }
+  const tagged: TaggedEntry[] = [];
+  const seenUuids = new Set<string>();
+  for (const { session, resolved } of resolvedBySession) {
     for (const entry of resolved.entries) {
       if (seenUuids.has(entry.uuid)) continue; // a resume replays parent turns verbatim
       seenUuids.add(entry.uuid);
@@ -254,8 +329,6 @@ export async function resolveTaskTranscript(
       });
     }
   }
-
-  if (!latest) return null;
 
   // Merge chronologically by each turn's own ts (stable: equal-ts turns keep
   // oldest-session-first order via the index tiebreaker), then walk the sorted
@@ -289,6 +362,11 @@ export async function resolveTaskTranscript(
     previousSessionId = item.sessionId;
   }
 
+  const revision = taskId ? (stitchMemoByTaskId.get(taskId)?.revision ?? 0) + 1 : 0;
+  if (taskId) {
+    touchStitchMemo(taskId, { depsFingerprint, revision, entries });
+  }
+
   return {
     record: latest.record,
     taskTitle: latest.taskTitle,
@@ -299,5 +377,6 @@ export async function resolveTaskTranscript(
     degraded: anyDegraded,
     unavailableReason: latest.unavailableReason,
     sessions: sessionMetas,
+    revision,
   };
 }

@@ -8,6 +8,7 @@ import type {
   ConversationSessionMeta,
   TranscriptGetRequest,
   TranscriptGetResponse,
+  TranscriptUnchangedResponse,
 } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
@@ -26,7 +27,10 @@ import type { IpcContext } from '../ipc-context';
 export function registerTranscriptHandlers(context: IpcContext): void {
   ipcMain.handle(
     IPC.TRANSCRIPT_GET,
-    async (_event, request: TranscriptGetRequest): Promise<TranscriptGetResponse> => {
+    async (
+      _event,
+      request: TranscriptGetRequest,
+    ): Promise<TranscriptGetResponse | TranscriptUnchangedResponse> => {
       const projectId = request.projectId ?? context.currentProjectId;
       const emptyResponse: TranscriptGetResponse = {
         sessionId: request.sessionId,
@@ -41,12 +45,20 @@ export function registerTranscriptHandlers(context: IpcContext): void {
         degraded: false,
         unavailableReason: 'file_missing',
         sessions: [],
+        revision: 0,
       };
       if (!projectId) return emptyResponse;
 
       const db = getProjectDb(projectId);
       const resolved = await resolveTaskTranscript(db, request.sessionId);
       if (!resolved) return emptyResponse;
+
+      // Nothing changed since the caller's last fetch: skip the full
+      // structured clone (the common case for an idle live-poll tick on a
+      // long transcript).
+      if (request.knownRevision !== undefined && request.knownRevision === resolved.revision) {
+        return { unchanged: true, revision: resolved.revision };
+      }
 
       return {
         sessionId: resolved.record.id,
@@ -61,6 +73,7 @@ export function registerTranscriptHandlers(context: IpcContext): void {
         degraded: resolved.degraded,
         unavailableReason: resolved.unavailableReason,
         sessions: resolved.sessions,
+        revision: resolved.revision,
       };
     },
   );

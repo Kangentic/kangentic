@@ -269,6 +269,16 @@
   background: var(--kng-edge-input);
 }
 
+/* Conversation viewer scroll container: replaces the native scrollbar with a
+   custom overlay rail (ConversationScrollbar.tsx) so a 10k+ message transcript
+   gets a substantial, always-grabbable thumb instead of the global 8px
+   thumb's ungrabbable sliver at that length. Scoped to this one class - every
+   other scrollable surface keeps the global scrollbar above untouched. */
+.conversation-scroll-hide-native::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 /* Drag overlay styling. The FlyingCard's frame 0 (KanbanBoard.tsx) mirrors
    these exact values so the overlay->fly handoff on a Done drop is seamless;
    keep opacity and rotation in sync across both. */

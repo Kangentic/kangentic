@@ -11,6 +11,7 @@ import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } 
 import { resolvePreviewTaskTitle } from '../devtools/main/preview-task-title';
 import { registerSeedGitChangesDevIpc } from '../devtools/main/seed-git-changes';
 import { registerSeedEmbeddingBacklogDevIpc } from '../devtools/main/seed-embedding-backlog';
+import { registerSeedLargeConversationDevIpc } from '../devtools/main/seed-large-conversation';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
 import { readBrowserAutomationConfig } from './browser/browser-automation-config';
@@ -614,6 +615,11 @@ const createWindow = () => {
           // Backlog" button - a realistic pending-chunk count for exercising the
           // central embedding engine's drain loop under sustained real-worker load.
           registerSeedEmbeddingBacklogDevIpc(getOptionalIpcContext);
+          // Seed-large-conversation dev IPC for the TestHarness "Seed Large
+          // Conversation" button - a throwaway task/session backed by a real
+          // synthetic multi-thousand-turn Claude transcript file, for
+          // exercising the Conversation viewer on a huge transcript.
+          registerSeedLargeConversationDevIpc(getOptionalIpcContext);
           // Adopt the two clones the /preview script pre-cloned (overlapping the
           // build); add more on demand via the TestHarness "Create Project" button.
           const project1 = await createPreviewClone(ephemeralContext, cwd); // adopts "Project 1"

@@ -15,6 +15,7 @@ import { PriorityBadge } from '../../backlog/PriorityBadge';
 import { useToastStore } from '../../../stores/toast-store';
 import { useProjectStore } from '../../../stores/project-store';
 import { useSessionStore } from '../../../stores/session-store';
+import { captureTerminalScrollback } from '../../../utils/terminal-capture-registry';
 import type { Task, AgentCommand, ShortcutConfig, Swimlane } from '../../../../shared/types';
 import { type TilePreset } from '../../../window-manager/tiling/presets';
 import { WindowLayoutMenu } from '../WindowLayoutMenu';
@@ -156,6 +157,13 @@ interface TaskDetailHeaderProps {
 async function openTaskConversation(taskId: string): Promise<void> {
   const projectId = useProjectStore.getState().currentProject?.id ?? null;
   let sessionId = useSessionStore.getState()._sessionByTaskId.get(taskId)?.id ?? null;
+  // Capture the terminal's visible scrollback NOW, at click time, before the
+  // async listSessions() gap below (during which live output could keep
+  // scrolling it) - open-at-position needs the viewport exactly as the user
+  // was looking at it. A no-terminal / no-live-session task simply has
+  // nothing to capture (capture is null), and the viewer falls back to
+  // opening at the bottom.
+  const capture = captureTerminalScrollback(sessionId);
   if (!sessionId) {
     try {
       const list = await window.electronAPI.transcripts.listSessions(taskId, projectId);
@@ -166,6 +174,13 @@ async function openTaskConversation(taskId: string): Promise<void> {
     }
   }
   if (sessionId) {
+    if (capture) {
+      useSessionStore.getState().setPendingTuiAnchor({
+        sessionId,
+        visibleLines: capture.visibleLines,
+        atBottom: capture.atBottom,
+      });
+    }
     useSessionStore.getState().setConversationSessionId(sessionId);
   } else {
     useToastStore.getState().addToast({ message: 'No conversation history for this task yet', variant: 'info' });

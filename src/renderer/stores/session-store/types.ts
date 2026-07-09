@@ -11,6 +11,18 @@ import type { UsagePeriodSlice } from './usage-period-slice';
 import type { TransientSessionSlice } from './transient-session-slice';
 import type { RateLimitSnapshot } from '../../utils/rate-limit-window';
 
+/** A one-shot capture of a task's terminal scrollback viewport at the moment
+ *  its conversation viewer was opened. See `pendingTuiAnchor` below. */
+export interface PendingTuiAnchor {
+  sessionId: string;
+  visibleLines: string[];
+  /** Do NOT gate the anchor's scroll position on this; see the anti-gate note
+   *  on `TerminalScrollbackCapture.atBottom` (Claude's alt-screen TUI never
+   *  moves real xterm scroll, so this is unreliable as a "user is at the tail"
+   *  signal). */
+  atBottom: boolean;
+}
+
 /**
  * The "core" session store state: every key that lives on the main
  * session-store.ts file (sessions, usage/activity/events, CRUD
@@ -71,6 +83,15 @@ export interface CoreSessionSlice {
    *  scroll to once the destination project has loaded. Kept separate because the
    *  project switch resets `scrollToTurnUuid`, which would otherwise drop it. */
   _pendingScrollToTurnUuid: string | null;
+  /** One-shot: captured at `TaskDetailHeader.openTaskConversation` click time
+   *  from the task's terminal (if any) - the visible scrollback lines and
+   *  whether it was at the live tail. `ConversationWindow` matches this to a
+   *  transcript turn (`tui-anchor.ts`) so the viewer opens centered there
+   *  instead of always at the bottom, when the user had scrolled up in the
+   *  TUI. Consumed only by the window whose anchor matches
+   *  `conversationSessionId`; cleared on project switch; loses to an explicit
+   *  `scrollToTurnUuid` navigation. */
+  pendingTuiAnchor: PendingTuiAnchor | null;
   sessionUsage: Record<string, SessionUsage>;
   /**
    * Shared account-wide rate-limit snapshot. Rate limits are an account-wide
@@ -149,6 +170,7 @@ export interface CoreSessionSlice {
   setScrollToTurnUuid: (uuid: string | null) => void;
   setPendingOpenConversation: (id: string | null) => void;
   setPendingScrollToTurnUuid: (uuid: string | null) => void;
+  setPendingTuiAnchor: (anchor: PendingTuiAnchor | null) => void;
   upsertSession: (session: Session) => void;
   updateSessionStatus: (id: string, updates: Partial<Session>) => void;
   updateUsage: (sessionId: string, data: SessionUsage) => void;

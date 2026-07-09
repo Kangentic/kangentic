@@ -116,6 +116,9 @@ describe('scopesOverlap', () => {
   it('does NOT overlap intentional-shadow scope pairs', () => {
     expect(scopesOverlap('board', 'task-dialog')).toBe(false);
     expect(scopesOverlap('task-dialog', 'command-bar')).toBe(false);
+    // conversation.find intentionally shadows search.plainFind's Mod+F while a
+    // Conversation window is focused - see the id's registry comment.
+    expect(scopesOverlap('conversation', 'global')).toBe(false);
   });
 });
 

@@ -12,12 +12,21 @@
  * "Copy as Markdown" export.
  *
  * The title bar reuses the same panel.* keybindings + structural-Escape pattern
- * as TaskDetailWindow (gated on `isFocused`); it adds no new KEYBINDINGS entries.
- * Close routes through the frame's animated `requestClose`; the conversation
- * window bridge mirrors the closure back to clearing `conversationSessionId`.
+ * as TaskDetailWindow (gated on `isFocused`). The in-viewer search bar is
+ * always visible (ConversationView owns it, including the `conversation.find`
+ * Mod+F binding that focuses it - there is no open/close state to toggle
+ * here). Close routes through the frame's animated `requestClose`; the
+ * conversation window bridge mirrors the closure back to clearing
+ * `conversationSessionId`.
+ *
+ * Open-at-position: computes `initialPosition` once, synchronously, the moment
+ * the transcript first loads - precedence is an already-set `scrollToTurnUuid`
+ * (handled inside ConversationView itself, since it wins there too), then a
+ * `pendingTuiAnchor` match (the task's terminal viewport at the moment the
+ * user clicked "open conversation" - see `tui-anchor.ts`), then the bottom.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { MessageSquare, X, SquareTerminal, Copy, Check, Loader2, PictureInPicture2 } from 'lucide-react';
 import { useSessionStore } from '../../stores/session-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -26,11 +35,13 @@ import { MaximizeToggleButton } from '../../components/dialogs/dialog-maximize';
 import { WindowLayoutMenu } from '../../components/dialogs/WindowLayoutMenu';
 import { KebabMenu, KebabMenuItem } from '../../components/KebabMenu';
 import { HeaderActionButton } from '../../components/HeaderActionButton';
-import { ConversationView } from '../../components/conversation/ConversationView';
+import { ConversationView, type InitialPosition } from '../../components/conversation/ConversationView';
+import { reconcileDisplayRows } from '../../components/conversation/display-rows';
+import { matchTuiViewportToRow } from '../../components/conversation/tui-anchor';
 import { transcriptToMarkdown } from '../../../shared/transcript-format';
 import { useLayerStore } from '../context';
 import type { ManagedWindow } from '../store/types';
-import type { TranscriptGetResponse } from '../../../shared/types';
+import type { TranscriptGetResponse, TranscriptUnchangedResponse } from '../../../shared/types';
 
 interface ConversationWindowProps {
   managedWindow: ManagedWindow;
@@ -44,15 +55,22 @@ interface ConversationWindowProps {
  *  open viewer follows new turns as the agent produces them. */
 const LIVE_REFRESH_MS = 2500;
 
+function isUnchangedResponse(
+  value: TranscriptGetResponse | TranscriptUnchangedResponse,
+): value is TranscriptUnchangedResponse {
+  return (value as TranscriptUnchangedResponse).unchanged === true;
+}
+
 /**
  * Cheap fingerprint of a transcript response, so a live poll that returns
  * identical content skips the state update entirely (the common case between
- * actual new turns). Without this, every 2.5s tick replaces the whole entries
- * array, re-runs the viewer's O(n) memos, and re-renders the visible rows -
- * a periodic hitch that fights smooth scrolling on a long transcript. Captures
- * appends (entry count), a streaming last turn (its content length grows in
- * place), and status/degraded/source flips - the changes that actually warrant
- * a repaint. A mid-transcript edit with an unchanged length is not detected,
+ * actual new turns). This is a client-side complement to the IPC-layer
+ * revision short-circuit (`knownRevision` below), which already skips the
+ * full structured clone on an idle poll - kept as defense in depth in case a
+ * genuinely new revision ever ships with an unchanged tail. Captures appends
+ * (entry count), a streaming last turn (its content length grows in place),
+ * and status/degraded/source flips - the changes that actually warrant a
+ * repaint. A mid-transcript edit with an unchanged length is not detected,
  * but transcripts are append-and-stream, so that does not occur in practice. */
 function transcriptSignature(response: TranscriptGetResponse | null): string {
   if (!response) return 'null';
@@ -100,6 +118,8 @@ export function ConversationWindow({
   const scrollToTurnUuid = useSessionStore((state) => state.scrollToTurnUuid);
   const setScrollToTurnUuid = useSessionStore((state) => state.setScrollToTurnUuid);
   const conversationSessionId = useSessionStore((state) => state.conversationSessionId);
+  const pendingTuiAnchor = useSessionStore((state) => state.pendingTuiAnchor);
+  const setPendingTuiAnchor = useSessionStore((state) => state.setPendingTuiAnchor);
   const sessions = useSessionStore((state) => state.sessions);
 
   const useStore = useLayerStore();
@@ -119,8 +139,18 @@ export function ConversationWindow({
   // whatever part of the transcript they are reading.
   const autoFollowNewMessages = !isFocused && !isHovering;
 
+  // Mirrors `response` so the live-poll interval (armed once per live window,
+  // not re-armed on every response update) can read the CURRENT revision at
+  // each tick without stale-closure risk.
+  const responseRef = useRef<TranscriptGetResponse | null>(null);
+  useEffect(() => {
+    responseRef.current = response;
+  }, [response]);
+
   // Fetch the transcript on mount. The anchor only resolves WHICH task to
-  // show - the response always spans that task's entire lifecycle.
+  // show - the response always spans that task's entire lifecycle. No
+  // knownRevision on this first fetch (nothing to compare against yet), so
+  // the handler always returns the full payload here.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -128,6 +158,10 @@ export function ConversationWindow({
       .get({ sessionId: managedWindow.anchor, projectId: currentProjectId })
       .then((result) => {
         if (cancelled) return;
+        if (isUnchangedResponse(result)) {
+          setLoading(false);
+          return;
+        }
         setResponse(result);
         setLoading(false);
       })
@@ -164,9 +198,16 @@ export function ConversationWindow({
     let cancelled = false;
     const interval = setInterval(() => {
       window.electronAPI.transcripts
-        .get({ sessionId: managedWindow.anchor, projectId: currentProjectId })
+        .get({
+          sessionId: managedWindow.anchor,
+          projectId: currentProjectId,
+          knownRevision: responseRef.current?.revision,
+        })
         .then((result) => {
           if (cancelled) return;
+          // Nothing changed server-side: the handler already skipped the full
+          // structured clone, so there is nothing further to do here.
+          if (isUnchangedResponse(result)) return;
           // Returning the SAME reference when nothing changed makes React bail
           // out of the re-render, so an idle live session does not repaint the
           // viewer every 2.5s.
@@ -208,12 +249,17 @@ export function ConversationWindow({
   const handleUndock = useCallback(() => untileWindow(managedWindow.id), [untileWindow, managedWindow.id]);
 
   // Task-detail parity keybindings (capture phase, gated on focus). No new
-  // registry entries: reuse panel.maximize / panel.close.
+  // registry entries for maximize/close: reuse panel.maximize / panel.close.
+  // conversation.find is registered inside ConversationView itself, which
+  // owns the always-visible search bar it focuses.
   useKeybinding('panel.maximize', handleToggleMaximized, { capture: true, enabled: isFocused });
   useKeybinding('panel.close', requestClose, { capture: true, enabled: isFocused });
 
   // Structural Escape (keybindings-registry exception, like BaseDialog /
-  // TaskDetailWindow): bubble-phase, gated on focus.
+  // TaskDetailWindow): bubble-phase, gated on focus. The search bar has no
+  // open/close state to special-case here - Escape always closes the window
+  // (the search input's own Escape handler stops propagation before this
+  // listener sees it, so typing Escape while focused in search just blurs it).
   useEffect(() => {
     if (!isFocused) return;
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -240,6 +286,46 @@ export function ConversationWindow({
   // so a second open conversation window never races to clear it.
   const activeScrollUuid = managedWindow.anchor === conversationSessionId ? scrollToTurnUuid : null;
 
+  // Open-at-position: computed ONCE, synchronously, on the render where
+  // `response` first becomes available - so it is ready before ConversationView
+  // even mounts (avoiding the top-flash the settle-loop's visibility gate is
+  // built to prevent). Mutating a ref during render to cache a one-time
+  // derived value (never scheduling a render itself) is the same pattern
+  // ConversationView's own row reconciler uses.
+  const initialPositionRef = useRef<InitialPosition | null>(null);
+  if (initialPositionRef.current === null && response) {
+    const anchor =
+      pendingTuiAnchor && pendingTuiAnchor.sessionId === managedWindow.anchor ? pendingTuiAnchor : null;
+    // Deliberately NOT gated on anchor.atBottom: Claude Code's TUI manages
+    // in-session scrollback internally (redrawing text at a fixed cursor
+    // position, printing its own "N new messages (ctrl+End)" hint) rather
+    // than moving the real terminal scroll position, so xterm's own
+    // viewportY/baseY reads as "at bottom" even while the user is looking at
+    // an earlier turn. Matching unconditionally is safe: when the terminal
+    // truly is caught up, the sampled center lines are themselves the latest
+    // turn, so the match naturally lands on (or very near) the last row
+    // anyway; a genuine miss (no signal in the sample) still falls back to
+    // bottom exactly as before.
+    if (anchor) {
+      const rowsForMatch = reconcileDisplayRows([], response.entries);
+      const matchedUuid = matchTuiViewportToRow(anchor.visibleLines, rowsForMatch);
+      initialPositionRef.current = matchedUuid ? { kind: 'uuid', uuid: matchedUuid } : { kind: 'bottom' };
+    } else {
+      initialPositionRef.current = { kind: 'bottom' };
+    }
+  }
+  const initialPosition = initialPositionRef.current ?? { kind: 'bottom' };
+
+  // Consume the one-shot pendingTuiAnchor exactly once, after the above has
+  // had a chance to read it (a store update never invalidates the ref already
+  // computed this render).
+  useEffect(() => {
+    if (!response) return;
+    const anchor =
+      pendingTuiAnchor && pendingTuiAnchor.sessionId === managedWindow.anchor ? pendingTuiAnchor : null;
+    if (anchor) setPendingTuiAnchor(null);
+  }, [response, pendingTuiAnchor, managedWindow.anchor, setPendingTuiAnchor]);
+
   return (
     <div
       className="flex h-full w-full flex-col overflow-hidden"
@@ -264,10 +350,11 @@ export function ConversationWindow({
           </div>
 
           {/* Promoted from kebab-only to visible icon buttons (shared component,
-              matching TaskDetailHeader's header row): both are common enough in a
+              matching TaskDetailHeader's header row): common enough in a
               read-only viewer to earn a one-tap affordance rather than living only
               behind "...". The kebab entries stay too (same pill+kebab redundancy
-              TaskDetailHeader uses for "View conversation"). */}
+              TaskDetailHeader uses for "View conversation"). Search has no toggle
+              button here - it is always visible inside ConversationView. */}
           {taskId && (
             <HeaderActionButton
               icon={SquareTerminal}
@@ -360,6 +447,8 @@ export function ConversationWindow({
           scrollToTurnUuid={activeScrollUuid}
           onConsumedScroll={consumeScroll}
           autoFollowNewMessages={autoFollowNewMessages}
+          initialPosition={initialPosition}
+          isFocused={isFocused}
         />
       )}
     </div>
