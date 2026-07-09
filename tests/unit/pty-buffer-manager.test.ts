@@ -877,5 +877,38 @@ describe('PtyBufferManager', () => {
       vi.advanceTimersByTime(20);
       vi.useRealTimers();
     });
+
+    it('a full reset (RIS) clears a dangling synchronized-output frame (no spurious 2026l after the reset)', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      // 2026h opens with no matching 2026l, then RIS resets everything. RIS
+      // itself wipes terminal state, so getScrollback must not append a
+      // trailing 2026l on top of it - state.synchronizedOpen has to be
+      // cleared by the reset arm of updateModeState, same as decPrivateModes.
+      manager.onData(SESSION, '\x1b[?2026hpartial diff, no closing 2026l');
+      manager.onData(SESSION, '\x1bc');
+
+      expect(manager.getScrollback(SESSION).endsWith('\x1b[?2026l')).toBe(false);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('a soft reset (DECSTR) clears a dangling synchronized-output frame (no spurious 2026l after the reset)', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      // Mirrors the RIS case above for the DECSTR reset arm: DECSTR does not
+      // switch buffers, but it still returns private modes to default, which
+      // must include closing a dangling synchronized-output frame.
+      manager.onData(SESSION, '\x1b[?2026hpartial diff, no closing 2026l');
+      manager.onData(SESSION, '\x1b[!p');
+
+      expect(manager.getScrollback(SESSION).endsWith('\x1b[?2026l')).toBe(false);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
   });
 });
