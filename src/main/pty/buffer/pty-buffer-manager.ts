@@ -59,11 +59,22 @@ function surrogateSafeFlushEnd(buffer: string, max: number): number {
 
 // DEC private input/reporting modes to re-assert on a scrollback replay. These
 // are invisible to restore: they change what xterm SENDS on later input, not
-// what it draws, so the replayed frame is unchanged. Display modes (alt-screen
-// 1049/47, origin 6, autowrap 7, cursor 25, ...) are excluded on purpose. #313.
-// Note: re-asserting 1004 (focus reporting) means the post-replay xterm.focus()
-// in useTerminal's afterWrite now emits a benign \x1b[I (FocusIn) to the PTY,
-// which Claude handles as a normal focus event.
+// what it draws, so the replayed frame is unchanged. Most display modes
+// (origin 6, autowrap 7, cursor 25, ...) are excluded on purpose: re-asserting
+// them for a NORMAL-buffer (classic-renderer) session could corrupt its
+// restore. #313. Note: re-asserting 1004 (focus reporting) means the
+// post-replay xterm.focus() in useTerminal's afterWrite now emits a benign
+// \x1b[I (FocusIn) to the PTY, which Claude handles as a normal focus event.
+//
+// Alt-screen (1049/47/1047) is the one display mode re-asserted, but NOT via
+// this set: it is tracked separately as BufferState.inAltScreen and emitted
+// only when the session is CURRENTLY in the alt buffer (see getScrollback).
+// That gate is what keeps it safe alongside the #313 exclusion above - a
+// classic normal-buffer session never sets inAltScreen, so its replay is
+// byte-for-byte unchanged; a fullscreen-TUI session's captured frame genuinely
+// belongs in the alt buffer, so replaying it there (instead of the normal
+// buffer, where it previously landed and desynced the cursor from the frame)
+// is the correct restore, not a corruption risk.
 const RESTORABLE_DEC_PRIVATE_MODES = new Set<number>([
   1,                 // DECCKM application cursor keys (the arrow-key bug)
   1000, 1002, 1003,  // mouse tracking
@@ -72,29 +83,54 @@ const RESTORABLE_DEC_PRIVATE_MODES = new Set<number>([
   2004,              // bracketed paste
 ]);
 
+// Alt-screen enter/exit variants, tracked into BufferState.inAltScreen (not
+// RESTORABLE_DEC_PRIVATE_MODES - see the comment above). 1049 is the modern
+// combined form (save cursor + switch + clear); 47/1047 are older variants
+// without the cursor save. All three flip the same boolean.
+const ALT_SCREEN_MODES = new Set<number>([47, 1047, 1049]);
+
+// DEC synchronized-output framing (mode 2026). Tracked so getScrollback can
+// close a frame left open by a mid-frame sample, which would otherwise stall
+// xterm's renderer for its ~1s safety timeout.
+const SYNCHRONIZED_OUTPUT_MODE = 2026;
+
 // Upper bound on a partial mode sequence carried across a PTY chunk boundary.
-// Larger than the longest combined restorable DECSET (all modes in one set is
-// ~45 chars: `\x1b[?1;1000;1002;1003;1004;1006;1015;1016;2004`), so a real split
-// is always preserved while a lone trailing ESC cannot grow modeParseCarry
-// without limit. Adding a mode to RESTORABLE_DEC_PRIVATE_MODES that pushes the
-// combined set past this must bump it too.
+// The carry must preserve a split of any tracked DECSET: the restorable input
+// modes, the alt-screen modes (47/1047/1049), and synchronized output (2026).
+// A single DECSET folding in every restorable mode alone is ~45 chars
+// (`\x1b[?1;1000;1002;1003;1004;1006;1015;1016;2004`); one that also folded in
+// 47/1047/1049/2026 would come to ~64, so a real split is always preserved
+// while a lone trailing ESC cannot grow modeParseCarry without limit. Adding a
+// mode to any of the three tracked sets that pushes a combined DECSET past this
+// must bump the constant too.
 const MODE_CARRY_MAX_LENGTH = 64;
 
-function updateDecPrivateModes(activeModes: Set<number>, text: string): void {
+/** Mutable mode-tracking fields of BufferState that updateModeState mutates. */
+type ModeState = Pick<BufferState, 'decPrivateModes' | 'inAltScreen' | 'synchronizedOpen'>;
+
+function updateModeState(state: ModeState, text: string): void {
   // One alternation matches a DECSET/DECRST set (\x1b[?<params>h|l) OR a full
   // reset (RIS \x1bc / DECSTR \x1b[!p) that returns every private mode to its
   // default. matchAll yields matches in stream order, so an interleaved
   // set-then-reset resolves correctly. A reset match has no capture groups.
   for (const match of text.matchAll(/\x1b\[\?([\d;]+)([hl])|\x1bc|\x1b\[!p/g)) {
     if (match[1] === undefined) {
-      for (const privateMode of RESTORABLE_DEC_PRIVATE_MODES) activeModes.delete(privateMode);
+      // RIS (\x1bc) returns to the normal buffer, so clear inAltScreen too;
+      // DECSTR (\x1b[!p) does not switch buffers per spec, so it leaves
+      // inAltScreen untouched. Both clear a dangling synchronized frame.
+      for (const privateMode of RESTORABLE_DEC_PRIVATE_MODES) state.decPrivateModes.delete(privateMode);
+      state.synchronizedOpen = false;
+      if (match[0] === '\x1bc') state.inAltScreen = false;
       continue;
     }
     const isSet = match[2] === 'h';
     for (const parameter of match[1].split(';')) {
       const privateMode = Number(parameter);
-      if (!RESTORABLE_DEC_PRIVATE_MODES.has(privateMode)) continue;
-      if (isSet) activeModes.add(privateMode); else activeModes.delete(privateMode);
+      if (RESTORABLE_DEC_PRIVATE_MODES.has(privateMode)) {
+        if (isSet) state.decPrivateModes.add(privateMode); else state.decPrivateModes.delete(privateMode);
+      }
+      if (ALT_SCREEN_MODES.has(privateMode)) state.inAltScreen = isSet;
+      if (privateMode === SYNCHRONIZED_OUTPUT_MODE) state.synchronizedOpen = isSet;
     }
   }
 }
@@ -131,6 +167,17 @@ interface BufferState {
    *  tracked from the live stream so getScrollback() can re-assert them after
    *  xterm.reset() wipes them on replay. Survives scrollback trimming. #313. */
   decPrivateModes: Set<number>;
+  /** Whether the session is currently in the alt screen buffer (DEC mode
+   *  47/1047/1049), tracked so getScrollback() can re-assert it after
+   *  xterm.reset() wipes it on replay - otherwise a fullscreen TUI's replayed
+   *  frame paints into the wrong (normal) buffer. Survives scrollback
+   *  trimming; reset on respawn like decPrivateModes. */
+  inAltScreen: boolean;
+  /** Whether a DEC synchronized-output frame (mode 2026) is currently open,
+   *  tracked so getScrollback() can close a frame left dangling by a
+   *  mid-frame sample - otherwise xterm stalls rendering for its ~1s safety
+   *  timeout. */
+  synchronizedOpen: boolean;
   /** Trailing partial escape sequence stitched onto the next chunk so a mode
    *  set split across two PTY chunks is parsed whole. Bounded in onData(). */
   modeParseCarry: string;
@@ -159,8 +206,10 @@ export class PtyBufferManager {
       pendingRepaintAt: null,
       lastDataAt: null,
       tuiStartIndex: previousScrollback ? 0 : -1,
-      // Start empty even on carry-over: the new process re-emits its own modes.
+      // Start empty/false even on carry-over: the new process re-emits its own modes.
       decPrivateModes: new Set<number>(),
+      inAltScreen: false,
+      synchronizedOpen: false,
       modeParseCarry: '',
     });
   }
@@ -169,22 +218,23 @@ export class PtyBufferManager {
     const state = this.buffers.get(sessionId);
     if (!state) return;
 
-    // Track sticky DEC private input modes (DECCKM, mouse, paste) from the live
-    // stream so the scrollback replay can re-assert them after xterm.reset()
-    // wipes them - the original mode-set bytes usually scroll out of the 512KB
-    // window (#313). modeParseCarry stitches a set split across two PTY chunks,
-    // bounded by MODE_CARRY_MAX_LENGTH so a lone ESC cannot grow it. Skip the
-    // scan for ESC-free bulk output unless a partial set is pending. Parse
-    // `combined` only; append the original `data` below so the carry never
-    // duplicates bytes into buffer/scrollback.
+    // Track sticky DEC private input modes (DECCKM, mouse, paste), alt-screen,
+    // and synchronized-output framing from the live stream so the scrollback
+    // replay can re-assert/close them after xterm.reset() wipes them - the
+    // original mode-set bytes usually scroll out of the 512KB window (#313).
+    // modeParseCarry stitches a set split across two PTY chunks, bounded by
+    // MODE_CARRY_MAX_LENGTH so a lone ESC cannot grow it. Skip the scan for
+    // ESC-free bulk output unless a partial set is pending. Parse `combined`
+    // only; append the original `data` below so the carry never duplicates
+    // bytes into buffer/scrollback.
     if (state.modeParseCarry || data.includes('\x1b')) {
       const combined = state.modeParseCarry + data;
-      updateDecPrivateModes(state.decPrivateModes, combined);
+      updateModeState(state, combined);
       // A carry can only be a partial sequence at the very END of `combined`,
       // and it is bounded to MODE_CARRY_MAX_LENGTH, so scan just the trailing
       // window - a full-chunk scan here is redundant on the hot path. The `!?`
       // admits a partial DECSTR (\x1b[!) split at \x1b[! | p, matching the
-      // DECSTR arm of updateDecPrivateModes so the soft reset is not lost.
+      // DECSTR arm of updateModeState so the soft reset is not lost.
       const trailingWindow = combined.slice(-(MODE_CARRY_MAX_LENGTH + 1));
       const partialEscapeMatch = trailingWindow.match(/\x1b(?:\[[\d?;]*!?)?$/);
       state.modeParseCarry =
@@ -366,7 +416,18 @@ export class PtyBufferManager {
       }
     }
 
-    return buildDecPrivateModePrefix(state.decPrivateModes) + '\x1b[0m' + scrollback;
+    // Alt-screen enter goes first: it (re-)clears the alt buffer and switches
+    // into it, so the input-mode reassert and the replayed frame land where
+    // the session actually is. Gated on inAltScreen so a classic normal-buffer
+    // session's replay is byte-for-byte unchanged (see the #313 comment on
+    // RESTORABLE_DEC_PRIVATE_MODES). A dangling synchronized-output frame is
+    // closed at the very end so a mid-frame sample can't stall xterm's
+    // renderer for its ~1s safety timeout.
+    return (state.inAltScreen ? '\x1b[?1049h' : '')
+      + buildDecPrivateModePrefix(state.decPrivateModes)
+      + '\x1b[0m'
+      + scrollback
+      + (state.synchronizedOpen ? '\x1b[?2026l' : '');
   }
 
   /**

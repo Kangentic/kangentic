@@ -275,6 +275,25 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   slow repaint can only delay a first paint, never hang the read. A resize that arrives before the
   PTY exists (the renderer mounts before the auto-resume spawn lands) is stashed and applied at
   spawn, so the PTY starts at the fitted size and no corrective resize is needed.
+- **DEC private mode and alt-screen re-assert on replay.** `xterm.reset()` on the renderer wipes
+  every DEC private mode xterm is tracking, and the original mode-set bytes usually scroll out of
+  the 512KB scrollback window on a long-running session. `PtyBufferManager` tracks DEC private
+  input/reporting modes (DECCKM, mouse tracking, bracketed paste, ...) from the live stream and
+  re-asserts them as a prefix on `getScrollback` (#313). Alt-screen (mode 1049/47/1047) is tracked
+  separately as `inAltScreen` and re-asserted with its own `\x1b[?1049h` prefix, gated on the
+  session currently being in the alt buffer - a classic (normal-buffer) session's replay is
+  unaffected, but a fullscreen-TUI session's replay now paints into the alt buffer instead of the
+  normal buffer (previously the cause of a cursor left visually disconnected from the TUI frame). A
+  synchronized-output frame (mode 2026) left open by a mid-frame sample is closed with a trailing
+  `\x1b[?2026l` so it cannot stall the renderer's ~1s safety timeout.
+- **Hold, not drop, live output across a renderer-side replay.** While a scrollback replay is in
+  flight (`scrollbackPendingRef`), the renderer's incoming-write queue HOLDS (retains, does not
+  ack) rather than drops live PTY bytes, and flushes them in order once the replay's `afterWrite`
+  completes. This closes a window where a live diff (e.g. a fullscreen TUI's selection-highlight
+  redraw) could be silently discarded during a reattach. Only the loading overlay continues to
+  drop-and-ack (its window can span the whole agent startup). A generation-aware `afterWrite` and a
+  bounded watchdog timer additionally guard against a stale or stuck replay leaving
+  `scrollbackPendingRef` true indefinitely, which would otherwise drop all live output forever.
 
 ## Key Constants
 

@@ -283,21 +283,126 @@ if (process.env.MOCK_CLAUDE_BACKGROUND_BASH === '1' && sessionId && !settingsPat
   }
 }
 
-// Stay alive to simulate a running session (30s gives tests time to interact)
-const timeout = setTimeout(() => process.exit(0), 30000);
+// Fullscreen-TUI interactive select-prompt harness for the terminal
+// input/focus-disconnect regression (fullscreen select-prompt freeze fix).
+//
+// mock-claude normally emits plain console.log marker lines with no terminal
+// escape sequences at all, so it cannot reproduce a bug that only exists in
+// the alt-screen (fullscreen renderer) replay path. When
+// MOCK_CLAUDE_FULLSCREEN_SELECT=1 is set, this branch instead behaves like a
+// real Claude Code fullscreen TUI parked at an AskUserQuestion-style select
+// prompt: it enters the alt screen buffer (1049h), turns on application
+// cursor keys (DECCKM, 1h), draws a 3-option menu, and reacts to arrow-key
+// input by moving the highlight via a cursor-addressed, synchronized-output
+// (2026h/2026l) DIFF - never a full repaint - exactly like the fix this
+// harness verifies (a dropped diff, or a replay landing in the wrong xterm
+// buffer, must not go unnoticed).
+const FULLSCREEN_SELECT_OPTIONS = ['First option', 'Second option', 'Third option'];
 
-// Exit cleanly on SIGTERM/SIGINT
-process.on('SIGTERM', () => { clearTimeout(timeout); process.exit(0); });
-process.on('SIGINT', () => { clearTimeout(timeout); process.exit(0); });
+if (process.env.MOCK_CLAUDE_FULLSCREEN_SELECT === '1') {
+  let selectedIndex = 0;
 
-// Keep stdin open so PTY doesn't close
-process.stdin.resume();
+  const cursorTo = (row, col) => '\x1b[' + row + ';' + col + 'H';
 
-// Listen for /exit command on stdin (graceful shutdown)
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', (data) => {
-  if (data.includes('/exit')) {
-    clearTimeout(timeout);
-    process.exit(0);
-  }
-});
+  const renderOptionRow = (index) => {
+    const row = 3 + index;
+    const marker = index === selectedIndex ? '> ' : '  ';
+    const text = marker + FULLSCREEN_SELECT_OPTIONS[index];
+    const styled = index === selectedIndex ? '\x1b[7m' + text + '\x1b[0m' : text;
+    return cursorTo(row, 1) + styled + '\x1b[K';
+  };
+
+  const drawFullScreen = () => {
+    let out = '\x1b[?1049h'; // enter the alt screen buffer
+    out += '\x1b[?1h'; // DECCKM: application cursor keys
+    out += '\x1b[2J'; // clear screen - marks where the TUI takes over
+    out += cursorTo(1, 1) + 'Select an option:';
+    for (let i = 0; i < FULLSCREEN_SELECT_OPTIONS.length; i++) {
+      out += renderOptionRow(i);
+    }
+    process.stdout.write(out);
+  };
+
+  const moveHighlight = (delta) => {
+    const previousIndex = selectedIndex;
+    const nextIndex = Math.min(
+      FULLSCREEN_SELECT_OPTIONS.length - 1,
+      Math.max(0, selectedIndex + delta),
+    );
+    if (nextIndex === previousIndex) return;
+    selectedIndex = nextIndex;
+    // A real diff, not a full repaint: only the two affected rows redraw,
+    // bracketed in a synchronized-output frame like Claude's real renderer.
+    const diff = '\x1b[?2026h' + renderOptionRow(previousIndex) + renderOptionRow(selectedIndex) + '\x1b[?2026l';
+    process.stdout.write(diff);
+  };
+
+  // A real interactive TUI reads its stdin in RAW mode: on a real TTY/PTY,
+  // stdin otherwise stays in the OS's cooked/line-buffered mode, which both
+  // locally echoes typed characters AND withholds every keystroke from the
+  // 'data' event until a newline is typed - so a single arrow-key press
+  // (never followed by Enter) would never be delivered at all. Guarded on
+  // isTTY: a plain pipe (e.g. a direct child_process spawn in a unit-style
+  // probe) has no raw/cooked mode and setRawMode does not exist there.
+  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+
+  drawFullScreen();
+
+  // Bounded lifetime safety net in case a test never sends Enter/exit
+  // (mirrors the 30s cap on the default branch below).
+  const timeout = setTimeout(() => process.exit(0), 30000);
+  process.on('SIGTERM', () => { clearTimeout(timeout); process.exit(0); });
+  process.on('SIGINT', () => { clearTimeout(timeout); process.exit(0); });
+
+  // Substring matching (not exact equality) on an accumulated buffer: a real
+  // PTY can deliver a 3-byte arrow-key escape sequence split across two
+  // 'data' events, or coalesce several keystrokes into one. inputCarry keeps
+  // a short trailing partial escape for the next chunk, mirroring the
+  // cross-chunk mode-carry pattern in pty-buffer-manager.ts.
+  let inputCarry = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (data) => {
+    const combined = inputCarry + data;
+    inputCarry = '';
+    if (combined.includes('\r') || combined.includes('\n')) {
+      clearTimeout(timeout);
+      process.stdout.write('\x1b[?1049l'); // leave the alt screen buffer
+      console.log('MOCK_CLAUDE_SELECTED:' + selectedIndex);
+      process.exit(0);
+      return;
+    }
+    if (combined.includes('/exit')) {
+      clearTimeout(timeout);
+      process.exit(0);
+      return;
+    }
+    if (combined.includes('\x1bOA') || combined.includes('\x1b[A')) {
+      moveHighlight(-1);
+    }
+    if (combined.includes('\x1bOB') || combined.includes('\x1b[B')) {
+      moveHighlight(1);
+    }
+    const partialEscapeMatch = combined.match(/\x1b(?:O|\[)?$/);
+    if (partialEscapeMatch) inputCarry = partialEscapeMatch[0];
+  });
+  process.stdin.resume();
+} else {
+  // Stay alive to simulate a running session (30s gives tests time to interact)
+  const timeout = setTimeout(() => process.exit(0), 30000);
+
+  // Exit cleanly on SIGTERM/SIGINT
+  process.on('SIGTERM', () => { clearTimeout(timeout); process.exit(0); });
+  process.on('SIGINT', () => { clearTimeout(timeout); process.exit(0); });
+
+  // Keep stdin open so PTY doesn't close
+  process.stdin.resume();
+
+  // Listen for /exit command on stdin (graceful shutdown)
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (data) => {
+    if (data.includes('/exit')) {
+      clearTimeout(timeout);
+      process.exit(0);
+    }
+  });
+}

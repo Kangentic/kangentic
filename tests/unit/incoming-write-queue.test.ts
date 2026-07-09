@@ -180,6 +180,70 @@ describe('createIncomingWriteQueue', () => {
     queue.reset();
     expect(ack).toHaveBeenCalledWith(6);
   });
+
+  // ---------------------------------------------------------------------
+  // useTerminal.ts wiring: shouldDrop: () => suppressDataRef.current,
+  // shouldHold: () => isBoardDragActive() || scrollbackPendingRef.current.
+  // A scrollback replay now HOLDS (not drops) live bytes, so a fullscreen
+  // TUI's selection-highlight diff arriving during a replay is never
+  // silently discarded - it applies strictly after the replayed frame.
+  // ---------------------------------------------------------------------
+  it('a scrollback replay holds live bytes and flushes them in order once it clears (no byte lost across the replay)', async () => {
+    const { term, writes } = fakeTerminal();
+    const ack = vi.fn();
+    const scrollbackPendingRef = { current: true };
+    const suppressDataRef = { current: false };
+    const queue = createIncomingWriteQueue({
+      getTerminal: () => term,
+      shouldDrop: () => suppressDataRef.current,
+      shouldHold: () => scrollbackPendingRef.current,
+      ack,
+      chunkSize: 4,
+    });
+
+    // A live diff frame arrives while the replay is still in flight.
+    queue.push('diff-frame-1');
+    await flush();
+    expect(writes).toEqual([]);
+    expect(ack).not.toHaveBeenCalled();
+
+    // More live bytes arrive before the replay finishes.
+    queue.push('-diff-frame-2');
+    await flush();
+    expect(writes).toEqual([]);
+    expect(ack).not.toHaveBeenCalled();
+
+    // The replay's afterWrite clears pending and kicks the queue.
+    scrollbackPendingRef.current = false;
+    queue.kick();
+    await flush();
+
+    // Every held byte was written, in order, strictly after the replay -
+    // nothing pushed during the window was silently dropped.
+    const expected = 'diff-frame-1-diff-frame-2';
+    expect(writes.join('')).toBe(expected);
+    const totalAcked = ack.mock.calls.reduce((sum, call) => sum + call[0], 0);
+    expect(totalAcked).toBe(expected.length);
+  });
+
+  it('an overlay with no active replay still drops-and-acks immediately (unaffected by the replay-hold change)', async () => {
+    const { term, writes } = fakeTerminal();
+    const ack = vi.fn();
+    const scrollbackPendingRef = { current: false };
+    const suppressDataRef = { current: true };
+    const queue = createIncomingWriteQueue({
+      getTerminal: () => term,
+      shouldDrop: () => suppressDataRef.current,
+      shouldHold: () => scrollbackPendingRef.current,
+      ack,
+    });
+
+    queue.push('startup noise');
+    await flush();
+
+    expect(writes).toEqual([]);
+    expect(ack).toHaveBeenCalledWith('startup noise'.length);
+  });
 });
 
 describe('writeChunkedToTerminal', () => {

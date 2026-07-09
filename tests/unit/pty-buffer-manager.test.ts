@@ -501,15 +501,18 @@ describe('PtyBufferManager', () => {
       vi.useRealTimers();
     });
 
-    it('does not re-assert display modes (alt-screen 1049)', () => {
+    it('does not re-assert display modes as INPUT modes (alt-screen 1049 is not in the input-mode prefix)', () => {
       vi.useFakeTimers();
       const { manager } = createManager();
 
       manager.onData(SESSION, '\x1b[?1049h');
       manager.onData(SESSION, 'tui frame');
 
-      // 1049 is a display mode, excluded from the restore set -> empty prefix.
-      expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('');
+      // 1049 is excluded from RESTORABLE_DEC_PRIVATE_MODES (the #313 input-mode
+      // set), so it never appears merged into the coalesced input-mode DECSET.
+      // It is re-asserted separately as alt-screen - see the "alt-screen
+      // re-assert" block below.
+      expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('\x1b[?1049h');
 
       vi.advanceTimersByTime(20);
       vi.useRealTimers();
@@ -567,7 +570,7 @@ describe('PtyBufferManager', () => {
       // One combined DECSET with params in non-sorted order (1, 2004, 1000).
       manager.onData(SESSION, '\x1b[?1;2004;1000h');
 
-      // updateDecPrivateModes splits on ';' and registers each param; the prefix
+      // updateModeState splits on ';' and registers each param; the prefix
       // must contain all three, sorted. Would fail if multi-param splitting was broken.
       expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('\x1b[?1;1000;2004h');
 
@@ -584,7 +587,7 @@ describe('PtyBufferManager', () => {
 
       // DECSTR resets every private mode -> no mode re-asserted in the prefix.
       // Mirrors the RIS (\x1bc) test; independently red-greens the |\x1b\[!p
-      // arm of the updateDecPrivateModes regex.
+      // arm of the updateModeState regex.
       expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('');
 
       vi.advanceTimersByTime(20);
@@ -634,18 +637,21 @@ describe('PtyBufferManager', () => {
       vi.useRealTimers();
     });
 
-    it('filters out non-restorable params from a combined DECSET, tracking only restorable ones', () => {
+    it('filters out non-restorable params from a combined DECSET, tracking 1049 separately as alt-screen', () => {
       vi.useFakeTimers();
       const { manager } = createManager();
 
-      // One DECSET with restorable mouse-tracking modes 1000, 1002 and non-restorable
-      // display mode 1049 (alt-screen) mixed in between them. The per-param guard
-      // `if (!RESTORABLE_DEC_PRIVATE_MODES.has(privateMode)) continue` inside
-      // updateDecPrivateModes must skip 1049 while tracking the others.
-      // Would fail (producing '\x1b[?1000;1002;1049h') if the guard were removed.
+      // One DECSET with restorable mouse-tracking modes 1000, 1002 and the
+      // alt-screen mode 1049 mixed in between them. The per-param guard inside
+      // updateModeState must keep 1049 OUT of the coalesced input-mode DECSET
+      // (it tracks inAltScreen separately instead) while still tracking 1000/1002.
       manager.onData(SESSION, '\x1b[?1000;1049;1002h');
 
-      expect(modePrefixOf(manager.getScrollback(SESSION))).toBe('\x1b[?1000;1002h');
+      const scrollback = manager.getScrollback(SESSION);
+      // Alt-screen leads, then the coalesced (sorted, 1049-free) input-mode
+      // DECSET, then the reset.
+      expect(scrollback.startsWith('\x1b[?1049h\x1b[?1000;1002h\x1b[0m')).toBe(true);
+      expect(modePrefixOf(scrollback)).toBe('\x1b[?1049h\x1b[?1000;1002h');
 
       vi.advanceTimersByTime(20);
       vi.useRealTimers();
@@ -667,6 +673,206 @@ describe('PtyBufferManager', () => {
       // read" refactor), which would make the second call return an empty prefix.
       const secondPrefix = modePrefixOf(manager.getScrollback(SESSION));
       expect(secondPrefix).toBe('\x1b[?1h');
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+  });
+
+  describe('alt-screen re-assert and synchronized-output safety (fullscreen TUI freeze fix)', () => {
+    it('re-asserts alt-screen (1049) when the session is currently in the alt buffer', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[?1049h');
+      manager.onData(SESSION, '\x1b[2Jtui frame');
+
+      const scrollback = manager.getScrollback(SESSION);
+      // Alt-screen enter goes first (re-clearing/switching into the alt
+      // buffer), then the (empty here) input-mode prefix, then the reset,
+      // then the replayed frame.
+      expect(scrollback.startsWith('\x1b[?1049h\x1b[0m')).toBe(true);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('leaves a classic (normal-buffer) session byte-for-byte unchanged (#313 safety guard)', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      // Input modes only, no alt-screen - a classic-renderer session.
+      manager.onData(SESSION, '\x1b[?1h\x1b[?2004h');
+      manager.onData(SESSION, 'plain scrollback');
+
+      const scrollback = manager.getScrollback(SESSION);
+      expect(scrollback).not.toContain('\x1b[?1049h');
+      expect(scrollback.startsWith('\x1b[?1;2004h\x1b[0m')).toBe(true);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('drops the re-assert after leaving alt-screen (1049l)', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[?1049h');
+      manager.onData(SESSION, 'tui frame');
+      manager.onData(SESSION, '\x1b[?1049l');
+      manager.onData(SESSION, 'back in the shell');
+
+      // The raw body still legitimately contains the original 1049h/1049l
+      // bytes (recorded content); what must NOT happen is a re-assert PREFIX
+      // in front of it, since the session is no longer in the alt buffer.
+      expect(manager.getScrollback(SESSION).startsWith('\x1b[?1049h')).toBe(false);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('restores an alt-screen enter split across two PTY chunks', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[?104');
+      manager.onData(SESSION, '9h');
+
+      expect(manager.getScrollback(SESSION).startsWith('\x1b[?1049h')).toBe(true);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('a full reset (RIS) exits alt-screen', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[?1049h');
+      manager.onData(SESSION, '\x1bc');
+
+      // The raw body still legitimately contains the original 1049h bytes;
+      // what must NOT happen is a re-assert prefix, since RIS returned the
+      // session to the normal buffer.
+      expect(manager.getScrollback(SESSION).startsWith('\x1b[?1049h')).toBe(false);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('a soft reset (DECSTR) does not exit alt-screen (DECSTR does not switch buffers per spec)', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[?1049h');
+      manager.onData(SESSION, '\x1b[!p');
+
+      expect(manager.getScrollback(SESSION).startsWith('\x1b[?1049h')).toBe(true);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('orders alt-screen before the input-mode prefix, and the replay frame after the reset', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[?1049h\x1b[?1h');
+      manager.onData(SESSION, '\x1b[2Jthe frame');
+
+      const scrollback = manager.getScrollback(SESSION);
+      expect(scrollback.startsWith('\x1b[?1049h\x1b[?1h\x1b[0m')).toBe(true);
+      expect(scrollback.indexOf('\x1b[2J')).toBeGreaterThan(scrollback.indexOf('\x1b[0m'));
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('closes a synchronized-output frame left dangling by the sample (2026h with no matching 2026l)', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[2Jframe');
+      manager.onData(SESSION, '\x1b[?2026hpartial diff, no closing 2026l');
+
+      expect(manager.getScrollback(SESSION).endsWith('\x1b[?2026l')).toBe(true);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('does not append a spurious 2026l when the synchronized-output frame is already balanced', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      manager.onData(SESSION, '\x1b[2Jframe');
+      manager.onData(SESSION, '\x1b[?2026hdiff\x1b[?2026l');
+
+      // The raw body already ends with a balanced 2026l; getScrollback must
+      // not append a second one on top of it.
+      const scrollback = manager.getScrollback(SESSION);
+      const occurrences = scrollback.split('\x1b[?2026l').length - 1;
+      expect(occurrences).toBe(1);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('tracks alt-screen via the older 47 and 1047 variants, not just 1049', () => {
+      vi.useFakeTimers();
+
+      // 47 (oldest variant, no cursor save) must flip inAltScreen the same
+      // way 1049 does. Would fail if ALT_SCREEN_MODES were narrowed to {1049}.
+      const managerFor47 = createManager().manager;
+      managerFor47.onData(SESSION, '\x1b[?47h');
+      managerFor47.onData(SESSION, '\x1b[2Jtui frame');
+      expect(managerFor47.getScrollback(SESSION).startsWith('\x1b[?1049h')).toBe(true);
+
+      // 1047 (intermediate variant) must do the same.
+      const managerFor1047 = createManager().manager;
+      managerFor1047.onData(SESSION, '\x1b[?1047h');
+      managerFor1047.onData(SESSION, '\x1b[2Jtui frame');
+      expect(managerFor1047.getScrollback(SESSION).startsWith('\x1b[?1049h')).toBe(true);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('routes a single combined DECSET spanning all three trackers (input-mode + alt-screen + synchronized-output)', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      // One DECSET carrying a restorable input mode (1000), the alt-screen
+      // mode (1049), and synchronized-output (2026) together. Each param must
+      // route independently to its own tracker.
+      manager.onData(SESSION, '\x1b[?1000;1049;2026h');
+      manager.onData(SESSION, '\x1b[2Jframe');
+
+      const scrollback = manager.getScrollback(SESSION);
+      // Alt-screen prefix leads (inAltScreen tracked separately from 1000).
+      expect(scrollback.startsWith('\x1b[?1049h')).toBe(true);
+      // 1000 lands in the coalesced input-mode DECSET, not the alt-screen or
+      // synchronized-output trackers.
+      const modePrefix = scrollback.slice(0, scrollback.indexOf('\x1b[0m'));
+      expect(modePrefix).toBe('\x1b[?1049h\x1b[?1000h');
+      // 2026 stayed open (never closed in this stream), so getScrollback
+      // closes the dangling frame at the very end.
+      expect(scrollback.endsWith('\x1b[?2026l')).toBe(true);
+
+      vi.advanceTimersByTime(20);
+      vi.useRealTimers();
+    });
+
+    it('closes a synchronized-output frame whose 2026h open is split across two PTY chunks', () => {
+      vi.useFakeTimers();
+      const { manager } = createManager();
+
+      // \x1b[?2026h split at the chunk boundary: '\x1b[?202' then '6h...'.
+      // modeParseCarry must stitch the two pieces so the open is not missed.
+      manager.onData(SESSION, '\x1b[?202');
+      manager.onData(SESSION, '6hframe');
+
+      expect(manager.getScrollback(SESSION).endsWith('\x1b[?2026l')).toBe(true);
 
       vi.advanceTimersByTime(20);
       vi.useRealTimers();

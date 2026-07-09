@@ -14,6 +14,13 @@ import '@xterm/xterm/css/xterm.css';
  *  (Claude Code) only redraws once and scrollback isn't churned. */
 const PTY_RESIZE_DEBOUNCE_MS = 200;
 
+/** Backstop for a scrollback replay whose chunked write never completes (e.g.
+ *  a dropped xterm.write callback). Force-clears scrollbackPendingRef and
+ *  resumes the incoming queue so live output isn't dropped indefinitely.
+ *  Comfortably above a healthy replay (repaint-settle caps at 400ms, plus a
+ *  512KB chunked write) and far below a pathological hang. */
+const SCROLLBACK_WATCHDOG_MS = 5000;
+
 /** Scroll positions saved before xterm dispose, keyed by session ID.
  *  Preserved across HMR via import.meta.hot.data so terminals restore
  *  the user's viewport position instead of jumping to the bottom. */
@@ -102,6 +109,14 @@ export function useTerminal(options: UseTerminalOptions) {
   /** Monotonic counter to abandon stale scrollback operations when a newer
    *  one starts (e.g. initTerminal and reloadScrollback racing). */
   const scrollbackGenerationRef = useRef(0);
+  /** Backstop timer for a stuck replay (see SCROLLBACK_WATCHDOG_MS). Arming a
+   *  new one clears any prior timer, so at most one is ever live - the one
+   *  for the most recently started replay. */
+  const scrollbackWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Resumes the incoming-write queue's held drain (set by the queue effect
+   *  below). Used by the watchdog to flush replay-held live bytes when a
+   *  stuck replay is force-cleared. */
+  const incomingResumeRef = useRef<(() => void) | null>(null);
   const isAtBottomRef = useRef(true);
   /** When true, onData writes are suppressed. Controlled by the caller
    *  (e.g. TerminalTab) to gate PTY output while a loading overlay is shown. */
@@ -198,6 +213,18 @@ export function useTerminal(options: UseTerminalOptions) {
       scrollbackPendingRef.current = true;
       const scrollbackGeneration = ++scrollbackGenerationRef.current;
       const suppressScrollback = suppressDataRef.current;
+      if (scrollbackWatchdogRef.current) clearTimeout(scrollbackWatchdogRef.current);
+      scrollbackWatchdogRef.current = setTimeout(() => {
+        scrollbackWatchdogRef.current = null;
+        if (scrollbackGenerationRef.current === scrollbackGeneration && scrollbackPendingRef.current) {
+          // Invalidate the generation so a merely-delayed (not dropped) afterWrite
+          // or catch for this replay bails at its generation guard instead of
+          // re-running fit / scroll / focus after we already force-recovered.
+          scrollbackGenerationRef.current += 1;
+          scrollbackPendingRef.current = false;
+          incomingResumeRef.current?.();
+        }
+      }, SCROLLBACK_WATCHDOG_MS);
 
       // Fit immediately to calculate actual container cols/rows
       fitAddon.fit();
@@ -219,13 +246,21 @@ export function useTerminal(options: UseTerminalOptions) {
 
       Promise.all([resizePromise, scrollbackPromise])
         .then(([, scrollback]) => {
-          // A newer scrollback operation has started; abandon this one.
-          if (scrollbackGenerationRef.current !== scrollbackGeneration) {
-            scrollbackPendingRef.current = false;
-            return;
-          }
+          // A newer scrollback operation has started; it owns clearing pending
+          // (and the watchdog it armed), so this stale resolve must not touch
+          // either - clearing them here would open the drop/hold gate early
+          // for the newer replay still in flight.
+          if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
 
           const afterWrite = () => {
+            // A newer replay may have started (and armed its own watchdog,
+            // which already canceled ours) while this chunked write was in
+            // flight; abandon so we don't clobber its pending/fit/focus.
+            if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
+            if (scrollbackWatchdogRef.current) {
+              clearTimeout(scrollbackWatchdogRef.current);
+              scrollbackWatchdogRef.current = null;
+            }
             // Re-fit to handle any layout shifts during the async gap
             if (fitAddonRef.current) {
               fitAddonRef.current.fit();
@@ -235,6 +270,10 @@ export function useTerminal(options: UseTerminalOptions) {
               isAtBottomRef.current = restoreScrollPosition(xtermRef.current, options.sessionId);
             }
             scrollbackPendingRef.current = false;
+            // Flush any live bytes the incoming queue held during the replay
+            // (see shouldHold in the queue effect below) now that the replay
+            // frame is fully painted, so they apply strictly after it.
+            incomingResumeRef.current?.();
             // Focus the terminal after the full init chain completes. No
             // corrective resize: main already sampled the settled frame at the
             // fitted width, and a same-dims resize is a documented no-op (POSIX
@@ -255,6 +294,10 @@ export function useTerminal(options: UseTerminalOptions) {
           // IPC may reject if session was killed during the async gap.
           // Unblock onData so the terminal isn't permanently silenced.
           if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
+          if (scrollbackWatchdogRef.current) {
+            clearTimeout(scrollbackWatchdogRef.current);
+            scrollbackWatchdogRef.current = null;
+          }
           scrollbackPendingRef.current = false;
         });
     } else {
@@ -274,18 +317,24 @@ export function useTerminal(options: UseTerminalOptions) {
 
     const queue = createIncomingWriteQueue({
       getTerminal: () => xtermRef.current,
-      // While scrollback is loading (or an overlay is up), drop onData -- it's
-      // duplicate data already included in the scrollback replay. The
-      // server-side getScrollback() drains the pending buffer, so this is
-      // defense-in-depth. Dropped slices are still acked inside the queue.
-      shouldDrop: () => scrollbackPendingRef.current || suppressDataRef.current,
-      // While a board drag is active, HOLD (not drop) inbound writes so xterm
-      // parsing doesn't compete with the drag on the renderer thread. Held bytes
-      // are retained and resumed on drag end; the coalescer's 30s watchdog
-      // bounds the hold if a drag end is ever missed.
-      shouldHold: () => isBoardDragActive(),
+      // Only an overlay (agent startup) drops onData - it can last many
+      // seconds and is recovered by the overlay-lift reloadScrollback, so
+      // holding it would pause the PTY for the whole startup. Dropped slices
+      // are still acked inside the queue.
+      shouldDrop: () => suppressDataRef.current,
+      // While a board drag OR a scrollback replay is in flight, HOLD (not
+      // drop) inbound writes. For a replay, getScrollback() drains the
+      // server-side pending buffer, so anything still arriving here is either
+      // an in-flight duplicate of the replay (harmless to re-apply) or
+      // genuinely new live output (e.g. a diff frame) that must not be lost -
+      // dropping it (the prior behavior) could silently discard a selection
+      // highlight in a fullscreen TUI. Held bytes are retained and resumed via
+      // kick() on drag end, at the end of afterWrite, or by the stuck-replay
+      // watchdog.
+      shouldHold: () => isBoardDragActive() || scrollbackPendingRef.current,
       ack: (bytes) => window.electronAPI.sessions.ackData(sessionId, bytes),
     });
+    incomingResumeRef.current = () => queue.kick();
 
     const cleanup = window.electronAPI.sessions.onData((incomingSessionId, data) => {
       if (incomingSessionId !== sessionId) return;
@@ -299,6 +348,7 @@ export function useTerminal(options: UseTerminalOptions) {
     return () => {
       cleanup();
       cleanupRef.current = null;
+      incomingResumeRef.current = null;
       unsubscribeDragEnd();
       queue.reset();
     };
@@ -346,6 +396,7 @@ export function useTerminal(options: UseTerminalOptions) {
   useEffect(() => {
     return () => {
       if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current);
+      if (scrollbackWatchdogRef.current) clearTimeout(scrollbackWatchdogRef.current);
       // Flush any pending batched writes synchronously so keystrokes queued
       // just before unmount (sessionId change, HMR dispose) aren't dropped.
       writeBatcherRef.current?.flush();
@@ -408,6 +459,18 @@ export function useTerminal(options: UseTerminalOptions) {
     const skipResize = reloadOptions?.skipResize ?? false;
     scrollbackPendingRef.current = true;
     const scrollbackGeneration = ++scrollbackGenerationRef.current;
+    if (scrollbackWatchdogRef.current) clearTimeout(scrollbackWatchdogRef.current);
+    scrollbackWatchdogRef.current = setTimeout(() => {
+      scrollbackWatchdogRef.current = null;
+      if (scrollbackGenerationRef.current === scrollbackGeneration && scrollbackPendingRef.current) {
+        // Invalidate the generation so a merely-delayed (not dropped) afterWrite
+        // or catch for this replay bails at its generation guard instead of
+        // re-running fit / scroll / focus after we already force-recovered.
+        scrollbackGenerationRef.current += 1;
+        scrollbackPendingRef.current = false;
+        incomingResumeRef.current?.();
+      }
+    }, SCROLLBACK_WATCHDOG_MS);
     xtermRef.current.reset();
 
     // Resize-first: fit to container, then sync PTY dimensions before
@@ -431,19 +494,31 @@ export function useTerminal(options: UseTerminalOptions) {
 
     Promise.all([resizePromise, scrollbackPromise])
       .then(([, scrollback]) => {
-        // A newer scrollback operation has started; abandon this one.
-        if (scrollbackGenerationRef.current !== scrollbackGeneration) {
-          scrollbackPendingRef.current = false;
-          return;
-        }
+        // A newer scrollback operation has started; it owns clearing pending
+        // (and the watchdog it armed), so this stale resolve must not touch
+        // either - clearing them here would open the drop/hold gate early
+        // for the newer replay still in flight.
+        if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
 
         const afterWrite = () => {
+          // A newer replay may have started (and armed its own watchdog,
+          // which already canceled ours) while this chunked write was in
+          // flight; abandon so we don't clobber its pending/fit/focus.
+          if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
+          if (scrollbackWatchdogRef.current) {
+            clearTimeout(scrollbackWatchdogRef.current);
+            scrollbackWatchdogRef.current = null;
+          }
           if (fitAddonRef.current) fitAddonRef.current.fit();
           // Restore saved scroll position (HMR) or pin to bottom
           if (xtermRef.current) {
             isAtBottomRef.current = restoreScrollPosition(xtermRef.current, options.sessionId);
           }
           scrollbackPendingRef.current = false;
+          // Flush any live bytes the incoming queue held during the reload
+          // (see shouldHold in the queue effect below) now that the replay
+          // frame is fully painted, so they apply strictly after it.
+          incomingResumeRef.current?.();
           // Focus after the reload completes. No corrective resize: when a
           // resize was sent above, main sampled the settled frame; a same-dims
           // resize is a no-op either way.
@@ -464,6 +539,10 @@ export function useTerminal(options: UseTerminalOptions) {
         // IPC may reject if session was killed during the async gap.
         // Unblock onData so the terminal isn't permanently silenced.
         if (scrollbackGenerationRef.current !== scrollbackGeneration) return;
+        if (scrollbackWatchdogRef.current) {
+          clearTimeout(scrollbackWatchdogRef.current);
+          scrollbackWatchdogRef.current = null;
+        }
         scrollbackPendingRef.current = false;
       });
   }, [options.sessionId]);
