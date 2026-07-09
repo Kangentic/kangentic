@@ -34,6 +34,7 @@ import { ConversationSearchBar, type ConversationSearchBarHandle } from './Conve
 import { ConversationScrollbar, CONTENT_RIGHT_CLEARANCE_PX, ROW_LEFT_INSET_PX } from './ConversationScrollbar';
 import { reconcileDisplayRows, isSlashCommandRow, speakerGroup, type DisplayRow, type DisplayRowResult } from './display-rows';
 import { FAR_FROM_BOTTOM_PX } from './scrollbar-math';
+import { ESTIMATED_ROW_HEIGHT, computeSettleScrollTop, type SettleVirtualItem } from './settle-scroll';
 import { renderAssistantBlocksMarkdown } from '../../../shared/transcript-format';
 import { sanitizeTranscriptText } from '../../../shared/ansi-strip';
 import { humanizeModelId } from '../../../shared/model-id';
@@ -49,7 +50,6 @@ import type {
 /** Result bodies longer than this are clamped with a "Show all" toggle. */
 const RESULT_CLAMP_CHARS = 4000;
 const HIGHLIGHT_DURATION_MS = 4000;
-const ESTIMATED_ROW_HEIGHT = 96;
 
 /** Where the viewer opens by default (no `scrollToTurnUuid`): the latest
  *  message, or centered on the row matching the terminal's visible
@@ -80,49 +80,26 @@ interface ConversationViewProps {
   isFocused: boolean;
 }
 
-/** Sum of `rows[0..index)`'s estimated heights - the row's approximate
- *  offset from the top of the virtual content, independent of the
- *  virtualizer's own (asynchronous, reconcile-driven) internal scroll state.
- *  Used only as a bootstrap guess before the target row has ever been
- *  rendered (see `useScrollSettle`'s `getVirtualItems` fallback below) - the
- *  per-row heuristic in `display-rows.ts` is a rough line-count estimate, so
- *  a target many rows deep can accumulate a large enough error that this
- *  alone is not a reliable final position. */
-function estimatedOffsetForIndex(rows: DisplayRow[], index: number): number {
-  let offset = 0;
-  for (let rowIndex = 0; rowIndex < index && rowIndex < rows.length; rowIndex += 1) {
-    offset += rows[rowIndex]?.estimatedHeight ?? ESTIMATED_ROW_HEIGHT;
-  }
-  return offset;
-}
-
-/** The subset of `@tanstack/react-virtual`'s `VirtualItem` this settle loop
- *  needs - narrowed so the hook does not have to import the virtualizer's
- *  full generic type. */
-interface SettleVirtualItem {
-  index: number;
-  start: number;
-  size: number;
-}
-
 /**
  * Bounded settle loop that drives the scroll container's `scrollTop`
  * DIRECTLY (never through `virtualizer.scrollToIndex`/`scrollToEnd`) until it
  * stabilizes across two ticks (or a tick cap is hit).
  *
- * For `align: 'center' | 'start'`, each tick first checks whether the target
- * row is currently among the virtualizer's OWN rendered `getVirtualItems()` -
- * if so, its `start`/`size` are real, measured values (accurate regardless of
- * how far off the row's static `estimatedHeight` heuristic was), and this
- * loop uses them directly instead of the heuristic. A target far from the
- * current scroll position is not yet rendered on tick 1, so that tick falls
- * back to the heuristic-summed estimate purely to get CLOSE - close enough
- * that the browser's own scrollTop clamping settles near the target's real
- * rows, which the virtualizer then renders, which the NEXT tick picks up via
- * getVirtualItems(). This is what actually fulfills convergence: the
- * heuristic alone never improves across retries (it is static per row), so
- * without this real-measurement readback the loop would just rewrite the
- * same wrong value every tick and call it "stable".
+ * For `align: 'center' | 'start'`, each tick delegates the actual scrollTop
+ * math to `computeSettleScrollTop` (settle-scroll.ts, unit-tested there),
+ * which first checks whether the target row is currently among the
+ * virtualizer's OWN rendered `getVirtualItems()` - if so, its `start`/`size`
+ * are real, measured values (accurate regardless of how far off the row's
+ * static `estimatedHeight` heuristic was), and it uses them directly instead
+ * of the heuristic. A target far from the current scroll position is not yet
+ * rendered on tick 1, so that tick falls back to the heuristic-summed
+ * estimate purely to get CLOSE - close enough that the browser's own
+ * scrollTop clamping settles near the target's real rows, which the
+ * virtualizer then renders, which the NEXT tick picks up via a fresh
+ * `virtualItem`. This is what actually fulfills convergence: the heuristic
+ * alone never improves across retries (it is static per row), so without
+ * this real-measurement readback the loop would just rewrite the same wrong
+ * value every tick and call it "stable".
  *
  * This bypasses `@tanstack/virtual-core`'s own scroll-to + reconcile
  * machinery on purpose: that reconcile path schedules its OWN
@@ -203,14 +180,9 @@ function useScrollSettle(
           // typically ready by the NEXT tick) - at that point start/size flip
           // to real values and this converges to the true position, which the
           // static heuristic alone never would (see this function's doc
-          // comment above).
+          // comment above and computeSettleScrollTop's in settle-scroll.ts).
           const virtualItem = getVirtualItems().find((item) => item.index === index);
-          const rowOffset = virtualItem ? virtualItem.start : estimatedOffsetForIndex(rows, index);
-          const rowHeight = virtualItem ? virtualItem.size : (rows[index]?.estimatedHeight ?? ESTIMATED_ROW_HEIGHT);
-          const targetOffset = align === 'center'
-            ? rowOffset - Math.max(0, (container.clientHeight - rowHeight) / 2)
-            : rowOffset;
-          container.scrollTop = Math.max(0, Math.round(targetOffset));
+          container.scrollTop = computeSettleScrollTop({ align, index, rows, virtualItem, clientHeight: container.clientHeight });
         }
 
         // `instant` (search-result navigation) skips the retry loop entirely:
@@ -563,7 +535,7 @@ export function ConversationView({
                   }}
                 >
                   {isSystem ? (
-                    <div className={gapClass} style={rowStyle}>
+                    <div className={gapClass} style={rowStyle} data-testid="conversation-row-gap">
                       <MemoConversationRow
                         row={row}
                         agentName={agentName}
@@ -572,7 +544,7 @@ export function ConversationView({
                       />
                     </div>
                   ) : (
-                    <div className={gapClass} style={rowStyle}>
+                    <div className={gapClass} style={rowStyle} data-testid="conversation-row-gap">
                       <div
                         data-highlighted={isHighlighted ? 'true' : undefined}
                         className={`group/message rounded-lg border px-3 py-2 transition-colors duration-700 ${
