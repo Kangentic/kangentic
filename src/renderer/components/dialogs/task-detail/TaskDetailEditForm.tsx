@@ -34,6 +34,8 @@ interface TaskDetailEditFormProps {
   setModelOverride: (value: string) => void;
   effortOverride: string;
   setEffortOverride: (value: string) => void;
+  permissionOverride: string;
+  setPermissionOverride: (value: string) => void;
   attachments: AttachmentsState;
   branchConfig: BranchConfigState;
   isSessionActive: boolean;
@@ -59,6 +61,8 @@ export function TaskDetailEditForm({
   setModelOverride,
   effortOverride,
   setEffortOverride,
+  permissionOverride,
+  setPermissionOverride,
   attachments,
   branchConfig,
   isSessionActive,
@@ -196,7 +200,9 @@ export function TaskDetailEditForm({
           setModelOverride={setModelOverride}
           effortOverride={effortOverride}
           setEffortOverride={setEffortOverride}
-          defaultOpen={!!agentOverride || !!modelOverride || !!effortOverride}
+          permissionOverride={permissionOverride}
+          setPermissionOverride={setPermissionOverride}
+          defaultOpen={!!agentOverride || !!modelOverride || !!effortOverride || !!permissionOverride}
         />
       )}
       {attachments.isDragOver && (

@@ -175,12 +175,11 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByRole('button', { name: 'Agent', exact: true }).click();
 
-    // Find the Permissions setting row by its description text, then locate its select
-    const permDescription = page.getByText('How the agent handles tool approvals');
-    const permSettingRow = permDescription.locator('..').locator('..').locator('..');
-    const permSelect = permSettingRow.locator('select');
-    const options = permSelect.locator('option');
-    const texts = await options.allTextContents();
+    // Permission mode is a Combobox (input + dropdown, not a native <select>):
+    // open it and read the option rows.
+    const permInput = page.locator('input[data-testid="agent-permission-mode"]');
+    await permInput.click();
+    const texts = await page.locator('[data-combobox-option]').allTextContents();
 
     expect(texts).toEqual([
       'Plan (Read-Only)',
@@ -191,6 +190,9 @@ test.describe('Settings Panel', () => {
       'Bypass (Unsafe)',
     ]);
 
+    // The Combobox's Escape handler doesn't stop propagation, so a single
+    // Escape (fired by closeSettings() below) closes both the popover and
+    // the whole panel in one press - no separate close needed here.
     await closeSettings();
   });
 
@@ -198,11 +200,10 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByRole('button', { name: 'Agent', exact: true }).click();
 
-    // Switch default agent to Kimi via the Default Agent select.
-    const defaultAgentDescription = page.getByText('Which agent CLI to use for new sessions');
-    const defaultAgentRow = defaultAgentDescription.locator('..').locator('..').locator('..');
-    const agentSelect = defaultAgentRow.locator('select');
-    await agentSelect.selectOption({ label: 'Kimi Code' });
+    // Switch default agent to Kimi via the Default Agent combobox.
+    const agentInput = page.locator('input[data-testid="project-default-agent"]');
+    await agentInput.click();
+    await page.locator('[data-testid="project-default-agent-option-kimi"]').click();
 
     // Cleanup MUST run even if the assertions below throw - otherwise a
     // failing assertion would leak the Kimi-default into subsequent tests
@@ -210,25 +211,32 @@ test.describe('Settings Panel', () => {
     // way to guarantee restoration in Playwright tests that mutate shared
     // app state (this test fixture uses module-scoped page + beforeAll).
     try {
-      const permDescription = page.getByText('How the agent handles tool approvals');
-      const permSettingRow = permDescription.locator('..').locator('..').locator('..');
-      const permSelect = permSettingRow.locator('select');
+      const permRow = page.locator('div:has(> input[data-testid="agent-permission-mode"])');
+      const permInput = page.locator('input[data-testid="agent-permission-mode"]');
 
       await expect.poll(async () => {
-        const options = permSelect.locator('option');
-        return options.allTextContents();
+        await permInput.click();
+        const texts = await page.locator('[data-combobox-option]').allTextContents();
+        // Close via the chevron toggle, not Escape: the Settings panel itself
+        // closes on Escape (see "Escape key closes panel" above), so pressing
+        // it here would tear down the whole panel instead of just this popover.
+        await permRow.locator('button[title="Close dropdown"]').click();
+        return texts;
       }, { timeout: 3000 }).toEqual([
         'Plan (Read-Only)',
         'Default (Confirm Actions)',
         'YOLO (Skip Confirmations)',
       ]);
 
-      // The Kimi adapter declares "default" as its defaultPermission.
-      // After switching the agent, the permission mode should be set to "default".
-      await expect(permSelect).toHaveValue('default');
+      // The Kimi adapter declares "default" as its defaultPermission. After
+      // switching the agent, the permission mode should be set to "default"
+      // - shown here as its label, since the Combobox displays the resolved
+      // option's label, not its raw value.
+      await expect(permInput).toHaveValue('Default (Confirm Actions)');
     } finally {
       // Restore to Claude so later tests are unaffected.
-      await agentSelect.selectOption({ label: 'Claude Code' });
+      await agentInput.click();
+      await page.locator('[data-testid="project-default-agent-option-claude"]').click();
       await closeSettings();
     }
   });
@@ -237,11 +245,10 @@ test.describe('Settings Panel', () => {
     await openSettings();
     await page.getByRole('button', { name: 'Agent', exact: true }).click();
 
-    // Switch default agent to OpenCode via the Default Agent select.
-    const defaultAgentDescription = page.getByText('Which agent CLI to use for new sessions');
-    const defaultAgentRow = defaultAgentDescription.locator('..').locator('..').locator('..');
-    const agentSelect = defaultAgentRow.locator('select');
-    await agentSelect.selectOption({ label: 'OpenCode' });
+    // Switch default agent to OpenCode via the Default Agent combobox.
+    const agentInput = page.locator('input[data-testid="project-default-agent"]');
+    await agentInput.click();
+    await page.locator('[data-testid="project-default-agent-option-opencode"]').click();
 
     // Cleanup MUST run even if the assertions below throw - otherwise a
     // failing assertion would leak the OpenCode-default into subsequent tests
@@ -249,26 +256,30 @@ test.describe('Settings Panel', () => {
     // way to guarantee restoration in Playwright tests that mutate shared
     // app state (this test fixture uses module-scoped page + beforeAll).
     try {
-      const permDescription = page.getByText('How the agent handles tool approvals');
-      const permSettingRow = permDescription.locator('..').locator('..').locator('..');
-      const permSelect = permSettingRow.locator('select');
+      const permRow = page.locator('div:has(> input[data-testid="agent-permission-mode"])');
+      const permInput = page.locator('input[data-testid="agent-permission-mode"]');
 
       // OpenCode exposes exactly 2 modes: Plan and Build (trimmed from the
       // original 4-entry Claude-shaped list). Verify exact order and no extras.
       await expect.poll(async () => {
-        const options = permSelect.locator('option');
-        return options.allTextContents();
+        await permInput.click();
+        const texts = await page.locator('[data-combobox-option]').allTextContents();
+        // Close via the chevron toggle, not Escape - see the Kimi test above.
+        await permRow.locator('button[title="Close dropdown"]').click();
+        return texts;
       }, { timeout: 3000 }).toEqual([
         'Plan',
         'Build',
       ]);
 
       // The OpenCode adapter declares "acceptEdits" as its defaultPermission.
-      // After switching the agent, the permission mode should be set to "acceptEdits".
-      await expect(permSelect).toHaveValue('acceptEdits');
+      // After switching the agent, the permission mode should be set to
+      // "acceptEdits" - shown here as its label (see the Kimi test above).
+      await expect(permInput).toHaveValue('Build');
     } finally {
       // Restore to Claude so later tests are unaffected.
-      await agentSelect.selectOption({ label: 'Claude Code' });
+      await agentInput.click();
+      await page.locator('[data-testid="project-default-agent-option-claude"]').click();
       await closeSettings();
     }
   });

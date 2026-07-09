@@ -24,6 +24,8 @@ export class ProjectRepository {
       path: input.path,
       github_url: input.github_url || null,
       default_agent: input.default_agent || DEFAULT_AGENT,
+      default_model: input.default_model ?? null,
+      default_effort: input.default_effort ?? null,
       group_id: null,
       position: 0,
       last_opened: now,
@@ -33,8 +35,8 @@ export class ProjectRepository {
       // Shift all existing projects down to make room at position 0
       db.prepare('UPDATE projects SET position = position + 1').run();
       db.prepare(
-        'INSERT INTO projects (id, name, path, github_url, default_agent, group_id, position, last_opened, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(project.id, project.name, project.path, project.github_url, project.default_agent, project.group_id, project.position, project.last_opened, project.created_at);
+        'INSERT INTO projects (id, name, path, github_url, default_agent, default_model, default_effort, group_id, position, last_opened, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(project.id, project.name, project.path, project.github_url, project.default_agent, project.default_model, project.default_effort, project.group_id, project.position, project.last_opened, project.created_at);
     });
     tx();
     return project;
@@ -82,6 +84,18 @@ export class ProjectRepository {
   setDefaultAgent(projectId: string, agentName: string): Project {
     const db = getGlobalDb();
     db.prepare('UPDATE projects SET default_agent = ? WHERE id = ?').run(agentName, projectId);
+    return db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as Project;
+  }
+
+  setDefaultModel(projectId: string, model: string | null): Project {
+    const db = getGlobalDb();
+    db.prepare('UPDATE projects SET default_model = ? WHERE id = ?').run(model, projectId);
+    return db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as Project;
+  }
+
+  setDefaultEffort(projectId: string, effort: string | null): Project {
+    const db = getGlobalDb();
+    db.prepare('UPDATE projects SET default_effort = ? WHERE id = ?').run(effort, projectId);
     return db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as Project;
   }
 

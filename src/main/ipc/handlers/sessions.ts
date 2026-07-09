@@ -196,7 +196,8 @@ export function registerSessionHandlers(context: IpcContext): void {
             resolvedProjectId, resolvedProjectPath,
           );
 
-          const overrides = resolveSpawnOverrides(current, currentLane);
+          const project = context.projectRepo.getById(resolvedProjectId);
+          const overrides = resolveSpawnOverrides(current, currentLane, project);
           await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, resumePrompt, signal, undefined, undefined, overrides);
 
           const updated = tasks.getById(taskId);

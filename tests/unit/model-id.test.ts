@@ -4,6 +4,8 @@ import {
   groupModelIds,
   parseModelFamily,
   compareModelVersion,
+  resolveModelSelector,
+  resolveEffortSelector,
 } from '../../src/shared/model-id';
 
 describe('parseModelId', () => {
@@ -287,5 +289,49 @@ describe('compareModelVersion', () => {
   it('treats a missing element as lower than any present element', () => {
     expect(compareModelVersion([4], [4, 8])).toBeLessThan(0);
     expect(compareModelVersion([4, 8], [4])).toBeGreaterThan(0);
+  });
+});
+
+describe('resolveModelSelector', () => {
+  it('passes through a raw lowercase id or alias verbatim', () => {
+    expect(resolveModelSelector('claude-opus-4-8')).toBe('claude-opus-4-8');
+    expect(resolveModelSelector('opus')).toBe('opus');
+    expect(resolveModelSelector('sonnet')).toBe('sonnet');
+  });
+
+  it('synthesizes a "<Name> <major>.<minor>" friendly form into an id', () => {
+    expect(resolveModelSelector('Opus 4.8')).toBe('claude-opus-4-8');
+    expect(resolveModelSelector('Sonnet 5')).toBe('claude-sonnet-5');
+    expect(resolveModelSelector('Haiku 4.5')).toBe('claude-haiku-4-5');
+  });
+
+  it('maps a trailing "(1M)" to the [1m] suffix', () => {
+    expect(resolveModelSelector('Opus 4.8 (1M)')).toBe('claude-opus-4-8[1m]');
+    expect(resolveModelSelector('Opus 4.8 (1m)')).toBe('claude-opus-4-8[1m]');
+  });
+
+  it('handles a multi-word model name', () => {
+    expect(resolveModelSelector('Fable 5')).toBe('claude-fable-5');
+  });
+
+  it('passes through empty/whitespace-only input unchanged', () => {
+    expect(resolveModelSelector('')).toBe('');
+    expect(resolveModelSelector('   ')).toBe('');
+  });
+
+  it('trims surrounding whitespace before matching', () => {
+    expect(resolveModelSelector('  Opus 4.8  ')).toBe('claude-opus-4-8');
+  });
+});
+
+describe('resolveEffortSelector', () => {
+  it('lowercases and trims', () => {
+    expect(resolveEffortSelector('XHigh')).toBe('xhigh');
+    expect(resolveEffortSelector(' High ')).toBe('high');
+    expect(resolveEffortSelector('MAX')).toBe('max');
+  });
+
+  it('passes through an already-normalized value unchanged', () => {
+    expect(resolveEffortSelector('medium')).toBe('medium');
   });
 });

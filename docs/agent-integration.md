@@ -316,8 +316,7 @@ claude --settings <mergedSettingsPath> --resume <uuid>
 
 #### Permission Mode Resolution (Priority Order)
 
-1. Swimlane's `permission_mode` (if set)
-2. Global `config.agent.permissionMode`
+See [Permission Mode Resolution](configuration.md#permission-mode-resolution-priority-order) in configuration.md.
 
 ### Non-Interactive Mode
 

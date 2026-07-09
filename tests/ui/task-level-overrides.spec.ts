@@ -36,6 +36,17 @@ async function closeDialog() {
   await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
 }
 
+/**
+ * Open a closed-enumeration Combobox (Agent/Effort/Permission - see
+ * src/renderer/components/dialogs/Combobox.tsx) and click a specific option
+ * by its exact value (not label - Agent/Permission display a friendly label
+ * that differs from the stored value, e.g. "Codex CLI" -> "codex").
+ */
+async function selectCombobox(target: Page, testId: string, optionValue: string) {
+  await target.locator(`input[data-testid="${testId}"]`).click();
+  await target.locator(`[data-testid="${testId}-option-${optionValue}"]`).click();
+}
+
 test.describe('NewTaskDialog Advanced section', () => {
   test('Advanced toggle is visible and starts collapsed', async () => {
     await openNewTaskDialog();
@@ -50,33 +61,46 @@ test.describe('NewTaskDialog Advanced section', () => {
     await closeDialog();
   });
 
-  test('expanding Advanced reveals model combobox and effort select with column-default placeholder', async () => {
+  test('expanding Advanced reveals model combobox and effort select with a resolved-default placeholder', async () => {
     await openNewTaskDialog();
 
     await page.locator('[data-testid="task-advanced-toggle"]').click();
 
+    // Effort: same closed-enumeration Combobox widget Model uses (opens on
+    // click/focus, typing filters, a click commits the pick).
+    const effortRow = page.locator('div:has(> input[data-testid="task-effort-override"])');
+    const effortInput = page.locator('input[data-testid="task-effort-override"]');
+    await expect(effortInput).toBeVisible();
+    await expect(effortInput).toHaveAttribute('placeholder', 'Agent default');
+    await effortInput.click();
+    const effortOptions = page.locator('[data-combobox-option]');
+    await expect(effortOptions.first()).toBeVisible();
+    const effortOptionTexts = await effortOptions.allTextContents();
+    expect(effortOptionTexts).toEqual(expect.arrayContaining(['low', 'medium', 'high', 'xhigh', 'max']));
+    // Close via the chevron toggle, NOT Escape: the form isn't dirty yet (no
+    // field has been picked), so Escape would bubble past the dropdown and
+    // trip NewTaskDialog's close-on-Escape guard, tearing down the whole
+    // dialog instead of just this popover (see the identical pitfall called
+    // out in the "Model dropdown open triggers a rescan" test below).
+    await effortRow.locator('button[title="Close dropdown"]').click();
+    await expect(effortOptions.first()).not.toBeVisible();
+
     // Model: free-text combobox seeded by `useKnownModels` (capabilities.models
-    // union discoveredModelsByAgent cache). Empty value shows "Use column
-    // default" placeholder; focusing the input reveals the suggestion list.
+    // union discoveredModelsByAgent cache). Empty value shows the resolved
+    // fallback directly, no "Use ... default" framing (column override ->
+    // project default -> agent default; this fixture has neither of the
+    // first two set, so plain "Agent default"); focusing the input reveals
+    // the suggestion list.
+    const modelRow = page.locator('div:has(> input[data-testid="task-model-override"])');
     const modelInput = page.locator('input[data-testid="task-model-override"]');
     await expect(modelInput).toBeVisible();
-    await expect(modelInput).toHaveAttribute('placeholder', 'Use column default');
+    await expect(modelInput).toHaveAttribute('placeholder', 'Agent default');
     await modelInput.click();
     const modelOptions = page.locator('[data-model-option]');
     await expect(modelOptions.first()).toBeVisible();
     const modelOptionTexts = await modelOptions.allTextContents();
     expect(modelOptionTexts).toEqual(expect.arrayContaining(['opus', 'sonnet', 'haiku']));
-
-    // Close the suggestion dropdown before checking the effort select so its
-    // outside-click handler doesn't intercept our next click.
-    await page.keyboard.press('Escape');
-
-    // Effort: still a real <select> (efforts are enumeration-only).
-    const effortSelect = page.locator('select[data-testid="task-effort-override"]');
-    await expect(effortSelect).toBeVisible();
-    await expect(effortSelect.locator('option').first()).toHaveText('Use column default');
-    const effortOptions = await effortSelect.locator('option').allTextContents();
-    expect(effortOptions).toEqual(expect.arrayContaining(['low', 'medium', 'high', 'xhigh', 'max']));
+    await modelRow.locator('button[title="Close dropdown"]').click();
 
     await closeDialog();
   });
@@ -91,8 +115,7 @@ test.describe('NewTaskDialog Advanced section', () => {
     await page.locator('input[data-testid="task-model-override"]').click();
     await page.locator('[data-model-option]:has-text("opus")').click();
 
-    // Effort is still a plain select
-    await page.locator('select[data-testid="task-effort-override"]').selectOption('high');
+    await selectCombobox(page, 'task-effort-override', 'high');
 
     await page.locator('button[type="submit"]:has-text("Create")').click();
     await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
@@ -155,7 +178,7 @@ test.describe('TaskDetailEditForm Advanced section (edit-mode overrides)', () =>
     await page.locator('[data-testid="task-advanced-toggle"]').click();
     await page.locator('input[data-testid="task-model-override"]').click();
     await page.locator('[data-model-option]:has-text("opus")').click();
-    await page.locator('select[data-testid="task-effort-override"]').selectOption('high');
+    await selectCombobox(page, 'task-effort-override', 'high');
     await page.locator('button[type="submit"]:has-text("Create")').click();
     await page.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 3000 });
 
@@ -167,14 +190,16 @@ test.describe('TaskDetailEditForm Advanced section (edit-mode overrides)', () =>
     // Section opens automatically because the task already has overrides set
     await expect(page.locator('[data-testid="task-advanced-section"]')).toBeVisible();
     await expect(page.locator('input[data-testid="task-model-override"]')).toHaveValue('opus');
-    await expect(page.locator('select[data-testid="task-effort-override"]')).toHaveValue('high');
+    // Effort's value and label are identical strings (no id<->display mapping
+    // like models have), so the input's displayed text still equals the raw value.
+    await expect(page.locator('input[data-testid="task-effort-override"]')).toHaveValue('high');
 
     // Change model to sonnet and effort to medium
     const modelInput = page.locator('input[data-testid="task-model-override"]');
     await modelInput.click();
     await modelInput.fill('');
     await page.locator('[data-model-option]:has-text("sonnet")').click();
-    await page.locator('select[data-testid="task-effort-override"]').selectOption('medium');
+    await selectCombobox(page, 'task-effort-override', 'medium');
 
     await page.locator('button:has-text("Save")').click();
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden' });
@@ -272,16 +297,22 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
     await multiPage.locator('input[placeholder="Task title"]').waitFor({ state: 'hidden', timeout: 2000 });
   }
 
-  test('Agent dropdown lists every found agent with a "Use column default" option', async () => {
+  test('Agent dropdown lists every found agent with a resolved-default option', async () => {
     await openDialog();
 
-    const agentSelect = multiPage.locator('select[data-testid="task-agent-override"]');
-    await expect(agentSelect).toBeVisible();
+    const agentInput = multiPage.locator('input[data-testid="task-agent-override"]');
+    await expect(agentInput).toBeVisible();
 
-    const optionTexts = await agentSelect.locator('option').allTextContents();
-    expect(optionTexts[0]).toBe('Use column default');
+    // No column or project agent override is set in this fixture, so the
+    // inherit placeholder resolves to the app default (Claude Code) and
+    // shows that value directly, no "Use default (...)" framing.
+    await expect(agentInput).toHaveAttribute('placeholder', 'Claude Code');
+
+    await agentInput.click();
+    const optionTexts = await multiPage.locator('[data-combobox-option]').allTextContents();
     expect(optionTexts).toEqual(expect.arrayContaining(['Claude Code', 'Codex CLI']));
 
+    await multiPage.keyboard.press('Escape');
     await closeDialog();
   });
 
@@ -293,7 +324,7 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
     await multiPage.locator('[data-model-option]:has-text("opus")').click();
 
     // Switch agent to Codex
-    await multiPage.locator('select[data-testid="task-agent-override"]').selectOption('codex');
+    await selectCombobox(multiPage, 'task-agent-override', 'codex');
 
     // Model state was reset (Codex doesn't have 'opus')
     const modelInput = multiPage.locator('input[data-testid="task-model-override"]');
@@ -316,7 +347,7 @@ test.describe('NewTaskDialog Advanced - Agent picker (multi-agent fixture)', () 
     await openDialog();
 
     await multiPage.locator('input[placeholder="Task title"]').fill('Agent Override Task');
-    await multiPage.locator('select[data-testid="task-agent-override"]').selectOption('codex');
+    await selectCombobox(multiPage, 'task-agent-override', 'codex');
     await multiPage.locator('input[data-testid="task-model-override"]').click();
     await multiPage.locator('[data-model-option]:has-text("gpt-5-mini")').click();
 
@@ -692,11 +723,14 @@ test.describe('NewTaskDialog Advanced - Model dropdown open triggers a rescan', 
     // dialog, not just the suggestion popover. The chevron toggle is a plain
     // mouse click scoped to ModelCombobox's own open/close state, so it
     // exercises the cooldown in isolation from that unrelated close path.
-    const chevronToggle = rescanPage.locator('button[title="Close dropdown"]');
+    // Scoped to the model input's own row: Effort/Permission/Agent are the
+    // same Combobox widget and render an identically-titled toggle button.
+    const modelRow = rescanPage.locator('div:has(> input[data-testid="task-model-override"])');
+    const chevronToggle = modelRow.locator('button[title="Close dropdown"]');
     await chevronToggle.click();
     await expect(modelOptions.first()).not.toBeVisible();
 
-    const reopenToggle = rescanPage.locator('button[title="Open dropdown"]');
+    const reopenToggle = modelRow.locator('button[title="Open dropdown"]');
     await reopenToggle.click();
     await expect(modelOptions.first()).toBeVisible();
 

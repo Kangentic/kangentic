@@ -97,6 +97,11 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
       mcpServerEnabled: config.mcpServer.enabled,
       mcpServerUrl: context.mcpServerHandle?.urlForProject(input.projectId),
       mcpServerToken: context.mcpServerHandle?.token,
+      // Project default model/effort, same tier board-task spawns apply. A
+      // fresh Command Terminal starts on the project's preferred combo
+      // instead of the CLI's own default.
+      model: project.default_model ?? undefined,
+      effort: project.default_effort ?? undefined,
     };
     const command = adapter.buildCommand(commandOptions);
     const extraEnv = adapter.buildEnv?.(commandOptions) ?? null;

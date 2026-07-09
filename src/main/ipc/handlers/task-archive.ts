@@ -74,8 +74,9 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
           const db = getProjectDb(resolvedProjectId);
           const sessionRepo = new SessionRepository(db);
           const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
+          const project = context.projectRepo.getById(resolvedProjectId);
 
-          const overrides = resolveSpawnOverrides(task, toLane);
+          const overrides = resolveSpawnOverrides(task, toLane, project);
           try {
             await engine.executeTransition(task, doneLane.id, input.targetSwimlaneId, toLane?.permission_mode, true, undefined, undefined, overrides);
           } catch (err) {
@@ -87,7 +88,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
           if (finalTask && !finalTask.session_id && toLane?.auto_spawn) {
             console.log(`[TASK_UNARCHIVE] Ensuring agent for task ${task.id.slice(0, 8)}`);
             try {
-              await engine.resumeSuspendedSession(finalTask, toLane.permission_mode, true, undefined, undefined, undefined, undefined, resolveSpawnOverrides(finalTask, toLane));
+              await engine.resumeSuspendedSession(finalTask, toLane.permission_mode, true, undefined, undefined, undefined, undefined, resolveSpawnOverrides(finalTask, toLane, project));
               finalTask = tasks.getById(task.id);
             } catch (err) {
               console.error('[TASK_UNARCHIVE] Failed to start session:', err);
@@ -114,6 +115,9 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
 
     const { tasks, swimlanes, actions, attachments: attachmentRepo } = getProjectRepos(context, resolvedProjectId);
     const toLane = swimlanes.getById(targetSwimlaneId);
+    // Project row is invariant for the whole batch (resolvedProjectId does not
+    // change per task); hoist the lookup out of the loop, matching board.ts.
+    const project = context.projectRepo.getById(resolvedProjectId);
 
     for (const id of ids) {
       // Per-task lock so each unarchive+spawn serializes against any
@@ -152,7 +156,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
             const sessionRepo = new SessionRepository(db);
             const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachmentRepo, resolvedProjectId, resolvedProjectPath);
 
-            const overrides = resolveSpawnOverrides(task, toLane);
+            const overrides = resolveSpawnOverrides(task, toLane, project);
             try {
               await engine.executeTransition(task, doneLane.id, targetSwimlaneId, toLane?.permission_mode, true, undefined, undefined, overrides);
             } catch (error) {
@@ -162,7 +166,7 @@ export function registerTaskArchiveHandlers(context: IpcContext): void {
             let finalTask = tasks.getById(task.id);
             if (finalTask && !finalTask.session_id && toLane?.auto_spawn) {
               try {
-                await engine.resumeSuspendedSession(finalTask, toLane.permission_mode, true, undefined, undefined, undefined, undefined, resolveSpawnOverrides(finalTask, toLane));
+                await engine.resumeSuspendedSession(finalTask, toLane.permission_mode, true, undefined, undefined, undefined, undefined, resolveSpawnOverrides(finalTask, toLane, project));
                 finalTask = tasks.getById(task.id);
               } catch (error) {
                 console.error('[TASK_BULK_UNARCHIVE] Failed to start session:', error);

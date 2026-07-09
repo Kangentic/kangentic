@@ -23,6 +23,14 @@ interface ModelComboboxProps {
   /** Friendly display name per model id, from `useModelDisplayNames`. A row
    *  without an entry falls back to its raw id (see `modelRowLabel`). */
   modelDisplayNames?: Record<string, string>;
+  /**
+   * How the placeholder reads when value is ''. 'resolved' (default) renders
+   * it at full text weight because it names a concrete model that will
+   * actually run. 'muted' is a faint hint for the literal case where no
+   * model is configured at any tier and the placeholder is just the generic
+   * "Agent default" fallback text.
+   */
+  placeholderVariant?: 'resolved' | 'muted';
 }
 
 // Vertically-navigable suggestion buttons: model options plus the older-versions
@@ -46,6 +54,7 @@ export function ModelCombobox({
   onOpen,
   contextWindows = {},
   modelDisplayNames = {},
+  placeholderVariant = 'resolved',
 }: ModelComboboxProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [filterText, setFilterText] = useState('');
@@ -53,7 +62,16 @@ export function ModelCombobox({
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  const displayValue = value || '';
+  // The committed value's friendly label (matches the dropdown rows and the
+  // inherited-default placeholder, both of which already go through
+  // modelRowLabel) - shown whenever the user isn't actively typing, so
+  // opening the dropdown on an already-selected value doesn't flash to the
+  // raw id. Once typing starts, filterText (not value, which for an async
+  // caller like a project-default setter can lag a keystroke behind) takes
+  // over as the displayed text - matching (see matchesQuery below) checks
+  // the raw id AND the friendly label, so filtering by either still works.
+  const selectedLabel = value ? modelRowLabel(value, modelDisplayNames) : '';
+  const displayValue = isOpen ? (filterText || selectedLabel) : selectedLabel;
   const searchQuery = filterText.toLowerCase();
 
   // One row per base model: [1m] variants collapse onto their base row as a 1M
@@ -261,14 +279,14 @@ export function ModelCombobox({
     // telemetry-learned window (absent -> none).
     const contextLabel = modelContextBadgeLabel(group, contextWindows);
     return (
-      <div key={group.primaryId} data-model-row className="flex items-center">
+      <div key={group.primaryId} data-model-row className="flex items-center hover:bg-surface-hover transition-colors">
         <button
           type="button"
           data-model-option
           onClick={() => handleSelectModel(group.primaryId)}
           onKeyDown={handleOptionKeyDown}
           title={group.primaryId}
-          className={`flex-1 min-w-0 text-left py-1.5 text-sm hover:bg-surface-hover focus:bg-surface-hover focus:outline-none transition-colors truncate ${
+          className={`flex-1 min-w-0 text-left py-1.5 text-sm focus:bg-surface-hover focus:outline-none truncate ${
             indent ? 'pl-7 pr-3 text-fg-muted' : 'px-3 text-fg'
           }`}
         >
@@ -278,7 +296,7 @@ export function ModelCombobox({
           <span
             data-model-context-window
             title={`${contextLabel} context window`}
-            className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-faint flex-shrink-0"
+            className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge bg-surface text-fg-faint flex-shrink-0"
           >
             {contextLabel}
           </span>
@@ -290,7 +308,7 @@ export function ModelCombobox({
             onClick={() => handleSelectModel(oneMillionId)}
             onKeyDown={handleChipKeyDown}
             title={oneMillionId}
-            className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge text-fg-muted hover:text-fg hover:border-fg-faint focus:outline focus:outline-1 focus:outline-fg-faint transition-colors flex-shrink-0"
+            className="mr-2 px-1.5 py-0.5 text-[11px] rounded border border-edge bg-surface text-fg-muted hover:text-fg hover:border-fg-faint focus:outline focus:outline-1 focus:outline-fg-faint transition-colors flex-shrink-0"
           >
             1M
           </button>
@@ -311,7 +329,9 @@ export function ModelCombobox({
           onKeyDown={handleInputKeyDown}
           placeholder={placeholder}
           data-testid={testId}
-          className="flex-1 bg-transparent px-3 py-1.5 text-sm text-fg placeholder-fg-faint focus:outline-none"
+          className={`flex-1 bg-transparent px-3 py-1.5 text-sm text-fg focus:outline-none ${
+            placeholderVariant === 'muted' ? 'placeholder-fg-faint' : 'placeholder-fg'
+          }`}
         />
         {displayValue && (
           <button

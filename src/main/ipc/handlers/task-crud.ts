@@ -131,8 +131,9 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
         const db = getProjectDb(projectId);
         const sessionRepo = new SessionRepository(db);
         const engine = createTransitionEngine(context, actions, tasks, sessionRepo, attachments, projectId, projectPath);
+        const project = context.projectRepo.getById(projectId);
 
-        const overrides = resolveSpawnOverrides(task, toLane);
+        const overrides = resolveSpawnOverrides(task, toLane, project);
         try {
           // Use '*' as fromSwimlaneId - no source column on creation, matches wildcard transitions
           await engine.executeTransition(task, '*', toLane.id, toLane.permission_mode, undefined, undefined, undefined, overrides);
@@ -145,17 +146,20 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
         if (finalTask && !finalTask.session_id && toLane.auto_spawn) {
           console.log(`[TASK_CREATE] Ensuring agent for task ${task.id.slice(0, 8)}`);
           try {
-            await engine.resumeSuspendedSession(finalTask, toLane.permission_mode, undefined, undefined, undefined, undefined, undefined, resolveSpawnOverrides(finalTask, toLane));
+            await engine.resumeSuspendedSession(finalTask, toLane.permission_mode, undefined, undefined, undefined, undefined, undefined, resolveSpawnOverrides(finalTask, toLane, project));
             finalTask = tasks.getById(task.id);
           } catch (err) {
             console.error('[TASK_CREATE] Failed to start session:', err);
           }
         }
 
-        // Schedule auto-command for freshly spawned session
-        if (finalTask?.session_id && toLane.auto_command) {
+        // Schedule auto-command for freshly spawned session. A per-task
+        // auto_command (MCP-only, set at create_task time) wins over the
+        // column's for this task.
+        const effectiveAutoCommand = finalTask?.auto_command ?? toLane.auto_command;
+        if (finalTask?.session_id && effectiveAutoCommand) {
           const vars = buildAutoCommandVars(finalTask);
-          const interpolated = interpolateTemplate(toLane.auto_command, vars);
+          const interpolated = interpolateTemplate(effectiveAutoCommand, vars);
           context.terminalSubmitScheduler.scheduleKeystrokes(finalTask.id, finalTask.session_id, [interpolated], { freshlySpawned: true });
         }
       });

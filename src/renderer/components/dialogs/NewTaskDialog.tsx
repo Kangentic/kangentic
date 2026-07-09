@@ -20,6 +20,7 @@ import { fetchGitBranches } from '../../utils/git-branches';
 import { isValidGitBranchName } from '../../../shared/git-utils';
 import { slugify, computeAutoBranchName } from '../../../shared/slugify';
 import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
+import type { PermissionMode } from '../../../shared/types';
 import { DescriptionEditor } from '../DescriptionEditor';
 import { MAX_ATTACHMENT_BYTES, MEDIA_TYPE_EXT, resolveMediaType, isImageMediaType, getFileTypeIcon, getExtension } from './attachment-utils';
 import { compressClipboardImage } from './image-compress';
@@ -120,8 +121,9 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
   const [agentOverride, setAgentOverride] = useState('');
   const [modelOverride, setModelOverride] = useState('');
   const [effortOverride, setEffortOverride] = useState('');
+  const [permissionOverride, setPermissionOverride] = useState('');
 
-  const isDirty = title.trim() !== '' || description.trim() !== '' || customBranchName.trim() !== '' || attachments.length > 0 || labels.length > 0 || priority !== 0 || agentOverride !== '' || modelOverride !== '' || effortOverride !== '';
+  const isDirty = title.trim() !== '' || description.trim() !== '' || customBranchName.trim() !== '' || attachments.length > 0 || labels.length > 0 || priority !== 0 || agentOverride !== '' || modelOverride !== '' || effortOverride !== '' || permissionOverride !== '';
 
   // Guard close gestures (X, Escape, backdrop, Ctrl+Shift+W) so unsaved work is
   // not lost: when the form is dirty, ask before discarding. Returns true to let
@@ -299,6 +301,7 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
         ...(agentOverride ? { agent_override: agentOverride } : {}),
         ...(modelOverride ? { model_override: modelOverride } : {}),
         ...(effortOverride ? { effort_override: effortOverride } : {}),
+        ...(permissionOverride ? { permission_mode: permissionOverride as PermissionMode } : {}),
         ...(attachments.length > 0 ? {
           pendingAttachments: attachments.map((attachment) => ({
             filename: attachment.filename,
@@ -496,6 +499,8 @@ export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {
               setModelOverride={setModelOverride}
               effortOverride={effortOverride}
               setEffortOverride={setEffortOverride}
+              permissionOverride={permissionOverride}
+              setPermissionOverride={setPermissionOverride}
             />
 
             {/* Drag overlay */}

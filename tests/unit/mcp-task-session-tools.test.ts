@@ -380,6 +380,173 @@ describe('create_task routing guardrail', () => {
 });
 
 // ---------------------------------------------------------------------------
+// kangentic_create_task - agent/model/effort/permissionMode/autoCommand
+// override wiring at the tool layer. handleCreateTask's persistence of these
+// fields onto taskRepo.create is covered in mcp-create-task-labels.test.ts;
+// this closes the tool-layer gap: a friendly model name ("Opus 4.8") must be
+// converted via the REAL resolveModelSelector before forwarding to
+// callHandler, and effort must be lowercased via the REAL
+// resolveEffortSelector (neither is mocked in this file - only
+// handler-helpers is mocked - so this exercises the actual conversion
+// functions from src/shared/model-id.ts).
+// ---------------------------------------------------------------------------
+
+describe('kangentic_create_task agent/model/effort/permissionMode/autoCommand override wiring', () => {
+  let server: ReturnType<typeof makeFakeServer>;
+  let resolver: RequestResolver;
+  let taskCounter: TaskCounter;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // clearAllMocks clears call history but NOT a prior .mockReturnValue() -
+    // re-pin the routing-guardrail default so a previous describe block's
+    // mockReturnValue(['...']) (a sibling project name) cannot leak in and
+    // trip the guardrail, which would block callHandler and self-mask every
+    // assertion below as "not called" instead of testing the override wiring.
+    mockDetectCrossProjectMention.mockReturnValue([]);
+    server = makeFakeServer();
+    resolver = makeResolver();
+    taskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
+  });
+
+  it('converts a friendly model name to the CLI id via resolveModelSelector before forwarding', async () => {
+    await server.getHandler('kangentic_create_task')({
+      title: 'Task with friendly model',
+      modelOverride: 'Opus 4.8',
+    });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [handlerName, params] = mockCallHandler.mock.calls[0];
+    expect(handlerName).toBe('create_task');
+    expect((params as Record<string, unknown>).modelOverride).toBe('claude-opus-4-8');
+  });
+
+  it('lowercases effortOverride via resolveEffortSelector before forwarding', async () => {
+    await server.getHandler('kangentic_create_task')({
+      title: 'Task with cased effort',
+      effortOverride: 'XHigh',
+    });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [, params] = mockCallHandler.mock.calls[0];
+    expect((params as Record<string, unknown>).effortOverride).toBe('xhigh');
+  });
+
+  it('forwards agentOverride, permissionMode, and autoCommand verbatim (no transformation)', async () => {
+    await server.getHandler('kangentic_create_task')({
+      title: 'Task with pass-through overrides',
+      agentOverride: 'codex',
+      permissionMode: 'bypassPermissions',
+      autoCommand: '/code-review',
+    });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [, params] = mockCallHandler.mock.calls[0];
+    const typedParams = params as Record<string, unknown>;
+    expect(typedParams.agentOverride).toBe('codex');
+    expect(typedParams.permissionMode).toBe('bypassPermissions');
+    expect(typedParams.autoCommand).toBe('/code-review');
+  });
+
+  it('forwards null for every override field when none are provided', async () => {
+    await server.getHandler('kangentic_create_task')({ title: 'Plain task' });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [, params] = mockCallHandler.mock.calls[0];
+    const typedParams = params as Record<string, unknown>;
+    expect(typedParams.agentOverride).toBeNull();
+    expect(typedParams.modelOverride).toBeNull();
+    expect(typedParams.effortOverride).toBeNull();
+    expect(typedParams.permissionMode).toBeNull();
+    expect(typedParams.autoCommand).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// kangentic_update_task - model/effort/permissionMode TRI-STATE wiring at the
+// tool layer: omitted forwards undefined (leave untouched downstream),
+// empty-string maps to null (explicit clear), and a concrete value is
+// resolved (model via resolveModelSelector, effort via
+// resolveEffortSelector) and forwarded. handleUpdateTask's consumption of
+// this tri-state (the `!== undefined` guards in task-commands.ts) is covered
+// separately in mcp-update-task-description-edits.test.ts.
+// ---------------------------------------------------------------------------
+
+describe('kangentic_update_task model/effort/permissionMode tri-state wiring', () => {
+  let server: ReturnType<typeof makeFakeServer>;
+  let resolver: RequestResolver;
+  let taskCounter: TaskCounter;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    server = makeFakeServer();
+    resolver = makeResolver();
+    taskCounter = { tryReserve: vi.fn(() => true), limit: () => 50 };
+    registerTaskTools(server as never, resolver, taskCounter);
+  });
+
+  it('forwards undefined for model/effort/permissionMode when all three are omitted', async () => {
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', title: 'New title' });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [, params] = mockCallHandler.mock.calls[0];
+    const typedParams = params as Record<string, unknown>;
+    expect(typedParams.model).toBeUndefined();
+    expect(typedParams.effort).toBeUndefined();
+    expect(typedParams.permissionMode).toBeUndefined();
+  });
+
+  it('maps an empty-string model to null (clear) rather than forwarding the empty string', async () => {
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', model: '' });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [, params] = mockCallHandler.mock.calls[0];
+    expect((params as Record<string, unknown>).model).toBeNull();
+  });
+
+  it('maps an empty-string effort to null', async () => {
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', effort: '' });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [, params] = mockCallHandler.mock.calls[0];
+    expect((params as Record<string, unknown>).effort).toBeNull();
+  });
+
+  it('maps an empty-string permissionMode to null', async () => {
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', permissionMode: '' });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [, params] = mockCallHandler.mock.calls[0];
+    expect((params as Record<string, unknown>).permissionMode).toBeNull();
+  });
+
+  it('resolves a friendly model name via resolveModelSelector for a concrete value', async () => {
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', model: 'Sonnet 4.5' });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [, params] = mockCallHandler.mock.calls[0];
+    expect((params as Record<string, unknown>).model).toBe('claude-sonnet-4-5');
+  });
+
+  it('lowercases a concrete effort value via resolveEffortSelector', async () => {
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', effort: 'High' });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [, params] = mockCallHandler.mock.calls[0];
+    expect((params as Record<string, unknown>).effort).toBe('high');
+  });
+
+  it('forwards a concrete permissionMode value verbatim (no transformation, not mapped to null)', async () => {
+    await server.getHandler('kangentic_update_task')({ taskId: 'task-1', permissionMode: 'plan' });
+
+    expect(mockCallHandler).toHaveBeenCalledOnce();
+    const [, params] = mockCallHandler.mock.calls[0];
+    expect((params as Record<string, unknown>).permissionMode).toBe('plan');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // get_current_task - uses defaultContextResolved, NOT withProject
 // ---------------------------------------------------------------------------
 

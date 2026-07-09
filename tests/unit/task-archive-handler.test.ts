@@ -207,6 +207,9 @@ interface MockContext {
   terminalSubmitScheduler: {
     scheduleKeystrokes: ReturnType<typeof vi.fn>;
   };
+  projectRepo: {
+    getById: ReturnType<typeof vi.fn>;
+  };
 }
 
 function createMockTask(id: string, overrides: Partial<MockTask> = {}): MockTask {
@@ -287,6 +290,9 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     },
     terminalSubmitScheduler: {
       scheduleKeystrokes: vi.fn(),
+    },
+    projectRepo: {
+      getById: vi.fn(() => ({ id: 'proj-123', default_agent: 'claude', default_model: null, default_effort: null })),
     },
     ...overrides,
   };

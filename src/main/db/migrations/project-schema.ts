@@ -920,6 +920,30 @@ export function runProjectMigrations(db: Database.Database): void {
     }
   }
 
+  // Migration: add per-task permission_mode override column. Mirrors
+  // agent_override/model_override/effort_override: settable via the New Task
+  // dialog's Advanced section and the task-detail edit form (pre-spawn or
+  // suspended only, same lock as agent_override); takes precedence over the
+  // swimlane's permission_mode and the project's default permission mode.
+  // NULL means "inherit from the swimlane / project default".
+  const hasTaskPermissionOverride = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
+    .some((col) => col.name === 'permission_mode');
+  if (!hasTaskPermissionOverride) {
+    db.exec('ALTER TABLE tasks ADD COLUMN permission_mode TEXT DEFAULT NULL');
+  }
+
+  // Migration: add per-task auto_command column. MCP-only: set via
+  // kangentic_create_task's `autoCommand` param so a skill can mint a task
+  // that runs an initial command (e.g. "/code-review") once the agent spawns.
+  // Not surfaced in the New Task dialog or project settings. Takes
+  // precedence over the swimlane's auto_command for this task only. NULL
+  // means "inherit from the swimlane".
+  const hasTaskAutoCommand = (db.pragma('table_info(tasks)') as Array<{ name: string }>)
+    .some((col) => col.name === 'auto_command');
+  if (!hasTaskAutoCommand) {
+    db.exec('ALTER TABLE tasks ADD COLUMN auto_command TEXT DEFAULT NULL');
+  }
+
   // Seed default swimlanes if empty (must run after all ALTER TABLE migrations)
   const laneCount = db.prepare('SELECT COUNT(*) as c FROM swimlanes').get() as { c: number };
   if (laneCount.c === 0) {

@@ -162,6 +162,9 @@ interface MockTask {
   session_id: string | null;
   branch_name: string | null;
   base_branch: string | null;
+  /** Per-task auto_command (MCP-only, kangentic_create_task's autoCommand param).
+   *  Wins over the destination swimlane's auto_command for this task only. */
+  auto_command: string | null;
 }
 
 interface MockSwimlane {
@@ -214,6 +217,9 @@ interface MockContext {
   terminalSubmitScheduler: {
     scheduleKeystrokes: ReturnType<typeof vi.fn>;
   };
+  projectRepo: {
+    getById: ReturnType<typeof vi.fn>;
+  };
 }
 
 function createMockTask(id: string, overrides: Partial<MockTask> = {}): MockTask {
@@ -225,6 +231,7 @@ function createMockTask(id: string, overrides: Partial<MockTask> = {}): MockTask
     session_id: null,
     branch_name: null,
     base_branch: null,
+    auto_command: null,
     ...overrides,
   };
 }
@@ -295,6 +302,9 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     },
     terminalSubmitScheduler: {
       scheduleKeystrokes: vi.fn(),
+    },
+    projectRepo: {
+      getById: vi.fn(() => ({ id: 'proj-123', default_agent: 'claude', default_model: null, default_effort: null })),
     },
     ...overrides,
   };
@@ -588,6 +598,90 @@ describe('TASK_CREATE handler', () => {
 
     // targetLane.auto_command is null
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+  });
+
+  // =========================================================================
+  // Per-task auto_command precedence (effectiveAutoCommand = finalTask?.auto_command
+  // ?? toLane.auto_command). The task's value, set only via
+  // kangentic_create_task's MCP-only autoCommand param, must win over the
+  // destination column's auto_command for this task. Red-green: reverting
+  // task-crud.ts's `finalTask?.auto_command ?? toLane.auto_command` to plain
+  // `toLane.auto_command` makes the precedence test below fail (scheduler
+  // would receive the lane's command instead of the task's); reverting the
+  // `?? toLane.auto_command` fallback entirely makes the fallback test fail
+  // (scheduler would not be called at all).
+  // =========================================================================
+
+  it('schedules the TASK auto_command, not the lane auto_command, when both are set (task wins)', async () => {
+    const autoCommandLane = createMockSwimlane('lane-auto-both', {
+      auto_spawn: true,
+      auto_command: '/lane-command',
+    });
+    swimlaneRepo = createMockSwimlaneRepo([autoCommandLane]);
+    const autoTask = createMockTask('task-auto-both', {
+      swimlane_id: 'lane-auto-both',
+      auto_command: '/task-command',
+    });
+    taskRepo = createMockTaskRepo(autoTask);
+    taskRepo.getById.mockReturnValue({ ...autoTask, session_id: 'session-auto-both' });
+
+    mockGetProjectRepos.mockReturnValue({
+      tasks: taskRepo,
+      swimlanes: swimlaneRepo,
+      actions: { getTransitionsFor: vi.fn(() => []) },
+      attachments: attachmentRepo,
+    });
+
+    const engine = createMockEngine();
+    mockCreateTransitionEngine.mockReturnValue(engine);
+
+    await callCreateHandler(context, {
+      swimlane_id: 'lane-auto-both',
+      title: 'Task overrides lane auto command',
+    });
+
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledWith(
+      'task-auto-both',
+      'session-auto-both',
+      ['/task-command'],
+      { freshlySpawned: true },
+    );
+  });
+
+  it('falls back to the lane auto_command when the task has none', async () => {
+    const autoCommandLane = createMockSwimlane('lane-auto-fallback', {
+      auto_spawn: true,
+      auto_command: '/lane-command',
+    });
+    swimlaneRepo = createMockSwimlaneRepo([autoCommandLane]);
+    const autoTask = createMockTask('task-auto-fallback', {
+      swimlane_id: 'lane-auto-fallback',
+      auto_command: null,
+    });
+    taskRepo = createMockTaskRepo(autoTask);
+    taskRepo.getById.mockReturnValue({ ...autoTask, session_id: 'session-auto-fallback' });
+
+    mockGetProjectRepos.mockReturnValue({
+      tasks: taskRepo,
+      swimlanes: swimlaneRepo,
+      actions: { getTransitionsFor: vi.fn(() => []) },
+      attachments: attachmentRepo,
+    });
+
+    const engine = createMockEngine();
+    mockCreateTransitionEngine.mockReturnValue(engine);
+
+    await callCreateHandler(context, {
+      swimlane_id: 'lane-auto-fallback',
+      title: 'Task with no auto command falls back to lane',
+    });
+
+    expect(context.terminalSubmitScheduler.scheduleKeystrokes).toHaveBeenCalledWith(
+      'task-auto-fallback',
+      'session-auto-fallback',
+      ['/lane-command'],
+      { freshlySpawned: true },
+    );
   });
 
   // =========================================================================

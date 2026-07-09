@@ -258,6 +258,72 @@ describe('handleUpdateTask - persists the full full-replace description up to th
 // mask the overflow).
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// handleCreateTask - per-task agent/model/effort/permissionMode/auto_command
+// overrides (the create_task param wiring added alongside the tri-state
+// update_task guards in task-commands.ts). Guards the ternary spread at
+// handleCreateTask lines ~167-171: reverting any one of those `? { ... } :
+// {}` clauses drops that field from the taskRepo.create call and fails the
+// corresponding assertion below.
+// ---------------------------------------------------------------------------
+
+describe('handleCreateTask - agent/model/effort/permissionMode/auto_command overrides persist to taskRepo.create', () => {
+  let context: CommandContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    context = makeContext();
+    mockResolveColumn.mockReturnValue({ swimlane: { id: 'lane-1', name: 'To Do' } });
+    mockTaskRepoCreate.mockImplementation((input: { title: string }) => ({
+      id: 'task-uuid-1',
+      display_id: 1,
+      title: input.title,
+    }));
+  });
+
+  it('forwards agentOverride/modelOverride/effortOverride/permissionMode/autoCommand to taskRepo.create', () => {
+    const result = handleCreateTask(
+      {
+        title: 'Spawn with overrides',
+        agentOverride: 'codex',
+        // The tool layer (task-tools.ts) is responsible for friendly-name ->
+        // CLI-id conversion via resolveModelSelector; handleCreateTask
+        // itself just forwards whatever string it is given verbatim.
+        modelOverride: 'claude-opus-4-8',
+        effortOverride: 'xhigh',
+        permissionMode: 'bypassPermissions',
+        autoCommand: '/code-review',
+      },
+      context,
+    );
+
+    expect(result.success).toBe(true);
+    expect(mockTaskRepoCreate).toHaveBeenCalledOnce();
+    expect(mockTaskRepoCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent_override: 'codex',
+        model_override: 'claude-opus-4-8',
+        effort_override: 'xhigh',
+        permission_mode: 'bypassPermissions',
+        auto_command: '/code-review',
+      }),
+    );
+  });
+
+  it('omits every override key from taskRepo.create when none are provided (no accidental null overwrite)', () => {
+    const result = handleCreateTask({ title: 'No overrides' }, context);
+
+    expect(result.success).toBe(true);
+    expect(mockTaskRepoCreate).toHaveBeenCalledOnce();
+    const createInput = mockTaskRepoCreate.mock.calls[0][0] as Record<string, unknown>;
+    expect(createInput).not.toHaveProperty('agent_override');
+    expect(createInput).not.toHaveProperty('model_override');
+    expect(createInput).not.toHaveProperty('effort_override');
+    expect(createInput).not.toHaveProperty('permission_mode');
+    expect(createInput).not.toHaveProperty('auto_command');
+  });
+});
+
 describe('handleCreateTask - Backlog column enforces its own lower description cap', () => {
   let context: CommandContext;
 

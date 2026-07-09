@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
+import { useProjectStore } from '../../stores/project-store';
 import { useKnownModels, useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
 import { groupModelIds, type ModelDisplayGroup } from '../../../shared/model-id';
 import { modelContextBadgeLabel, modelRowLabel } from '../../utils/format-tokens';
@@ -73,6 +74,13 @@ export function ModelEffortPicker({
     task ? s.swimlanes.find((lane) => lane.id === task.swimlane_id)?.effort_override ?? null : null,
   );
   const setTaskRuntimeOverride = useBoardStore((s) => s.setTaskRuntimeOverride);
+  // Project-level default: the tier below the swimlane and above the CLI
+  // default. Falls through into the pill display and the popover's
+  // clear-to-default row so the picker never shows the generic "Default"
+  // placeholder when the project actually has a preferred model/effort.
+  const currentProject = useProjectStore((s) => s.currentProject);
+  const projectDefaultModel = currentProject?.default_model ?? null;
+  const projectDefaultEffort = currentProject?.default_effort ?? null;
   const agentCapabilities = useConfigStore(
     (s) => s.agentList.find((a) => a.name === agent)?.capabilities,
   );
@@ -159,17 +167,18 @@ export function ModelEffortPicker({
   const taskModelOverride = task?.model_override ?? null;
   const taskEffortOverride = task?.effort_override ?? null;
   // Effort fallback chain: live status (truth) -> task override -> swimlane
-  // override. Some Claude models (Haiku 4.5) accept --effort but never echo
-  // it back in status updates, so without this chain the pill stays blank
-  // even though the user explicitly configured an effort tier.
-  const effectiveEffort = liveEffort ?? taskEffortOverride ?? swimlaneEffortOverride;
+  // override -> project default. Some Claude models (Haiku 4.5) accept
+  // --effort but never echo it back in status updates, so without this chain
+  // the pill stays blank even though the user explicitly configured an
+  // effort tier.
+  const effectiveEffort = liveEffort ?? taskEffortOverride ?? swimlaneEffortOverride ?? projectDefaultEffort;
 
   // Display labels:
   // - live mode: existing behavior (live > overrides; effort pill suppressed when null)
   // - prespawn: show overrides falling through to "Default" so users can click to pick
   // An override is humanized the same way as the popover rows for
   // consistency; the live telemetry name is already human-readable and wins.
-  const modelOverrideId = taskModelOverride || swimlaneModelOverride;
+  const modelOverrideId = taskModelOverride || swimlaneModelOverride || projectDefaultModel;
   const modelOverrideLabel = modelOverrideId
     ? modelRowLabel(modelOverrideId, modelDisplayNames)
     : null;
@@ -215,7 +224,7 @@ export function ModelEffortPicker({
               options={modelOptionsForPopover}
               pinnedOptions={pinnedModelOptions}
               currentValue={currentModelValue}
-              swimlaneDefault={swimlaneModelOverride}
+              swimlaneDefault={swimlaneModelOverride ?? projectDefaultModel}
               onSelect={applyModel}
               onClose={() => setOpenPopover(null)}
               testId="context-bar-model-popover"
@@ -251,7 +260,7 @@ export function ModelEffortPicker({
               title="Effort"
               options={effortOptions.map((value) => ({ value, label: value }))}
               currentValue={currentEffortValue}
-              swimlaneDefault={swimlaneEffortOverride}
+              swimlaneDefault={swimlaneEffortOverride ?? projectDefaultEffort}
               onSelect={applyEffort}
               onClose={() => setOpenPopover(null)}
               testId="context-bar-effort-popover"

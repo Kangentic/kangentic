@@ -63,7 +63,9 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'contextBar.showRateLimits', tabId: 'terminal', label: 'Rate Limits', description: 'Claude 5h / weekly quota bars', scope: 'global', section: 'Context Bar', keywords: ['context bar', 'status', 'claude', 'quota', 'plan', 'limit', '5h', 'weekly'] },
 
   // ── Agent ──
-  { id: 'project.defaultAgent', tabId: 'agent', label: 'Default Agent', description: 'Which agent CLI to use for new sessions', scope: 'project', keywords: ['agent', 'claude', 'default'] },
+  { id: 'project.defaultAgent', tabId: 'agent', label: 'Agent', description: 'Which agent CLI to use for new sessions', scope: 'project', keywords: ['agent', 'claude', 'default'] },
+  { id: 'project.defaultModel', tabId: 'agent', label: 'Model', description: 'Model used for new sessions when no column or task override is set', scope: 'project', keywords: ['model', 'opus', 'sonnet', 'default'] },
+  { id: 'project.defaultEffort', tabId: 'agent', label: 'Effort', description: 'Reasoning effort used for new sessions when no column or task override is set', scope: 'project', keywords: ['effort', 'reasoning', 'xhigh', 'default'] },
   { id: 'agent.cliPaths', tabId: 'agent', label: 'CLI Paths', description: 'Paths to agent CLI binaries (auto-detected if empty)', scope: 'global', keywords: ['binary', 'executable'] },
   { id: 'agent.idleTimeoutMinutes', tabId: 'agent', label: 'Idle Timeout (minutes)', description: 'Auto-suspend sessions after this many minutes idle. 0 to disable.', scope: 'global', keywords: ['suspend', 'minutes'] },
   { id: 'agent.permissionMode', tabId: 'agent', label: 'Permissions', description: 'How the agent handles tool approvals', scope: 'project', keywords: ['allowlist', 'bypass', 'approve'] },

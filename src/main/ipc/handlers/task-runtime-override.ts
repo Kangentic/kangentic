@@ -89,16 +89,19 @@ export function registerTaskRuntimeOverrideHandlers(context: IpcContext): void {
         const lane = swimlanes.getById(task.swimlane_id);
         const swimlaneModel = lane?.model_override ?? null;
         const swimlaneEffort = lane?.effort_override ?? null;
+        const project = context.projectRepo.getById(projectId);
+        const projectDefaultModel = project?.default_model ?? null;
+        const projectDefaultEffort = project?.default_effort ?? null;
 
         const oldOverrideModel = task.model_override ?? null;
         const oldOverrideEffort = task.effort_override ?? null;
         const newOverrideModel = input.model !== undefined ? input.model : oldOverrideModel;
         const newOverrideEffort = input.effort !== undefined ? input.effort : oldOverrideEffort;
 
-        const oldEffectiveModel = oldOverrideModel ?? swimlaneModel;
-        const newEffectiveModel = newOverrideModel ?? swimlaneModel;
-        const oldEffectiveEffort = oldOverrideEffort ?? swimlaneEffort;
-        const newEffectiveEffort = newOverrideEffort ?? swimlaneEffort;
+        const oldEffectiveModel = oldOverrideModel ?? swimlaneModel ?? projectDefaultModel;
+        const newEffectiveModel = newOverrideModel ?? swimlaneModel ?? projectDefaultModel;
+        const oldEffectiveEffort = oldOverrideEffort ?? swimlaneEffort ?? projectDefaultEffort;
+        const newEffectiveEffort = newOverrideEffort ?? swimlaneEffort ?? projectDefaultEffort;
 
         // Persist before any PTY action. After this point, any downstream
         // failure (live-inject schedule miss, respawn error) still leaves the

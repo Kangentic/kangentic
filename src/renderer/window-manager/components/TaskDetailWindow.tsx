@@ -121,6 +121,7 @@ export function TaskDetailWindow({
   const [agentOverride, setAgentOverride] = useState(task.agent_override ?? '');
   const [modelOverride, setModelOverride] = useState(task.model_override ?? '');
   const [effortOverride, setEffortOverride] = useState(task.effort_override ?? '');
+  const [permissionOverride, setPermissionOverride] = useState(task.permission_mode ?? '');
   const [isEditing, setIsEditing] = useState(!!initialEdit);
   const [descriptionPeekOpen, setDescriptionPeekOpen] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -156,6 +157,7 @@ export function TaskDetailWindow({
     agentOverride,
     modelOverride,
     effortOverride,
+    permissionOverride,
     setTitle,
     setDescription,
     setPrUrl,
@@ -164,6 +166,7 @@ export function TaskDetailWindow({
     setAgentOverride,
     setModelOverride,
     setEffortOverride,
+    setPermissionOverride,
     setIsEditing,
     branchConfig,
     session: sessionState.session,
@@ -226,11 +229,12 @@ export function TaskDetailWindow({
     || agentOverride !== (task.agent_override ?? '')
     || modelOverride !== (task.model_override ?? '')
     || effortOverride !== (task.effort_override ?? '')
+    || permissionOverride !== (task.permission_mode ?? '')
     || JSON.stringify(labels) !== JSON.stringify(task.labels ?? [])
     || branchConfig.baseBranch !== (task.base_branch || '')
     || branchConfig.customBranchName !== (task.branch_name || '')
     || branchConfig.useWorktree !== (task.use_worktree != null ? Boolean(task.use_worktree) : null)
-  ), [title, description, prUrl, priority, agentOverride, modelOverride, effortOverride, labels, branchConfig.baseBranch, branchConfig.customBranchName, branchConfig.useWorktree, task]);
+  ), [title, description, prUrl, priority, agentOverride, modelOverride, effortOverride, permissionOverride, labels, branchConfig.baseBranch, branchConfig.customBranchName, branchConfig.useWorktree, task]);
 
   // Guard close gestures (header X, Escape, panel.close) while editing with
   // unsaved changes: ask before discarding. Returns true to let the caller
@@ -588,6 +592,8 @@ export function TaskDetailWindow({
                   setModelOverride={setModelOverride}
                   effortOverride={effortOverride}
                   setEffortOverride={setEffortOverride}
+                  permissionOverride={permissionOverride}
+                  setPermissionOverride={setPermissionOverride}
                   attachments={attachments}
                   branchConfig={branchConfig}
                   isSessionActive={sessionState.isSessionActive}

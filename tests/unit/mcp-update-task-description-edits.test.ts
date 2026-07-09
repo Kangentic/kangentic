@@ -423,3 +423,67 @@ describe('handleUpdateTask - descriptionEdits / appendDescription', () => {
     expect(result.message).toContain('title');
   });
 });
+
+// ---------------------------------------------------------------------------
+// handleUpdateTask - model/effort/permissionMode TRI-STATE (task-commands.ts
+// ~line 278-284, 332-334): these three fields distinguish "not provided"
+// (undefined - leave untouched) from "explicitly cleared" (null, which the
+// tool layer produces from an empty-string param) from "set" (a concrete
+// value) - unlike the sibling scalar fields, which collapse "omitted" and
+// "clear" onto the same null sentinel.
+//
+// `updateTaskParams()` deliberately does NOT include model/effort/
+// permissionMode keys by default, so `params.model` etc. is `undefined` via
+// plain property access on any call that doesn't override them - exactly
+// matching what the real tool layer forwards for an omitted optional field.
+//
+// Red-green: reverting any of the three `!== undefined` guards in
+// task-commands.ts to an unconditional assignment (or reverting the
+// tool-layer empty-string-to-null mapping tested separately in
+// mcp-task-session-tools.test.ts) makes the corresponding case below fail.
+// ---------------------------------------------------------------------------
+
+describe.each([
+  { param: 'model', dbKey: 'model_override', changedField: 'model', value: 'opus' },
+  { param: 'effort', dbKey: 'effort_override', changedField: 'effort', value: 'high' },
+  { param: 'permissionMode', dbKey: 'permission_mode', changedField: 'permissionMode', value: 'plan' },
+] as const)('handleUpdateTask - $param tri-state (omitted vs cleared vs set)', ({ param, dbKey, changedField, value }) => {
+  let context: CommandContext;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    context = makeContext();
+    mockTaskRepoGetById.mockReturnValue(existingTask());
+    mockTaskRepoUpdate.mockImplementation((input: Record<string, unknown>) => ({ ...existingTask(), ...input }));
+  });
+
+  it('omitted (undefined): leaves the field out of the update and out of changedFields', () => {
+    const result = handleUpdateTask(updateTaskParams({ title: 'New title' }), context);
+
+    expect(result.success).toBe(true);
+    expect(mockTaskRepoUpdate).toHaveBeenCalledOnce();
+    const updateInput = mockTaskRepoUpdate.mock.calls[0][0] as Record<string, unknown>;
+    expect(updateInput).not.toHaveProperty(dbKey);
+    expect(result.message).not.toContain(changedField);
+  });
+
+  it('null (the tool-layer empty-string clear): sets the field to null and reports it in changedFields', () => {
+    const result = handleUpdateTask(updateTaskParams({ [param]: null }), context);
+
+    expect(result.success).toBe(true);
+    expect(mockTaskRepoUpdate).toHaveBeenCalledOnce();
+    const updateInput = mockTaskRepoUpdate.mock.calls[0][0] as Record<string, unknown>;
+    expect(updateInput[dbKey]).toBeNull();
+    expect(result.message).toContain(changedField);
+  });
+
+  it('a concrete value: sets the field to that value and reports it in changedFields', () => {
+    const result = handleUpdateTask(updateTaskParams({ [param]: value }), context);
+
+    expect(result.success).toBe(true);
+    expect(mockTaskRepoUpdate).toHaveBeenCalledOnce();
+    const updateInput = mockTaskRepoUpdate.mock.calls[0][0] as Record<string, unknown>;
+    expect(updateInput[dbKey]).toBe(value);
+    expect(result.message).toContain(changedField);
+  });
+});

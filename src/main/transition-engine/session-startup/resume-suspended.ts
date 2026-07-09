@@ -40,6 +40,8 @@ export async function resumeSuspendedSessions(
   configManager: ConfigManager,
   projectDefaultAgent?: string | null,
   mcpServerHandle?: import('../../agent/mcp-http-server').McpHttpServerHandle | null,
+  projectDefaultModel?: string | null,
+  projectDefaultEffort?: string | null,
 ): Promise<void> {
   if (isShuttingDown()) return;
 
@@ -280,6 +282,8 @@ export async function resumeSuspendedSessions(
         projectPath,
         effectiveConfig: config,
         projectDefaultAgent: projectDefaultAgent ?? null,
+        projectDefaultModel: projectDefaultModel ?? null,
+        projectDefaultEffort: projectDefaultEffort ?? null,
         resolvedShell,
         mcpServerHandle,
         resume,

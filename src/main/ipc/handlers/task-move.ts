@@ -590,6 +590,7 @@ export async function handleTaskMove(
             sessionRepo,
             task,
             toLane: toLane ?? null,
+            project,
             autoCommand: interpolatedAuto,
           });
 
@@ -654,7 +655,7 @@ export async function handleTaskMove(
           // `!interpolatedAuto` guard is structurally redundant (an auto_command
           // would have produced a non-null plan above) but kept for safety.
           const sourceEffort = task.effort_override ?? activeRecord?.applied_effort ?? null;
-          const targetEffort = task.effort_override ?? toLane?.effort_override ?? null;
+          const targetEffort = task.effort_override ?? toLane?.effort_override ?? project?.default_effort ?? null;
           const restartNeededForEffort = targetEffort !== sourceEffort && targetEffort !== null;
 
           if (restartNeededForEffort && !interpolatedAuto) {

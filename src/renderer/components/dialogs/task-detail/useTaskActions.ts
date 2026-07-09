@@ -5,7 +5,7 @@ import { useBacklogStore } from '../../../stores/backlog-store';
 import { useSessionStore } from '../../../stores/session-store';
 import { useProjectStore } from '../../../stores/project-store';
 import { useToastStore } from '../../../stores/toast-store';
-import type { Task, Session, AgentCommand, Swimlane } from '../../../../shared/types';
+import type { Task, Session, AgentCommand, Swimlane, PermissionMode } from '../../../../shared/types';
 import type { useBranchConfig } from './useBranchConfig';
 import type { useTaskProgress } from '../../../utils/task-progress';
 
@@ -41,6 +41,7 @@ export function useTaskActions(input: {
   agentOverride: string;
   modelOverride: string;
   effortOverride: string;
+  permissionOverride: string;
   setTitle: Dispatch<SetStateAction<string>>;
   setDescription: Dispatch<SetStateAction<string>>;
   setPrUrl: Dispatch<SetStateAction<string>>;
@@ -49,6 +50,7 @@ export function useTaskActions(input: {
   setAgentOverride: Dispatch<SetStateAction<string>>;
   setModelOverride: Dispatch<SetStateAction<string>>;
   setEffortOverride: Dispatch<SetStateAction<string>>;
+  setPermissionOverride: Dispatch<SetStateAction<string>>;
   setIsEditing: Dispatch<SetStateAction<boolean>>;
 
   // Branch config hook
@@ -224,6 +226,7 @@ export function useTaskActions(input: {
     input.setAgentOverride(input.task.agent_override ?? '');
     input.setModelOverride(input.task.model_override ?? '');
     input.setEffortOverride(input.task.effort_override ?? '');
+    input.setPermissionOverride(input.task.permission_mode ?? '');
     input.branchConfig.resetToTask();
     input.setIsEditing(false);
   };
@@ -265,6 +268,7 @@ export function useTaskActions(input: {
           agent_override: input.agentOverride || null,
           model_override: input.modelOverride || null,
           effort_override: input.effortOverride || null,
+          permission_mode: (input.permissionOverride || null) as PermissionMode | null,
         }
         : {};
 
@@ -282,7 +286,8 @@ export function useTaskActions(input: {
             || input.priority !== (input.task.priority ?? 0)
             || (input.agentOverride || null) !== input.task.agent_override
             || (input.modelOverride || null) !== input.task.model_override
-            || (input.effortOverride || null) !== input.task.effort_override) {
+            || (input.effortOverride || null) !== input.task.effort_override
+            || (input.permissionOverride || null) !== input.task.permission_mode) {
             await input.updateTask({
               id: input.task.id,
               title: input.title,

@@ -604,4 +604,50 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
     expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
   });
+
+  // =========================================================================
+  // No-live-swap effort regression-guard (project-level default_effort tier)
+  // =========================================================================
+
+  it('no-live-swap: DOES respawn when the session runs at a different effort than the project default (no lane override)', async () => {
+    // Lane carries no effort_override (null), so the target falls through to
+    // project.default_effort. Session applied_effort='low' differs from the
+    // project default 'xhigh' -> a real delta -> respawn must fire.
+    const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: null });
+    setActiveRecord('acceptEdits', null, 'low');
+    const taskRepo = makeTaskRepo();
+    const context = makeContext(taskRepo, swimlaneRepo);
+    context.projectRepo.getById = vi.fn(() => ({ id: 'proj-test', default_agent: 'claude', default_effort: 'xhigh' }));
+    vi.mocked(prepareInjectionPlan).mockReturnValue(null);
+
+    await handleTaskMove(context as never, {
+      taskId: 'task-aaa00001',
+      targetSwimlaneId: EXECUTING_LANE_ID,
+      targetPosition: 0,
+    });
+
+    expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('no-live-swap: does NOT respawn when the session already runs at the project default_effort (no lane override)', async () => {
+    // Session is already at 'xhigh', which matches the project default; the
+    // lane has no override so target = project default = 'xhigh' -> no delta.
+    const { swimlaneRepo } = makeLanes({ permission_mode: null, effort_override: null });
+    setActiveRecord('acceptEdits', null, 'xhigh');
+    const taskRepo = makeTaskRepo();
+    const context = makeContext(taskRepo, swimlaneRepo);
+    context.projectRepo.getById = vi.fn(() => ({ id: 'proj-test', default_agent: 'claude', default_effort: 'xhigh' }));
+    vi.mocked(prepareInjectionPlan).mockReturnValue(null);
+
+    await handleTaskMove(context as never, {
+      taskId: 'task-aaa00001',
+      targetSwimlaneId: EXECUTING_LANE_ID,
+      targetPosition: 0,
+    });
+
+    expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    expect(markRecordSuspended).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
 });

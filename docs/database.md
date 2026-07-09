@@ -42,6 +42,8 @@ All queries are synchronous via **better-sqlite3** -- they block the Node.js eve
 | path | TEXT | NOT NULL | |
 | github_url | TEXT | | NULL |
 | default_agent | TEXT | NOT NULL | 'claude' |
+| default_model | TEXT | | NULL |
+| default_effort | TEXT | | NULL |
 | group_id | TEXT | | NULL |
 | position | INTEGER | NOT NULL | 0 |
 | last_opened | TEXT | NOT NULL | |
@@ -124,6 +126,8 @@ Per-column session model (two orthogonal axes; see `src/shared/types.ts` and `do
 | model_override | TEXT | | NULL |
 | effort_override | TEXT | | NULL |
 | agent_override | TEXT | | NULL |
+| permission_mode | TEXT | | NULL |
+| auto_command | TEXT | | NULL |
 | detail_view_state | TEXT | | NULL |
 | archived_at | TEXT | | NULL |
 | created_at | TEXT | NOT NULL | |
@@ -470,6 +474,8 @@ Listed in execution order within `runProjectMigrations()`:
 45. **`detail_view_state` column on tasks** - adds `detail_view_state TEXT DEFAULT NULL`, a per-task JSON blob (`TaskDetailViewState`) holding the task-detail dialog's layout (divider ratio, which side panel is open, Changes view mode, selected diff file, reviewed files, diff scope, file-tree width, selected commit in the Changes panel's history browser, commit-history region height). Hydrated into the session store on board load and saved debounced via the task-scoped `TASK_SET_DETAIL_VIEW_STATE` IPC so reopening a task restores its layout across restarts. The dedicated `setDetailViewState` writer deliberately does not bump `updated_at` (view-state churn must not reorder the board). Idempotent guarded `ALTER TABLE`.
 46. **Conversation-memory index (`memory_chunks` + FTS + `memory_index_state` + `memory_meta`)** - creates the per-project retrieval store over the structured transcript: `memory_chunks` (corpus-generic chunk store, `UNIQUE(corpus, doc_id, seq)`), the `memory_chunks_fts` FTS5 external-content shadow (with `_ai`/`_ad`/`_au` sync triggers), `memory_index_state` (per-doc staleness signature + status), and `memory_meta` (chunker version). Cascade cleanup via `trg_sessions_delete_memory` on `sessions`. The `memory_chunks_vec` (vec0) table is created at runtime by `RetrievalStore.ensureVecTable()` only when the sqlite-vec extension loaded, never by migrations, and no trigger references it. Idempotent `CREATE ... IF NOT EXISTS`.
 47. **Durable per-turn token-usage ledger (`conversation_turn_usage`)** - creates the table plus its `idx_turn_usage_task` / `idx_turn_usage_session` / `idx_turn_usage_ts` indices. One row per assistant turn that reported usage, keyed by `turn_uuid` (so a `--resume` replay dedups back onto one row), populated by `ConversationIndexer` from the parsed transcript at index time so token counts survive the agent pruning its native JSONL. Deliberately has NO `sessions` DELETE cascade (unlike `memory_chunks`): it is a long-lived ledger, not a rebuildable index, so token history outlives the session rows it describes. See the `conversation_turn_usage table` section above. Idempotent `CREATE ... IF NOT EXISTS`.
+48. **`permission_mode` column on tasks** - adds `permission_mode TEXT DEFAULT NULL`, a per-task permission override mirroring `agent_override`/`model_override`/`effort_override`: settable via the New Task dialog's Advanced section and the task-detail edit form (pre-spawn or suspended only, same lock as `agent_override`). Takes precedence over the swimlane's `permission_mode` and the project's default permission mode; NULL means inherit. Idempotent guarded `ALTER TABLE`.
+49. **`auto_command` column on tasks** - adds `auto_command TEXT DEFAULT NULL`, an MCP-only per-task initial command set via `kangentic_create_task`'s `autoCommand` param so a skill can mint a task that runs a command (e.g. `/code-review`) once the agent spawns. Not surfaced in the New Task dialog or project settings. Takes precedence over the swimlane's `auto_command` for this task only; NULL means inherit from the swimlane. Idempotent guarded `ALTER TABLE`.
 
 ### Key Migrations (Global DB)
 
@@ -478,6 +484,7 @@ Listed in execution order (idempotent, gated on `IF NOT EXISTS` / `pragma table_
 1. **`project_groups` table** -- creates the project groups table for organizing projects into named, collapsible sections.
 2. **`group_id` column on projects** -- adds nullable foreign key linking projects to their group.
 3. **`position` column on projects** -- adds explicit project ordering. Backfills positions based on `last_opened DESC` order to preserve the original visual order.
+4. **`default_model` and `default_effort` columns on projects** - adds `default_model TEXT` and `default_effort TEXT` (both nullable, no default). Per-project model/effort defaults mirroring the existing `default_agent`; unlike `default_agent`, NULL is a valid "no project preference" state that falls through to the CLI/agent default. Read at spawn time as the tier between a column's `model_override`/`effort_override` and the CLI default. Idempotent guarded `ALTER TABLE`.
 
 ## Repository Pattern
 

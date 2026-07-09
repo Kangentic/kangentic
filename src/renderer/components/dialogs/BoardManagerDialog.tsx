@@ -13,6 +13,7 @@ import { BaseDialog } from './BaseDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { IconPickerDialog } from './IconPickerDialog';
 import { ModelCombobox } from './ModelCombobox';
+import { Combobox } from './Combobox';
 import { maximizedDialogLayout, MaximizeToggleButton } from './dialog-maximize';
 import { ColumnRail, ALL_COLUMNS_ID, type RailRow } from './board-manager/ColumnRail';
 import { ColumnsOverview, formatModelName, type OverviewRow } from './board-manager/ColumnsOverview';
@@ -23,6 +24,7 @@ import { ToggleCard } from '../ToggleCard';
 import { useAgentCapabilityResolution } from '../../hooks/useAgentCapabilityResolution';
 import { useModelContextWindows, useModelDisplayNames } from '../../hooks/useKnownModels';
 import { useKeybinding } from '../../hooks/useKeybinding';
+import { modelRowLabel } from '../../utils/format-tokens';
 import {
   getPermissionLabel,
   DEFAULT_PERMISSIONS,
@@ -663,6 +665,14 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   const modelDisplayNames = useModelDisplayNames(effectiveAgent);
   const agentPermissions = effectiveAgentInfo?.permissions ?? DEFAULT_PERMISSIONS;
 
+  // Project-level model/effort defaults (mirrors projectDefaultAgent above).
+  // Surfaced directly as the inherit option's label/placeholder - no bare
+  // "Default" placeholder - so a new column shows what it will actually run
+  // with, the same pattern the New Task Advanced section uses.
+  const projectDefaultModel = currentProject?.default_model ?? null;
+  const projectDefaultModelLabel = projectDefaultModel ? modelRowLabel(projectDefaultModel, modelDisplayNames) : null;
+  const projectDefaultEffort = currentProject?.default_effort ?? null;
+
   // Merge in in-flight lane drafts so the dropdown reflects model picks
   // that other columns set in this same edit session but haven't been
   // saved yet. The hook returns the globally-known set; this adds the
@@ -1281,10 +1291,10 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       />
                     ) : undefined}
                   >
-                    <Select
+                    <Combobox
                       value={draft.agent_override ?? ''}
-                      onChange={(event) => {
-                        const nextAgent = event.target.value || null;
+                      onChange={(nextValue) => {
+                        const nextAgent = nextValue || null;
                         updateDraft((current) => {
                           let nextPermission = current.permission_mode;
                           if (current.permission_mode) {
@@ -1294,17 +1304,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                           return { ...current, agent_override: nextAgent, permission_mode: nextPermission };
                         });
                       }}
-                      wrapperClassName="relative"
-                      className={DIALOG_SELECT_CLASS}
-                      data-testid="column-agent-override"
-                    >
-                      <option value="">{projectDefaultAgentLabel}</option>
-                      {agentList
-                        .filter((entry) => entry.found && entry.name !== projectDefaultAgent)
-                        .map((entry) => (
-                          <option key={entry.name} value={entry.name}>{entry.displayName ?? entry.name}</option>
-                        ))}
-                    </Select>
+                      options={agentList
+                        .filter((entry) => entry.found)
+                        .map((entry) => ({ value: entry.name, label: entry.displayName ?? entry.name }))}
+                      placeholder={projectDefaultAgentLabel}
+                      testId="column-agent-override"
+                    />
                   </SettingField>
 
                   {supportsModelOverride && (
@@ -1313,7 +1318,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       description="Override the model for sessions spawned here."
                       hint={draft.model_override ? (
                         <ResetHint
-                          title="Reset to agent default"
+                          title={projectDefaultModelLabel ? 'Reset to project default' : 'Reset to agent default'}
                           onClick={() => updateDraft((current) => ({ ...current, model_override: null }))}
                         />
                       ) : undefined}
@@ -1323,7 +1328,8 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                           value={draft.model_override ?? ''}
                           onChange={(nextValue) => updateDraft((current) => ({ ...current, model_override: nextValue }))}
                           availableModels={discoveredModels}
-                          placeholder="Default"
+                          placeholder={projectDefaultModelLabel ?? 'Agent default'}
+                          placeholderVariant={projectDefaultModelLabel ? 'resolved' : 'muted'}
                           testId="column-model-override"
                           onOpen={() => useConfigStore.getState().rescanModels()}
                           contextWindows={modelContextWindows}
@@ -1339,23 +1345,19 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       description="Reasoning effort budget. Higher costs more tokens."
                       hint={draft.effort_override ? (
                         <ResetHint
-                          title="Reset to agent default"
+                          title={projectDefaultEffort ? 'Reset to project default' : 'Reset to agent default'}
                           onClick={() => updateDraft((current) => ({ ...current, effort_override: null }))}
                         />
                       ) : undefined}
                     >
-                      <Select
+                      <Combobox
                         value={draft.effort_override ?? ''}
-                        onChange={(event) => updateDraft((current) => ({ ...current, effort_override: event.target.value || null }))}
-                        wrapperClassName="relative"
-                        className={DIALOG_SELECT_CLASS}
-                        data-testid="column-effort-override"
-                      >
-                        <option value="">Default</option>
-                        {effortLevels.map((level) => (
-                          <option key={level} value={level}>{level}</option>
-                        ))}
-                      </Select>
+                        onChange={(nextValue) => updateDraft((current) => ({ ...current, effort_override: nextValue || null }))}
+                        options={effortLevels.map((level) => ({ value: level, label: level }))}
+                        placeholder={projectDefaultEffort ?? 'Agent default'}
+                        placeholderVariant={projectDefaultEffort ? 'resolved' : 'muted'}
+                        testId="column-effort-override"
+                      />
                     </SettingField>
                   )}
 
@@ -1369,23 +1371,16 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       />
                     ) : undefined}
                   >
-                    <Select
+                    <Combobox
                       value={draft.permission_mode ?? ''}
-                      onChange={(event) => updateDraft((current) => ({
+                      onChange={(nextValue) => updateDraft((current) => ({
                         ...current,
-                        permission_mode: event.target.value ? (event.target.value as PermissionMode) : null,
+                        permission_mode: nextValue ? (nextValue as PermissionMode) : null,
                       }))}
-                      wrapperClassName="relative"
-                      className={DIALOG_SELECT_CLASS}
-                      data-testid="column-permission-mode"
-                    >
-                      <option value="">{getPermissionLabel(agentPermissions, globalPermissionMode)}</option>
-                      {agentPermissions
-                        .filter((entry) => entry.mode !== globalPermissionMode)
-                        .map((entry) => (
-                          <option key={entry.mode} value={entry.mode}>{entry.label}</option>
-                        ))}
-                    </Select>
+                      options={agentPermissions.map((entry) => ({ value: entry.mode, label: entry.label }))}
+                      placeholder={getPermissionLabel(agentPermissions, globalPermissionMode)}
+                      testId="column-permission-mode"
+                    />
                   </SettingField>
 
                   {draft.permission_mode === 'plan' && (

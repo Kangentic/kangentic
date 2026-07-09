@@ -335,6 +335,8 @@
           path: input.path,
           github_url: input.github_url || null,
           default_agent: defaultAgentOverride || 'claude',
+          default_model: null,
+          default_effort: null,
           group_id: null,
           position: 0,
           last_opened: now(),
@@ -413,6 +415,8 @@
           path: projectPath,
           github_url: null,
           default_agent: defaultAgentOverride || 'claude',
+          default_model: null,
+          default_effort: null,
           group_id: null,
           position: 0,
           last_opened: now(),
@@ -472,6 +476,22 @@
         var idx = projects.findIndex(function (p) { return p.id === id; });
         if (idx >= 0) {
           projects[idx].default_agent = agentName;
+          return Object.assign({}, projects[idx]);
+        }
+        throw new Error('Project not found: ' + id);
+      },
+      setDefaultModel: async function (id, model) {
+        var idx = projects.findIndex(function (p) { return p.id === id; });
+        if (idx >= 0) {
+          projects[idx].default_model = model;
+          return Object.assign({}, projects[idx]);
+        }
+        throw new Error('Project not found: ' + id);
+      },
+      setDefaultEffort: async function (id, effort) {
+        var idx = projects.findIndex(function (p) { return p.id === id; });
+        if (idx >= 0) {
+          projects[idx].default_effort = effort;
           return Object.assign({}, projects[idx]);
         }
         throw new Error('Project not found: ' + id);
@@ -659,6 +679,8 @@
           model_override: input.model_override || null,
           effort_override: input.effort_override || null,
           agent_override: input.agent_override || null,
+          permission_mode: input.permission_mode || null,
+          auto_command: input.auto_command || null,
           attachment_count: 0,
           archived_at: null,
           detail_view_state: null,

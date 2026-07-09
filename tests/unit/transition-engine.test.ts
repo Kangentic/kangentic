@@ -398,6 +398,52 @@ describe('TransitionEngine - raw/sanitized description split', () => {
   });
 });
 
+describe('TransitionEngine - permission_mode resolution precedence', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => {
+      return `claude ${options.prompt ?? ''}`;
+    });
+  });
+
+  it('task.permission_mode wins over the passed permissionOverride (swimlane) argument', async () => {
+    // Resolution order in executeSpawnAgent is task -> swimlane override -> global
+    // default. The `permissionOverride` argument here is the caller-resolved
+    // swimlane permission_mode; a task-level pin must win over it.
+    const task = makeTask({ permission_mode: 'plan' });
+    const sessionRepo = makeSessionRepo();
+
+    const { engine } = makeEngine({ sessionRepo });
+    await engine.executeTransition(
+      task as Parameters<typeof engine.executeTransition>[0],
+      'todo',
+      'doing',
+      'acceptEdits', // permissionOverride from the destination swimlane
+    );
+
+    expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
+    const inserted = sessionRepo.insert.mock.calls[0][0] as { permission_mode?: string };
+    expect(inserted.permission_mode).toBe('plan');
+  });
+
+  it('falls through to permissionOverride when the task has no permission_mode pin', async () => {
+    const task = makeTask({ permission_mode: null });
+    const sessionRepo = makeSessionRepo();
+
+    const { engine } = makeEngine({ sessionRepo });
+    await engine.executeTransition(
+      task as Parameters<typeof engine.executeTransition>[0],
+      'todo',
+      'doing',
+      'acceptEdits',
+    );
+
+    expect(sessionRepo.insert).toHaveBeenCalledTimes(1);
+    const inserted = sessionRepo.insert.mock.calls[0][0] as { permission_mode?: string };
+    expect(inserted.permission_mode).toBe('acceptEdits');
+  });
+});
+
 describe('TransitionEngine - create_worktree action threads signal + progress', () => {
   type EnsureWorktreeOptions = { signal?: AbortSignal; onProgress?: (phase: string) => void };
 

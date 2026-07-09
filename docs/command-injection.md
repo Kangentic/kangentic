@@ -7,7 +7,11 @@ Kangentic injects per-column "auto-commands" and per-column model/effort setting
 `prepareInjectionPlan` (`src/main/transition-engine/injection-plan.ts`) decides which `/model` / `/effort`
 slashes a column transition emits by diffing a **source** against a **target**:
 
-- **Target** is the destination column's effective value: `task.<override> ?? toLane.<override> ?? null`.
+- **Target** is the destination column's effective value: `task.<override> ?? toLane.<override> ?? project.default_<field> ?? null`.
+  The project-default tier is read on both sides of the diff: without it, a task moving between
+  two override-less columns on a project with a default model/effort set would read source = the
+  applied project default (recorded at the last spawn) vs target = null, and spuriously
+  restart/re-inject even though nothing actually changed.
 - **Source** is the value the live session is *actually running at*, read from the session
   record's `applied_model` / `applied_effort` columns: `task.<override> ?? record.applied_<field> ?? null`.
   It is NOT the leaving column's config. The leaving column disagrees with reality after an

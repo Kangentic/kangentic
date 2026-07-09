@@ -110,6 +110,11 @@ Create a task on the board (default: the To Do column on the active board) or in
 | `baseBranch` | string | No | Base branch for the task. Board tasks only. |
 | `useWorktree` | boolean | No | Whether to use a git worktree. Board tasks only. |
 | `attachments` | array | No | File attachments: `[{ filePath: string, filename?: string }]`. Files are read from disk and stored in the project's `.kangentic/` directory. |
+| `agentOverride` | string | No | Pin a specific agent for this task's entire lifetime (e.g. `"claude"`, `"codex"`). Locks against column moves. Omit to resolve column override -> project default -> app default. |
+| `modelOverride` | string | No | Model to spawn this task with (e.g. `"opus"`, `"claude-opus-4-8"`, or the friendly `"Opus 4.8"`). Best-effort: a friendly name is converted to the CLI id; an unresolvable model errors at spawn time. Omit to resolve column override -> project default -> agent default. |
+| `effortOverride` | string | No | Effort/reasoning level to spawn this task with (e.g. `"xhigh"`). Valid values are agent-specific. Omit to resolve column override -> project default -> agent default. |
+| `permissionMode` | string | No | Permission mode to spawn this task with: `"default"`, `"plan"`, `"acceptEdits"`, `"dontAsk"`, `"bypassPermissions"`, or `"auto"`. Omit to resolve column override -> project default -> app default. |
+| `autoCommand` | string | No | Slash command to run once the agent spawns for this task (e.g. `"/code-review"`, `"/release"`). Overrides the destination column's `auto_command` for this task only. MCP-only - not surfaced in the New Task dialog. |
 
 If the target column has `auto_spawn` enabled, creating a task there will also spawn an agent session for it. Backlog items never auto-spawn.
 
@@ -210,7 +215,7 @@ Get detailed column configuration: description, auto-spawn, permission mode, pla
 
 ### kangentic_update_task
 
-Update a task's title, description (full replace, in-place find/replace edits, or append), PR info, agent assignment, priority, labels, base branch, worktree toggle, or attachments. To move a task between columns, use `kangentic_move_task` instead.
+Update a task's title, description (full replace, in-place find/replace edits, or append), PR info, agent assignment, model/effort/permission overrides, priority, labels, base branch, worktree toggle, or attachments. To move a task between columns, use `kangentic_move_task` instead.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -226,6 +231,9 @@ Update a task's title, description (full replace, in-place find/replace edits, o
 | `labels` | string[] | No | Replace the task's label list. Pass `[]` to clear. |
 | `baseBranch` | string | No | Base branch the task's worktree branches from (e.g. `"main"`) |
 | `useWorktree` | boolean | No | Whether the task uses an isolated git worktree |
+| `model` | string | No | Model override for this task (e.g. `"opus"`, `"claude-opus-4-8"`, or the friendly `"Opus 4.8"`). Best-effort friendly-name resolution. Pass empty string to clear. |
+| `effort` | string | No | Effort/reasoning level override for this task (e.g. `"xhigh"`). Pass empty string to clear. |
+| `permissionMode` | string | No | Permission mode override for this task: `"default"`, `"plan"`, `"acceptEdits"`, `"dontAsk"`, `"bypassPermissions"`, or `"auto"`. Pass empty string to clear. |
 | `attachments` | array | No | File attachments to ADD to the task: `[{ filePath: string, filename?: string }]`. Additive - existing attachments are kept, not replaced. Use `kangentic_remove_task_attachment` to remove one. |
 
 At least one updatable field is required.

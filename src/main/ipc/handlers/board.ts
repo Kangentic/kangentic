@@ -120,6 +120,7 @@ export function registerBoardHandlers(context: IpcContext): void {
       const sessionRepo = projectId
         ? new SessionRepository(getProjectDb(projectId))
         : null;
+      const project = projectId ? context.projectRepo.getById(projectId) : null;
       for (const task of tasks.list(result.id)) {
         if (!task.session_id) continue;
         const session = context.sessionManager.getSession(task.session_id);
@@ -132,6 +133,7 @@ export function registerBoardHandlers(context: IpcContext): void {
           sessionRepo,
           task,
           toLane: result,
+          project,
         });
         if (!plan) continue;
 

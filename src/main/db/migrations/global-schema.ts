@@ -53,4 +53,15 @@ export function runGlobalMigrations(db: Database.Database): void {
     });
   }
 
+  // Migration: add 'default_model' / 'default_effort' columns for project-level
+  // model/effort defaults (sibling to default_agent). Nullable - unlike
+  // default_agent, NULL is a valid "no project preference" state that falls
+  // through to the agent CLI's own default.
+  const projectColumns = db.pragma('table_info(projects)') as Array<{ name: string }>;
+  if (!projectColumns.some((col) => col.name === 'default_model')) {
+    db.exec('ALTER TABLE projects ADD COLUMN default_model TEXT DEFAULT NULL');
+  }
+  if (!projectColumns.some((col) => col.name === 'default_effort')) {
+    db.exec('ALTER TABLE projects ADD COLUMN default_effort TEXT DEFAULT NULL');
+  }
 }

@@ -5,6 +5,9 @@ import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
 import type { RequestResolver } from './project-resolver';
 import type { BoardHit, BacklogHit, SearchScope } from '../commands/search-commands';
 import { TASK_DESCRIPTION_MAX_LENGTH, handleMoveTaskToProject } from '../commands/task-commands';
+import { resolveModelSelector, resolveEffortSelector } from '../../../shared/model-id';
+
+const PERMISSION_MODE_SCHEMA = z.enum(['default', 'plan', 'acceptEdits', 'dontAsk', 'bypassPermissions', 'auto']);
 
 /**
  * Build the create_task routing-check refusal shown when the call
@@ -66,11 +69,16 @@ export function registerTaskTools(
           filePath: z.string().describe('Absolute path to the file to attach'),
           filename: z.string().optional().describe('Override display filename'),
         })).optional().describe('File attachments. Always include here any local files the user referenced in the prompt by absolute path - reading a file for context does not replace attaching it. Each entry needs `filePath` (absolute) and may override the display `filename`. Skip only when the user explicitly said the file is "for context only, don\'t attach."'),
+        agentOverride: z.string().optional().describe('Pin a specific agent for this task\'s entire lifetime (e.g. "claude", "codex"). Locks against column moves, same as the New Task dialog\'s Advanced section. Omit to resolve through the normal chain: column override -> project default -> app default.'),
+        modelOverride: z.string().max(200).optional().describe('Model to spawn this task with (e.g. "opus", "claude-opus-4-8", or the friendly "Opus 4.8"). Best-effort: a friendly name is converted to the CLI id; if the agent CLI does not recognize the result, the spawn errors and you can retry with the exact id. Omit to resolve through the normal chain: column override -> project default -> agent default.'),
+        effortOverride: z.string().max(50).optional().describe('Effort/reasoning level to spawn this task with (e.g. "xhigh", "high"). Valid values are agent-specific. Omit to resolve through the normal chain: column override -> project default -> agent default.'),
+        permissionMode: PERMISSION_MODE_SCHEMA.optional().describe('Permission mode to spawn this task with. Omit to resolve through the normal chain: column override -> project default -> app default.'),
+        autoCommand: z.string().max(4000).optional().describe('Slash command to run once the agent spawns for this task (e.g. "/code-review", "/release"). Overrides the destination column\'s auto_command for this task only. Not surfaced in the UI - MCP-only.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, project }) => withProject(resolver, project, (ctx, resolved) => {
+    async ({ title, description, column, priority, labels, branchName, baseBranch, useWorktree, attachments, agentOverride, modelOverride, effortOverride, permissionMode, autoCommand, project }) => withProject(resolver, project, (ctx, resolved) => {
       // Routing guardrail: when the caller defaulted to the active
       // project (no explicit selector) but the task text names a
       // DIFFERENT registered project, refuse instead of silently filing
@@ -112,6 +120,11 @@ export function registerTaskTools(
         baseBranch: baseBranch ?? null,
         useWorktree: useWorktree ?? null,
         attachments: attachments ?? null,
+        agentOverride: agentOverride ?? null,
+        modelOverride: modelOverride ? resolveModelSelector(modelOverride) : null,
+        effortOverride: effortOverride ? resolveEffortSelector(effortOverride) : null,
+        permissionMode: permissionMode ?? null,
+        autoCommand: autoCommand ?? null,
       }, ctx, 'Failed to create task');
     }, { alwaysAnnotate: true }),
   );
@@ -373,6 +386,9 @@ export function registerTaskTools(
         labels: z.array(z.string()).optional().describe('Replace the task\'s label list. Pass [] to clear all labels. If this same call also sets a long description (roughly 1KB or more), set labels in a separate labels-only update instead, or they may be dropped before reaching the server.'),
         baseBranch: z.string().optional().describe('Base branch the task\'s worktree branches from (e.g. "main").'),
         useWorktree: z.boolean().optional().describe('Whether the task uses an isolated git worktree.'),
+        model: z.string().max(200).optional().describe('Model override for this task (e.g. "opus", "claude-opus-4-8", or the friendly "Opus 4.8"). Best-effort: a friendly name is converted to the CLI id. Pass empty string to clear.'),
+        effort: z.string().max(50).optional().describe('Effort/reasoning level override for this task (e.g. "xhigh"). Valid values are agent-specific. Pass empty string to clear.'),
+        permissionMode: z.union([PERMISSION_MODE_SCHEMA, z.literal('')]).optional().describe('Permission mode override for this task. Pass empty string to clear.'),
         attachments: z.array(z.object({
           filePath: z.string().describe('Absolute path to the file to attach'),
           filename: z.string().optional().describe('Override display filename'),
@@ -381,12 +397,13 @@ export function registerTaskTools(
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ taskId, title, description, descriptionEdits, appendDescription, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, attachments, project }) => {
+    async ({ taskId, title, description, descriptionEdits, appendDescription, prUrl, prNumber, agent, priority, labels, baseBranch, useWorktree, model, effort, permissionMode, attachments, project }) => {
       if (
         title === undefined && description === undefined && descriptionEdits === undefined && appendDescription === undefined &&
         prUrl === undefined && prNumber === undefined &&
         agent === undefined && priority === undefined && labels === undefined && baseBranch === undefined &&
-        useWorktree === undefined && attachments === undefined
+        useWorktree === undefined && model === undefined && effort === undefined && permissionMode === undefined &&
+        attachments === undefined
       ) {
         return { content: [{ type: 'text' as const, text: 'Provide at least one field to update.' }], isError: true };
       }
@@ -406,6 +423,9 @@ export function registerTaskTools(
         labels: labels ?? null,
         baseBranch: baseBranch ?? null,
         useWorktree: useWorktree ?? null,
+        model: model !== undefined ? (model ? resolveModelSelector(model) : null) : undefined,
+        effort: effort !== undefined ? (effort ? resolveEffortSelector(effort) : null) : undefined,
+        permissionMode: permissionMode !== undefined ? (permissionMode || null) : undefined,
         attachments: attachments ?? null,
       }, ctx, 'Failed to update task'));
     },
@@ -495,7 +515,7 @@ export function registerTaskTools(
         agentOverride: z.string().nullable().optional().describe('Force a specific agent for this column (e.g. "codex"). Null to use project default.'),
         modelOverride: z.string().max(200).nullable().optional().describe('Adapter-specific model identifier passed at spawn time (e.g. Claude "opus", "sonnet", "claude-opus-4-7"). Null to inherit the agent default.'),
         effortOverride: z.string().max(50).nullable().optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "medium", "high", "xhigh", "max"). Valid values are agent-specific. Null to inherit the agent default.'),
-        permissionMode: z.enum(['default', 'plan', 'acceptEdits', 'dontAsk', 'bypassPermissions', 'auto']).nullable().optional().describe('Permission mode for agents spawned in this column. Null to use project default.'),
+        permissionMode: PERMISSION_MODE_SCHEMA.nullable().optional().describe('Permission mode for agents spawned in this column. Null to use project default.'),
         handoffContext: z.boolean().optional().describe('Enable multi-agent handoff context preservation when entering this column.'),
         planExitTargetColumn: z.string().nullable().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning. Null to disable.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),

@@ -163,6 +163,7 @@ function makeContext(sessionSuspend: ReturnType<typeof vi.fn> = vi.fn(async () =
     configManager: { getEffectiveConfig: vi.fn(() => ({ agent: { permissionMode: 'acceptEdits' } })) },
     terminalSubmitScheduler: { cancel: vi.fn(), scheduleKeystrokes: vi.fn() },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
+    projectRepo: { getById: vi.fn(() => ({ id: PROJECT_ID, default_agent: 'claude', default_model: null, default_effort: null })) },
   };
 }
 
@@ -277,10 +278,11 @@ describe('restartSessionForSettingsChange', () => {
     expect(targetAgent).toBeUndefined();
     expect(handoffPromptPrefix).toBeUndefined();
 
-    // resolveSpawnOverrides was called to build spawn overrides from task + lane.
+    // resolveSpawnOverrides was called to build spawn overrides from task + lane + project.
     expect(mockResolveSpawnOverrides).toHaveBeenCalledWith(
       expect.objectContaining({ id: TASK_ID }),
       expect.objectContaining({ id: 'lane-executing' }),
+      expect.objectContaining({ id: PROJECT_ID }),
     );
   });
 

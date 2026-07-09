@@ -234,6 +234,8 @@ function makeSpawnInput(overrides: {
     projectPath: overrides.projectPath ?? '/home/dev/project',
     effectiveConfig: overrides.effectiveConfig ?? makeAppConfig(),
     projectDefaultAgent: null,
+    projectDefaultModel: null,
+    projectDefaultEffort: null,
     resolvedShell: '/bin/bash',
     mcpServerHandle: overrides.mcpServerHandle ?? null,
     resume: overrides.resume ?? null,
@@ -373,6 +375,31 @@ describe('prepareAgentSpawn - model/effort override passthrough', () => {
     // the adapter's buildCommand expects when no override is active.
     expect(capturedCommandOptions[0].model).toBeUndefined();
     expect(capturedCommandOptions[0].effort).toBeUndefined();
+  });
+});
+
+describe('prepareAgentSpawn - permission_mode resolution', () => {
+  it('resolves permissionMode from task.permission_mode, winning over a differing swimlane.permission_mode', async () => {
+    const { adapter, capturedCommandOptions } = makeCaptureAdapter();
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const taskWithPermissionOverride = makeTask({ permission_mode: 'plan' } as Partial<Task>);
+    const laneWithDifferentMode = makeSwimlane({ permission_mode: 'acceptEdits' } as Partial<Swimlane>);
+    const configWithDifferentDefault = makeAppConfig({
+      agent: { cliPaths: {}, permissionMode: 'default', maxConcurrentSessions: 5, queueOverflow: 'queue', autoResumeSessionsOnRestart: true },
+    });
+
+    const result = await prepareAgentSpawn(makeSpawnInput({
+      task: taskWithPermissionOverride,
+      swimlane: laneWithDifferentMode,
+      effectiveConfig: configWithDifferentDefault,
+    }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok:true');
+    expect(result.data.permissionMode).toBe('plan');
+    expect(capturedCommandOptions).toHaveLength(1);
+    expect(capturedCommandOptions[0].permissionMode).toBe('plan');
   });
 });
 

@@ -499,6 +499,52 @@ test.describe('BoardManagerDialog extended', () => {
     });
   });
 
+  // ── Agent/Effort/Permission Combobox: explicitly picking the resolved
+  //    default must still persist an override ────────────────────────────
+  //
+  // The Agent/Effort/Permission fields show the resolved default (project
+  // default agent, or the project/agent default for effort/permission) as a
+  // faint placeholder when the column has no override. Their option lists
+  // used to EXCLUDE the entry matching that resolved default (a leftover
+  // from the old native-<select> pattern, where the inherit "option" and a
+  // real pick of the same value were visually indistinguishable anyway).
+  // With the Combobox, that exclusion meant a value that happens to equal
+  // the resolved default could never be explicitly clicked - there was no
+  // way to pin it, so it silently stayed on inherit forever. Verify the
+  // fix: clicking the option matching the resolved default writes a real,
+  // non-null override.
+
+  test('picking the option that matches the resolved default still writes an explicit override', async () => {
+    await openManagerByHeader('Code Review');
+    const dialog = page.locator('[data-testid="board-manager-dialog"]');
+
+    // Code Review has no agent_override; the project default agent is Claude
+    // Code, so the placeholder already reads "Claude Code". Explicitly click
+    // that same option from the list.
+    const agentInput = dialog.locator('input[data-testid="column-agent-override"]');
+    await expect(agentInput).toHaveAttribute('placeholder', 'Claude Code');
+    await agentInput.click();
+    await dialog.locator('[data-testid="column-agent-override-option-claude"]').click();
+    await expect(agentInput).toHaveValue('Claude Code');
+
+    await dialog.locator('[data-testid="board-manager-save"]').click();
+    await dialog.waitFor({ state: 'detached', timeout: 3000 });
+
+    const saved = await page.evaluate(async () => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      const lane = lanes.find((s) => s.name === 'Code Review');
+      return lane?.agent_override;
+    });
+    expect(saved).toBe('claude');
+
+    // Cleanup: restore to inherit.
+    await page.evaluate(async () => {
+      const lanes = await window.electronAPI.swimlanes.list();
+      const lane = lanes.find((s) => s.name === 'Code Review');
+      if (lane) await window.electronAPI.swimlanes.update({ id: lane.id, agent_override: null });
+    });
+  });
+
   // ── Maximize parity ──────────────────────────────────────────────────────
   //
   // The dialog reuses the shared maximize pattern (maximizedDialogLayout +

@@ -17,6 +17,10 @@ export interface Project {
   path: string;
   github_url: string | null;
   default_agent: string;
+  /** Project-level default model, applied below the column override and above the CLI default. Null means no project preference. */
+  default_model: string | null;
+  /** Project-level default effort/reasoning level. Null means no project preference. */
+  default_effort: string | null;
   group_id: string | null;
   position: number;
   last_opened: string;
@@ -204,6 +208,10 @@ export interface Task {
   effort_override: string | null;
   /** Per-task agent override set at task creation. When non-null, wins over the swimlane's `agent_override` and the project default for the task's entire lifetime - column moves cannot change the agent. Set only via the New Task dialog's Advanced section; the ContextBar popover does not edit this. */
   agent_override: string | null;
+  /** Per-task permission mode override. Takes precedence over the swimlane's `permission_mode` and the project's default permission mode; null inherits. Set via the New Task dialog's Advanced section or the task-detail edit form (pre-spawn or suspended only - same lock as `agent_override`). */
+  permission_mode: PermissionMode | null;
+  /** Per-task initial command, injected once the agent spawns for this task. MCP-only (set via `kangentic_create_task`'s `autoCommand` param); not surfaced in the UI. Takes precedence over the swimlane's `auto_command` for this task only; null inherits the swimlane. */
+  auto_command: string | null;
   attachment_count: number;
   /** Serialized `TaskDetailViewState` (JSON) persisting the task-detail dialog's layout across restarts. null until the user changes the layout once. */
   detail_view_state: string | null;
@@ -2170,6 +2178,9 @@ export interface TaskCreateInput {
   model_override?: string | null;
   effort_override?: string | null;
   agent_override?: string | null;
+  permission_mode?: PermissionMode | null;
+  /** MCP-only initial command, injected once the agent spawns for this task. Not surfaced in the New Task dialog. */
+  auto_command?: string | null;
   /** External origin carried through when promoting an imported backlog item, so import dedup survives promotion. */
   externalId?: string;
   externalSource?: string;
@@ -2204,6 +2215,7 @@ export interface TaskUpdateInput {
   model_override?: string | null;
   effort_override?: string | null;
   agent_override?: string | null;
+  permission_mode?: PermissionMode | null;
 }
 
 /** Result of `IPC.TASK_RESOLVE_PR` - the on-demand branch->PR resolver. */
@@ -2367,6 +2379,8 @@ export interface ProjectCreateInput {
   path: string;
   github_url?: string;
   default_agent?: string;
+  default_model?: string | null;
+  default_effort?: string | null;
 }
 
 /** Minimal parsing interface for agent-specific runtime behavior. */
@@ -2950,6 +2964,8 @@ export interface ElectronAPI {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     rename: (id: string, name: string) => Promise<Project>;
     setDefaultAgent: (id: string, agentName: string) => Promise<Project>;
+    setDefaultModel: (id: string, model: string | null) => Promise<Project>;
+    setDefaultEffort: (id: string, effort: string | null) => Promise<Project>;
     reorder: (ids: string[]) => Promise<void>;
     setGroup: (projectId: string, groupId: string | null) => Promise<void>;
     relocate: (id: string, newPath: string, options?: ProjectRelocateOptions) => Promise<ProjectRelocateResult>;

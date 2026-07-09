@@ -10,7 +10,7 @@ import { resolveTask } from './task-resolver';
 import { handleCreateBacklogTask, BACKLOG_DESCRIPTION_MAX_LENGTH } from './backlog-commands';
 import { linkPRForTask } from '../../pr/pr-linking';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
-import type { TaskUpdateInput } from '../../../shared/types';
+import type { TaskUpdateInput, PermissionMode } from '../../../shared/types';
 
 export const TASK_DESCRIPTION_MAX_LENGTH = 50_000;
 
@@ -90,6 +90,11 @@ export const handleCreateTask: CommandHandler = (
   const attachments = params.attachments as Array<{ filePath: string; filename?: string }> | null;
   const priority = params.priority as number | null;
   const rawLabels = params.labels as Array<string | { name: string; color?: string }> | null;
+  const agentOverride = params.agentOverride as string | null;
+  const modelOverride = params.modelOverride as string | null;
+  const effortOverride = params.effortOverride as string | null;
+  const permissionMode = params.permissionMode as PermissionMode | null;
+  const autoCommand = params.autoCommand as string | null;
 
   // Observability for the "labels dropped on a large description" bug
   // (task #229). Logs what `labels` actually reached the handler. If it is
@@ -161,6 +166,11 @@ export const handleCreateTask: CommandHandler = (
     ...(branchName ? { customBranchName: branchName } : {}),
     ...(labelNames.length > 0 ? { labels: labelNames } : {}),
     ...(priority !== null && priority !== undefined ? { priority } : {}),
+    ...(agentOverride ? { agent_override: agentOverride } : {}),
+    ...(modelOverride ? { model_override: modelOverride } : {}),
+    ...(effortOverride ? { effort_override: effortOverride } : {}),
+    ...(permissionMode ? { permission_mode: permissionMode } : {}),
+    ...(autoCommand ? { auto_command: autoCommand } : {}),
   });
 
   // Persist label colors to config if any were provided
@@ -207,6 +217,9 @@ export const handleUpdateTask: CommandHandler = (
   const newLabels = params.labels as string[] | null;
   const newBaseBranch = params.baseBranch as string | null;
   const newUseWorktree = params.useWorktree as boolean | null;
+  const newModel = params.model as string | null | undefined;
+  const newEffort = params.effort as string | null | undefined;
+  const newPermissionMode = params.permissionMode as PermissionMode | null | undefined;
   const newAttachments = params.attachments as Array<{ filePath: string; filename?: string }> | null;
 
   // Observability for the "labels dropped on a large description" bug
@@ -264,6 +277,13 @@ export const handleUpdateTask: CommandHandler = (
   if (newLabels !== null) updates.labels = newLabels;
   if (newBaseBranch !== null) updates.base_branch = newBaseBranch;
   if (newUseWorktree !== null) updates.use_worktree = newUseWorktree ? 1 : 0;
+  // model/effort/permissionMode distinguish "not provided" (undefined - leave
+  // untouched) from "explicitly cleared" (null, from an empty-string param at
+  // the tool layer) from "set" (a concrete value) - unlike the sibling fields
+  // above, which collapse "omitted" and "clear" onto the same null sentinel.
+  if (newModel !== undefined) updates.model_override = newModel;
+  if (newEffort !== undefined) updates.effort_override = newEffort;
+  if (newPermissionMode !== undefined) updates.permission_mode = newPermissionMode;
 
   const hasScalarChange = Object.keys(updates).length > 1;
   let updated = hasScalarChange ? taskRepo.update(updates as unknown as TaskUpdateInput) : task;
@@ -311,6 +331,9 @@ export const handleUpdateTask: CommandHandler = (
   if (newLabels !== null) changedFields.push('labels');
   if (newBaseBranch !== null) changedFields.push('baseBranch');
   if (newUseWorktree !== null) changedFields.push('useWorktree');
+  if (newModel !== undefined) changedFields.push('model');
+  if (newEffort !== undefined) changedFields.push('effort');
+  if (newPermissionMode !== undefined) changedFields.push('permissionMode');
   if (attachmentsAdded > 0) changedFields.push('attachments');
 
   return {
@@ -328,6 +351,9 @@ export const handleUpdateTask: CommandHandler = (
       labels: updated.labels,
       baseBranch: updated.base_branch,
       useWorktree: updated.use_worktree,
+      modelOverride: updated.model_override,
+      effortOverride: updated.effort_override,
+      permissionMode: updated.permission_mode,
       ...(newAttachments !== null ? { attachmentCount: updated.attachment_count, attachmentsAdded } : {}),
     },
   };

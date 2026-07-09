@@ -75,6 +75,8 @@ export async function prepareAgentSpawn(input: {
   projectPath: string;
   effectiveConfig: AppConfig;
   projectDefaultAgent: string | null;
+  projectDefaultModel: string | null;
+  projectDefaultEffort: string | null;
   resolvedShell: string;
   mcpServerHandle: McpHttpServerHandle | null | undefined;
   /** Non-null → build a resume command with the given agent session ID. */
@@ -97,7 +99,7 @@ export async function prepareAgentSpawn(input: {
 
   await adapter.ensureTrust(cwd);
 
-  const permissionMode = swimlane?.permission_mode ?? config.agent.permissionMode;
+  const permissionMode = task.permission_mode ?? swimlane?.permission_mode ?? config.agent.permissionMode;
 
   let agentSessionId: string | null;
   const canResume = input.resume !== null;
@@ -130,10 +132,11 @@ export async function prepareAgentSpawn(input: {
     mcpServerUrl: input.mcpServerHandle?.urlForProject(projectId),
     mcpServerToken: input.mcpServerHandle?.token,
     // Task-level override (set by the ContextBar popover) wins over the
-    // swimlane override - once a user has expressed an explicit per-task
-    // preference, it sticks across column moves until they clear it.
-    model: task.model_override ?? swimlane?.model_override ?? undefined,
-    effort: task.effort_override ?? swimlane?.effort_override ?? undefined,
+    // swimlane override, which wins over the project-level default - once a
+    // user has expressed an explicit per-task preference, it sticks across
+    // column moves until they clear it.
+    model: task.model_override ?? swimlane?.model_override ?? input.projectDefaultModel ?? undefined,
+    effort: task.effort_override ?? swimlane?.effort_override ?? input.projectDefaultEffort ?? undefined,
   };
 
   const command = adapter.buildCommand(commandOptions);

@@ -11,6 +11,8 @@ export const IPC = {
   PROJECT_SET_GROUP: 'project:setGroup',
   PROJECT_RENAME: 'project:rename',
   PROJECT_SET_DEFAULT_AGENT: 'project:setDefaultAgent',
+  PROJECT_SET_DEFAULT_MODEL: 'project:setDefaultModel',
+  PROJECT_SET_DEFAULT_EFFORT: 'project:setDefaultEffort',
   PROJECT_AUTO_OPENED: 'project:autoOpened',
   PROJECT_RELOCATE: 'project:relocate',
   PROJECT_MOVE_PROGRESS: 'project:moveProgress',

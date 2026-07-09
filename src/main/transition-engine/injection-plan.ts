@@ -1,4 +1,4 @@
-import type { SessionRecord, Swimlane, Task } from '../../shared/types';
+import type { Project, SessionRecord, Swimlane, Task } from '../../shared/types';
 import type { AgentAdapter } from '../agent/agent-adapter';
 import type { SessionRepository } from '../db/repositories/session-repository';
 import type { CommandVerifier } from './terminal-submit-scheduler';
@@ -43,6 +43,14 @@ export interface InjectionPlanInput {
    */
   task: Pick<Task, 'id' | 'agent' | 'model_override' | 'effort_override'>;
   toLane: Swimlane | null;
+  /**
+   * Project-level model/effort default - the tier below the column and above
+   * the CLI default. Read on BOTH the source and target sides of the delta so
+   * an override-less column move on a project with a default set does not
+   * read a spurious change (source = the project default the session was
+   * actually spawned with; target = null without this tier).
+   */
+  project?: Pick<Project, 'default_model' | 'default_effort'> | null;
   /** Already-interpolated auto_command from the destination column, or empty. */
   autoCommand?: string;
 }
@@ -80,7 +88,7 @@ export interface InjectionPlan {
 }
 
 export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan | null {
-  const { adapter, sessionRepo, task, toLane, autoCommand } = input;
+  const { adapter, sessionRepo, task, toLane, autoCommand, project } = input;
 
   // SOURCE is the model/effort the live session is ACTUALLY running at, read
   // from the session record (`applied_model` / `applied_effort`), NOT the
@@ -91,11 +99,17 @@ export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan |
   // slash fires for that field (preserving the ContextBar contract). When no
   // record exists (unit stubs, a session predating this column) the applied
   // value is null, i.e. "agent default".
+  //
+  // The project-default tier is read on BOTH sides: without it, a task moving
+  // between two override-less columns on a project with a default_model set
+  // would read source = the applied project default (recorded at the last
+  // spawn) vs target = null, and spuriously restart/re-inject even though
+  // nothing actually changed.
   const record = sessionRepo?.getLatestForTask(task.id) ?? null;
   const sourceModel = task.model_override ?? record?.applied_model ?? null;
-  const targetModel = task.model_override ?? toLane?.model_override ?? null;
+  const targetModel = task.model_override ?? toLane?.model_override ?? project?.default_model ?? null;
   const sourceEffort = task.effort_override ?? record?.applied_effort ?? null;
-  const targetEffort = task.effort_override ?? toLane?.effort_override ?? null;
+  const targetEffort = task.effort_override ?? toLane?.effort_override ?? project?.default_effort ?? null;
 
   const modelChanged = targetModel !== sourceModel;
   const effortChanged = targetEffort !== sourceEffort;

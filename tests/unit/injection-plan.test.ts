@@ -414,6 +414,72 @@ describe('prepareInjectionPlan', () => {
   });
 });
 
+describe('prepareInjectionPlan -- project-level default_model / default_effort tier', () => {
+  // The project default sits below the column override and above the CLI
+  // default, and MUST be read on both the source and target sides of the
+  // delta (see the header comment on prepareInjectionPlan). Without the `??
+  // project?.default_model` / `?? project?.default_effort` fallback on the
+  // TARGET side, an override-less column move on a project with a default
+  // set would spuriously read source = the recorded applied project default
+  // vs target = null, and wrongly restart / re-inject.
+
+  it('no spurious restart: session applied_model already equals the project default, override-less lane', () => {
+    const adapter = fakeAdapter({}); // no getInjectionSequence (model-only case)
+    const plan = prepareInjectionPlan({
+      adapter,
+      sessionRepo: sessionRepoWith({ applied_model: 'opus' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ model_override: null, effort_override: null }),
+      project: { default_model: 'opus', default_effort: null },
+    });
+    // Nothing changed and nothing else to do -> null plan, no restart.
+    expect(plan).toBeNull();
+  });
+
+  it('flags needsRestartForModel when the session has no applied_model but the project sets a default', () => {
+    const adapter = fakeAdapter({});
+    const plan = prepareInjectionPlan({
+      adapter,
+      sessionRepo: sessionRepoWith({ applied_model: null }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ model_override: null, effort_override: null }),
+      project: { default_model: 'opus', default_effort: null },
+    });
+    expect(plan).not.toBeNull();
+    expect(plan?.needsRestartForModel).toBe(true);
+  });
+
+  it('no spurious effort injection: session applied_effort already equals the project default, override-less lane', () => {
+    const adapter = fakeAdapter({
+      getInjectionSequence: (spec) => (spec.effortChanged && spec.effort ? [`/effort ${spec.effort}`] : []),
+    });
+    const plan = prepareInjectionPlan({
+      adapter,
+      sessionRepo: sessionRepoWith({ applied_model: null, applied_effort: 'high' }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ model_override: null, effort_override: null }),
+      project: { default_model: null, default_effort: 'high' },
+    });
+    // effort source (project default 'high') === target (project default 'high') -> no delta, no plan.
+    expect(plan).toBeNull();
+  });
+
+  it('injects /effort when the session has no applied_effort but the project sets a default', () => {
+    const adapter = fakeAdapter({
+      getInjectionSequence: (spec) => (spec.effortChanged && spec.effort ? [`/effort ${spec.effort}`] : []),
+    });
+    const plan = prepareInjectionPlan({
+      adapter,
+      sessionRepo: sessionRepoWith({ applied_model: null, applied_effort: null }),
+      task: { id: 't1', agent: 'fake', model_override: null, effort_override: null },
+      toLane: lane({ model_override: null, effort_override: null }),
+      project: { default_model: null, default_effort: 'high' },
+    });
+    expect(plan?.sequence).toEqual(['/effort high']);
+    expect(plan?.appliedSettings).toEqual({ effort: 'high' });
+  });
+});
+
 describe('prepareInjectionPlan -- per-task override wins over column override', () => {
   // The ContextBar popover writes `tasks.model_override` / `tasks.effort_override`
   // and the user-confirmed semantic is "task override fully wins over column

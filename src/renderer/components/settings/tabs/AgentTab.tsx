@@ -5,7 +5,11 @@ import { useProjectStore } from '../../../stores/project-store';
 import type { AgentDetectionInfo, AgentPermissionEntry, AppConfig, PermissionMode } from '../../../../shared/types';
 import { DEFAULT_PERMISSIONS, DEFAULT_AGENT, getAgentDefaultPermission } from '../../../../shared/types';
 import { agentDisplayName, agentLoginCommand } from '../../../utils/agent-display-name';
-import { SettingRow, Select, INPUT_CLASS, useScopedUpdate } from '../shared';
+import { useAgentCapabilityResolution } from '../../../hooks/useAgentCapabilityResolution';
+import { useModelContextWindows, useModelDisplayNames } from '../../../hooks/useKnownModels';
+import { ModelCombobox } from '../../dialogs/ModelCombobox';
+import { Combobox } from '../../dialogs/Combobox';
+import { SettingRow, INPUT_CLASS, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 
 export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
@@ -55,6 +59,15 @@ export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
   const detectedAgents = useMemo(() => agentList.filter((agent) => agent.found), [agentList]);
   const undetectedAgents = useMemo(() => agentList.filter((agent) => !agent.found), [agentList]);
 
+  const {
+    models: defaultModelOptions,
+    effortLevels: defaultEffortOptions,
+    supportsModelOverride: showDefaultModelPicker,
+  } = useAgentCapabilityResolution(effectiveAgent);
+  const defaultModelContextWindows = useModelContextWindows(effectiveAgent);
+  const defaultModelDisplayNames = useModelDisplayNames(effectiveAgent);
+  const showDefaultEffortPicker = defaultEffortOptions.length > 0;
+
   const handleDefaultAgentChange = async (agentName: string) => {
     if (!currentProject) return;
     await window.electronAPI.projects.setDefaultAgent(currentProject.id, agentName);
@@ -63,32 +76,76 @@ export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
     if (newDefault !== config.agent.permissionMode) {
       updateProject({ agent: { permissionMode: newDefault } });
     }
+    // Previous model/effort defaults were valid for the previous agent's
+    // capability matrix; clear so the user re-picks from the new agent.
+    await window.electronAPI.projects.setDefaultModel(currentProject.id, null);
+    await window.electronAPI.projects.setDefaultEffort(currentProject.id, null);
+    await refreshCurrentProject();
+  };
+
+  const handleDefaultModelChange = async (model: string) => {
+    if (!currentProject) return;
+    await window.electronAPI.projects.setDefaultModel(currentProject.id, model || null);
+    await refreshCurrentProject();
+  };
+
+  const handleDefaultEffortChange = async (effort: string) => {
+    if (!currentProject) return;
+    await window.electronAPI.projects.setDefaultEffort(currentProject.id, effort || null);
     await refreshCurrentProject();
   };
 
   return (
     <>
       <SettingRow {...settingProps('project.defaultAgent')}>
-        <Select
+        <Combobox
           value={effectiveAgent}
-          onChange={(event) => handleDefaultAgentChange(event.target.value)}
+          onChange={handleDefaultAgentChange}
+          options={
+            agentList.length > 0
+              ? [...detectedAgents, ...undetectedAgents].map((agent) => ({ value: agent.name, label: agent.displayName ?? agent.name }))
+              : [{ value: DEFAULT_AGENT, label: agentDisplayName(DEFAULT_AGENT) }]
+          }
+          allowClear={false}
           disabled={!currentProject}
-        >
-          {detectedAgents.map((agent) => (
-            <option key={agent.name} value={agent.name}>
-              {agent.displayName ?? agent.name}
-            </option>
-          ))}
-          {detectedAgents.length > 0 && undetectedAgents.length > 0 && (
-            <option disabled>────────────</option>
-          )}
-          {undetectedAgents.map((agent) => (
-            <option key={agent.name} value={agent.name}>
-              {agent.displayName ?? agent.name}
-            </option>
-          ))}
-          {agentList.length === 0 && <option value={DEFAULT_AGENT}>{agentDisplayName(DEFAULT_AGENT)}</option>}
-        </Select>
+          testId="project-default-agent"
+        />
+      </SettingRow>
+      {showDefaultModelPicker && (
+        <SettingRow {...settingProps('project.defaultModel')}>
+          <ModelCombobox
+            value={currentProject?.default_model ?? ''}
+            onChange={handleDefaultModelChange}
+            availableModels={defaultModelOptions}
+            placeholder="Agent default"
+            placeholderVariant="muted"
+            testId="project-default-model"
+            onOpen={() => useConfigStore.getState().rescanModels()}
+            contextWindows={defaultModelContextWindows}
+            modelDisplayNames={defaultModelDisplayNames}
+          />
+        </SettingRow>
+      )}
+      {showDefaultEffortPicker && (
+        <SettingRow {...settingProps('project.defaultEffort')}>
+          <Combobox
+            value={currentProject?.default_effort ?? ''}
+            onChange={handleDefaultEffortChange}
+            options={defaultEffortOptions.map((level) => ({ value: level, label: level }))}
+            placeholder="Agent default"
+            placeholderVariant="muted"
+            testId="project-default-effort"
+          />
+        </SettingRow>
+      )}
+      <SettingRow {...settingProps('agent.permissionMode')}>
+        <Combobox
+          value={config.agent.permissionMode}
+          onChange={(nextValue) => updateProject({ agent: { permissionMode: nextValue as PermissionMode } })}
+          options={agentPermissions.map((entry) => ({ value: entry.mode, label: entry.label }))}
+          allowClear={false}
+          testId="agent-permission-mode"
+        />
       </SettingRow>
       {agentList.filter((agent) => agent.name === effectiveAgent).map((agent) => {
         const loginCommand = agentLoginCommand(agent.name);
@@ -156,16 +213,6 @@ export function AgentTab({ config, globalConfig, agentInfo, agentList }: {
           max={120}
           className={INPUT_CLASS}
         />
-      </SettingRow>
-      <SettingRow {...settingProps('agent.permissionMode')}>
-        <Select
-          value={config.agent.permissionMode}
-          onChange={(event) => updateProject({ agent: { permissionMode: event.target.value as PermissionMode } })}
-        >
-          {agentPermissions.map((entry) => (
-            <option key={entry.mode} value={entry.mode}>{entry.label}</option>
-          ))}
-        </Select>
       </SettingRow>
     </>
   );

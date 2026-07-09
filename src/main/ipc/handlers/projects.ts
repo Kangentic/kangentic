@@ -414,9 +414,9 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
       .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
 
     runWithProjectLogContext(project.name, () =>
-      resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle)
+      resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort)
         .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
-        .then(() => autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
+        .then(() => autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort))
         .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err)),
     );
 
@@ -472,8 +472,8 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       cleanupStaleResourcesAsync(project.path, taskRepo, swimlaneRepo, sessionRepo, context.sessionManager)
         .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
 
-      await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle);
-      await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle);
+      await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort);
+      await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort);
       context.recoveredProjects.add(project.id);
     })),
   );
@@ -590,9 +590,9 @@ export function registerProjectHandlers(context: IpcContext): void {
         .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
 
       runWithProjectLogContext(project.name, () =>
-        resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle)
+        resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort)
           .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
-          .then(() => autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle))
+          .then(() => autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort))
           .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err)),
       );
 
@@ -627,6 +627,14 @@ export function registerProjectHandlers(context: IpcContext): void {
       throw new Error(`Unknown agent: "${agentName}"`);
     }
     return context.projectRepo.setDefaultAgent(id, agentName);
+  });
+
+  ipcMain.handle(IPC.PROJECT_SET_DEFAULT_MODEL, (_, id: string, model: string | null) => {
+    return context.projectRepo.setDefaultModel(id, model);
+  });
+
+  ipcMain.handle(IPC.PROJECT_SET_DEFAULT_EFFORT, (_, id: string, effort: string | null) => {
+    return context.projectRepo.setDefaultEffort(id, effort);
   });
 
   ipcMain.handle(IPC.PROJECT_OPEN_BY_PATH, async (_, projectPath: string) => {

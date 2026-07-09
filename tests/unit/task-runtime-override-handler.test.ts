@@ -102,6 +102,7 @@ interface MockContext {
     getSessionAgentName: ReturnType<typeof vi.fn>;
   };
   terminalSubmitScheduler: { scheduleKeystrokes: ReturnType<typeof vi.fn> };
+  projectRepo: { getById: ReturnType<typeof vi.fn> };
 }
 
 function createMockTask(overrides: Partial<MockTask> = {}): MockTask {
@@ -125,6 +126,7 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
       getSessionAgentName: vi.fn(() => undefined),
     },
     terminalSubmitScheduler: { scheduleKeystrokes: vi.fn() },
+    projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', default_agent: 'claude', default_model: null, default_effort: null })) },
     ...overrides,
   };
 }

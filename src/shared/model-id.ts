@@ -93,6 +93,53 @@ export function humanizeModelId(modelId: string): string | null {
   return bracketMatch ? `${label} (${bracketMatch[1].toUpperCase()})` : label;
 }
 
+/**
+ * Best-effort inverse of `humanizeModelId`, for callers (MCP tools) that
+ * receive a friendly name like "Opus 4.8" instead of the exact spawnable id.
+ * A raw id/alias (no spaces, already lowercase - e.g. "claude-opus-4-8",
+ * "opus", "sonnet") passes through verbatim. A "<Name> <major>.<minor>"
+ * friendly form is synthesized into `claude-<name>-<major>-<minor>`, with an
+ * optional trailing "(1M)" mapped to the `[1m]` suffix.
+ *
+ * This is deliberately best-effort, not a validated lookup: it does not check
+ * the result against a live discovered model list (that would require an
+ * agent CLI probe at the MCP layer), so a synthesized id for an unusual or
+ * unreleased model name may not match the CLI's actual spawnable string. The
+ * agent CLI is the final validator - an unresolvable model surfaces as a
+ * normal CLI error at spawn time, and the caller can retry with the exact id.
+ */
+export function resolveModelSelector(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return trimmed;
+  // Already a raw id/alias - no spaces and no uppercase letters.
+  if (!/\s/.test(trimmed) && trimmed === trimmed.toLowerCase()) return trimmed;
+
+  const oneMillionMatch = trimmed.match(/\s*\(1M\)\s*$/i);
+  const base = oneMillionMatch ? trimmed.slice(0, oneMillionMatch.index).trim() : trimmed;
+
+  const parts = base.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return trimmed;
+  const last = parts[parts.length - 1];
+  const isVersion = /^\d+(\.\d+)*$/.test(last);
+  const nameParts = isVersion ? parts.slice(0, -1) : parts;
+  const versionParts = isVersion ? last.split('.') : [];
+  if (nameParts.length === 0) return trimmed;
+
+  const nameSegment = nameParts.map((part) => part.toLowerCase()).join('-');
+  const id = ['claude', nameSegment, ...versionParts].join('-');
+  return oneMillionMatch ? `${id}[1m]` : id;
+}
+
+/**
+ * Best-effort normalization for a friendly effort/reasoning level (MCP
+ * tools): case-insensitive, trimmed. Effort values are stored and displayed
+ * verbatim (there is no id<->display mapping like models), so this only
+ * fixes casing ("XHigh" -> "xhigh"); the agent CLI validates the result.
+ */
+export function resolveEffortSelector(input: string): string {
+  return input.trim().toLowerCase();
+}
+
 export interface ParsedModelFamily {
   /** The base id with its trailing numeric version run removed. */
   family: string;

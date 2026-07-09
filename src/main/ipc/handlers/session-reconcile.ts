@@ -106,6 +106,7 @@ export async function restartSessionForSettingsChange(
     const updatedTask = tasks.getById(taskId);
     if (!updatedTask) return { ok: false, reason: 'task disappeared during restart' };
     const updatedLane = swimlanes.getById(updatedTask.swimlane_id);
+    const project = context.projectRepo.getById(projectId);
 
     const sessionRepo = new SessionRepository(getProjectDb(projectId));
     const engine = createTransitionEngine(
@@ -121,7 +122,7 @@ export async function restartSessionForSettingsChange(
         undefined, // signal
         undefined, // targetAgent - resolved internally from the task/session
         undefined, // handoffPromptPrefix
-        resolveSpawnOverrides(updatedTask, updatedLane),
+        resolveSpawnOverrides(updatedTask, updatedLane, project),
       );
       return { ok: true };
     } catch (respawnError) {

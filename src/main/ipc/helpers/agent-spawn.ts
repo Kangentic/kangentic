@@ -10,7 +10,7 @@ import { interpolateTemplate } from '../../agent/shared';
 import { agentRegistry } from '../../agent/agent-registry';
 import { buildSessionHistoryReference } from '../../agent/handoff/session-history-reference';
 import { DEFAULT_AGENT } from '../../../shared/types';
-import type { Task, Swimlane } from '../../../shared/types';
+import type { Task, Swimlane, Project } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
 import { resolveTargetAgent } from '../../transition-engine/agent-resolver';
@@ -39,10 +39,12 @@ export function buildAutoCommandVars(task: Task): Record<string, string> {
  * `engine.resumeSuspendedSession` and `engine.executeTransition`.
  *
  * model/effort: per-task override (set via the ContextBar popover) wins over the
- * swimlane override - the user's explicit choice is sticky across column moves
- * and respawns. Undefined values are returned unchanged so a fully-unset
- * (undefined / undefined) row produces `undefined` rather than `null` and
- * downstream `?? undefined` coalescing stays a no-op.
+ * swimlane override, which wins over the project-level default - the user's
+ * explicit choice is sticky across column moves and respawns, and the project
+ * default is the base fallback below both. Undefined values are returned
+ * unchanged so a fully-unset (undefined / undefined / undefined) row produces
+ * `undefined` rather than `null` and downstream `?? undefined` coalescing
+ * stays a no-op.
  *
  * isolatedSwimlaneId / forceFresh: derived from the destination column's session
  * target + spawn strategy. This is the single resolution site for the spawn path,
@@ -53,10 +55,11 @@ export function buildAutoCommandVars(task: Task): Record<string, string> {
 export function resolveSpawnOverrides(
   task: Pick<Task, 'model_override' | 'effort_override'>,
   lane: Pick<Swimlane, 'id' | 'model_override' | 'effort_override' | 'session_target' | 'session_spawn_strategy'> | null | undefined,
+  project?: Pick<Project, 'default_model' | 'default_effort'> | null,
 ): { model: string | null | undefined; effort: string | null | undefined; isolatedSwimlaneId: string | null; forceFresh: boolean } {
   return {
-    model: task.model_override ?? lane?.model_override,
-    effort: task.effort_override ?? lane?.effort_override,
+    model: task.model_override ?? lane?.model_override ?? project?.default_model,
+    effort: task.effort_override ?? lane?.effort_override ?? project?.default_effort,
     isolatedSwimlaneId: resolveIsolatedSwimlaneId(lane),
     forceFresh: resolveForceFresh(lane),
   };
@@ -253,7 +256,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         task, toLane.permission_mode, skipPromptTemplate, undefined, signal,
         targetAgent,
         handoffPromptPrefix,
-        resolveSpawnOverrides(task, toLane),
+        resolveSpawnOverrides(task, toLane, project),
       );
     } catch (error) {
       if (isAbortError(error)) throw error;
@@ -276,9 +279,10 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         console.error('[spawnAgent] Failed to finalize handoff:', error);
       }
 
-      if (!options.suppressAutoCommand && toLane.auto_command?.trim()) {
+      const effectiveAutoCommand = currentTask.auto_command ?? toLane.auto_command;
+      if (!options.suppressAutoCommand && effectiveAutoCommand?.trim()) {
         const vars = buildAutoCommandVars(currentTask);
-        const interpolated = interpolateTemplate(toLane.auto_command, vars);
+        const interpolated = interpolateTemplate(effectiveAutoCommand, vars);
         context.terminalSubmitScheduler.scheduleKeystrokes(currentTask.id, currentTask.session_id, [interpolated], { freshlySpawned: true });
       }
     }
@@ -292,7 +296,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   try {
     await engine.executeTransition(
       task, fromSwimlaneId, toLane.id, toLane.permission_mode, skipPromptTemplate, signal, targetAgent,
-      resolveSpawnOverrides(task, toLane),
+      resolveSpawnOverrides(task, toLane, project),
       // A create_worktree action runs inside the transition; give it the same
       // progress labels as the default task-move worktree path so its
       // "Creating worktree..." / "Running setup script..." phases reach the card.
@@ -339,8 +343,9 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   // so the resume is promptless, and the post-spawn keystroke is skipped. A
   // fresh-spawn outcome also sits idle because skipPromptTemplate is already
   // true for any non-To-Do source.
-  const interpolatedAutoCommand = !options.suppressAutoCommand && toLane.auto_command?.trim()
-    ? interpolateTemplate(toLane.auto_command, buildAutoCommandVars(currentTask))
+  const effectiveAutoCommand = currentTask.auto_command ?? toLane.auto_command;
+  const interpolatedAutoCommand = !options.suppressAutoCommand && effectiveAutoCommand?.trim()
+    ? interpolateTemplate(effectiveAutoCommand, buildAutoCommandVars(currentTask))
     : undefined;
   const deliverAutoCommandAsPrompt = interpolatedAutoCommand !== undefined
     && (canResumeDestination || skipPromptTemplate === true);
@@ -361,7 +366,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       currentTask, toLane.permission_mode, skipPromptTemplate, resumePrompt, signal,
       targetAgent,
       undefined,
-      resolveSpawnOverrides(currentTask, toLane),
+      resolveSpawnOverrides(currentTask, toLane, project),
     );
   } catch (error) {
     if (isAbortError(error)) throw error;

@@ -18,6 +18,12 @@
  * - forceFresh: true for 'always_spawn_new' strategy; false for 'create_or_resume'.
  *   Context-aware default: isolated lane with unset strategy defaults to true;
  *   main lane with unset strategy defaults to false.
+ *
+ * Project tier: below the lane, a project-level default_model/default_effort
+ * fallback. Omitting the `project` argument entirely (as most tests above do)
+ * behaves like the pre-project-tier chain (falls through to undefined, same
+ * as an omitted lane); passing an explicit project fixture with null fields
+ * preserves the "both null produces null" contract.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -39,6 +45,8 @@ type LaneFields = {
   session_target: SessionTarget;
   session_spawn_strategy: SessionSpawnStrategy;
 };
+
+type ProjectFields = { default_model: string | null; default_effort: string | null };
 
 function makeTask(model: string | null, effort: string | null): TaskOverrideFields {
   return { model_override: model, effort_override: effort };
@@ -64,6 +72,10 @@ function makeLane(
     session_target: options.sessionTarget ?? 'main',
     session_spawn_strategy: options.sessionSpawnStrategy ?? 'create_or_resume',
   };
+}
+
+function makeProject(model: string | null, effort: string | null): ProjectFields {
+  return { default_model: model, default_effort: effort };
 }
 
 // ---------------------------------------------------------------------------
@@ -108,18 +120,54 @@ describe('resolveSpawnOverrides', () => {
   });
 
   describe('both null produces null (not undefined)', () => {
-    it('returns null for model when both task and lane model_override are null', () => {
-      // The ?? operator short-circuits on null, so lane.model_override (also
-      // null) is evaluated and returned. The result is null, not undefined.
-      // Downstream callers like commandOptions use `?? undefined` so they
-      // convert null to undefined themselves.
-      const result = resolveSpawnOverrides(makeTask(null, null), makeLane(null, null));
+    it('returns null for model when task, lane, and project default are all null', () => {
+      // The ?? operator short-circuits on null, so each null is evaluated in
+      // turn down to the project tier (also null). The result is null, not
+      // undefined. Downstream callers like commandOptions use `?? undefined`
+      // so they convert null to undefined themselves.
+      const result = resolveSpawnOverrides(makeTask(null, null), makeLane(null, null), makeProject(null, null));
       expect(result.model).toBeNull();
     });
 
-    it('returns null for effort when both task and lane effort_override are null', () => {
-      const result = resolveSpawnOverrides(makeTask(null, null), makeLane(null, null));
+    it('returns null for effort when task, lane, and project default are all null', () => {
+      const result = resolveSpawnOverrides(makeTask(null, null), makeLane(null, null), makeProject(null, null));
       expect(result.effort).toBeNull();
+    });
+  });
+
+  describe('project default fallback (below lane, above CLI default)', () => {
+    it('returns the project default model when task and lane have no override', () => {
+      const result = resolveSpawnOverrides(makeTask(null, null), makeLane(null, null), makeProject('opus', null));
+      expect(result.model).toBe('opus');
+    });
+
+    it('returns the project default effort when task and lane have no override', () => {
+      const result = resolveSpawnOverrides(makeTask(null, null), makeLane(null, null), makeProject(null, 'xhigh'));
+      expect(result.effort).toBe('xhigh');
+    });
+
+    it('falls through to the project default when the lane is omitted entirely', () => {
+      const result = resolveSpawnOverrides(makeTask(null, null), undefined, makeProject('opus', 'xhigh'));
+      expect(result.model).toBe('opus');
+      expect(result.effort).toBe('xhigh');
+    });
+
+    it('the lane override wins over the project default', () => {
+      const result = resolveSpawnOverrides(makeTask(null, null), makeLane('sonnet', 'medium'), makeProject('opus', 'xhigh'));
+      expect(result.model).toBe('sonnet');
+      expect(result.effort).toBe('medium');
+    });
+
+    it('the task override wins over the project default', () => {
+      const result = resolveSpawnOverrides(makeTask('sonnet', 'medium'), makeLane(null, null), makeProject('opus', 'xhigh'));
+      expect(result.model).toBe('sonnet');
+      expect(result.effort).toBe('medium');
+    });
+
+    it('is undefined when the project argument is omitted entirely (pre-project-tier behavior)', () => {
+      const result = resolveSpawnOverrides(makeTask(null, null), makeLane(null, null));
+      expect(result.model).toBeUndefined();
+      expect(result.effort).toBeUndefined();
     });
   });
 
