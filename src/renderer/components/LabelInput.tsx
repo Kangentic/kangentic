@@ -1,6 +1,8 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react';
 import { X } from 'lucide-react';
 import { Pill } from './Pill';
+import { OverlayPopover } from './OverlayPopover';
+import { usePopoverPosition } from '../hooks/usePopoverPosition';
 
 interface LabelInputProps {
   labels: string[];
@@ -18,7 +20,9 @@ interface LabelInputProps {
 export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, testId }: LabelInputProps) {
   const [labelInput, setLabelInput] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [triggerWidth, setTriggerWidth] = useState<number>();
   const labelInputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
 
   const filteredSuggestions = useMemo(() => {
@@ -28,13 +32,32 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
     );
   }, [labelInput, allExistingLabels, labels]);
 
-  // Close suggestions on click outside
+  const suggestionsOpen = showSuggestions && filteredSuggestions.length > 0;
+
+  // Portaled to document.body (see render below), so measure and position against
+  // the visible field rather than relying on an in-flow absolute offset that would
+  // be clipped by an ancestor `overflow: hidden` / `overflow-y-auto`.
+  const { style: popoverStyle, placement } = usePopoverPosition(containerRef, suggestionsRef, suggestionsOpen, {
+    mode: 'dropdown',
+    strategy: 'fixed',
+    preferVertical: 'below',
+    preferRight: false,
+  });
+
+  useLayoutEffect(() => {
+    if (suggestionsOpen && containerRef.current) {
+      setTriggerWidth(containerRef.current.getBoundingClientRect().width);
+    }
+  }, [suggestionsOpen]);
+
+  // Close suggestions on click outside. The popover is portaled OUT of
+  // containerRef, so a click inside it must also count as "inside".
   useEffect(() => {
     if (!showSuggestions) return;
     const handleClick = (event: MouseEvent) => {
       if (
         suggestionsRef.current && !suggestionsRef.current.contains(event.target as Node) &&
-        labelInputRef.current && !labelInputRef.current.contains(event.target as Node)
+        containerRef.current && !containerRef.current.contains(event.target as Node)
       ) {
         setShowSuggestions(false);
       }
@@ -74,7 +97,10 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
   return (
     <div className="flex-1 relative">
       <label className="text-xs text-fg-muted mb-1 block">Labels</label>
-      <div className="flex flex-wrap items-center gap-1 bg-surface border border-edge-input rounded px-2 py-1 min-h-[32px] focus-within:border-accent">
+      <div
+        ref={containerRef}
+        className="flex flex-wrap items-center gap-1 bg-surface border border-edge-input rounded px-2 py-1 min-h-[32px] focus-within:border-accent"
+      >
         {labels.map((label) => {
           const color = labelColors[label];
           return (
@@ -116,24 +142,30 @@ export function LabelInput({ labels, setLabels, labelColors, allExistingLabels, 
         />
       </div>
 
-      {/* Label suggestions dropdown */}
-      {showSuggestions && filteredSuggestions.length > 0 && (
-        <div
-          ref={suggestionsRef}
-          className="absolute z-50 left-0 right-0 mt-1 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 max-h-[150px] overflow-y-auto"
-        >
-          {filteredSuggestions.map((suggestion) => (
-            <button
-              key={suggestion}
-              type="button"
-              onClick={() => addLabel(suggestion)}
-              className="w-full px-3 py-1.5 text-xs text-fg-secondary text-left hover:bg-surface-hover/40"
-            >
-              {suggestion}
-            </button>
-          ))}
-        </div>
-      )}
+      {/* Label suggestions dropdown - portaled to escape clipping ancestors (e.g. the
+          task-detail window's overflow-y-auto edit form) */}
+      <OverlayPopover
+        open={suggestionsOpen}
+        popoverRef={suggestionsRef}
+        style={{ ...popoverStyle, width: triggerWidth }}
+        portal
+        transformOrigin={placement.vertical === 'above' ? 'bottom center' : 'top center'}
+        className="fixed z-[2147483646] bg-surface-raised border border-edge rounded-lg shadow-xl py-1 max-h-[150px] overflow-y-auto"
+        data-testid="label-suggestions"
+      >
+        {filteredSuggestions.map((suggestion) => (
+          <button
+            key={suggestion}
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => addLabel(suggestion)}
+            className="w-full px-3 py-1.5 text-xs text-fg-secondary text-left hover:bg-surface-hover/40"
+            data-testid="label-suggestion"
+          >
+            {suggestion}
+          </button>
+        ))}
+      </OverlayPopover>
     </div>
   );
 }
