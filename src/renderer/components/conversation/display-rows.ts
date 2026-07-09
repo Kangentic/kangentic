@@ -125,6 +125,7 @@ function estimateRowHeight(entry: TranscriptEntry): number {
       for (const block of entry.blocks) {
         if (block.type === 'text') {
           height += estimateTextLines(block.text) * LINE_HEIGHT;
+        // activity-state-ok: this is TranscriptBlock.type, not an ActivityState bucket.
         } else if (block.type === 'thinking') {
           height += THINKING_TOGGLE_HEIGHT;
         } else {
@@ -177,6 +178,7 @@ function buildSearchIndex(
       entry.blocks.forEach((block, index) => {
         if (block.type === 'text') {
           appendSegment(builder, sanitizeTranscriptText(block.text), null);
+        // activity-state-ok: this is TranscriptBlock.type, not an ActivityState bucket.
         } else if (block.type === 'thinking') {
           appendSegment(builder, sanitizeTranscriptText(block.text), `${entry.uuid}:think:${index}`);
         } else {
