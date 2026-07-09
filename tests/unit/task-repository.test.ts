@@ -47,9 +47,12 @@ function createSqlTracker() {
       }),
       get: vi.fn((...args: unknown[]) => {
         entry.args = args;
-        // COUNT(*) queries expect a { count } row; everything else models a
-        // "not found" lookup, matching real better-sqlite3 semantics.
+        // COUNT(*) queries expect a { count } row; the position/display_id
+        // COALESCE(MAX(...)) queries in create() expect a { max } row;
+        // everything else models a "not found" lookup, matching real
+        // better-sqlite3 semantics.
         if (/COUNT\(\*\)/i.test(sql)) return { count: 0 };
+        if (/COALESCE\(MAX\(/i.test(sql)) return { max: -1 };
         return undefined;
       }),
       all: vi.fn((...args: unknown[]) => {
@@ -207,6 +210,63 @@ describe('TaskRepository SQL contracts', () => {
       expect(limitBindingFor(0)).toBe(1); // under floor
       expect(limitBindingFor(-5)).toBe(1); // negative floor
       expect(limitBindingFor(15.9)).toBe(15); // floored
+    });
+  });
+
+  describe('create - createdAt handling', () => {
+    // Added for kangentic_move_task_to_project: create() gained an optional
+    // `createdAt` on TaskCreateInput so a relocated task can preserve its
+    // original creation time instead of always being stamped "now". These
+    // isolate that parameter's two branches independent of the higher-level
+    // move-to-project test (mcp-move-task-to-project.test.ts), which only
+    // exercises the override path indirectly and is skipped locally when
+    // better-sqlite3 cannot load under the vitest Node ABI.
+
+    it('defaults created_at to now (equal to updated_at) when createdAt is omitted', () => {
+      const before = new Date().toISOString();
+      const task = repo.create({ title: 'Untimestamped task', description: '', swimlane_id: 'lane-1' });
+      const after = new Date().toISOString();
+
+      // Same `now` value is used for both columns in the source - not just
+      // "close in time" but the identical string.
+      expect(task.created_at).toBe(task.updated_at);
+      expect(task.created_at >= before).toBe(true);
+      expect(task.created_at <= after).toBe(true);
+    });
+
+    it('preserves an explicit createdAt override, distinct from the updated_at "now" stamp', () => {
+      const before = new Date().toISOString();
+      const task = repo.create({
+        title: 'Relocated task',
+        description: '',
+        swimlane_id: 'lane-1',
+        createdAt: '2020-01-01T00:00:00.000Z',
+      });
+      const after = new Date().toISOString();
+
+      expect(task.created_at).toBe('2020-01-01T00:00:00.000Z');
+      // updated_at is still stamped to the real "now", not the override.
+      expect(task.updated_at).not.toBe(task.created_at);
+      expect(task.updated_at >= before).toBe(true);
+      expect(task.updated_at <= after).toBe(true);
+    });
+
+    it('binds the overridden createdAt (not "now") into the INSERT statement', () => {
+      repo.create({
+        title: 'Relocated task',
+        description: '',
+        swimlane_id: 'lane-1',
+        createdAt: '2020-01-01T00:00:00.000Z',
+      });
+
+      const insertStatement = tracker.statements.find((s) => s.sql.includes('INSERT INTO tasks'));
+      expect(insertStatement).toBeDefined();
+      // Column order: ... model_override, effort_override, agent_override, created_at, updated_at
+      const args = insertStatement!.args;
+      const createdAtArg = args[args.length - 2];
+      const updatedAtArg = args[args.length - 1];
+      expect(createdAtArg).toBe('2020-01-01T00:00:00.000Z');
+      expect(updatedAtArg).not.toBe('2020-01-01T00:00:00.000Z');
     });
   });
 });

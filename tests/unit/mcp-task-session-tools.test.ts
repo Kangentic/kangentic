@@ -592,6 +592,20 @@ describe('kangentic_move_task_to_project wiring', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('To Do');
   });
+
+  it('surfaces a thrown error from handleMoveTaskToProject as isError, not an unhandled rejection', async () => {
+    mockHandleMoveTaskToProject.mockImplementation(() => {
+      throw new Error('unexpected FK violation');
+    });
+
+    const result = await server.getHandler('kangentic_move_task_to_project')({
+      taskId: '42',
+      targetProject: 'Target',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe('unexpected FK violation');
+  });
 });
 
 describe('list_sessions project routing via withProject', () => {
