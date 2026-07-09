@@ -144,7 +144,13 @@ test.describe('Changes view: diff scroll memory', () => {
 
     // Open the Changes panel; alpha.ts is auto-selected (first file).
     await page.locator('[data-testid="changes-toggle"]').click();
-    await page.locator('[data-testid="diff-editor-area"]').waitFor({ state: 'visible', timeout: 5000 });
+    // 10s, matching every other visibility wait in this test (below) and the
+    // sibling commit-detail-selection.spec.ts: under CI worker contention the
+    // panel mount + Monaco diff-editor construction can take longer than a
+    // tight 5s budget (observed flake: failed at 6.5s, passed at 10.7s on
+    // retry), so a fixed 5000ms here was simply tighter than everywhere else
+    // that waits on the same locator.
+    await page.locator('[data-testid="diff-editor-area"]').waitFor({ state: 'visible', timeout: 10000 });
     // Wait for Monaco to render diff content (rendered line nodes exist).
     await page.locator('.view-line').first().waitFor({ state: 'visible', timeout: 10000 });
 
