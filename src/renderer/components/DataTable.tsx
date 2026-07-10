@@ -37,6 +37,83 @@ interface DataTableProps<TRow, TKey extends string = string> {
 
 const ESTIMATED_ROW_HEIGHT = 45;
 
+export interface SortLevel<TKey extends string = string> {
+  key: TKey;
+  direction: 'asc' | 'desc';
+}
+
+/** Subset of DataTableColumn the sort algorithms need. */
+interface SortableColumn<TRow, TKey extends string> {
+  key: TKey;
+  align?: 'left' | 'right';
+  sortValue?: (row: TRow) => number | string;
+}
+
+/**
+ * Computes the next ordered sort-level array for a header click. Pure and
+ * exported so the direction-anchored asc/desc/clear cycle and Shift+Click
+ * multi-sort transitions can be unit tested without mounting the table.
+ *
+ * - Numeric (right-aligned) columns start descending, text columns
+ *   ascending; a repeat plain click flips, a third clears back to
+ *   manual/position order.
+ * - Shift+Click adds the column as a tie-break level (or flips its
+ *   direction if it is already a level) and never clears.
+ * - A plain click on a column other than the sole active sort collapses to
+ *   a single sort on the clicked column.
+ */
+export function computeNextSorts<TRow, TKey extends string>(
+  sorts: Array<SortLevel<TKey>>,
+  column: SortableColumn<TRow, TKey>,
+  shiftKey: boolean,
+): Array<SortLevel<TKey>> {
+  const initialDirection: 'asc' | 'desc' = column.align === 'right' ? 'desc' : 'asc';
+  const existingIndex = sorts.findIndex((level) => level.key === column.key);
+
+  if (shiftKey && sorts.length > 0) {
+    return existingIndex >= 0
+      ? sorts.map((level, index) => (index === existingIndex
+          ? { ...level, direction: level.direction === 'asc' ? 'desc' : 'asc' }
+          : level))
+      : [...sorts, { key: column.key, direction: initialDirection }];
+  }
+  if (existingIndex === 0 && sorts.length === 1) {
+    return sorts[0].direction === initialDirection
+      ? [{ key: column.key, direction: initialDirection === 'asc' ? 'desc' : 'asc' }]
+      : [];
+  }
+  return [{ key: column.key, direction: initialDirection }];
+}
+
+/**
+ * Applies ordered sort levels to `data`. Index 0 is the primary sort; later
+ * levels break ties left to right. Pure and exported for the same reason as
+ * `computeNextSorts`.
+ */
+export function sortRows<TRow, TKey extends string>(
+  data: TRow[],
+  sorts: Array<SortLevel<TKey>>,
+  columns: Array<SortableColumn<TRow, TKey>>,
+): TRow[] {
+  if (sorts.length === 0) return data;
+  const levels = sorts
+    .map((level) => ({ direction: level.direction, extractValue: columns.find((column) => column.key === level.key)?.sortValue }))
+    .filter((level): level is { direction: 'asc' | 'desc'; extractValue: (row: TRow) => number | string } => !!level.extractValue);
+  if (levels.length === 0) return data;
+
+  return [...data].sort((rowA, rowB) => {
+    for (const level of levels) {
+      const valueA = level.extractValue(rowA);
+      const valueB = level.extractValue(rowB);
+      const comparison = typeof valueA === 'string' && typeof valueB === 'string'
+        ? valueA.localeCompare(valueB)
+        : (valueA as number) - (valueB as number);
+      if (comparison !== 0) return level.direction === 'asc' ? comparison : -comparison;
+    }
+    return 0;
+  });
+}
+
 /** Sortable row wrapper - renders a drag handle and applies transform/transition styles. */
 function SortableRow<TRow, TKey extends string>({
   row,
@@ -130,57 +207,12 @@ export function DataTable<TRow, TKey extends string = string>({
 
   const handleHeaderClick = (column: DataTableColumn<TRow, TKey>, shiftKey: boolean) => {
     if (!column.sortValue) return;
-    // Numeric (right-aligned) columns start descending (biggest first), text
-    // columns ascending; a repeat click flips, a third clears. The cycle is
-    // anchored to the column's OWN initial direction - the old asc-anchored
-    // cycle made ascending unreachable on numeric columns (desc -> clear).
-    const initialDirection: 'asc' | 'desc' = column.align === 'right' ? 'desc' : 'asc';
-    const existingIndex = sorts.findIndex((level) => level.key === column.key);
-    let newSorts: Array<{ key: TKey; direction: 'asc' | 'desc' }>;
-
-    if (shiftKey && sorts.length > 0) {
-      // Shift+Click: add this column as an extra tie-break level, or flip its
-      // direction if it is already a level. Never clears.
-      newSorts = existingIndex >= 0
-        ? sorts.map((level, index) => (index === existingIndex
-            ? { ...level, direction: level.direction === 'asc' ? 'desc' : 'asc' }
-            : level))
-        : [...sorts, { key: column.key, direction: initialDirection }];
-    } else if (existingIndex === 0 && sorts.length === 1) {
-      // Plain click on the sole sorted column: initial -> flipped -> clear
-      // (clear returns to manual/position order).
-      newSorts = sorts[0].direction === initialDirection
-        ? [{ key: column.key, direction: initialDirection === 'asc' ? 'desc' : 'asc' }]
-        : [];
-    } else {
-      // Plain click elsewhere (or with multi-sort active): collapse to a
-      // single sort on the clicked column.
-      newSorts = [{ key: column.key, direction: initialDirection }];
-    }
-
+    const newSorts = computeNextSorts(sorts, column, shiftKey);
     setSorts(newSorts);
     onSortChange?.(newSorts[0]?.key);
   };
 
-  const sortedData = useMemo(() => {
-    if (sorts.length === 0) return data;
-    const levels = sorts
-      .map((level) => ({ direction: level.direction, extractValue: columns.find((column) => column.key === level.key)?.sortValue }))
-      .filter((level): level is { direction: 'asc' | 'desc'; extractValue: (row: TRow) => number | string } => !!level.extractValue);
-    if (levels.length === 0) return data;
-
-    return [...data].sort((rowA, rowB) => {
-      for (const level of levels) {
-        const valueA = level.extractValue(rowA);
-        const valueB = level.extractValue(rowB);
-        const comparison = typeof valueA === 'string' && typeof valueB === 'string'
-          ? valueA.localeCompare(valueB)
-          : (valueA as number) - (valueB as number);
-        if (comparison !== 0) return level.direction === 'asc' ? comparison : -comparison;
-      }
-      return 0;
-    });
-  }, [data, sorts, columns]);
+  const sortedData = useMemo(() => sortRows(data, sorts, columns), [data, sorts, columns]);
 
   const virtualizer = useVirtualizer({
     count: sortedData.length,
