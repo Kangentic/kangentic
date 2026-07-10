@@ -85,7 +85,7 @@ async function pairDevice(displayName: string): Promise<void> {
   });
   await expect(page.getByText('135790')).toBeVisible();
 
-  const deviceNameInput = page.locator('input[placeholder="Device name (e.g. Tyler\'s iPhone)"]');
+  const deviceNameInput = page.locator('input[placeholder="Device name (e.g. My iPhone)"]');
   await deviceNameInput.fill(displayName);
   await page.getByRole('button', { name: 'Codes match' }).click();
 
@@ -222,7 +222,7 @@ test.describe('Mobile Devices settings tab', () => {
     await expect(page.getByText('123456')).toBeVisible();
     await expect(page.getByText('rocket lock star')).toBeVisible();
 
-    const deviceNameInput = page.locator('input[placeholder="Device name (e.g. Tyler\'s iPhone)"]');
+    const deviceNameInput = page.locator('input[placeholder="Device name (e.g. My iPhone)"]');
     await deviceNameInput.fill('SAS Confirm Device');
     await page.getByRole('button', { name: 'Codes match' }).click();
 
