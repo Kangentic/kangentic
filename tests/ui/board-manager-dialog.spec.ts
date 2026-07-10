@@ -189,6 +189,34 @@ test.describe('BoardManagerDialog', () => {
     await expect(page.locator('[data-testid="board-manager-delete"]')).toBeHidden();
   });
 
+  test('Cancel and dirty-enabled Save render pointer cursor; disabled Save does not', async () => {
+    // Regression guard for the Tailwind v4 Preflight fix (src/renderer/index.css
+    // @layer base). Complements tests/unit/button-cursor-base-rule.test.ts (which
+    // scans the CSS source text) by asserting the COMPUTED cursor in a real
+    // browser, so a Tailwind v4 layer-ordering or specificity mistake that still
+    // contains the right source text but fails to actually apply would be caught
+    // here even though the static scan would stay green.
+    await openManagerByHeader('Code Review');
+
+    // Save starts disabled (no dirty edits yet): the `:not(:disabled)` rule must
+    // NOT apply, so the button keeps the browser's non-pointer disabled cursor.
+    const saveBtn = page.locator('[data-testid="board-manager-save"]');
+    await expect(saveBtn).toBeDisabled();
+    await expect(saveBtn).not.toHaveCSS('cursor', 'pointer');
+
+    // Cancel is always enabled and has no cursor-* utility of its own, so it
+    // depends entirely on the restored base-layer rule.
+    const cancelBtn = page.locator('[data-testid="board-manager-dialog"]').getByRole('button', { name: 'Cancel' });
+    await expect(cancelBtn).toHaveCSS('cursor', 'pointer');
+
+    // Dirty the form so Save becomes enabled, and confirm the rule now applies.
+    await page.locator('[data-testid="board-manager-name"]').fill('Reviews-cursor-check');
+    await expect(saveBtn).toBeEnabled();
+    await expect(saveBtn).toHaveCSS('cursor', 'pointer');
+
+    // afterEach discards the dirty edit via closeManager()'s Cancel+Discard path.
+  });
+
   test('Add column inserts a new draft tab inline; empty name blocks save', async () => {
     await openManagerByHeader('Code Review');
 
