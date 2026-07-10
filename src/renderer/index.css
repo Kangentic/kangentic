@@ -1,5 +1,22 @@
 @import "tailwindcss";
 
+/* Base element defaults.
+   Tailwind v4 Preflight dropped the v3 default `button { cursor: pointer }`, so
+   restore it here (official upgrade-guide fix). This is load-bearing: the window
+   light-dismiss heuristic in useClickOutsideToClose.ts treats pointer-cursor
+   elements as actionable (not dismissible dead space). Utilities (cursor-*,
+   select-text) still override, since base layer < utilities. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  button {
+    user-select: none;
+  }
+}
+
 /* ── Semantic Color Tokens ── */
 
 :root {
