@@ -4,10 +4,14 @@ import path from 'node:path';
 
 // Guards the Tailwind v4 Preflight regression fix: v4 dropped v3's default
 // `button { cursor: pointer }`, so src/renderer/index.css restores it in a
-// @layer base block. This is load-bearing beyond aesthetics: the window
-// light-dismiss heuristic (useClickOutsideToClose.ts) reads the computed cursor
-// to decide whether a click target is actionable. A silent deletion of this
-// rule would regress both the button cursor and that dismissal behavior.
+// @layer base block, scoped to native <button> only (not [role="button"] -
+// this app's dnd-kit sortable columns spread role="button" onto a wrapper div
+// purely for keyboard-drag ARIA semantics, and cursor inheriting down from
+// there breaks the window light-dismiss heuristic; see the comment in
+// index.css). This is load-bearing beyond aesthetics: the light-dismiss
+// heuristic (useClickOutsideToClose.ts) reads the computed cursor to decide
+// whether a click target is actionable. A silent deletion of this rule would
+// regress both the button cursor and that dismissal behavior.
 //
 // The @layer base wrapping is itself load-bearing: in Tailwind v4 an unlayered
 // rule outranks the utilities layer, so hoisting these declarations out of the
@@ -45,10 +49,14 @@ const normalizedCss = normalizeWhitespace(fs.readFileSync(INDEX_CSS_PATH, 'utf-8
 const layerBaseBlock = extractLayerBaseBlock(normalizedCss);
 
 describe('button cursor base rule (Tailwind v4 Preflight regression guard)', () => {
-  it('restores cursor:pointer on buttons and role="button" inside @layer base', () => {
+  it('restores cursor:pointer on native buttons inside @layer base', () => {
     expect(layerBaseBlock).toContain(
-      normalizeWhitespace('button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }'),
+      normalizeWhitespace('button:not(:disabled) { cursor: pointer; }'),
     );
+  });
+
+  it('does not extend cursor:pointer to [role="button"] (would leak into dnd-kit sortable wrappers)', () => {
+    expect(layerBaseBlock).not.toContain('[role="button"]');
   });
 
   it('disables text selection on native buttons inside @layer base', () => {

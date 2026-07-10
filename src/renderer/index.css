@@ -2,13 +2,18 @@
 
 /* Base element defaults.
    Tailwind v4 Preflight dropped the v3 default `button { cursor: pointer }`, so
-   restore it here (official upgrade-guide fix). This is load-bearing: the window
-   light-dismiss heuristic in useClickOutsideToClose.ts treats pointer-cursor
-   elements as actionable (not dismissible dead space). Utilities (cursor-*,
-   select-text) still override, since base layer < utilities. */
+   restore it here (official upgrade-guide fix), scoped to native <button> only
+   (v3's default also covered [role="button"], but this app's dnd-kit sortable
+   columns spread role="button" onto a wrapper div purely for keyboard-drag ARIA
+   semantics; cursor is inherited, so adding it there would leak a pointer cursor
+   into the column's dead space and break the window light-dismiss heuristic in
+   useClickOutsideToClose.ts, which reads computed cursor to decide whether a
+   click target is actionable). Every real custom "button" div in this app
+   already opts in explicitly via the cursor-pointer utility (see Pill.tsx), so
+   narrowing to <button> loses no coverage. Utilities (cursor-*, select-text)
+   still override, since base layer < utilities. */
 @layer base {
-  button:not(:disabled),
-  [role="button"]:not(:disabled) {
+  button:not(:disabled) {
     cursor: pointer;
   }
 
