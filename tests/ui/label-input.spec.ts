@@ -84,6 +84,55 @@ test('clicking a label suggestion commits the clicked label, not the typed text'
   }
 });
 
+test('clicking outside the field closes the suggestion dropdown', async () => {
+  const { browser, page } = await launchPage();
+  try {
+    await createProject(page, `LabelAutocompleteOutsideClick ${Date.now()}`);
+    await seedLabelColors(page, {
+      research: '#3b82f6',
+      'agent-adapter': '#8b5cf6',
+      'agent-context': '#06b6d4',
+    });
+
+    const todoColumn = page.locator('[data-swimlane-name="To Do"]');
+    await todoColumn.locator('text=Add task').click();
+
+    const newTaskDialog = page.locator('.fixed.inset-0');
+    const titleInput = newTaskDialog.locator('input[placeholder="Task title"]');
+    await titleInput.fill('Outside click test');
+
+    // Focus the (empty) Labels field. onFocus always opens the dropdown, and with
+    // an empty query every seeded label matches (String.includes('') is true), so
+    // the dropdown opens with no text typed.
+    const labelInput = newTaskDialog.locator('[data-testid="task-labels"]');
+    await labelInput.click();
+    const dropdown = page.locator('[data-testid="label-suggestions"]');
+    await expect(dropdown).toBeVisible({ timeout: 3000 });
+
+    // Click a sibling field that is outside both containerRef and the portaled
+    // suggestionsRef. Deliberately does NOT rely on onBlur's own close path:
+    // onBlur only calls addLabel/closes when labelInput has non-empty trimmed
+    // text (see handleLabelKeyDown's sibling onBlur in LabelInput.tsx), and this
+    // field is empty, so onBlur is a no-op here. Only the click-outside handler
+    // (now checking containerRef instead of the old labelInputRef, since the
+    // dropdown moved outside the DOM subtree via the portal) can close it.
+    await titleInput.click();
+    await expect(dropdown).not.toBeVisible({ timeout: 3000 });
+
+    // Confirm nothing was spuriously committed by the outside click.
+    const createButton = newTaskDialog.locator('button[type="submit"]:has-text("Create")');
+    await createButton.click();
+    await newTaskDialog.waitFor({ state: 'hidden', timeout: 3000 });
+
+    const taskData = await page.evaluate(() => window.electronAPI.tasks.list());
+    const task = taskData.find((t: { title: string }) => t.title === 'Outside click test');
+    expect(task).toBeDefined();
+    expect(task!.labels).toEqual([]);
+  } finally {
+    await browser.close();
+  }
+});
+
 const CLIP_PROJECT_ID = 'proj-label-input-clip';
 const CLIP_TASK_ID = 'task-label-input-clip';
 
