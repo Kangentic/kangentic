@@ -31,7 +31,10 @@ function registeredStoreNames(): string[] {
   const source = fs.readFileSync(STATE_MIRROR_PATH, 'utf-8');
   const block = source.match(/const PREVIEW_STORES[^=]*=\s*\{([\s\S]*?)\};/);
   if (!block) throw new Error('Could not locate the PREVIEW_STORES object literal in state-mirror.ts.');
-  return [...block[1].matchAll(/(\w+):/g)].map((match) => match[1]);
+  // Keys are the store name -> a bare identifier (`board:`) OR, for a
+  // kebab-case store file, a quoted key (`'usage-dashboard':`). Match both so
+  // the guard covers multi-word store filenames, not just single-word ones.
+  return [...block[1].matchAll(/['"]?([\w-]+)['"]?\s*:/g)].map((match) => match[1]);
 }
 
 function storeFileNames(): string[] {
