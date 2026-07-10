@@ -60,7 +60,6 @@ const ALLOWLIST_CHANNELS = new Set([
   'SESSION_GET_SUMMARY',
   'SESSION_LIST_SUMMARIES',
   'SESSION_GET_TOOL_BREAKDOWN',
-  'SESSION_GET_PERIOD_STATS',
   // Session by-session-id / global / transient (separate ephemeral lifecycle)
   'SESSION_KILL',
   'SESSION_WRITE',

@@ -256,14 +256,21 @@ test.describe('Task Activity Indicators', () => {
       await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
     });
 
-    test('status bar shows separate token and cost spans when usage exists', async () => {
-      const tokens = page.locator('[data-testid="aggregate-tokens"]');
-      const cost = page.locator('[data-testid="aggregate-cost"]');
-      await expect(tokens).toBeVisible();
-      await expect(cost).toBeVisible();
+    test('usage dashboard shows live token and cost tiles when usage exists', async () => {
+      // The old status-bar usage strip was replaced by the dashboard; the live
+      // KPI layering reads the same in-memory sessionUsage. Self-cleaning for
+      // the shared page: closes the dashboard before finishing.
+      await page.locator('[data-testid="usage-stats-button"]').click();
+      await page.locator('[data-testid="stats-page"]').waitFor({ state: 'visible', timeout: 10000 });
 
-      await expect(tokens).toContainText('1k');
-      await expect(cost).toContainText('$');
+      const tokens = page.locator('[data-testid="kpi-tokens"]');
+      const cost = page.locator('[data-testid="kpi-cost-value"]');
+      await expect(tokens).toContainText('1.5k', { timeout: 10000 });
+      await expect(tokens).toContainText('1k in / 500 out');
+      await expect(cost).toContainText('$0.01');
+
+      await page.locator('[data-testid="stats-close"]').click();
+      await page.locator('[data-testid="stats-page"]').waitFor({ state: 'hidden', timeout: 5000 });
     });
 
     test('task with session opens detail dialog in view mode (not edit mode)', async () => {

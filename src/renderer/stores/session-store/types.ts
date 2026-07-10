@@ -7,7 +7,6 @@ import type {
   SpawnSessionInput,
 } from '../../../shared/types';
 import type { TaskChangesPanelSlice } from './task-changes-panel-slice';
-import type { UsagePeriodSlice } from './usage-period-slice';
 import type { TransientSessionSlice } from './transient-session-slice';
 import type { RateLimitSnapshot } from '../../utils/rate-limit-window';
 
@@ -191,4 +190,4 @@ export interface CoreSessionSlice {
   getQueuePosition: (sessionId: string) => { position: number; total: number } | null;
 }
 
-export type SessionStore = CoreSessionSlice & TaskChangesPanelSlice & UsagePeriodSlice & TransientSessionSlice;
+export type SessionStore = CoreSessionSlice & TaskChangesPanelSlice & TransientSessionSlice;

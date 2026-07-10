@@ -17,10 +17,9 @@ import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessi
 import { isShuttingDown } from '../../shutdown-state';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
 import { abortInFlightResume, registerResumeController, releaseResumeController } from './session-resume-controllers';
-import type { Session, UsageTimePeriod, TaskResolvePrResult } from '../../../shared/types';
+import type { Session, TaskResolvePrResult } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
-import { computePeriodCutoff } from '../../../shared/period-cutoff';
 
 // Track session start times for duration calculation on exit
 const sessionStartTimes = new Map<string, number>();
@@ -279,17 +278,6 @@ export function registerSessionHandlers(context: IpcContext): void {
   // works mid-session and survives the bounded event cache.
   ipcMain.handle(IPC.SESSION_GET_TOOL_BREAKDOWN, (_, sessionId: string) => {
     return context.sessionManager.getToolBreakdown(sessionId);
-  });
-
-  ipcMain.handle(IPC.SESSION_GET_PERIOD_STATS, (_, period: UsageTimePeriod) => {
-    if (!context.currentProjectId) return { totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0 };
-    const db = getProjectDb(context.currentProjectId);
-    // Reads from the append-only usage_history table so totals survive task
-    // and session deletion. SessionRepository.getStatsAfter still exists but
-    // is no longer the source of truth for the StatusBar.
-    const usageHistoryRepo = new UsageHistoryRepository(db);
-    const since = computePeriodCutoff(period);
-    return usageHistoryRepo.getStatsAfter(since);
   });
 
   // Set which sessions are visible in the renderer (terminal panel + command bar overlay).

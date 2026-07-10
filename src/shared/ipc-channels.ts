@@ -23,6 +23,7 @@ export const IPC = {
   DEV_SEED_GIT_CHANGES: 'dev:seedGitChanges',
   DEV_SEED_EMBEDDING_BACKLOG: 'dev:seedEmbeddingBacklog',
   DEV_SEED_LARGE_CONVERSATION: 'dev:seedLargeConversation',
+  DEV_SEED_USAGE_DATA: 'dev:seedUsageData',
 
   // Project Groups
   PROJECT_GROUP_LIST: 'projectGroup:list',
@@ -116,10 +117,12 @@ export const IPC = {
   SESSION_GET_TOOL_BREAKDOWN: 'session:getToolBreakdown',
   SESSION_SPAWN_TRANSIENT: 'session:spawnTransient',
   SESSION_KILL_TRANSIENT: 'session:killTransient',
-  SESSION_GET_PERIOD_STATS: 'session:getPeriodStats',
   SESSION_SET_FOCUSED: 'session:setFocused',
   SESSION_NOTIFY_USER_INTERRUPT: 'session:notifyUserInterrupt',
   SESSION_INJECT_SETTINGS: 'session:injectSettings',
+
+  // Usage stats (dashboard)
+  USAGE_GET_DASHBOARD_STATS: 'usage:getDashboardStats',
 
   // Config
   CONFIG_GET: 'config:get',

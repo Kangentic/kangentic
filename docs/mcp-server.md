@@ -33,7 +33,8 @@ Claude Code agent calls MCP tool (e.g. kangentic_create_task)
 | Diagnostics Tools | `src/main/agent/mcp-http/diagnostics-tools.ts` | Read-only product tools backing crash records, persistent console logs, process metrics, IPC traffic recordings, and worktree state. |
 | Tool Annotations | `src/main/agent/mcp-http/annotations.ts` | Shared `READ_ONLY_ANNOTATIONS` / `MUTATING_ANNOTATIONS` MCP tool-annotation constants. Every tool in every `*-tools.ts` file declares one of these (see the Tool annotations note below). |
 | Browser Tools | `src/main/agent/mcp-http/browser-tools.ts` | Shipped `kangentic_browser_*` MCP tool family driving the embedded Browser pane via in-process CDP (no HTTP bridge, no lockfile). Gated by the global `browserAutomation.*` policy. |
-| Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, inventory, search, analytics, backlog, handoff, inspect (`get_transcript`, `query_db`), and session-files (`get_session_files`, `get_session_events`) commands. |
+| Usage Tools | `src/main/agent/mcp-http/usage-tools.ts` | Aggregated usage statistics (`kangentic_get_usage_stats`): tokens, cost, burn rate, and by-model / by-agent / by-effort breakdowns, per project or app-wide, over the shared time ranges. Reads the same usage-stats service as the in-app dashboard. |
+| Command Handlers | `src/main/agent/commands/` | Per-domain handlers shared by the HTTP tools: task, column, inventory, search, analytics, usage, backlog, handoff, inspect (`get_transcript`, `query_db`), and session-files (`get_session_files`, `get_session_events`) commands. |
 | Column Resolver | `src/main/agent/commands/column-resolver.ts` | Shared case-insensitive column name to swimlane lookup used by multiple handlers. |
 | MCP Config Delivery | `src/main/agent/adapters/claude/command-builder.ts` | Writes session `mcp.json` (with the per-launch URL + token) and adds `--mcp-config` flag to CLI command. |
 | Trust Manager | `src/main/agent/adapters/claude/trust-manager.ts` | Pre-approves kangentic MCP server in `~/.claude.json`. |
@@ -178,6 +179,31 @@ At least one parameter is required. Returns the same task fields as `kangentic_f
 Get a high-level board overview: task counts per column, active sessions, completed tasks, and aggregate cost/token metrics.
 
 No parameters.
+
+### kangentic_get_usage_stats
+
+Aggregated agent-usage statistics for one project or rolled up across every registered
+project: tokens in/out, cost, burn rate ($/hr approximate + tokens/hr), sessions, tool
+calls, line churn, compactions, and by-model / by-agent / by-effort breakdowns (a null
+effort means the agent default; a session that switches effort mid-run attributes all
+its usage to the last-applied value). This is the same data the in-app usage dashboard
+shows, over the same time ranges.
+
+Reads the durable usage ledgers (`usage_history` per-session totals and
+`conversation_turn_usage` per-turn time series), so totals survive task and session
+deletion. Usage from in-flight sessions is excluded until they finalize. Two token
+semantics coexist by design and never reconcile: KPI token totals are per-session
+context-window snapshots, while the time series carries true per-turn tokens. The $/hr
+burn rate allocates each session's reported cost across its turns proportionally by
+token share - API-equivalent and approximate; subscription sessions reporting $0 count
+tokens but no cost.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `period` | string | No | Time range: "live" (trailing 2 hours), "today", "week", "month", or "all" (default). "today"/"week"/"month" start at the machine's local midnight / Monday / 1st of month. |
+| `allProjects` | boolean | No | Roll up across every registered project, with per-project sub-totals. Takes precedence over `project`. |
+| `includeSeries` | boolean | No | Include the bucketed token/cost time series in the response (larger). Default: false (KPIs + breakdowns only). |
+| `project` | string | No | Project name or UUID to target a different project than the active one. |
 
 ### kangentic_get_task_stats
 

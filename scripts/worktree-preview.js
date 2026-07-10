@@ -211,8 +211,129 @@ function openTerminal(cwd, command) {
  * the Vite/esbuild build finishes), so this resolves in well under a second
  * in the common case; the timeout is just a generous safety net.
  */
+function pidFilePathFor(worktreeDir, port) {
+  return path.join(worktreeDir, '.kangentic', `preview-${port}.pid`);
+}
+
+/**
+ * Remove a leftover PID file for this port BEFORE launching. dev.js removes
+ * its own file only on a clean exit; a hard kill (taskkill, crash) leaves it
+ * behind, and the post-launch poll below would then instantly read the STALE
+ * pid and report a process that is not the new instance - which is exactly
+ * how kill-and-restart tooling ends up chasing ghosts while the real server
+ * stays alive. The port was just verified free, so any file here is stale by
+ * definition.
+ */
+function removeStalePidFile(worktreeDir, port) {
+  try {
+    fs.rmSync(pidFilePathFor(worktreeDir, port), { force: true });
+    fs.rmSync(stopFilePathFor(worktreeDir, port), { force: true });
+  } catch {
+    // best-effort
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Graceful stop (--stop [--port=N])
+// ---------------------------------------------------------------------------
+
+/**
+ * Companion to the stop-file watcher in scripts/dev.js. Creating
+ * `.kangentic/preview-<port>.stop` asks that dev server to run its normal
+ * cleanup and exit 0, which lets the hosting terminal tab close itself
+ * (Windows Terminal keeps a dead tab open after a non-zero exit, so a
+ * `taskkill /F` restart used to leave one "[process exited with code 1]"
+ * tab behind per restart). Falls back to a force kill only if the server
+ * does not exit within the grace window (e.g. an older dev.js without the
+ * watcher).
+ */
+function stopFilePathFor(worktreeDir, port) {
+  return path.join(worktreeDir, '.kangentic', `preview-${port}.stop`);
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function forceKill(pid) {
+  try {
+    if (process.platform === 'win32') {
+      execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+    } else {
+      // SIGKILL, not SIGTERM: this fallback only runs AFTER the 10s graceful
+      // window already elapsed, i.e. the process is hung/blocked and a
+      // catchable SIGTERM is likely ignored. Unconditional kill matches the
+      // Windows `/F` branch and the zombie-reaper / shutdown escalation.
+      process.kill(pid, 'SIGKILL');
+    }
+  } catch {
+    // best-effort: the process may have exited between the check and the kill
+  }
+}
+
+function listRunningPreviewPorts(worktreeDir) {
+  const kanDir = path.join(worktreeDir, '.kangentic');
+  let entries = [];
+  try {
+    entries = fs.readdirSync(kanDir);
+  } catch {
+    return [];
+  }
+  return entries
+    .map((entry) => /^preview-(\d+)\.pid$/.exec(entry))
+    .filter(Boolean)
+    .map((match) => parseInt(match[1], 10));
+}
+
+async function stopPreview(worktreeDir, requestedPort) {
+  const ports = requestedPort ? [requestedPort] : listRunningPreviewPorts(worktreeDir);
+  if (ports.length === 0) {
+    console.log('[preview] No running preview found (no PID file in .kangentic/)');
+    return;
+  }
+
+  for (const port of ports) {
+    const pidFilePath = pidFilePathFor(worktreeDir, port);
+    let pid = null;
+    try {
+      pid = parseInt(fs.readFileSync(pidFilePath, 'utf-8').trim(), 10);
+    } catch {
+      // no PID file for this port
+    }
+
+    if (!pid || !isProcessAlive(pid)) {
+      console.log(`[preview] Port ${port}: not running (stale files cleaned up)`);
+      removeStalePidFile(worktreeDir, port);
+      continue;
+    }
+
+    console.log(`[preview] Port ${port}: requesting graceful stop of PID ${pid}...`);
+    fs.writeFileSync(stopFilePathFor(worktreeDir, port), String(Date.now()));
+
+    // dev.js polls for the stop file every 500ms; give it a generous window
+    // to close Vite/Electron and clean up before falling back to force.
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline && isProcessAlive(pid)) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    if (isProcessAlive(pid)) {
+      console.log(`[preview] Port ${port}: no graceful exit within 10s, force-killing PID ${pid}`);
+      forceKill(pid);
+      removeStalePidFile(worktreeDir, port);
+    } else {
+      console.log(`[preview] Port ${port}: stopped cleanly (terminal tab closes itself)`);
+    }
+  }
+}
+
 function waitForPidFile(worktreeDir, port, timeoutMs = 30000) {
-  const pidFilePath = path.join(worktreeDir, '.kangentic', `preview-${port}.pid`);
+  const pidFilePath = pidFilePathFor(worktreeDir, port);
   const pollIntervalMs = 200;
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve) => {
@@ -242,6 +363,9 @@ function waitForPidFile(worktreeDir, port, timeoutMs = 30000) {
 async function main() {
   const worktreeDir = process.cwd();
   const isFresh = process.argv.includes('--fresh');
+  const isStop = process.argv.includes('--stop');
+  const portFlag = process.argv.find((arg) => arg.startsWith('--port='));
+  const requestedPort = portFlag ? parseInt(portFlag.split('=')[1], 10) : null;
 
   const rootDir = findRootProject(worktreeDir);
   if (!rootDir) {
@@ -252,6 +376,11 @@ async function main() {
     process.exit(1);
   }
 
+  if (isStop) {
+    await stopPreview(worktreeDir, requestedPort);
+    return;
+  }
+
   console.log(`[preview] Root project: ${rootDir}`);
   console.log(`[preview] Worktree:     ${worktreeDir}`);
   if (isFresh) console.log('[preview] Fresh mode: launching without --cwd (Welcome Screen)');
@@ -259,6 +388,7 @@ async function main() {
   ensureNodeModulesLink(worktreeDir, rootDir);
 
   const port = await findAvailablePort(5174);
+  removeStalePidFile(worktreeDir, port);
   const command = buildCommand(worktreeDir, port, { fresh: isFresh });
 
   console.log(`[preview] Opening preview terminal...`);

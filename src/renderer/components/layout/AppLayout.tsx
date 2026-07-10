@@ -30,9 +30,12 @@ import { useFocusedSessionsSync } from '../../hooks/useFocusedSessionsSync';
 import { useDictation } from '../../hooks/useDictation';
 import { DictationSurface } from '../dictation/DictationSurface';
 import { useKeybinding } from '../../hooks/useKeybinding';
+import { StatsPage } from '../stats/StatsPage';
+import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 
 export function AppLayout() {
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
+  const statsOpen = useUsageDashboardStore((s) => s.statsOpen);
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
   const openProjectSettings = useConfigStore((s) => s.openProjectSettings);
   const config = useConfigStore((s) => s.config);
@@ -89,6 +92,7 @@ export function AppLayout() {
     else if (currentProject) openProjectSettings(currentProject.path, currentProject.name);
     else setSettingsOpen(true);
   });
+  useKeybinding('stats.toggle', () => useUsageDashboardStore.getState().toggle());
   useKeybinding('view.toggleSidebar', () => sidebar.toggle());
   useKeybinding('view.toggleTerminalPanel', () => terminal.onToggleCollapse());
   useKeybinding('task.create', () => useBoardStore.getState().requestNewTask(), {
@@ -214,6 +218,7 @@ export function AppLayout() {
       </div>
 
       {config.statusBarVisible !== false && <StatusBar />}
+      {statsOpen && <StatsPage />}
       {settingsOpen && <SettingsPanel />}
       {commandBar.isOpen && <CommandTerminalLayer onHide={commandBar.close} />}
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}

@@ -12,6 +12,7 @@ import { resolvePreviewTaskTitle } from '../devtools/main/preview-task-title';
 import { registerSeedGitChangesDevIpc } from '../devtools/main/seed-git-changes';
 import { registerSeedEmbeddingBacklogDevIpc } from '../devtools/main/seed-embedding-backlog';
 import { registerSeedLargeConversationDevIpc } from '../devtools/main/seed-large-conversation';
+import { registerSeedUsageDataDevIpc } from '../devtools/main/seed-usage-data';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
 import { readBrowserAutomationConfig } from './browser/browser-automation-config';
@@ -620,6 +621,11 @@ const createWindow = () => {
           // synthetic multi-thousand-turn Claude transcript file, for
           // exercising the Conversation viewer on a huge transcript.
           registerSeedLargeConversationDevIpc(getOptionalIpcContext);
+          // Seed-usage-data dev IPC for the TestHarness "Seed Usage Data"
+          // button - days of realistic multi-agent usage written through the
+          // real capture repositories, so the usage dashboard has rich charts
+          // to show in an ephemeral preview.
+          registerSeedUsageDataDevIpc(getOptionalIpcContext);
           // Adopt the two clones the /preview script pre-cloned (overlapping the
           // build); add more on demand via the TestHarness "Create Project" button.
           const project1 = await createPreviewClone(ephemeralContext, cwd); // adopts "Project 1"

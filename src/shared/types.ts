@@ -1053,10 +1053,201 @@ export interface TranscriptToolCounts {
 
 export type UsageTimePeriod = 'live' | 'today' | 'week' | 'month' | 'all';
 
-export interface PeriodUsageStats {
+// === Usage Dashboard Stats ===
+
+/** Which projects a dashboard-stats query aggregates over. */
+export type UsageStatsScope =
+  | { kind: 'project'; projectId: string }
+  | { kind: 'all' };
+
+export type UsageStatsScopeKind = UsageStatsScope['kind'];
+
+/**
+ * Drill-down to a single local day (clicking a day in a dashboard chart).
+ * Transient view state - never persisted; the whole payload re-scopes to
+ * [local midnight of dayStartMs, next local midnight), with hour/half-hour
+ * bucket granularity like the Today range.
+ */
+export interface UsageDayDrill {
+  /** Any epoch ms within the target local day (normalized server-side). */
+  dayStartMs: number;
+}
+
+/**
+ * User-defined bounded window (the "Custom" range picker; month granularity
+ * in v1). Overrides the quick period's window like a drill does, at adaptive
+ * day/week bucket granularity. Transient view state - never persisted;
+ * cleared by picking a quick period, preserved across scope/project cycling.
+ */
+export interface UsageCustomWindow {
+  /** Inclusive local start (epoch ms; first-of-month local midnight in v1). */
+  sinceMs: number;
+  /** Exclusive local end (epoch ms; first of the month AFTER the To month). */
+  untilMs: number;
+}
+
+/**
+ * KPI totals for the usage dashboard.
+ *
+ * Two data sources with DIFFERENT token semantics that never reconcile:
+ * the cost/token/session/tool/line fields come from `usage_history`
+ * (per-finalized-session context-window SNAPSHOT tokens, the same numbers the
+ * old status-bar strip showed), while the cache-token and burn-rate fields are
+ * derived from `conversation_turn_usage` (true per-turn tokens). The UI must
+ * never present the two as the same measurement.
+ */
+export interface UsageKpis {
   totalCostUsd: number;
+  /** True when at least one session in range reported a non-zero cost. False
+   *  means no agent reported cost at all (e.g. subscription plans), which is
+   *  distinct from "$0 spent". */
+  costKnown: boolean;
   totalInputTokens: number;
   totalOutputTokens: number;
+  /** Convenience: input + output. */
+  totalTokens: number;
+  sessionCount: number;
+  toolCallCount: number;
+  linesAdded: number;
+  linesRemoved: number;
+  filesChanged: number;
+  compactionCount: number;
+  totalDurationMs: number;
+  /** Turn-derived totals (conversation_turn_usage; true per-turn tokens). */
+  turnInputTokens: number;
+  turnOutputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  /** Tokens per hour over the effective window (turn-derived); null when no turn data. */
+  burnRateTokensPerHour: number | null;
+  /** Dollars per hour via proportional allocation of each session's reported
+   *  cost across its turns by token share. API-equivalent and approximate;
+   *  null when no cost or no turn data is available. */
+  burnRateUsdPerHour: number | null;
+}
+
+/** One bucket of the turn-derived token trend (source: conversation_turn_usage). */
+export interface TokenSeriesPoint {
+  /** Local-boundary-aligned bucket start, epoch ms. */
+  bucketStartMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  /** Session cost allocated to this bucket proportionally by token share (approximate). */
+  allocatedCostUsd: number;
+  turnCount: number;
+}
+
+/** Per-model slice of one cost-series bucket (for the stacked daily bars).
+ *  Model ids are normalized base ids, matching `ModelUsageBreakdown.modelId`
+ *  so the stack and the donut agree on identity. */
+export interface CostSeriesModelSlice {
+  modelId: string | null;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/** One local-day (or local-week for 'all') bucket of the session-derived cost trend
+ *  (source: usage_history, bucketed by session_started_at). */
+export interface CostSeriesPoint {
+  bucketStartMs: number;
+  costUsd: number;
+  inputTokens: number;
+  outputTokens: number;
+  sessionCount: number;
+  /** Per-model splits of this bucket (sums equal the bucket totals). */
+  byModel: CostSeriesModelSlice[];
+}
+
+/** Per-model rollup over the selected range (source: usage_history). */
+export interface ModelUsageBreakdown {
+  /** Normalized model id; null when the agent reported none. */
+  modelId: string | null;
+  modelDisplayName: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  sessionCount: number;
+}
+
+/** Per-agent rollup over the selected range (source: usage_history.agent). */
+export interface AgentUsageBreakdown {
+  /** Agent name as recorded on the session; null for rows predating the agent column. */
+  agent: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  sessionCount: number;
+}
+
+/** Per-effort rollup over the selected range (source: usage_history.effort,
+ *  the session's last-applied `--effort` value). */
+export interface EffortUsageBreakdown {
+  /** Applied effort level; null means agent default (no flag) - a real
+   *  bucket, rendered as "(default)", not missing data. */
+  effort: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  sessionCount: number;
+}
+
+/** Per-project sub-totals for the app-wide rollup's comparison table. All
+ *  fields fold out of the rows already read for the range (zero extra
+ *  queries); ratios (cost share, blended $/Mtok, avg session) are derived
+ *  client-side from these. */
+export interface ProjectUsageSummary {
+  projectId: string;
+  projectName: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  sessionCount: number;
+  toolCallCount: number;
+  linesAdded: number;
+  linesRemoved: number;
+  totalDurationMs: number;
+  /** Most recent session start in range (epoch ms); null when no sessions. */
+  lastActiveMs: number | null;
+  /** Dominant agent by tokens in range; null when none recorded. */
+  topAgent: string | null;
+}
+
+/**
+ * Composite payload for the usage dashboard and the `kangentic_get_usage_stats`
+ * MCP tool. Series are DENSE (exactly one point per bucket, zero-filled) and
+ * bounded (~400 points; the service widens buckets for long ranges), so the
+ * renderer never gap-fills. For period 'live' the window is the trailing
+ * 120 minutes in 5-minute buckets and `costSeries` is empty.
+ */
+export interface UsageDashboardStats {
+  scope: UsageStatsScope;
+  period: UsageTimePeriod;
+  /** Inclusive x-domain start of the token series. */
+  rangeStartMs: number;
+  /** Exclusive x-domain end ("now" for open-ended periods). */
+  rangeEndMs: number;
+  /** Uniform token-series bucket width. */
+  bucketSizeMs: number;
+  /** Uniform cost-series bucket width (local day, or local week for 'all'). */
+  costBucketSizeMs: number;
+  generatedAtMs: number;
+  kpis: UsageKpis;
+  /** KPI totals of the immediately-preceding window (yesterday / last week /
+   *  last month / prior 2h; the prior day for a drill), powering the hero
+   *  tiles' "vs previous period" deltas. Null for All Time (no previous). */
+  previousKpis: UsageKpis | null;
+  tokenSeries: TokenSeriesPoint[];
+  costSeries: CostSeriesPoint[];
+  byModel: ModelUsageBreakdown[];
+  byAgent: AgentUsageBreakdown[];
+  byEffort: EffortUsageBreakdown[];
+  /** Present only for scope.kind === 'all'. */
+  perProject?: ProjectUsageSummary[];
+  /** Projects whose DB was missing or unreadable and were skipped (app-wide scope). */
+  skippedProjects?: Array<{ projectId: string; projectName: string }>;
 }
 
 // === Session Display State (discriminated union for UI) ===
@@ -1790,7 +1981,15 @@ export interface AppConfig {
   restoreWindowPosition: boolean;
   windowBounds: { x: number; y: number; width: number; height: number } | null;
   windowMaximized: boolean;
+  /** @deprecated The status-bar usage strip was replaced by the usage dashboard.
+   *  Read once as a seed fallback for `usageStatsPeriod`; never written anymore. */
   statusBarPeriod: UsageTimePeriod;
+  /** Persisted time range for the usage stats dashboard. One global value shared
+   *  across all projects (survives project switches and restarts). */
+  usageStatsPeriod: UsageTimePeriod;
+  /** Persisted scope for the usage stats dashboard: the current project or the
+   *  app-wide all-projects rollup. Remembers the last user selection. */
+  usageStatsScope: UsageStatsScopeKind;
   /** Per-project memory of the last user-selected task tab in the terminal panel.
    *  Keyed by project ID, value is the task ID. Restored on project switch. */
   lastActiveTaskByProject: Record<string, string>;
@@ -1976,6 +2175,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   windowBounds: null,
   windowMaximized: false,
   statusBarPeriod: 'live',
+  usageStatsPeriod: 'live',
+  usageStatsScope: 'project',
   lastActiveTaskByProject: {},
   workspaceByProject: {},
   commandTerminalWorkspace: null,
@@ -3027,6 +3228,18 @@ export interface DevSeedEmbeddingBacklogResult {
   docId: string;
 }
 
+/** Summary of a dev test-harness usage-data seed (see DEV_SEED_USAGE_DATA). */
+export interface DevSeedUsageDataResult {
+  /** Synthetic finalized sessions written to usage_history (across all projects). */
+  sessions: number;
+  /** Synthetic turns written to conversation_turn_usage (across all projects). */
+  turns: number;
+  /** Days of history covered. */
+  days: number;
+  /** Registered projects seeded (descending volume per project). */
+  projects: number;
+}
+
 /** Summary of a dev test-harness large-conversation seed (see DEV_SEED_LARGE_CONVERSATION). */
 export interface DevSeedLargeConversationResult {
   /** The throwaway task's Kangentic session record id. */
@@ -3070,6 +3283,16 @@ export interface ElectronAPI {
      * scrolling/search/performance, without running a real agent for hours.
      */
     seedLargeConversation: (count: number) => Promise<DevSeedLargeConversationResult>;
+    /**
+     * Seed `days` of realistic synthetic usage (sessions across several
+     * agents/models plus per-turn time series, newest inside the trailing
+     * live window) into EVERY registered project's usage ledgers via the real
+     * capture repositories, at descending volume per project - the fast path
+     * to rich usage-dashboard charts (including a meaningful This Project vs
+     * All Projects difference) in a /preview session. Each click appends a
+     * fresh batch.
+     */
+    seedUsageData: (days: number) => Promise<DevSeedUsageDataResult>;
     /** True only in dev-preview (`/preview`, `--ephemeral`); false in the regular dogfood. */
     isEphemeralPreview: boolean;
     /**
@@ -3253,7 +3476,6 @@ export interface ElectronAPI {
     getToolBreakdown: (sessionId: string) => Promise<PerToolStat[]>;
     spawnTransient: (input: SpawnTransientSessionInput) => Promise<{ session: Session; branch: string; checkoutError?: string }>;
     killTransient: (sessionId: string) => Promise<void>;
-    getPeriodStats: (period: UsageTimePeriod) => Promise<PeriodUsageStats>;
     setFocused: (sessionIds: string[]) => Promise<void>;
     /**
      * User pressed Ctrl+C in this session's terminal. The renderer
@@ -3277,6 +3499,15 @@ export interface ElectronAPI {
      * persistence, best-effort live slash injection only.
      */
     injectSettings: (input: SessionInjectSettingsInput) => Promise<SessionInjectSettingsResult>;
+  };
+
+  // Usage statistics (the dashboard opened from the title bar).
+  usage: {
+    /** Composite usage-statistics payload: KPIs + bucketed time series +
+     *  by-model/by-agent breakdowns, per-project or app-wide. Read-only.
+     *  Pass `drill` to re-scope everything to one local day (chart click);
+     *  `customWindow` to a user-picked month span (drill takes precedence). */
+    getDashboardStats: (scope: UsageStatsScope, period: UsageTimePeriod, drill?: UsageDayDrill | null, customWindow?: UsageCustomWindow | null) => Promise<UsageDashboardStats>;
   };
 
   // Voice-to-text dictation (push-to-talk -> live popup -> focused terminal).

@@ -3,8 +3,8 @@
  * vitest's system Node, so the DB is mocked with a `prepare`/`run`/`get`
  * surface that records the SQL it was given and the params bound to it.
  *
- * The history is the source of truth for the StatusBar period selector. Its
- * tests pin three contracts that must not silently regress:
+ * The history is the source of truth for the usage dashboard's period totals.
+ * Its tests pin three contracts that must not silently regress:
  *
  *   1. UPSERT on `session_record_id` (idempotency for repeat captures of the
  *      same record at suspend then app shutdown).
@@ -27,6 +27,7 @@ interface PreparedStatement {
   sql: string;
   runParams: unknown[][];
   getParams: unknown[][];
+  allParams: unknown[][];
   getReturn?: unknown;
 }
 
@@ -42,6 +43,7 @@ function createMockDb(getReturn?: unknown): {
         sql,
         runParams: [],
         getParams: [],
+        allParams: [],
         getReturn,
       };
       statements.push(statement);
@@ -54,7 +56,10 @@ function createMockDb(getReturn?: unknown): {
           statement.getParams.push(params);
           return statement.getReturn;
         }),
-        all: vi.fn(() => []),
+        all: vi.fn((...params: unknown[]) => {
+          statement.allParams.push(params);
+          return [];
+        }),
       };
     }),
   } as unknown as Database.Database;
@@ -75,6 +80,8 @@ function makeUsageInput(overrides: Partial<RecordSessionUsageInput> = {}): Recor
     modelId: 'claude-opus-4',
     modelDisplayName: 'Claude Opus 4',
     compactionCount: 0,
+    agent: 'claude',
+    effort: 'high',
     ...overrides,
   };
 }
@@ -103,8 +110,8 @@ describe('UsageHistoryRepository.recordSessionUsage', () => {
     //   id, session_record_id, recorded_at, session_started_at, session_type,
     //   total_cost_usd, total_input_tokens, total_output_tokens,
     //   total_duration_ms, tool_call_count, model_id, model_display_name,
-    //   compaction_count
-    expect(params).toHaveLength(13);
+    //   compaction_count, agent, effort
+    expect(params).toHaveLength(15);
     // id (param 0) is a generated uuid - just assert it's a string
     expect(typeof params[0]).toBe('string');
     expect((params[0] as string).length).toBeGreaterThan(0);
@@ -122,6 +129,20 @@ describe('UsageHistoryRepository.recordSessionUsage', () => {
     expect(params[10]).toBe('claude-opus-4');
     expect(params[11]).toBe('Claude Opus 4');
     expect(params[12]).toBe(0);
+    expect(params[13]).toBe('claude');
+    expect(params[14]).toBe('high');
+  });
+
+  it('keeps a previously-stamped agent and effort when a re-capture has none (COALESCE in the upsert)', () => {
+    const { db, statements } = createMockDb();
+    const repository = new UsageHistoryRepository(db);
+
+    repository.recordSessionUsage(makeUsageInput({ agent: null, effort: null }));
+
+    const doUpdateMatch = statements[0].sql.match(/DO\s+UPDATE\s+SET\s+([\s\S]+)$/i);
+    expect(doUpdateMatch).not.toBeNull();
+    expect(doUpdateMatch![1]).toMatch(/agent\s*=\s*COALESCE\(\s*excluded\.agent\s*,\s*usage_history\.agent\s*\)/i);
+    expect(doUpdateMatch![1]).toMatch(/effort\s*=\s*COALESCE\(\s*excluded\.effort\s*,\s*usage_history\.effort\s*\)/i);
   });
 
   it('does NOT include git stat columns in the DO UPDATE SET clause (owned by updateGitStats)', () => {
@@ -193,49 +214,38 @@ describe('UsageHistoryRepository.updateGitStats', () => {
   });
 });
 
-describe('UsageHistoryRepository.getStatsAfter', () => {
-  it('issues a WHERE-less SUM when since is null (All Time)', () => {
-    const { db, statements } = createMockDb({
-      totalCostUsd: 12.5, totalInputTokens: 9999, totalOutputTokens: 4444,
-    });
+describe('UsageHistoryRepository.listRowsAfter', () => {
+  it('issues a WHERE-less SELECT when since is null (All Time), oldest first', () => {
+    const { db, statements } = createMockDb();
     const repository = new UsageHistoryRepository(db);
 
-    const result = repository.getStatsAfter(null);
+    const result = repository.listRowsAfter(null);
 
     expect(statements).toHaveLength(1);
     expect(statements[0].sql).not.toMatch(/WHERE/i);
     expect(statements[0].sql).toMatch(/FROM\s+usage_history/i);
-    expect(statements[0].getParams[0]).toEqual([]);
-    expect(result).toEqual({
-      totalCostUsd: 12.5,
-      totalInputTokens: 9999,
-      totalOutputTokens: 4444,
-    });
+    expect(statements[0].sql).toMatch(/ORDER\s+BY\s+session_started_at\s+ASC/i);
+    expect(result).toEqual([]);
   });
 
   it('filters on session_started_at when since is provided (not recorded_at)', () => {
-    const { db, statements } = createMockDb({
-      totalCostUsd: 1, totalInputTokens: 2, totalOutputTokens: 3,
-    });
+    const { db, statements } = createMockDb();
     const repository = new UsageHistoryRepository(db);
 
-    repository.getStatsAfter('2026-04-01T00:00:00Z');
+    repository.listRowsAfter('2026-04-01T00:00:00Z');
 
     expect(statements[0].sql).toMatch(/WHERE\s+session_started_at\s*>=\s*\?/i);
     expect(statements[0].sql).not.toMatch(/recorded_at\s*>=/i);
-    expect(statements[0].getParams[0]).toEqual(['2026-04-01T00:00:00Z']);
+    expect(statements[0].allParams[0]).toEqual(['2026-04-01T00:00:00Z']);
   });
 
-  it('returns a zeroed PeriodUsageStats shape when the SUM yields no row', () => {
-    const { db } = createMockDb(undefined);
+  it('selects the agent and effort columns (the by-agent / by-effort breakdown sources)', () => {
+    const { db, statements } = createMockDb();
     const repository = new UsageHistoryRepository(db);
 
-    const result = repository.getStatsAfter(null);
+    repository.listRowsAfter(null);
 
-    expect(result).toEqual({
-      totalCostUsd: 0,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-    });
+    expect(statements[0].sql).toMatch(/\bagent\b/);
+    expect(statements[0].sql).toMatch(/\beffort\b/);
   });
 });

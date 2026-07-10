@@ -53,6 +53,19 @@
   /* Activity indicators (identical across all themes) */
   --kng-active: #34d399;      /* working / thinking (emerald-400) */
   --kng-attention: #e3b341;   /* needs-you / idle / permission (soft honey) */
+
+  /* Categorical chart series (usage dashboard donuts/legends). Dark-surface
+     steps of the validated dataviz reference palette; slot ORDER is the
+     CVD-safety mechanism - assign series by slot index, never re-order or
+     cycle. Single-series charts use --kng-accent instead. Light-base themes
+     override below; per-theme overrides only where the palette validator
+     fails on that theme's raised surface. */
+  --kng-chart-1: #3987e5;
+  --kng-chart-2: #199e70;
+  --kng-chart-3: #c98500;
+  --kng-chart-4: #008300;
+  --kng-chart-5: #9085e9;
+  --kng-chart-6: #e66767;
 }
 
 .theme-light {
@@ -246,6 +259,22 @@
   --kng-accent-on: #ffffff;
 }
 
+/* Light-base themes share the light-surface categorical steps. Validated
+   2026-07-10 with the dataviz palette validator against every theme's raised
+   surface: all 10 pass. Known WARNs rely on the relief rule (the dashboard's
+   donuts always render a visible value list): slots 2/3 sit below 3:1 on the
+   light surfaces (inherent to the reference light set) and slot 4 is at
+   2.87-2.96:1 on moon/forest. Do NOT brighten slot 4 to fix that - it
+   collapses protan separation from slot 3 (measured dE 0.4). */
+.theme-light, .theme-sand, .theme-mint, .theme-sky, .theme-peach {
+  --kng-chart-1: #2a78d6;
+  --kng-chart-2: #1baf7a;
+  --kng-chart-3: #eda100;
+  --kng-chart-4: #008300;
+  --kng-chart-5: #4a3aa7;
+  --kng-chart-6: #e34948;
+}
+
 @theme inline {
   --color-surface: var(--kng-surface);
   --color-surface-raised: var(--kng-surface-raised);
@@ -270,6 +299,13 @@
 
   --color-active: var(--kng-active);
   --color-attention: var(--kng-attention);
+
+  --color-chart-1: var(--kng-chart-1);
+  --color-chart-2: var(--kng-chart-2);
+  --color-chart-3: var(--kng-chart-3);
+  --color-chart-4: var(--kng-chart-4);
+  --color-chart-5: var(--kng-chart-5);
+  --color-chart-6: var(--kng-chart-6);
 }
 
 /* Custom scrollbar */

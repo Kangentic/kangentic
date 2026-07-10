@@ -21,6 +21,24 @@ export interface TurnUsageOwner {
   taskId: string | null;
 }
 
+/**
+ * One (5-minute-bucket, session, model) group of turn usage, as consumed by the
+ * usage-stats service. Session-level grouping is deliberate: the service
+ * allocates each session's reported cost across its turn buckets proportionally
+ * by token share, so it needs per-session token subtotals per bucket.
+ */
+export interface GroupedTurnUsageRow {
+  /** UTC-aligned group start (epoch ms), a multiple of the groupMs passed in. */
+  bucketStartMs: number;
+  sessionId: string | null;
+  model: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  turnCount: number;
+}
+
 interface TurnUsageRow {
   turn_uuid: string;
   agent_session_id: string | null;
@@ -148,6 +166,45 @@ export class ConversationUsageStore {
       .prepare('SELECT * FROM conversation_turn_usage WHERE session_id = ? ORDER BY ts ASC')
       .all(sessionId) as TurnUsageRow[];
     return rows.map(toRecord);
+  }
+
+  /**
+   * Project-wide turn usage grouped into fixed UTC buckets of `groupMs`
+   * (the usage dashboard passes 5 minutes: coarse enough to bound row counts,
+   * fine enough that groups nest cleanly into local hour/day chart buckets for
+   * every real-world UTC offset). Grouped by bucket + session + model so the
+   * usage-stats service can fold buckets to local boundaries and allocate
+   * session costs in JS. Turns with a NULL `ts` are excluded (they cannot be
+   * placed on a time axis; their tokens still count in the usage_history KPIs).
+   * Uses idx_turn_usage_ts. Pass null `sinceMs` for all time; pass `untilMs`
+   * to bound the window (the dashboard's day drill-down).
+   */
+  getGroupedUsageSince(sinceMs: number | null, groupMs: number, untilMs: number | null = null): GroupedTurnUsageRow[] {
+    const select = `
+      SELECT
+        CAST(ts / ? AS INTEGER) * ? AS bucketStartMs,
+        session_id AS sessionId,
+        model,
+        SUM(input_tokens) AS inputTokens,
+        SUM(output_tokens) AS outputTokens,
+        SUM(cache_creation_input_tokens) AS cacheCreationTokens,
+        SUM(cache_read_input_tokens) AS cacheReadTokens,
+        COUNT(*) AS turnCount
+      FROM conversation_turn_usage
+    `;
+    const tail = 'GROUP BY bucketStartMs, session_id, model ORDER BY bucketStartMs ASC';
+    const clauses = ['ts IS NOT NULL'];
+    const params: number[] = [groupMs, groupMs];
+    if (sinceMs !== null) {
+      clauses.push('ts >= ?');
+      params.push(sinceMs);
+    }
+    if (untilMs !== null) {
+      clauses.push('ts < ?');
+      params.push(untilMs);
+    }
+    return this.db.prepare(`${select} WHERE ${clauses.join(' AND ')} ${tail}`)
+      .all(...params) as GroupedTurnUsageRow[];
   }
 
   /** Usage for a specific set of turns - the join a conversation view uses to hang

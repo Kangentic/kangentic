@@ -22,8 +22,8 @@
  *      usageHistoryRepo.recordSessionUsage to write a history row.
  *   5. Poll until the task appears in archivedTasks (Done-path fully completed).
  *   6. Delete the task (hard delete via IPC).
- *   7. Query SESSION_GET_PERIOD_STATS('all') - assert totalCostUsd > 0 and
- *      tokens are preserved despite the task being gone.
+ *   7. Query USAGE_GET_DASHBOARD_STATS (project scope, 'all') - assert the KPI
+ *      totalCostUsd > 0 and tokens are preserved despite the task being gone.
  *
  * Uses mock-claude with an injected status.json rather than the real CLI.
  * The status.json uses the correct Claude schema (context_window + cost keys)
@@ -179,10 +179,18 @@ test.describe('Usage history - lifetime totals survive task deletion', () => {
       }, taskId);
     }, { timeout: 10000 }).toBe(true);
 
-    // Query period stats BEFORE delete to establish baseline. History row must
-    // already be written (captureSessionMetrics is synchronous once it runs).
+    // Query dashboard stats BEFORE delete to establish baseline. History row
+    // must already be written (captureSessionMetrics is synchronous once it
+    // runs). The dashboard endpoint reads the same append-only usage_history
+    // ledger the old period-stats endpoint did.
     const statsBeforeDelete = await page.evaluate(async () => {
-      return window.electronAPI.sessions.getPeriodStats('all');
+      const project = await window.electronAPI.projects.getCurrent();
+      if (!project) throw new Error('No current project');
+      const stats = await window.electronAPI.usage.getDashboardStats(
+        { kind: 'project', projectId: project.id },
+        'all',
+      );
+      return stats.kpis;
     });
     expect(statsBeforeDelete.totalCostUsd).toBeGreaterThan(0);
     expect(statsBeforeDelete.totalInputTokens).toBeGreaterThan(0);
@@ -203,10 +211,16 @@ test.describe('Usage history - lifetime totals survive task deletion', () => {
       }, taskId);
     }, { timeout: 5000 }).toBe(false);
 
-    // THE CORE ASSERTION: period stats after deletion must match before deletion.
+    // THE CORE ASSERTION: dashboard stats after deletion must match before deletion.
     // The usage_history table is append-only and NOT cascade-deleted with tasks/sessions.
     const statsAfterDelete = await page.evaluate(async () => {
-      return window.electronAPI.sessions.getPeriodStats('all');
+      const project = await window.electronAPI.projects.getCurrent();
+      if (!project) throw new Error('No current project');
+      const stats = await window.electronAPI.usage.getDashboardStats(
+        { kind: 'project', projectId: project.id },
+        'all',
+      );
+      return stats.kpis;
     });
 
     expect(statsAfterDelete.totalCostUsd).toBeCloseTo(statsBeforeDelete.totalCostUsd, 6);

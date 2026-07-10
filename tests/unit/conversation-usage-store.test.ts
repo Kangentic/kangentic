@@ -85,6 +85,50 @@ function makeUsageDb(): { db: Database.Database; table: Map<string, FakeUsageRow
         const wanted = new Set(args.map((value) => String(value)));
         return rows.filter((row) => wanted.has(row.turn_uuid));
       }
+      if (sql.includes('GROUP BY bucketStartMs')) {
+        // The grouped burn-rate read: params are (groupMs, groupMs[, sinceMs]).
+        // Mirrors the real SQL: NULL ts excluded, integer-division bucketing,
+        // grouped by (bucket, session, model), ordered by bucket ascending.
+        const groupMs = Number(args[0]);
+        expect(args[1]).toBe(args[0]);
+        const sinceMs = sql.includes('ts >= ?') ? Number(args[2]) : null;
+        const grouped = new Map<string, {
+          bucketStartMs: number;
+          sessionId: string | null;
+          model: string | null;
+          inputTokens: number;
+          outputTokens: number;
+          cacheCreationTokens: number;
+          cacheReadTokens: number;
+          turnCount: number;
+        }>();
+        for (const row of rows) {
+          if (row.ts === null) continue;
+          if (sinceMs !== null && row.ts < sinceMs) continue;
+          const bucketStartMs = Math.floor(row.ts / groupMs) * groupMs;
+          const key = `${bucketStartMs}|${row.session_id ?? ''}|${row.model ?? ''}`;
+          let entry = grouped.get(key);
+          if (!entry) {
+            entry = {
+              bucketStartMs,
+              sessionId: row.session_id,
+              model: row.model,
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheCreationTokens: 0,
+              cacheReadTokens: 0,
+              turnCount: 0,
+            };
+            grouped.set(key, entry);
+          }
+          entry.inputTokens += row.input_tokens;
+          entry.outputTokens += row.output_tokens;
+          entry.cacheCreationTokens += row.cache_creation_input_tokens;
+          entry.cacheReadTokens += row.cache_read_input_tokens;
+          entry.turnCount += 1;
+        }
+        return [...grouped.values()].sort((a, b) => a.bucketStartMs - b.bucketStartMs);
+      }
       throw new Error(`unexpected all SQL: ${sql}`);
     },
   }));
@@ -334,5 +378,87 @@ describe('ConversationIndexer.indexSession populates the usage ledger', () => {
 
     expect(await indexer.indexSession('project-1', 'session-1')).toBe('indexed');
     expect(state.usageInserts).toHaveLength(0);
+  });
+});
+
+describe('ConversationUsageStore.getGroupedUsageSince', () => {
+  const FIVE_MIN = 5 * 60_000;
+
+  it('groups turns into fixed UTC buckets per (bucket, session, model), oldest first', () => {
+    const { db } = makeUsageDb();
+    const store = new ConversationUsageStore(db);
+    // Two turns inside the same 5-min bucket, one in the next bucket.
+    store.recordTurns(
+      owner,
+      [
+        { turnUuid: 'a1', ts: FIVE_MIN * 100 + 1_000, model: 'model-x', usage: usage({ inputTokens: 10, outputTokens: 20 }) },
+        { turnUuid: 'a2', ts: FIVE_MIN * 100 + 2_000, model: 'model-x', usage: usage({ inputTokens: 30, outputTokens: 40 }) },
+        { turnUuid: 'a3', ts: FIVE_MIN * 101 + 500, model: 'model-x', usage: usage({ inputTokens: 5, outputTokens: 5 }) },
+      ],
+      now,
+    );
+
+    const groups = store.getGroupedUsageSince(null, FIVE_MIN);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].bucketStartMs).toBe(FIVE_MIN * 100);
+    expect(groups[0].sessionId).toBe('session-1');
+    expect(groups[0].model).toBe('model-x');
+    expect(groups[0].inputTokens).toBe(40);
+    expect(groups[0].outputTokens).toBe(60);
+    expect(groups[0].turnCount).toBe(2);
+    expect(groups[1].bucketStartMs).toBe(FIVE_MIN * 101);
+    expect(groups[1].turnCount).toBe(1);
+  });
+
+  it('excludes NULL-ts turns (they cannot be placed on a time axis)', () => {
+    const { db } = makeUsageDb();
+    const store = new ConversationUsageStore(db);
+    store.recordTurns(
+      owner,
+      [
+        { turnUuid: 'a1', ts: null, model: 'model-x', usage: usage() },
+        { turnUuid: 'a2', ts: FIVE_MIN * 10, model: 'model-x', usage: usage() },
+      ],
+      now,
+    );
+
+    const groups = store.getGroupedUsageSince(null, FIVE_MIN);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].bucketStartMs).toBe(FIVE_MIN * 10);
+  });
+
+  it('applies the sinceMs lower bound when provided', () => {
+    const { db } = makeUsageDb();
+    const store = new ConversationUsageStore(db);
+    store.recordTurns(
+      owner,
+      [
+        { turnUuid: 'a1', ts: FIVE_MIN * 10, model: 'model-x', usage: usage() },
+        { turnUuid: 'a2', ts: FIVE_MIN * 20, model: 'model-x', usage: usage() },
+      ],
+      now,
+    );
+
+    const groups = store.getGroupedUsageSince(FIVE_MIN * 15, FIVE_MIN);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].bucketStartMs).toBe(FIVE_MIN * 20);
+  });
+
+  it('separates groups by session and model within one bucket', () => {
+    const { db } = makeUsageDb();
+    const store = new ConversationUsageStore(db);
+    store.recordTurns(owner, [
+      { turnUuid: 'a1', ts: FIVE_MIN * 10 + 100, model: 'model-x', usage: usage() },
+      { turnUuid: 'a2', ts: FIVE_MIN * 10 + 200, model: 'model-y', usage: usage() },
+    ], now);
+    store.recordTurns({ ...owner, sessionId: 'session-2' }, [
+      { turnUuid: 'a3', ts: FIVE_MIN * 10 + 300, model: 'model-x', usage: usage() },
+    ], now);
+
+    const groups = store.getGroupedUsageSince(null, FIVE_MIN);
+    expect(groups).toHaveLength(3);
+    expect(new Set(groups.map((group) => `${group.sessionId}|${group.model}`))).toEqual(
+      new Set(['session-1|model-x', 'session-1|model-y', 'session-2|model-x']),
+    );
   });
 });

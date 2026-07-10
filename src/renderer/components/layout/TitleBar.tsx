@@ -1,9 +1,10 @@
 import React from 'react';
-import { Command, Mic, Minus, Settings, Square, X } from 'lucide-react';
+import { ChartColumn, Command, Mic, Minus, Settings, Square, X } from 'lucide-react';
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useDictationStore } from '../../stores/dictation-store';
 import { useSessionStore } from '../../stores/session-store';
+import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
 import { selectCurrentProjectTransientSessionIds } from '../../stores/session-store/transient-session-slice';
 import { isWorktreePath } from '../../../shared/git-utils';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
@@ -126,6 +127,12 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpaw
   const quickFindCombo = useFormattedCombo('search.togglePalette');
   const commandTerminalCombo = useFormattedCombo('commandBar.toggle');
   const settingsCombo = useFormattedCombo('settings.toggle');
+  const statsCombo = useFormattedCombo('stats.toggle');
+
+  // Store-direct like the Settings gear (statsOpen is dashboard-store state).
+  const statsOpen = useUsageDashboardStore((state) => state.statsOpen);
+  const toggleStats = useUsageDashboardStore((state) => state.toggle);
+  const prefetchStats = useUsageDashboardStore((state) => state.prefetch);
 
   // While the layer is open and below the cap, the button spawns ANOTHER terminal.
   const spawnsAnother = !!commandBarOpen && !!canSpawnMore;
@@ -238,6 +245,18 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpaw
             <Mic size={20} />
           </button>
         )}
+        <button
+          onClick={toggleStats}
+          onMouseEnter={prefetchStats}
+          className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
+            statsOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
+          }`}
+          title={`Usage Stats (${statsCombo})`}
+          aria-label="Usage Stats"
+          data-testid="usage-stats-button"
+        >
+          <ChartColumn size={20} />
+        </button>
         <button
           onClick={handleGearClick}
           className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${

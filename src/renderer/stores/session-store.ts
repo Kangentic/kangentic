@@ -6,7 +6,6 @@ import { useConfigStore } from './config-store';
 import type { SessionStore, PendingTuiAnchor } from './session-store/types';
 import { buildSessionByTaskId } from './session-store/session-index';
 import { createTaskChangesPanelSlice } from './session-store/task-changes-panel-slice';
-import { createUsagePeriodSlice } from './session-store/usage-period-slice';
 import { createTransientSessionSlice, transientKey, type TransientSessionEntry } from './session-store/transient-session-slice';
 import { mergeRateLimitSnapshot } from '../utils/rate-limit-window';
 
@@ -782,6 +781,5 @@ export const useSessionStore = create<SessionStore>((set, get, api) => ({
   },
 
   ...createTaskChangesPanelSlice(set, get, api),
-  ...createUsagePeriodSlice(set, get, api),
   ...createTransientSessionSlice(preservedTransientState)(set, get, api),
 }));

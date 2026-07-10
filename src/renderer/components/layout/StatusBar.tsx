@@ -1,78 +1,25 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { useShallow } from 'zustand/react/shallow';
-import { SquareTerminal, ClipboardCheck, ArrowUp, ArrowDown, ChevronDown, Check } from 'lucide-react';
-import { OverlayPopover } from '../OverlayPopover';
+import { SquareTerminal, ClipboardCheck } from 'lucide-react';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
 import { agentDisplayName } from '../../utils/agent-display-name';
 import { DEFAULT_AGENT } from '../../../shared/types';
-import { formatTokenCount } from '../../utils/format-tokens';
-import { formatCost } from '../../utils/format-session';
-import { useValuePulse } from '../../hooks/useValuePulse';
-import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { Pill } from '../Pill';
-import type { UsageTimePeriod } from '../../../shared/types';
 
-const PERIOD_OPTIONS: Array<{ value: UsageTimePeriod; label: string }> = [
-  { value: 'live', label: 'Live' },
-  { value: 'today', label: 'Today' },
-  { value: 'week', label: 'This Week' },
-  { value: 'month', label: 'This Month' },
-  { value: 'all', label: 'All Time' },
-];
-
-const PERIOD_LABELS: Record<UsageTimePeriod, string> = Object.fromEntries(
-  PERIOD_OPTIONS.map(({ value, label }) => [value, label]),
-) as Record<UsageTimePeriod, string>;
-
+/**
+ * Bottom status bar: agents/queued/tasks counts, agent-not-found warning, and
+ * the app version. The old usage strip (tokens up/down, cost, time-range
+ * dropdown) was replaced by the usage dashboard (title-bar chart icon /
+ * Mod+Shift+U), which is now the only usage surface.
+ */
 export function StatusBar() {
   const allSessions = useSessionStore((s) => s.sessions);
-  const selectedPeriod = useSessionStore((s) => s.selectedPeriod);
-  const periodStats = useSessionStore((s) => s.periodStats);
-  const setSelectedPeriod = useSessionStore((s) => s.setSelectedPeriod);
   const agentInfo = useConfigStore((s) => s.agentInfo);
   const appVersion = useConfigStore((s) => s.appVersion);
   const tasks = useBoardStore((s) => s.tasks);
   const swimlanes = useBoardStore((s) => s.swimlanes);
   const currentProject = useProjectStore((s) => s.currentProject);
-
-  // Period popover state
-  const [periodPopoverOpen, setPeriodPopoverOpen] = useState(false);
-  const periodTriggerRef = useRef<HTMLButtonElement>(null);
-  const periodPopoverRef = useRef<HTMLDivElement>(null);
-  const { style: periodPopoverStyle } = usePopoverPosition(
-    periodTriggerRef, periodPopoverRef, periodPopoverOpen, { mode: 'dropdown' },
-  );
-
-  // Close popover on click outside
-  useEffect(() => {
-    if (!periodPopoverOpen) return;
-    function handleClickOutside(event: MouseEvent) {
-      if (
-        periodPopoverRef.current && !periodPopoverRef.current.contains(event.target as Node) &&
-        periodTriggerRef.current && !periodTriggerRef.current.contains(event.target as Node)
-      ) {
-        setPeriodPopoverOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside, true);
-    return () => document.removeEventListener('mousedown', handleClickOutside, true);
-  }, [periodPopoverOpen]);
-
-  // Close popover on Escape
-  useEffect(() => {
-    if (!periodPopoverOpen) return;
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        event.stopPropagation();
-        setPeriodPopoverOpen(false);
-      }
-    }
-    document.addEventListener('keydown', handleEscape, true);
-    return () => document.removeEventListener('keydown', handleEscape, true);
-  }, [periodPopoverOpen]);
 
   const projectSessions = allSessions.filter((s) => s.projectId === currentProject?.id);
   const activeSessions = projectSessions.filter((s) => s.status === 'running').length;
@@ -84,59 +31,9 @@ export function StatusBar() {
   );
   const activeTasks = tasks.filter((t) => !doneSwimlaneIds.has(t.swimlane_id)).length;
 
-  // Aggregate token usage across current project's live sessions.
-  // Computed inside a selector that returns primitives so re-renders only happen
-  // when the rounded aggregate values actually change (not on every background update).
-  const projectSessionIds = useMemo(() => new Set(projectSessions.map((s) => s.id)), [projectSessions]);
-  const liveUsage = useSessionStore(
-    useShallow(
-      useCallback((s) => {
-        let cost = 0;
-        let input = 0;
-        let output = 0;
-        let count = 0;
-        for (const [id, usage] of Object.entries(s.sessionUsage)) {
-          if (projectSessionIds.has(id)) {
-            cost += usage.cost.totalCostUsd;
-            input += usage.contextWindow.totalInputTokens;
-            output += usage.contextWindow.totalOutputTokens;
-            count++;
-          }
-        }
-        return { cost, input, output, count };
-      }, [projectSessionIds]),
-    ),
-  );
-  const liveCost = liveUsage.cost;
-  const liveInput = liveUsage.input;
-  const liveOutput = liveUsage.output;
-
-  // Compute displayed stats based on selected period
-  const isLive = selectedPeriod === 'live';
-  const displayInput = isLive ? liveInput : (periodStats?.totalInputTokens ?? 0) + liveInput;
-  const displayOutput = isLive ? liveOutput : (periodStats?.totalOutputTokens ?? 0) + liveOutput;
-  const displayCost = isLive ? liveCost : (periodStats?.totalCostUsd ?? 0) + liveCost;
-
-  const hasUsage = liveUsage.count > 0 || (periodStats && !isLive);
-
-  // Pulse hooks - always called unconditionally (hooks rules)
-  const tokenKey = `${displayInput}-${displayOutput}`;
-  // Rebaseline the pulse on a project or period switch: that flips the displayed
-  // totals to a different context, which is not a live tick and must not animate
-  // (.claude/rules/restore-no-animation-replay.md).
-  const pulseResetKey = `${currentProject?.id ?? ''}:${selectedPeriod}`;
-  const tokenPulseRef = useValuePulse(tokenKey, { resetKey: pulseResetKey });
-  const costPulseRef = useValuePulse(displayCost, { resetKey: pulseResetKey });
-
-  function handlePeriodSelect(period: UsageTimePeriod) {
-    setSelectedPeriod(period);
-    setPeriodPopoverOpen(false);
-  }
-
   // `data-dismiss-surface`: dead space in the status bar light-dismisses an open task
-  // window; its clickable stats are excluded as actions (pointer cursor / controls).
-  // A new clickable child must carry `cursor-pointer` or `data-no-dismiss`, or a
-  // click on it will also dismiss.
+  // window. A new clickable child must carry `cursor-pointer` or `data-no-dismiss`,
+  // or a click on it will also dismiss.
   return (
     <div className="h-9 bg-surface border-t border-edge flex items-center px-3 text-xs text-fg-faint select-none flex-shrink-0" data-dismiss-surface>
       {currentProject && (
@@ -152,57 +49,6 @@ export function StatusBar() {
             <ClipboardCheck size={14} />
             {activeTasks} tasks
           </span>
-          {hasUsage && (
-            <>
-              <div className="w-px h-3.5 bg-edge flex-shrink-0" />
-              <span ref={tokenPulseRef} className="tabular-nums flex items-center gap-3" data-testid="aggregate-tokens" title={`${PERIOD_LABELS[selectedPeriod]} input / output tokens`}>
-                <span className="flex items-center gap-1">
-                  <ArrowUp size={11} className="text-fg-faint" />
-                  {formatTokenCount(displayInput)}
-                </span>
-                <span className="flex items-center gap-1">
-                  <ArrowDown size={11} className="text-fg-faint" />
-                  {formatTokenCount(displayOutput)}
-                </span>
-              </span>
-              <div className="w-px h-3.5 bg-edge flex-shrink-0" />
-              <span ref={costPulseRef} className="tabular-nums" data-testid="aggregate-cost" title={`${PERIOD_LABELS[selectedPeriod]} API cost`}>
-                {formatCost(displayCost)}
-              </span>
-            </>
-          )}
-          {(hasUsage || !isLive) && <div className="w-px h-3.5 bg-edge flex-shrink-0" />}
-          <div className="relative">
-            <button
-              ref={periodTriggerRef}
-              type="button"
-              onClick={() => setPeriodPopoverOpen(!periodPopoverOpen)}
-              className="flex items-center gap-1 bg-transparent border border-edge rounded px-1.5 py-0.5 text-xs text-fg-muted cursor-pointer hover:border-edge-input focus:outline-none focus:border-accent transition-colors"
-              data-testid="usage-period-select"
-              title="Usage stats time range"
-            >
-              {PERIOD_LABELS[selectedPeriod]}
-              <ChevronDown size={10} className="text-fg-faint" />
-            </button>
-            <OverlayPopover
-              open={periodPopoverOpen}
-              popoverRef={periodPopoverRef}
-              style={periodPopoverStyle}
-              className="absolute z-50 bg-surface-raised border border-edge rounded-lg shadow-xl py-1 min-w-[120px]"
-            >
-                {PERIOD_OPTIONS.map(({ value, label }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => handlePeriodSelect(value)}
-                    className="w-full px-3 py-1.5 text-xs text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center justify-between gap-3"
-                  >
-                    {label}
-                    {value === selectedPeriod && <Check size={12} className="text-accent flex-shrink-0" />}
-                  </button>
-                ))}
-              </OverlayPopover>
-          </div>
         </div>
       )}
 

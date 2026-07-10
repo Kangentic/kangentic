@@ -89,7 +89,9 @@ export function runProjectMigrations(db: Database.Database): void {
       lines_added INTEGER NOT NULL DEFAULT 0,
       lines_removed INTEGER NOT NULL DEFAULT 0,
       files_changed INTEGER NOT NULL DEFAULT 0,
-      compaction_count INTEGER NOT NULL DEFAULT 0
+      compaction_count INTEGER NOT NULL DEFAULT 0,
+      agent TEXT,
+      effort TEXT
     );
   `);
 
@@ -853,9 +855,49 @@ export function runProjectMigrations(db: Database.Database): void {
   // Import dedup scans promoted board tasks by external origin (mirrors idx_backlog_external).
   db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_external ON tasks(external_source, external_id)');
 
-  // usage_history query indices (StatusBar period bucketing uses session_started_at).
+  // usage_history query indices (usage-dashboard period bucketing uses session_started_at).
   db.exec('CREATE INDEX IF NOT EXISTS idx_usage_history_session_started_at ON usage_history(session_started_at)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_usage_history_recorded_at ON usage_history(recorded_at)');
+
+  // Migration: add 'agent' column so the usage dashboard can break usage down
+  // by agent (Claude vs Codex vs ...). Stamped at capture time from the
+  // session manager's recorded agent name (generic - no agent-name branching);
+  // best-effort backfill resolves surviving session -> task rows (the agent
+  // name lives on the task). Rows whose session/task was deleted stay NULL and
+  // render as "(unknown)".
+  const hasUsageHistoryAgent = (db.pragma('table_info(usage_history)') as Array<{ name: string }>)
+    .some((col) => col.name === 'agent');
+  if (!hasUsageHistoryAgent) {
+    db.exec('ALTER TABLE usage_history ADD COLUMN agent TEXT');
+    db.exec(`
+      UPDATE usage_history SET agent = (
+        SELECT t.agent
+          FROM sessions s
+          JOIN tasks t ON t.id = s.task_id
+         WHERE s.id = usage_history.session_record_id
+      )
+      WHERE agent IS NULL
+    `);
+  }
+
+  // Migration: add 'effort' column so the usage dashboard can break usage down
+  // by reasoning effort. Stamped at capture time from the session record's
+  // applied_effort (the last spawn/resume/live-switch value - the same ground
+  // truth the injection delta uses); best-effort backfill from surviving
+  // session rows. NULL means agent default (no flag), rendered "(default)".
+  const hasUsageHistoryEffort = (db.pragma('table_info(usage_history)') as Array<{ name: string }>)
+    .some((col) => col.name === 'effort');
+  if (!hasUsageHistoryEffort) {
+    db.exec('ALTER TABLE usage_history ADD COLUMN effort TEXT');
+    db.exec(`
+      UPDATE usage_history SET effort = (
+        SELECT s.applied_effort
+          FROM sessions s
+         WHERE s.id = usage_history.session_record_id
+      )
+      WHERE effort IS NULL
+    `);
+  }
 
   // One-shot backfill: populate the history from existing sessions so that
   // installs upgrading to this version do not see "All Time" reset to zero.
@@ -863,12 +905,14 @@ export function runProjectMigrations(db: Database.Database): void {
   const historyRowCount = (db.prepare('SELECT COUNT(*) AS c FROM usage_history').get() as { c: number }).c;
   if (historyRowCount === 0) {
     const sourceRows = db.prepare(`
-      SELECT id, started_at, suspended_at, exited_at, session_type,
-             total_cost_usd, total_input_tokens, total_output_tokens,
-             total_duration_ms, tool_call_count, model_id, model_display_name,
-             lines_added, lines_removed, files_changed
-      FROM sessions
-      WHERE total_cost_usd IS NOT NULL
+      SELECT s.id, s.started_at, s.suspended_at, s.exited_at, s.session_type,
+             s.total_cost_usd, s.total_input_tokens, s.total_output_tokens,
+             s.total_duration_ms, s.tool_call_count, s.model_id, s.model_display_name,
+             s.lines_added, s.lines_removed, s.files_changed,
+             t.agent AS agent, s.applied_effort AS effort
+      FROM sessions s
+      LEFT JOIN tasks t ON t.id = s.task_id
+      WHERE s.total_cost_usd IS NOT NULL
     `).all() as Array<{
       id: string;
       started_at: string;
@@ -885,6 +929,8 @@ export function runProjectMigrations(db: Database.Database): void {
       lines_added: number | null;
       lines_removed: number | null;
       files_changed: number | null;
+      agent: string | null;
+      effort: string | null;
     }>;
     if (sourceRows.length > 0) {
       const insertBackfill = db.prepare(`
@@ -892,8 +938,8 @@ export function runProjectMigrations(db: Database.Database): void {
           (id, session_record_id, recorded_at, session_started_at, session_type,
            total_cost_usd, total_input_tokens, total_output_tokens,
            total_duration_ms, tool_call_count, model_id, model_display_name,
-           lines_added, lines_removed, files_changed)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           lines_added, lines_removed, files_changed, agent, effort)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const transaction = db.transaction(() => {
         for (const row of sourceRows) {
@@ -913,6 +959,8 @@ export function runProjectMigrations(db: Database.Database): void {
             row.lines_added ?? 0,
             row.lines_removed ?? 0,
             row.files_changed ?? 0,
+            row.agent,
+            row.effort,
           );
         }
       });

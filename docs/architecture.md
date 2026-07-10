@@ -58,6 +58,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `dev:seedGitChanges` | invoke | Seed a realistic all-scopes / all-statuses git changeset (committed, staged, working) into each ephemeral preview repo (active task worktrees plus the project) so the Changes tab has content to exercise; silently skips any path outside the preview-projects root. Returns `DevSeedGitChangesResult` |
 | `dev:seedEmbeddingBacklog` | invoke | Seed synthetic pending chunks (`embedded_model = NULL`) into the current project's conversation-memory index via the real chunk-write path, then flag the project dirty (TestHarness "Seed Embedding Backlog" button) - a fast path to a realistic embedding backlog for exercising the central embedding engine's drain loop without needing that many real agent turns. Returns `DevSeedEmbeddingBacklogResult` |
 | `dev:seedLargeConversation` | invoke | Seed a throwaway task backed by a synthetic multi-thousand-turn Claude JSONL transcript (TestHarness "Seed Large Conversation" button; appends more turns on re-click) and open it in the Conversation viewer, for exercising the viewer's virtualization, in-viewer search, and open-at-position behavior against a realistic long transcript. Returns `DevSeedLargeConversationResult` |
+| `dev:seedUsageData` | invoke | Seed days of realistic synthetic usage (sessions across several agents/models plus per-turn time series) into every registered project's usage ledgers via the real capture repositories, at descending volume per project (TestHarness "Seed Usage Data" button; appends another batch on re-click), so the usage dashboard has rich charts in a preview. Returns `DevSeedUsageDataResult` |
 
 ### Project Groups (6 channels)
 | Channel | Pattern | Purpose |
@@ -173,7 +174,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `transition:set` | invoke | Set action chain for lane A→B |
 | `transition:getFor` | invoke | Get transitions for lane pair (exact match, then wildcard) |
 
-### Sessions (36 channels)
+### Sessions (35 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -211,7 +212,11 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `session:spawnTransient` | invoke | Spawn ephemeral command terminal session (no task, no DB) |
 | `session:killTransient` | invoke | Kill a transient session and clean up session directory |
 | `session:injectSettings` | invoke | Inject a model/effort change into a live transient session's PTY via slash commands. Session-keyed (no task row, no DB persistence); backs the command-terminal context bar picker. |
-| `session:getPeriodStats` | invoke | Fetch aggregated usage stats (tokens, cost) for a given time period. Sources from the append-only `usage_history` table so totals survive task deletion, bulk-archive, and revert-to-backlog. |
+
+### Usage Stats (1 channel)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `usage:getDashboardStats` | invoke | Composite usage-statistics payload for the dashboard (KPIs, bucketed token/cost time series, by-model / by-agent breakdowns), for one project or rolled up across every registered project, over the Live/Today/Week/Month/All Time ranges. Sources from the append-only `usage_history` + `conversation_turn_usage` ledgers so totals survive task deletion, bulk-archive, and revert-to-backlog. Read-only; the explicit scope argument carries the project id. |
 
 ### Config (9 channels)
 | Channel | Pattern | Purpose |
@@ -433,7 +438,7 @@ Created on project open. Stored in the global config directory (not inside the p
 - **backlog_attachments** -- File attachments for backlog tasks, mirroring `task_attachments`. Copied to `task_attachments` on promote.
 - **session_transcripts** -- ANSI-stripped PTY output per session. Written by `TranscriptWriter` with 30s debounced flush. Used for cross-agent handoff context. No FK; cascade via DELETE trigger on sessions.
 - **handoffs** -- Cross-agent handoff records. Tracks from/to agents and sessions, stores serialized `ContextPacket` (transcript excluded). FK on task_id with CASCADE delete.
-- **usage_history** -- Append-only ledger of finalized session usage (cost, tokens, duration, tool count, git stats, model). No FK to `tasks` or `sessions`, so rows survive task deletion, bulk-archive cleanup, and revert-to-backlog. Backs the StatusBar period selector (Live/Today/Week/Month/All Time) via `session:getPeriodStats`. Written by `captureSessionMetrics` (UPSERT on `session_record_id`) and `captureGitStats` (mirror of git-diff stats).
+- **usage_history** -- Append-only ledger of finalized session usage (cost, tokens, duration, tool count, git stats, model, agent). No FK to `tasks` or `sessions`, so rows survive task deletion, bulk-archive cleanup, and revert-to-backlog. Backs the usage dashboard's period totals, cost-per-day series, and by-model / by-agent breakdowns (Live/Today/Week/Month/All Time) via `usage:getDashboardStats` and the `kangentic_get_usage_stats` MCP tool. Written by `captureSessionMetrics` (UPSERT on `session_record_id`) and `captureGitStats` (mirror of git-diff stats).
 
 Repositories follow a simple pattern -- one class per table, all queries are synchronous (better-sqlite3). Transactions used for position shifts (task move, swimlane reorder).
 

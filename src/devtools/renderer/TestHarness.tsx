@@ -15,12 +15,13 @@
  * future harness affordances slot in below.
  */
 
-import { useState } from 'react';
-import { Plus, FolderPlus, FileDiff, Database, MessagesSquare } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Plus, FolderPlus, FileDiff, Database, MessagesSquare, ChartColumn, GripVertical } from 'lucide-react';
 import { useBoardStore } from '../../renderer/stores/board-store';
 import { useProjectStore } from '../../renderer/stores/project-store';
 import { useToastStore } from '../../renderer/stores/toast-store';
 import { useSessionStore } from '../../renderer/stores/session-store';
+import { useUsageDashboardStore } from '../../renderer/stores/usage-dashboard-store';
 
 /** Default seed count for "Seed Embedding Backlog": large enough to force
  *  hundreds of real drain-loop round-robin iterations against the live embed
@@ -33,6 +34,14 @@ const EMBEDDING_BACKLOG_SEED_COUNT = 3000;
  *  stress the Conversation viewer's virtualization/scrolling/search on a
  *  huge file, without hanging the UI for many seconds on a single click. */
 const LARGE_CONVERSATION_SEED_TURNS = 3000;
+
+/** Days of history written per click of "Seed Usage Data": enough that every
+ *  range has a production-like shape - Month is full, and All Time exercises
+ *  the adaptive daily granularity (spans <= ~90 days render per-day) with
+ *  weekend dips, idle days, spike days, and a multi-agent mix - while keeping
+ *  a click near-instant. Re-clicks append another batch, so the open
+ *  dashboard visibly animates to the new totals. */
+const USAGE_DATA_SEED_DAYS = 60;
 
 // Lorem source. Titles/descriptions are deliberately meaningless so that
 // dragging a seeded task to an executing column gives the agent nothing real to
@@ -133,6 +142,42 @@ export function TestHarness() {
   const [seeding, setSeeding] = useState(false);
   const [seedingBacklog, setSeedingBacklog] = useState(false);
   const [seedingConversation, setSeedingConversation] = useState(false);
+  const [seedingUsage, setSeedingUsage] = useState(false);
+
+  // Draggable so the panel can be moved off whatever it is covering. Position
+  // is session-only BY DESIGN (never persisted): every launch starts at the
+  // same fixed spot on the left edge. Dragging is header-handle-only so the
+  // buttons stay plainly clickable; pointer capture keeps the drag alive when
+  // the cursor outruns the handle, and the position clamps to the viewport so
+  // the panel cannot be lost offscreen.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const dragOffsetRef = useRef<{ dx: number; dy: number } | null>(null);
+  const [draggedPosition, setDraggedPosition] = useState<{ x: number; y: number } | null>(null);
+
+  const handleDragPointerDown = (event: React.PointerEvent<HTMLElement>) => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    dragOffsetRef.current = { dx: event.clientX - rect.left, dy: event.clientY - rect.top };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+
+  const handleDragPointerMove = (event: React.PointerEvent<HTMLElement>) => {
+    const dragOffset = dragOffsetRef.current;
+    const panel = panelRef.current;
+    if (!dragOffset || !panel) return;
+    const x = Math.min(Math.max(event.clientX - dragOffset.dx, 0), Math.max(window.innerWidth - panel.offsetWidth, 0));
+    const y = Math.min(Math.max(event.clientY - dragOffset.dy, 0), Math.max(window.innerHeight - panel.offsetHeight, 0));
+    setDraggedPosition({ x, y });
+  };
+
+  const handleDragPointerEnd = (event: React.PointerEvent<HTMLElement>) => {
+    dragOffsetRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
 
   const handleCreateTask = async () => {
     const todoSwimlane = useBoardStore.getState().swimlanes.find((lane) => lane.role === 'todo');
@@ -290,12 +335,56 @@ export function TestHarness() {
     }
   };
 
+  // Dev-only: seed days of realistic multi-agent usage into EVERY registered
+  // project's usage ledgers (via the real capture repositories, main-side) at
+  // descending volume per project, so This Project vs All Projects differ and
+  // the per-project table reconciles. Force-refreshes the dashboard
+  // afterwards: with it open, a click visibly animates the charts to the new
+  // totals - a live demo of the streaming-update path.
+  const handleSeedUsageData = async () => {
+    setSeedingUsage(true);
+    try {
+      const result = await window.electronAPI.dev?.seedUsageData(USAGE_DATA_SEED_DAYS);
+      if (!result) {
+        useToastStore.getState().addToast({ message: 'Seeding usage data is dev-preview only', variant: 'warning' });
+        return;
+      }
+      void useUsageDashboardStore.getState().loadDashboardStats({ force: true });
+      useToastStore.getState().addToast({
+        message: `Seeded ${result.sessions} sessions / ${result.turns} turns over ${result.days} days across ${result.projects} project${result.projects === 1 ? '' : 's'}`,
+        variant: 'success',
+      });
+    } catch (error) {
+      useToastStore.getState().addToast({
+        message: `Failed to seed usage data: ${error instanceof Error ? error.message : 'unknown error'}`,
+        variant: 'error',
+      });
+    } finally {
+      setSeedingUsage(false);
+    }
+  };
+
   return (
     <div
-      className="fixed left-6 top-1/2 -translate-y-1/2 z-[2147483600] flex flex-col gap-1.5 rounded-lg border border-edge bg-surface-raised/95 p-1.5 shadow-2xl backdrop-blur"
+      ref={panelRef}
+      className={`fixed z-[2147483600] flex flex-col gap-1.5 rounded-lg border border-edge bg-surface-raised/95 p-1.5 shadow-2xl backdrop-blur ${
+        draggedPosition ? '' : 'left-6 top-1/2 -translate-y-1/2'
+      }`}
+      style={draggedPosition ? { left: draggedPosition.x, top: draggedPosition.y } : undefined}
       data-testid="dev-test-harness"
     >
-      <span className="px-1 text-[11px] font-semibold uppercase tracking-wider text-fg-faint select-none">Test Harness</span>
+      <span
+        onPointerDown={handleDragPointerDown}
+        onPointerMove={handleDragPointerMove}
+        onPointerUp={handleDragPointerEnd}
+        onPointerCancel={handleDragPointerEnd}
+        className="flex items-center gap-1 px-1 text-[11px] font-semibold uppercase tracking-wider text-fg-faint select-none cursor-grab active:cursor-grabbing touch-none"
+        title="Drag to move (position resets on relaunch)"
+        data-testid="dev-test-harness-drag-handle"
+      >
+        <GripVertical size={12} aria-hidden />
+        Test Harness
+      </span>
       <button
         type="button"
         onClick={handleCreateTask}
@@ -348,6 +437,17 @@ export function TestHarness() {
       >
         <MessagesSquare size={16} />
         {seedingConversation ? 'Seeding...' : 'Seed Large Conversation'}
+      </button>
+      <button
+        type="button"
+        onClick={handleSeedUsageData}
+        disabled={seedingUsage}
+        className="flex items-center gap-1.5 rounded-md border border-edge bg-surface-raised px-3.5 py-2 text-[13px] font-medium text-fg hover:bg-surface disabled:opacity-50 transition-colors"
+        data-testid="dev-seed-usage-data"
+        title={`Seed ${USAGE_DATA_SEED_DAYS} days of realistic multi-agent usage into the usage dashboard's ledgers (re-click appends another batch and the open dashboard animates to it)`}
+      >
+        <ChartColumn size={16} />
+        {seedingUsage ? 'Seeding...' : 'Seed Usage Data'}
       </button>
     </div>
   );

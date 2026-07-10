@@ -12,6 +12,9 @@ export interface DataTableColumn<TRow, TKey extends string = string> {
   sortValue?: (row: TRow) => number | string;
   render: (row: TRow) => React.ReactNode;
   headerRender?: (data: TRow[]) => React.ReactNode;
+  /** Hover explanation for the column header (what the stat means). Sortable
+   *  columns get the sort hint appended automatically. */
+  headerTitle?: string;
 }
 
 interface DataTableProps<TRow, TKey extends string = string> {
@@ -118,52 +121,66 @@ export function DataTable<TRow, TKey extends string = string>({
   sortableEnabled = false,
   onSortChange,
 }: DataTableProps<TRow, TKey>) {
-  const [sortKey, setSortKey] = useState<TKey | undefined>(defaultSortKey);
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(defaultSortDirection);
+  // Ordered sort levels: index 0 is the primary sort, later entries break
+  // ties (added via Shift+Click).
+  const [sorts, setSorts] = useState<Array<{ key: TKey; direction: 'asc' | 'desc' }>>(
+    defaultSortKey ? [{ key: defaultSortKey, direction: defaultSortDirection }] : [],
+  );
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  const handleHeaderClick = (column: DataTableColumn<TRow, TKey>) => {
+  const handleHeaderClick = (column: DataTableColumn<TRow, TKey>, shiftKey: boolean) => {
     if (!column.sortValue) return;
-    let newKey: TKey | undefined;
-    let newDirection = sortDirection;
-    if (sortKey === column.key) {
-      // Clicking the same column cycles: asc -> desc -> clear
-      if (sortDirection === 'asc') {
-        newDirection = 'desc';
-        newKey = column.key;
-      } else {
-        // Clear sort (return to manual/position order)
-        newKey = undefined;
-      }
+    // Numeric (right-aligned) columns start descending (biggest first), text
+    // columns ascending; a repeat click flips, a third clears. The cycle is
+    // anchored to the column's OWN initial direction - the old asc-anchored
+    // cycle made ascending unreachable on numeric columns (desc -> clear).
+    const initialDirection: 'asc' | 'desc' = column.align === 'right' ? 'desc' : 'asc';
+    const existingIndex = sorts.findIndex((level) => level.key === column.key);
+    let newSorts: Array<{ key: TKey; direction: 'asc' | 'desc' }>;
+
+    if (shiftKey && sorts.length > 0) {
+      // Shift+Click: add this column as an extra tie-break level, or flip its
+      // direction if it is already a level. Never clears.
+      newSorts = existingIndex >= 0
+        ? sorts.map((level, index) => (index === existingIndex
+            ? { ...level, direction: level.direction === 'asc' ? 'desc' : 'asc' }
+            : level))
+        : [...sorts, { key: column.key, direction: initialDirection }];
+    } else if (existingIndex === 0 && sorts.length === 1) {
+      // Plain click on the sole sorted column: initial -> flipped -> clear
+      // (clear returns to manual/position order).
+      newSorts = sorts[0].direction === initialDirection
+        ? [{ key: column.key, direction: initialDirection === 'asc' ? 'desc' : 'asc' }]
+        : [];
     } else {
-      newKey = column.key;
-      newDirection = column.align === 'left' || !column.align ? 'asc' : 'desc';
+      // Plain click elsewhere (or with multi-sort active): collapse to a
+      // single sort on the clicked column.
+      newSorts = [{ key: column.key, direction: initialDirection }];
     }
-    setSortKey(newKey);
-    setSortDirection(newDirection);
-    onSortChange?.(newKey);
+
+    setSorts(newSorts);
+    onSortChange?.(newSorts[0]?.key);
   };
 
   const sortedData = useMemo(() => {
-    if (!sortKey) return data;
-    const activeColumn = columns.find((column) => column.key === sortKey);
-    if (!activeColumn?.sortValue) return data;
-    const extractValue = activeColumn.sortValue;
+    if (sorts.length === 0) return data;
+    const levels = sorts
+      .map((level) => ({ direction: level.direction, extractValue: columns.find((column) => column.key === level.key)?.sortValue }))
+      .filter((level): level is { direction: 'asc' | 'desc'; extractValue: (row: TRow) => number | string } => !!level.extractValue);
+    if (levels.length === 0) return data;
 
     return [...data].sort((rowA, rowB) => {
-      const valueA = extractValue(rowA);
-      const valueB = extractValue(rowB);
-
-      let comparison: number;
-      if (typeof valueA === 'string' && typeof valueB === 'string') {
-        comparison = valueA.localeCompare(valueB);
-      } else {
-        comparison = (valueA as number) - (valueB as number);
+      for (const level of levels) {
+        const valueA = level.extractValue(rowA);
+        const valueB = level.extractValue(rowB);
+        const comparison = typeof valueA === 'string' && typeof valueB === 'string'
+          ? valueA.localeCompare(valueB)
+          : (valueA as number) - (valueB as number);
+        if (comparison !== 0) return level.direction === 'asc' ? comparison : -comparison;
       }
-
-      return sortDirection === 'asc' ? comparison : -comparison;
+      return 0;
     });
-  }, [data, sortKey, sortDirection, columns]);
+  }, [data, sorts, columns]);
 
   const virtualizer = useVirtualizer({
     count: sortedData.length,
@@ -179,12 +196,18 @@ export function DataTable<TRow, TKey extends string = string>({
       {sortableEnabled && <th className="w-[32px]" />}
       {columns.map((column, columnIndex) => {
         const isSortable = !!column.sortValue;
-        const isActive = sortKey === column.key;
+        const sortIndex = sorts.findIndex((level) => level.key === column.key);
+        const isActive = sortIndex >= 0;
+        const headerTitle = [
+          column.headerTitle,
+          isSortable ? 'Click to sort - Shift+Click adds a secondary sort' : undefined,
+        ].filter(Boolean).join('\n');
         return (
           <th
             key={`${column.key}-${columnIndex}`}
             className={`px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-fg-faint select-none transition-colors ${column.width || ''} ${column.align === 'right' ? 'text-right' : 'text-left'} ${isSortable ? 'cursor-pointer hover:text-fg-muted' : ''}`}
-            onClick={isSortable ? () => handleHeaderClick(column) : undefined}
+            onClick={isSortable ? (event) => handleHeaderClick(column, event.shiftKey) : undefined}
+            title={headerTitle || undefined}
           >
             {column.headerRender ? (
               column.headerRender(sortedData)
@@ -198,11 +221,15 @@ export function DataTable<TRow, TKey extends string = string>({
                 {isSortable && (
                   <span className="w-3 h-3 flex items-center justify-center">
                     {isActive && (
-                      sortDirection === 'asc'
+                      sorts[sortIndex].direction === 'asc'
                         ? <ArrowUp size={12} className="text-accent-fg" />
                         : <ArrowDown size={12} className="text-accent-fg" />
                     )}
                   </span>
+                )}
+                {/* Tie-break priority, shown only when multiple levels are active. */}
+                {isActive && sorts.length > 1 && (
+                  <span className="text-[11px] text-accent-fg tabular-nums" data-testid="sort-priority">{sortIndex + 1}</span>
                 )}
               </span>
             )}

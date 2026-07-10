@@ -1535,9 +1535,6 @@
         var index = sessions.findIndex(function (s) { return s.id === sessionId; });
         if (index !== -1) sessions.splice(index, 1);
       },
-      getPeriodStats: async function () {
-        return { totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0 };
-      },
       // Call log for test assertions. Each entry is the string[] of session IDs
       // passed to setFocused. Reset between tests via:
       //   window.electronAPI.sessions.__setFocusedCalls.length = 0;
@@ -1553,6 +1550,130 @@
       injectSettings: async function (input) {
         window.electronAPI.sessions.__injectSettingsCalls.push(input);
         return { ok: true, injected: true };
+      },
+    },
+
+    usage: {
+      // Call log for test assertions. Each entry is
+      // { scope, period, drill, customWindow }. Reset between tests via:
+      //   window.electronAPI.usage.__getDashboardStatsCalls.length = 0;
+      __getDashboardStatsCalls: [],
+      // Override the returned payload for a test: set to a function
+      //   (scope, period, drill, customWindow) => UsageDashboardStats
+      // or null to use the default fixture below.
+      __dashboardStatsFixture: null,
+      getDashboardStats: async function (scope, period, drill, customWindow) {
+        window.electronAPI.usage.__getDashboardStatsCalls.push({ scope: scope, period: period, drill: drill || null, customWindow: customWindow || null });
+        if (window.electronAPI.usage.__dashboardStatsFixture) {
+          return window.electronAPI.usage.__dashboardStatsFixture(scope, period, drill || null, customWindow || null);
+        }
+        // Default fixture: a small dense payload so the dashboard renders
+        // tiles, charts, and breakdowns without per-test setup.
+        var hourMs = 60 * 60 * 1000;
+        var dayMs = 24 * hourMs;
+        var nowMs = Date.now();
+        var bucketSizeMs = hourMs;
+        var bucketCount = 6;
+        var rangeStartMs = Math.floor(nowMs / bucketSizeMs) * bucketSizeMs - (bucketCount - 1) * bucketSizeMs;
+        var tokenSeries = [];
+        for (var i = 0; i < bucketCount; i++) {
+          tokenSeries.push({
+            bucketStartMs: rangeStartMs + i * bucketSizeMs,
+            inputTokens: 1000 + i * 250,
+            outputTokens: 400 + i * 100,
+            cacheCreationTokens: 200,
+            cacheReadTokens: 5000,
+            allocatedCostUsd: 0.05 * (i + 1),
+            turnCount: 3 + i,
+          });
+        }
+        var costSeries = [];
+        for (var d = 0; d < 3; d++) {
+          var dayCost = 1.25 + d;
+          var dayInput = 20000 + d * 5000;
+          var dayOutput = 8000 + d * 2000;
+          costSeries.push({
+            bucketStartMs: rangeStartMs - (2 - d) * dayMs,
+            costUsd: dayCost,
+            inputTokens: dayInput,
+            outputTokens: dayOutput,
+            sessionCount: 2 + d,
+            byModel: [
+              { modelId: 'mock-model-large', costUsd: dayCost * 0.75, inputTokens: Math.floor(dayInput * 0.75), outputTokens: Math.floor(dayOutput * 0.75) },
+              { modelId: 'mock-model-small', costUsd: dayCost * 0.25, inputTokens: Math.ceil(dayInput * 0.25), outputTokens: Math.ceil(dayOutput * 0.25) },
+            ],
+          });
+        }
+        return {
+          scope: scope,
+          period: period,
+          rangeStartMs: rangeStartMs,
+          rangeEndMs: nowMs,
+          bucketSizeMs: bucketSizeMs,
+          costBucketSizeMs: dayMs,
+          generatedAtMs: nowMs,
+          kpis: {
+            totalCostUsd: 12.34,
+            costKnown: true,
+            totalInputTokens: 150000,
+            totalOutputTokens: 42000,
+            totalTokens: 192000,
+            sessionCount: 7,
+            toolCallCount: 315,
+            linesAdded: 1200,
+            linesRemoved: 340,
+            filesChanged: 58,
+            compactionCount: 2,
+            totalDurationMs: 4 * hourMs,
+            turnInputTokens: 60000,
+            turnOutputTokens: 20000,
+            cacheCreationTokens: 30000,
+            cacheReadTokens: 900000,
+            burnRateTokensPerHour: 24000,
+            burnRateUsdPerHour: 1.54,
+          },
+          previousKpis: period === 'all' ? null : {
+            totalCostUsd: 10.0,
+            costKnown: true,
+            totalInputTokens: 120000,
+            totalOutputTokens: 36000,
+            totalTokens: 156000,
+            sessionCount: 6,
+            toolCallCount: 280,
+            linesAdded: 1000,
+            linesRemoved: 300,
+            filesChanged: 50,
+            compactionCount: 1,
+            totalDurationMs: 3 * hourMs,
+            turnInputTokens: 50000,
+            turnOutputTokens: 16000,
+            cacheCreationTokens: 24000,
+            cacheReadTokens: 700000,
+            burnRateTokensPerHour: 20000,
+            burnRateUsdPerHour: 1.3,
+          },
+          tokenSeries: tokenSeries,
+          costSeries: costSeries,
+          byModel: [
+            { modelId: 'mock-model-large', modelDisplayName: 'Mock Large', inputTokens: 120000, outputTokens: 30000, costUsd: 10.0, sessionCount: 5 },
+            { modelId: 'mock-model-small', modelDisplayName: 'Mock Small', inputTokens: 30000, outputTokens: 12000, costUsd: 2.34, sessionCount: 2 },
+          ],
+          byAgent: [
+            { agent: 'claude', inputTokens: 130000, outputTokens: 36000, costUsd: 11.0, sessionCount: 6 },
+            { agent: 'codex', inputTokens: 20000, outputTokens: 6000, costUsd: 1.34, sessionCount: 1 },
+          ],
+          byEffort: [
+            { effort: 'high', inputTokens: 90000, outputTokens: 26000, costUsd: 8.0, sessionCount: 3 },
+            { effort: null, inputTokens: 40000, outputTokens: 10000, costUsd: 3.0, sessionCount: 3 },
+            { effort: 'low', inputTokens: 20000, outputTokens: 6000, costUsd: 1.34, sessionCount: 1 },
+          ],
+          perProject: scope.kind === 'all'
+            ? [
+                { projectId: 'mock-project-1', projectName: 'Mock Project', inputTokens: 100000, outputTokens: 30000, costUsd: 9.0, sessionCount: 5, toolCallCount: 220, linesAdded: 900, linesRemoved: 250, totalDurationMs: 3 * hourMs, lastActiveMs: nowMs - hourMs, topAgent: 'claude' },
+                { projectId: 'mock-project-2', projectName: 'Other Project', inputTokens: 50000, outputTokens: 12000, costUsd: 3.34, sessionCount: 2, toolCallCount: 95, linesAdded: 300, linesRemoved: 90, totalDurationMs: hourMs, lastActiveMs: nowMs - 26 * hourMs, topAgent: 'codex' },
+              ]
+            : undefined,
+        };
       },
     },
 

@@ -80,6 +80,14 @@ export function captureSessionMetrics(
         modelId: usage.model.id ?? null,
         modelDisplayName: usage.model.displayName ?? null,
         compactionCount,
+        // Generic manager-recorded agent name (agent-adapters-boundary rule:
+        // no per-agent branching; null when the manager no longer knows it,
+        // COALESCE in the upsert keeps a previously-stamped value).
+        agent: sessionManager.getSessionAgentName(sessionId) ?? null,
+        // Last-applied effort from the session record (spawn/resume/live-switch
+        // ground truth; null = agent default). Attributes the whole session to
+        // its final effort - same snapshot semantics as model_id above.
+        effort: sessionRepo.findByAnyId(recordId)?.applied_effort ?? null,
       });
     }
   } catch {

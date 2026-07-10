@@ -25,6 +25,7 @@ import { useBoardStore } from '../stores/board-store';
 import { useBacklogStore } from '../stores/backlog-store';
 import { useConfigStore } from '../stores/config-store';
 import { useSessionStore, cancelSync } from '../stores/session-store';
+import { useUsageDashboardStore } from '../stores/usage-dashboard-store';
 import {
   isWarmProject,
   markProjectSeen,
@@ -360,12 +361,14 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
         });
       }
 
-      // Restore persisted usage period regardless of cache path. Cheap
-      // setState if the value already matches.
-      const savedPeriod = useConfigStore.getState().config.statusBarPeriod;
-      if (savedPeriod && savedPeriod !== useSessionStore.getState().selectedPeriod) {
-        useSessionStore.getState().setSelectedPeriod(savedPeriod);
-      }
+      // Usage dashboard (#316 fix): a project switch re-points the 'project'
+      // scope at a different DB, so reset transient view state (drill,
+      // explicitly-viewed project) and refetch UNCONDITIONALLY while the page
+      // is open - the selected range persists (it is a global preference),
+      // only the data refreshes. The old status-bar restore gated on
+      // "saved !== selected" and skipped the refetch on same-period switches,
+      // leaving the previous project's totals on screen. No-ops when closed.
+      useUsageDashboardStore.getState().onProjectSwitched();
     } else {
       useBoardStore.setState({ tasks: [], swimlanes: [], archivedTasks: [], archivedTotalCount: 0, archivedFullyLoaded: false });
       useSessionStore.setState({

@@ -101,6 +101,15 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     rebindable: true,
   },
   {
+    id: 'stats.toggle',
+    label: 'Toggle Usage Stats',
+    description: 'Open or close the usage statistics dashboard.',
+    group: 'General',
+    scope: 'global',
+    defaultCombo: 'Mod+Shift+U',
+    rebindable: true,
+  },
+  {
     id: 'view.toggleBoardBacklog',
     label: 'Switch Board / Backlog',
     description: 'Toggle between the board and the backlog view.',

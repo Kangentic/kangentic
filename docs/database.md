@@ -229,16 +229,22 @@ Indexes: `idx_sessions_task_started` on (task_id, started_at DESC), `idx_session
 | lines_removed | INTEGER | NOT NULL | 0 |
 | files_changed | INTEGER | NOT NULL | 0 |
 | compaction_count | INTEGER | NOT NULL | 0 |
+| agent | TEXT | | NULL |
+| effort | TEXT | | NULL |
 
 Indexes: `idx_usage_history_session_started_at` on (session_started_at), `idx_usage_history_recorded_at` on (recorded_at).
 
-Append-only ledger of finalized session usage. Decoupled from `sessions` and `tasks`: rows have no foreign keys, so they survive task deletion, bulk-archive cleanup, and revert-to-backlog. The StatusBar period selector (Live/Today/Week/Month/All Time) reads from this table via `SESSION_GET_PERIOD_STATS` so cost and token totals reflect every session ever finalized on the project, not just the ones whose source task still exists.
+Append-only ledger of finalized session usage. Decoupled from `sessions` and `tasks`: rows have no foreign keys, so they survive task deletion, bulk-archive cleanup, and revert-to-backlog. The usage dashboard's period totals (Live/Today/Week/Month/All Time), cost-per-day series, and by-model / by-agent / by-effort breakdowns read from this table via `USAGE_GET_DASHBOARD_STATS` (and the `kangentic_get_usage_stats` MCP tool) so cost and token totals reflect every session ever finalized on the project, not just the ones whose source task still exists.
+
+`agent` records which agent (claude, codex, gemini, ...) ran the session, stamped generically from the session manager's recorded agent name at capture time; a one-shot migration backfills it from surviving `sessions` -> `tasks.agent` joins, and rows whose task was already deleted stay NULL (rendered as "(unknown)").
+
+`effort` records the session's last-applied `--effort` value, stamped at capture time from `sessions.applied_effort` (the spawn/resume/live-switch ground truth); a one-shot migration backfills it from surviving session rows. NULL means agent default (no flag) - a real bucket rendered as "(default)", not missing data. A session that switches effort mid-run attributes all of its usage to the final value (the same snapshot semantics as `model_id`).
 
 `session_record_id` is the `sessions.id` of the row this entry mirrors. The UNIQUE constraint plus an `ON CONFLICT(session_record_id) DO UPDATE` clause in `recordSessionUsage` makes capture idempotent: re-capturing the same record at suspend AND again at app shutdown updates the existing row instead of producing duplicates. Git stat columns (`lines_added`, `lines_removed`, `files_changed`) are intentionally excluded from the UPSERT's `DO UPDATE SET` clause because they are owned by `updateGitStats`, which runs separately after `captureGitStats` finishes its `git diff` against the base branch.
 
 `session_started_at` is used for period bucketing (`WHERE session_started_at >= ?`) so "Today" means "session started today", not "metrics flushed today" - the difference matters for sessions that finalize across midnight. Written by `captureSessionMetrics` whenever `usage` is defined (i.e. metrics were actually captured). Cost = 0 with non-zero tokens is the Claude subscription-user case (Plus/Max) and IS recorded; the gate is `if (usage)`, not `cost > 0`. The migration backfills existing `sessions` rows with `total_cost_usd IS NOT NULL` so installs upgrading to this version do not lose their lifetime totals.
 
-TypeScript type: `PeriodUsageStats` (return type) in `src/shared/types.ts`. Repository: `UsageHistoryRepository` in `src/main/db/repositories/usage-history-repository.ts`.
+TypeScript types: `UsageDashboardStats` / `UsageKpis` (the composite read shape) in `src/shared/types.ts`. Repository: `UsageHistoryRepository` in `src/main/db/repositories/usage-history-repository.ts`; the aggregation itself lives in `src/main/usage-stats/` (`usageStatsService` + pure bucketing math), shared by the IPC handler and the MCP tool.
 
 ### task_attachments table
 
@@ -390,7 +396,7 @@ Key/value bookkeeping for the memory index. Holds `chunker_version`; a mismatch 
 
 ### conversation_turn_usage table
 
-Durable per-turn token-usage ledger. One row per assistant turn that reported usage, written by `ConversationIndexer` from the parsed transcript at index time so it persists after the agent prunes its native JSONL (unlike the in-transcript `usage` field, which is re-derived on each parse). Counts are kept as raw components so cost analysis can weight fresh input against the cheaper cache reads. Read via `ConversationUsageStore` (`getForTask` / `getForSession` / `getForTurns`).
+Durable per-turn token-usage ledger. One row per assistant turn that reported usage, written by `ConversationIndexer` from the parsed transcript at index time so it persists after the agent prunes its native JSONL (unlike the in-transcript `usage` field, which is re-derived on each parse). Counts are kept as raw components so cost analysis can weight fresh input against the cheaper cache reads. Read via `ConversationUsageStore` (`getForTask` / `getForSession` / `getForTurns`, plus `getGroupedUsageSince`, the 5-minute-bucketed project-wide read behind the usage dashboard's burn-rate and token-trend charts).
 
 | Column | Type | Constraints | Default |
 |--------|------|-------------|---------|
@@ -475,6 +481,7 @@ Grouped by feature. The numbering is for cross-reference only and does not refle
 46. **Durable per-turn token-usage ledger (`conversation_turn_usage`)** - creates the table plus its `idx_turn_usage_task` / `idx_turn_usage_session` / `idx_turn_usage_ts` indices. One row per assistant turn that reported usage, keyed by `turn_uuid` (so a `--resume` replay dedups back onto one row), populated by `ConversationIndexer` from the parsed transcript at index time so token counts survive the agent pruning its native JSONL. Deliberately has NO `sessions` DELETE cascade (unlike `memory_chunks`): it is a long-lived ledger, not a rebuildable index, so token history outlives the session rows it describes. See the `conversation_turn_usage table` section above. Idempotent `CREATE ... IF NOT EXISTS`.
 47. **`permission_mode` column on tasks** - adds `permission_mode TEXT DEFAULT NULL`, a per-task permission override mirroring `agent_override`/`model_override`/`effort_override`: settable via the New Task dialog's Advanced section and the task-detail edit form (pre-spawn or suspended only, same lock as `agent_override`). Takes precedence over the swimlane's `permission_mode` and the project's default permission mode; NULL means inherit. Idempotent guarded `ALTER TABLE`.
 48. **`auto_command` column on tasks** - adds `auto_command TEXT DEFAULT NULL`, an MCP-only per-task initial command set via `kangentic_create_task`'s `autoCommand` param so a skill can mint a task that runs a command (e.g. `/code-review`) once the agent spawns. Not surfaced in the New Task dialog or project settings. Takes precedence over the swimlane's `auto_command` for this task only; NULL means inherit from the swimlane. Idempotent guarded `ALTER TABLE`.
+49. **`agent` and `effort` columns on `usage_history`** - adds `agent TEXT` and `effort TEXT` (both in the `CREATE TABLE` block plus guarded `ALTER TABLE` for existing DBs) so the usage dashboard can break usage down by agent and by reasoning effort. `agent` is stamped at capture time from the session manager's recorded agent name; `effort` from `sessions.applied_effort` (the last-applied `--effort` value, NULL = agent default). Each has a one-shot backfill: `agent` from surviving `sessions` -> `tasks.agent` joins, `effort` from surviving `sessions.applied_effort`. Rows whose source was deleted stay NULL (rendered "(unknown)" / "(default)"). The one-shot `usage_history` seed backfill (migration 36) also carries both columns. Idempotent guarded `ALTER TABLE`.
 
 ### Key Migrations (Global DB)
 
@@ -647,7 +654,7 @@ Operates on a per-project DB. Append-only ledger of finalized session usage. Dec
 |--------|-------------|
 | `recordSessionUsage(input)` | Insert or UPSERT a history row keyed by `session_record_id`. UPSERT updates cost / tokens / duration / tool count / model / compaction-count fields on conflict but intentionally excludes git stat columns from the `DO UPDATE SET` clause (those are owned by `updateGitStats`). Called from `captureSessionMetrics` whenever `usage` is defined - including subscription-user sessions where `cost = 0` with real token counts. Token columns here hold the per-capture SNAPSHOT (not the transcript cumulative), so period stats summed across a session's `--resume` rows do not double-count. |
 | `updateGitStats(sessionRecordId, stats)` | Update `lines_added`, `lines_removed`, `files_changed` for an existing history row. Silent no-op if no row exists for the given `sessionRecordId` (e.g. the session never had usage captured). Called from `captureGitStats` in `src/main/ipc/handlers/git-stats-capture.ts` alongside the matching `SessionRepository.updateGitStats` call. |
-| `getStatsAfter(since)` | Sum `total_cost_usd`, `total_input_tokens`, `total_output_tokens` across all rows where `session_started_at >= since`. Pass `null` for "All Time" (no WHERE clause). Period bucketing uses `session_started_at` (when work happened), not `recorded_at` (when metrics flushed), so Today/Week/Month semantics are preserved across midnight boundaries. Used by the `SESSION_GET_PERIOD_STATS` IPC handler that drives the StatusBar. |
+| `listRowsAfter(since)` | List all history rows where `session_started_at >= since`, oldest first. Pass `null` for "All Time" (no WHERE clause). Period bucketing uses `session_started_at` (when work happened), not `recorded_at` (when metrics flushed), so Today/Week/Month semantics are preserved across midnight boundaries. One query feeds the usage dashboard's KPI totals, cost-per-day series, and by-model / by-agent breakdowns; the aggregation lives in the pure functions of `src/main/usage-stats/bucketing.ts`, consumed by the `USAGE_GET_DASHBOARD_STATS` IPC handler and the `kangentic_get_usage_stats` MCP tool via `usageStatsService`. |
 
 ## Connection Management
 

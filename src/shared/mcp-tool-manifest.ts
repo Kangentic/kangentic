@@ -68,6 +68,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_get_column_detail', label: 'Column Detail', blurb: 'automation, permission mode, and config for a column', category: 'board' },
   { name: 'kangentic_update_column', label: 'Update Column', blurb: 'rename, recolor, and configure a column automation', category: 'board' },
   { name: 'kangentic_board_summary', label: 'Board Summary', blurb: 'counts, active sessions, and aggregate cost across the board', category: 'board' },
+  { name: 'kangentic_get_usage_stats', label: 'Usage Stats', blurb: 'tokens, cost, burn rate, and by-model / by-agent usage for a project or all projects over a time range', category: 'board' },
   { name: 'kangentic_list_backlog', label: 'List Backlog', blurb: 'see items staged in the backlog', category: 'board' },
   { name: 'kangentic_promote_backlog', label: 'Promote Backlog', blurb: 'move backlog items onto the board as tasks', category: 'board' },
   { name: 'kangentic_update_backlog_item', label: 'Update Backlog Item', blurb: 'edit a backlog item title, description, priority, labels, or attachments', category: 'board' },

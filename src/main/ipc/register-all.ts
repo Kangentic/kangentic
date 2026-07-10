@@ -39,6 +39,7 @@ import { registerBrowserHandlers } from './handlers/browser';
 import { registerSearchHandlers } from './handlers/search';
 import { registerTranscriptHandlers } from './handlers/transcripts';
 import { registerMobileBridgeHandlers } from './handlers/mobile-bridge';
+import { registerUsageStatsHandlers } from './handlers/usage-stats';
 import { retrievalService } from '../retrieval/retrieval-service';
 import { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
 import type { IpcContext } from './ipc-context';
@@ -154,6 +155,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerBrowserHandlers(context);
   registerSearchHandlers(context);
   registerTranscriptHandlers(context);
+  registerUsageStatsHandlers(context);
   registerSystemHandlers(context);
   registerMobileBridgeHandlers(context);
 

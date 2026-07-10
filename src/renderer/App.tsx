@@ -10,6 +10,7 @@ import { useMobileStore } from './stores/mobile-store';
 import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useToastStore } from './stores/toast-store';
+import { useUsageDashboardStore } from './stores/usage-dashboard-store';
 import { useProjectSwitchEffect } from './hooks/useProjectSwitchEffect';
 import { useAgentDrivenInvalidation } from './hooks/useAgentDrivenInvalidation';
 import { invalidateProject } from './stores/project-cache';
@@ -337,10 +338,9 @@ export function App() {
           }
         }
 
-        // Refresh period stats after metrics are persisted (slight delay for DB write)
-        if (useSessionStore.getState().selectedPeriod !== 'live') {
-          setTimeout(() => useSessionStore.getState().fetchPeriodStats(), 1000);
-        }
+        // Refresh the usage dashboard after metrics are persisted (slight delay
+        // for the DB write; no-ops while the dashboard is closed).
+        setTimeout(() => useUsageDashboardStore.getState().loadDashboardStats({ force: true }), 1000);
 
         // Desktop notification for non-zero exit on non-visible projects
         if (exitCode !== 0 && notifyConfig.desktop.onAgentCrash) {
@@ -685,6 +685,9 @@ if (import.meta.hot) {
     useBacklogStore.getState().loadBacklog();
     useMobileStore.getState().loadStatus();
     useMobileStore.getState().loadDevices();
+    // Usage dashboard Pattern B: refetch the composite payload from
+    // main-process truth (no-ops while the dashboard is closed).
+    useUsageDashboardStore.getState().loadDashboardStats();
     useSessionStore.getState().syncSessions().then((applied) => {
       if (!applied) return;
 
@@ -698,10 +701,6 @@ if (import.meta.hot) {
         }
       }
 
-      const savedPeriod = useConfigStore.getState().config.statusBarPeriod;
-      if (savedPeriod && savedPeriod !== useSessionStore.getState().selectedPeriod) {
-        useSessionStore.getState().setSelectedPeriod(savedPeriod);
-      }
     });
   });
 }
@@ -717,5 +716,6 @@ if (import.meta.env.DEV) {
     session: useSessionStore,
     window: useWindowStore,
     commandWindow: commandWindowManager.store,
+    usageDashboard: useUsageDashboardStore,
   };
 }

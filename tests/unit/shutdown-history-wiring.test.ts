@@ -64,7 +64,6 @@ vi.mock('../../src/main/db/repositories/usage-history-repository', () => ({
     }
     recordSessionUsage = vi.fn();
     updateGitStats = vi.fn();
-    getStatsAfter = vi.fn(() => ({ totalCostUsd: 0, totalInputTokens: 0, totalOutputTokens: 0 }));
   },
 }));
 

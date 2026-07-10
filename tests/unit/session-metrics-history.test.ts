@@ -29,6 +29,8 @@ interface Mocks {
   usageHistoryRepo: UsageHistoryRepository;
   updateMetrics: ReturnType<typeof vi.fn>;
   recordSessionUsage: ReturnType<typeof vi.fn>;
+  getSessionAgentName: ReturnType<typeof vi.fn>;
+  findByAnyId: ReturnType<typeof vi.fn>;
 }
 
 function makeUsage(overrides: Partial<SessionUsage> = {}): SessionUsage {
@@ -57,17 +59,25 @@ function makeMocks(usageBySessionId: Record<string, SessionUsage> = {}): Mocks {
   const updateMetrics = vi.fn();
   const recordSessionUsage = vi.fn();
 
+  // `captureSessionMetrics` stamps `agent`/`effort` onto the history row from
+  // these two lookups (generic manager-recorded agent name + the session
+  // record's applied_effort); the mocks must expose them or the history write
+  // throws and is swallowed by the best-effort try/catch.
+  const getSessionAgentName = vi.fn((): string | undefined => 'claude');
+  const findByAnyId = vi.fn((): { applied_effort: string | null } | undefined => ({ applied_effort: 'high' }));
+
   const sessionManager = {
     getUsageCache: vi.fn(() => usageBySessionId),
     getToolCallCount: vi.fn(() => 7),
     getToolBreakdown: vi.fn(() => []),
     getCompactionCount: vi.fn(() => 0),
+    getSessionAgentName,
   } as unknown as SessionManager;
 
-  const sessionRepo = { updateMetrics } as unknown as SessionRepository;
+  const sessionRepo = { updateMetrics, findByAnyId } as unknown as SessionRepository;
   const usageHistoryRepo = { recordSessionUsage } as unknown as UsageHistoryRepository;
 
-  return { sessionManager, sessionRepo, usageHistoryRepo, updateMetrics, recordSessionUsage };
+  return { sessionManager, sessionRepo, usageHistoryRepo, updateMetrics, recordSessionUsage, getSessionAgentName, findByAnyId };
 }
 
 describe('captureSessionMetrics history write', () => {
@@ -103,6 +113,8 @@ describe('captureSessionMetrics history write', () => {
       modelId: 'claude-opus-4',
       modelDisplayName: 'Claude Opus 4',
       compactionCount: 0,
+      agent: 'claude',
+      effort: 'high',
     });
   });
 
@@ -189,5 +201,47 @@ describe('captureSessionMetrics history write', () => {
     );
 
     expect(recordSessionUsage).toHaveBeenCalledWith(expect.objectContaining({ sessionType: null }));
+  });
+
+  it('stamps agent from getSessionAgentName and effort from the session record', () => {
+    const { sessionManager, sessionRepo, usageHistoryRepo, recordSessionUsage, getSessionAgentName, findByAnyId } = makeMocks({
+      'pty-1': makeUsage(),
+    });
+    getSessionAgentName.mockReturnValue('codex');
+    findByAnyId.mockReturnValue({ applied_effort: 'low' });
+
+    captureSessionMetrics(
+      sessionManager,
+      sessionRepo,
+      usageHistoryRepo,
+      'pty-1',
+      'record-1',
+      '2026-04-01T10:00:00Z',
+      'codex_agent',
+    );
+
+    expect(getSessionAgentName).toHaveBeenCalledWith('pty-1');
+    expect(findByAnyId).toHaveBeenCalledWith('record-1');
+    expect(recordSessionUsage).toHaveBeenCalledWith(expect.objectContaining({ agent: 'codex', effort: 'low' }));
+  });
+
+  it('falls back to null agent/effort when the manager and record do not know them', () => {
+    const { sessionManager, sessionRepo, usageHistoryRepo, recordSessionUsage, getSessionAgentName, findByAnyId } = makeMocks({
+      'pty-1': makeUsage(),
+    });
+    getSessionAgentName.mockReturnValue(undefined);
+    findByAnyId.mockReturnValue(undefined);
+
+    captureSessionMetrics(
+      sessionManager,
+      sessionRepo,
+      usageHistoryRepo,
+      'pty-1',
+      'record-1',
+      '2026-04-01T10:00:00Z',
+      'claude_agent',
+    );
+
+    expect(recordSessionUsage).toHaveBeenCalledWith(expect.objectContaining({ agent: null, effort: null }));
   });
 });

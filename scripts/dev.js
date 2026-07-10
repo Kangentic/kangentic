@@ -29,6 +29,30 @@ try {
   console.warn('[dev] could not write preview PID file:', pidWriteError);
 }
 
+// Graceful-stop channel: tooling that needs to tear down this preview (e.g.
+// a restart after a main-process change) creates this file instead of
+// `taskkill /F`. A forced kill exits non-zero, which Windows Terminal's
+// default closeOnExit=graceful treats as a crash and leaves a dead
+// "[process exited with code 1]" tab behind after every restart. Polling for
+// the file lets dev.js run its normal cleanup and exit 0, so the hosting
+// terminal tab closes itself. Written by
+// `node scripts/worktree-preview.js --stop` (see stopPreview there).
+const stopFilePath = path.join(projectDir, '.kangentic', `preview-${port}.stop`);
+try {
+  fs.rmSync(stopFilePath, { force: true });
+} catch {
+  // best-effort: a stale stop file from a crashed instance must not
+  // immediately stop this one; ignore removal failures.
+}
+const stopWatcher = setInterval(() => {
+  if (fs.existsSync(stopFilePath)) {
+    console.log('[dev] Stop requested via stop file - shutting down');
+    cleanup(0);
+  }
+}, 500);
+// Never keep the process alive just to watch for stops.
+stopWatcher.unref();
+
 // Detect Electron executable path per-platform
 const electronExe = process.platform === 'win32'
   ? path.join(projectDir, 'node_modules', 'electron', 'dist', 'electron.exe')
@@ -261,11 +285,12 @@ function cleanup(exitCode) {
     electronProc.kill();
     electronProc = null;
   }
-  // Best-effort: remove this instance's PID file so tooling never finds a
-  // stale entry for a preview that already exited. A no-op if ephemeral mode
-  // is about to remove the whole .kangentic/ dir below anyway.
+  // Best-effort: remove this instance's PID and stop files so tooling never
+  // finds a stale entry for a preview that already exited. A no-op if
+  // ephemeral mode is about to remove the whole .kangentic/ dir below anyway.
   try {
     fs.rmSync(pidFilePath, { force: true });
+    fs.rmSync(stopFilePath, { force: true });
   } catch {
     // best-effort
   }
@@ -293,6 +318,14 @@ function cleanup(exitCode) {
 
 process.on('SIGINT', () => cleanup(0));
 process.on('SIGTERM', () => cleanup(0));
+// Closing the preview's terminal WINDOW delivers SIGHUP (on Windows, Node maps
+// the console CTRL_CLOSE_EVENT to it, with a ~10s grace window before the OS
+// terminates unconditionally; on unix, terminal close sends a real SIGHUP).
+// Without this handler the dev server survived a closed terminal as an orphan
+// still holding its port and Electron child, and left a stale PID file behind
+// for the next launch to misreport. cleanup() is comfortably faster than the
+// grace window (sync kills + fs removals).
+process.on('SIGHUP', () => cleanup(0));
 
 start().catch((err) => {
   console.error('[dev] Fatal error:', err);

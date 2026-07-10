@@ -18,27 +18,27 @@
  *
  * ## What we test
  *
- * The hook is exercised through its real consumer: `StatusBar` in the running Vite
- * app. StatusBar renders `[data-testid="aggregate-cost"]` when there is live usage
- * data, and that element is the ref target of `costPulseRef = useValuePulse(displayCost,
- * { resetKey: pulseResetKey })`. We manipulate the Zustand stores (exposed on
- * `window.__zustandStores` in DEV mode) to trigger value and resetKey changes, then
- * observe whether `animate-value-update` appears on the DOM element.
+ * The hook is exercised through its real consumer: the usage dashboard's KPI
+ * tiles (the old StatusBar usage strip was replaced by the dashboard). The
+ * Cost tile's value element `[data-testid="kpi-cost-value"]` is the ref target
+ * of `useValuePulse(value, { resetKey })` with
+ * `resetKey = "<scopeKind>:<projectId>:<period>"`. We manipulate the Zustand
+ * stores (exposed on `window.__zustandStores` in DEV mode) to trigger value and
+ * resetKey changes, then observe whether `animate-value-update` appears.
  *
  * ## Behavior contract
  *
- * (a) When `resetKey` CHANGES, the hook rebaselines SILENTLY - it must NOT add the
- *     pulse class `animate-value-update`.
+ * (a) When `resetKey` CHANGES, the hook rebaselines SILENTLY - it must NOT add
+ *     the pulse class `animate-value-update`.
  * (b) When `resetKey` is STABLE and `value` changes, it DOES pulse.
  * (c) Initial mount never pulses.
  *
  * ## Red-green anchoring
  *
- * Reverting the `resetKey` effect branch (lines ~41-48 in `useValuePulse.ts`) makes
- * test (a) fail: without the early return on `resetKey` change, the hook would not
- * suppress the class and would instead fall through to the normal pulse path,
- * applying `animate-value-update`. The poll in test (a) has a tight window (500ms)
- * and a deliberate fixed-wait negative assertion after it.
+ * Reverting the `resetKey` effect branch in `useValuePulse.ts` makes test (a)
+ * fail: a period change flips the resetKey AND changes the displayed value
+ * (live-only -> DB+live layering), so without the early return the hook falls
+ * through to the pulse path and applies `animate-value-update`.
  */
 
 import { test, expect } from '@playwright/test';
@@ -53,15 +53,15 @@ const PROJECT_ID = 'proj-pulse-test';
 const SESSION_ID = 'sess-pulse-test';
 const SWIMLANE_ID = 'lane-pulse-0';
 
-/** Initial cost value seeded via getUsage mock. Must be non-zero so StatusBar renders usage. */
-const INITIAL_COST = 0.0042;
-/** A different cost that causes a value-change effect run. */
-const UPDATED_COST = 0.0099;
+/** Initial live cost. Formats as $0.05 - the pulse fires on the FORMATTED value,
+ *  so test values must differ after formatCost. */
+const INITIAL_COST = 0.05;
+/** A different cost whose formatted value differs ($0.12). */
+const UPDATED_COST = 0.12;
 
 /**
- * Pre-configure script: one project with one running session. The `getUsage` mock
- * is overridden to return real usage so StatusBar renders `[data-testid="aggregate-tokens"]`
- * and `[data-testid="aggregate-cost"]`.
+ * Pre-configure script: one project with one running session. The `getUsage`
+ * mock is overridden so the dashboard's live KPI layering sees real usage.
  */
 const PRE_CONFIGURE = `
   window.__mockPreConfigure(function (state) {
@@ -127,8 +127,7 @@ const PRE_CONFIGURE = `
     return { currentProjectId: '${PROJECT_ID}' };
   });
 
-  // Override getUsage so StatusBar sees real usage data for SESSION_ID.
-  // The initial cost is ${INITIAL_COST} - non-zero so the status bar renders the cost span.
+  // Override getUsage so the dashboard's live layer sees usage for SESSION_ID.
   window.electronAPI.sessions.getUsage = async function () {
     var result = {};
     result['${SESSION_ID}'] = {
@@ -164,18 +163,17 @@ async function launchPulsePage(): Promise<{ browser: Browser; page: Page }> {
   return { browser, page };
 }
 
-/**
- * Wait for the StatusBar's cost element to be visible AND carrying the initial
- * usage value (confirming the getUsage mock was consumed and the store is hydrated).
- */
-async function waitForUsageVisible(page: Page): Promise<void> {
-  await page.locator('[data-testid="aggregate-cost"]').waitFor({ state: 'visible', timeout: 10000 });
+/** Open the dashboard from the title bar and wait for the seeded live cost. */
+async function openDashboard(page: Page): Promise<void> {
+  await page.locator('[data-testid="usage-stats-button"]').click();
+  await page.locator('[data-testid="stats-page"]').waitFor({ state: 'visible', timeout: 10000 });
+  await expect(page.locator('[data-testid="kpi-cost-value"]')).toContainText('$0.05', { timeout: 10000 });
 }
 
 /**
- * Inject new usage data into the session store's `sessionUsage` map for SESSION_ID.
- * `projectId` in the session list stays the same as PROJECT_ID, so `pulseResetKey`
- * (`"${projectId}:live"`) is unchanged - this is a pure VALUE change with STABLE reset key.
+ * Inject new usage data into the session store's `sessionUsage` map for
+ * SESSION_ID. Scope, project, and period are untouched, so the KPI tiles'
+ * resetKey is unchanged - a pure VALUE change with a STABLE reset key.
  */
 async function injectUsageUpdate(page: Page, newCostUsd: number): Promise<void> {
   await page.evaluate(
@@ -185,15 +183,6 @@ async function injectUsageUpdate(page: Page, newCostUsd: number): Promise<void> 
           sessionUsage: Record<
             string,
             {
-              model: { id: string; displayName: string };
-              contextWindow: {
-                usedPercentage: number;
-                usedTokens: number;
-                cacheTokens: number;
-                totalInputTokens: number;
-                totalOutputTokens: number;
-                contextWindowSize: number;
-              };
               cost: { totalCostUsd: number; totalDurationMs: number };
             }
           >;
@@ -225,92 +214,47 @@ async function injectUsageUpdate(page: Page, newCostUsd: number): Promise<void> 
 }
 
 /**
- * Inject new usage data AND simultaneously change the selected period from 'live'
- * to 'today'. Both writes go into one synchronous `setState` call on the session
- * store, so React 18 batches them into one render. The single resulting effect run
- * sees `resetKey` changed (from `"<projectId>:live"` to `"<projectId>:today"`) AND
- * `value` changed (cost ticked up), so:
+ * Flip the dashboard period from 'live' to 'today' via a direct store
+ * setState (no action side effects). One synchronous evaluate = one React 18
+ * batched render = one effect run that sees BOTH a resetKey change (the
+ * period component flips) AND a value change (live-only cost becomes
+ * DB-totals + live via the layering), so:
  *
  * - WITH the resetKey branch: the early return fires, no class is added.
- * - WITHOUT the resetKey branch: `value !== prevRef.current` is true, so the class
- *   IS added. That is what the red run verifies.
- *
- * Using `selectedPeriod` (not project id) for the resetKey change preserves the
- * session-project relationship: `projectSessions` still matches, `liveUsage.count`
- * stays > 0, `hasUsage` remains true, so `[data-testid="aggregate-cost"]` stays
- * mounted throughout the test. This makes the element observable when the class
- * would be wrongly added, giving genuine red-green discrimination.
+ * - WITHOUT the resetKey branch: `value !== prevRef.current` is true, so the
+ *   class IS added. That is what the red run verifies.
  */
-async function injectResetKeyChange(page: Page, newCostUsd: number): Promise<void> {
-  await page.evaluate(
-    ({ sessionId, newCost }: { sessionId: string; newCost: number }) => {
-      type SessionStoreHandle = {
-        getState: () => {
-          sessionUsage: Record<
-            string,
-            {
-              model: { id: string; displayName: string };
-              contextWindow: {
-                usedPercentage: number;
-                usedTokens: number;
-                cacheTokens: number;
-                totalInputTokens: number;
-                totalOutputTokens: number;
-                contextWindowSize: number;
-              };
-              cost: { totalCostUsd: number; totalDurationMs: number };
-            }
-          >;
-        };
-        setState: (partial: Record<string, unknown>) => void;
-      };
-
-      const stores = (
-        window as unknown as { __zustandStores?: { session: SessionStoreHandle } }
-      ).__zustandStores;
-      if (!stores) throw new Error('window.__zustandStores not exposed');
-
-      const currentUsage = stores.session.getState().sessionUsage;
-      const existing = currentUsage[sessionId];
-      if (!existing) throw new Error(`No usage entry for session ${sessionId}`);
-
-      // Single setState call changes both selectedPeriod (which changes the resetKey
-      // component from 'live' to 'today') and sessionUsage (which changes the cost value).
-      // React 18 batches this into one render with one effect run.
-      // The reset branch in useValuePulse fires on resetKey change and returns early.
-      stores.session.setState({
-        selectedPeriod: 'today',
-        sessionUsage: {
-          ...currentUsage,
-          [sessionId]: {
-            ...existing,
-            cost: { totalCostUsd: newCost, totalDurationMs: existing.cost.totalDurationMs + 100 },
-          },
-        },
-      });
-    },
-    { sessionId: SESSION_ID, newCost: newCostUsd },
-  );
+async function injectResetKeyChange(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    type DashboardStoreHandle = {
+      setState: (partial: Record<string, unknown>) => void;
+    };
+    const stores = (
+      window as unknown as { __zustandStores?: { usageDashboard: DashboardStoreHandle } }
+    ).__zustandStores;
+    if (!stores) throw new Error('window.__zustandStores not exposed');
+    stores.usageDashboard.setState({ period: 'today' });
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-test.describe('useValuePulse resetKey behavior (via StatusBar)', () => {
+test.describe('useValuePulse resetKey behavior (via the usage dashboard KPI tiles)', () => {
   // Tests use separate browser instances for isolation - no shared state.
 
-  test('(c) initial mount never pulses - animate-value-update is absent on first load', async () => {
+  test('(c) initial mount never pulses - animate-value-update is absent on first open', async () => {
     const { browser, page } = await launchPulsePage();
     try {
-      await waitForUsageVisible(page);
+      await openDashboard(page);
 
       // On initial mount, mountedRef.current is false so the effect returns early.
       // The class must never appear at all - not even for a frame.
-      await expect(page.locator('[data-testid="aggregate-cost"]')).not.toHaveClass(
+      await expect(page.locator('[data-testid="kpi-cost-value"]')).not.toHaveClass(
         /animate-value-update/,
       );
-      await expect(page.locator('[data-testid="aggregate-tokens"]')).not.toHaveClass(
+      await expect(page.locator('[data-testid="kpi-tokens-value"]')).not.toHaveClass(
         /animate-value-update/,
       );
     } finally {
@@ -321,36 +265,34 @@ test.describe('useValuePulse resetKey behavior (via StatusBar)', () => {
   test('(b) stable resetKey + value change = pulse class is applied then removed', async () => {
     const { browser, page } = await launchPulsePage();
     try {
-      await waitForUsageVisible(page);
+      await openDashboard(page);
 
       // Confirm no class before the mutation.
-      await expect(page.locator('[data-testid="aggregate-cost"]')).not.toHaveClass(
+      await expect(page.locator('[data-testid="kpi-cost-value"]')).not.toHaveClass(
         /animate-value-update/,
       );
 
-      // Inject a cost update with the same project/period = stable pulseResetKey.
+      // Inject a cost update with the same scope/project/period = stable resetKey.
       await injectUsageUpdate(page, UPDATED_COST);
 
       // The hook queues the class-add via requestAnimationFrame. Poll for it.
-      // Timeout 2000ms is generous but deterministic - rAF fires within one vsync frame
-      // (~16ms). The poll interval 50ms keeps the check tight without busy-looping.
       await expect
         .poll(
           () =>
             page.evaluate(() => {
-              const element = document.querySelector('[data-testid="aggregate-cost"]');
+              const element = document.querySelector('[data-testid="kpi-cost-value"]');
               return element?.classList.contains('animate-value-update') ?? false;
             }),
           { timeout: 2000, intervals: [50, 50, 100, 100, 100] },
         )
         .toBe(true);
 
-      // After durationMs (350ms default) the class is removed. Wait 600ms total to be safe.
+      // After durationMs (350ms default) the class is removed.
       await expect
         .poll(
           () =>
             page.evaluate(() => {
-              const element = document.querySelector('[data-testid="aggregate-cost"]');
+              const element = document.querySelector('[data-testid="kpi-cost-value"]');
               return element?.classList.contains('animate-value-update') ?? false;
             }),
           { timeout: 1500, intervals: [100, 200, 300, 300] },
@@ -364,37 +306,28 @@ test.describe('useValuePulse resetKey behavior (via StatusBar)', () => {
   test('(a) resetKey change suppresses pulse - animate-value-update must NOT appear', async () => {
     const { browser, page } = await launchPulsePage();
     try {
-      await waitForUsageVisible(page);
+      await openDashboard(page);
 
       // Confirm no class before the mutation.
-      await expect(page.locator('[data-testid="aggregate-cost"]')).not.toHaveClass(
+      await expect(page.locator('[data-testid="kpi-cost-value"]')).not.toHaveClass(
         /animate-value-update/,
       );
 
-      // Inject cost change AND selectedPeriod change simultaneously (one setState call,
-      // one React render, one effect run). The effect sees resetKey changed (period
-      // changed from 'live' to 'today', so pulseResetKey flips), so with the correct
-      // implementation it rebaselines silently and never adds the class.
-      //
-      // Without the resetKey branch: value changed (INITIAL_COST -> UPDATED_COST+0.005),
-      // so the hook falls through to the pulse logic and adds the class via rAF.
-      await injectResetKeyChange(page, UPDATED_COST + 0.005);
+      // Flip the period: resetKey changes AND the displayed cost changes in the
+      // same render (live-only -> DB totals + live). With the correct
+      // implementation the hook rebaselines silently and never adds the class.
+      await injectResetKeyChange(page);
 
       // Red-green observation window: sample the DOM every 100ms for 600ms.
-      // requestAnimationFrame fires within ~16ms of the state update. If the resetKey
-      // branch is absent, the class appears in the first 100ms window and
-      // classObservedDuringWindow becomes true -> the expect below fails (RED).
-      // With the correct implementation the class never appears -> expect passes (GREEN).
-      //
       // We do NOT use expect.poll(toBe(false)) here - that is anti-pattern 6
-      // (polling for non-occurrence exits immediately). Instead we actively scan the
-      // window before drawing a conclusion.
+      // (polling for non-occurrence exits immediately). Instead we actively scan
+      // the window before drawing a conclusion.
       let classObservedDuringWindow = false;
       for (let iteration = 0; iteration < 6; iteration++) {
         // intentional fixed wait - scanning for non-occurrence requires a time budget
         await page.waitForTimeout(100);
         const classPresent = await page.evaluate(() => {
-          const element = document.querySelector('[data-testid="aggregate-cost"]');
+          const element = document.querySelector('[data-testid="kpi-cost-value"]');
           return element?.classList.contains('animate-value-update') ?? false;
         });
         if (classPresent) {

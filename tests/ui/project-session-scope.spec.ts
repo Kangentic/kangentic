@@ -212,7 +212,7 @@ test.describe('Project Session Scope', () => {
     }
   });
 
-  test('status bar counts only current project sessions', async () => {
+  test('status bar counts and dashboard live cost scope to the current project', async () => {
     const { browser, page } = await launchWithState(twoProjectPreConfig({ withUsage: true }));
 
     try {
@@ -222,17 +222,24 @@ test.describe('Project Session Scope', () => {
       const sessionCount = page.locator('[data-testid="session-count"]');
       await expect(sessionCount).toContainText('1 agents');
 
-      // Usage should only reflect Project A's session ($0.05, not $0.25)
-      const cost = page.locator('[data-testid="aggregate-cost"]');
-      await expect(cost).toContainText('$0.05');
+      // The dashboard's live cost tile should only reflect Project A's
+      // session ($0.05, not $0.25 across both projects).
+      await page.locator('[data-testid="usage-stats-button"]').click();
+      await page.locator('[data-testid="stats-page"]').waitFor({ state: 'visible', timeout: 10000 });
+      const cost = page.locator('[data-testid="kpi-cost-value"]');
+      await expect(cost).toContainText('$0.05', { timeout: 10000 });
 
-      // Switch to Project B. The toContainText assertions below self-retry
-      // until the store updates - no fixed wait needed.
+      // Close the overlay (it covers the sidebar), switch to Project B, reopen.
+      await page.locator('[data-testid="stats-close"]').click();
+      await page.locator('[data-testid="stats-page"]').waitFor({ state: 'hidden', timeout: 5000 });
       await page.locator('[role="button"]:has-text("Project Beta")').click();
 
-      // Status bar now shows Project B's session ($0.20)
+      // Status bar now shows Project B's session; the reopened dashboard
+      // shows Project B's live cost ($0.20).
       await expect(sessionCount).toContainText('1 agents', { timeout: 3000 });
-      await expect(cost).toContainText('$0.20');
+      await page.locator('[data-testid="usage-stats-button"]').click();
+      await page.locator('[data-testid="stats-page"]').waitFor({ state: 'visible', timeout: 10000 });
+      await expect(cost).toContainText('$0.20', { timeout: 10000 });
     } finally {
       await browser.close();
     }

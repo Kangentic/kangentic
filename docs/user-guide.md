@@ -610,20 +610,17 @@ The status bar runs along the bottom of the window, providing at-a-glance metric
 |---------|-------------|
 | **Agents** | Count of actively running agent sessions (green when > 0), plus queued count if any |
 | **Tasks** | Count of active (non-done) tasks on the board |
-| **Tokens** | Aggregate input and output token counts across sessions |
-| **Cost** | Aggregate API cost across sessions |
 
-### Time Period
+## Usage Stats Dashboard
 
-Click the time period dropdown at the right end of the status bar to change the reporting window. Options:
+Open the usage dashboard from the chart icon in the title bar or with `Mod+Shift+U`. It replaces the old status-bar token/cost strip with a full-page view of agent usage:
 
-- **Live** - shows only metrics from currently running sessions (default)
-- **Today** - includes historical session metrics from today plus live sessions
-- **This Week** - includes metrics from the past 7 days plus live sessions
-- **This Month** - includes metrics from the past 30 days plus live sessions
-- **All Time** - includes all historical metrics plus live sessions
+- **Scope** - the current project, or an app-wide rollup across every registered project (with a per-project comparison table).
+- **Metric** - toggle between cost and tokens.
+- **Range** - Live (trailing 2 hours), Today, This Week, This Month, All Time, or a custom month range. Click a day in a chart to drill into that single day.
+- **Breakdowns** - by model, by agent, and by reasoning effort, alongside KPI tiles (cost, tokens, sessions, tool calls, line churn, burn rate) with "vs previous period" deltas.
 
-Token and cost values pulse briefly when they change. The selected period persists across app restarts (stored in `statusBarPeriod` config key).
+Totals are read from the durable usage ledgers, so they survive task and session deletion. The selected range and scope persist across app restarts (one global value shared across all projects).
 
 ## Keyboard Shortcuts
 
@@ -632,6 +629,7 @@ Every shortcut is declared in a central registry and is **rebindable** under Set
 General:
 
 - **Mod+Shift+S** - Toggle the settings panel
+- **Mod+Shift+U** - Toggle the Usage Stats dashboard
 - **Mod+Shift+B** - Switch between Board and Backlog view
 - **Mod+Shift+E** - Toggle the project sidebar
 - **Mod+Shift+J** - Toggle the bottom terminal panel
