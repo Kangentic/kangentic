@@ -39,6 +39,7 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       '@shared': '/src/shared',
+      '@kangentic/protocol': '/packages/protocol/src',
     },
   },
   server: {

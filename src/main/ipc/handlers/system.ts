@@ -70,6 +70,15 @@ export function registerSystemHandlers(context: IpcContext): void {
         retrievalService.reconcileEmbedWorker(context);
       });
     }
+    // Toggling the mobile bridge on/off, or changing the relay URL, takes
+    // effect immediately without reopening the app.
+    if (config.mobileBridge) {
+      const effectiveConfig = context.configManager.getEffectiveConfig(context.currentProjectPath || undefined);
+      context.mobileBridgeService.reconcile({
+        enabled: effectiveConfig.mobileBridge?.enabled ?? false,
+        relayUrl: effectiveConfig.mobileBridge?.relayUrl ?? '',
+      });
+    }
   });
 
   // Synchronous sibling of CONFIG_SET for the renderer's quit/unload flush: an async

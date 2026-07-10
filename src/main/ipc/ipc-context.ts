@@ -11,6 +11,7 @@ import type { TerminalSubmitScheduler } from '../transition-engine/terminal-subm
 import type { TerminalSubmit } from '../pty/terminal-submit';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 import type { TranscriptionService } from '../transcription/transcription-service';
+import type { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
 
 export interface IpcContext {
   mainWindow: BrowserWindow;
@@ -72,4 +73,10 @@ export interface IpcContext {
    * the server has bound its port.
    */
   mcpServerHandle: McpHttpServerHandle | null;
+  /**
+   * Owns the desktop's mobile-bridge identity, signed device roster, and
+   * active pairing ceremony. Machine-global like config, not tied to the
+   * currently open project. See src/main/mobile-bridge/mobile-bridge-service.ts.
+   */
+  mobileBridgeService: MobileBridgeService;
 }

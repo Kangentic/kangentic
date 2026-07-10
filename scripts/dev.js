@@ -144,7 +144,7 @@ async function start() {
       cacheDir: viteCacheDir,
       plugins: [tailwindcss(), react()],
       resolve: {
-        alias: { '@shared': '/src/shared' },
+        alias: { '@shared': '/src/shared', '@kangentic/protocol': '/packages/protocol/src' },
         preserveSymlinks: true,
       },
       optimizeDeps: {

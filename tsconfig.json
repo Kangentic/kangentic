@@ -16,9 +16,11 @@
     "resolveJsonModule": true,
     "jsx": "react-jsx",
     "paths": {
-      "@shared/*": ["src/shared/*"]
+      "@shared/*": ["src/shared/*"],
+      "@kangentic/protocol": ["packages/protocol/src/index.ts"],
+      "@kangentic/protocol/*": ["packages/protocol/src/*"]
     }
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "packages/protocol/src/**/*"],
   "exclude": ["node_modules"]
 }

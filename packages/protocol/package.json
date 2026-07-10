@@ -1,0 +1,51 @@
+{
+  "name": "@kangentic/protocol",
+  "version": "0.1.0",
+  "description": "Kangentic mobile bridge wire protocol: framing, Noise-based pairing and session handshakes, signed device roster, and capability verbs shared between desktop and mobile.",
+  "main": "dist/index.cjs",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kangentic/kangentic.git"
+  },
+  "keywords": [
+    "kangentic",
+    "protocol",
+    "noise-protocol",
+    "e2ee",
+    "mobile"
+  ],
+  "author": {
+    "name": "Kangentic",
+    "url": "https://github.com/Kangentic"
+  },
+  "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist/",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs && tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^2.2.0",
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.0",
+    "typescript": "^6.0.3"
+  }
+}

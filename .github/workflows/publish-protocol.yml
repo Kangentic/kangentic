@@ -1,0 +1,78 @@
+name: Publish @kangentic/protocol
+
+# Independent of the main Kangentic release pipeline (release.yml) BY DESIGN.
+# @kangentic/protocol's version (packages/protocol/package.json) is
+# deliberately decoupled from Kangentic's own root version -- this lets the
+# protocol package ship on its own cadence, including while the mobile
+# bridge feature is still being actively built out, without requiring (or
+# triggering) a full Kangentic desktop release. Cut a protocol release with
+# the `/release-protocol` skill, which tags on the `protocol-v*` namespace
+# (never colliding with Kangentic's own `v*` release tags) and pushes that
+# tag to trigger this workflow. `workflow_dispatch` is also available for an
+# ad hoc manual publish (e.g. re-running after a transient npm failure).
+#
+# Revisit merging this back into release.yml's publish-npm job once the
+# protocol API stabilizes and kangentic-mobile's release cadence wants to
+# track Kangentic's own releases more closely -- see the comment left in
+# release.yml's publish-npm job.
+
+on:
+  push:
+    tags:
+      - 'protocol-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish-protocol:
+    # Distinct from (and shorter than) the workflow name above, since GitHub
+    # concatenates them as "Publish @kangentic/protocol / <job name>" in the
+    # checks list and run summary -- repeating the package name in both
+    # would read redundantly.
+    name: Build & publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      # Trusted publishing (OIDC) needs npm >= 11.5.1, which Node 24 ships
+      # (11.16+). See release.yml's publish-npm job for why this pins Node 24
+      # instead of self-upgrading npm.
+      #
+      # IMPORTANT (one-time bootstrap): npm cannot link an OIDC Trusted
+      # Publisher to a package that has never been published. The very
+      # first @kangentic/protocol release must be published manually
+      # (`npm login` then `npm publish --access public -w packages/protocol`
+      # from an authenticated maintainer machine) BEFORE Trusted Publishing
+      # can be configured on npmjs.com for this repo + workflow file. Every
+      # publish after that first one goes through this workflow via OIDC,
+      # with no stored npm token.
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: Build protocol package
+        run: npm run build -w packages/protocol
+
+      # Idempotent: re-running an already-published version (a workflow_dispatch
+      # retry, or backfilling a green run after a transient failure) must not
+      # fail on npm's "cannot publish over the previously published version".
+      # npm view on a scoped package still resolves by "<name>@<version>".
+      - name: Publish @kangentic/protocol to npm
+        run: |
+          PUBLISHED_VERSION=$(node -p "require('./packages/protocol/package.json').version")
+          if npm view "@kangentic/protocol@$PUBLISHED_VERSION" version >/dev/null 2>&1; then
+            echo "@kangentic/protocol@$PUBLISHED_VERSION is already on npm; skipping publish (idempotent re-run)."
+            exit 0
+          fi
+          npm publish --access public --provenance -w packages/protocol

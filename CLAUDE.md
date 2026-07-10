@@ -19,6 +19,8 @@ config/           # Vite configs (renderer, used by scripts/dev.js)
 packages/
   launcher/       # Public npm package ("kangentic") - thin npx installer
     bin/          # kangentic.js launcher script
+  protocol/       # Public npm package ("@kangentic/protocol") - shared mobile bridge
+                  #   wire schema, Noise crypto, capability verbs (desktop + future mobile app)
 src/
   main/           # Electron main process
     agent/        # Agent adapter system
@@ -33,6 +35,8 @@ src/
     transition-engine/  # Transition engine (action execution)
     git/          # Worktree manager
     ipc/          # IPC handler registration
+    mobile-bridge/  # Mobile companion app bridge: identity, signed roster, QR pairing,
+                    #   capability router, relay transport client (consumes @kangentic/protocol)
     pr/           # PR subsystem (mirrors agent/boards): shared/ contract + errors,
                   #   adapters/github/ connector, pr-registry, linking, refresh, scheduler
     pty/          # PTY session manager, shell resolver

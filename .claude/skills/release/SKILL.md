@@ -88,6 +88,10 @@ Run: `npm version <new-version> --no-git-tag-version -w packages/launcher`
 
 Read the new version from `package.json` and `packages/launcher/package.json` to confirm both match.
 
+**Do not bump `packages/protocol`.** `@kangentic/protocol`'s version is deliberately decoupled
+from Kangentic's own -- it ships on its own cadence via the separate `/release-protocol` skill
+and `publish-protocol.yml` workflow, not this one. See that skill for details.
+
 ## Step 3 -- Generate Changelog
 
 1. **Find the previous tag:** Run `git describe --tags --abbrev=0`. If no tags exist, use the root commit as the starting point (this is the first release).

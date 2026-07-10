@@ -330,7 +330,7 @@ Settings are accessed from two entry points:
 - **App Settings** - click the gear icon in the title bar. This is the main settings panel with all app-wide and project-default settings.
 - **Project Settings** - click the gear icon on a project row in the sidebar. This shows only the per-project overridable subset.
 
-Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. In App Settings, tabs above the separator (General, Theme, Terminal, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below the separator (Layout, Behavior, Dictation, Memory, Hotkeys, MCP Server, Agent Browser, Notifications, Privacy, Developer) are shared across all projects. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)). When no project is open, only the shared tabs appear. Project Settings shows inherited defaults as hints, with reset buttons on any overridden value and a "Reset All" footer when overrides exist.
+Both panels use a VS Code-style layout: a sidebar with tab navigation on the left, and the active settings pane on the right. In App Settings, tabs above the separator (General, Theme, Terminal, Agent, Git, Browser, Shortcuts) are per-project settings; tabs below the separator (Layout, Behavior, Dictation, Memory, Hotkeys, MCP Server, Agent Browser, Notifications, Mobile Devices, Privacy, Developer) are shared across all projects. The General tab shows the project's location on disk with a "Move..." button (see [Moving a project](#moving-a-project)). When no project is open, only the shared tabs appear. Project Settings shows inherited defaults as hints, with reset buttons on any overridden value and a "Reset All" footer when overrides exist.
 
 ### Moving a project
 
@@ -513,6 +513,14 @@ When an agent goes idle (waiting for input or stopped) on a non-active project, 
 Desktop and toast notifications fire when an agent needs attention and the user can't already see it - either the window is minimized/unfocused, or a different project is active. Notification events: agent idle, permission-blocked idle (body shows "Needs permission"), session crash (non-zero exit), and plan-completion auto-moves. The task name is the title and the project name is the body. Clicking a desktop notification brings the window to the foreground, switches to the correct project, and opens the task detail dialog. The taskbar also flashes on Windows. A 10-second per-session cooldown prevents repeated desktop notifications from the same agent.
 
 The Settings > Notifications panel exposes three configurable events: **Agent Idle**, **Plan Complete**, and **Spawn Stalled** (a task spawn that waits too long on the git queue while preparing). Each can be set to Desktop & Toast, Desktop Only, Toast Only, or Off. Toast duration and max visible count are also configurable. The **Agent Crash** notification (non-zero exit) is always on and not exposed in the settings UI.
+
+### Mobile Devices
+
+The Mobile Devices tab is the desktop half of the mobile companion app's pairing link - global (applies to this desktop installation, not any one project) and off by default. Enable the **Mobile Bridge** toggle and set a **Relay Address** (a self-hosted or Kangentic-hosted relay) before pairing.
+
+Click **Pair a Device** to display a QR code; scanning it with the Kangentic mobile app starts an end-to-end encrypted pairing handshake. Once the handshake completes, both the desktop and the phone show a short code and emoji sequence - confirm they match on both screens before tapping "Codes match" to finish pairing. This catches a photographed or relayed QR, since an attacker cannot make both sides show the same code. If the codes don't match, or you want to back out, cancel and start over.
+
+Paired devices appear in a list below, each with its granted capabilities. Revoking a device removes it from the desktop's signed roster immediately; a revoked phone must be paired again from scratch to reconnect. See [Mobile Bridge](mobile-bridge.md) for the underlying protocol, pairing ceremony, and security design.
 
 ### Privacy
 

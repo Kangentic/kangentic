@@ -243,3 +243,12 @@ jobs:
             exit 0
           fi
           npm publish --access public --provenance -w packages/launcher
+
+  # @kangentic/protocol is published by its OWN independent workflow
+  # (publish-protocol.yml), NOT here. Its version is deliberately decoupled
+  # from Kangentic's own version (see that workflow's header comment) so the
+  # protocol package can ship on its own cadence -- including while the
+  # mobile bridge feature is still being built out -- without requiring or
+  # triggering a full Kangentic desktop release. Do not re-add a protocol
+  # publish step to this job; that reintroduces the lockstep coupling this
+  # split was built to remove.

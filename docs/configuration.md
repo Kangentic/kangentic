@@ -20,7 +20,7 @@ The config directory (`<configDir>`) is platform-specific:
 
 Both panels use a VS Code-style layout: a sidebar with tab navigation on the left and the active settings pane on the right. A search bar at the top filters settings by keyword. Search uses multi-token matching (all tokens must appear in the setting name or description). Results are grouped by tab with match count badges on the sidebar; tabs with zero matches are dimmed. Press Ctrl+F (Cmd+F on macOS) to focus the search bar, Escape to clear the filter.
 
-- **Settings Panel** -- opened via the titlebar gear icon or the gear icon on each project row in the sidebar. A project switcher dropdown in the header allows switching between projects. Sidebar tabs: General, Theme, Terminal, Agent, Git, Browser, Shortcuts, Layout, Behavior, Dictation, Memory, Hotkeys, MCP Server, Agent Browser, Notifications, Privacy, Developer. The first seven tabs (above the separator) are per-project settings. Five of them (Theme, Terminal, Agent, Git, Browser) save to `.kangentic/config.json`, Shortcuts saves to the board config files (`kangentic.json` and `kangentic.local.json`), and the General tab edits the project record in the global index database. The General tab exposes the `project.location` setting -- the folder on disk the project points at -- with a "Change..." button to re-point the project after its folder is moved or renamed; because tasks and history are keyed by project id, they are preserved across a relocation. The Agent tab exposes the `project.defaultAgent` setting (the "Agent" combobox) -- the agent CLI used for new sessions in this project -- along with `project.defaultModel` and `project.defaultEffort` (the "Model" and "Effort" comboboxes), the project-level model and reasoning-effort defaults applied when no column or task override is set. Like `project.location`, all three are stored on the project record in the global index database rather than in `AppConfig`. The last ten (Layout, Behavior, Dictation, Memory, Hotkeys, MCP Server, Agent Browser, Notifications, Privacy, Developer) are shared settings that apply across all projects, saved to the global config. When no project is open, only the 10 shared tabs appear. Changes save immediately. New projects inherit only the seeded settings subset (`theme`, `terminal.*`, `agent.permissionMode`, `git.*`) from the most recently configured project, falling back to defaults if none exist. Project-specific data such as `browser.defaultUrl` and `importSources` is stored per-project and is never cloned into a new project.
+- **Settings Panel** -- opened via the titlebar gear icon or the gear icon on each project row in the sidebar. A project switcher dropdown in the header allows switching between projects. Sidebar tabs: General, Theme, Terminal, Agent, Git, Browser, Shortcuts, Layout, Behavior, Dictation, Memory, Hotkeys, MCP Server, Agent Browser, Notifications, Mobile Devices, Privacy, Developer. The first seven tabs (above the separator) are per-project settings. Five of them (Theme, Terminal, Agent, Git, Browser) save to `.kangentic/config.json`, Shortcuts saves to the board config files (`kangentic.json` and `kangentic.local.json`), and the General tab edits the project record in the global index database. The General tab exposes the `project.location` setting -- the folder on disk the project points at -- with a "Change..." button to re-point the project after its folder is moved or renamed; because tasks and history are keyed by project id, they are preserved across a relocation. The Agent tab exposes the `project.defaultAgent` setting (the "Agent" combobox) -- the agent CLI used for new sessions in this project -- along with `project.defaultModel` and `project.defaultEffort` (the "Model" and "Effort" comboboxes), the project-level model and reasoning-effort defaults applied when no column or task override is set. Like `project.location`, all three are stored on the project record in the global index database rather than in `AppConfig`. The last eleven (Layout, Behavior, Dictation, Memory, Hotkeys, MCP Server, Agent Browser, Notifications, Mobile Devices, Privacy, Developer) are shared settings that apply across all projects, saved to the global config. When no project is open, only the 11 shared tabs appear. Changes save immediately. New projects inherit only the seeded settings subset (`theme`, `terminal.*`, `agent.permissionMode`, `git.*`) from the most recently configured project, falling back to defaults if none exist. Project-specific data such as `browser.defaultUrl` and `importSources` is stored per-project and is never cloned into a new project.
 
 ### App-Only Settings
 
@@ -42,6 +42,7 @@ These settings appear only in App Settings and cannot be overridden per-project:
 - `browserAutomation.enabled`, `browserAutomation.allowInteraction`, `browserAutomation.allowNavigation`, `browserAutomation.allowEval`, `browserAutomation.restrictNavigationToLocalhost`
 - `dictation.*` (all voice dictation settings)
 - `memory.*` (conversation search + recall, in the Memory tab)
+- `mobileBridge.*` (mobile companion app pairing/relay, in the Mobile Devices tab)
 - `hotkeyOverrides`
 
 ### Per-Project Overridable Settings
@@ -291,6 +292,17 @@ from `memory.semanticEnabled` (Smart/hybrid when on, keyword when off), so there
 is no per-search toggle. The Memory tab also offers a "Rebuild index" action that
 purges and re-runs the backfill sweep for the current project (recovery from a
 stale or corrupt index).
+
+### Mobile Bridge
+
+The Mobile Devices tab hosts the desktop half of the mobile companion app's pairing/transport link (`src/main/mobile-bridge/`, see [Mobile Bridge](mobile-bridge.md)). Global-only (per-machine) - the identity, roster, and relay connection represent this desktop installation, not any one project.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `mobileBridge.enabled` | boolean | `false` | Master switch. When `false`, no relay connection is held and pairing is unavailable; the relay URL input and pairing controls are disabled in the UI. |
+| `mobileBridge.relayUrl` | string | `''` | The relay address to dial (self-hosted or Kangentic's hosted relay), e.g. `wss://relay.kangentic.com`. |
+
+**Actions (not config keys):** the Mobile Devices tab also exposes two settings-registry entries that are UI surfaces, not `AppConfig` keys: **Pair a Device** (registry id `mobileBridge.pairing`) starts the QR pairing ceremony described in [Mobile Bridge](mobile-bridge.md#pairing-ceremony), and **Paired Devices** (registry id `mobileBridge.devices`) lists currently paired phones with their granted capabilities and a revoke action. Both are backed by the `mobile:*` IPC channels and the signed device roster (`src/main/mobile-bridge/roster-store.ts`), not persisted in `AppConfig`.
 
 ### Privacy
 

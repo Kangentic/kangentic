@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    // Declaration-only emit (see package.json's `build` script: build.mjs
+    // handles the actual runtime JS via esbuild). "bundler" resolution lets
+    // relative imports stay extensionless, matching esbuild's resolver and
+    // the root app's classic "node" resolution used when this package's
+    // TS source is consumed in-repo via the @kangentic/protocol alias.
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationMap": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

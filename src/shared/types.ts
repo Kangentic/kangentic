@@ -1761,6 +1761,18 @@ export interface AppConfig {
     remote?: DictationRemoteEndpoint;
   };
 
+  /**
+   * Mobile companion app bridge. GLOBAL/shared scope (below the settings
+   * separator, in the Mobile Devices tab): the identity, roster, and relay
+   * connection represent this desktop installation, not any one project.
+   */
+  mobileBridge?: {
+    /** Master switch. When false, no relay connection is held and pairing is unavailable. Default false. */
+    enabled?: boolean;
+    /** The relay address to dial (self-hosted or Kangentic's hosted relay), e.g. "wss://relay.kangentic.com". */
+    relayUrl?: string;
+  };
+
   hasCompletedFirstRun: boolean;
   skipDeleteConfirm: boolean;
   skipBoardConfigConfirm: boolean;
@@ -1986,6 +1998,10 @@ export const DEFAULT_CONFIG: AppConfig = {
     releaseBufferMs: 250,
     experience: 'popup',
   },
+  mobileBridge: {
+    enabled: false,
+    relayUrl: '',
+  },
 };
 
 // === Agent Commands ===
@@ -2195,6 +2211,61 @@ export interface ImportCheckCliResult {
   available: boolean;
   authenticated: boolean;
   error?: string;
+}
+
+// === Mobile Bridge ===
+// This repo's types.ts is deliberately import-free (a dependency-free leaf
+// module), so these mirror @kangentic/protocol's CapabilityVerb/roster
+// shapes as plain, self-contained types rather than importing them -- keep
+// MOBILE_CAPABILITY_VERBS in sync with packages/protocol/src/capabilities/verbs.ts
+// (CAPABILITY_VERBS) by hand; there is no shell/file/arbitrary-command verb
+// in the protocol, by design.
+export const MOBILE_CAPABILITY_VERBS = [
+  'read-stream',
+  'read-board',
+  'read-diff',
+  'send-user-message',
+  'move-task',
+  'answer-permission-prompt',
+] as const;
+export type MobileCapabilityVerb = (typeof MOBILE_CAPABILITY_VERBS)[number];
+
+export interface MobileBridgeStatus {
+  enabled: boolean;
+  /** False when Electron safeStorage can't genuinely encrypt (e.g. the Linux basic_text backend) -- the bridge refuses to create/use an identity in that state. */
+  secureStorageAvailable: boolean;
+  /** Hex-encoded static public key, for display/verification. Never the private key. */
+  identityFingerprint: string | null;
+  relayUrl: string;
+  pairedDeviceCount: number;
+  pairingInProgress: boolean;
+}
+
+export interface MobileStartPairingResult {
+  /** The `kangentic-pair://...` URI to render as a QR code. */
+  qrUri: string;
+  /** ISO 8601. */
+  expiresAt: string;
+}
+
+export interface MobilePairedDevice {
+  deviceId: string;
+  displayName: string;
+  capabilities: MobileCapabilityVerb[];
+  /** ISO 8601. */
+  pairedAt: string;
+}
+
+export interface MobilePairingSasPayload {
+  /** 6-digit short authentication string, shown alongside `emoji` for the user to compare against the phone's screen. */
+  digits: string;
+  emoji: string[];
+  /** Hex-encoded, for display only -- the roster entry itself is signed and persisted main-side. */
+  phoneStaticPublicKeyHex: string;
+}
+
+export interface MobilePairingEndedPayload {
+  reason: string;
 }
 
 // === IPC API Types ===
@@ -3404,6 +3475,20 @@ export interface ElectronAPI {
       setPat: (input: AsanaSetPatInput) => Promise<AsanaSetPatResult>;
       clearCredential: () => Promise<void>;
     };
+  };
+
+  // Mobile Bridge -- machine-global (like config), not project-scoped.
+  mobile: {
+    getStatus: () => Promise<MobileBridgeStatus>;
+    startPairing: () => Promise<MobileStartPairingResult>;
+    confirmPairing: (displayName: string, capabilities?: MobileCapabilityVerb[]) => Promise<void>;
+    cancelPairing: () => Promise<void>;
+    listDevices: () => Promise<MobilePairedDevice[]>;
+    revokeDevice: (deviceId: string) => Promise<void>;
+    setDeviceCapabilities: (deviceId: string, capabilities: MobileCapabilityVerb[]) => Promise<void>;
+    onPairingSas: (callback: (payload: MobilePairingSasPayload) => void) => () => void;
+    onPairingEnded: (callback: (payload: MobilePairingEndedPayload) => void) => () => void;
+    onStateChanged: (callback: () => void) => () => void;
   };
 
   // Board Config

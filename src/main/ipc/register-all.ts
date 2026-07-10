@@ -38,7 +38,9 @@ import { registerGitDiffHandlers } from './handlers/git-diff';
 import { registerBrowserHandlers } from './handlers/browser';
 import { registerSearchHandlers } from './handlers/search';
 import { registerTranscriptHandlers } from './handlers/transcripts';
+import { registerMobileBridgeHandlers } from './handlers/mobile-bridge';
 import { retrievalService } from '../retrieval/retrieval-service';
+import { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
 import type { IpcContext } from './ipc-context';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 
@@ -83,6 +85,11 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     ephemeral: process.argv.includes('--ephemeral'),
   });
   const diffWatcher = new DiffWatcher();
+  // Placeholder config -- reconciled to the real effective config right
+  // after `context` (and its configManager getter) is constructed below,
+  // since MobileBridgeService's constructor needs a config synchronously
+  // but configManager itself is only available once `context` exists.
+  const mobileBridgeService = new MobileBridgeService({ enabled: false, relayUrl: '' });
 
   // Lazy-initialize heavy objects on first access
   let projectRepo: ProjectRepository | null = null;
@@ -123,7 +130,14 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     currentProjectPath: null,
     recoveredProjects: new Set<string>(),
     mcpServerHandle,
+    mobileBridgeService,
   };
+
+  const effectiveConfig = context.configManager.getEffectiveConfig(context.currentProjectPath ?? undefined);
+  mobileBridgeService.reconcile({
+    enabled: effectiveConfig.mobileBridge?.enabled ?? false,
+    relayUrl: effectiveConfig.mobileBridge?.relayUrl ?? '',
+  });
 
   registerProjectHandlers(context);
   registerTaskCrudHandlers(context);
@@ -141,6 +155,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerSearchHandlers(context);
   registerTranscriptHandlers(context);
   registerSystemHandlers(context);
+  registerMobileBridgeHandlers(context);
 
   // Start the central embedding engine's background drain loop at boot, not
   // lazily on the first project:open. attach() is idempotent, so the later

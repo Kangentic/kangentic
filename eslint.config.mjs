@@ -6,11 +6,15 @@ import reactHooksPlugin from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 
 export default tseslint.config(
-  { ignores: ['node_modules/', '.vite/', '.kangentic/', 'dist/', 'build/', 'packages/'] },
+  // packages/launcher is deliberately zero-dep plain CommonJS with no build
+  // step; packages/protocol IS linted under the same strict rules as src/
+  // and tests/ below (see the `packages/protocol/src/**` entry in the next
+  // block's `files`), so it is NOT in this ignore list.
+  { ignores: ['node_modules/', '.vite/', '.kangentic/', 'dist/', 'build/', 'packages/launcher/'] },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['src/**/*.{ts,tsx}', 'tests/**/*.{ts,tsx}'],
+    files: ['src/**/*.{ts,tsx}', 'tests/**/*.{ts,tsx}', 'packages/protocol/src/**/*.ts'],
     plugins: {
       'react-hooks': reactHooksPlugin,
     },

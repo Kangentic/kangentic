@@ -1,6 +1,20 @@
 import { defineConfig } from 'vitest/config';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const configDir = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  resolve: {
+    // No existing alias precedent for @shared in this config (unit tests import
+    // it via relative paths instead); this one is added specifically so
+    // tests/unit/protocol/*.test.ts can exercise the real public export
+    // surface of the package (`import ... from '@kangentic/protocol'`) rather
+    // than reaching into its internals via deep relative paths.
+    alias: {
+      '@kangentic/protocol': path.join(configDir, 'packages/protocol/src'),
+    },
+  },
   // Match the build-time constant used by esbuild (scripts/{dev,build}.js)
   // and Vite (vite.config.mts). Vitest evaluates source TS with on-the-fly
   // transforms - the constant is unset by default, so any `if (__KANGENTIC_DEV__)`

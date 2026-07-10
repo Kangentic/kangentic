@@ -1004,6 +1004,12 @@ function getShutdownDependencies() {
         mcpServerHandle.close();
         mcpServerHandle = null;
       }
+      // Synchronously tear down the mobile bridge: cancels any in-progress
+      // pairing ceremony and disposes active sessions. All of its internal
+      // timers (the ~2-minute KK re-handshake, the relay client's reconnect
+      // backoff) are already .unref()'d, but dispose() clears them
+      // explicitly so nothing fires mid-shutdown.
+      getOptionalIpcContext()?.mobileBridgeService.dispose();
     },
     isEphemeral,
   };

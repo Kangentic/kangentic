@@ -198,6 +198,15 @@ jobs:
         run: npm ci
       - name: Build (production bundle)
         run: npm run build
+      # @kangentic/protocol publishes through its own independent workflow
+      # (publish-protocol.yml), not this one -- but that workflow only runs
+      # at publish time (a protocol-v* tag push), so without this step a
+      # broken package build (a declaration-emit error, an esbuild config
+      # regression) would go undetected until an actual release attempt.
+      # This proves `npm run build -w packages/protocol` still succeeds on
+      # every PR, same as the app bundle above.
+      - name: Build @kangentic/protocol package
+        run: npm run build -w packages/protocol
 
   # UI tier, sharded across parallel ubuntu runners (Playwright `--shard`). Each
   # shard prints its own per-test results via the `list` reporter (visible in the

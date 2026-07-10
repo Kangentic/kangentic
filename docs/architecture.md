@@ -243,6 +243,21 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `boardConfig:shortcutsChanged` | on | Event: shortcuts file changed |
 | `boardConfig:setDefaultBaseBranch` | invoke | Set the team-shared default base branch in `kangentic.json` |
 
+### Mobile Bridge (10 channels)
+Machine-global (like Config), not project-scoped - backs the Mobile Devices settings tab. See [Mobile Bridge](mobile-bridge.md) for the pairing ceremony, roster, capability verbs, and relay transport this group fronts.
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `mobile:getStatus` | invoke | Report bridge status: enabled, secure-storage availability, identity fingerprint, relay URL, paired device count, pairing-in-progress |
+| `mobile:startPairing` | invoke | Mint a pairing token, connect the pairing relay slot, and return the QR payload URI |
+| `mobile:confirmPairing` | invoke | Confirm the SAS matched; signs the phone's static key into the roster with the given display name and capabilities |
+| `mobile:cancelPairing` | invoke | Cancel an in-progress pairing ceremony |
+| `mobile:listDevices` | invoke | List paired devices (id, display name, capabilities, paired-at) |
+| `mobile:revokeDevice` | invoke | Revoke a paired device: drop it from the signed roster and tear down its session |
+| `mobile:setDeviceCapabilities` | invoke | Update a paired device's granted capability verbs (re-signs the roster entry) |
+| `mobile:pairingSas` | on | Event: the SAS (digits + emoji) to display for the current pairing ceremony |
+| `mobile:pairingEnded` | on | Event: pairing cancelled or failed, with a reason |
+| `mobile:stateChanged` | on | Event: status or device list changed (confirm/revoke/capability update) |
+
 ### Notifications (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
@@ -708,11 +723,20 @@ Backlog Import group (6 channels): `backlog:importCheckCli`, `backlog:importFetc
 
 Asana ships an additional `boards:asana:*` group (3 channels: `authStatus`, `setPat`, `clearCredential`) for its Personal Access Token lifecycle. Handlers live in `src/main/boards/adapters/asana/ipc-handlers.ts` and are registered by `registerAsanaIpcHandlers()` from the backlog handler. Keeping the surface adapter-local means Asana specifics never leak into the generic backlog handler.
 
+## Mobile Bridge
+
+`src/main/mobile-bridge/`
+
+Desktop half of the mobile companion app's secure pairing/transport link, consuming the shared `@kangentic/protocol` package (`packages/protocol/`). Owns the device identity, signed device roster, QR pairing ceremony, capability-verb router, and the outbound relay transport client. Constructed in `src/main/ipc/register-all.ts`, torn down synchronously in `src/main/index.ts`'s `clearPendingTimers`. Machine-global (not project-scoped), backing the Mobile Devices settings tab via the `mobile:*` IPC group above.
+
+Phase 1 (shipped) covers identity/roster/pairing/transport and the deny-by-default capability router with no verb handlers registered yet; capability data feeds, notifications, and a direct P2P transport upgrade are later phases. See [Mobile Bridge](mobile-bridge.md) for the full pairing ceremony, SAS confirmation, roster revocation model, capability verb list, ongoing-session crypto, relay transport contract, and phase scope.
+
 ## See Also
 
 - [Session Lifecycle](session-lifecycle.md) -- Full state machine, spawn flow, queue, crash recovery
 - [Agent Integration](agent-integration.md) -- Adapter interface, per-agent CLI details, permission modes, hooks, trust
 - [Board Integration](board-integration.md) -- BoardAdapter interface, registry, how to add a new provider
+- [Mobile Bridge](mobile-bridge.md) - Pairing ceremony, signed device roster, capability verbs, relay transport
 - [Transition Engine](transition-engine.md) -- Action types, templates, priority rules
 - [Database](database.md) -- Full schema reference, migrations, repository pattern
 - [Configuration](configuration.md) -- Config cascade, all settings keys

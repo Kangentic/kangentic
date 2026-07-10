@@ -6,6 +6,7 @@ import { TestHarness } from '../devtools/renderer/TestHarness';
 import { useProjectStore } from './stores/project-store';
 import { useBoardStore } from './stores/board-store';
 import { useConfigStore } from './stores/config-store';
+import { useMobileStore } from './stores/mobile-store';
 import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useToastStore } from './stores/toast-store';
@@ -682,6 +683,8 @@ if (import.meta.hot) {
     useConfigStore.getState().loadAgentList();
     useBoardStore.getState().loadBoard();
     useBacklogStore.getState().loadBacklog();
+    useMobileStore.getState().loadStatus();
+    useMobileStore.getState().loadDevices();
     useSessionStore.getState().syncSessions().then((applied) => {
       if (!applied) return;
 

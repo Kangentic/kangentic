@@ -2479,6 +2479,103 @@
       })(),
     },
 
+    // Mobile bridge mock. Stateful (pairing a device persists into
+    // listDevices() for the rest of the test), with escape hatches for
+    // specs that need to drive the pairing flow's push events directly:
+    //   - window.__mockMobileBridgeStatus: shallow-merged onto getStatus()'s result
+    //   - window.__mockMobileDevices: overrides listDevices()'s return value
+    //   - window.__mockFireMobilePairingSas(payload) / __mockFireMobilePairingEnded(payload) / __mockFireMobileStateChanged()
+    mobile: (function () {
+      var state = {
+        enabled: false,
+        secureStorageAvailable: true,
+        identityFingerprint: null,
+        relayUrl: '',
+        devices: [],
+        pairingInProgress: false,
+      };
+      var sasListeners = [];
+      var pairingEndedListeners = [];
+      var stateChangedListeners = [];
+
+      if (typeof window !== 'undefined') {
+        window.__mockFireMobilePairingSas = function (payload) {
+          sasListeners.forEach(function (listener) { listener(payload); });
+        };
+        window.__mockFireMobilePairingEnded = function (payload) {
+          pairingEndedListeners.forEach(function (listener) { listener(payload); });
+        };
+        window.__mockFireMobileStateChanged = function () {
+          stateChangedListeners.forEach(function (listener) { listener(); });
+        };
+      }
+
+      return {
+        getStatus: async function () {
+          var overrides = (typeof window !== 'undefined' && window.__mockMobileBridgeStatus) || {};
+          return Object.assign({
+            enabled: state.enabled,
+            secureStorageAvailable: state.secureStorageAvailable,
+            identityFingerprint: state.identityFingerprint,
+            relayUrl: state.relayUrl,
+            pairedDeviceCount: state.devices.length,
+            pairingInProgress: state.pairingInProgress,
+          }, overrides);
+        },
+        startPairing: async function () {
+          state.pairingInProgress = true;
+          return {
+            qrUri: 'kangentic-pair://mock',
+            expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+          };
+        },
+        confirmPairing: async function (displayName, capabilities) {
+          state.pairingInProgress = false;
+          state.devices.push({
+            deviceId: 'mock-device-' + (state.devices.length + 1),
+            displayName: displayName,
+            capabilities: capabilities || [],
+            pairedAt: new Date().toISOString(),
+          });
+        },
+        cancelPairing: async function () {
+          state.pairingInProgress = false;
+        },
+        listDevices: async function () {
+          return (typeof window !== 'undefined' && window.__mockMobileDevices) || state.devices;
+        },
+        revokeDevice: async function (deviceId) {
+          state.devices = state.devices.filter(function (device) { return device.deviceId !== deviceId; });
+        },
+        setDeviceCapabilities: async function (deviceId, capabilities) {
+          state.devices.forEach(function (device) {
+            if (device.deviceId === deviceId) device.capabilities = capabilities;
+          });
+        },
+        onPairingSas: function (callback) {
+          sasListeners.push(callback);
+          return function () {
+            var index = sasListeners.indexOf(callback);
+            if (index >= 0) sasListeners.splice(index, 1);
+          };
+        },
+        onPairingEnded: function (callback) {
+          pairingEndedListeners.push(callback);
+          return function () {
+            var index = pairingEndedListeners.indexOf(callback);
+            if (index >= 0) pairingEndedListeners.splice(index, 1);
+          };
+        },
+        onStateChanged: function (callback) {
+          stateChangedListeners.push(callback);
+          return function () {
+            var index = stateChangedListeners.indexOf(callback);
+            if (index >= 0) stateChangedListeners.splice(index, 1);
+          };
+        },
+      };
+    })(),
+
     boardConfig: {
       exists: async function () { return false; },
       export: async function () {},

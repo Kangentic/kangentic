@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
-import type { ElectronAPI, NotificationInput, Project, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress } from '../shared/types';
+import type { ElectronAPI, NotificationInput, Project, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingEndedPayload } from '../shared/types';
 import { installConsoleCapture } from './diagnostics/console-capture';
 import { installDevtoolsPreloadHooks } from '../devtools/preload/install-globals';
 
@@ -393,6 +393,31 @@ const api: ElectronAPI = {
       authStatus: () => ipcRenderer.invoke(IPC.BOARDS_ASANA_AUTH_STATUS),
       setPat: (input) => ipcRenderer.invoke(IPC.BOARDS_ASANA_SET_PAT, input),
       clearCredential: () => ipcRenderer.invoke(IPC.BOARDS_ASANA_CLEAR_CREDENTIAL),
+    },
+  },
+
+  mobile: {
+    getStatus: () => ipcRenderer.invoke(IPC.MOBILE_GET_STATUS),
+    startPairing: () => ipcRenderer.invoke(IPC.MOBILE_START_PAIRING),
+    confirmPairing: (displayName, capabilities) => ipcRenderer.invoke(IPC.MOBILE_CONFIRM_PAIRING, displayName, capabilities),
+    cancelPairing: () => ipcRenderer.invoke(IPC.MOBILE_CANCEL_PAIRING),
+    listDevices: () => ipcRenderer.invoke(IPC.MOBILE_LIST_DEVICES),
+    revokeDevice: (deviceId) => ipcRenderer.invoke(IPC.MOBILE_REVOKE_DEVICE, deviceId),
+    setDeviceCapabilities: (deviceId, capabilities) => ipcRenderer.invoke(IPC.MOBILE_SET_DEVICE_CAPABILITIES, deviceId, capabilities),
+    onPairingSas: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: MobilePairingSasPayload) => callback(payload);
+      ipcRenderer.on(IPC.MOBILE_PAIRING_SAS, handler);
+      return () => ipcRenderer.removeListener(IPC.MOBILE_PAIRING_SAS, handler);
+    },
+    onPairingEnded: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: MobilePairingEndedPayload) => callback(payload);
+      ipcRenderer.on(IPC.MOBILE_PAIRING_ENDED, handler);
+      return () => ipcRenderer.removeListener(IPC.MOBILE_PAIRING_ENDED, handler);
+    },
+    onStateChanged: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on(IPC.MOBILE_STATE_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.MOBILE_STATE_CHANGED, handler);
     },
   },
 
