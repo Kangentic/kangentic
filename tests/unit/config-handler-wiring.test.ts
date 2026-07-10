@@ -175,6 +175,7 @@ function makeContext(overrides?: {
     currentProjectPath: overrides?.currentProjectPath ?? null,
     currentProjectId: overrides?.currentProjectId ?? null,
     mcpServerHandle: null,
+    mobileBridgeService: { reconcile: vi.fn() },
   };
 }
 
@@ -266,6 +267,63 @@ describe('CONFIG_SET IPC handler - retrieval-service reconcileEmbedWorker wiring
     await Promise.resolve();
 
     expect(reconcileEmbedWorkerSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('CONFIG_SET IPC handler - mobileBridgeService reconcile wiring', () => {
+  // Regression guard: toggling mobileBridge.enabled or editing relayUrl in
+  // Settings must take effect immediately (no app/project reopen), by
+  // calling mobileBridgeService.reconcile() with the freshly-saved
+  // EFFECTIVE config's mobileBridge fields - not the raw partial `config`
+  // argument, which may omit relayUrl entirely on an enabled-only toggle.
+  beforeEach(() => {
+    capturedHandlers.clear();
+    capturedOnHandlers.clear();
+    applyRuntimeConfigSpy.mockClear();
+  });
+
+  it('calls mobileBridgeService.reconcile() with the effective config when the saved config includes a mobileBridge key', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    context.configManager.getEffectiveConfig.mockReturnValue({
+      agent: { maxConcurrentSessions: 5, idleTimeoutMinutes: 30 },
+      terminal: { shell: null },
+      mobileBridge: { enabled: true, relayUrl: 'wss://relay.example.com' },
+    });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:set', { mobileBridge: { enabled: true } });
+
+    expect(context.mobileBridgeService.reconcile).toHaveBeenCalledTimes(1);
+    expect(context.mobileBridgeService.reconcile).toHaveBeenCalledWith({
+      enabled: true,
+      relayUrl: 'wss://relay.example.com',
+    });
+  });
+
+  it('defaults enabled to false and relayUrl to empty string when the effective config omits mobileBridge fields', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    context.configManager.getEffectiveConfig.mockReturnValue({
+      agent: { maxConcurrentSessions: 5, idleTimeoutMinutes: 30 },
+      terminal: { shell: null },
+      mobileBridge: {},
+    });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:set', { mobileBridge: { enabled: false } });
+
+    expect(context.mobileBridgeService.reconcile).toHaveBeenCalledWith({
+      enabled: false,
+      relayUrl: '',
+    });
+  });
+
+  it('does NOT call mobileBridgeService.reconcile() when the saved config has no mobileBridge key', () => {
+    const context = makeContext({ currentProjectPath: '/repo/main' });
+    registerSystemHandlers(context as Parameters<typeof registerSystemHandlers>[0]);
+
+    invokeHandler('config:set', { terminal: { shell: '/usr/bin/zsh' } });
+
+    expect(context.mobileBridgeService.reconcile).not.toHaveBeenCalled();
   });
 });
 

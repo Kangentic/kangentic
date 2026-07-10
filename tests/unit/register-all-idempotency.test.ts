@@ -180,6 +180,28 @@ vi.mock('../../src/main/ipc/handlers/git-diff', () => ({
 vi.mock('../../src/main/ipc/handlers/system', () => ({
   registerSystemHandlers: vi.fn(),
 }));
+vi.mock('../../src/main/ipc/handlers/mobile-bridge', () => ({
+  registerMobileBridgeHandlers: vi.fn(),
+}));
+
+// MobileBridgeService is constructed directly by register-all.ts (unlike the
+// other services above, which are all injected via a registerXHandlers mock),
+// so it needs its own lightweight class mock: a real .reconcile() spy to
+// assert the effective-config wiring below, and no real fs/electron/identity
+// work (the real class already covers that in mobile-bridge-service.test.ts).
+const mobileBridgeReconcileSpy = vi.fn();
+const mobileBridgeDisposeSpy = vi.fn();
+vi.mock('../../src/main/mobile-bridge/mobile-bridge-service', () => ({
+  MobileBridgeService: class {
+    config: unknown;
+    constructor(config: unknown) {
+      this.config = config;
+    }
+    reconcile = mobileBridgeReconcileSpy;
+    dispose = mobileBridgeDisposeSpy;
+    on = vi.fn();
+  },
+}));
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -192,6 +214,8 @@ function makeMockWindow(id: number) {
 describe('registerAllIpc idempotency', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    mobileBridgeReconcileSpy.mockClear();
+    mobileBridgeDisposeSpy.mockClear();
     // Reset the module-level `context` singleton between tests
     vi.resetModules();
   });
@@ -210,6 +234,7 @@ describe('registerAllIpc idempotency', () => {
     const { registerTaskMoveHandlers } = await import('../../src/main/ipc/handlers/task-move');
     const { registerTaskBranchHandlers } = await import('../../src/main/ipc/handlers/task-branch');
     const { registerTaskRuntimeOverrideHandlers } = await import('../../src/main/ipc/handlers/task-runtime-override');
+    const { registerMobileBridgeHandlers } = await import('../../src/main/ipc/handlers/mobile-bridge');
     const { retrievalService } = await import('../../src/main/retrieval/retrieval-service');
 
     const window = makeMockWindow(1);
@@ -222,11 +247,20 @@ describe('registerAllIpc idempotency', () => {
     expect(registerTaskMoveHandlers).toHaveBeenCalledTimes(1);
     expect(registerTaskBranchHandlers).toHaveBeenCalledTimes(1);
     expect(registerTaskRuntimeOverrideHandlers).toHaveBeenCalledTimes(1);
+    expect(registerMobileBridgeHandlers).toHaveBeenCalledTimes(1);
 
     // The central embedding engine's drain loop is started at boot (not just
     // lazily on the first project:open), so the drain loop is already alive
     // before any project is opened.
     expect(retrievalService.attach).toHaveBeenCalledTimes(1);
+
+    // MobileBridgeService.reconcile() is called once at startup with the
+    // real effective config's mobileBridge fields (defaulted, since the
+    // mocked ConfigManager.getEffectiveConfig() here returns no mobileBridge
+    // key) - not left at the { enabled: false, relayUrl: '' } placeholder
+    // the constructor takes before configManager is available.
+    expect(mobileBridgeReconcileSpy).toHaveBeenCalledTimes(1);
+    expect(mobileBridgeReconcileSpy).toHaveBeenCalledWith({ enabled: false, relayUrl: '' });
 
     // Context is initialized (wrappers don't throw)
     expect(() => getSessionManager()).not.toThrow();
@@ -246,6 +280,7 @@ describe('registerAllIpc idempotency', () => {
     const { registerBacklogHandlers } = await import('../../src/main/ipc/handlers/backlog');
     const { registerGitDiffHandlers } = await import('../../src/main/ipc/handlers/git-diff');
     const { registerSystemHandlers } = await import('../../src/main/ipc/handlers/system');
+    const { registerMobileBridgeHandlers } = await import('../../src/main/ipc/handlers/mobile-bridge');
     const { retrievalService } = await import('../../src/main/retrieval/retrieval-service');
 
     const window1 = makeMockWindow(1);
@@ -277,10 +312,16 @@ describe('registerAllIpc idempotency', () => {
     expect(registerBacklogHandlers).toHaveBeenCalledTimes(1);
     expect(registerGitDiffHandlers).toHaveBeenCalledTimes(1);
     expect(registerSystemHandlers).toHaveBeenCalledTimes(1);
+    expect(registerMobileBridgeHandlers).toHaveBeenCalledTimes(1);
 
     // The second call short-circuits before reaching retrievalService.attach,
     // so it stays called exactly once total across both registerAllIpc calls.
     expect(retrievalService.attach).toHaveBeenCalledTimes(1);
+
+    // Same idempotency guarantee for the mobile bridge: a re-activate on
+    // macOS must not construct a second MobileBridgeService (which would
+    // hold a second relay connection) nor re-run reconcile() a second time.
+    expect(mobileBridgeReconcileSpy).toHaveBeenCalledTimes(1);
   }, 30000);
 
   it('second call preserves existing services', async () => {
