@@ -53,6 +53,14 @@ interface SessionTelemetryCallbacks {
    * knowledge stays behind this generic callback.
    */
   resolveBackgroundShellOutputFile?(sessionId: string, shellId: string): string | null;
+  /**
+   * Report which of `shellIds` have a terminal notification in the agent's
+   * durable session transcript - definitive proof of completion for a NAMED
+   * shell whose OS PID was never captured (task #386). The bg-shell watcher
+   * calls this every cycle a PID-less named shell exists. Agent-specific
+   * transcript knowledge stays behind this generic callback.
+   */
+  reportTerminatedBackgroundShells?(sessionId: string, shellIds: string[]): string[];
 }
 
 export interface SessionTelemetryOptions {
@@ -248,6 +256,21 @@ export class SessionTelemetry {
           },
           resolveShellOutputFile: (sessionId, shellId) =>
             callbacks.resolveBackgroundShellOutputFile?.(sessionId, shellId) ?? null,
+          reportTerminatedShellsFromTranscript: (sessionId, shellIds) =>
+            callbacks.reportTerminatedBackgroundShells?.(sessionId, shellIds) ?? [],
+          onNamedShellTerminated: (sessionId, shellId) => {
+            // Watcher confirmed the shell's terminal notification directly in
+            // the durable transcript - definitive proof of completion,
+            // independent of output/count state. Drain it by id, same as a
+            // Tier A PID exit.
+            const syntheticEvent: SessionEvent = {
+              ts: Date.now(),
+              type: EventType.BackgroundShellEnd,
+              detail: shellId,
+            };
+            this.pushEvent(sessionId, syntheticEvent);
+            this.activityEngine.markBackgroundShellEnded(sessionId, shellId, { source: 'transcript' });
+          },
         },
       });
     }

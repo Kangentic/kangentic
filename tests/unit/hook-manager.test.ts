@@ -7,7 +7,7 @@ import {
   removeHooks,
 } from '../../src/main/agent/adapters/claude';
 import { EventType } from '../../src/shared/types';
-import { extractDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches, emitOnlyWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
+import { extractDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
 
 let tmpDir: string;
 const EVENT_BRIDGE = '/fake/.kangentic/event-bridge.js';
@@ -72,15 +72,13 @@ describe('hook-manager', () => {
         setTypeWhen({ field: 'is_interrupt', equals: 'true', to: EventType.Interrupted }),
       );
 
-      // UserPromptSubmit: bare prompt (entry 0), plus the task-notification
-      // bg-shell-end entry (entry 1) that drains a NAMED shell on terminal
-      // status via the injected <task-notification> message (Incident A).
-      expect(hooks.UserPromptSubmit).toHaveLength(2);
+      // UserPromptSubmit: bare prompt only. A background-shell terminal
+      // notification used to be drained via a second entry here (Incident A),
+      // but that notification is delivered as a queued_command attachment
+      // and never fires this hook (task #386) - removed in favor of the
+      // watcher's transcript drain (background-shell-transcript.ts).
+      expect(hooks.UserPromptSubmit).toHaveLength(1);
       expect(hooks.UserPromptSubmit[0].hooks[0].command).toContain('prompt');
-      expect(hooks.UserPromptSubmit[1].hooks[0].command).toContain('background_shell_end');
-      expect(hooks.UserPromptSubmit[1].hooks[0].command).toContain(
-        emitOnlyWhenDetailMatches('^[\\w-]{1,64}$'),
-      );
 
       // Stop: idle
       expect(hooks.Stop).toHaveLength(1);
@@ -181,8 +179,8 @@ describe('hook-manager', () => {
       expect(hooks.PreToolUse).toHaveLength(2);
       expect(hooks.PreToolUse[0].hooks[0].command).toBe('echo user-pretool');
 
-      // UserPromptSubmit: 1 user + 2 event-bridge (bare prompt + bg-shell-end)
-      expect(hooks.UserPromptSubmit).toHaveLength(3);
+      // UserPromptSubmit: 1 user + 1 event-bridge (bare prompt)
+      expect(hooks.UserPromptSubmit).toHaveLength(2);
       expect(hooks.UserPromptSubmit[0].hooks[0].command).toBe('echo user-hook');
     });
   });

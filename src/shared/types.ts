@@ -2927,6 +2927,31 @@ export interface AdapterRuntimeStrategy {
      * as "unsupported" and falls back to the count heuristic and caps.
      */
     resolveOutputFile(options: { cwd: string; shellId: string }): string | null;
+
+    /**
+     * Report which of `shellIds` have a TERMINAL background-shell
+     * notification in the agent's durable session transcript - definitive
+     * proof the shell completed. A shell whose termination is never hooked
+     * (Claude delivers it as a `queued_command` attachment, which never
+     * fires `UserPromptSubmit`) is still recorded in the transcript, so this
+     * is the reliable drain path for a NAMED shell whose OS PID was never
+     * captured and whose output file stays quiescent without a process-tree
+     * deficit ever confirming exit (task #386). Matching against the
+     * caller's own tracked `shellIds` means an unrelated notification (e.g.
+     * a subagent/Task completion, whose id is never a tracked shell) can
+     * never match.
+     *
+     * Implementations read only NEW transcript bytes since the previous
+     * call (an internal per-transcript cursor) so repeated polling stays
+     * cheap. Must not throw: return [] when the transcript is missing,
+     * unreadable, or nothing terminal appeared. Omit entirely for agents
+     * whose transcript carries no such signal.
+     */
+    reportTerminatedShells?(options: {
+      cwd: string;
+      agentSessionId: string;
+      shellIds: string[];
+    }): string[];
   };
 }
 

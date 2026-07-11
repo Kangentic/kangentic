@@ -610,10 +610,22 @@ describe('ActivityEngine replay tests', () => {
   // Incident A (session f03f5e43): a NAMED bg shell whose OS PID was never
   // captured exits, but its end hook is lost. The watcher's named-shell
   // no-drain branch correctly refuses a count-based drain, so the shell is
-  // held until the 5-min cap -> the task shows falsely ACTIVE. The fix emits
-  // a background_shell_end from the <task-notification> Claude injects on
-  // terminal status. Two fixtures: the raw capture (bug) and the corrected
-  // stream carrying the ends the fixed bridge emits.
+  // held until the 5-min cap -> the task shows falsely ACTIVE.
+  //
+  // The original fix (a second UserPromptSubmit hook entry draining a
+  // <task-notification>'s task id) turned out to be dead on arrival in
+  // production (task #386): a background shell's terminal notification is
+  // delivered as a queued_command attachment, which never fires
+  // UserPromptSubmit - only subagent/Task completions (a genuine user turn)
+  // do, and draining THOSE spuriously was the real, confirmed defect. The
+  // corrected fixture below still pins the intended engine contract - given
+  // a background_shell_end that correctly names the shell's own id, the
+  // engine drains it and settles idle - it is just no longer produced by a
+  // hook. It is produced by the bg-shell watcher's transcript drain (see
+  // background-shell-transcript.ts and the bg-shell-watcher.test.ts /
+  // session-telemetry-wiring.test.ts coverage of that path). The RAW
+  // (missed-end) fixture below is, if anything, MORE faithful to production
+  // now: no <task-notification> hook ever emits for a bg shell.
   // ───────────────────────────────────────────────────────────────────
   describe('session-013-task-notification-missed-end (RAW, the bug)', () => {
     let result: ReplayResult;
@@ -648,9 +660,12 @@ describe('ActivityEngine replay tests', () => {
     });
 
     it('drains both shells and reaches clean idle (no orphans, no hatch)', () => {
-      // The corrected stream carries the two background_shell_end events the
-      // fixed bridge emits from each shell's <task-notification>. Both named
-      // shells drain; the session settles to idle with no holders.
+      // The corrected stream carries the two background_shell_end events that
+      // (in production) now come from the bg-shell watcher's transcript
+      // drain, keyed by each shell's own id - not a hook. This fixture
+      // exercises only the ENGINE'S side of that contract (an id-matching
+      // background_shell_end drains the named shell). Both named shells
+      // drain; the session settles to idle with no holders.
       expect(result.finalActivity).toBe('idle');
       expect(result.finalState.activeBackgroundShellIds).toEqual([]);
       expect(result.finalState.anonymousBackgroundShellCount).toBe(0);

@@ -627,8 +627,13 @@ export class ActivityEngine {
    * remove it. Otherwise (anonymous bg shell), decrement
    * `anonymousBackgroundShellCount`. Re-evaluates the predicate -
    * may emit idle.
+   *
+   * `options.source: 'transcript'` labels a definitive drain confirmed
+   * directly from the agent's durable session transcript (task #386) -
+   * distinct from a Tier A PID-exit or a heuristic quiescence reclaim,
+   * both of which also pass an id but carry no source.
    */
-  markBackgroundShellEnded(sessionId: string, shellId?: string): void {
+  markBackgroundShellEnded(sessionId: string, shellId?: string, options?: { source?: 'transcript' }): void {
     if (this.disposed) return;
     const state = this.states.get(sessionId);
     if (!state) return;
@@ -660,9 +665,11 @@ export class ActivityEngine {
         return;
       }
     }
-    const trigger: TransitionTrigger = shellId !== undefined
-      ? `event:bg-shell-ended:${shellId}`
-      : 'event:bg-shell-ended:watcher';
+    const trigger: TransitionTrigger = options?.source === 'transcript'
+      ? 'event:bg-shell-ended:transcript'
+      : shellId !== undefined
+        ? `event:bg-shell-ended:${shellId}`
+        : 'event:bg-shell-ended:watcher';
     const delta = formatCounterDelta(before, snapshotCounters(state));
     this.reevaluate(sessionId, state, trigger, delta);
   }

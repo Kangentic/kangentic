@@ -38,9 +38,12 @@ import { looksLikeShellId } from '../background-shell/looks-like-shell-id';
  *                         the second arrival "promotes" an anonymous
  *                         slot to a named one to keep total count constant.
  * - `BackgroundShellEnd`  decrements the named shell if the id matches,
- *                         else drains anonymous, else drains a named
- *                         entry as last resort. The agent told us
- *                         SOMETHING ended.
+ *                         else drains anonymous (ONLY when the end carried
+ *                         no id at all - an id-shaped-but-unmatched end is
+ *                         a no-op, never a fallback decrement), else bumps
+ *                         `unmatchedBgShellEnd`. The agent told us
+ *                         SOMETHING ended, but an unattributable end must
+ *                         never corrupt a counter it wasn't naming.
  */
 export function updateCounters(state: SessionEngineState, event: SessionEvent): void {
   switch (event.type) {
@@ -204,20 +207,27 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
     case EventType.BackgroundShellEnd: {
       // KillBash's hook fires this with detail = tool_input.shell_id.
       // If we tracked the start under that id, decrement the named set.
-      // Otherwise (KillBash without a shell_id, or an anonymous shell)
-      // drain the anonymous count.
+      // An end with NO id at all (a true anonymous-shell signal) drains
+      // the anonymous count instead.
       //
-      // If neither matches, the end is UNATTRIBUTABLE: there is no id to
-      // match and no anonymous slot to drain. We do NOT drain an arbitrary
-      // named shell as a last resort - that would let a spurious end (e.g.
-      // a tool-blind remap leaking an Agent completion) corrupt a real,
-      // id-tracked shell and trigger a premature idle. Instead it is a
-      // no-op that bumps a compensation counter, bounding the blast radius
-      // of any input-layer mistake. Real orphans are still reclaimed by the
-      // process-tree watcher and the bg-shell escape hatch.
+      // An id-shaped detail that does NOT match a tracked named shell is
+      // UNATTRIBUTABLE and must NEVER fall through to draining the
+      // anonymous count: the end explicitly named a shell, so treating the
+      // miss as "some anonymous shell must have ended" would let a stray or
+      // mis-remapped id-carrying end (e.g. a version-skewed hook payload)
+      // silently mask a real, unrelated anonymous shell's exit. We do not
+      // drain an arbitrary named shell either, for the same reason. Instead
+      // it is a no-op that bumps a compensation counter, bounding the blast
+      // radius of any input-layer mistake. Real orphans are still reclaimed
+      // by the process-tree watcher, the transcript drain, and the bg-shell
+      // escape hatch.
       const shellId = event.detail;
-      if (shellId !== undefined && state.activeBackgroundShellIds.has(shellId)) {
-        state.activeBackgroundShellIds.delete(shellId);
+      if (shellId !== undefined) {
+        if (state.activeBackgroundShellIds.has(shellId)) {
+          state.activeBackgroundShellIds.delete(shellId);
+        } else {
+          state.compensationCounters.unmatchedBgShellEnd += 1;
+        }
       } else if (state.anonymousBackgroundShellCount > 0) {
         state.anonymousBackgroundShellCount -= 1;
       } else {

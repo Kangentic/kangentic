@@ -9,6 +9,7 @@ import {
   parseClaudeTranscriptToolCounts,
 } from './transcript-parser';
 import { resolveBackgroundTaskOutputFile } from './background-task-output';
+import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { ensureWorktreeTrust, ensureMcpServerTrust } from './trust-manager';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
@@ -156,6 +157,11 @@ export class ClaudeAdapter implements AgentAdapter {
     // baseTmpDir parameter stays internal to the resolver.
     backgroundShells: {
       resolveOutputFile: (options) => resolveBackgroundTaskOutputFile(options),
+      // Definitive reclaim (task #386): a shell's terminal <task-notification>
+      // is delivered as a queued_command attachment, never a hooked user
+      // turn, but IS appended to the native transcript. See
+      // background-shell-transcript.ts for the full rationale.
+      reportTerminatedShells: (options) => reportTerminatedBackgroundShells(options),
     },
   };
 

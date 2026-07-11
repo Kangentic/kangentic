@@ -27,8 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { EventType } from '../../src/shared/types';
-import { extractTool, extractToolId, extractDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches, extractDetailPattern, emitOnlyWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
-import { TASK_NOTIFICATION_END_PATTERN } from '../../src/main/agent/adapters/claude/hook-manager';
+import { extractTool, extractToolId, extractDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
 
 const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
 
@@ -44,14 +43,6 @@ function runBridge(stdinContent: string, args: string[]): void {
 
 function readEvent(): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(outputFile, 'utf-8').trim());
-}
-
-/** All JSONL lines emitted (for multi-command-against-one-file scenarios). */
-function readEvents(): Record<string, unknown>[] {
-  return fs.readFileSync(outputFile, 'utf-8')
-    .split('\n')
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
 /** True when the bridge appended at least one event (file exists, non-empty). */
@@ -546,158 +537,6 @@ describe('event-bridge StopFailure -> turn_failed / turn_retrying (retryable-err
     const emitted = readEvent();
     expect(emitted.type).toBe('turn_retrying');
     expect(emitted.detail).toBe('server_error: upstream connect error');
-  });
-});
-
-describe('event-bridge UserPromptSubmit task-notification -> background_shell_end (Incident A)', () => {
-  // The exact directive set the Claude adapter wires as a SECOND UserPromptSubmit
-  // entry (alongside the bare Prompt entry). When a NAMED bg shell reaches a
-  // terminal state, Claude injects a <task-notification> user message that fires
-  // UserPromptSubmit; this entry pulls the task id out of the prompt and emits
-  // background_shell_end, suppressing entirely for ordinary prompts. The
-  // pattern is imported from hook-manager.ts so this test always exercises the
-  // exact regex the adapter wires (no hand-synced copy to drift).
-  const BG_END_DIRECTIVES = [
-    extractDetailPattern('prompt', TASK_NOTIFICATION_END_PATTERN),
-    emitOnlyWhenDetailMatches('^[\\w-]{1,64}$'),
-  ];
-  // The bare Prompt entry that fires for every UserPromptSubmit (entry #1).
-  const PROMPT_DIRECTIVES: string[] = [];
-
-  /** Real-shape task-notification block (mirrors session f03f5e43, shell
-   *  b9wh3dhov). Paths sanitized to a generic dev home per no-personal-info. */
-  function taskNotification(taskId: string, status: string, summary: string): string {
-    return `<task-notification>\n<task-id>${taskId}</task-id>\n<tool-use-id>toolu_01JQeHaUT5NcJFwFrenQaGLf</tool-use-id>\n<output-file>C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\proj-hash\\session\\tasks\\${taskId}.output</output-file>\n<status>${status}</status>\n<summary>${summary}</summary>\n</task-notification>`;
-  }
-
-  it('emits background_shell_end with the task id for a failed notification', () => {
-    const stdinContent = JSON.stringify({
-      session_id: 'abc123',
-      cwd: 'C:\\Users\\dev\\repo',
-      prompt: taskNotification('b9wh3dhov', 'failed', 'Background command "E2E tier" failed with exit code 1'),
-    });
-    runBridge(stdinContent, [outputFile, 'background_shell_end', ...BG_END_DIRECTIVES]);
-    const emitted = readEvent();
-    expect(emitted.type).toBe('background_shell_end');
-    expect(emitted.detail).toBe('b9wh3dhov');
-  });
-
-  it('emits for a completed notification', () => {
-    const stdinContent = JSON.stringify({
-      prompt: taskNotification('bikrml4pf', 'completed', 'Background command "E2E" completed (exit code 0)'),
-    });
-    runBridge(stdinContent, [outputFile, 'background_shell_end', ...BG_END_DIRECTIVES]);
-    const emitted = readEvent();
-    expect(emitted.type).toBe('background_shell_end');
-    expect(emitted.detail).toBe('bikrml4pf');
-  });
-
-  it('suppresses entirely for an ordinary prompt (nothing appended)', () => {
-    const stdinContent = JSON.stringify({ prompt: 'Please fix the failing test in task-move.ts' });
-    runBridge(stdinContent, [outputFile, 'background_shell_end', ...BG_END_DIRECTIVES]);
-    expect(outputEmitted()).toBe(false);
-  });
-
-  it('suppresses a notification with a NON-terminal status (e.g. running)', () => {
-    const stdinContent = JSON.stringify({
-      prompt: taskNotification('b0n5h2qf8', 'running', 'Background command still running'),
-    });
-    runBridge(stdinContent, [outputFile, 'background_shell_end', ...BG_END_DIRECTIVES]);
-    expect(outputEmitted()).toBe(false);
-  });
-
-  it('suppresses a prompt that merely mentions task-notification without the anchored structure', () => {
-    const stdinContent = JSON.stringify({
-      prompt: 'Explain how the <task-notification> mechanism works in Claude Code',
-    });
-    runBridge(stdinContent, [outputFile, 'background_shell_end', ...BG_END_DIRECTIVES]);
-    expect(outputEmitted()).toBe(false);
-  });
-
-  it('both UserPromptSubmit entries against one file yield prompt + background_shell_end (the (b) shape)', () => {
-    // Entry #1 (bare Prompt) and entry #2 (this directive set) both run for the
-    // same notification prompt, appending to the same events file. The Prompt
-    // is preserved (turnActive) AND the named shell is drained.
-    const stdinContent = JSON.stringify({
-      prompt: taskNotification('b9wh3dhov', 'failed', 'E2E tier failed'),
-    });
-    runBridge(stdinContent, [outputFile, 'prompt', ...PROMPT_DIRECTIVES]);
-    runBridge(stdinContent, [outputFile, 'background_shell_end', ...BG_END_DIRECTIVES]);
-    const events = readEvents();
-    expect(events).toHaveLength(2);
-    expect(events[0].type).toBe('prompt');
-    expect(events[1].type).toBe('background_shell_end');
-    expect(events[1].detail).toBe('b9wh3dhov');
-  });
-
-  it('fail-closed: a malformed emit-gate pattern suppresses the event and logs', () => {
-    // Hand-encode an emitOnlyWhenDetailMatches with an invalid regex to confirm
-    // the fail-closed path: nothing is appended and a diagnostic is logged.
-    const badGate = `emitOnlyWhenDetailMatches:${Buffer.from(JSON.stringify({ pattern: '([' }), 'utf8').toString('base64')}`;
-    const stdinContent = JSON.stringify({
-      prompt: taskNotification('b9wh3dhov', 'failed', 'E2E tier failed'),
-    });
-    runBridge(stdinContent, [outputFile, 'background_shell_end', extractDetailPattern('prompt', TASK_NOTIFICATION_END_PATTERN), badGate]);
-    expect(outputEmitted()).toBe(false);
-    const errorLog = path.join(tmpDir, 'events-bridge.error.log');
-    expect(fs.existsSync(errorLog)).toBe(true);
-    expect(fs.readFileSync(errorLog, 'utf-8')).toContain('invalid emitOnlyWhenDetailMatches pattern');
-  });
-
-  it('extractDetailPattern: malformed regex logs and still emits the event with detail unset', () => {
-    // When extractDetailPattern receives an invalid regex pattern the bridge
-    // calls logBridgeError('invalid extractDetailPattern pattern: ...') and
-    // breaks out of the case without setting event.detail. The event is still
-    // appended because extractDetailPattern is NOT a gate directive - it is
-    // a best-effort extraction. Confirm: event lands, detail is absent, and
-    // the error log records the diagnostic.
-    //
-    // Hand-encode the directive with a broken pattern so it cannot be
-    // produced by the typed builder (which does not validate regex syntax).
-    const badExtract = `extractDetailPattern:${Buffer.from(JSON.stringify({ field: 'prompt', pattern: '([' }), 'utf8').toString('base64')}`;
-    const stdinContent = JSON.stringify({
-      prompt: taskNotification('b9wh3dhov', 'failed', 'E2E tier failed'),
-    });
-    runBridge(stdinContent, [outputFile, 'background_shell_end', badExtract]);
-    // The event IS still appended (extractDetailPattern alone never suppresses).
-    expect(outputEmitted()).toBe(true);
-    const emitted = readEvent();
-    expect(emitted.type).toBe('background_shell_end');
-    // detail must be absent: the broken regex produced no capture group 1.
-    expect(emitted.detail).toBeUndefined();
-    const errorLog = path.join(tmpDir, 'events-bridge.error.log');
-    expect(fs.existsSync(errorLog)).toBe(true);
-    expect(fs.readFileSync(errorLog, 'utf-8')).toContain('invalid extractDetailPattern pattern');
-  });
-
-  it('extractDetailPattern: non-string field value skips extraction and still emits', () => {
-    // The bridge guards `if (typeof value !== 'string') break` before the
-    // regex call. Sending a numeric field value must leave detail unset
-    // and must not suppress the event. Pair with emitOnlyWhenDetailMatches
-    // to confirm the fail-closed suppression applies (no detail -> no match ->
-    // suppressed), demonstrating the full interaction.
-    const stdinContent = JSON.stringify({ prompt: 42 }); // numeric, not a string
-    // Without a gate: event is emitted, detail is unset.
-    runBridge(stdinContent, [outputFile, 'background_shell_end', extractDetailPattern('prompt', TASK_NOTIFICATION_END_PATTERN)]);
-    expect(outputEmitted()).toBe(true);
-    const emitted = readEvent();
-    expect(emitted.type).toBe('background_shell_end');
-    expect(emitted.detail).toBeUndefined();
-  });
-
-  it('extractDetailPattern + emitOnlyWhenDetailMatches: non-string field causes fail-closed suppression', () => {
-    // When the field is non-string, extractDetailPattern leaves detail
-    // unset. A downstream emitOnlyWhenDetailMatches gate then sees
-    // detail === undefined (not a string), which is fail-closed: it
-    // suppresses the event entirely. Nothing is appended.
-    const stdinContent = JSON.stringify({ prompt: { nested: 'object' } }); // object, not a string
-    runBridge(stdinContent, [
-      outputFile,
-      'background_shell_end',
-      extractDetailPattern('prompt', TASK_NOTIFICATION_END_PATTERN),
-      emitOnlyWhenDetailMatches('^[\\w-]{1,64}$'),
-    ]);
-    expect(outputEmitted()).toBe(false);
   });
 });
 

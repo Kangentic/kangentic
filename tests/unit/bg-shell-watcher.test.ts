@@ -74,6 +74,7 @@ interface CallbackLog {
   naturalExits: Array<{ sessionId: string; exitedCount: number }>;
   shellPidExited: Array<{ sessionId: string; shellId: string }>;
   namedShellLikelyExited: Array<{ sessionId: string; shellId: string }>;
+  namedShellTerminated: Array<{ sessionId: string; shellId: string }>;
   rootDied: string[];
   observedAlive: string[];
 }
@@ -86,9 +87,23 @@ function makeWatcher(opts?: {
   namedShellMap?: Map<string, string[]>;
   outputPathMap?: Map<string, string>;
   mockFiles?: Map<string, OutputFileSample>;
+  /**
+   * Scripted transcript-drain reader keyed by shell id. Defaults to empty so
+   * `reportTerminatedShellsFromTranscript` returns [] and the transcript-drain
+   * path stays inert for every existing test. A test opts in by adding an id
+   * to this set, then asserting `log.namedShellTerminated`.
+   */
+  terminatedShellIds?: Set<string>;
 }) {
   const probe = new MockProcessTreeProbe();
-  const log: CallbackLog = { naturalExits: [], shellPidExited: [], namedShellLikelyExited: [], rootDied: [], observedAlive: [] };
+  const log: CallbackLog = {
+    naturalExits: [],
+    shellPidExited: [],
+    namedShellLikelyExited: [],
+    namedShellTerminated: [],
+    rootDied: [],
+    observedAlive: [],
+  };
   const rootPids = opts?.rootPidMap ?? new Map<string, number>();
   const shellCounts = opts?.shellCountMap ?? new Map<string, number>();
   const pendingTools = opts?.pendingToolMap ?? new Map<string, number>();
@@ -102,6 +117,7 @@ function makeWatcher(opts?: {
   // `mockFiles` maps a resolved path to its current size/mtime sample.
   const outputPaths = opts?.outputPathMap ?? new Map<string, string>();
   const mockFiles = opts?.mockFiles ?? new Map<string, OutputFileSample>();
+  const terminatedShellIds = opts?.terminatedShellIds ?? new Set<string>();
 
   const callbacks: BgShellWatcherCallbacks = {
     onNaturalExit(sessionId, exitedCount) {
@@ -113,6 +129,9 @@ function makeWatcher(opts?: {
     onNamedShellLikelyExited(sessionId, shellId) {
       log.namedShellLikelyExited.push({ sessionId, shellId });
     },
+    onNamedShellTerminated(sessionId, shellId) {
+      log.namedShellTerminated.push({ sessionId, shellId });
+    },
     onRootProcessDied(sessionId) {
       log.rootDied.push(sessionId);
     },
@@ -121,6 +140,9 @@ function makeWatcher(opts?: {
     },
     resolveShellOutputFile(_sessionId, shellId) {
       return outputPaths.get(shellId) ?? null;
+    },
+    reportTerminatedShellsFromTranscript(_sessionId, shellIds) {
+      return shellIds.filter((shellId) => terminatedShellIds.has(shellId));
     },
     getRootPid(sessionId) {
       return rootPids.get(sessionId);
@@ -143,7 +165,7 @@ function makeWatcher(opts?: {
     statOutputFile: (filePath) => mockFiles.get(filePath) ?? null,
   });
 
-  return { watcher, probe, log, rootPids, shellCounts, pendingTools, namedShells, outputPaths, mockFiles };
+  return { watcher, probe, log, rootPids, shellCounts, pendingTools, namedShells, outputPaths, mockFiles, terminatedShellIds };
 }
 
 describe('BgShellWatcher', () => {
@@ -2394,6 +2416,119 @@ describe('BgShellWatcher', () => {
       mockFiles.set('/mock/tmp/bgA.output', { sizeBytes: 200, mtimeMs: 2 });
       await watcher.pollNow();
       expect(log.observedAlive).toContain('s1');
+      watcher.dispose();
+    });
+  });
+
+  describe('transcript drain for a PID-less named shell (task #386)', () => {
+    /**
+     * Task #386: a background shell's terminal <task-notification> is
+     * delivered as a `queued_command` attachment, never a hooked user turn,
+     * so neither the KillBash hook nor the removed task-notification hook
+     * directive can ever fire for it. The watcher instead asks the adapter
+     * directly whether the transcript shows the tracked shell terminated -
+     * definitive proof of completion, independent of the process-tree count
+     * or the shell's output-file growth state.
+     */
+    function setupPidlessNamedShellForTranscript(terminatedShellIds?: Set<string>) {
+      const outputPaths = new Map<string, string>([['bvqiw3a6s', '/mock/tmp/bvqiw3a6s.output']]);
+      const mockFiles = new Map<string, OutputFileSample>([
+        ['/mock/tmp/bvqiw3a6s.output', { sizeBytes: 100, mtimeMs: 1000 }],
+      ]);
+      const harness = makeWatcher({ outputPathMap: outputPaths, mockFiles, terminatedShellIds });
+      harness.rootPids.set('s1', 1234);
+      harness.probe.alive.add(1234);
+      harness.probe.trees.set(1234, []); // no pre-existing helpers
+      return { ...harness, outputPaths, mockFiles };
+    }
+
+    it('drains the cycle the transcript reports termination, with frozen output and a persistent deficit (task #386 shape)', async () => {
+      const { watcher, probe, shellCounts, namedShells, log, terminatedShellIds } = setupPidlessNamedShellForTranscript();
+      watcher.registerSession('s1');
+      await watcher.pollNow(); // anchor: preExisting=0
+
+      // Named shell tracked, no PID captured; its OS shell is gone from the
+      // top-level count (permanent deficit, matching the #386 incident),
+      // output frozen at baseline. None of that matters to the transcript
+      // drain - it fires (or doesn't) purely on what the transcript says.
+      shellCounts.set('s1', 1);
+      namedShells.set('s1', ['bvqiw3a6s']);
+      probe.trees.set(1234, []);
+      await watcher.pollNow(); // baseline output sample; transcript not yet reporting termination
+      expect(log.namedShellTerminated).toHaveLength(0);
+
+      // The transcript now shows the shell's terminal <task-notification>.
+      terminatedShellIds.add('bvqiw3a6s');
+      await watcher.pollNow();
+
+      expect(log.namedShellTerminated).toEqual([{ sessionId: 's1', shellId: 'bvqiw3a6s' }]);
+      // Drained on the FIRST cycle the transcript reports it - not after
+      // NAMED_SHELL_QUIESCENT_RECLAIM_CYCLES, and not via the count/PID paths
+      // (proves count-independence: no deficit resolution was needed).
+      expect(log.namedShellLikelyExited).toHaveLength(0);
+      expect(log.shellPidExited).toHaveLength(0);
+      expect(log.naturalExits).toHaveLength(0);
+      watcher.dispose();
+    });
+
+    it('never fires while the transcript reports no termination (a live shell emits no terminal notification)', async () => {
+      const { watcher, shellCounts, namedShells, log } = setupPidlessNamedShellForTranscript();
+      watcher.registerSession('s1');
+      await watcher.pollNow();
+
+      shellCounts.set('s1', 1);
+      namedShells.set('s1', ['bvqiw3a6s']);
+      for (let i = 0; i < 10; i++) {
+        await watcher.pollNow();
+      }
+
+      expect(log.namedShellTerminated).toHaveLength(0);
+      watcher.dispose();
+    });
+
+    it('ignores a reported id that is not one of the tracked shell ids (structural rejection of subagent completions)', async () => {
+      // Production filters the transcript's captured ids to the caller's
+      // `shellIds` argument, so an unrelated notification (a subagent/Task
+      // completion's long-hex id) can never match a tracked shell. Model
+      // that at the watcher boundary: even if the reader callback reported
+      // an id, the watcher only acts on ids that were actually asked about.
+      const terminatedShellIds = new Set<string>(['aa01903e41d755d26']); // a subagent id, not tracked
+      const { watcher, shellCounts, namedShells, log } = setupPidlessNamedShellForTranscript(terminatedShellIds);
+      watcher.registerSession('s1');
+      await watcher.pollNow();
+
+      shellCounts.set('s1', 1);
+      namedShells.set('s1', ['bvqiw3a6s']);
+      await watcher.pollNow();
+
+      expect(log.namedShellTerminated).toHaveLength(0);
+      watcher.dispose();
+    });
+
+    it('drains the transcript even when the process-tree probe fails this cycle (the probe-health guard must not gate the transcript drain)', async () => {
+      const { watcher, probe, shellCounts, namedShells, log, terminatedShellIds } =
+        setupPidlessNamedShellForTranscript();
+      watcher.registerSession('s1');
+      await watcher.pollNow(); // anchor: preExisting=0
+
+      shellCounts.set('s1', 1);
+      namedShells.set('s1', ['bvqiw3a6s']);
+      await watcher.pollNow(); // baseline output sample; transcript not yet reporting termination
+      expect(log.namedShellTerminated).toHaveLength(0);
+
+      // Simulate exactly the host-load spell task #386 targets: the
+      // process-tree probe times out (listAllProcesses returns []) on the
+      // very cycle the transcript reports the shell's terminal notification.
+      // The drain callback needs neither the descendant walk nor a healthy
+      // process snapshot, so it must still fire even though the probe-health
+      // guard in cycleSession would otherwise skip the whole cycle. The root
+      // process itself is still alive (isAlive is a separate, cheap per-PID
+      // check) - only the full-tree enumeration fails.
+      probe.failProbe = true;
+      terminatedShellIds.add('bvqiw3a6s');
+      await watcher.pollNow();
+
+      expect(log.namedShellTerminated).toEqual([{ sessionId: 's1', shellId: 'bvqiw3a6s' }]);
       watcher.dispose();
     });
   });

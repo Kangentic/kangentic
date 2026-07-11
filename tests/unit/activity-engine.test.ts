@@ -1587,6 +1587,21 @@ describe('ActivityEngine', () => {
       expect(state.activeBackgroundShellIds.has('bash_2')).toBe(true);
     });
 
+    it('markBackgroundShellEnded with source "transcript" drains by id and labels a distinct trigger (task #386)', () => {
+      // The transcript drain is definitive proof of completion (a tracked
+      // shell's own terminal <task-notification> observed in the durable
+      // session transcript), distinct from a Tier A PID-exit or the
+      // heuristic quiescence reclaim - both of which also pass an id but no
+      // `source` and so keep the existing `event:bg-shell-ended:<shellId>`
+      // label. Give it its own trigger label so a debug-overlay/replay trace
+      // can tell the two apart at a glance.
+      engine.processEvent(SESSION_ID, event(EventType.BackgroundShellStart, { detail: 'bvqiw3a6s' }));
+      engine.markBackgroundShellEnded(SESSION_ID, 'bvqiw3a6s', { source: 'transcript' });
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.activeBackgroundShellIds.has('bvqiw3a6s')).toBe(false);
+      expect(state.recentTransitions.at(-1)?.trigger).toBe('event:bg-shell-ended:transcript');
+    });
+
     it('markBackgroundShellEnded with unknown id is no-op (does NOT corrupt anonymous count)', () => {
       engine.processEvent(SESSION_ID, event(EventType.BackgroundShellStart, { detail: 'bash_1' }));
       engine.processEvent(SESSION_ID, event(EventType.BackgroundShellStart));
@@ -1704,6 +1719,27 @@ describe('ActivityEngine', () => {
       state.activeBackgroundShellIds.add('legacy-key');
       engine.processEvent(SESSION_ID, event(EventType.BackgroundShellEnd, { detail: 'bash_assigned_id' }));
       expect(state.activeBackgroundShellIds.size).toBe(1);
+      expect(state.activeBackgroundShellIds.has('legacy-key')).toBe(true);
+      expect(state.compensationCounters.unmatchedBgShellEnd).toBe(1);
+    });
+
+    it('BackgroundShellEnd event with an unmatchable shellId does NOT fall through to anonymous (task #386 hardening)', () => {
+      // A stray or mis-remapped id-carrying end must never be treated as
+      // "some anonymous shell ended" just because an anonymous slot happens
+      // to exist - the end explicitly named a shell, so an id-shape miss is
+      // ALWAYS unattributable, never an anonymous-drain signal. Before this
+      // hardening, an unmatched id-shaped detail fell through to
+      // decrementing anonymousBackgroundShellCount whenever it was > 0 -
+      // exactly what the deleted subagent-completion task-notification hook
+      // triggered on every /code-review subagent stop (task #386).
+      engine.processEvent(SESSION_ID, event(EventType.BackgroundShellStart)); // anonymous
+      const state = engine.getState(SESSION_ID)!;
+      state.activeBackgroundShellIds.add('legacy-key');
+      expect(state.anonymousBackgroundShellCount).toBe(1);
+
+      engine.processEvent(SESSION_ID, event(EventType.BackgroundShellEnd, { detail: 'aa01903e41d755d26' }));
+
+      expect(state.anonymousBackgroundShellCount).toBe(1);
       expect(state.activeBackgroundShellIds.has('legacy-key')).toBe(true);
       expect(state.compensationCounters.unmatchedBgShellEnd).toBe(1);
     });

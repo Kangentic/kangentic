@@ -227,6 +227,12 @@ export class SessionManager extends EventEmitter {
         return session.agentParser?.runtime?.backgroundShells
           ?.resolveOutputFile({ cwd: session.cwd, shellId }) ?? null;
       },
+      reportTerminatedBackgroundShells: (sessionId, shellIds) => {
+        const session = this.registry.get(sessionId);
+        if (!session?.agentSessionId) return [];
+        return session.agentParser?.runtime?.backgroundShells
+          ?.reportTerminatedShells?.({ cwd: session.cwd, agentSessionId: session.agentSessionId, shellIds }) ?? [];
+      },
     }, {
       activityEngineOptions: this.activityEngineOptions,
       // Activity-engine debug snapshots land at `<projectRoot>/.kangentic/debug/<sessionId>.json`

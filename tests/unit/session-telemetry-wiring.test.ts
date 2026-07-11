@@ -571,6 +571,127 @@ describe('SessionTelemetry: onNamedShellLikelyExited -> BackgroundShellEnd + mar
 });
 
 // ---------------------------------------------------------------------------
+// Gap 2: onNamedShellTerminated wiring (transcript drain -> engine drain, task #386)
+// ---------------------------------------------------------------------------
+
+describe('SessionTelemetry: onNamedShellTerminated -> BackgroundShellEnd + markBackgroundShellEnded({ source: "transcript" }) wiring', () => {
+  // Exercises the onNamedShellTerminated closure in session-telemetry.ts end-
+  // to-end: drives the full path from the watcher's transcript-drain callback
+  // through SessionTelemetry's closure body, verifying:
+  //   a) a BackgroundShellEnd synthetic event with detail === shellId appears
+  //      in the session log.
+  //   b) activityEngine.markBackgroundShellEnded(sessionId, shellId, { source:
+  //      'transcript' }) is called, draining the named shell by identity and
+  //      transitioning to idle, with the distinct 'event:bg-shell-ended:transcript'
+  //      trigger label (not the Tier A / quiescence-reclaim label, which
+  //      passes an id too but no source).
+  //
+  // Unlike the quiescence-reclaim wiring above (Gap 1), this drain does not
+  // require sustained output quiescence or a poll-count threshold: it fires
+  // the cycle the reportTerminatedBackgroundShells callback reports the id -
+  // the whole point of a definitive, transcript-confirmed drain (task #386:
+  // the shell's terminal notification is delivered as a queued_command
+  // attachment that never fires the UserPromptSubmit hook, so this transcript
+  // read is the only signal that can ever confirm its exit).
+  //
+  // Red-green: deleting the onNamedShellTerminated body in session-telemetry.ts
+  // leaves the engine holding the orphaned named shell, so assertion (b)
+  // "activity === idle" stays 'thinking'.
+
+  const TERMINATED_SHELL_ID = 'bvqiw3a6s';
+
+  let probe: MockProcessTreeProbe;
+  let rootPids: Map<string, number>;
+  let log: CallbackLog;
+  let telemetry: SessionTelemetry;
+  let terminatedShellIds: Set<string>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    probe = new MockProcessTreeProbe();
+    rootPids = new Map();
+    log = { activityChanges: [], events: [], usageChanges: [] };
+    terminatedShellIds = new Set();
+    const callbacks = makeCallbacks(log);
+
+    telemetry = new SessionTelemetry(
+      {
+        ...callbacks,
+        getSessionRootPid: (sessionId) => rootPids.get(sessionId),
+        reportTerminatedBackgroundShells: (_sessionId, shellIds) =>
+          shellIds.filter((shellId) => terminatedShellIds.has(shellId)),
+      },
+      {
+        processTreeProbe: probe,
+        disableBgShellWatcher: false,
+        activityEngineOptions: {
+          bgShellEscapeHatchMs: 300_000,
+          staleThinkingTimeoutMs: 300_000,
+          idleStabilityWindowMs: 0,
+        },
+      },
+    );
+  });
+
+  afterEach(() => {
+    telemetry.dispose();
+    vi.useRealTimers();
+  });
+
+  it('onNamedShellTerminated pushes BackgroundShellEnd with shellId detail, drains the shell, and labels the transcript trigger', async () => {
+    const rootPid = 8002;
+    rootPids.set('s-transcript', rootPid);
+    probe.alive.add(rootPid);
+    // The named shell's OS process is already gone (permanent deficit) -
+    // exactly like the #386 incident - but that state is irrelevant to this
+    // drain path: it fires independent of count/output state.
+    probe.trees.set(rootPid, []);
+
+    telemetry.initSession('s-transcript');
+
+    // Anchor cycle: no bg shells yet (preExisting=0).
+    await telemetry.bgShellWatcher!.pollNow();
+
+    telemetry.ingestEvents('s-transcript', [
+      { ts: Date.now(), type: EventType.Prompt },
+      { ts: Date.now(), type: EventType.BackgroundShellStart, detail: TERMINATED_SHELL_ID },
+      { ts: Date.now(), type: EventType.Idle },
+    ]);
+
+    const stateAfterIngest = telemetry.activityEngine.getState('s-transcript');
+    expect(stateAfterIngest?.activeBackgroundShellIds.has(TERMINATED_SHELL_ID)).toBe(true);
+    expect(stateAfterIngest?.activity).toBe('thinking');
+
+    const eventsBefore = log.events.length;
+
+    // One cycle with no termination reported yet: no drain.
+    await telemetry.bgShellWatcher!.pollNow();
+    expect(telemetry.activityEngine.getState('s-transcript')?.activity).toBe('thinking');
+
+    // The transcript now reports the shell's terminal notification.
+    terminatedShellIds.add(TERMINATED_SHELL_ID);
+    await telemetry.bgShellWatcher!.pollNow();
+
+    // a) A BackgroundShellEnd event was pushed with detail === shellId.
+    const newEvents = log.events.slice(eventsBefore);
+    const bgShellEndEvents = newEvents.filter(
+      (entry) =>
+        entry.sessionId === 's-transcript' &&
+        entry.event.type === EventType.BackgroundShellEnd,
+    );
+    expect(bgShellEndEvents).toHaveLength(1);
+    expect(bgShellEndEvents[0]?.event.detail).toBe(TERMINATED_SHELL_ID);
+
+    // b) The engine drained the named shell by identity, with the distinct
+    // transcript-drain trigger label.
+    const stateAfterDrain = telemetry.activityEngine.getState('s-transcript');
+    expect(stateAfterDrain?.activeBackgroundShellIds.has(TERMINATED_SHELL_ID)).toBe(false);
+    expect(stateAfterDrain?.activity).toBe('idle');
+    expect(stateAfterDrain?.recentTransitions.at(-1)?.trigger).toBe('event:bg-shell-ended:transcript');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Gap 3: processStatusUpdate -> reemitBackfilled wiring (retroactive
 // back-fill must RE-EMIT a sibling session, not just mutate its cache)
 // ---------------------------------------------------------------------------

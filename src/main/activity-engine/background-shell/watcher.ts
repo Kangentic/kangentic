@@ -65,6 +65,16 @@ export interface BgShellWatcherCallbacks {
    * deliberately refuses named ids).
    */
   onNamedShellLikelyExited(sessionId: string, shellId: string): void;
+  /**
+   * A NAMED bg shell's terminal state was observed directly in the agent's
+   * durable session transcript (task #386's definitive drain) - not a
+   * process-tree inference. Distinct from `onNamedShellLikelyExited` (a
+   * heuristic reclaim requiring output quiescence AND a process-tree
+   * deficit): this fires the instant the transcript confirms completion,
+   * regardless of output/count state. The engine should drain the named
+   * shell by id.
+   */
+  onNamedShellTerminated(sessionId: string, shellId: string): void;
   /** Called when the Claude CLI itself dies. Engine should forceIdle. */
   onRootProcessDied(sessionId: string): void;
   /**
@@ -85,6 +95,14 @@ export interface BgShellWatcherCallbacks {
    * stays behind this generic callback (agent-adapters-boundary).
    */
   resolveShellOutputFile(sessionId: string, shellId: string): string | null;
+  /**
+   * Report which of `shellIds` (a set of NAMED, PID-less tracked shells) have
+   * a terminal notification in the agent's durable transcript - definitive
+   * proof of completion (task #386). Returns the subset observed terminated.
+   * Agent-specific transcript knowledge stays behind this generic callback
+   * (agent-adapters-boundary); an agent without such a signal returns [].
+   */
+  reportTerminatedShellsFromTranscript(sessionId: string, shellIds: string[]): string[];
   /**
    * Read accessors for the watcher to introspect engine state. The
    * watcher does not own counters - it observes them.
@@ -584,6 +602,32 @@ export class BgShellWatcher {
       this.callbacks.onRootProcessDied(sessionId);
       this.unregisterSession(sessionId);
       return;
+    }
+
+    // Definitive drain (task #386): a NAMED shell whose OS PID was never
+    // captured is invisible to Tier A (which only drains shells with a known
+    // PID). Ask the adapter whether that shell's terminal <task-notification>
+    // has appeared in the durable transcript - a signal a hook can never
+    // deliver for it (Claude sends the notification as a queued_command
+    // attachment, not a hooked user turn), but which IS definitive proof of
+    // completion once observed. This runs BEFORE the process-tree probe-health
+    // guard below, because it needs neither the descendant walk nor a healthy
+    // process snapshot: gating it on the probe would suppress the drain during
+    // exactly the host-load spells that both time out the probe AND leave a
+    // named shell PID-less (task #386's target scenario). A live shell has
+    // emitted no such notification, so this path can never drain one early.
+    // `trackedShellPids` still holds the previous cycle's captures here (Tier A
+    // prunes below); a shell that just exited is therefore excluded from this
+    // set but is drained by Tier A this same cycle, so nothing is missed.
+    const pidlessNamedIds = this.callbacks
+      .getNamedShellIds(sessionId)
+      .filter((shellId) => !state.trackedShellPids.has(shellId));
+    if (pidlessNamedIds.length > 0) {
+      const terminatedIds = this.callbacks.reportTerminatedShellsFromTranscript(sessionId, pidlessNamedIds);
+      for (const shellId of terminatedIds) {
+        state.shellOutputFiles.delete(shellId);
+        this.callbacks.onNamedShellTerminated(sessionId, shellId);
+      }
     }
 
     // Walk the per-session subtree from the shared cycle index. In-memory

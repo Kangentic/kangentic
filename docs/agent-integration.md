@@ -124,8 +124,9 @@ One scannable block per adapter for activity-state derivation and session ID cap
 | `statusFile?.isFullRewrite` | `boolean` | `true` when `status.json` is fully rewritten on every update. The events file is always append-only regardless of this flag. |
 | `streamOutput?.createParser()` | `() => StreamOutputParser` | Build a per-session parser that consumes raw PTY stdout for telemetry. Used by agents that emit machine-readable NDJSON to the terminal (Cursor's `--output-format stream-json` init event carries `model` + `session_id`). The returned object exposes `parseTelemetry(data)` returning `{ usage?, events? } \| null`; `SessionManager` invokes it on every PTY chunk. Each spawn gets a fresh parser so per-session rolling buffers can survive across chunk boundaries. |
 | `backgroundShells?.resolveOutputFile({cwd, shellId})` | `(options) => string \| null` | Locate the agent's on-disk output file for a NAMED background shell, or `null` when it has none. The bg-shell process-tree watcher stats this file each poll cycle; file growth is ground-truth liveness that keeps a genuinely-running shell from being reclaimed at the 5-min named cap when no OS PID could be captured (see [Activity Detection](activity-detection.md), Output-file liveness). Today only Claude implements this (its temp `tasks/<shellId>.output` files). |
+| `backgroundShells?.reportTerminatedShells?({cwd, agentSessionId, shellIds})` | `(options) => string[]` | Report which of `shellIds` have a TERMINAL notification in the agent's durable session transcript - definitive proof of completion (task #386), independent of process-tree/output state. Reads only new transcript bytes since the previous call. Today only Claude implements this (its native transcript carries the shell's terminal `<task-notification>`, delivered as a `queued_command` attachment that never fires a hook - see [Activity Detection](activity-detection.md), Transcript drain). |
 
-Omit `sessionId` entirely for agents that use caller-owned IDs (Claude via `--session-id`) or that have no resume mechanism (Aider). Omit `sessionHistory` for agents without a native session log file. Omit `statusFile` for agents that don't emit hook-driven `status.json` / `events.jsonl` (only Claude and Copilot use this pipeline today). Omit `streamOutput` for agents that don't emit machine-readable NDJSON to PTY stdout (everyone except Cursor today). Omit `backgroundShells` for agents that don't write a per-shell output file (everyone except Claude today).
+Omit `sessionId` entirely for agents that use caller-owned IDs (Claude via `--session-id`) or that have no resume mechanism (Aider). Omit `sessionHistory` for agents without a native session log file. Omit `statusFile` for agents that don't emit hook-driven `status.json` / `events.jsonl` (only Claude and Copilot use this pipeline today). Omit `streamOutput` for agents that don't emit machine-readable NDJSON to PTY stdout (everyone except Cursor today). Omit `backgroundShells` for agents that don't write a per-shell output file or expose a transcript-based termination signal (everyone except Claude today).
 
 ### `SpawnSessionInput` extras
 
@@ -343,7 +344,7 @@ All Kangentic artifacts stay in `.kangentic/` - nothing is written to `.claude/s
 
 ### Hook Injection
 
-Kangentic subscribes to 18 Claude Code hook points via the event bridge (19 entries: `UserPromptSubmit` registers two, for two distinct event types):
+Kangentic subscribes to 18 Claude Code hook points via the event bridge:
 
 | Hook Event | Event Type | Purpose |
 |------------|-----------|---------|
@@ -351,7 +352,6 @@ Kangentic subscribes to 18 Claude Code hook points via the event bridge (19 entr
 | `PostToolUse` (blank) | `tool_end` | Tool execution completed |
 | `PostToolUseFailure` (blank) | `tool_end` | Tool execution failed (remaps to `interrupted` when `is_interrupt` is true) |
 | `UserPromptSubmit` | `prompt` | User submitted a prompt |
-| `UserPromptSubmit` | `background_shell_end` | A `<task-notification>` terminal status (`completed`/`failed`/`killed`/`cancelled`/`aborted`) drains the named bg shell; suppressed for all other prompts via `emitOnlyWhenDetailMatches` (fail-closed) |
 | `Stop` | `idle` | Agent stopped naturally |
 | `StopFailure` | `turn_failed` or `turn_retrying` | Fires instead of `Stop` on a service/API error; carries the error type in `detail`. A TERMINAL error stays `turn_failed` (routed through the Interrupted bypass to reset stale counters and idle at once); a TRANSIENT, auto-retried error (overloaded/server_error/rate_limit/api_error) is reclassified to `turn_retrying`, which holds the session thinking through a live retry instead of force-idling it - see [Activity Detection](activity-detection.md) |
 | `PermissionRequest` | `idle` | Agent hit a permission wall |
