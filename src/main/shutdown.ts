@@ -1,5 +1,6 @@
 import { closeAll, getProjectDb } from './db/database';
 import { browserPaneRegistry } from './browser/browser-pane-registry';
+import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { SessionRepository } from './db/repositories/session-repository';
 import { TaskRepository } from './db/repositories/task-repository';
 import { UsageHistoryRepository } from './db/repositories/usage-history-repository';
@@ -49,6 +50,12 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): void {
     // per .claude/rules/synchronous-shutdown.md (detachDebugger guards a
     // destroyed webContents).
     browserPaneRegistry.detachAll();
+
+    // Destroy every open pop-out window synchronously. Idempotent -- the main
+    // window's 'close' handler (index.ts) already calls this in the normal quit
+    // path, so this is a no-op there; it matters for SIGINT/SIGTERM and other
+    // shutdown entry points that reach performShutdown() without a 'close' event.
+    popOutWindowManager.destroyAll();
 
     // Close active project's file watchers before killing sessions
     dependencies.getBoardConfigManager().detach();

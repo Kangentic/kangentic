@@ -1,3 +1,5 @@
+import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from './pop-out';
+
 // === Database Models ===
 
 export interface ProjectGroup {
@@ -1985,6 +1987,13 @@ export interface AppConfig {
   restoreWindowPosition: boolean;
   windowBounds: { x: number; y: number; width: number; height: number } | null;
   windowMaximized: boolean;
+  /** Persisted bounds + last target display for each detached pop-out surface, keyed by
+   *  PopOutKind (not per-task), so a surface reopens on the monitor it was last placed on. */
+  popOutBounds: Record<string, {
+    bounds: { x: number; y: number; width: number; height: number };
+    displayId: number;
+    maximized: boolean;
+  }>;
   /** @deprecated The status-bar usage strip was replaced by the usage dashboard.
    *  Read once as a seed fallback for `usageStatsPeriod`; never written anymore. */
   statusBarPeriod: UsageTimePeriod;
@@ -2178,6 +2187,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   restoreWindowPosition: true,
   windowBounds: null,
   windowMaximized: false,
+  popOutBounds: {},
   statusBarPeriod: 'live',
   usageStatsPeriod: 'live',
   usageStatsScope: 'project',
@@ -3607,6 +3617,10 @@ export interface ElectronAPI {
     getProjectOverridesByPath: (projectPath: string) => Promise<DeepPartial<AppConfig> | null>;
     setProjectOverridesByPath: (projectPath: string, overrides: DeepPartial<AppConfig>) => Promise<void>;
     syncDefaultToProjects: (partial: DeepPartial<AppConfig>) => Promise<number>;
+    /** Fires after ANY window's config:set persists (including this one). Bare signal;
+     *  re-fetch via config.get()/loadConfig() to pick up the new effective config. Lets
+     *  pop-out windows (and the main window) live-sync theme/settings across windows. */
+    onChanged: (callback: () => void) => () => void;
   };
 
   // Keybindings
@@ -3681,6 +3695,21 @@ export interface ElectronAPI {
     close: () => void;
     flashFrame: (flash: boolean) => void;
     isFocused: () => Promise<boolean>;
+  };
+
+  // Pop-out windows: detach a registered surface (stats, changes, browser) into its own
+  // OS-level BrowserWindow. See src/shared/pop-out.ts.
+  popOut: {
+    open: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<void>;
+    close: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<void>;
+    focus: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<void>;
+    isOpen: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) => Promise<boolean>;
+    /** instanceKeys (popOutInstanceKey) of every currently-open pop-out window. */
+    listOpen: () => Promise<string[]>;
+    onChanged: (callback: (openInstanceKeys: string[]) => void) => () => void;
+    /** Synchronous boot value: this window's own descriptor if it was opened as a
+     *  pop-out (read from additionalArguments in preload), else null for the main window. */
+    descriptor: PopOutDescriptor | null;
   };
 
   // Analytics
@@ -3778,8 +3807,13 @@ export interface ElectronAPI {
     clearStorage: () => Promise<void>;
     /** Register an open Browser pane's guest webContents for kangentic_browser_* targeting. */
     registerPane: (input: BrowserPaneRegisterInput) => Promise<void>;
-    /** Unregister a Browser pane (on unmount). */
-    unregisterPane: (sessionId: string) => Promise<void>;
+    /** Unregister a Browser pane (on unmount). Pass the webContentsId this
+     *  instance registered with so the main process only clears the registry
+     *  entry if it still points at this exact guest (see
+     *  unregisterIfMatches in browser-pane-registry.ts) - guards the
+     *  in-app-pane-vs-pop-out-pane handoff race. Omit to unregister
+     *  unconditionally. */
+    unregisterPane: (sessionId: string, webContentsId?: number) => Promise<void>;
     /**
      * Subscribe to Ctrl+wheel zoom changes that fire inside the embedded
      * webview. The main process applies the zoom and broadcasts the resulting

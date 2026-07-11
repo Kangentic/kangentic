@@ -134,6 +134,10 @@ export const IPC = {
   CONFIG_GET_PROJECT_BY_PATH: 'config:getProjectByPath',
   CONFIG_SET_PROJECT_BY_PATH: 'config:setProjectByPath',
   CONFIG_SYNC_DEFAULT_TO_PROJECTS: 'config:syncDefaultToProjects',
+  // Bare-signal push: fired after any config:set persists, fanned to every window
+  // (main + pop-outs) so live theme/settings changes sync across windows. Carries
+  // no payload; subscribers re-fetch via config:get.
+  CONFIG_CHANGED: 'config:changed',
 
   // Keybindings
   KEYBINDINGS_PROBE_GLOBAL: 'keybindings:probeGlobal',
@@ -182,6 +186,15 @@ export const IPC = {
   WINDOW_CLOSE: 'window:close',
   WINDOW_FLASH_FRAME: 'window:flashFrame',
   WINDOW_IS_FOCUSED: 'window:isFocused',
+
+  // Pop-out windows: detach a registered UI surface (stats, changes, browser) into its
+  // own OS-level BrowserWindow. See src/shared/pop-out.ts for the surface registry.
+  POPOUT_OPEN: 'popOut:open',
+  POPOUT_CLOSE: 'popOut:close',
+  POPOUT_FOCUS: 'popOut:focus',
+  POPOUT_IS_OPEN: 'popOut:isOpen',
+  POPOUT_LIST_OPEN: 'popOut:listOpen',
+  POPOUT_CHANGED: 'popOut:changed',
 
   // Analytics
   TRACK_RENDERER_ERROR: 'analytics:trackRendererError',

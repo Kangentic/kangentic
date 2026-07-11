@@ -17,6 +17,7 @@ const CONFIG_DICTIONARY_PATHS = [
   'hotkeyOverrides',
   'workspaceByProject',
   'commandTerminalWorkspace',
+  'popOutBounds',
 ] as const;
 
 /** Drop keys whose value is undefined. Returns undefined when nothing is left,

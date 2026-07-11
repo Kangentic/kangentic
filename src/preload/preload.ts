@@ -1,8 +1,25 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
 import type { ElectronAPI, NotificationInput, Project, Session, SessionUsage, ActivityState, ActivityReason, SessionEvent, UpdateDownloadedInfo, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingEndedPayload } from '../shared/types';
+import { POPOUT_ARG_PREFIX } from '../shared/pop-out';
+import type { PopOutDescriptor, PopOutKind, PopOutParamsByKind } from '../shared/pop-out';
 import { installConsoleCapture } from './diagnostics/console-capture';
 import { installDevtoolsPreloadHooks } from '../devtools/preload/install-globals';
+
+// Pop-out descriptor: `--kangentic-popout=<base64 JSON>` is appended to a pop-out window's
+// additionalArguments by the main process (pop-out-window-manager.ts). Read once at preload
+// time; null for the main window, which never carries this flag. Malformed input degrades to
+// null rather than throwing, so a bad descriptor falls back to booting the full app.
+function readPopOutDescriptor(): PopOutDescriptor | null {
+  const arg = process.argv.find((value) => value.startsWith(POPOUT_ARG_PREFIX));
+  if (!arg) return null;
+  try {
+    return JSON.parse(Buffer.from(arg.slice(POPOUT_ARG_PREFIX.length), 'base64').toString('utf-8')) as PopOutDescriptor;
+  } catch {
+    return null;
+  }
+}
+const popOutDescriptor = readPopOutDescriptor();
 
 // Forward renderer console.* + window error events to the main-process
 // diagnostics subsystem. The main side decides whether to persist based on
@@ -270,6 +287,11 @@ const api: ElectronAPI = {
     getProjectOverridesByPath: (projectPath) => ipcRenderer.invoke(IPC.CONFIG_GET_PROJECT_BY_PATH, projectPath),
     setProjectOverridesByPath: (projectPath, overrides) => ipcRenderer.invoke(IPC.CONFIG_SET_PROJECT_BY_PATH, projectPath, overrides),
     syncDefaultToProjects: (partial) => ipcRenderer.invoke(IPC.CONFIG_SYNC_DEFAULT_TO_PROJECTS, partial),
+    onChanged: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on(IPC.CONFIG_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.CONFIG_CHANGED, handler);
+    },
   },
 
   keybindings: {
@@ -337,6 +359,24 @@ const api: ElectronAPI = {
     close: () => ipcRenderer.send(IPC.WINDOW_CLOSE),
     flashFrame: (flash: boolean) => ipcRenderer.send(IPC.WINDOW_FLASH_FRAME, flash),
     isFocused: () => ipcRenderer.invoke(IPC.WINDOW_IS_FOCUSED),
+  },
+
+  popOut: {
+    open: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) =>
+      ipcRenderer.invoke(IPC.POPOUT_OPEN, kind, params),
+    close: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) =>
+      ipcRenderer.invoke(IPC.POPOUT_CLOSE, kind, params),
+    focus: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) =>
+      ipcRenderer.invoke(IPC.POPOUT_FOCUS, kind, params),
+    isOpen: <K extends PopOutKind>(kind: K, params: PopOutParamsByKind[K]) =>
+      ipcRenderer.invoke(IPC.POPOUT_IS_OPEN, kind, params),
+    listOpen: () => ipcRenderer.invoke(IPC.POPOUT_LIST_OPEN),
+    onChanged: (callback: (openInstanceKeys: string[]) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, keys: string[]) => callback(keys);
+      ipcRenderer.on(IPC.POPOUT_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.POPOUT_CHANGED, handler);
+    },
+    descriptor: popOutDescriptor,
   },
 
   analytics: {
@@ -456,7 +496,7 @@ const api: ElectronAPI = {
     clearTaskUrl: (taskId) => ipcRenderer.invoke(IPC.BROWSER_URL_CLEAR_TASK, taskId),
     clearStorage: () => ipcRenderer.invoke(IPC.BROWSER_CLEAR_STORAGE),
     registerPane: (input) => ipcRenderer.invoke(IPC.BROWSER_PANE_REGISTER, input),
-    unregisterPane: (sessionId) => ipcRenderer.invoke(IPC.BROWSER_PANE_UNREGISTER, sessionId),
+    unregisterPane: (sessionId, webContentsId) => ipcRenderer.invoke(IPC.BROWSER_PANE_UNREGISTER, sessionId, webContentsId),
     onZoomChanged: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, factor: number) => callback(factor);
       ipcRenderer.on(IPC.BROWSER_ZOOM_CHANGED, handler);

@@ -78,6 +78,18 @@ export class BrowserPaneRegistry {
     this.panes.delete(sessionId);
   }
 
+  /** Unregister sessionId's pane ONLY if its current entry still has this exact
+   *  webContentsId. A renderer's unmount cleanup passes the webContentsId it
+   *  itself registered with, so an out-of-order unmount (e.g. the in-app pane
+   *  unmounting AFTER a pop-out window's pane already re-registered the same
+   *  sessionId with a new guest) cannot clobber the newer registration. */
+  unregisterIfMatches(sessionId: string, webContentsId: number): void {
+    const entry = this.panes.get(sessionId);
+    if (entry && entry.webContentsId === webContentsId) {
+      this.panes.delete(sessionId);
+    }
+  }
+
   /** Remove whatever pane is bound to a guest webContents id (guest `destroyed`). */
   unregisterByWebContentsId(webContentsId: number): void {
     for (const [sessionId, entry] of this.panes) {

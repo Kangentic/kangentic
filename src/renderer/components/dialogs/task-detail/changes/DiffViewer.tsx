@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
 import type { DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
@@ -32,10 +32,6 @@ interface DiffViewerProps {
   viewMode: 'split' | 'inline';
   onViewModeChange: (mode: 'split' | 'inline') => void;
   binary: boolean;
-  /** Extra controls rendered at the right edge of the toolbar, after a divider
-   *  (e.g. the task-detail expand/collapse buttons). Omitted by the standalone
-   *  TaskChangesDialog, which has no panel-layout controls. */
-  trailingControls?: ReactNode;
   /** Whether the containing task window is focused (gates the change-nav keys). */
   isFocused?: boolean;
   /** Called when next/prev-change reaches a file boundary, so the panel rolls
@@ -101,7 +97,6 @@ export function DiffViewer({
   viewMode,
   onViewModeChange,
   binary,
-  trailingControls,
   isFocused = false,
   onCrossFile,
   pendingChangeFocus = null,
@@ -739,12 +734,6 @@ export function DiffViewer({
               >
                 <Rows2 size={16} />
               </button>
-            </>
-          )}
-          {trailingControls && (
-            <>
-              <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />
-              {trailingControls}
             </>
           )}
         </div>

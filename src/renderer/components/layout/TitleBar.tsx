@@ -5,6 +5,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useDictationStore } from '../../stores/dictation-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
+import { usePopOut } from '../../pop-out/usePopOut';
 import { selectCurrentProjectTransientSessionIds } from '../../stores/session-store/transient-session-slice';
 import { isWorktreePath } from '../../../shared/git-utils';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
@@ -133,6 +134,9 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpaw
   const statsOpen = useUsageDashboardStore((state) => state.statsOpen);
   const toggleStats = useUsageDashboardStore((state) => state.toggle);
   const prefetchStats = useUsageDashboardStore((state) => state.prefetch);
+  // When the stats dashboard is detached into its own window, this button
+  // focuses that window instead of toggling the (suppressed) in-app overlay.
+  const statsPopOut = usePopOut('stats', {});
 
   // While the layer is open and below the cap, the button spawns ANOTHER terminal.
   const spawnsAnother = !!commandBarOpen && !!canSpawnMore;
@@ -246,12 +250,12 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpaw
           </button>
         )}
         <button
-          onClick={toggleStats}
+          onClick={() => (statsPopOut.isOpen ? statsPopOut.focus() : toggleStats())}
           onMouseEnter={prefetchStats}
           className={`p-1.5 hover:bg-surface-hover rounded transition-colors ${
-            statsOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
+            statsOpen || statsPopOut.isOpen ? 'text-fg bg-surface-hover' : 'text-fg-muted hover:text-fg'
           }`}
-          title={`Usage Stats (${statsCombo})`}
+          title={statsPopOut.isOpen ? 'Focus usage stats window' : `Usage Stats (${statsCombo})`}
           aria-label="Usage Stats"
           data-testid="usage-stats-button"
         >

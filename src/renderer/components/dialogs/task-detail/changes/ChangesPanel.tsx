@@ -1,6 +1,7 @@
 import '../../../../monacoConfig';
 import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
-import { ChevronsLeftRight, ChevronsRightLeft, Loader2, ArrowLeft } from 'lucide-react';
+import { ChevronsLeftRight, ChevronsRightLeft, GitBranch, Loader2, ArrowLeft, ArrowUp, ArrowDown } from 'lucide-react';
+import { DetachableSurfaceHeader } from '../../../../pop-out/DetachableSurfaceHeader';
 import { FileTreePanel } from './FileTreePanel';
 import { DiffViewer } from './DiffViewer';
 import { DiffErrorBoundary } from './DiffErrorBoundary';
@@ -60,6 +61,11 @@ interface ChangesPanelProps {
    *  The task supplies the graph's PR marker (pr_number / head_sha). Omitted
    *  for the command-terminal Changes embed, which stays Uncommitted-only. */
   task?: Task;
+  /** When set (task-detail embed only), the panel toolbar shows a pop-out
+   *  control that detaches this Changes view into its own OS window. Omitted by
+   *  the standalone dialog, the command-terminal embed, and the pop-out root
+   *  itself (which must not offer to detach again). */
+  popOutParams?: { taskId: string; projectId: string };
 }
 
 interface ContentCacheEntry {
@@ -76,12 +82,15 @@ interface DisplayedFileContent {
   filePath: string;
 }
 
-export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPath, worktreePath, baseBranch, emptyMessage, panelMode, onExpand, onCollapse, task }: ChangesPanelProps) {
+export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPath, worktreePath, baseBranch, emptyMessage, panelMode, onExpand, onCollapse, task, popOutParams }: ChangesPanelProps) {
   const effectiveScrollKey = scrollKey ?? entityId;
-  // The task-detail embed passes panelMode + a handler; the standalone
-  // TaskChangesDialog passes neither, so it never shows these controls. Expand
-  // and collapse are mutually exclusive: only one is relevant per mode.
-  const panelControls =
+  // Expand-full is a PANEL-level action (it acts on the whole Changes surface, not
+  // the current diff), so it lives in the shared surface header alongside the
+  // pop-out control - NOT in the diff toolbar with the diff/git tools. The
+  // task-detail embed passes panelMode + a handler; the standalone dialog and the
+  // command-terminal embed pass neither, so it shows only in the embed. Expand and
+  // collapse are mutually exclusive: only one is relevant per mode.
+  const expandCollapseControl =
     panelMode === 'split' && onExpand ? (
       <button
         onClick={onExpand}
@@ -101,14 +110,6 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         <ChevronsRightLeft size={16} />
       </button>
     ) : null;
-  // When no diff is mounted (no file selected, empty diff, or a fetch error)
-  // the controls have no toolbar to live in, so render a minimal row to keep a
-  // pointer-reachable collapse affordance available in expanded mode.
-  const fallbackControlsRow = panelControls && (
-    <div className="flex items-center justify-end px-3 py-1.5 border-b border-edge flex-shrink-0">
-      {panelControls}
-    </div>
-  );
   const [files, setFiles] = useState<GitDiffFileEntry[]>([]);
   const [totalInsertions, setTotalInsertions] = useState(0);
   const [totalDeletions, setTotalDeletions] = useState(0);
@@ -603,6 +604,66 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     document.addEventListener('mouseup', onMouseUp);
   }, [setChangesHistoryHeightStore, entityId]);
 
+  // Shared detachable-surface header (task-detail embed only): the panel's true
+  // first row, above the commit-history region. It also OWNS the branch context
+  // (branch + base badge + ahead/behind + last commit) that the file-tree's
+  // BranchHeader shows in the other embeds - the embed passes showBranchHeader=false
+  // to that so the row is not duplicated. Panel-level actions (expand-full) and the
+  // pop-out control sit on the right - the one predictable home for pop-out across
+  // every surface. Diff/git tools stay in the diff toolbar below, never mixed in.
+  const surfaceHeaderAhead = branchSummary?.ahead ?? 0;
+  const surfaceHeaderBehind = branchSummary?.behind ?? 0;
+  const surfaceHeaderLastCommit = branchSummary?.lastCommit ?? null;
+  const surfaceHeader = popOutParams ? (
+    <DetachableSurfaceHeader kind="changes" params={popOutParams} actions={expandCollapseControl}>
+      <GitBranch size={14} className="text-fg-muted flex-shrink-0" aria-hidden />
+      <span
+        className="text-xs font-medium text-fg-secondary truncate flex-shrink-0 max-w-[45%]"
+        title={branchSummary?.currentBranch ?? undefined}
+        data-testid="changes-branch-name"
+      >
+        {branchSummary?.currentBranch ?? 'Changes'}
+      </span>
+      {baseLabel && (
+        <span
+          className={`shrink-0 rounded border px-1 py-px text-[11px] font-medium leading-none ${
+            isCustomBase ? 'border-accent/50 text-accent-fg' : 'border-edge-subtle text-fg-faint'
+          }`}
+          data-testid="changes-base-label"
+          title={isCustomBase ? `Based on ${baseLabel}, not the project default` : `Based on ${baseLabel}, the project default`}
+        >
+          {baseLabel}
+        </span>
+      )}
+      {(surfaceHeaderAhead > 0 || surfaceHeaderBehind > 0) && (
+        <span className="flex items-center gap-1.5 text-fg-muted flex-shrink-0 text-[11px]" title={`${surfaceHeaderAhead} ahead, ${surfaceHeaderBehind} behind base branch`}>
+          {surfaceHeaderAhead > 0 && (
+            <span className="flex items-center gap-0.5 tabular-nums"><ArrowUp size={11} className="text-green-400" />{surfaceHeaderAhead}</span>
+          )}
+          {surfaceHeaderBehind > 0 && (
+            <span className="flex items-center gap-0.5 tabular-nums"><ArrowDown size={11} className="text-red-400" />{surfaceHeaderBehind}</span>
+          )}
+        </span>
+      )}
+      {surfaceHeaderLastCommit && (
+        <>
+          <span className="h-3 w-px bg-edge/60 flex-shrink-0 mx-0.5" aria-hidden />
+          <span
+            className="text-[11px] text-fg-muted truncate min-w-0"
+            title={`${surfaceHeaderLastCommit.hash} ${surfaceHeaderLastCommit.subject}`}
+            data-testid="changes-last-commit"
+          >
+            <span className="font-mono text-fg-faint">{surfaceHeaderLastCommit.hash}</span>{' '}
+            {surfaceHeaderLastCommit.subject}
+            {surfaceHeaderLastCommit.timestamp && (
+              <span className="text-fg-faint"> {'·'} {formatRelativeTime(surfaceHeaderLastCommit.timestamp)}</span>
+            )}
+          </span>
+        </>
+      )}
+    </DetachableSurfaceHeader>
+  ) : null;
+
   // The detail pane (error / empty / two-pane), scoped to the current
   // selection (Uncommitted or a commit). Rendered as a helper so the history
   // region above stays mounted regardless of which branch renders below.
@@ -643,7 +704,6 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     return (
       <div className="flex flex-col h-full">
         {commitDetailHeader}
-        {fallbackControlsRow}
         <div className="flex flex-col items-center justify-center flex-1 gap-2 p-4">
           <span className="text-xs text-red-400">{error}</span>
           <button
@@ -683,6 +743,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
             totalInsertions={totalInsertions}
             totalDeletions={totalDeletions}
             branchSummary={changesSelectedCommit ? undefined : branchSummary}
+            showBranchHeader={!popOutParams}
             viewedFiles={viewedFiles}
             onToggleViewed={handleToggleViewed}
             scope={changesSelectedCommit ? undefined : scope}
@@ -708,7 +769,6 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         <div className="flex-1 min-h-0">
           {!selectedFile ? (
             <div className="flex flex-col h-full">
-              {fallbackControlsRow}
               <div className="flex items-center justify-center flex-1 text-xs text-fg-disabled">
                 Select a file to view changes
               </div>
@@ -726,7 +786,6 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
                 viewMode={viewMode}
                 onViewModeChange={(mode) => updateConfig({ diffViewMode: mode })}
                 binary={selectedFileEntry?.binary ?? false}
-                trailingControls={panelControls ?? undefined}
                 isFocused={isFocused}
                 onCrossFile={handleCrossFile}
                 pendingChangeFocus={pendingChangeFocus}
@@ -753,6 +812,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
 
   return (
     <div ref={changesPanelRootRef} className="flex flex-col h-full min-h-0">
+      {surfaceHeader}
       {/* Commit-history region (top): the master browse surface. Only shown when
           a `task` is provided (the history browser needs the graph's PR marker);
           the command-terminal embed stays Uncommitted-only, filling the whole panel. */}

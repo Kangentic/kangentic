@@ -218,7 +218,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 |---------|---------|---------|
 | `usage:getDashboardStats` | invoke | Composite usage-statistics payload for the dashboard (KPIs, bucketed token/cost time series, by-model / by-agent breakdowns), for one project or rolled up across every registered project, over the Live/Today/Week/Month/All Time ranges. Sources from the append-only `usage_history` + `conversation_turn_usage` ledgers so totals survive task deletion, bulk-archive, and revert-to-backlog. Read-only; the explicit scope argument carries the project id. |
 
-### Config (9 channels)
+### Config (10 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `config:get` | invoke | Fetch effective AppConfig (global merged with project overrides) |
@@ -230,6 +230,7 @@ Build-excluded from production via `__KANGENTIC_DEV__` (esbuild dead-code elimin
 | `config:getProjectByPath` | invoke | Fetch project overrides by filesystem path |
 | `config:setProjectByPath` | invoke | Update project overrides by filesystem path |
 | `config:syncDefaultToProjects` | invoke | Sync default config values to all project configs |
+| `config:changed` | on | Bare-signal event fanned to every window (main + open pop-outs) after any `config:set` persists; subscribers re-fetch via `config:get` so theme/settings sync live across windows |
 
 ### Keybindings (1 channel)
 | Channel | Pattern | Purpose |
@@ -320,11 +321,22 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 ### Window (5 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `window:minimize` | send | Minimize window |
-| `window:maximize` | send | Maximize/restore window |
-| `window:close` | send | Close window |
-| `window:flashFrame` | send | Flash taskbar icon to attract attention |
-| `window:isFocused` | invoke | Check if window has focus (for notification gating) |
+| `window:minimize` | send | Minimize the sending window (resolved via `BrowserWindow.fromWebContents(event.sender)`, so this operates on whichever window - main or a pop-out - actually called it) |
+| `window:maximize` | send | Maximize/restore the sending window |
+| `window:close` | send | Close the sending window |
+| `window:flashFrame` | send | Flash the sending window's taskbar icon to attract attention |
+| `window:isFocused` | invoke | Check if the sending window has focus (for notification gating) |
+
+### Pop-out Windows (6 channels)
+Detach a registered UI surface (usage stats, git changes, the task Browser pane) into its own OS-level `BrowserWindow`. See `src/shared/pop-out.ts` for the surface registry (`PopOutKind`, params, per-surface push fan-out) and `src/main/pop-out/` for the window manager + broadcast helper. Distinct from the in-app DOM window manager (`src/renderer/window-manager/`), which tiles movable panes inside the single main `BrowserWindow`.
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `popOut:open` | invoke | Open a surface's pop-out window (kind + params), or focus it if already open |
+| `popOut:close` | invoke | Close a surface's pop-out window |
+| `popOut:focus` | invoke | Focus (and restore if minimized) a surface's pop-out window |
+| `popOut:isOpen` | invoke | Whether a surface's pop-out window is currently open |
+| `popOut:listOpen` | invoke | List the instance keys of every currently-open pop-out window |
+| `popOut:changed` | on | Event: the set of open pop-out windows changed; pushed to the main window only, mirrored into `pop-out-store.ts` so in-app triggers (title bar, headers) flip between "open" and "focus" |
 
 ### Analytics (1 channel)
 | Channel | Pattern | Purpose |
@@ -352,7 +364,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `browser:clearStorage` | invoke | Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches across the per-worktree embedded browser partitions (and the legacy shared jar). Saved URLs are kept. |
 | `browser:zoomChanged` | push | Broadcast the new zoom factor after Ctrl+wheel is applied in the main process (the webview's `zoom-changed` event lives on WebContents, not the DOM tag, so the renderer learns about wheel zoom only via this push) |
 | `browser:paneRegister` | invoke | Register an open Browser pane's guest webContents (taskId, sessionId, webContentsId, url) with the main-process pane registry so the `kangentic_browser_*` MCP tools can target it |
-| `browser:paneUnregister` | invoke | Unregister a Browser pane on unmount (the guest's own `destroyed` event is the backstop) |
+| `browser:paneUnregister` | invoke | Unregister a Browser pane on unmount, scoped to the webContentsId that instance registered with (compare-and-delete) so an out-of-order unmount between the in-app pane and its pop-out cannot clobber a newer registration; the guest's own `destroyed` event is the backstop |
 
 ### Updater (3 channels)
 | Channel | Pattern | Purpose |

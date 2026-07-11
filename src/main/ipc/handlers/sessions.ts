@@ -20,6 +20,7 @@ import { abortInFlightResume, registerResumeController, releaseResumeController 
 import type { Session, TaskResolvePrResult } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
+import { broadcast } from '../../pop-out/window-broadcast';
 
 // Track session start times for duration calculation on exit
 const sessionStartTimes = new Map<string, number>();
@@ -321,7 +322,7 @@ export function registerSessionHandlers(context: IpcContext): void {
 
     // Flush buffered usage (last-write-wins per session)
     for (const [sessionId, { data, projectId }] of bufferedUsage) {
-      context.mainWindow.webContents.send(IPC.SESSION_USAGE, sessionId, data, projectId);
+      broadcast(context.mainWindow, IPC.SESSION_USAGE, sessionId, data, projectId);
     }
     bufferedUsage.clear();
 
@@ -352,7 +353,7 @@ export function registerSessionHandlers(context: IpcContext): void {
     if (context.mainWindow.isDestroyed()) return;
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     if (isFocusedSession(sessionId)) {
-      context.mainWindow.webContents.send(IPC.SESSION_USAGE, sessionId, data, projectId);
+      broadcast(context.mainWindow, IPC.SESSION_USAGE, sessionId, data, projectId);
     } else {
       // Buffer for background sessions (last-write-wins)
       bufferedUsage.set(sessionId, { data, projectId });
@@ -379,7 +380,7 @@ export function registerSessionHandlers(context: IpcContext): void {
           }
         });
       }
-      context.mainWindow.webContents.send(IPC.SESSION_ACTIVITY, sessionId, state, reason, projectId, taskId, taskTitle);
+      broadcast(context.mainWindow, IPC.SESSION_ACTIVITY, sessionId, state, reason, projectId, taskId, taskTitle);
 
       // A session going idle (the agent finished its turn) is the catch-all
       // signal that a PR may have just been created mid-session - the move-time
@@ -452,14 +453,14 @@ export function registerSessionHandlers(context: IpcContext): void {
       }
     }
     if (!context.mainWindow.isDestroyed()) {
-      context.mainWindow.webContents.send(IPC.SESSION_STATUS, sessionId, session, session.projectId);
+      broadcast(context.mainWindow, IPC.SESSION_STATUS, sessionId, session, session.projectId);
     }
   });
 
   context.sessionManager.on('idle-timeout', (sessionId: string, taskId: string, timeoutMinutes: number) => {
     const projectId = context.sessionManager.getSessionProjectId(sessionId);
     if (!context.mainWindow.isDestroyed()) {
-      context.mainWindow.webContents.send(IPC.SESSION_IDLE_TIMEOUT, sessionId, taskId, timeoutMinutes, projectId);
+      broadcast(context.mainWindow, IPC.SESSION_IDLE_TIMEOUT, sessionId, taskId, timeoutMinutes, projectId);
     }
     if (!projectId) return;
 
@@ -523,7 +524,7 @@ export function registerSessionHandlers(context: IpcContext): void {
     }
 
     if (!context.mainWindow.isDestroyed()) {
-      context.mainWindow.webContents.send(IPC.SESSION_EXIT, sessionId, exitCode, resolvedProjectId, intentional);
+      broadcast(context.mainWindow, IPC.SESSION_EXIT, sessionId, exitCode, resolvedProjectId, intentional);
     }
 
     // Persist exit status to session DB -- use the session's own projectId

@@ -19,6 +19,7 @@ import type { Task, SessionDisplayState } from '../../../../shared/types';
 import { useSessionStore } from '../../../stores/session-store';
 import { useTaskSplitResize } from '../../../hooks/useTaskSplitResize';
 import { PanelErrorBoundary } from '../../PanelErrorBoundary';
+import { usePopOut } from '../../../pop-out/usePopOut';
 
 const ChangesPanel = lazy(() => import('./changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
 
@@ -81,6 +82,9 @@ export function TaskDetailBody({
   // default agent so the ContextBar picker can resolve capabilities (mirrors
   // CommandBarOverlay). Non-null `task.agent` wins inside ContextBar.
   const projectDefaultAgent = useProjectStore((state) => state.currentProject?.default_agent ?? null);
+  const projectId = useProjectStore((state) => state.currentProject?.id ?? '');
+  const browserPopOut = usePopOut('browser', { taskId: task.id, projectId });
+  const changesPopOut = usePopOut('changes', { taskId: task.id, projectId });
   const changesViewMode = useSessionStore((state) => state.changesViewMode[task.id] ?? 'split');
   const setChangesViewMode = useSessionStore((state) => state.setChangesViewMode);
   // Spawn-progress label ("Creating worktree...", etc.) for the pre-session
@@ -100,10 +104,15 @@ export function TaskDetailBody({
   // The right panel is one of three mutually-exclusive views (Browser / Changes
   // / Description peek); opening one closes the others (enforced in the toggle
   // handlers). All three share the same draggable terminal split.
-  const rightPanelPresent = changesOpen || browserOpen || descriptionPeekOpen;
-  const showBrowser = browserOpen;
-  const changesPresent = changesOpen && !browserOpen;
-  const showDescriptionPanel = descriptionPeekOpen && !browserOpen && !changesOpen;
+  // Strict mutual exclusivity: while the Browser pane or the Changes view is
+  // detached into its own window, the in-app split suppresses that panel (falling
+  // back to the other panel or the plain terminal) rather than showing it in two
+  // places at once.
+  const showBrowser = browserOpen && !browserPopOut.isOpen;
+  const showChanges = changesOpen && !showBrowser && !changesPopOut.isOpen;
+  const rightPanelPresent = showChanges || showBrowser || descriptionPeekOpen;
+  const changesPresent = showChanges;
+  const showDescriptionPanel = descriptionPeekOpen && !showBrowser && !showChanges;
   const changesExpanded = changesPresent && changesViewMode === 'expanded';
   const handleChangesExpand = () => setChangesViewMode(task.id, 'expanded');
   const handleChangesCollapse = () => setChangesViewMode(task.id, 'split');
@@ -200,6 +209,7 @@ export function TaskDetailBody({
           onExpand={handleChangesExpand}
           onCollapse={handleChangesCollapse}
           task={task}
+          popOutParams={projectId ? { taskId: task.id, projectId } : undefined}
         />
       </Suspense>
     </PanelErrorBoundary>

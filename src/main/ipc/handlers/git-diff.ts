@@ -11,6 +11,7 @@ import { fetchAllRemotesIfStale } from '../../git/fetch-throttle';
 import { countLocalOnlyCommits } from '../../git/local-only-commits';
 import type { GitBlameInput, GitBranchSummaryInput, GitCommitGraphInput, GitDiffFilesInput, GitFileContentInput, GitFileHistoryInput, GitPendingChangesInput, GitPendingChangesResult, PRState } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
+import { broadcast } from '../../pop-out/window-broadcast';
 
 /**
  * Policy inputs that shape what the Done move would actually destroy. `autoCleanup`
@@ -120,9 +121,9 @@ export function registerGitDiffHandlers(context: IpcContext): void {
 
   ipcMain.on(IPC.GIT_DIFF_SUBSCRIBE, (_, worktreePath: string) => {
     watcher.subscribe(worktreePath, () => {
-      if (!context.mainWindow.isDestroyed()) {
-        context.mainWindow.webContents.send(IPC.GIT_DIFF_CHANGED);
-      }
+      // broadcast() already guards a destroyed main window internally, matching the
+      // CONFIG_SET site's guard-free call.
+      broadcast(context.mainWindow, IPC.GIT_DIFF_CHANGED);
     });
   });
 

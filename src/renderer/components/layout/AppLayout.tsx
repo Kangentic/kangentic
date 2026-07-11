@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { TitleBar } from './TitleBar';
 import { StatusBar } from './StatusBar';
 import { ProjectSidebar } from '../sidebar/ProjectSidebar';
@@ -32,10 +32,12 @@ import { DictationSurface } from '../dictation/DictationSurface';
 import { useKeybinding } from '../../hooks/useKeybinding';
 import { StatsPage } from '../stats/StatsPage';
 import { useUsageDashboardStore } from '../../stores/usage-dashboard-store';
+import { usePopOut } from '../../pop-out/usePopOut';
 
 export function AppLayout() {
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
   const statsOpen = useUsageDashboardStore((s) => s.statsOpen);
+  const statsPopOut = usePopOut('stats', {});
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
   const openProjectSettings = useConfigStore((s) => s.openProjectSettings);
   const config = useConfigStore((s) => s.config);
@@ -84,6 +86,15 @@ export function AppLayout() {
   useFocusedSessionsSync();
   useDictation();
 
+  // Strict mutual exclusivity: the usage stats overlay and its pop-out window
+  // never coexist. When the pop-out opens, close the in-app overlay so reopening
+  // it (title bar / keybinding) later starts from a clean closed state; the
+  // render guard below is belt-and-suspenders against the one-frame race before
+  // this effect runs.
+  useEffect(() => {
+    if (statsPopOut.isOpen) useUsageDashboardStore.getState().close();
+  }, [statsPopOut.isOpen]);
+
   // App-level shortcuts wired here, where the layout owns the relevant state and
   // resize controllers. Combos come from the central keybinding registry.
   // Settings toggle mirrors the title-bar gear's behavior.
@@ -92,7 +103,7 @@ export function AppLayout() {
     else if (currentProject) openProjectSettings(currentProject.path, currentProject.name);
     else setSettingsOpen(true);
   });
-  useKeybinding('stats.toggle', () => useUsageDashboardStore.getState().toggle());
+  useKeybinding('stats.toggle', () => (statsPopOut.isOpen ? statsPopOut.focus() : useUsageDashboardStore.getState().toggle()));
   useKeybinding('view.toggleSidebar', () => sidebar.toggle());
   useKeybinding('view.toggleTerminalPanel', () => terminal.onToggleCollapse());
   useKeybinding('task.create', () => useBoardStore.getState().requestNewTask(), {
@@ -218,7 +229,7 @@ export function AppLayout() {
       </div>
 
       {config.statusBarVisible !== false && <StatusBar />}
-      {statsOpen && <StatsPage />}
+      {statsOpen && !statsPopOut.isOpen && <StatsPage />}
       {settingsOpen && <SettingsPanel />}
       {commandBar.isOpen && <CommandTerminalLayer onHide={commandBar.close} />}
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}

@@ -1,0 +1,62 @@
+---
+paths:
+  - "src/main/pop-out/**"
+  - "src/shared/pop-out.ts"
+  - "src/main/index.ts"
+  - "src/renderer/pop-out/**"
+---
+# Rule: pop-out surfaces go through the registry
+
+The pop-out window engine lets a registered UI surface (usage stats, git changes, the task
+Browser pane) detach into its own OS-level `BrowserWindow`. It stays a small, declarative system
+only if every surface and every window-creation site funnels through the same two registries -
+otherwise each new detachable surface becomes a bespoke multi-window rewrite, and a stray
+`new BrowserWindow` bypasses the bounds persistence, broadcast fan-out, and synchronous-shutdown
+teardown the engine already handles centrally.
+
+This is distinct from `src/renderer/window-manager/` (movable DOM windows inside the single
+`BrowserWindow` - task-detail and Command Terminal). Do not extend that system to cover OS-level
+pop-outs, and do not conflate the two layers.
+
+## The rule
+
+- **Every OS `BrowserWindow` is created in exactly one of two places:** the main window in
+  `createWindow()` (`src/main/index.ts`), or a pop-out window in
+  `src/main/pop-out/pop-out-window-manager.ts`. No other file may call `new BrowserWindow(`.
+- **Every `PopOutKind` has a shared metadata entry** in `POP_OUT_SURFACES`
+  (`src/shared/pop-out.ts`): title, default bounds/min size, `needsWebview`, and the push
+  `channels` fanned to that surface's open windows. This is the single source both processes read
+  - the main-side window manager for bounds/webview config, the renderer for its fan-out
+  declaration.
+- **Every `PopOutKind` has a matching renderer registry entry** (`SurfaceDescriptor` in
+  `src/renderer/pop-out/surface-registry.ts`, registered via `registerSurface()` in
+  `src/renderer/pop-out/surfaces/index.ts`): a root component, a minimal `bootstrap()` (load only
+  what the surface consumes, not the full `App.tsx` bootstrap), an `hmrResync()`, and the in-app
+  surface it is mutually exclusive with.
+- **Every declared fan-out channel is a real `IPC` constant.** A typo silently drops that push
+  instead of erroring.
+- **Strict mutual exclusivity.** When a surface's pop-out window is open
+  (`usePopOut(kind, params).isOpen`), the in-app form (overlay / dialog / embedded pane) must not
+  also be mounted. Guard the in-app mount site and add a `<PopOutButton kind=... params=.../>` to
+  its header/toolbar.
+- **Task-scoped surfaces resolve their own data from `params`** (`{ taskId, projectId }`), never
+  from ambient ` currentProject`/`currentTask` state - a pop-out window is a separate renderer
+  process with its own stores.
+
+## Enforcement (self-maintaining)
+
+- **Test:** `tests/unit/pop-out-surface-registry.test.ts` scans `src/main` for `new BrowserWindow(`
+  outside the two sanctioned files, asserts the shared-meta `PopOutKind` set matches the renderer
+  registry's registered set, and asserts every declared `channels` entry is a member of
+  `Object.values(IPC)`. Runs in CI via `npm run test:unit`.
+- **Test:** `tests/unit/hmr-resync.test.ts` covers the renderer half of Pattern B/E for
+  `pop-out-store.ts` (the store mirroring which windows are open).
+- **Review:** `/code-review` flags a new `new BrowserWindow(` outside the manager, or a new
+  in-app surface added without its mutual-exclusivity guard.
+
+## Scope
+
+The pop-out window engine: `src/main/pop-out/**`, `src/shared/pop-out.ts`,
+`src/renderer/pop-out/**`, and the pop-out-specific edits to `src/main/index.ts`
+(`createWindow()`'s `configure()` call and the main-window `close` handler). Does not cover the
+in-app DOM window manager (`src/renderer/window-manager/`), which is a separate, unrelated system.

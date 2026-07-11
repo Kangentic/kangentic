@@ -11,6 +11,7 @@ import { useSessionStore } from './stores/session-store';
 import { useBacklogStore } from './stores/backlog-store';
 import { useToastStore } from './stores/toast-store';
 import { useUsageDashboardStore } from './stores/usage-dashboard-store';
+import { usePopOutStore } from './stores/pop-out-store';
 import { useProjectSwitchEffect } from './hooks/useProjectSwitchEffect';
 import { useAgentDrivenInvalidation } from './hooks/useAgentDrivenInvalidation';
 import { invalidateProject } from './stores/project-cache';
@@ -90,6 +91,14 @@ export function App() {
       useProjectStore.setState({ missingPathProject: project });
     });
 
+    // Pop-out windows: hydrate which surfaces are currently detached, then stay
+    // live via the popOut:changed push. Only meaningful in the main window (a
+    // pop-out window never reads this store); see stores/pop-out-store.ts.
+    void usePopOutStore.getState().loadOpen();
+    const cleanupPopOutChanged = window.electronAPI.popOut?.onChanged((openInstanceKeys) => {
+      usePopOutStore.getState().setOpen(openInstanceKeys);
+    });
+
     // Listen for auto-update downloaded notification
     const cleanupUpdateListener = window.electronAPI.updater?.onUpdateDownloaded((info) => {
       useToastStore.getState().addToast({
@@ -107,6 +116,7 @@ export function App() {
       if (mountTimerRafId !== undefined) cancelAnimationFrame(mountTimerRafId);
       cleanupAutoOpen();
       cleanupPathMissing?.();
+      cleanupPopOutChanged?.();
       cleanupUpdateListener?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap: every callee is a stable Zustand action or an IPC listener registered exactly once
@@ -688,6 +698,8 @@ if (import.meta.hot) {
     // Usage dashboard Pattern B: refetch the composite payload from
     // main-process truth (no-ops while the dashboard is closed).
     useUsageDashboardStore.getState().loadDashboardStats();
+    // Pop-out windows Pattern B: re-hydrate which surfaces are currently detached.
+    usePopOutStore.getState().loadOpen();
     useSessionStore.getState().syncSessions().then((applied) => {
       if (!applied) return;
 
@@ -717,5 +729,6 @@ if (import.meta.env.DEV) {
     window: useWindowStore,
     commandWindow: commandWindowManager.store,
     usageDashboard: useUsageDashboardStore,
+    popOut: usePopOutStore,
   };
 }

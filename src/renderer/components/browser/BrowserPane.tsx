@@ -9,6 +9,7 @@ import { AttachmentChips } from './AttachmentChips';
 import { useToastStore } from '../../stores/toast-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useKeybinding } from '../../hooks/useKeybinding';
+import { PopOutButton } from '../../pop-out/PopOutButton';
 import { browserPartitionForWorktree } from '../../../shared/browser-partition';
 import type { BrowserPickedElement } from '../../../shared/types';
 import type { WebviewElement } from './webview-types';
@@ -119,6 +120,7 @@ function BrowserPaneActive({
   // flashed in as the pane slid open. We cover it with the app's surface color
   // (plus a spinner) and lift the cover on the first dom-ready / stop-loading.
   const [pageReady, setPageReady] = useState(false);
+  const projectId = useProjectStore((state) => state.currentProject?.id ?? null);
 
   const webviewRef = useRef<WebviewElement | null>(null);
   const overlayContainerRef = useRef<HTMLDivElement | null>(null);
@@ -171,6 +173,7 @@ function BrowserPaneActive({
   // that knows taskId + sessionId + the guest's webContentsId. Registers on
   // dom-ready (the id is valid once the guest attaches) and unregisters on
   // unmount; main also tracks the guest's own destroyed / did-navigate events.
+  const registeredWebContentsIdRef = useRef<number | null>(null);
   useEffect(() => {
     const webview = webviewRef.current;
     if (!webview) return;
@@ -185,6 +188,7 @@ function BrowserPaneActive({
       }
       if (!Number.isInteger(webContentsId) || webContentsId <= 0) return;
       registered = true;
+      registeredWebContentsIdRef.current = webContentsId;
       const projectId = useProjectStore.getState().currentProject?.id ?? null;
       let url: string | null = null;
       try {
@@ -198,7 +202,11 @@ function BrowserPaneActive({
     register();
     return () => {
       webview.removeEventListener('dom-ready', register);
-      void window.electronAPI.browser.unregisterPane(sessionId);
+      // Pass the webContentsId THIS instance registered with, so an out-of-order
+      // unmount (e.g. this in-app pane unmounting after a pop-out window's pane
+      // already re-registered the same sessionId with a new guest) cannot
+      // clobber the newer registration - see unregisterIfMatches.
+      void window.electronAPI.browser.unregisterPane(sessionId, registeredWebContentsIdRef.current ?? undefined);
     };
   }, [sessionId, taskId]);
 
@@ -457,7 +465,11 @@ function BrowserPaneActive({
       className="flex flex-col h-full min-h-0 bg-surface"
       data-testid="browser-pane"
     >
-      {/* URL bar */}
+      {/* URL bar. This IS the browser pane's top bar (its identity is the URL it
+          already shows), so unlike Changes/Stats it needs no separate surface
+          header - the pop-out control just takes its predictable top-right slot at
+          the end of this toolbar. Hidden inside a pop-out window (its descriptor is
+          set), whose OS title bar already provides identity. */}
       <form onSubmit={handleUrlSubmit} className="flex items-center gap-1 px-2 py-1.5 border-b border-edge flex-shrink-0">
         <button
           type="button"
@@ -558,6 +570,14 @@ function BrowserPaneActive({
             <ZoomIn size={14} />
           </button>
         </div>
+        {/* Pop-out in its predictable top-right slot. Hidden inside a pop-out
+            window (descriptor set); shown only for the in-app embed. */}
+        {!window.electronAPI.popOut?.descriptor && projectId && (
+          <>
+            <div className="w-px h-5 bg-edge mx-1 flex-shrink-0" aria-hidden="true" />
+            <PopOutButton kind="browser" params={{ taskId, projectId }} title="Open in new window" />
+          </>
+        )}
       </form>
 
       {/* Webview + canvas overlay */}

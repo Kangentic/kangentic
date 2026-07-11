@@ -2,7 +2,6 @@ const PROCESS_START = performance.now();
 
 import { app, BrowserWindow, clipboard, Menu, nativeImage, powerMonitor, session } from 'electron';
 import path from 'node:path';
-import fs from 'node:fs';
 import { registerAllIpc, getSessionManager, getTerminalSubmitScheduler, getBoardConfigManager, getCurrentProjectId, getOptionalIpcContext, openProjectByPath, deleteProjectFromIndex, pruneStaleWorktreeProjects, activateAllProjects, getLastOpenedProject } from './ipc/register-all';
 import { installDiagnostics } from './diagnostics/install';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
@@ -27,7 +26,8 @@ import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, s
 import { resolveClientId } from './analytics/client-id';
 import { PATHS } from './config/paths';
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
-import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds } from './window-utils';
+import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath } from './window-utils';
+import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
@@ -292,8 +292,14 @@ app.on('web-contents-created', (_event, contents) => {
       : currentFactor / WHEEL_ZOOM_STEP;
     const clampedFactor = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, targetFactor));
     contents.setZoomFactor(clampedFactor);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC.BROWSER_ZOOM_CHANGED, clampedFactor);
+    // Route the zoom readout to the window that actually HOSTS this webview guest - the
+    // main window for the in-app pane, or a pop-out window for a detached Browser pane -
+    // so the pop-out's toolbar % stays synced with Ctrl+wheel zoom. Sending to mainWindow
+    // unconditionally would leave a popped-out pane's readout stale (its BrowserPane is
+    // the only listener, and the main window's in-app pane is unmounted while popped out).
+    const hostWindow = BrowserWindow.fromWebContents(contents.hostWebContents ?? contents);
+    if (hostWindow && !hostWindow.isDestroyed()) {
+      hostWindow.webContents.send(IPC.BROWSER_ZOOM_CHANGED, clampedFactor);
     }
   });
 
@@ -518,6 +524,34 @@ const createWindow = () => {
   mainWindow.on('move', saveBounds);
   mainWindow.on('resize', saveBounds);
 
+  // Pop-out windows (usage stats, git changes, the Browser pane) share this window's
+  // preload and Vite dev server. configure() is idempotent -- re-activate on macOS calls
+  // createWindow() again and simply replaces the context.
+  popOutWindowManager.configure({
+    devServerUrl: MAIN_WINDOW_VITE_DEV_SERVER_URL ?? null,
+    viteName: MAIN_WINDOW_VITE_NAME,
+    preloadPath: path.join(__dirname, 'preload.js'),
+    // Resolved lazily at bounds-save time (the IPC context is built after this call):
+    // share the app-canonical ConfigManager so pop-out bounds writes never clobber
+    // settings written through context.configManager. Mirrors the ctx-preferring idiom
+    // in safeReadDeveloperFlag above.
+    getConfigManager: () => getOptionalIpcContext()?.configManager ?? windowConfigManager,
+    onOpenSetChanged: (openInstanceKeys) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(IPC.POPOUT_CHANGED, openInstanceKeys);
+      }
+    },
+  });
+
+  // Electron only fires window-all-closed at window-count zero, so closing the main
+  // window while a pop-out is open would leave an orphan pop-out and never quit. Destroy
+  // every pop-out synchronously when the MAIN window closes (not when a pop-out itself
+  // closes -- this listener is scoped to mainWindow only) so the count reaches zero and
+  // window-all-closed / app.on('activate') behave correctly either way.
+  mainWindow.on('close', () => {
+    popOutWindowManager.destroyAll();
+  });
+
   // Register IPC handlers early so speculative preloading (below) can use them.
   // Idempotent: on macOS dock re-activation, the guard in registerAllIpc()
   // updates the window reference without re-registering handlers.
@@ -577,16 +611,7 @@ const createWindow = () => {
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
-    // The esbuild layout ships the renderer alongside the main bundle
-    // (./renderer/). The legacy Forge layout kept it in ../renderer/.
-    // Prefer the esbuild layout because the legacy path can be populated
-    // by a stale `npm start` dev-server cache (`.vite/renderer/`) that
-    // survives `npm run build`, causing the packaged app to load an
-    // outdated bundle. Fall back to the legacy path only when the
-    // standalone layout is missing.
-    const standalonePath = path.join(__dirname, `renderer/${MAIN_WINDOW_VITE_NAME}/index.html`);
-    const legacyPath = path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`);
-    mainWindow.loadFile(fs.existsSync(standalonePath) ? standalonePath : legacyPath);
+    mainWindow.loadFile(resolveRendererIndexPath(MAIN_WINDOW_VITE_NAME));
   }
 
   endPhase('createWindow');

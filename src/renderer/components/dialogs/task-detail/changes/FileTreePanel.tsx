@@ -20,6 +20,11 @@ interface FileTreePanelProps {
   totalDeletions: number;
   /** Live branch context (name, ahead/behind, last commit) shown in the header. */
   branchSummary?: GitBranchSummaryResult | null;
+  /** Whether to render the built-in branch header (branch + base + ahead/behind +
+   *  last commit). The task-detail embed shows this context in the shared surface
+   *  header instead, so it passes false to avoid duplicating the row. Default true
+   *  (standalone dialog / command-terminal embed, which have no surface header). */
+  showBranchHeader?: boolean;
   /** Paths the user has marked "viewed" (their rows dim). */
   viewedFiles: Set<string>;
   /** Toggle a file's "viewed" mark. */
@@ -768,6 +773,7 @@ export function FileTreePanel({
   totalInsertions,
   totalDeletions,
   branchSummary,
+  showBranchHeader = true,
   viewedFiles,
   onToggleViewed,
   scope,
@@ -822,8 +828,11 @@ export function FileTreePanel({
 
   return (
     <div className="flex flex-col h-full" data-testid="changes-file-tree">
-      {/* Branch context + refresh */}
-      <BranchHeader branchSummary={branchSummary} baseLabel={baseLabel} baseLabelCustom={baseLabelCustom} />
+      {/* Branch context + refresh. Suppressed in the task-detail embed, where the
+          shared surface header owns this context (see showBranchHeader). */}
+      {showBranchHeader && (
+        <BranchHeader branchSummary={branchSummary} baseLabel={baseLabel} baseLabelCustom={baseLabelCustom} />
+      )}
 
       {/* Diff scope: working changes / staged / full branch. A segmented control
           (single-select among 3 fixed options) rather than a dropdown. */}

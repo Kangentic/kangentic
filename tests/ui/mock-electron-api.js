@@ -1861,6 +1861,7 @@
       syncDefaultToProjects: async function () {
         return 0;
       },
+      onChanged: function (/* callback() */) { return noop; },
     },
 
     keybindings: {
@@ -2732,6 +2733,16 @@
       isFocused: function () { return Promise.resolve(true); },
     },
 
+    popOut: {
+      open: function (/* kind, params */) { return Promise.resolve(); },
+      close: function (/* kind, params */) { return Promise.resolve(); },
+      focus: function (/* kind, params */) { return Promise.resolve(); },
+      isOpen: function (/* kind, params */) { return Promise.resolve(false); },
+      listOpen: function () { return Promise.resolve([]); },
+      onChanged: function (/* callback(openInstanceKeys) */) { return noop; },
+      descriptor: null,
+    },
+
     clipboard: {
       readImage: function () { return Promise.resolve('/tmp/kangentic-clipboard/pasted-image-1234567890.png'); },
       // Call log for test assertions. Reset with window.electronAPI.clipboard.__writeTextCalls.length = 0.
@@ -2849,7 +2860,7 @@
       // toast paths via test-time monkeypatching.
       clearStorage: function () { return Promise.resolve(); },
       registerPane: function (input) { browserPaneCalls.push({ type: 'register', input: input }); return Promise.resolve(); },
-      unregisterPane: function (sessionId) { browserPaneCalls.push({ type: 'unregister', sessionId: sessionId }); return Promise.resolve(); },
+      unregisterPane: function (sessionId, webContentsId) { browserPaneCalls.push({ type: 'unregister', sessionId: sessionId, webContentsId: webContentsId }); return Promise.resolve(); },
       // Ctrl+wheel zoom is applied in the main process and broadcast back.
       // The UI tier has no main process, so the mock just registers the
       // callback and returns a no-op unsubscribe.

@@ -70,6 +70,31 @@ describe('BrowserPaneRegistry', () => {
     expect(registry.size).toBe(0);
   });
 
+  describe('unregisterIfMatches', () => {
+    it('is a no-op when the current entry was re-registered with a different webContentsId (race guard)', () => {
+      // Pop-out re-registers sess-a with a new guest (webContentsId 22) BEFORE the
+      // in-app pane's own unmount cleanup (still carrying its stale webContentsId 11)
+      // runs. The stale cleanup must not clobber the newer registration.
+      registry.register(REGISTER_A); // webContentsId 11
+      registry.register({ ...REGISTER_A, webContentsId: 22 }); // pop-out re-registers the same session
+      registry.unregisterIfMatches('sess-a', 11); // stale unmount cleanup, out of order
+      expect(registry.get('sess-a')).toBeDefined();
+      expect(registry.get('sess-a')?.webContentsId).toBe(22);
+    });
+
+    it('deletes the entry when the webContentsId still matches the current registration', () => {
+      registry.register(REGISTER_A);
+      registry.register({ ...REGISTER_A, webContentsId: 22 });
+      registry.unregisterIfMatches('sess-a', 22);
+      expect(registry.get('sess-a')).toBeUndefined();
+    });
+
+    it('is a harmless no-op for an unknown sessionId', () => {
+      expect(() => registry.unregisterIfMatches('unknown', 5)).not.toThrow();
+      expect(registry.size).toBe(0);
+    });
+  });
+
   it('updates url by sessionId and by webContentsId', () => {
     registry.register(REGISTER_B);
     registry.updateUrl('sess-b', 'http://localhost:5173');

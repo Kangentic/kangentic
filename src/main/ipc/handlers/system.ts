@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { app, ipcMain, Notification, dialog, shell, globalShortcut, clipboard } from 'electron';
+import { app, BrowserWindow, ipcMain, Notification, dialog, shell, globalShortcut, clipboard } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { comboToAccelerator } from '../../../shared/keybindings';
 import { WorktreeManager } from '../../git/worktree-manager';
@@ -13,6 +13,7 @@ import { HandoffRepository } from '../../db/repositories/handoff-repository';
 import { syncProjectMcpConfig } from './projects';
 import { applyRuntimeConfig } from '../../config/apply-runtime-config';
 import { listAgents, invalidateAgentListCache } from '../../agent/agent-list';
+import { broadcast } from '../../pop-out/window-broadcast';
 import type {
   NotificationInput,
   AgentCommand,
@@ -79,6 +80,11 @@ export function registerSystemHandlers(context: IpcContext): void {
         relayUrl: effectiveConfig.mobileBridge?.relayUrl ?? '',
       });
     }
+    // Bare-signal broadcast so every open pop-out window re-fetches via config:get and
+    // stays in theme/settings sync (they subscribe through config.onChanged in
+    // usePopOutBootstrap). The main window is a harmless extra recipient: it does not
+    // subscribe, updating its own config store optimistically at the config.set call site.
+    broadcast(context.mainWindow, IPC.CONFIG_CHANGED);
   });
 
   // Synchronous sibling of CONFIG_SET for the renderer's quit/unload flush: an async
@@ -100,6 +106,10 @@ export function registerSystemHandlers(context: IpcContext): void {
     if (!context.currentProjectPath) throw new Error('No project open');
     context.configManager.saveProjectOverrides(context.currentProjectPath, overrides);
     applyRuntimeConfig(context.sessionManager, context.configManager, context.currentProjectPath);
+    // A per-project override changes the EFFECTIVE config open pop-outs read (the Changes
+    // surface reads git.defaultBaseBranch, which is project-overridable), so fan the same
+    // bare signal CONFIG_SET does so they re-fetch instead of diffing a stale base branch.
+    broadcast(context.mainWindow, IPC.CONFIG_CHANGED);
   });
 
   ipcMain.handle(IPC.CONFIG_GET_PROJECT_BY_PATH, (_, projectPath: string) => {
@@ -116,6 +126,10 @@ export function registerSystemHandlers(context: IpcContext): void {
     // currently-open project needs its in-memory state refreshed now.
     if (projectPath === context.currentProjectPath) {
       applyRuntimeConfig(context.sessionManager, context.configManager, projectPath);
+      // Sync open pop-outs of the current project to the changed effective config (see
+      // the CONFIG_SET_PROJECT broadcast note). Scoped to the current project since only
+      // its pop-outs are open.
+      broadcast(context.mainWindow, IPC.CONFIG_CHANGED);
       // Re-arm the PR-refresh timer so a changed interval (Git tab) takes effect
       // immediately without reopening the project. Imported lazily so registering
       // the system handlers does not pull the gh-backed PR runtime into this
@@ -485,17 +499,26 @@ export function registerSystemHandlers(context: IpcContext): void {
   });
 
   // === Window ===
-  ipcMain.on(IPC.WINDOW_MINIMIZE, () => context.mainWindow.minimize());
-  ipcMain.on(IPC.WINDOW_MAXIMIZE, () => {
-    if (context.mainWindow.isMaximized()) {
-      context.mainWindow.unmaximize();
+  // Resolve the window that actually sent the IPC message (falling back to the main
+  // window for a channel invoked outside a BrowserWindow's webContents, which should
+  // not happen in practice). This is what lets frameless pop-out windows draw their own
+  // custom minimize/maximize/close controls and have them operate on themselves rather
+  // than always hitting the main window.
+  function resolveSenderWindow(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): Electron.BrowserWindow {
+    return BrowserWindow.fromWebContents(event.sender) ?? context.mainWindow;
+  }
+  ipcMain.on(IPC.WINDOW_MINIMIZE, (event) => resolveSenderWindow(event).minimize());
+  ipcMain.on(IPC.WINDOW_MAXIMIZE, (event) => {
+    const win = resolveSenderWindow(event);
+    if (win.isMaximized()) {
+      win.unmaximize();
     } else {
-      context.mainWindow.maximize();
+      win.maximize();
     }
   });
-  ipcMain.on(IPC.WINDOW_CLOSE, () => context.mainWindow.close());
-  ipcMain.on(IPC.WINDOW_FLASH_FRAME, (_event, flash: boolean) => context.mainWindow.flashFrame(flash));
-  ipcMain.handle(IPC.WINDOW_IS_FOCUSED, () => context.mainWindow.isFocused());
+  ipcMain.on(IPC.WINDOW_CLOSE, (event) => resolveSenderWindow(event).close());
+  ipcMain.on(IPC.WINDOW_FLASH_FRAME, (event, flash: boolean) => resolveSenderWindow(event).flashFrame(flash));
+  ipcMain.handle(IPC.WINDOW_IS_FOCUSED, (event) => resolveSenderWindow(event).isFocused());
 
   // === Notifications ===
   const activeNotifications = new Set<Notification>();

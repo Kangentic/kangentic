@@ -207,11 +207,20 @@ export function registerBrowserHandlers(context: IpcContext): void {
     });
   });
 
-  ipcMain.handle(IPC.BROWSER_PANE_UNREGISTER, (_event, sessionId: string) => {
+  ipcMain.handle(IPC.BROWSER_PANE_UNREGISTER, (_event, sessionId: string, webContentsId?: number) => {
     // Mirror the register handler's input guard (a registered sessionId always
     // passed it). A bad key would be a harmless Map no-op, but validating keeps
     // the two sibling handlers symmetric.
     if (!isValidSessionId(sessionId)) return;
-    browserPaneRegistry.unregister(sessionId);
+    // When the caller passes the webContentsId it registered with (every
+    // BrowserPane instance does), scope the unregister to that exact guest so
+    // an out-of-order unmount across the in-app pane and its pop-out cannot
+    // clobber a newer registration for the same sessionId. Falls back to the
+    // unconditional unregister for any caller that omits it.
+    if (typeof webContentsId === 'number' && Number.isInteger(webContentsId) && webContentsId > 0) {
+      browserPaneRegistry.unregisterIfMatches(sessionId, webContentsId);
+    } else {
+      browserPaneRegistry.unregister(sessionId);
+    }
   });
 }
