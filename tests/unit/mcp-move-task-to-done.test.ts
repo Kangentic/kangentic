@@ -20,6 +20,8 @@
  *   - handleMoveTask moves a task to Done, dispatching to onTaskMove with the
  *     archived Done lane's id
  *   - handleCreateTask still rejects column: "Done" (regression)
+ *   - includeArchivedDone does NOT expose a non-Done archived lane by name -
+ *     the fix's carve-out is scoped to role 'done', not "any archived lane"
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -152,5 +154,31 @@ describe.runIf(CAN_RUN)('resolving and moving a task to the Done column', () => 
     if (!response.success) {
       expect(response.error).toContain('Column "Done" not found');
     }
+  });
+
+  it('does not expose a non-Done archived lane by name, even with includeArchivedDone set', () => {
+    // A user can archive a custom column deliberately to hide it (distinct
+    // from the Done lane, which is archived by design). The fix's carve-out
+    // is `swimlane.role === 'done'`, not "any archived lane" - assert the
+    // narrower condition directly so a future refactor that widens the OR to
+    // just `includeArchivedDone` (leaking every hidden archived lane through
+    // move_task) fails this test.
+    const swimlaneRepo = new SwimlaneRepository(db);
+    const hiddenLane = swimlaneRepo.create({ name: 'Retired Column', auto_spawn: false, is_archived: true });
+
+    const withFlag = resolveColumn(db, 'Retired Column', 'todo', { includeArchivedDone: true });
+    expect('error' in withFlag).toBe(true);
+    if ('error' in withFlag) {
+      expect(withFlag.error).toContain('Column "Retired Column" not found');
+    }
+
+    const taskRepo = new TaskRepository(db);
+    const task = taskRepo.create({ title: 'Task', description: '', swimlane_id: todoLane.id });
+    const response = handleMoveTask({ taskId: task.id, column: 'Retired Column' }, context);
+    expect(response.success).toBe(false);
+    if (!response.success) {
+      expect(response.error).not.toContain(hiddenLane.id);
+    }
+    expect(context.onTaskMove).not.toHaveBeenCalled();
   });
 });
