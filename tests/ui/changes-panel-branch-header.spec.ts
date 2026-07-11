@@ -118,7 +118,7 @@ test.afterAll(async () => {
 });
 
 test.describe('Changes panel: branch header', () => {
-  test('shows branch name, ahead/behind, and last commit', async () => {
+  test('shows branch name, ahead/behind, and last commit in the shared surface header', async () => {
     const card = page
       .locator('[data-swimlane-name="Code Review"]')
       .locator('text=Branch Header Task')
@@ -136,18 +136,38 @@ test.describe('Changes panel: branch header', () => {
       await page.locator('[data-testid="changes-toggle"]').click();
     }
 
-    // Branch name from the mocked branchSummary is visible.
-    await expect(dialog.locator('text=feature/enhance-changes').first()).toBeVisible({ timeout: 8000 });
+    // In the task-detail embed the branch/commit context lives in the shared
+    // detachable-surface header (surface-header-changes), not the file-tree's
+    // own BranchHeader: the embed passes showBranchHeader={false} to
+    // FileTreePanel to avoid rendering it twice (see ChangesPanel's
+    // surfaceHeader and FileTreePanel's showBranchHeader prop). Only the
+    // standalone TaskChangesDialog and the command-terminal Changes embed
+    // still show BranchHeader inside the file tree.
+    const surfaceHeader = page.locator('[data-testid="surface-header-changes"]');
+    await surfaceHeader.waitFor({ state: 'visible', timeout: 8000 });
+
+    // Branch name from the mocked branchSummary is visible, scoped to the
+    // surface header so this also proves it did NOT render (duplicated)
+    // inside the file tree.
+    const branchName = surfaceHeader.locator('[data-testid="changes-branch-name"]');
+    await expect(branchName).toHaveText('feature/enhance-changes', { timeout: 8000 });
+    await expect(page.locator('[data-testid="changes-branch-name"]')).toHaveCount(1);
 
     // Last-commit line: short hash + subject.
-    const lastCommit = page.locator('[data-testid="changes-last-commit"]');
+    const lastCommit = surfaceHeader.locator('[data-testid="changes-last-commit"]');
     await lastCommit.waitFor({ state: 'visible', timeout: 3000 });
     await expect(lastCommit).toContainText('abc1234', { timeout: 3000 });
     await expect(lastCommit).toContainText('wire branch summary into header', { timeout: 3000 });
 
-    // Auto-fit: with a branch name + commit and no manual width (config null), the
-    // tree sizes itself wider than the 220px floor so the header is readable.
-    await expect.poll(async () => (await fileTree.boundingBox())!.width, { timeout: 5000 }).toBeGreaterThan(240);
+    // The file tree's own branch-name/last-commit auto-fit sizing (which
+    // widens the tree to avoid truncating BranchHeader's content) has nothing
+    // to measure in this embed, since that content now lives in the
+    // full-width surface header instead of inside the tree column. The tree
+    // therefore stays at its default floor width rather than auto-fitting -
+    // unlike the standalone dialog / command-terminal embed, where
+    // BranchHeader still renders inside the tree and auto-fit still widens it
+    // (not covered here; this spec is scoped to the task-detail embed).
+    await expect.poll(async () => (await fileTree.boundingBox())!.width, { timeout: 5000 }).toBeLessThan(240);
 
     // Close panel + dialog so state does not leak to other tests.
     await page.locator('[data-testid="changes-toggle"]').click();

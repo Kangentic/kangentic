@@ -1,16 +1,21 @@
 /**
- * UI tests for the DiffViewer `trailingControls` path inside ChangesPanel.
+ * UI tests for the DiffViewer toolbar inside ChangesPanel (split/inline toggle,
+ * whitespace, collapse-unchanged, markdown preview) plus the panel-level
+ * expand/collapse control's location.
  *
- * Intent: when a file IS selected (i.e. `selectedFile` is truthy in
- * ChangesPanel), the `panelControls` node is forwarded as `trailingControls`
- * to the DiffViewer toolbar rather than being rendered in the `fallbackControlsRow`.
- * This is distinct from the fallback-row path exercised by the other changes-panel
- * specs, where `git.diffFiles` returns `{ files: [] }` and no file is ever selected.
+ * DiffViewer no longer accepts a `trailingControls` prop: the panel-level
+ * expand/collapse control (`panelControls` in ChangesPanel, exposed as
+ * `expandCollapseControl`) now renders in the shared detachable-surface header
+ * (`surface-header-changes`, via `DetachableSurfaceHeader`'s `actions` slot),
+ * NOT inside the DiffViewer toolbar, and NOT conditioned on a file being
+ * selected - the surface header is the panel's unconditional top row. The
+ * first test below locks that location explicitly so a regression that moves
+ * it back into (or duplicates it in) the diff toolbar is caught.
  *
- * To exercise this path we seed `window.__mockGitDiff` (the test hook in
- * mock-electron-api.js) with a single modified file entry carrying its diff
+ * To exercise the diff toolbar we seed `window.__mockGitDiff` (the test hook
+ * in mock-electron-api.js) with a single modified file entry carrying its diff
  * content. ChangesPanel auto-selects the first file, fetches its content, and
- * mounts DiffViewer with the expand/collapse control in the toolbar.
+ * mounts DiffViewer.
  *
  * Monaco concern: @monaco-editor/react loads inside a real headless Chromium
  * context here, but the toolbar renders synchronously before Monaco initializes,
@@ -121,8 +126,8 @@ test.afterAll(async () => {
   await browser?.close();
 });
 
-test.describe('DiffViewer toolbar: trailingControls rendered when a file is selected', () => {
-  test('expand control appears in the DiffViewer toolbar (alongside split/inline buttons) when a file is auto-selected', async () => {
+test.describe('DiffViewer toolbar: rendering toggles, and the surface header expand/collapse control', () => {
+  test('expand control lives in the shared surface header (not the DiffViewer toolbar), independent of file selection', async () => {
     // Seed git.diffFiles to return a real file (with content) so ChangesPanel
     // auto-selects it and DiffViewer mounts. The __mockGitDiff hook stays active
     // until cleared. Setting it here (before the Changes panel is opened) ensures
@@ -159,35 +164,41 @@ test.describe('DiffViewer toolbar: trailingControls rendered when a file is sele
     await expect(changesPill).toBeVisible();
     await changesPill.click();
 
+    // The shared surface header is the panel's unconditional top row: it
+    // mounts as soon as ChangesPanel opens, before any file is fetched or
+    // selected, so changes-expand is already visible here.
+    const surfaceHeader = page.locator('[data-testid="surface-header-changes"]');
+    await surfaceHeader.waitFor({ state: 'visible', timeout: 5000 });
+    await expect(surfaceHeader.locator('[data-testid="changes-expand"]')).toBeVisible();
+    await expect(surfaceHeader.locator('[data-testid="changes-collapse"]')).not.toBeVisible();
+
     // ChangesPanel auto-selects the first file (src/renderer/components/Foo.tsx).
-    // Once selected, DiffViewer is mounted and its toolbar renders with
-    // the split/inline toggles AND the trailingControls (expand button in split
-    // mode). We wait for the toolbar split button to appear as a proxy for "toolbar
-    // is mounted" - it renders synchronously before Monaco initializes.
+    // Once selected, DiffViewer mounts its own toolbar (split/inline toggles) -
+    // independently of the surface header above. We wait for the toolbar split
+    // button as a proxy for "toolbar is mounted" - it renders synchronously
+    // before Monaco initializes.
     await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible({ timeout: 8000 });
     await expect(page.locator('[data-testid="diff-view-inline"]')).toBeVisible();
 
-    // The expand button must be present IN the DiffViewer toolbar: it is a sibling
-    // of diff-view-split / diff-view-inline inside the same toolbar container.
-    // This is the trailingControls path; the fallbackControlsRow is NOT rendered
-    // when a file is selected.
-    await expect(page.locator('[data-testid="changes-expand"]')).toBeVisible();
-    await expect(page.locator('[data-testid="changes-collapse"]')).not.toBeVisible();
+    // The expand control is NOT among the diff toolbar's own buttons: exactly
+    // one changes-expand exists on the page (in the surface header), proving
+    // DiffViewer does not also render it (it no longer accepts a
+    // trailingControls prop).
+    await expect(page.locator('[data-testid="changes-expand"]')).toHaveCount(1);
 
-    // Clicking expand in the DiffViewer toolbar collapses to show the collapse
-    // control (same as the fallback-row path - the button renders identically).
-    await page.locator('[data-testid="changes-expand"]').click();
-    await expect(page.locator('[data-testid="changes-collapse"]')).toBeVisible();
-    await expect(page.locator('[data-testid="changes-expand"]')).not.toBeVisible();
+    // Clicking expand (from the surface header) still expands the panel.
+    await surfaceHeader.locator('[data-testid="changes-expand"]').click();
+    await expect(surfaceHeader.locator('[data-testid="changes-collapse"]')).toBeVisible();
+    await expect(surfaceHeader.locator('[data-testid="changes-expand"]')).not.toBeVisible();
 
-    // The split/inline toggles are still present (they are siblings in the same
-    // toolbar row - trailingControls does not replace them).
+    // The diff toolbar's own controls are unaffected by the expand/collapse
+    // toggle (they are independent surfaces).
     await expect(page.locator('[data-testid="diff-view-split"]')).toBeVisible();
     await expect(page.locator('[data-testid="diff-view-inline"]')).toBeVisible();
 
-    // Collapse back to split view via the toolbar collapse button.
-    await page.locator('[data-testid="changes-collapse"]').click();
-    await expect(page.locator('[data-testid="changes-expand"]')).toBeVisible();
+    // Collapse back to split view via the surface-header collapse button.
+    await surfaceHeader.locator('[data-testid="changes-collapse"]').click();
+    await expect(surfaceHeader.locator('[data-testid="changes-expand"]')).toBeVisible();
 
     // Clear the mock so it does not persist into any follow-up calls.
     await page.evaluate(() => {

@@ -43,6 +43,11 @@
   let browserUrls = {};
   let browserCaptureCalls = [];
   let browserPaneCalls = [];
+  // Pop-out engine call log: open/close/focus invocations, so a test can
+  // assert the title-bar / surface-header trigger called the right verb
+  // (e.g. focus() instead of toggling the in-app overlay) without a real
+  // OS window. See window.__mockPopOut below.
+  let popOutCalls = [];
 
   // Resolve the git diff fixture for a request. A test can seed a single fixture
   // via window.__mockGitDiff, per-scope fixtures via window.__mockGitDiffByScope
@@ -2734,9 +2739,9 @@
     },
 
     popOut: {
-      open: function (/* kind, params */) { return Promise.resolve(); },
-      close: function (/* kind, params */) { return Promise.resolve(); },
-      focus: function (/* kind, params */) { return Promise.resolve(); },
+      open: function (kind, params) { popOutCalls.push({ type: 'open', kind: kind, params: params }); return Promise.resolve(); },
+      close: function (kind, params) { popOutCalls.push({ type: 'close', kind: kind, params: params }); return Promise.resolve(); },
+      focus: function (kind, params) { popOutCalls.push({ type: 'focus', kind: kind, params: params }); return Promise.resolve(); },
       isOpen: function (/* kind, params */) { return Promise.resolve(false); },
       listOpen: function () { return Promise.resolve([]); },
       onChanged: function (/* callback(openInstanceKeys) */) { return noop; },
@@ -2910,6 +2915,23 @@
     },
     seedTaskUrl: function (taskId, url) {
       browserUrls[taskId] = url;
+    },
+  };
+
+  /**
+   * Test hook: inspect the pop-out engine's open/close/focus call log. The
+   * renderer's pop-out store itself is driven directly via
+   * window.__zustandStores.popOut (exposed dev-only in App.tsx) - a test sets
+   * openInstanceKeys there to simulate "a surface just detached", the same
+   * shape the real popOut:changed push delivers. This hook is only for
+   * asserting which verb a trigger (title-bar button, PopOutButton) called.
+   */
+  window.__mockPopOut = {
+    reset: function () {
+      popOutCalls = [];
+    },
+    getCalls: function () {
+      return popOutCalls.slice();
     },
   };
 

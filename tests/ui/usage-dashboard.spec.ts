@@ -543,4 +543,94 @@ test.describe('usage dashboard', () => {
       await browser.close();
     }
   });
+
+  // Pop-out mutual exclusivity (see .claude/rules/pop-out-surface-registry.md):
+  // the stats overlay and its detached OS window must never coexist. These two
+  // tests drive the renderer's pop-out store directly via
+  // window.__zustandStores.popOut (exposed dev-only in App.tsx for exactly this
+  // purpose) - the same shape the real popOut:changed IPC push delivers - so the
+  // AppLayout/TitleBar wiring is proven without a real second BrowserWindow.
+  test('title-bar button focuses the detached stats window instead of opening the in-app overlay', async () => {
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      await page.evaluate(() => {
+        (window as unknown as {
+          __zustandStores: { popOut: { getState: () => { setOpen: (keys: string[]) => void } } };
+        }).__zustandStores.popOut.getState().setOpen(['stats']);
+      });
+
+      const statsButton = page.locator('[data-testid="usage-stats-button"]');
+      await expect(statsButton).toHaveAttribute('title', 'Focus usage stats window');
+      await statsButton.click();
+
+      await expect
+        .poll(async () => page.evaluate(() => (window as unknown as {
+          __mockPopOut: { getCalls: () => Array<{ type: string; kind: string }> };
+        }).__mockPopOut.getCalls().length), { timeout: 3000 })
+        .toBe(1);
+
+      const calls = await page.evaluate(() => (window as unknown as {
+        __mockPopOut: { getCalls: () => Array<{ type: string; kind: string; params: unknown }> };
+      }).__mockPopOut.getCalls());
+      expect(calls).toEqual([{ type: 'focus', kind: 'stats', params: {} }]);
+
+      // Strict mutual exclusivity: the in-app overlay never mounted.
+      await expect(page.locator('[data-testid="stats-page"]')).not.toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the pop-out engine reporting the stats surface as detached closes an already-open in-app overlay', async () => {
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+
+      // Simulates the user popping the surface out via its header button (or
+      // any other trigger): the popOut:changed push reports 'stats' as open.
+      // AppLayout's mutual-exclusivity effect must close the in-app overlay.
+      await page.evaluate(() => {
+        (window as unknown as {
+          __zustandStores: { popOut: { getState: () => { setOpen: (keys: string[]) => void } } };
+        }).__zustandStores.popOut.getState().setOpen(['stats']);
+      });
+
+      await page.locator('[data-testid="stats-page"]').waitFor({ state: 'hidden', timeout: 5000 });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // The surface header's OWN pop-out control (rendered by DetachableSurfaceHeader
+  // -> PopOutButton, the same shared component ChangesPanel and BrowserPane use)
+  // is a separate button from the title-bar trigger above, and is untested
+  // elsewhere: it is the actual mechanism a user clicks to detach a surface.
+  test('the surface header pop-out button opens the detached stats window', async () => {
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+
+      const popOutButton = page.locator('[data-testid="pop-out-button-stats"]');
+      await expect(popOutButton).toBeVisible();
+      await expect(popOutButton).toHaveAttribute('title', 'Open in new window');
+      await popOutButton.click();
+
+      await expect
+        .poll(async () => page.evaluate(() => (window as unknown as {
+          __mockPopOut: { getCalls: () => Array<{ type: string; kind: string }> };
+        }).__mockPopOut.getCalls().length), { timeout: 3000 })
+        .toBe(1);
+
+      const calls = await page.evaluate(() => (window as unknown as {
+        __mockPopOut: { getCalls: () => Array<{ type: string; kind: string; params: unknown }> };
+      }).__mockPopOut.getCalls());
+      expect(calls).toEqual([{ type: 'open', kind: 'stats', params: {} }]);
+    } finally {
+      await browser.close();
+    }
+  });
 });
