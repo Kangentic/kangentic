@@ -1,6 +1,6 @@
 import '../../../../monacoConfig';
-import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
-import { ChevronsLeftRight, ChevronsRightLeft, GitBranch, Loader2, ArrowLeft, ArrowUp, ArrowDown } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { ChevronsLeftRight, ChevronsRightLeft, GitBranch, ArrowLeft, ArrowUp, ArrowDown } from 'lucide-react';
 import { DetachableSurfaceHeader } from '../../../../pop-out/DetachableSurfaceHeader';
 import { FileTreePanel } from './FileTreePanel';
 import { DiffViewer } from './DiffViewer';
@@ -18,13 +18,9 @@ import type { GitBranchSummaryResult, GitCommitGraphCommit, GitDiffFileEntry, Gi
 const EMPTY_VIEWED_FILES = new Set<string>();
 
 // File-tree width constraints (px) for the Changes panel two-pane layout.
-const FILE_TREE_DEFAULT_WIDTH = 220;          // width before an auto-fit measurement; also the auto-fit floor
-const FILE_TREE_AUTO_FIT_MAX = 420;           // ceiling so the tree never crowds the diff
-const FILE_TREE_AUTO_FIT_DIFF_RESERVE = 280;  // space kept for the diff pane when auto-fitting
+const FILE_TREE_DEFAULT_WIDTH = 220;          // default width until a drag sets a per-task width
 const FILE_TREE_DRAG_MIN = 160;               // minimum tree width while dragging the divider
 const DIFF_PANE_DRAG_MIN = 240;               // minimum diff-pane width while dragging the divider
-const BRANCH_NAME_FIT_PADDING = 100;          // room beside the branch name (git icon, ahead/behind badges)
-const LAST_COMMIT_FIT_PADDING = 28;           // room beside the last-commit line
 
 // Vertical-split constraints (px) between the commit-history region (top) and
 // the detail pane (bottom).
@@ -451,68 +447,25 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   useKeybinding('changes.prevFile', () => handleNavigateFile('prev'), { capture: true, enabled: isFocused });
 
   // File-tree width is PER-TASK (session store, keyed by entityId), like the
-  // terminal split's dividerRatio: an undefined stored width means auto-fit to the
-  // branch name / last commit on open; a drag sets that task's own width. Local
-  // state drives live drag feedback.
+  // terminal split's dividerRatio: an undefined stored width means the default
+  // width; a drag sets that task's own width. Local state drives live drag
+  // feedback.
   const storedFileTreeWidth = useSessionStore((state) => state.changesFileTreeWidth[entityId]);
   const setChangesFileTreeWidth = useSessionStore((state) => state.setChangesFileTreeWidth);
   const [fileTreeWidth, setFileTreeWidth] = useState<number>(storedFileTreeWidth ?? FILE_TREE_DEFAULT_WIDTH);
   const fileTreeWidthRef = useRef<number>(storedFileTreeWidth ?? FILE_TREE_DEFAULT_WIDTH);
   const [isResizingTree, setIsResizingTree] = useState(false);
   const panelRowRef = useRef<HTMLDivElement>(null);
-  const autoFittedRef = useRef(false);
-  // In auto-fit mode the two-pane is held at opacity 0 (behind a spinner) until
-  // the width is measured, so it reveals already at the correct width rather than
-  // painting at the default and snapping/animating. Manual width is ready at once.
-  const [autoFitReady, setAutoFitReady] = useState<boolean>(storedFileTreeWidth !== undefined);
 
   // Apply the stored (manual) width. Fires only when the stored value itself
   // changes - NOT on isResizingTree - so the release does not momentarily re-apply
   // a stale width and snap the panel (the janky double-move). A live drag is
   // local-only and untouched.
   useEffect(() => {
-    if (storedFileTreeWidth === undefined) return; // auto-fit mode owns the width
+    if (storedFileTreeWidth === undefined) return;
     setFileTreeWidth(storedFileTreeWidth);
     fileTreeWidthRef.current = storedFileTreeWidth;
   }, [storedFileTreeWidth]);
-
-  // Auto-fit once when the branch summary first arrives and this task has no
-  // manual width: measure the natural (un-truncated) width of the branch name +
-  // last-commit line (scrollWidth survives truncation, and works at opacity 0) and
-  // size the tree to fit, clamped so it never crowds the diff. Reveal once
-  // measured, so the panel appears already at its final width.
-  useLayoutEffect(() => {
-    if (storedFileTreeWidth !== undefined || autoFittedRef.current || !branchSummary) return;
-    const container = panelRowRef.current;
-    if (!container) return;
-    autoFittedRef.current = true;
-    const branchEl = container.querySelector('[data-testid="changes-branch-name"]');
-    const commitEl = container.querySelector('[data-testid="changes-last-commit"]');
-    const branchNeeded = branchEl ? branchEl.scrollWidth + BRANCH_NAME_FIT_PADDING : 0;
-    const commitNeeded = commitEl ? commitEl.scrollWidth + LAST_COMMIT_FIT_PADDING : 0;
-    const needed = Math.max(branchNeeded, commitNeeded);
-    if (needed > 0) {
-      const fit = Math.round(Math.max(
-        FILE_TREE_DEFAULT_WIDTH,
-        Math.min(FILE_TREE_AUTO_FIT_MAX, container.getBoundingClientRect().width - FILE_TREE_AUTO_FIT_DIFF_RESERVE, needed),
-      ));
-      setFileTreeWidth(fit);
-      fileTreeWidthRef.current = fit;
-    }
-    setAutoFitReady(true);
-  }, [branchSummary, storedFileTreeWidth]);
-
-  // Safety net: never hold the two-pane hidden forever waiting on branch context
-  // that may never arrive (e.g. the branch-summary IPC rejected, so branchSummary
-  // stays null and the auto-fit effect above never runs). If auto-fit has not
-  // completed shortly after mount, reveal at the default width. The happy path
-  // sets autoFitReady within a frame or two, well before this fires, and clears
-  // the timer on cleanup.
-  useEffect(() => {
-    if (autoFitReady) return;
-    const revealFallbackTimer = setTimeout(() => setAutoFitReady(true), 1500);
-    return () => clearTimeout(revealFallbackTimer);
-  }, [autoFitReady]);
 
   const handleTreeResizeStart = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
@@ -729,11 +682,9 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   }
 
   return (
-    <div className="flex flex-col h-full relative">
+    <div className="flex flex-col h-full">
       {commitDetailHeader}
-      {/* Hold the panel hidden (behind the spinner) until the auto-fit width is
-          measured, so it reveals already at the correct width - no snap, no animate. */}
-      <div ref={panelRowRef} className="flex-1 min-h-0 flex" style={{ opacity: autoFitReady ? 1 : 0 }}>
+      <div ref={panelRowRef} className="flex-1 min-h-0 flex">
         {/* File tree - left panel (drag-resizable) */}
         <div className="flex-shrink-0 overflow-hidden" style={{ width: fileTreeWidth }}>
           <FileTreePanel
@@ -798,14 +749,6 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
           )}
         </div>
       </div>
-
-      {/* Brief spinner shown over the opacity-0 panel until the auto-fit width is
-          measured, so the panel never paints at the wrong width first. */}
-      {!autoFitReady && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <Loader2 size={20} className="animate-spin text-fg-muted" />
-        </div>
-      )}
     </div>
   );
   };

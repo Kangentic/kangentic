@@ -159,14 +159,9 @@ test.describe('Changes panel: branch header', () => {
     await expect(lastCommit).toContainText('abc1234', { timeout: 3000 });
     await expect(lastCommit).toContainText('wire branch summary into header', { timeout: 3000 });
 
-    // The file tree's own branch-name/last-commit auto-fit sizing (which
-    // widens the tree to avoid truncating BranchHeader's content) has nothing
-    // to measure in this embed, since that content now lives in the
-    // full-width surface header instead of inside the tree column. The tree
-    // therefore stays at its default floor width rather than auto-fitting -
-    // unlike the standalone dialog / command-terminal embed, where
-    // BranchHeader still renders inside the tree and auto-fit still widens it
-    // (not covered here; this spec is scoped to the task-detail embed).
+    // The file tree has no branch/commit content to size around in this
+    // embed (it lives in the full-width surface header instead), so the tree
+    // stays at its default width.
     await expect.poll(async () => (await fileTree.boundingBox())!.width, { timeout: 5000 }).toBeLessThan(240);
 
     // Close panel + dialog so state does not leak to other tests.

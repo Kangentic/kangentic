@@ -143,7 +143,7 @@ describe('setChangesScope', () => {
 // ---------------------------------------------------------------------------
 
 describe('setChangesFileTreeWidth', () => {
-  it('starts empty (panel auto-fits when a task has no stored width)', () => {
+  it('starts empty (panel uses the default width when a task has no stored width)', () => {
     const { getState } = createTestStore();
     expect(getState().changesFileTreeWidth).toEqual({});
   });

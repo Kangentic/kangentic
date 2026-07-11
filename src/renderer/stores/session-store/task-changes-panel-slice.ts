@@ -16,9 +16,9 @@ export interface TaskChangesPanelSlice {
   changesScope: Record<string, GitDiffScope>;
   /**
    * Manually-set Changes panel file-tree width (px), keyed by task ID. Absent
-   * means the panel auto-fits to the branch name / commit on open. Per-task so a
-   * task with a long branch name can keep its own width (persists across dialog
-   * open/close, like {@link dividerRatio}).
+   * means the panel uses its default width. Per-task so a task with a long
+   * branch name can keep its own width (persists across dialog open/close, like
+   * {@link dividerRatio}).
    */
   changesFileTreeWidth: Record<string, number>;
   /**
