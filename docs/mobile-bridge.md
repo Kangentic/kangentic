@@ -103,7 +103,7 @@ Once a device is paired, `src/main/mobile-bridge/session/bridge-session.ts` mana
 
 `src/main/mobile-bridge/transport/relay-client.ts` is the desktop's **outbound-only** WebSocket client to a blind relay (self-hostable, or Kangentic's hosted instance). The relay forwards opaque ciphertext frames only - it authenticates nothing and reads nothing, because every frame is already Noise-encrypted (or, during pairing, is itself a Noise handshake message the relay cannot decrypt).
 
-- **Wire contract:** connect to `${relayUrl}?slot=<hex-encoded-slot-id>`. During pairing, the slot id is the pairing token (so the relay rendezvouses the phone and desktop connections that present the *same* token); for an ongoing session, it is a value derived from the paired device's static key. The relay never interprets the slot id's cryptographic meaning, only its bytes. **The relay server itself is a separate, not-yet-built repo/task** - this client-side contract is the assumed shape until that server lands.
+- **Wire contract:** connect to `${relayUrl}?slot=<hex-encoded-slot-id>`. During pairing, the slot id is the pairing token (so the relay rendezvouses the phone and desktop connections that present the *same* token); for an ongoing session, it is a value derived from the paired device's static key. The relay never interprets the slot id's cryptographic meaning, only its bytes. **The relay server lives in the separate [`kangentic-relay`](https://github.com/Kangentic/kangentic-relay) repo**, which implements exactly this contract (see its README for the self-host quickstart and full config reference).
 - **Reconnect with capped exponential backoff:** starts at 500ms, doubles up to a 30s ceiling, resets on a successful connect.
 - **Per-session byte cap** (`maxBytesPerSession`, default 256MB) as defense-in-depth against a runaway send loop on either end.
 - **Accountless:** no Kangentic account/entitlement coupling in this client. Any such gate belongs only on the hosted relay's own connection-acceptance policy (open-core design - see the research doc section 10); this client behaves identically against a self-hosted or Kangentic-hosted relay.
@@ -111,7 +111,7 @@ Once a device is paired, `src/main/mobile-bridge/session/bridge-session.ts` mana
 
 ### Honest relay-metadata statement
 
-Even a correctly-implemented blind relay is not metadata-invisible. A relay operator (including a self-hoster, or Kangentic operating the hosted instance) can observe: source and destination IPs, connection timing, frame sizes and frequency, and the pairing graph (which slot ids co-occur). None of that is message *content* - the relay cannot decrypt anything - but it is real, observable metadata. Mitigations available today: self-hosting the relay, single-use pairing tokens, and (once the relay server exists) relay-slot tokens so only paired devices can consume relay capacity at all. This statement should stay in any user-facing security documentation rather than being implied away.
+Even a correctly-implemented blind relay is not metadata-invisible. A relay operator (including a self-hoster, or Kangentic operating the hosted instance) can observe: source and destination IPs, connection timing, frame sizes and frequency, and the pairing graph (which slot ids co-occur). None of that is message *content* - the relay cannot decrypt anything - but it is real, observable metadata. Mitigations: self-hosting the relay, single-use pairing tokens, and the relay's own connection caps and per-IP/per-slot rate limits so only paired devices can consume relay capacity at all (implemented in `kangentic-relay`'s guards; see its README). This statement should stay in any user-facing security documentation rather than being implied away.
 
 ## Scope
 
@@ -130,7 +130,7 @@ Even a correctly-implemented blind relay is not metadata-invisible. A relay oper
 - **Bridge Phase 2 (data feeds, interactive control & capabilities):** actual capability-verb handlers wired to `SessionManager`'s output tap, the transcript service, repositories, `DiffService`, and the activity engine; the PTY write path for phone-originated input, including `answer-permission-prompt` bound to a specific outstanding prompt id; a consolidated main-side board event stream; the MCP tool surface exposed to paired devices.
 - **Bridge Phase 3 (notifications & push sender):** moving the notification should-fire policy into main; an Expo push sender; presence suppression; the paired-devices capability-editing UI beyond revoke.
 - **Bridge Phase 4 (direct P2P + IPv6 speed upgrade):** WebRTC data channels (`node-datachannel` desktop / `react-native-webrtc` mobile), signaling over the already-secure channel, DTLS fingerprint pinning, IPv6-first candidate ordering, Tailscale detection.
-- **The relay SERVER.** This doc describes the desktop's client-side contract against a relay; the relay itself (a tiny stateless blind byte-forwarder) is planned as a separate `kangentic-relay` repo and is not part of this codebase.
+- **The relay SERVER.** This doc describes the desktop's client-side contract against a relay; the relay itself (a tiny stateless blind byte-forwarder) lives in the separate, open-source [`kangentic-relay`](https://github.com/Kangentic/kangentic-relay) repo and is not part of this codebase.
 - The mobile app itself (`kangentic-mobile`, a separate repo).
 
 ## See Also

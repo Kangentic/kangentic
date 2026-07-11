@@ -1,13 +1,14 @@
 /**
- * A minimal in-repo stand-in for the (separate, not-yet-built) relay
- * server task: a "blind" WebSocket rendezvous that pairs up exactly two
- * connections presenting the same `?slot=` query param and forwards raw
- * frames between them byte-for-byte, reading nothing from the payload.
- * This is the simplest possible interpretation of relay-client.ts's own
- * documented wire contract, and is the closest to end-to-end this repo can
- * exercise until the real relay repo exists - RelayClient's production
- * code (real Node global WebSocket) connects to this exactly as it would
- * to the eventual real relay.
+ * A minimal in-repo stand-in for the real relay server, which now lives in
+ * the separate `kangentic-relay` repo (https://github.com/Kangentic/kangentic-relay):
+ * a "blind" WebSocket rendezvous that pairs up exactly two connections
+ * presenting the same `?slot=` query param and forwards raw frames between
+ * them byte-for-byte, reading nothing from the payload. This is the
+ * simplest possible interpretation of relay-client.ts's own documented
+ * wire contract, and is the closest to end-to-end this repo can exercise
+ * without standing up the real relay - RelayClient's production code
+ * (real Node global WebSocket) connects to this exactly as it would to a
+ * real `kangentic-relay` instance.
  */
 import { WebSocketServer, WebSocket as NodeWebSocket } from 'ws';
 
