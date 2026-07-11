@@ -11,20 +11,36 @@ interface ColumnResolution {
  * List all non-archived swimlanes from the database.
  */
 export function listActiveSwimlanes(db: Database.Database): Swimlane[] {
+  return listResolvableSwimlanes(db, false);
+}
+
+/**
+ * List swimlanes eligible for name/role resolution. The Done lane is always
+ * persisted archived (it is collapsed in the board UI by design), so it is
+ * excluded unless includeArchivedDone is set - letting an agent resolve
+ * "Done" as a genuine move target without exposing other archived lanes,
+ * which a user archived deliberately to hide them.
+ */
+function listResolvableSwimlanes(db: Database.Database, includeArchivedDone: boolean): Swimlane[] {
   const swimlaneRepo = new SwimlaneRepository(db);
-  return swimlaneRepo.list().filter((swimlane) => !swimlane.is_archived);
+  return swimlaneRepo
+    .list()
+    .filter((swimlane) => !swimlane.is_archived || (includeArchivedDone && swimlane.role === 'done'));
 }
 
 /**
  * Resolve a column name to a swimlane. If columnName is null, returns the
  * default 'todo' column. Returns an error response if the column is not found.
+ * Pass options.includeArchivedDone to also match the archived Done lane by
+ * name (see listResolvableSwimlanes); it stays excluded by default.
  */
 export function resolveColumn(
   db: Database.Database,
   columnName: string | null,
   defaultRole: 'todo' | 'done' = 'todo',
+  options: { includeArchivedDone?: boolean } = {},
 ): ColumnResolution | { error: string } {
-  const allSwimlanes = listActiveSwimlanes(db);
+  const allSwimlanes = listResolvableSwimlanes(db, options.includeArchivedDone ?? false);
   let swimlane = allSwimlanes.find((lane) => lane.role === defaultRole);
 
   if (columnName) {

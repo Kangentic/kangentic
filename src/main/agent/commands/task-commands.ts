@@ -450,7 +450,7 @@ export const handleMoveTask: CommandHandler = (
     return { success: false, error: `Task "${taskIdParam}" not found` };
   }
 
-  const resolution = resolveColumn(db, columnName);
+  const resolution = resolveColumn(db, columnName, 'todo', { includeArchivedDone: true });
   if ('error' in resolution) {
     return { success: false, error: resolution.error };
   }
