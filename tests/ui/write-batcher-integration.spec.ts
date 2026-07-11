@@ -18,7 +18,9 @@
  *     write containing the newline character; Ctrl+V with clipboard text pastes
  *     the text through terminal.paste -> onData; and Ctrl+V with a clipboard
  *     image writes the shell-quoted temp-file path returned by the native
- *     clipboard.readImage IPC.
+ *     clipboard.readImage IPC, formatted through the resolved agent's
+ *     pastedImageReferenceTemplate (see terminal-image-paste-reference.spec.ts
+ *     for the real task-detail terminal coverage of that template).
  *
  * Coverage of gap 1 (unmount-flush): flush() is called on unmount by the
  * cleanup effect. The synchronous flush() behavior is already unit-tested in
@@ -324,15 +326,19 @@ test.describe('WriteBatcher - useTerminal IPC wiring', () => {
     }
   });
 
-  test('Ctrl+V with a clipboard image writes the temp-file path via the onWrite batcher path', async () => {
+  test('Ctrl+V with a clipboard image writes the adapter-templated reference via the onWrite batcher path', async () => {
     // The image-paste fix: handlePaste's Priority 1 (text) falls through when the
     // clipboard has no text, then Priority 2 reads the image natively via
     // window.electronAPI.clipboard.readImage() (the main-process Electron clipboard,
     // which bypasses the denied web clipboard-read permission). The returned temp
     // file path is shell-converted, quoted, and written to the PTY through the same
     // batcher.schedule onWrite callback. This guards the Ctrl+V image regression.
-    // The path has no spaces or special chars, so quoteForShell leaves it unquoted
-    // and the write payload equals the path verbatim on every platform.
+    // The path has no spaces or special chars, so quoteForShell leaves it unquoted.
+    // The Command Terminal resolves its pasteImageTemplate via the project's
+    // default_agent (CommandTerminalWindow.tsx has no task to resolve through);
+    // basePreConfig() below sets default_agent: 'claude', and the mock agents.list()
+    // 'claude' entry declares pastedImageReferenceTemplate: 'Read this image: {path} ',
+    // so the write payload is the templated reference, not the bare path.
     const IMAGE_PATH = '/tmp/kangentic-clipboard/pasted-image-test.png';
     const clipboardOverrideScript = `
       ${deterministicSpawnScript}
@@ -360,7 +366,7 @@ test.describe('WriteBatcher - useTerminal IPC wiring', () => {
 
       const writeCalls = await page.evaluate(() => window.electronAPI.sessions.__writeCalls);
       expect((writeCalls as Array<{ sessionId: string; payload: string }>)[0].sessionId).toBe(TRANSIENT_SESSION_ID);
-      expect((writeCalls as Array<{ sessionId: string; payload: string }>)[0].payload).toBe(IMAGE_PATH);
+      expect((writeCalls as Array<{ sessionId: string; payload: string }>)[0].payload).toBe(`Read this image: ${IMAGE_PATH} `);
     } finally {
       await browser.close();
     }
