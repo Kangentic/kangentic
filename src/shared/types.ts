@@ -92,6 +92,10 @@ export interface AgentDetectionInfo {
   /** True if the adapter streams account-wide rate-limit windows; gates the ContextBar
    *  rate-limit pill so any session of this agent shows the shared global snapshot. */
   reportsRateLimits?: boolean;
+  /** Template for the text injected when a clipboard/dropped image is captured to a temp PNG
+   *  (e.g. "Read this image: {path} "), so the agent reliably reads it as an image instead of
+   *  treating a bare file path as inert text. Undefined = inject the bare quoted path. */
+  pastedImageReferenceTemplate?: string;
   /** True if the adapter exposes a one-shot summarize capability (used by auto-name task title). */
   supportsSummarize?: boolean;
   /** Discovered at detection time; absent for adapters that do not implement discovery. */

@@ -83,6 +83,11 @@ interface UseTerminalOptions {
   /** Let Escape bubble (to close the containing dialog) when the mouse pointer
    *  is outside the terminal. Used by the task detail dialog. */
   releaseEscapeWhenPointerOutside?: boolean;
+  /** Adapter-declared template (see `AgentDetectionInfo.pastedImageReferenceTemplate`) for
+   *  the text injected when a pasted/dropped image is captured to a temp PNG. Read live via
+   *  a ref (not captured at attach time) since the agent list loads asynchronously and can
+   *  resolve after `enableTerminalClipboard` has already attached its key handler. */
+  pasteImageTemplate?: string;
 }
 
 /** Restore a saved scroll position (from HMR) or pin to the bottom.
@@ -128,6 +133,11 @@ export function useTerminal(options: UseTerminalOptions) {
   const writeBatcherRef = useRef<WriteBatcher | null>(null);
   /** Tears down the WebGL renderer attachment (cancels retries, disposes addon). */
   const disposeWebglRef = useRef<(() => void) | null>(null);
+  /** Updated every render so the paste handler (attached once by initTerminal)
+   *  always reads the current template, even though the agent list resolves
+   *  asynchronously after the terminal has already initialized. */
+  const pasteImageTemplateRef = useRef(options.pasteImageTemplate);
+  pasteImageTemplateRef.current = options.pasteImageTemplate;
 
   const initTerminal = useCallback(() => {
     if (!terminalRef.current || xtermRef.current) return;
@@ -176,7 +186,15 @@ export function useTerminal(options: UseTerminalOptions) {
     writeBatcherRef.current = batcher;
 
     // Enable Ctrl+C copy (when text selected), Ctrl+V paste, and Ctrl+Enter newline
-    enableTerminalClipboard(terminal, terminalRef.current, batcher.schedule, options.shellName, options.sessionId ?? undefined, options.releaseEscapeWhenPointerOutside);
+    enableTerminalClipboard(
+      terminal,
+      terminalRef.current,
+      batcher.schedule,
+      options.shellName,
+      options.sessionId ?? undefined,
+      options.releaseEscapeWhenPointerOutside,
+      () => pasteImageTemplateRef.current,
+    );
 
     terminal.onScroll(() => {
       const buffer = terminal.buffer.active;

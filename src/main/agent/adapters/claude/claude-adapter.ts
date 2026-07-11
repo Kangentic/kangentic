@@ -52,6 +52,12 @@ export class ClaudeAdapter implements AgentAdapter {
   // ContextBar shows the rate-limit pill for any Claude session using the shared
   // global snapshot - even a freshly spawned one that has not reported its own yet.
   readonly reportsRateLimits = true;
+  // Claude's own clipboard image paste fails silently on Windows Snipping Tool
+  // images (claude-code #26679), and a bare typed path is never auto-recognized
+  // as an image (no @file support for images). Kangentic's own clipboard/drop
+  // capture is reliable, so inject an explicit Read instruction pointing at the
+  // saved temp PNG instead of a bare path.
+  readonly pastedImageReferenceTemplate = 'Read this image: {path} ';
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Plan (Read-Only)' },
     { mode: 'dontAsk', label: "Don't Ask (Deny Unless Allowed)" },

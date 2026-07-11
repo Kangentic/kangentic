@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { convertPathForShell, quoteForShell } from '../utils/terminal-clipboard';
+import { convertPathForShell, formatImageReference, quoteForShell } from '../utils/terminal-clipboard';
+
+/** Extensions recognized as an image drop. `File.type` can be empty for some
+ *  drag sources, so extension is checked alongside the MIME type. */
+const IMAGE_FILE_EXTENSIONS = /\.(png|jpe?g|gif|webp|bmp|svg)$/i;
+
+function isImageFile(file: File): boolean {
+  return file.type.startsWith('image/') || IMAGE_FILE_EXTENSIONS.test(file.name);
+}
 
 /**
  * Hook that manages file drag-and-drop onto a terminal.
@@ -16,6 +24,10 @@ export function useTerminalFileDrop(
   sessionId: string | null,
   focusTerminal: () => void,
   shellName?: string,
+  /** Adapter-declared template (see `AgentDetectionInfo.pastedImageReferenceTemplate`) applied
+   *  to a dropped image file so the agent reliably reads it as an image. Non-image drops
+   *  (e.g. a dropped .txt file) always get the bare quoted path. */
+  pasteImageTemplate?: string,
 ) {
   const [fileDragActive, setFileDragActive] = useState(false);
   const windowDragCounterRef = useRef(0);
@@ -94,14 +106,15 @@ export function useTerminalFileDrop(
       let filePath = window.electronAPI.webUtils.getPathForFile(file);
       if (filePath) {
         if (shellName) filePath = convertPathForShell(filePath, shellName);
-        paths.push(quoteForShell(filePath, shellName));
+        const quotedPath = quoteForShell(filePath, shellName);
+        paths.push(isImageFile(file) ? formatImageReference(quotedPath, pasteImageTemplate) : quotedPath);
       }
     }
     if (paths.length > 0) {
       window.electronAPI.sessions.write(sessionId, paths.join(' '));
       focusTerminal();
     }
-  }, [sessionId, focusTerminal, shellName]);
+  }, [sessionId, focusTerminal, shellName, pasteImageTemplate]);
 
   return {
     /** True when a file drag is active anywhere in the window (overlay becomes interactive). */

@@ -117,11 +117,11 @@ The leftmost tab shows an activity log - structured events from all sessions. Th
 
 ### Clipboard Paste
 
-Press **Ctrl+V** (Cmd+V on macOS) in the terminal to paste. Text on the clipboard is pasted directly. If the clipboard contains an image (and no text), the image is saved to a temporary file and the file path is written to the PTY, allowing Claude Code to pick it up as a vision input. Paths are automatically quoted for the active shell (PowerShell, bash, cmd, WSL, etc.).
+Press **Ctrl+V** (Cmd+V on macOS) in the terminal to paste. Text on the clipboard is pasted directly. If the clipboard contains an image (and no text), the image is saved to a temporary file; the agent then reliably reads it as a vision input, since a bare file path alone is not recognized as an image by most CLIs. Claude Code receives an explicit "Read this image: ..." instruction pointing at the saved file (this is more reliable than the CLI's own clipboard reader, which can silently miss a Windows Snipping Tool image); other agents receive the bare file path today. Paths are automatically quoted for the active shell (PowerShell, bash, cmd, WSL, etc.).
 
 ### File Drop to Terminal
 
-Drag files from your file manager onto the terminal to insert their file paths into the active session. Paths containing spaces are automatically quoted. Multiple files are inserted as a space-separated list. A visual overlay appears when files are dragged over the terminal area.
+Drag files from your file manager onto the terminal to insert their file paths into the active session. An image file (PNG, JPEG, GIF, WebP, BMP, SVG) is inserted the same way as a pasted image (Claude Code gets an explicit "Read this image: ..." reference); any other file is inserted as its bare file path. Paths containing spaces are automatically quoted. Multiple files are inserted as a space-separated list. A visual overlay appears when files are dragged over the terminal area.
 
 ### Resize
 

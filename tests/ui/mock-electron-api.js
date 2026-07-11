@@ -1926,6 +1926,9 @@
             // KEEP IN SYNC with ClaudeAdapter.reportsRateLimits: gates the ContextBar
             // rate-limit pill on the agent capability (account-wide snapshot).
             reportsRateLimits: true,
+            // KEEP IN SYNC with ClaudeAdapter.pastedImageReferenceTemplate: the text
+            // injected for a pasted/dropped image instead of a bare file path.
+            pastedImageReferenceTemplate: 'Read this image: {path} ',
             // Capabilities mirror what discoverClaudeCapabilities() would return
             // for a real Claude install: parsed from `claude --help` plus the
             // user's `availableModels` setting. Tests can override per-agent

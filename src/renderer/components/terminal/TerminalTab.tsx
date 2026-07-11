@@ -4,6 +4,7 @@ import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from './FileDropOverlay';
 import { useConfigStore } from '../../stores/config-store';
 import { useSessionStore } from '../../stores/session-store';
+import { useBoardStore } from '../../stores/board-store';
 import { LaunchOverlay } from '../LaunchOverlay';
 import { getIsHmrReload } from '../../utils/hmr-flag';
 import { useTerminalOverlay } from '../../utils/task-progress';
@@ -53,6 +54,25 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     ),
   );
 
+  // Resolve via the session's own taskId (not the taskId prop / task's forward
+  // session_id), mirroring ContextBar: a model/effort restart respawns the
+  // session and the board store's task.session_id can go stale until the next
+  // reload, but session.taskId stays correct across the restart.
+  const sessionTaskId = useSessionStore(
+    useCallback(
+      (s: ReturnType<typeof useSessionStore.getState>) =>
+        s.sessions.find((session) => session.id === sessionId)?.taskId,
+      [sessionId],
+    ),
+  );
+  const sessionAgent = useBoardStore((s) => s.tasks.find((t) => t.id === sessionTaskId)?.agent ?? null);
+  // Adapter-declared: this agent needs an explicit reference (not a bare path)
+  // to reliably read a pasted/dropped image. Never branch on agent name here -
+  // see .claude/rules/agent-adapters-boundary.md.
+  const pasteImageTemplate = useConfigStore(
+    (s) => s.agentList.find((a) => a.name === sessionAgent)?.pastedImageReferenceTemplate,
+  );
+
   const { overlayLabel } = useTerminalOverlay(taskId, sessionId);
   const pendingCommandLabel = useSessionStore((s) => s.pendingCommandLabel[taskId] ?? null);
 
@@ -69,6 +89,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     cursorStyle: config.terminal.cursorStyle,
     shellName: sessionShell,
     releaseEscapeWhenPointerOutside,
+    pasteImageTemplate,
   });
 
   // Sync suppressDataRef with overlay state: suppress all PTY data while overlay is showing.
@@ -270,7 +291,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     };
   }, [active, fit, flushResize, focus, deferContainerResize, immediatePanelResize, reloadScrollback, terminalRef, scrollbackPending]);
 
-  const fileDrop = useTerminalFileDrop(sessionId, focus, sessionShell);
+  const fileDrop = useTerminalFileDrop(sessionId, focus, sessionShell, pasteImageTemplate);
 
   return (
     <div ref={containerRef} className="h-full w-full bg-surface relative">

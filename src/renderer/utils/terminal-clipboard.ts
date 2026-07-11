@@ -168,17 +168,32 @@ export function quoteForShell(filePath: string, shellName?: string): string {
 }
 
 /**
+ * Format the text injected into the PTY for a captured (pasted or dropped)
+ * image file. With no template, this is just the bare shell-quoted path
+ * (legacy behavior for adapters that have not declared
+ * `pastedImageReferenceTemplate`). With a template, `{path}` is replaced by
+ * the quoted path; a template lacking `{path}` has the quoted path appended.
+ */
+export function formatImageReference(quotedPath: string, template?: string): string {
+  if (!template) return quotedPath;
+  return template.includes('{path}')
+    ? template.split('{path}').join(quotedPath)
+    : `${template} ${quotedPath}`;
+}
+
+/**
  * Handle Ctrl+V / Cmd+V paste in the terminal.
  *
  * Priority 1: If the clipboard contains text, paste it into xterm.
  * Priority 2: If the clipboard contains an image (and no text), save it
- *   to a temp file and write the file path to the PTY so Claude Code
- *   can pick it up.
+ *   to a temp file and write a reference to it (see `formatImageReference`)
+ *   to the PTY so the agent reliably reads it as an image.
  */
 async function handlePaste(
   terminal: Terminal,
   onWrite?: (data: string) => void,
   shellName?: string,
+  getImageReferenceTemplate?: () => string | undefined,
 ): Promise<void> {
   // Priority 1: text clipboard
   try {
@@ -194,15 +209,17 @@ async function handlePaste(
   // Priority 2: image clipboard (only useful if we can write to PTY).
   // Read the image natively in the main process (Electron clipboard), which avoids
   // the document-focus requirement of the web clipboard API and behaves identically
-  // across platforms, then write the saved file path to the PTY so Claude Code can
-  // pick it up.
+  // across platforms (and, unlike the agent CLI's own clipboard reader, reliably
+  // captures a Windows Snipping Tool image), then write a reference to the saved
+  // file path to the PTY so the agent picks it up as an image.
   if (!onWrite) return;
 
   try {
     let filePath = await window.electronAPI.clipboard.readImage();
     if (!filePath) return;
     if (shellName) filePath = convertPathForShell(filePath, shellName);
-    onWrite(quoteForShell(filePath, shellName));
+    const quotedPath = quoteForShell(filePath, shellName);
+    onWrite(formatImageReference(quotedPath, getImageReferenceTemplate?.()));
   } catch {
     // native clipboard read failed - silently fail
   }
@@ -241,6 +258,7 @@ export function enableTerminalClipboard(
   shellName?: string,
   sessionId?: string,
   releaseEscapeWhenPointerOutside?: boolean,
+  getImageReferenceTemplate?: () => string | undefined,
 ): void {
   // OSC 52 clipboard writes (write-only). Claude Code's TUI copies a selection by
   // emitting ESC]52;c;<base64>BEL alongside a fire-and-forget PowerShell Set-Clipboard;
@@ -290,7 +308,7 @@ export function enableTerminalClipboard(
       ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key === 'V');
 
     if (isPaste) {
-      handlePaste(terminal, onWrite, shellName).catch(() => { /* clipboard access denied */ });
+      handlePaste(terminal, onWrite, shellName, getImageReferenceTemplate).catch(() => { /* clipboard access denied */ });
       return false;
     }
 

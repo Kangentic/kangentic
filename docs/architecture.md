@@ -279,7 +279,7 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 ### Agents (1 channel)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, supportsSummarize) |
+| `agent:list` | invoke | List all detected agent CLIs as `AgentDetectionInfo` (name, displayName, found, path, version, authenticated, permissions, defaultPermission, liveTelemetryUnsupported, reportsRateLimits, pastedImageReferenceTemplate, supportsSummarize) |
 
 ### Handoffs (1 channel)
 | Channel | Pattern | Purpose |

@@ -128,6 +128,14 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   const config = useConfigStore((s) => s.config);
   const rawProjectPath = useProjectStore((s) => s.currentProject?.path ?? null);
   const projectAgent = useProjectStore((s) => s.currentProject?.default_agent ?? null);
+  // Adapter-declared: this agent needs an explicit reference (not a bare path) to
+  // reliably read a pasted/dropped image. A transient Command Terminal spawns the
+  // project's default agent (see transient-sessions.ts), so resolve the template by
+  // projectAgent - the same signal ContextBar's agentFallback and SESSION_INJECT_SETTINGS
+  // use here. Never branch on agent name - see .claude/rules/agent-adapters-boundary.md.
+  const pasteImageTemplate = useConfigStore(
+    (s) => s.agentList.find((a) => a.name === projectAgent)?.pastedImageReferenceTemplate,
+  );
   // Resolve to the main repo root if the current project is a worktree.
   const projectPath = useMemo(() => (rawProjectPath ? resolveProjectRoot(rawProjectPath) : null), [rawProjectPath]);
   const shortcuts = useBoardStore((s) => s.shortcuts);
@@ -307,9 +315,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
     scrollbackLines: config.terminal.scrollbackLines,
     cursorStyle: config.terminal.cursorStyle,
     shellName: commandTerminalShell ?? undefined,
+    pasteImageTemplate,
   });
 
-  const fileDrop = useTerminalFileDrop(effectiveSessionId, focus, commandTerminalShell ?? undefined);
+  const fileDrop = useTerminalFileDrop(effectiveSessionId, focus, commandTerminalShell ?? undefined, pasteImageTemplate);
 
   // Init the terminal once the session is ready AND the container has dimensions.
   const initialized = useRef(false);

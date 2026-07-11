@@ -57,6 +57,7 @@ async function buildAgentList(
         defaultPermission: adapter.defaultPermission,
         liveTelemetryUnsupported: adapter.liveTelemetryUnsupported,
         reportsRateLimits: adapter.reportsRateLimits,
+        pastedImageReferenceTemplate: adapter.pastedImageReferenceTemplate,
         supportsSummarize: typeof adapter.summarize === 'function',
         capabilities,
       };

@@ -356,6 +356,22 @@ export interface AgentAdapter {
   readonly reportsRateLimits?: boolean;
 
   /**
+   * Set by adapters whose CLI does not reliably auto-attach an image from a
+   * bare file path (i.e. most CLIs - a typed/pasted path is read as plain
+   * text, never auto-recognized as an image attachment). Kangentic saves a
+   * pasted-clipboard or dropped image to a temp PNG (this capture is reliable
+   * even where the CLI's own native clipboard reader silently fails, e.g.
+   * Claude Code on Windows with Snipping Tool images) and injects this
+   * template instead of the bare path, so the agent reliably reads the file
+   * as an image rather than treating the path as inert text.
+   *
+   * `{path}` is replaced with the shell-quoted absolute path to the saved
+   * PNG. A template without `{path}` has the quoted path appended after a
+   * space. Omit (falsy) to inject the bare quoted path (legacy behavior).
+   */
+  readonly pastedImageReferenceTemplate?: string;
+
+  /**
    * Optional session lifecycle hook called once per PTY spawn, after
    * the session is live. Adapters that need to do per-session work
    * outside the declarative `runtime` hooks (e.g. fire an out-of-band
