@@ -21,15 +21,15 @@ const ChangesPanel = lazy(() =>
  * project matching params.projectId - true at open time (a "changes" pop-out is
  * only opened from the currently-open project's board). If the user switches
  * projects in the main window before this pop-out's own bootstrap/HMR resync
- * resolves, the task lookup below simply misses and shows "Task not found"
- * rather than any incorrect cross-project data.
+ * resolves, the task lookup below simply misses and shows "No changes on this
+ * branch" rather than any incorrect cross-project data.
  */
 export function PopOutChangesRoot({ params }: { params: PopOutTaskParams }) {
   const projectPath = useProjectStore((state) => state.currentProject?.path ?? null);
   const defaultBaseBranch = useConfigStore((state) => state.config.git.defaultBaseBranch);
   const task = useBoardStore((state) => state.tasks.find((candidate) => candidate.id === params.taskId));
 
-  if (!task || !task.worktree_path || !projectPath) {
+  if (!task || !projectPath) {
     return (
       <div className="flex items-center justify-center h-full text-sm text-fg-disabled">
         No changes on this branch
@@ -58,7 +58,7 @@ export function PopOutChangesRoot({ params }: { params: PopOutTaskParams }) {
           isFocused
           scrollKey={task.id}
           projectPath={projectPath}
-          worktreePath={task.worktree_path}
+          worktreePath={task.worktree_path ?? undefined}
           baseBranch={task.base_branch || defaultBaseBranch || 'main'}
           task={task}
         />
