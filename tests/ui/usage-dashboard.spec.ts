@@ -522,6 +522,64 @@ test.describe('usage dashboard', () => {
     }
   });
 
+  test('Cost hero sparkline populates in Live from turn-derived cost, not the empty session ledger', async () => {
+    // Live has no finalized costSeries yet (the session ledger only writes on
+    // completion), but tokenSeries carries turn-allocated cost as it happens.
+    // KngSparkline renders nothing for fewer than 2 points, so an empty
+    // costSeries with a populated tokenSeries is the exact real-world shape
+    // that previously left the Cost hero tile's sparkline blank in Live.
+    const liveFixture = `
+      (function () {
+        window.electronAPI.usage.__dashboardStatsFixture = function (scope, period) {
+          var now = Date.now();
+          var hour = 3600000;
+          return {
+            scope: scope,
+            period: period,
+            rangeStartMs: now - 2 * hour,
+            rangeEndMs: now,
+            bucketSizeMs: hour,
+            costBucketSizeMs: 24 * hour,
+            generatedAtMs: now,
+            kpis: {
+              totalCostUsd: 1.75, costKnown: true,
+              totalInputTokens: 4000, totalOutputTokens: 1500, totalTokens: 5500,
+              sessionCount: 1, toolCallCount: 9,
+              linesAdded: 4, linesRemoved: 1, filesChanged: 2,
+              compactionCount: 0, totalDurationMs: hour,
+              turnInputTokens: 4000, turnOutputTokens: 1500,
+              cacheCreationTokens: 0, cacheReadTokens: 0,
+              burnRateTokensPerHour: 5500, burnRateUsdPerHour: 1.75,
+            },
+            previousKpis: null,
+            tokenSeries: [
+              { bucketStartMs: now - 2 * hour, inputTokens: 2000, outputTokens: 800, cacheCreationTokens: 0, cacheReadTokens: 0, allocatedCostUsd: 1.0, turnCount: 4 },
+              { bucketStartMs: now - hour, inputTokens: 2000, outputTokens: 700, cacheCreationTokens: 0, cacheReadTokens: 0, allocatedCostUsd: 0.75, turnCount: 5 },
+            ],
+            costSeries: [],
+            byModel: [],
+            byAgent: [],
+            byEffort: [],
+          };
+        };
+      })();
+    `;
+    const { browser, page } = await launchWithState(twoProjectPreConfig() + liveFixture);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      // Default period on open is Live (see the first test's comment above).
+      // The Cost hero VALUE in Live is sourced from the in-memory running
+      // session aggregate, not this payload (there is no running session
+      // here, so it reads $0.00) - only the sparkline is payload-derived, so
+      // that is the one assertion this test needs.
+      await openDashboard(page);
+
+      await expect(page.locator('[data-testid="kpi-cost"] .recharts-area-area')).toBeVisible({ timeout: 10000 });
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('with no project open, the dashboard opens app-wide (picker reads All Projects)', async () => {
     const noProjectPreConfig = `
       window.__mockPreConfigure(function () {
