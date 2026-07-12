@@ -177,9 +177,10 @@ export function deriveTokenSparkline(tokenSeries: TokenSeriesPoint[]): TimePoint
   }));
 }
 
-/** Sparkline input: session-derived cost per bucket (the Cost hero tile). */
-export function deriveCostSparkline(costSeries: CostSeriesPoint[]): TimePoint[] {
-  return costSeries.map((point) => ({ x: point.bucketStartMs, y: point.costUsd }));
+/** Sparkline input: turn-allocated cost per bucket (the Cost hero tile). Sourced from
+ *  tokenSeries so it populates in Live, matching the Tokens and Burn hero sparklines. */
+export function deriveCostSparkline(tokenSeries: TokenSeriesPoint[]): TimePoint[] {
+  return tokenSeries.map((point) => ({ x: point.bucketStartMs, y: point.allocatedCostUsd }));
 }
 
 /**
@@ -254,7 +255,7 @@ export function useStatsData(effectiveMetric: UsageMetricMode): StatsDerivedData
       ),
       cumulative: deriveCumulative(payload.costSeries, effectiveMetric),
       tokenSparkline: deriveTokenSparkline(payload.tokenSeries),
-      costSparkline: deriveCostSparkline(payload.costSeries),
+      costSparkline: deriveCostSparkline(payload.tokenSeries),
       byModelSlices,
       byAgentSlices: foldBreakdownForDonut(
         payload.byAgent.map((agent) => ({

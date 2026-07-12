@@ -139,7 +139,7 @@ export function StatsDashboardBody() {
 
   return (
     <>
-      <div className="flex items-center gap-3 flex-wrap px-4 pb-2 flex-shrink-0">
+      <div className="flex items-center gap-3 flex-wrap px-4 pt-3 pb-2 flex-shrink-0">
         {/* Selecting a project here views its stats without switching the
             app; the metric toggle is hidden when no agent reported cost
             (tokens is forced). */}

@@ -31,6 +31,7 @@ import {
   OTHER_SLICE_VAR,
   UNKNOWN_SLICE_VAR,
   deriveBurnRateSeries,
+  deriveCostSparkline,
   deriveCumulative,
   deriveModelStack,
   foldBreakdownForDonut,
@@ -129,6 +130,18 @@ describe('chart series derivations', () => {
     expect(tokens[0].y).toBeCloseTo(1800);
     const cost = deriveBurnRateSeries(tokenSeries, HOUR / 12, 'cost');
     expect(cost[0].y).toBeCloseTo(6);
+  });
+
+  it('deriveCostSparkline reads allocated cost from the turn-derived series, so it populates in Live', () => {
+    const tokenSeries: TokenSeriesPoint[] = [
+      { bucketStartMs: 0, inputTokens: 100, outputTokens: 50, cacheCreationTokens: 0, cacheReadTokens: 0, allocatedCostUsd: 0.5, turnCount: 1 },
+      { bucketStartMs: 1, inputTokens: 20, outputTokens: 10, cacheCreationTokens: 0, cacheReadTokens: 0, allocatedCostUsd: 0.1, turnCount: 1 },
+    ];
+    // Live has no finalized costSeries yet, only tokenSeries; the sparkline must still populate.
+    expect(deriveCostSparkline(tokenSeries)).toEqual([
+      { x: 0, y: 0.5 },
+      { x: 1, y: 0.1 },
+    ]);
   });
 
   it('deriveCumulative produces a running sum over the cost series', () => {
