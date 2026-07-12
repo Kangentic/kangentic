@@ -191,12 +191,14 @@ vi.mock('../../src/main/ipc/handlers/mobile-bridge', () => ({
 // work (the real class already covers that in mobile-bridge-service.test.ts).
 const mobileBridgeReconcileSpy = vi.fn();
 const mobileBridgeDisposeSpy = vi.fn();
+const mobileBridgeAttachContextSpy = vi.fn();
 vi.mock('../../src/main/mobile-bridge/mobile-bridge-service', () => ({
   MobileBridgeService: class {
     config: unknown;
     constructor(config: unknown) {
       this.config = config;
     }
+    attachContext = mobileBridgeAttachContextSpy;
     reconcile = mobileBridgeReconcileSpy;
     dispose = mobileBridgeDisposeSpy;
     on = vi.fn();
@@ -262,6 +264,11 @@ describe('registerAllIpc idempotency', () => {
     expect(mobileBridgeReconcileSpy).toHaveBeenCalledTimes(1);
     expect(mobileBridgeReconcileSpy).toHaveBeenCalledWith({ enabled: false, relayUrl: '' });
 
+    // attachContext() wires the capability-verb handlers and must run once,
+    // before reconcile() (which drives syncSessions()) so the first sync has
+    // handlers to route into.
+    expect(mobileBridgeAttachContextSpy).toHaveBeenCalledTimes(1);
+
     // Context is initialized (wrappers don't throw)
     expect(() => getSessionManager()).not.toThrow();
   }, 30000);
@@ -322,6 +329,10 @@ describe('registerAllIpc idempotency', () => {
     // macOS must not construct a second MobileBridgeService (which would
     // hold a second relay connection) nor re-run reconcile() a second time.
     expect(mobileBridgeReconcileSpy).toHaveBeenCalledTimes(1);
+    // Nor re-run attachContext() - re-registering the same verb on the
+    // router a second time would be a correctness bug even if the mock
+    // doesn't throw the way a real double-registration might.
+    expect(mobileBridgeAttachContextSpy).toHaveBeenCalledTimes(1);
   }, 30000);
 
   it('second call preserves existing services', async () => {
