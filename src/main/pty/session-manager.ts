@@ -107,6 +107,13 @@ export class SessionManager extends EventEmitter {
 
   constructor(options: SessionManagerOptions = {}) {
     super();
+    // The mobile bridge's read-stream feed attaches per-subscription listeners
+    // (data-tap/activity/usage/event) for every session a paired phone streams,
+    // on top of the app's own baseline listeners. That legitimately crosses
+    // Node's default max of 10 per event, so raise the cap to keep a normal
+    // multi-session fan-out from tripping a spurious MaxListenersExceededWarning
+    // (a genuine leak still shows as an unbounded climb well past this).
+    this.setMaxListeners(100);
     this.activityEngineOptions = options.activityEngineOptions;
 
     this.sessionQueue = new SessionQueue({
@@ -131,6 +138,16 @@ export class SessionManager extends EventEmitter {
             this.emit('session-changed', sessionId, toSession(session));
           }
         }
+        // Unfiltered output tap: fires for EVERY session regardless of
+        // renderer focus, unlike 'data' below. This is the mobile bridge's
+        // seam onto live PTY output (see src/main/mobile-bridge/handlers)
+        // - it deliberately does NOT feed backpressure.recordEmitted,
+        // since that accounting exists only for the renderer's focused-tab
+        // drain protocol, which a bridge subscriber does not participate
+        // in. With no listener attached this emit is a no-op call, so it
+        // costs nothing when no device is paired.
+        this.emit('data-tap', sessionId, data);
+
         // Only emit IPC data for focused sessions. Background sessions
         // accumulate in scrollback and reload via getScrollback() on tab switch.
         if (this.focusedSessionIds.size === 0 || this.focusedSessionIds.has(sessionId)) {
@@ -471,6 +488,17 @@ export class SessionManager extends EventEmitter {
       },
       emit: (event, ...args) => this.emit(event, ...args),
     });
+  }
+
+  /**
+   * True when the session has a live PTY that `write()` will actually deliver
+   * to (as opposed to a suspended/queued/exited session still in the registry
+   * with a null pty, whose writes `write()` silently drops). Lets a caller
+   * distinguish "delivered" from "dropped" instead of assuming existence means
+   * writability.
+   */
+  isWritable(sessionId: string): boolean {
+    return !!this.registry.get(sessionId)?.pty;
   }
 
   write(sessionId: string, data: string): void {

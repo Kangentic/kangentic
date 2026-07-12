@@ -2,7 +2,7 @@
 
 Kangentic's mobile companion app (`kangentic-mobile`, a separate repo) pairs with the desktop over an end-to-end encrypted connection so a user can walk away from their PC while agents run, then get notified, read the live conversation, see code changes, send messages back, and move tasks from their phone. The full product rationale and architecture research live in [docs/research/mobile-companion-app.md](research/mobile-companion-app.md); this doc covers what actually shipped in the desktop bridge and the shared protocol package.
 
-This doc covers **Phase 1: Protocol, pairing & secure relay transport** - the identity, pairing ceremony, signed device roster, capability-verb envelope, ongoing session crypto, and outbound relay transport client. See [Scope](#scope) at the bottom for what is explicitly deferred to later phases.
+This doc covers **Phase 1 (protocol, pairing & secure relay transport)** and **Phase 2 (data feeds, interactive control & capabilities)**: identity, pairing ceremony, signed device roster, capability-verb envelope, ongoing session crypto, outbound relay transport client, the live capability-verb handlers, and the data feeds they subscribe to (SessionManager output, the transcript service, board state, `DiffService`). See [Scope](#scope) at the bottom for what is still deferred to later phases.
 
 ## Layout
 
@@ -34,9 +34,22 @@ src/main/mobile-bridge/       # desktop implementation, consumes @kangentic/prot
   transport/
     relay-client.ts           # outbound WebSocket relay client with reconnect/backoff
     transport-factory.ts      # Transport swap point (relay today, P2P later)
-  session/bridge-session.ts   # one connected device's Noise KK session + re-handshake timer
-  capability-router.ts        # deny-by-default verb dispatch (no handlers yet - Phase 2)
-  mobile-bridge-service.ts    # top-level service: identity, roster, pairing, sessions
+  session/
+    bridge-session.ts         # one connected device's Noise KK session + re-handshake timer
+    subscription-registry.ts  # per-device live event subscriptions (read-stream/board/diff), keyed and torn down together
+  capability-router.ts        # deny-by-default verb dispatch
+  handlers/                   # one module per capability verb, registered once at attachContext()
+    read-stream.ts            # SessionManager scrollback/data-tap/activity/usage + transcript deltas
+    read-board.ts              # repository snapshot + the consolidated board-changed bus
+    read-diff.ts               # DiffService (bridge-owned DiffWatcher, never IpcContext.diffWatcher)
+    send-user-message.ts       # delivery via TerminalSubmit.submitContent (bracketed paste), not a raw write
+    move-task.ts               # routes through handleTaskMove (task-lifecycle-lock + transition engine)
+    interactive-terminal.ts    # raw PTY write-path parity (explicit grant only)
+    answer-permission-prompt.ts # binds the response to a specific outstanding prompt id
+    board-tool.ts                # board-tool-read/board-tool-write - NOT MCP; routes directly into commandHandlers, gated by board-tool-allowlist.ts
+    board-tool-allowlist.ts      # per-tool read/mutate classification (excludes query_db + move_task/list_tasks/list_columns/list_backlog, which duplicate dedicated verbs; browser/devtools/diagnostics/cross-project tools are absent from commandHandlers, so they are excluded for free)
+  board-event-bus.ts          # consolidated main-process board-mutation event stream (IpcContext.boardEvents)
+  mobile-bridge-service.ts    # top-level service: identity, roster, pairing, sessions, attachContext()
 ```
 
 The desktop service is constructed in `src/main/ipc/register-all.ts` and torn down synchronously in `src/main/index.ts`'s `clearPendingTimers` (see [Synchronous Shutdown](../.claude/rules/synchronous-shutdown.md)). It is wired to the renderer through the full 7-layer IPC bridge - channels in `src/shared/ipc-channels.ts` (`MOBILE_*`, see [Architecture > Mobile Bridge](architecture.md#mobile-bridge-10-channels)), types in `src/shared/types.ts` ("Mobile Bridge" section), the `mobile:` namespace in `src/preload/preload.ts`, the handler in `src/main/ipc/handlers/mobile-bridge.ts`, the `useMobileStore` renderer store, and the Mobile Devices settings tab.
@@ -63,7 +76,7 @@ The original research doc considered a PAKE (SPAKE2) for the pairing exchange so
 
 After the handshake completes, both sides derive a **Short Authentication String** (`packages/protocol/src/crypto/sas.ts`, `deriveShortAuthenticationString`) from the handshake transcript hash - a 6-digit code plus a short emoji sequence, Matrix-style commitment-before-reveal. The desktop's settings UI shows this alongside a device-name field and two buttons: "Codes match" and "Codes don't match." The user visually compares the code against what the phone displays. This step defeats a photographed or relayed QR: an attacker who intercepts the QR cannot also make both sides' SAS values agree, because the SAS is derived from a live handshake transcript involving both parties' ephemeral keys, not from anything printed on the QR.
 
-Confirming ("Codes match") signs the phone's static public key into the device roster with a display name and an initial capability grant (`DEFAULT_PAIRING_CAPABILITIES` - `read-stream`, `read-board`, `read-diff`; write/control verbs are granted explicitly afterward, not by default). Rejecting ("Codes don't match") or cancelling tears down the pairing ceremony without touching the roster.
+Confirming ("Codes match") signs the phone's static public key into the device roster with a display name and an initial capability grant (`DEFAULT_PAIRING_CAPABILITIES` - `read-stream`, `read-board`, `read-diff`, `board-tool-read`; write/control verbs are granted explicitly afterward, not by default). Rejecting ("Codes don't match") or cancelling tears down the pairing ceremony without touching the roster.
 
 ## Signed Device Roster
 
@@ -71,22 +84,53 @@ Confirming ("Codes match") signs the phone's static public key into the device r
 
 ### Revocation is drop-plus-rekey
 
-Revoking a device (`revokeDevice()`) removes its entry from the roster **and** is intended to rotate the desktop's own static identity key. Dropping the roster entry alone is not sufficient: Noise KK's mutual authentication only proves possession of a static keypair, so a revoked device that already completed a handshake could still authenticate against a future session as long as the desktop's static key is unchanged. Phase 1 ships the roster-side "drop" half (`roster-store.ts`'s `revokeDevice`) plus session teardown for that device; a full key-rotation-and-re-provisioning flow for any *other* still-paired devices is Phase 2/3 scope, since Phase 1 typically has at most one paired device to reason about in practice.
+Revoking a device (`revokeDevice()`) removes its entry from the roster **and** is intended to rotate the desktop's own static identity key. Dropping the roster entry alone is not sufficient: Noise KK's mutual authentication only proves possession of a static keypair, so a revoked device that already completed a handshake could still authenticate against a future session as long as the desktop's static key is unchanged. Phases 1 and 2 ship the roster-side "drop" half (`roster-store.ts`'s `revokeDevice`) plus live `BridgeSession`/subscription teardown for that device (`MobileBridgeService.disposeSession`); a full key-rotation-and-re-provisioning flow for any *other* still-paired devices is Phase 3 scope, since a small paired-device count is the common case in practice.
 
 ## Capability Verbs
 
 `packages/protocol/src/capabilities/verbs.ts` defines the complete allowlist a paired device can be granted:
 
-- `read-stream`
-- `read-board`
-- `read-diff`
-- `send-user-message`
-- `move-task`
-- `answer-permission-prompt`
+- `read-stream` - live scrollback, terminal output, activity/usage telemetry, and transcript deltas for one session.
+- `read-board` - a project's columns/tasks/backlog, or (with no `projectId`) the machine's project list; live updates via the board-changed bus.
+- `read-diff` - a task's diff file list or a single file's content, via `DiffService`; live "something changed, re-fetch" pushes via a bridge-owned `DiffWatcher`.
+- `send-user-message` - deliver text to a running session via the same bracketed-paste path (`TerminalSubmit.submitContent`) the renderer's Browser-pane Send affordance uses.
+- `move-task` - move a task between columns via `handleTaskMove` (respects `withTaskLock` and the transition engine).
+- `answer-permission-prompt` - the most sensitive verb; binds a phone's raw keystrokes to a specific outstanding permission-prompt id before writing them to the PTY.
+- `interactive-terminal` - raw PTY write-path parity (full desktop-terminal keystroke control), an explicit-grant-only verb, not in the read-only default.
+- `board-tool-read` / `board-tool-write` - the long-tail task/backlog CRUD surface (create, edit, delete, link PR, ...) that has no dedicated verb, split by read vs mutate access so the grant granularity matches the rest of the model. **Not MCP** - no agent, LLM, or JSON-RPC round-trip is involved; see [Board Tool Surface](#board-tool-surface) below.
 
 There is **deliberately no shell, file-read, or arbitrary-command verb** - absent from the protocol entirely, not filtered at runtime. This mirrors the lesson from SSH forced-command escapes and is the counter-example to Chrome Remote Desktop / VS Code tunnels, which are identity-gated but capability-unscoped. Adding a verb to this list is a protocol change; it does not by itself grant anything to a device - a device's roster entry still has to include the verb in its `CapabilitySet`, and the desktop's `CapabilityRouter` still has to have a handler registered for it.
 
-`src/main/mobile-bridge/capability-router.ts` is the desktop-side dispatch point: it checks the requesting session's `CapabilitySet` (bound at pairing time, adjustable per-device afterward) before even looking up a handler, so an unauthorized verb is rejected before any handler code runs. **Phase 1 ships the router and the deny-by-default authorization check only - no verb has a registered handler yet.** An authorized-but-unregistered verb fails closed with an explicit "no handler registered" error rather than doing nothing silently. Wiring real handlers (SessionManager output tap, transcript service, repositories, DiffService, activity engine, the PTY write path) is Phase 2.
+`src/main/mobile-bridge/capability-router.ts` is the desktop-side dispatch point: it checks the requesting session's `CapabilitySet` (bound at pairing time, adjustable per-device afterward via the Mobile Devices settings tab's per-verb toggles) before even looking up a handler, so an unauthorized verb is rejected before any handler code runs. Every verb has a registered handler (`src/main/mobile-bridge/handlers/`, wired once by `MobileBridgeService.attachContext()`); an authorized-but-unregistered verb would still fail closed with an explicit "no handler registered" error rather than doing nothing silently - that guarantee stays load-bearing even though nothing exercises it in production today.
+
+`DEFAULT_PAIRING_CAPABILITIES` (granted automatically on a successful pairing) is read-only: `read-stream`, `read-board`, `read-diff`, `board-tool-read`. Every write/control verb (`send-user-message`, `move-task`, `answer-permission-prompt`, `interactive-terminal`, `board-tool-write`) requires an explicit grant afterward via the settings UI.
+
+## Data Feeds
+
+Each `read-*` handler subscribes to a live main-process source and pushes `BridgeEvent`s (`packages/protocol/src/events/event.ts`: `transcript` / `activity` / `terminal` / `board` / `diff`) over the established `BridgeSession`, tracked per-device in a `SubscriptionRegistry` so a device's live subscriptions tear down together on disconnect or revocation:
+
+- **`read-stream`** taps `SessionManager`'s **unfiltered `data-tap` event** (`src/main/pty/session-manager.ts`), added specifically for this feed: SessionManager's pre-existing `data` event is gated to `focusedSessionIds` (the renderer's active tab), so a background session's output never reached a listener that isn't the focused renderer tab. `data-tap` fires for every session's output unconditionally and does not feed the renderer's backpressure accounting (that protocol exists only for the focused-tab drain handshake). Raw output is coalesced on a short timer before pushing (`TerminalEvent`). `activity`/`usage`/`event` telemetry pushes as `ActivityEvent`, and a transcript delta pushes (`TranscriptEvent`) only when `resolveTaskTranscript`'s memoized `revision` increases, so an idle poll costs nothing.
+- **`read-board`** subscribes to `IpcContext.boardEvents` (below), filtered by `projectId`.
+- **`read-diff`** subscribes a **bridge-owned `DiffWatcher`** instance (`MobileBridgeService`'s own `diffWatcher` field), never `IpcContext.diffWatcher` - that instance is shared with the renderer's Changes panel and is single-watch-per-path, so a bridge teardown would kill the renderer's live watch on the same worktree (and vice versa).
+
+### Consolidated board-changed bus
+
+`src/main/mobile-bridge/board-event-bus.ts`'s `BoardEventBus` (exposed as `IpcContext.boardEvents`, a plain Node `EventEmitter`, not an IPC channel) is a single main-process-internal stream for every agent-driven board mutation, so `read-board` subscribes once instead of listening to each ad-hoc `IPC.*_BY_AGENT` renderer-push channel individually. It is fed **additively**, right next to the existing `sendToRenderer(...)` calls in `buildCommandContextForProject`'s six callbacks (`src/main/agent/mcp-project-context.ts`) and the PR-linking push (`src/main/pr/pr-linking.ts`) - the renderer's existing `*_BY_AGENT` pushes and `useAgentDrivenInvalidation` are untouched.
+
+### Permission-prompt id binding
+
+There is no dedicated permission-prompt object in the desktop app - a prompt is just the agent's own TUI prompt, and the activity engine tracks only that one is pending (`ActivityStatsSnapshot.permissionPending`) plus which tool it is for (`permissionAwaitedToolId`, the `tool_use_id` - added in Phase 2, kept in sync between the engine-internal and IPC copies of `ActivityStatsSnapshot` per `activity-stats-snapshot-parity.test.ts`). `answer-permission-prompt`'s handler synthesizes a prompt id (`${sessionId}:${permissionAwaitedToolId}`), reports it in `read-stream`'s snapshot as `awaitedPromptId`, and rejects an answer whose `promptId` does not match the CURRENT live value - the safety property that makes this verb meaningfully different from a plain `interactive-terminal` write. The phone sends raw keystrokes; no agent-specific interpretation happens in the bridge (per `agent-adapters-boundary.md`).
+
+## Board Tool Surface
+
+`board-tool-read` / `board-tool-write` are **not the MCP protocol** - despite the `{tool, params}` shape, no agent, LLM, or JSON-RPC round-trip happens anywhere in this path. `handleBoardTool` (`src/main/mobile-bridge/handlers/board-tool.ts`) is a plain function call straight into `commandHandlers` (`src/main/agent/commands/index.ts` - the same registry the in-process MCP HTTP server also happens to dispatch into), reusing the exact handlers and board-mutation side-effect fan-out without re-deriving the `register*Tools` layer's zod schemas, defaulting, rate limiting, or LLM-facing prose formatting. This is the same kind of direct reuse `read-board`/`move-task` do against their own repositories/`handleTaskMove` - a thin authorization + routing wrapper over the existing engine, not a second protocol surface. It exists for the long tail of task/backlog CRUD (create, edit, delete, link PR, backlog promote/update/delete, stats, transcript, handoff) that would be tedious to give each its own bespoke verb. The `tool` field a request names is the **internal `commandHandlers` key** (e.g. `'create_task'`), not a public MCP tool name.
+
+`src/main/mobile-bridge/handlers/board-tool-allowlist.ts` hand-classifies every `commandHandlers` key as `'read'` or `'mutate'` (`board-tool-allowlist.test.ts` fails if a new registry entry ships unclassified). Excluded from both verbs:
+- `query_db` (raw SQL escape hatch).
+- `move_task`, `list_tasks`, `list_columns`, `list_backlog` - real, safe `commandHandlers` entries, but **duplicates** of the dedicated `move-task` and `read-board` verbs, which give a cleaner contract (swimlaneId not column-name resolution; full `Task`/`Swimlane` objects; `read-board` also has a live subscription these one-shot tools lack). Excluding them here keeps exactly one path per capability instead of two competing ones.
+- Everything not in `commandHandlers` at all: the `kangentic_browser_*` family, the dev-only `kangentic_devtools_*` family, the diagnostics tools (`tail_logs`, `get_recent_crashes`, ...), and the remaining cross-project tools (`list_projects`, unified `search`, `move_task_to_project`) are registered through entirely separate registries, so building the allowlist from `commandHandlers`'s keys excludes them for free, with no separate name-matching needed.
+
+A phone bootstraps its project list through `read-board` with no `projectId`, since `commandHandlers` has no `list_projects` entry.
 
 ## Ongoing Session: Noise KK + Re-handshake + Secretstream
 
@@ -115,20 +159,28 @@ Even a correctly-implemented blind relay is not metadata-invisible. A relay oper
 
 ## Scope
 
-**Shipped in this phase (Bridge Phase 1):**
+**Shipped (Bridge Phase 1 - protocol, pairing & secure relay transport):**
 
 - `@kangentic/protocol` package: wire schema, Noise KK + IKpsk0 implementations, secretstream framing, capability verb list, roster signing, QR payload encode/decode, transport interface.
 - Device identity (encrypted at rest via Electron `safeStorage`, refuses to persist unprotected).
 - Signed device roster with revoke-drop (rekey-on-revoke is scaffolded but the full multi-device re-provisioning flow is deferred).
 - QR pairing ceremony (token-bound Noise PSK + SAS confirmation) with desktop settings UI.
 - The desktop's outbound relay CLIENT connection with reconnect/backoff.
-- `CapabilityRouter` with the deny-by-default authorization check (no verb handlers registered).
 - Mobile Devices settings tab: enable toggle, relay URL, pairing flow, paired-device list, revoke.
 
-**Explicitly out of scope for this phase:**
+**Shipped (Bridge Phase 2 - data feeds, interactive control & capabilities):**
 
-- **Bridge Phase 2 (data feeds, interactive control & capabilities):** actual capability-verb handlers wired to `SessionManager`'s output tap, the transcript service, repositories, `DiffService`, and the activity engine; the PTY write path for phone-originated input, including `answer-permission-prompt` bound to a specific outstanding prompt id; a consolidated main-side board event stream; the MCP tool surface exposed to paired devices.
-- **Bridge Phase 3 (notifications & push sender):** moving the notification should-fire policy into main; an Expo push sender; presence suppression; the paired-devices capability-editing UI beyond revoke.
+- `interactive-terminal`, `board-tool-read`, `board-tool-write` added to `CAPABILITY_VERBS`; per-verb request/response payload types (`packages/protocol/src/wire/payloads.ts`); `terminal`/`diff` event kinds and a reshaped project-keyed `BoardEvent` (`packages/protocol/src/events/event.ts`); a per-kind `framing.ts` event validator; `deriveSessionSlotId` for the ongoing-session relay slot.
+- `MobileBridgeService.attachContext()` + `syncSessions()`: opens one live `BridgeSession` per roster device, routes decoded `capability-request` messages through `CapabilityRouter.dispatch()`.
+- All 9 capability-verb handlers (`src/main/mobile-bridge/handlers/`), each described under [Data Feeds](#data-feeds) and [Board Tool Surface](#board-tool-surface) above.
+- `SessionManager`'s unfiltered `data-tap` event and `ActivityStatsSnapshot.permissionAwaitedToolId`.
+- The consolidated `BoardEventBus` (`IpcContext.boardEvents`).
+- Per-device capability-granting UI in the Mobile Devices settings tab (one toggle per verb, driven by `MOBILE_CAPABILITY_VERBS`).
+- Still deferred within Phase 2's own scope: re-handshaking `BridgeSession` on a transport reconnect (mid-interval connect latency is a UX rough edge, not a correctness gap - the existing ~2-minute timer still re-handshakes).
+
+**Explicitly out of scope, later phases:**
+
+- **Bridge Phase 3 (notifications & push sender):** moving the notification should-fire policy into main; an Expo push sender; presence suppression; full desktop static-key rotation and re-provisioning of remaining paired devices on revoke; fuller device-management UX beyond the per-verb toggles.
 - **Bridge Phase 4 (direct P2P + IPv6 speed upgrade):** WebRTC data channels (`node-datachannel` desktop / `react-native-webrtc` mobile), signaling over the already-secure channel, DTLS fingerprint pinning, IPv6-first candidate ordering, Tailscale detection.
 - **The relay SERVER.** This doc describes the desktop's client-side contract against a relay; the relay itself (a tiny stateless blind byte-forwarder) lives in the separate, open-source [`kangentic-relay`](https://github.com/Kangentic/kangentic-relay) repo and is not part of this codebase.
 - The mobile app itself (`kangentic-mobile`, a separate repo).

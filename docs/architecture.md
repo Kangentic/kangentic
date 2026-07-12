@@ -746,7 +746,7 @@ Asana ships an additional `boards:asana:*` group (3 channels: `authStatus`, `set
 
 Desktop half of the mobile companion app's secure pairing/transport link, consuming the shared `@kangentic/protocol` package (`packages/protocol/`). Owns the device identity, signed device roster, QR pairing ceremony, capability-verb router, and the outbound relay transport client. Constructed in `src/main/ipc/register-all.ts`, torn down synchronously in `src/main/index.ts`'s `clearPendingTimers`. Machine-global (not project-scoped), backing the Mobile Devices settings tab via the `mobile:*` IPC group above.
 
-Phase 1 (shipped) covers identity/roster/pairing/transport and the deny-by-default capability router with no verb handlers registered yet; capability data feeds, notifications, and a direct P2P transport upgrade are later phases. See [Mobile Bridge](mobile-bridge.md) for the full pairing ceremony, SAS confirmation, roster revocation model, capability verb list, ongoing-session crypto, relay transport contract, and phase scope.
+Phase 1 (shipped) covers identity/roster/pairing/transport and the deny-by-default capability router. Phase 2 (shipped) wires all 9 capability-verb handlers to their live main-process data feeds (SessionManager's unfiltered output tap, the transcript service, repositories, `DiffService`, the activity engine's permission-prompt state) and the board/task MCP surface; notifications and a direct P2P transport upgrade are later phases. See [Mobile Bridge](mobile-bridge.md) for the full pairing ceremony, SAS confirmation, roster revocation model, capability verb list, data feeds, ongoing-session crypto, relay transport contract, and phase scope.
 
 ## See Also
 

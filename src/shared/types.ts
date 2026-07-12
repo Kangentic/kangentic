@@ -607,6 +607,8 @@ export interface ActivityStatsSnapshot {
   anonymousBackgroundShellCount: number;
   turnActive: boolean;
   permissionPending: boolean;
+  /** The tool_use_id awaiting a permission decision when `permissionPending` is true, else null. */
+  permissionAwaitedToolId: string | null;
   msSinceLastSignal: number | null;
   /** Wall-clock ms of the most recent thinking-signal. Lets the
    *  debug-overlay timeline render the active watchdog deadline as
@@ -2442,6 +2444,9 @@ export const MOBILE_CAPABILITY_VERBS = [
   'send-user-message',
   'move-task',
   'answer-permission-prompt',
+  'interactive-terminal',
+  'board-tool-read',
+  'board-tool-write',
 ] as const;
 export type MobileCapabilityVerb = (typeof MOBILE_CAPABILITY_VERBS)[number];
 

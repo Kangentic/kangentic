@@ -12,6 +12,7 @@ import type { TerminalSubmit } from '../pty/terminal-submit';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 import type { TranscriptionService } from '../transcription/transcription-service';
 import type { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
+import type { BoardEventBus } from '../mobile-bridge/board-event-bus';
 
 export interface IpcContext {
   mainWindow: BrowserWindow;
@@ -79,4 +80,12 @@ export interface IpcContext {
    * currently open project. See src/main/mobile-bridge/mobile-bridge-service.ts.
    */
   mobileBridgeService: MobileBridgeService;
+  /**
+   * Consolidated main-process-internal board-mutation event stream, fed
+   * alongside (never instead of) the existing `IPC.*_BY_AGENT` renderer
+   * pushes. Lets the mobile bridge's read-board handler subscribe once,
+   * filtered by projectId, rather than to each ad-hoc `*_BY_AGENT` channel.
+   * See src/main/mobile-bridge/board-event-bus.ts.
+   */
+  boardEvents: BoardEventBus;
 }

@@ -287,7 +287,7 @@ describe('PairingService.confirmSas default capabilities', () => {
 
     expect(persistedDevice).toBeDefined();
     expect(persistedDevice?.capabilities).toEqual(DEFAULT_PAIRING_CAPABILITIES);
-    expect(persistedDevice?.capabilities).toEqual(['read-stream', 'read-board', 'read-diff']);
+    expect(persistedDevice?.capabilities).toEqual(['read-stream', 'read-board', 'read-diff', 'board-tool-read']);
   });
 });
 

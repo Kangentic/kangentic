@@ -81,6 +81,7 @@ function makeIpcContext(projectResult: Project | null): IpcContext {
       getById: vi.fn(() => projectResult),
       list: vi.fn(() => (projectResult ? [projectResult] : [])),
     },
+    boardEvents: { emitBoardChanged: vi.fn() },
   } as unknown as IpcContext;
 }
 
@@ -211,12 +212,14 @@ describe('buildCommandContextForProject - onSwimlaneUpdated write-back', () => {
     const project = makeProject({ id: DEFAULT_ID, path: PROJECT_PATH });
     const send = vi.fn();
     const writeBackForProject = vi.fn();
+    const emitBoardChanged = vi.fn();
     const ipcContext = {
       projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
       mainWindow: { isDestroyed: () => false, webContents: { send } },
       boardConfigManager: { writeBackForProject },
+      boardEvents: { emitBoardChanged },
     } as unknown as IpcContext;
-    return { ipcContext, send, writeBackForProject };
+    return { ipcContext, send, writeBackForProject, emitBoardChanged };
   }
 
   // onSwimlaneUpdated only reads id + name off the swimlane.
@@ -253,5 +256,80 @@ describe('buildCommandContextForProject - onSwimlaneUpdated write-back', () => {
     context!.onBacklogChanged();
 
     expect(writeBackForProject).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Consolidated board-changed bus fan-out
+//
+// The mobile bridge's read-board subscription consumes context.boardEvents
+// instead of each ad-hoc *_BY_AGENT channel. Every board-mutation callback
+// must feed BOTH the existing renderer IPC push (unchanged, zero risk to the
+// renderer) AND the boardEvents bus (additive).
+// ---------------------------------------------------------------------------
+
+describe('buildCommandContextForProject - consolidated board-changed bus fan-out', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function makeFanOutContext() {
+    const project = makeProject({ id: DEFAULT_ID });
+    const send = vi.fn();
+    const emitBoardChanged = vi.fn();
+    const ipcContext = {
+      projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
+      mainWindow: { isDestroyed: () => false, webContents: { send } },
+      boardConfigManager: { writeBackForProject: vi.fn() },
+      boardEvents: { emitBoardChanged },
+      sessionManager: { removeByTaskId: vi.fn() },
+    } as unknown as IpcContext;
+    return { ipcContext, send, emitBoardChanged };
+  }
+
+  it('onTaskCreated fires a task-created board event', () => {
+    const { ipcContext, emitBoardChanged } = makeFanOutContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+
+    context.onTaskCreated({ id: 'task-0', title: 'Task Zero' } as never, 'To Do', 'lane-0');
+
+    expect(emitBoardChanged).toHaveBeenCalledWith({ projectId: DEFAULT_ID, change: 'task-created', ids: ['task-0'] });
+  });
+
+  it('onTaskUpdated fires both the IPC push and a task-updated board event', () => {
+    const { ipcContext, send, emitBoardChanged } = makeFanOutContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+
+    context.onTaskUpdated({ id: 'task-1', title: 'Task One' } as never);
+
+    expect(send).toHaveBeenCalledWith('TASK_UPDATED_BY_AGENT', 'task-1', 'Task One', DEFAULT_ID);
+    expect(emitBoardChanged).toHaveBeenCalledWith({ projectId: DEFAULT_ID, change: 'task-updated', ids: ['task-1'] });
+  });
+
+  it('onTaskDeleted fires a task-deleted board event', () => {
+    const { ipcContext, emitBoardChanged } = makeFanOutContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+
+    context.onTaskDeleted({ id: 'task-2', title: 'Task Two', session_id: null, worktree_path: null } as never);
+
+    expect(emitBoardChanged).toHaveBeenCalledWith({ projectId: DEFAULT_ID, change: 'task-deleted', ids: ['task-2'] });
+  });
+
+  it('onSwimlaneUpdated fires a swimlane-updated board event', () => {
+    const { ipcContext, emitBoardChanged } = makeFanOutContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+
+    context.onSwimlaneUpdated({ id: 'lane-1', name: 'Review' } as never);
+
+    expect(emitBoardChanged).toHaveBeenCalledWith({ projectId: DEFAULT_ID, change: 'swimlane-updated', ids: ['lane-1'] });
+  });
+
+  it('onBacklogChanged fires a backlog-changed board event with no ids', () => {
+    const { ipcContext, emitBoardChanged } = makeFanOutContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID)!;
+
+    context.onBacklogChanged();
+
+    expect(emitBoardChanged).toHaveBeenCalledWith({ projectId: DEFAULT_ID, change: 'backlog-changed', ids: [] });
   });
 });

@@ -16,6 +16,9 @@ export const CAPABILITY_VERBS = [
   'send-user-message',
   'move-task',
   'answer-permission-prompt',
+  'interactive-terminal',
+  'board-tool-read',
+  'board-tool-write',
 ] as const;
 
 export type CapabilityVerb = (typeof CAPABILITY_VERBS)[number];

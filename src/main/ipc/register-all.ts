@@ -43,6 +43,7 @@ import { registerUsageStatsHandlers } from './handlers/usage-stats';
 import { registerPopOutHandlers } from './handlers/pop-out';
 import { retrievalService } from '../retrieval/retrieval-service';
 import { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
+import { BoardEventBus } from '../mobile-bridge/board-event-bus';
 import type { IpcContext } from './ipc-context';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 
@@ -92,6 +93,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // since MobileBridgeService's constructor needs a config synchronously
   // but configManager itself is only available once `context` exists.
   const mobileBridgeService = new MobileBridgeService({ enabled: false, relayUrl: '' });
+  const boardEvents = new BoardEventBus();
 
   // Lazy-initialize heavy objects on first access
   let projectRepo: ProjectRepository | null = null;
@@ -133,7 +135,15 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     recoveredProjects: new Set<string>(),
     mcpServerHandle,
     mobileBridgeService,
+    boardEvents,
   };
+
+  // The bridge needs IpcContext (SessionManager, repos, DiffService,
+  // commandHandlers) to register its capability-verb handlers - it cannot
+  // receive it at construction time above since IpcContext does not exist
+  // yet at that point. attachContext() must run before reconcile() so the
+  // first reconcile's syncSessions() has handlers to route into.
+  mobileBridgeService.attachContext(context);
 
   const effectiveConfig = context.configManager.getEffectiveConfig(context.currentProjectPath ?? undefined);
   mobileBridgeService.reconcile({

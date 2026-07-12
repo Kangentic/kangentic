@@ -2678,8 +2678,14 @@
           state.devices = state.devices.filter(function (device) { return device.deviceId !== deviceId; });
         },
         setDeviceCapabilities: async function (deviceId, capabilities) {
-          state.devices.forEach(function (device) {
-            if (device.deviceId === deviceId) device.capabilities = capabilities;
+          // Reassign to a NEW array (like revokeDevice's .filter above), not an
+          // in-place mutation of the existing array/device objects: the
+          // renderer's useMobileStore((state) => state.devices) selector is
+          // reference-equality gated, so mutating devices in place while
+          // keeping the same array reference would silently skip the
+          // re-render even though loadDevices() re-fetched "fresh" data.
+          state.devices = state.devices.map(function (device) {
+            return device.deviceId === deviceId ? Object.assign({}, device, { capabilities: capabilities }) : device;
           });
         },
         onPairingSas: function (callback) {

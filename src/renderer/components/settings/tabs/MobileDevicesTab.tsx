@@ -1,11 +1,24 @@
 import { useEffect, useState } from 'react';
 import { QrCode, Smartphone, Trash2 } from 'lucide-react';
 import QRCode from 'qrcode';
-import type { AppConfig } from '../../../../shared/types';
-import { INPUT_CLASS, SectionHeader, SettingRow, SettingToggleRow, useScopedUpdate } from '../shared';
+import { MOBILE_CAPABILITY_VERBS, type AppConfig, type MobileCapabilityVerb, type MobilePairedDevice } from '../../../../shared/types';
+import { CompactToggleList, INPUT_CLASS, SectionHeader, SettingRow, SettingToggleRow, useScopedUpdate } from '../shared';
 import { settingProps } from '../settings-registry';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { useMobileStore } from '../../../stores/mobile-store';
+
+/** Short label + blurb per verb, for the per-device capability toggle list. Keyed off MOBILE_CAPABILITY_VERBS so a new verb is a compile error here until classified. */
+const CAPABILITY_LABELS: Record<MobileCapabilityVerb, { label: string; description: string }> = {
+  'read-stream': { label: 'Live output', description: 'Terminal output and activity for running sessions' },
+  'read-board': { label: 'Board', description: 'View tasks, columns, and backlog' },
+  'read-diff': { label: 'Diffs', description: 'View code changes' },
+  'send-user-message': { label: 'Send messages', description: 'Send a message to a running agent' },
+  'move-task': { label: 'Move tasks', description: 'Move tasks between columns' },
+  'answer-permission-prompt': { label: 'Answer prompts', description: 'Approve or deny an agent permission request' },
+  'interactive-terminal': { label: 'Interactive terminal', description: 'Full keystroke control of the running terminal' },
+  'board-tool-read': { label: 'Task details', description: 'Search tasks and read stats, transcripts, and handoff notes' },
+  'board-tool-write': { label: 'Task actions', description: 'Create, edit, and delete tasks or backlog items, link PRs' },
+};
 
 export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) {
   const updateGlobal = useScopedUpdate('global');
@@ -23,6 +36,7 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
   const confirmPairing = useMobileStore((state) => state.confirmPairing);
   const cancelPairing = useMobileStore((state) => state.cancelPairing);
   const revokeDevice = useMobileStore((state) => state.revokeDevice);
+  const setDeviceCapabilities = useMobileStore((state) => state.setDeviceCapabilities);
   const setPairingSas = useMobileStore((state) => state.setPairingSas);
   const setPairingEnded = useMobileStore((state) => state.setPairingEnded);
   const clearPairingEnded = useMobileStore((state) => state.clearPairingEnded);
@@ -189,20 +203,20 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
             {devices.map((device) => (
               <li
                 key={device.deviceId}
-                className="flex items-center justify-between gap-3 rounded-md border border-edge bg-surface-hover/30 px-3 py-2"
+                className="rounded-md border border-edge bg-surface-hover/30 px-3 py-2 space-y-2"
               >
-                <div className="min-w-0">
-                  <div className="text-sm text-fg-secondary truncate">{device.displayName}</div>
-                  <div className="text-xs text-fg-faint truncate">{device.capabilities.join(', ') || 'No capabilities granted'}</div>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 text-sm text-fg-secondary truncate">{device.displayName}</div>
+                  <button
+                    type="button"
+                    className="shrink-0 rounded p-1.5 text-fg-faint hover:text-danger hover:bg-danger/10 transition-colors"
+                    title="Revoke"
+                    onClick={() => setRevokeTarget({ deviceId: device.deviceId, displayName: device.displayName })}
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  className="shrink-0 rounded p-1.5 text-fg-faint hover:text-danger hover:bg-danger/10 transition-colors"
-                  title="Revoke"
-                  onClick={() => setRevokeTarget({ deviceId: device.deviceId, displayName: device.displayName })}
-                >
-                  <Trash2 size={14} />
-                </button>
+                <DeviceCapabilityToggles device={device} onChange={setDeviceCapabilities} />
               </li>
             ))}
           </ul>
@@ -224,5 +238,39 @@ export function MobileDevicesTab({ globalConfig }: { globalConfig: AppConfig }) 
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Minimal per-device capability grant UI: one toggle per verb in
+ * MOBILE_CAPABILITY_VERBS, so a new verb auto-surfaces here without a
+ * component change. Fuller device-management UX (grouping, presets) is
+ * Bridge Phase 3 scope - this exists so the Phase 2 write/control verbs
+ * (interactive-terminal, move-task, answer-permission-prompt,
+ * send-user-message, board-tool-write) are actually grantable, since
+ * pairing itself only grants the read-only default set.
+ */
+function DeviceCapabilityToggles({
+  device,
+  onChange,
+}: {
+  device: MobilePairedDevice;
+  onChange: (deviceId: string, capabilities: MobileCapabilityVerb[]) => void;
+}) {
+  const granted = new Set(device.capabilities);
+  return (
+    <CompactToggleList
+      items={MOBILE_CAPABILITY_VERBS.map((verb) => ({
+        label: CAPABILITY_LABELS[verb].label,
+        description: CAPABILITY_LABELS[verb].description,
+        checked: granted.has(verb),
+        onChange: (value) => {
+          const next = value
+            ? [...device.capabilities, verb]
+            : device.capabilities.filter((existing) => existing !== verb);
+          onChange(device.deviceId, next);
+        },
+      }))}
+    />
   );
 }

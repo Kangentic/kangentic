@@ -12,6 +12,7 @@
 import { isCapabilityVerb } from '../capabilities/verbs';
 import type { BridgeEvent } from '../events/event';
 import type { BridgeMessage, JsonValue } from './messages';
+import { isJsonValue, isRecord } from './json-value';
 
 export const MAX_FRAME_LENGTH = 1024 * 1024;
 
@@ -31,17 +32,37 @@ export function decodeMessage(bytes: Uint8Array): BridgeMessage {
   return validateBridgeMessage(parsed);
 }
 
-function isJsonValue(value: unknown): value is JsonValue {
-  if (value === null) return true;
-  const t = typeof value;
-  if (t === 'boolean' || t === 'number' || t === 'string') return true;
-  if (Array.isArray(value)) return value.every(isJsonValue);
-  if (t === 'object') return Object.values(value as Record<string, unknown>).every(isJsonValue);
-  return false;
-}
+/**
+ * Per-kind event validation. Each kind has a different required key set
+ * (transcript/activity/terminal are session-scoped, board is project-scoped
+ * with an optional task, diff is task-scoped) - there is no single field
+ * (e.g. a universal "taskId") every event kind carries, so this cannot be a
+ * single shared check.
+ */
+function validateEvent(event: Record<string, unknown>): BridgeEvent {
+  if (typeof event.kind !== 'string') throw new Error('event message missing a valid "kind"');
+  if (!isJsonValue(event.payload)) throw new Error('event payload is not JSON-serializable');
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
+  switch (event.kind) {
+    case 'transcript':
+    case 'activity':
+    case 'terminal': {
+      if (typeof event.sessionId !== 'string') throw new Error(`"${event.kind}" event is missing "sessionId"`);
+      if (typeof event.taskId !== 'string') throw new Error(`"${event.kind}" event is missing "taskId"`);
+      return event as unknown as BridgeEvent;
+    }
+    case 'board': {
+      if (typeof event.projectId !== 'string') throw new Error('"board" event is missing "projectId"');
+      if (event.taskId !== undefined && typeof event.taskId !== 'string') throw new Error('"board" event has a non-string "taskId"');
+      return event as unknown as BridgeEvent;
+    }
+    case 'diff': {
+      if (typeof event.taskId !== 'string') throw new Error('"diff" event is missing "taskId"');
+      return event as unknown as BridgeEvent;
+    }
+    default:
+      throw new Error(`event message has an unknown event kind: ${event.kind}`);
+  }
 }
 
 function validateBridgeMessage(value: unknown): BridgeMessage {
@@ -75,18 +96,8 @@ function validateBridgeMessage(value: unknown): BridgeMessage {
     }
 
     case 'event': {
-      const event = value.event;
-      if (!isRecord(event) || typeof event.kind !== 'string') {
-        throw new Error('event message missing a valid "event"');
-      }
-      if (typeof event.taskId !== 'string') throw new Error('event is missing "taskId"');
-      if (!isJsonValue(event.payload)) throw new Error('event payload is not JSON-serializable');
-      if (event.kind === 'transcript' || event.kind === 'activity') {
-        if (typeof event.sessionId !== 'string') throw new Error(`"${event.kind}" event is missing "sessionId"`);
-      } else if (event.kind !== 'board') {
-        throw new Error(`event message has an unknown event kind: ${event.kind}`);
-      }
-      return { type: 'event', event: event as unknown as BridgeEvent };
+      if (!isRecord(value.event)) throw new Error('event message missing a valid "event"');
+      return { type: 'event', event: validateEvent(value.event) };
     }
 
     default:

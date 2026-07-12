@@ -32,10 +32,38 @@ export {
 } from './crypto/secretstream';
 
 export { deriveShortAuthenticationString, type ShortAuthenticationString } from './crypto/sas';
+export { deriveSessionSlotId } from './crypto/slot';
 
 export type { JsonValue, BridgeMessage, HeartbeatMessage, CapabilityRequestMessage, CapabilityResponseMessage, EventMessage } from './wire/messages';
 export { encodeMessage, decodeMessage, MAX_FRAME_LENGTH } from './wire/framing';
+export { isJsonValue, isRecord } from './wire/json-value';
 export { SessionFrameKind, wrapSessionFrame, unwrapSessionFrame } from './wire/session-frame';
+
+export {
+  parseCapabilityRequestPayload,
+  type CapabilityRequestPayloadMap,
+  type CapabilityResponsePayloadMap,
+  type ReadStreamRequestPayload,
+  type ReadStreamResponsePayload,
+  type ReadBoardRequestPayload,
+  type ReadBoardProjectSummary,
+  type ReadBoardProjectListResponsePayload,
+  type ReadBoardSnapshotResponsePayload,
+  type ReadBoardResponsePayload,
+  type ReadDiffScope,
+  type ReadDiffRequestPayload,
+  type ReadDiffResponsePayload,
+  type SendUserMessageRequestPayload,
+  type SendUserMessageResponsePayload,
+  type MoveTaskRequestPayload,
+  type MoveTaskResponsePayload,
+  type AnswerPermissionPromptRequestPayload,
+  type AnswerPermissionPromptResponsePayload,
+  type InteractiveTerminalRequestPayload,
+  type InteractiveTerminalResponsePayload,
+  type BoardToolRequestPayload,
+  type BoardToolResponsePayload,
+} from './wire/payloads';
 
 export {
   PAIRING_URI_SCHEME,
@@ -65,6 +93,15 @@ export {
   type CapabilitySet,
 } from './capabilities/verbs';
 
-export type { BridgeEvent, TranscriptEvent, BoardEvent, ActivityEvent } from './events/event';
+export type {
+  BridgeEvent,
+  TranscriptEvent,
+  ActivityEvent,
+  ActivityEventPayload,
+  TerminalEvent,
+  BoardEvent,
+  BoardEventPayload,
+  DiffEvent,
+} from './events/event';
 
 export type { Transport, TransportState, Unsubscribe } from './transport/transport';

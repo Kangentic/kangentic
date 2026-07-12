@@ -17,6 +17,16 @@ const GIT_META_FILES = new Set(['index', 'HEAD', 'ORIG_HEAD', 'MERGE_HEAD', 'pac
 interface WatcherEntry {
   watchers: fs.FSWatcher[];
   debounceTimer: ReturnType<typeof setTimeout> | null;
+  /**
+   * Every subscriber's callback for this path. The renderer's git-diff panel
+   * is single-subscriber-per-path, but the mobile bridge fans out one live
+   * `read-diff` subscription per paired device/task onto the SAME path (two
+   * worktree-less tasks in one repo, or two phones on one task, both resolve
+   * to the same git directory), so a path must multiplex - one debounced
+   * `fs.watch` set feeding every registered callback, torn down only when the
+   * last subscriber leaves.
+   */
+  callbacks: Set<() => void>;
 }
 
 /**
@@ -33,21 +43,31 @@ interface WatcherEntry {
 export class DiffWatcher {
   private readonly watchers = new Map<string, WatcherEntry>();
 
-  subscribe(worktreePath: string, callback: () => void): void {
-    // Already watching this path
-    if (this.watchers.has(worktreePath)) return;
+  /**
+   * Register a change callback for a path, returning a teardown that removes
+   * ONLY this callback (closing the underlying `fs.watch` handles when it was
+   * the last one). A repeat subscribe for an already-watched path attaches to
+   * the existing watch instead of no-oping, so every subscriber is wired.
+   */
+  subscribe(worktreePath: string, callback: () => void): () => void {
+    const existing = this.watchers.get(worktreePath);
+    if (existing) {
+      existing.callbacks.add(callback);
+      return () => this.removeCallback(worktreePath, callback);
+    }
 
-    const entry: WatcherEntry = { watchers: [], debounceTimer: null };
+    const entry: WatcherEntry = { watchers: [], debounceTimer: null, callbacks: new Set([callback]) };
     this.watchers.set(worktreePath, entry);
 
-    // Debounce: reset the shared timer on each change from any watcher.
+    // Debounce: reset the shared timer on each change from any watcher, then
+    // fan the single fire out to every registered callback.
     const fire = () => {
       const current = this.watchers.get(worktreePath);
       if (current !== entry) return; // unsubscribed/replaced while debouncing
       if (entry.debounceTimer !== null) clearTimeout(entry.debounceTimer);
       entry.debounceTimer = setTimeout(() => {
         entry.debounceTimer = null;
-        callback();
+        for (const registeredCallback of entry.callbacks) registeredCallback();
       }, DEBOUNCE_MS);
     };
 
@@ -68,6 +88,21 @@ export class DiffWatcher {
     //    needs the absolute git dir (a worktree's lives under the main repo's
     //    .git/worktrees/<name>, not <worktree>/.git).
     this.watchGitMetadata(worktreePath, entry, fire);
+
+    return () => this.removeCallback(worktreePath, callback);
+  }
+
+  /**
+   * Remove one subscriber's callback from a path, closing the underlying
+   * watchers only when it was the last subscriber. `unsubscribe()` still
+   * force-closes every callback for a path (used by the renderer's single
+   * subscriber and by relocation's `releaseUnder`/`closeAll`).
+   */
+  private removeCallback(worktreePath: string, callback: () => void): void {
+    const entry = this.watchers.get(worktreePath);
+    if (!entry) return;
+    entry.callbacks.delete(callback);
+    if (entry.callbacks.size === 0) this.unsubscribe(worktreePath);
   }
 
   /**

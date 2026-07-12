@@ -32,6 +32,25 @@ vi.mock('electron', () => ({
     },
     getSelectedStorageBackend: () => 'keychain',
   },
+  // Phase 2's capability handlers reach real src/main/ipc/handlers and
+  // src/main/agent modules at import time (attachContext() wires them into
+  // the router), so their module-scope `import { ipcMain } from 'electron'`
+  // statements need this to exist even though nothing in this test suite
+  // ever calls ipcMain.handle/.on.
+  ipcMain: {
+    handle: vi.fn(),
+    on: vi.fn(),
+    removeHandler: vi.fn(),
+  },
+}));
+
+// Reached transitively via handlers/mcp-tool.ts -> mcp-project-context.ts ->
+// task-move.ts, which imports the real analytics module (pulls in the
+// aptabase-electron package and electron's `app`). Mocked the same way
+// session-manager.test.ts does, since nothing here exercises analytics.
+vi.mock('../../../src/main/analytics/analytics', () => ({
+  trackEvent: vi.fn(),
+  sanitizeErrorMessage: (message: string) => message,
 }));
 
 const existsSyncSpy = vi.hoisted(() => vi.fn<(filePath: string) => boolean>());

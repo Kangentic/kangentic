@@ -95,4 +95,20 @@ describe('CapabilityRouter', () => {
     const response = await router.dispatch(fakeRequest('send-user-message', { requestId: 'abc-123' }), session);
     expect(response.requestId).toBe('abc-123');
   });
+
+  // Phase 2 added interactive-terminal, board-tool-read, board-tool-write to
+  // CAPABILITY_VERBS. The router's dispatch logic is verb-agnostic (no
+  // per-verb branching), so this is not re-proving the tests above per
+  // verb - it confirms the new verbs are valid router inputs at all.
+  it.each(['interactive-terminal', 'board-tool-read', 'board-tool-write'] as const)(
+    'dispatches the new verb "%s" like any other once registered and authorized',
+    async (verb) => {
+      const router = new CapabilityRouter();
+      const session = fakeSession([verb]);
+      router.register(verb, (request) => ({ type: 'capability-response', requestId: request.requestId, ok: true }));
+
+      const response = await router.dispatch(fakeRequest(verb), session);
+      expect(response.ok).toBe(true);
+    },
+  );
 });

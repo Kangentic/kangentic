@@ -259,7 +259,7 @@ test.describe('Mobile Devices settings tab', () => {
     await closeSettings();
   });
 
-  test('paired-device list renders seeded devices with their capabilities', async () => {
+  test('paired-device list renders seeded devices with a toggle per capability, checked for granted verbs', async () => {
     await page.evaluate(() => {
       (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
         {
@@ -273,13 +273,16 @@ test.describe('Mobile Devices settings tab', () => {
 
     await openMobileTab();
 
-    await expect(page.locator('li', { hasText: 'Seeded iPhone' })).toBeVisible();
-    await expect(page.getByText('read-stream, read-board')).toBeVisible();
+    const deviceRow = page.locator('li', { hasText: 'Seeded iPhone' });
+    await expect(deviceRow).toBeVisible();
+    await expect(deviceRow.getByRole('switch', { name: 'Live output', exact: true })).toHaveAttribute('aria-checked', 'true');
+    await expect(deviceRow.getByRole('switch', { name: 'Board', exact: true })).toHaveAttribute('aria-checked', 'true');
+    await expect(deviceRow.getByRole('switch', { name: 'Interactive terminal', exact: true })).toHaveAttribute('aria-checked', 'false');
 
     await closeSettings();
   });
 
-  test('devices with no capabilities show the "No capabilities granted" fallback', async () => {
+  test('devices with no capabilities show every toggle unchecked', async () => {
     await page.evaluate(() => {
       (window as unknown as { __mockMobileDevices: MobilePairedDevice[] }).__mockMobileDevices = [
         {
@@ -293,9 +296,49 @@ test.describe('Mobile Devices settings tab', () => {
 
     await openMobileTab();
 
-    await expect(page.locator('li', { hasText: 'Bare Device' })).toBeVisible();
-    await expect(page.getByText('No capabilities granted')).toBeVisible();
+    const deviceRow = page.locator('li', { hasText: 'Bare Device' });
+    await expect(deviceRow).toBeVisible();
+    const switches = deviceRow.getByRole('switch');
+    await expect(switches).toHaveCount(9);
+    for (const toggle of await switches.all()) {
+      await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    }
 
+    await closeSettings();
+  });
+
+  test('toggling a capability grants it and persists via setDeviceCapabilities', async () => {
+    await openMobileTab();
+    await pairDevice('Capability Toggle Device');
+
+    const deviceRow = page.locator('li', { hasText: 'Capability Toggle Device' });
+    // Pairing grants only the read-only default set - interactive-terminal
+    // (a write/control verb) starts ungranted.
+    const terminalToggle = deviceRow.getByRole('switch', { name: 'Interactive terminal', exact: true });
+    await expect(terminalToggle).toHaveAttribute('aria-checked', 'false');
+
+    await terminalToggle.click();
+    await expect(terminalToggle).toHaveAttribute('aria-checked', 'true');
+
+    // Persisted through setDeviceCapabilities + a devices re-fetch, not just local UI state.
+    await expect.poll(async () =>
+      page.evaluate(async () => {
+        const devices = await window.electronAPI.mobile.listDevices();
+        return devices.find((device) => device.displayName === 'Capability Toggle Device')?.capabilities.includes('interactive-terminal');
+      }),
+    ).toBe(true);
+
+    // Toggling off removes it again.
+    await terminalToggle.click();
+    await expect(terminalToggle).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(async () =>
+      page.evaluate(async () => {
+        const devices = await window.electronAPI.mobile.listDevices();
+        return devices.find((device) => device.displayName === 'Capability Toggle Device')?.capabilities.includes('interactive-terminal');
+      }),
+    ).toBe(false);
+
+    await revokeDevice('Capability Toggle Device');
     await closeSettings();
   });
 

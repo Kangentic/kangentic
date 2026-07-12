@@ -18,11 +18,15 @@ const watchCallbacksByPath = new Map<string, (eventType: string, filename: strin
 /** Controls whether fs.existsSync reports the logs/ directory as present. */
 let mockExistsSyncResult = true;
 
+/** Count of fs.watch() handles created, per watched path, to assert a repeat subscribe reuses one handle. */
+const watchHandleCountByPath = new Map<string, number>();
+
 vi.mock('node:fs', () => ({
   default: {
     watch: vi.fn((watchPath: string, _options: unknown, callback: (eventType: string, filename: string | null) => void) => {
       watchCallback = callback;
       watchCallbacksByPath.set(watchPath, callback);
+      watchHandleCountByPath.set(watchPath, (watchHandleCountByPath.get(watchPath) ?? 0) + 1);
       const closeFn = vi.fn();
       mockCloseFns.set(watchPath, closeFn);
       return { close: closeFn };
@@ -68,6 +72,7 @@ describe('DiffWatcher', () => {
     vi.clearAllMocks();
     mockCloseFns.clear();
     watchCallbacksByPath.clear();
+    watchHandleCountByPath.clear();
     watchCallback = null;
     mockExistsSyncResult = true;
     // Default: git is not a real repo, so rev-parse rejects and watchGitMetadata no-ops.
@@ -88,20 +93,43 @@ describe('DiffWatcher', () => {
     expect(watchCallback).not.toBeNull();
   });
 
-  it('does not create duplicate watchers for the same path', () => {
+  it('multiplexes multiple callbacks onto a single fs.watch for the same path', () => {
     const callback = vi.fn();
+    const secondCallback = vi.fn();
 
     watcher.subscribe('/project', callback);
-
-    const secondCallback = vi.fn();
     watcher.subscribe('/project', secondCallback);
 
-    // Trigger a change - only the first callback should be wired
+    // The second subscribe reuses the existing watch (no new fs.watch handle)...
+    expect(watchHandleCountByPath.get('/project')).toBe(1);
+
+    // ...but BOTH callbacks fire on a change (the pre-fix bug dropped the second).
     watchCallback!('change', 'src/file.ts');
     vi.advanceTimersByTime(500);
 
     expect(callback).toHaveBeenCalledTimes(1);
-    expect(secondCallback).not.toHaveBeenCalled();
+    expect(secondCallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('subscribe returns a teardown that removes only its own callback; the watch closes when the last leaves', () => {
+    const callbackA = vi.fn();
+    const callbackB = vi.fn();
+
+    const unsubscribeA = watcher.subscribe('/project', callbackA);
+    watcher.subscribe('/project', callbackB);
+
+    // Tearing down A leaves B's watch alive.
+    unsubscribeA();
+    expect(mockCloseFns.get('/project')).not.toHaveBeenCalled();
+
+    watchCallback!('change', 'src/file.ts');
+    vi.advanceTimersByTime(500);
+    expect(callbackA).not.toHaveBeenCalled();
+    expect(callbackB).toHaveBeenCalledTimes(1);
+
+    // Tearing down the last subscriber closes the underlying fs.watch.
+    watcher.unsubscribe('/project');
+    expect(mockCloseFns.get('/project')).toHaveBeenCalledTimes(1);
   });
 
   it('fires callback after debounce period', () => {

@@ -312,6 +312,7 @@ export async function linkPR(context: IpcContext, options: LinkPROptions): Promi
       if (!context.mainWindow.isDestroyed()) {
         context.mainWindow.webContents.send(IPC.TASK_UPDATED_BY_AGENT, linked.id, linked.title, projectId);
       }
+      context.boardEvents.emitBoardChanged({ projectId, change: 'task-updated', ids: [linked.id] });
     },
   });
 }

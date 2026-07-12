@@ -56,6 +56,7 @@ export function buildCommandContextForProject(
       sendToRenderer(
         ipcContext.mainWindow, IPC.TASK_CREATED_BY_AGENT, task.id, task.title, columnName, projectId,
       );
+      ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-created', ids: [task.id] });
       // Auto-spawn fire-and-forget so the tool call returns immediately
       // and Claude doesn't block on a multi-second PTY spawn.
       autoSpawnForTask(ipcContext, projectId, task, swimlaneId).catch((err) => {
@@ -65,6 +66,7 @@ export function buildCommandContextForProject(
 
     onTaskUpdated: (task) => {
       sendToRenderer(ipcContext.mainWindow, IPC.TASK_UPDATED_BY_AGENT, task.id, task.title, projectId);
+      ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-updated', ids: [task.id] });
     },
 
     onTaskDeleted: (task) => {
@@ -95,6 +97,7 @@ export function buildCommandContextForProject(
       }
 
       sendToRenderer(ipcContext.mainWindow, IPC.TASK_DELETED_BY_AGENT, task.id, task.title, projectId);
+      ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-deleted', ids: [task.id] });
     },
 
     onTaskMove: async (input) => {
@@ -105,11 +108,13 @@ export function buildCommandContextForProject(
         .get(input.taskId) as { id: string; title: string } | undefined;
       if (movedTask) {
         sendToRenderer(ipcContext.mainWindow, IPC.TASK_UPDATED_BY_AGENT, movedTask.id, movedTask.title, projectId);
+        ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'task-updated', ids: [movedTask.id] });
       }
     },
 
     onSwimlaneUpdated: (swimlane) => {
       sendToRenderer(ipcContext.mainWindow, IPC.SWIMLANE_UPDATED_BY_AGENT, swimlane.id, swimlane.name, projectId);
+      ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'swimlane-updated', ids: [swimlane.id] });
       // Persist team-shared column fields (color, model/effort/permission
       // overrides, auto-command, ...) to kangentic.json so an agent's column
       // edit survives a restart and reaches teammates via git. Project-scoped
@@ -121,6 +126,7 @@ export function buildCommandContextForProject(
 
     onBacklogChanged: () => {
       sendToRenderer(ipcContext.mainWindow, IPC.BACKLOG_CHANGED_BY_AGENT, projectId);
+      ipcContext.boardEvents.emitBoardChanged({ projectId, change: 'backlog-changed', ids: [] });
     },
 
     onLabelColorsChanged: (colors) => {

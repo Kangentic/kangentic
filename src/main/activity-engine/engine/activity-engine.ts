@@ -195,6 +195,7 @@ export class ActivityEngine {
       anonymousBackgroundShellCount: state.anonymousBackgroundShellCount,
       turnActive: state.turnActive,
       permissionPending: state.permissionPending,
+      permissionAwaitedToolId: state.permissionAwaitedToolId,
       msSinceLastSignal: lastSignalAt === null ? null : this.now() - lastSignalAt,
       lastSignalAt,
       lastPtyOutputAt,
