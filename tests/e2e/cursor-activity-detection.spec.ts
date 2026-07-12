@@ -134,7 +134,13 @@ test.describe('Cursor Agent - Activity Detection', () => {
 
     await moveTaskIpc(page, taskId, swimlaneIds.planning);
 
-    const scrollback = await waitForScrollback(page, 'MOCK_CURSOR_MODE:', 15000);
+    // mock-cursor.js writes MOCK_CURSOR_MODE: and the stream-json init event
+    // as two separate console.log calls, so they can land in two separate
+    // PTY chunks - waiting on the first marker alone raced the second's
+    // arrival. Wait on the later-arriving marker instead: scrollback is
+    // append-only, so its presence guarantees the earlier line already
+    // landed too.
+    const scrollback = await waitForScrollback(page, '"subtype":"init"', 15000);
     expect(scrollback).toContain('MOCK_CURSOR_MODE:noninteractive');
     // And the stream-json init event is present so ContextBar can light up.
     expect(scrollback).toContain('"subtype":"init"');
