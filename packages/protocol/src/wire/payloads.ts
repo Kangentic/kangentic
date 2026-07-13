@@ -16,6 +16,24 @@
 import type { CapabilityVerb } from '../capabilities/verbs';
 import type { JsonValue } from './messages';
 import { isJsonValue, isRecord } from './json-value';
+import {
+  isActivityReasonWire,
+  isActivityStateWire,
+  parseBacklogItemWire,
+  parseBoardColumnWire,
+  parseBoardTaskWire,
+  parseDiffFileContentWire,
+  parseDiffFileListWire,
+  parseSessionUsageWire,
+  type ActivityReasonWire,
+  type ActivityStateWire,
+  type BacklogItemWire,
+  type BoardColumnWire,
+  type BoardTaskWire,
+  type DiffFileContentWire,
+  type DiffFileListWire,
+  type SessionUsageWire,
+} from '../events/payloads';
 
 // === read-stream ===
 
@@ -27,10 +45,30 @@ export interface ReadStreamRequestPayload {
 /** Initial snapshot returned on subscribe; live updates arrive as TerminalEvent/ActivityEvent/TranscriptEvent. */
 export interface ReadStreamResponsePayload {
   scrollback: string;
-  activity: JsonValue;
-  usage: JsonValue | null;
+  activity: { state: ActivityStateWire | null; reason: ActivityReasonWire | null };
+  usage: SessionUsageWire | null;
   /** The live outstanding permission-prompt id (see answer-permission-prompt), or null when none is pending. */
   awaitedPromptId: string | null;
+}
+
+/** Phone-side narrowing of a read-stream subscribe response. Throws on a malformed required field. */
+export function parseReadStreamResponsePayload(payload: JsonValue): ReadStreamResponsePayload {
+  if (!isRecord(payload)) throw new Error('read-stream response must be an object');
+  if (typeof payload.scrollback !== 'string') throw new Error('read-stream response is missing "scrollback"');
+  if (!isRecord(payload.activity)) throw new Error('read-stream response is missing "activity"');
+  const state = payload.activity.state;
+  const reason = payload.activity.reason;
+  if (state !== null && !isActivityStateWire(state)) throw new Error('read-stream response has an invalid activity "state"');
+  if (reason !== null && !isActivityReasonWire(reason)) throw new Error('read-stream response has an invalid activity "reason"');
+  if (payload.awaitedPromptId !== null && typeof payload.awaitedPromptId !== 'string') {
+    throw new Error('read-stream response has an invalid "awaitedPromptId"');
+  }
+  return {
+    scrollback: payload.scrollback,
+    activity: { state: state ?? null, reason: reason ?? null },
+    usage: payload.usage === null || payload.usage === undefined ? null : parseSessionUsageWire(payload.usage as JsonValue),
+    awaitedPromptId: payload.awaitedPromptId ?? null,
+  };
 }
 
 function parseReadStreamRequestPayload(payload: JsonValue): ReadStreamRequestPayload {
@@ -63,12 +101,38 @@ export interface ReadBoardProjectListResponsePayload {
 /** Returned when the request carries a projectId - a snapshot of that project's board. */
 export interface ReadBoardSnapshotResponsePayload {
   projectId: string;
-  columns: JsonValue;
-  tasks: JsonValue;
-  backlog: JsonValue;
+  columns: BoardColumnWire[];
+  tasks: BoardTaskWire[];
+  backlog: BacklogItemWire[];
 }
 
 export type ReadBoardResponsePayload = ReadBoardProjectListResponsePayload | ReadBoardSnapshotResponsePayload;
+
+/** Phone-side narrowing of a read-board response (project list or board snapshot). Throws on a malformed required field. */
+export function parseReadBoardResponsePayload(payload: JsonValue): ReadBoardResponsePayload {
+  if (!isRecord(payload)) throw new Error('read-board response must be an object');
+
+  if (Array.isArray(payload.projects)) {
+    const projects = payload.projects.map((project, index) => {
+      if (!isRecord(project) || typeof project.id !== 'string' || typeof project.name !== 'string') {
+        throw new Error(`read-board project ${index} is malformed`);
+      }
+      return { id: project.id, name: project.name };
+    });
+    return { projects };
+  }
+
+  if (typeof payload.projectId !== 'string') throw new Error('read-board response is missing "projectId"');
+  if (!Array.isArray(payload.columns)) throw new Error('read-board response is missing "columns"');
+  if (!Array.isArray(payload.tasks)) throw new Error('read-board response is missing "tasks"');
+  if (!Array.isArray(payload.backlog)) throw new Error('read-board response is missing "backlog"');
+  return {
+    projectId: payload.projectId,
+    columns: payload.columns.map((column) => parseBoardColumnWire(column as JsonValue)),
+    tasks: payload.tasks.map((task) => parseBoardTaskWire(task as JsonValue)),
+    backlog: payload.backlog.map((item) => parseBacklogItemWire(item as JsonValue)),
+  };
+}
 
 function parseReadBoardRequestPayload(payload: JsonValue): ReadBoardRequestPayload {
   if (!isRecord(payload)) throw new Error('read-board payload must be an object');
@@ -95,8 +159,14 @@ export interface ReadDiffRequestPayload {
   action?: 'subscribe' | 'unsubscribe';
 }
 
-/** Structurally mirrors the desktop app's GitDiffFilesResult (no filePath) or GitFileContentResult (filePath set). */
-export type ReadDiffResponsePayload = JsonValue;
+/** The desktop's GitDiffFilesResult mirror (no filePath) or GitFileContentResult mirror (filePath set). */
+export type ReadDiffResponsePayload = DiffFileListWire | DiffFileContentWire;
+
+/** Phone-side narrowing of a read-diff response, discriminated by the presence of "files". Throws on a malformed required field. */
+export function parseReadDiffResponsePayload(payload: JsonValue): ReadDiffResponsePayload {
+  if (!isRecord(payload)) throw new Error('read-diff response must be an object');
+  return 'files' in payload ? parseDiffFileListWire(payload) : parseDiffFileContentWire(payload);
+}
 
 function parseReadDiffRequestPayload(payload: JsonValue): ReadDiffRequestPayload {
   if (!isRecord(payload)) throw new Error('read-diff payload must be an object');

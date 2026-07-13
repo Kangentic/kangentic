@@ -3,6 +3,7 @@ import { commandHandlers } from '../../agent/commands';
 import { buildCommandContextForProject } from '../../agent/mcp-project-context';
 import type { IpcContext } from '../../ipc/ipc-context';
 import { isBoardToolAllowedForVerb } from './board-tool-allowlist';
+import { toWireJson } from './wire-mappers';
 
 /**
  * Routes a phone's board-tool-read/board-tool-write request straight into
@@ -54,5 +55,5 @@ export async function handleBoardTool(
   }
 
   const responsePayload: BoardToolResponsePayload = { result: response.data as unknown as JsonValue };
-  return { type: 'capability-response', requestId: request.requestId, ok: true, payload: responsePayload as unknown as JsonValue };
+  return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
 }

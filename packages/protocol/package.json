@@ -1,6 +1,6 @@
 {
   "name": "@kangentic/protocol",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Kangentic mobile bridge wire protocol: framing, Noise-based pairing and session handshakes, signed device roster, and capability verbs shared between desktop and mobile.",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",

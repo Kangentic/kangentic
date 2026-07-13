@@ -34,9 +34,11 @@ function fakeSession(): BridgeSession {
 
 describe('handleReadBoard', () => {
   beforeEach(() => {
-    tasksList.mockReset().mockReturnValue([{ id: 't-1' }]);
-    swimlanesList.mockReset().mockReturnValue([{ id: 'lane-1' }]);
-    backlogList.mockReset().mockReturnValue([{ id: 'b-1' }]);
+    // detail_view_state / handoff_context / external_metadata are renderer- or
+    // desktop-internal fields the wire mappers must strip from the snapshot.
+    tasksList.mockReset().mockReturnValue([{ id: 't-1', session_id: 'sess-1', detail_view_state: 'renderer-only-blob' }]);
+    swimlanesList.mockReset().mockReturnValue([{ id: 'lane-1', handoff_context: true }]);
+    backlogList.mockReset().mockReturnValue([{ id: 'b-1', external_metadata: { secret: true } }]);
   });
 
   it('with no projectId, returns the project bootstrap list and never touches repos', async () => {
@@ -85,9 +87,13 @@ describe('handleReadBoard', () => {
     expect(response.payload).toEqual({
       projectId: 'proj-1',
       columns: [{ id: 'lane-1' }],
-      tasks: [{ id: 't-1' }],
+      tasks: [{ id: 't-1', session_id: 'sess-1' }],
       backlog: [{ id: 'b-1' }],
     });
+    const snapshot = response.payload as { columns: object[]; tasks: object[]; backlog: object[] };
+    expect(snapshot.tasks[0]).not.toHaveProperty('detail_view_state');
+    expect(snapshot.columns[0]).not.toHaveProperty('handoff_context');
+    expect(snapshot.backlog[0]).not.toHaveProperty('external_metadata');
     expect(subscriptions.has('board:proj-1')).toBe(true);
 
     // A board-changed event for a DIFFERENT project must not push.

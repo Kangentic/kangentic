@@ -24,12 +24,18 @@ function fakeSession(): BridgeSession {
   return { deviceId: 'device-1', isEstablished: true, sendMessage: vi.fn() } as unknown as BridgeSession;
 }
 
+const usageFixture = {
+  contextWindow: { usedPercentage: 10, usedTokens: 100, cacheTokens: 50, totalInputTokens: 150, totalOutputTokens: 20, contextWindowSize: 200000 },
+  cost: { totalCostUsd: 0.5, totalDurationMs: 1000 },
+  model: { id: 'claude-opus-4-8', displayName: 'Opus 4.8' },
+};
+
 class FakeSessionManager extends EventEmitter {
   getSession = vi.fn((id: string) => ({ id, taskId: 'task-1' }));
   getScrollback = vi.fn(() => Promise.resolve('scrollback-content'));
   getActivityCache = vi.fn(() => ({ 'sess-1': 'thinking' }));
   getActivityReason = vi.fn(() => ({ kind: 'turn-active' }));
-  getUsageCache = vi.fn(() => ({ 'sess-1': { contextWindow: { used: 1 } } }));
+  getUsageCache = vi.fn(() => ({ 'sess-1': usageFixture }));
   getActivityStatsSnapshot = vi.fn(() => ({ permissionPending: false, permissionAwaitedToolId: null }));
   getSessionProjectId = vi.fn(() => 'proj-1');
 }
@@ -132,38 +138,107 @@ describe('handleReadStream', () => {
     }
   });
 
+  const userEntry = { kind: 'user', uuid: 'entry-user-1', ts: 100, text: 'hello agent' };
+  const assistantEntry = { kind: 'assistant', uuid: 'entry-assistant-1', ts: 200, blocks: [{ type: 'text', text: 'hi there' }] };
+
+  function transcriptPushesOf(session: BridgeSession): unknown[][] {
+    return (session.sendMessage as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([message]) => (message as { event?: { kind?: string } }).event?.kind === 'transcript',
+    );
+  }
+
+  it('seeds the transcript once at subscribe time so a quiet session still delivers its conversation', async () => {
+    resolveTaskTranscriptMock.mockResolvedValue({ revision: 1, entries: [userEntry] });
+    const session = fakeSession();
+    const context = { sessionManager } as unknown as IpcContext;
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const transcriptPushes = transcriptPushesOf(session);
+    expect(transcriptPushes).toHaveLength(1);
+    expect(transcriptPushes[0][0]).toEqual({
+      type: 'event',
+      event: { kind: 'transcript', sessionId: 'sess-1', taskId: 'task-1', payload: [userEntry] },
+    });
+  });
+
   it('a session event push also checks the transcript and pushes a delta only when the revision increased', async () => {
     resolveTaskTranscriptMock
-      .mockResolvedValueOnce({ revision: 1, entries: ['a'] })
-      .mockResolvedValueOnce({ revision: 1, entries: ['a'] }) // unchanged revision - no second push
-      .mockResolvedValueOnce({ revision: 2, entries: ['a', 'b'] });
+      .mockResolvedValueOnce({ revision: 1, entries: [userEntry] }) // subscribe-time seed
+      .mockResolvedValueOnce({ revision: 1, entries: [userEntry] }) // unchanged revision - no push
+      .mockResolvedValueOnce({ revision: 2, entries: [userEntry, assistantEntry] });
+    const session = fakeSession();
+    const context = { sessionManager } as unknown as IpcContext;
+    await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(transcriptPushesOf(session)).toHaveLength(1);
+
+    sessionManager.emit('event', 'sess-1', { ts: 1, type: 'tool_start' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(transcriptPushesOf(session)).toHaveLength(1); // unchanged revision
+
+    sessionManager.emit('event', 'sess-1', { ts: 2, type: 'tool_end' });
+    await Promise.resolve();
+    await Promise.resolve();
+    const transcriptPushes = transcriptPushesOf(session);
+    expect(transcriptPushes).toHaveLength(2);
+    expect((transcriptPushes[1][0] as { event: { payload: unknown } }).event.payload).toEqual([userEntry, assistantEntry]);
+  });
+
+  it('pushes a permission activity event when a prompt appears, deduplicates, and clears with pending false', async () => {
     const session = fakeSession();
     const context = { sessionManager } as unknown as IpcContext;
     await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
 
-    sessionManager.emit('event', 'sess-1', { type: 'tool_start' });
-    await Promise.resolve();
-    await Promise.resolve();
-    sessionManager.emit('event', 'sess-1', { type: 'tool_end' });
-    await Promise.resolve();
-    await Promise.resolve();
+    const permissionPushes = (): unknown[][] =>
+      (session.sendMessage as ReturnType<typeof vi.fn>).mock.calls.filter(
+        ([message]) => (message as { event?: { payload?: { type?: string } } }).event?.payload?.type === 'permission',
+      );
 
-    const transcriptPushes = (session.sendMessage as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([message]) => message.event?.kind === 'transcript',
-    );
-    expect(transcriptPushes).toHaveLength(1);
-    expect(transcriptPushes[0][0]).toEqual({
+    // A prompt appears after subscribe: the next activity emission carries it.
+    sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: true, permissionAwaitedToolId: 'tool-7' });
+    sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+    expect(permissionPushes()).toHaveLength(1);
+    expect(permissionPushes()[0][0]).toEqual({
       type: 'event',
-      event: { kind: 'transcript', sessionId: 'sess-1', taskId: 'task-1', payload: ['a'] },
+      event: {
+        kind: 'activity',
+        sessionId: 'sess-1',
+        taskId: 'task-1',
+        payload: { type: 'permission', promptId: 'sess-1:tool-7', pending: true },
+      },
     });
 
-    sessionManager.emit('event', 'sess-1', { type: 'tool_start' });
-    await Promise.resolve();
-    await Promise.resolve();
-    const secondTranscriptPushes = (session.sendMessage as ReturnType<typeof vi.fn>).mock.calls.filter(
-      ([message]) => message.event?.kind === 'transcript',
+    // The same outstanding prompt does not re-emit.
+    sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+    expect(permissionPushes()).toHaveLength(1);
+
+    // The prompt clears: pending false carries the id that was answered.
+    sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: false, permissionAwaitedToolId: null });
+    sessionManager.emit('event', 'sess-1', { ts: 3, type: 'tool_end' });
+    expect(permissionPushes()).toHaveLength(2);
+    expect((permissionPushes()[1][0] as { event: { payload: unknown } }).event.payload).toEqual({
+      type: 'permission',
+      promptId: 'sess-1:tool-7',
+      pending: false,
+    });
+  });
+
+  it('a prompt already outstanding at subscribe time is not re-pushed by the next activity emission', async () => {
+    sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: true, permissionAwaitedToolId: 'tool-9' });
+    const session = fakeSession();
+    const context = { sessionManager } as unknown as IpcContext;
+    const response = await handleReadStream(fakeRequest({ sessionId: 'sess-1', action: 'subscribe' }), session, context, new SubscriptionRegistry());
+    expect((response.payload as { awaitedPromptId: string | null }).awaitedPromptId).toBe('sess-1:tool-9');
+
+    // The snapshot already told the phone; an unchanged prompt must not double-notify.
+    sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+    const permissionPushes = (session.sendMessage as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([message]) => (message as { event?: { payload?: { type?: string } } }).event?.payload?.type === 'permission',
     );
-    expect(secondTranscriptPushes).toHaveLength(2);
-    expect(secondTranscriptPushes[1][0].event.payload).toEqual(['a', 'b']);
+    expect(permissionPushes).toHaveLength(0);
   });
 });

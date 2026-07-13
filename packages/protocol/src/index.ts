@@ -41,6 +41,9 @@ export { SessionFrameKind, wrapSessionFrame, unwrapSessionFrame } from './wire/s
 
 export {
   parseCapabilityRequestPayload,
+  parseReadStreamResponsePayload,
+  parseReadBoardResponsePayload,
+  parseReadDiffResponsePayload,
   type CapabilityRequestPayloadMap,
   type CapabilityResponsePayloadMap,
   type ReadStreamRequestPayload,
@@ -93,15 +96,55 @@ export {
   type CapabilitySet,
 } from './capabilities/verbs';
 
-export type {
-  BridgeEvent,
-  TranscriptEvent,
-  ActivityEvent,
-  ActivityEventPayload,
-  TerminalEvent,
-  BoardEvent,
-  BoardEventPayload,
-  DiffEvent,
+export {
+  BOARD_TOOL_READ_NAMES,
+  BOARD_TOOL_WRITE_NAMES,
+  isBoardToolReadName,
+  isBoardToolWriteName,
+  type BoardToolReadName,
+  type BoardToolWriteName,
+  type BoardToolName,
+} from './capabilities/board-tools';
+
+export {
+  isBridgeEvent,
+  parseActivityEventPayload,
+  type BridgeEvent,
+  type TranscriptEvent,
+  type ActivityEvent,
+  type ActivityEventPayload,
+  type TerminalEvent,
+  type BoardEvent,
+  type BoardEventPayload,
+  type DiffEvent,
 } from './events/event';
+
+export {
+  parseTranscriptEntriesWire,
+  isActivityStateWire,
+  isActivityReasonWire,
+  parseSessionUsageWire,
+  parseSessionEventWire,
+  parseBoardColumnWire,
+  parseBoardTaskWire,
+  parseBacklogItemWire,
+  parseDiffFileListWire,
+  parseDiffFileContentWire,
+  type TranscriptBlockWire,
+  type TranscriptEntryWire,
+  type TranscriptTurnUsageWire,
+  type TranscriptSystemSubtypeWire,
+  type ActivityStateWire,
+  type ActivityReasonWire,
+  type SessionUsageWire,
+  type SessionEventWire,
+  type BoardColumnWire,
+  type BoardTaskWire,
+  type BacklogItemWire,
+  type DiffFileStatusWire,
+  type DiffFileWire,
+  type DiffFileListWire,
+  type DiffFileContentWire,
+} from './events/payloads';
 
 export type { Transport, TransportState, Unsubscribe } from './transport/transport';

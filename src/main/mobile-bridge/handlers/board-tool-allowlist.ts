@@ -37,41 +37,24 @@
  *   `move_task_to_project`) - none of them are `commandHandlers` entries,
  *   so none of them are reachable here.
  */
+import { BOARD_TOOL_READ_NAMES, BOARD_TOOL_WRITE_NAMES } from '@kangentic/protocol';
 import { commandHandlers } from '../../agent/commands';
 
 export type BoardToolAccess = 'read' | 'mutate';
 
 /**
  * Every `commandHandlers` key EXCEPT the excluded set below, classified
- * read vs mutate. `board-tool-allowlist.test.ts` fails if a new
- * `commandHandlers` entry is added without a classification (or exclusion)
- * here, or if this table drifts from `commandHandlers`'s actual key set.
+ * read vs mutate. The classification itself is the protocol package's
+ * BOARD_TOOL_READ_NAMES / BOARD_TOOL_WRITE_NAMES tuples (the phone types
+ * its `tool` field from the same source), so the two sides cannot drift;
+ * `board-tool-allowlist.test.ts` fails if a new `commandHandlers` entry is
+ * added without a classification (or exclusion), or if the protocol tuples
+ * drift from `commandHandlers`'s actual key set.
  */
-export const MOBILE_BOARD_TOOL_ACCESS: Readonly<Record<string, BoardToolAccess>> = {
-  create_task: 'mutate',
-  update_task: 'mutate',
-  delete_task: 'mutate',
-  link_pr: 'mutate',
-  remove_attachment: 'mutate',
-  update_column: 'mutate',
-  search_tasks: 'read',
-  find_task: 'read',
-  get_current_task: 'read',
-  get_task_stats: 'read',
-  get_usage_stats: 'read',
-  board_summary: 'read',
-  list_sessions: 'read',
-  get_session_history: 'read',
-  get_column_detail: 'read',
-  create_backlog_task: 'mutate',
-  promote_backlog: 'mutate',
-  update_backlog_item: 'mutate',
-  delete_backlog_item: 'mutate',
-  get_handoff_context: 'read',
-  get_transcript: 'read',
-  get_session_files: 'read',
-  get_session_events: 'read',
-};
+export const MOBILE_BOARD_TOOL_ACCESS: Readonly<Record<string, BoardToolAccess>> = Object.fromEntries([
+  ...BOARD_TOOL_READ_NAMES.map((name): [string, BoardToolAccess] => [name, 'read']),
+  ...BOARD_TOOL_WRITE_NAMES.map((name): [string, BoardToolAccess] => [name, 'mutate']),
+]);
 
 /** query_db is unsafe; move_task/list_tasks/list_columns/list_backlog are safe but duplicate the dedicated move-task/read-board verbs - see the module doc comment. */
 export const MOBILE_EXCLUDED_BOARD_TOOLS: ReadonlySet<string> = new Set([

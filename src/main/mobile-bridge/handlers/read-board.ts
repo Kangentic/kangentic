@@ -2,7 +2,6 @@ import {
   parseCapabilityRequestPayload,
   type CapabilityRequestMessage,
   type CapabilityResponseMessage,
-  type JsonValue,
   type ReadBoardResponsePayload,
 } from '@kangentic/protocol';
 import { getProjectRepos } from '../../ipc/helpers/project-repos';
@@ -13,6 +12,7 @@ import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import type { BoardChangedEvent } from '../board-event-bus';
 import { sendEvent } from './send-event';
+import { toBacklogItemWire, toBoardColumnWire, toBoardTaskWire, toWireJson } from './wire-mappers';
 
 function subscriptionKeyFor(projectId: string): string {
   return `board:${projectId}`;
@@ -29,7 +29,7 @@ export async function handleReadBoard(
   if (!payload.projectId) {
     const projects = context.projectRepo.list().map((project) => ({ id: project.id, name: project.name }));
     const responsePayload: ReadBoardResponsePayload = { projects };
-    return { type: 'capability-response', requestId: request.requestId, ok: true, payload: responsePayload as unknown as JsonValue };
+    return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
   }
 
   const projectId = payload.projectId;
@@ -50,9 +50,9 @@ export async function handleReadBoard(
 
   const responsePayload: ReadBoardResponsePayload = {
     projectId,
-    columns: repos.swimlanes.list() as unknown as JsonValue,
-    tasks: repos.tasks.list() as unknown as JsonValue,
-    backlog: backlogRepo.list() as unknown as JsonValue,
+    columns: repos.swimlanes.list().map(toBoardColumnWire),
+    tasks: repos.tasks.list().map(toBoardTaskWire),
+    backlog: backlogRepo.list().map(toBacklogItemWire),
   };
 
   const listener = (event: BoardChangedEvent): void => {
@@ -67,5 +67,5 @@ export async function handleReadBoard(
   const unsubscribe = context.boardEvents.onBoardChanged(listener);
   subscriptions.set(subscriptionKey, unsubscribe);
 
-  return { type: 'capability-response', requestId: request.requestId, ok: true, payload: responsePayload as unknown as JsonValue };
+  return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
 }

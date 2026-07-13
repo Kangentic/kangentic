@@ -2,7 +2,8 @@ import {
   parseCapabilityRequestPayload,
   type CapabilityRequestMessage,
   type CapabilityResponseMessage,
-  type JsonValue,
+  type DiffFileContentWire,
+  type DiffFileListWire,
 } from '@kangentic/protocol';
 import type { DiffWatcher } from '../../git/diff-watcher';
 import { DiffService } from '../../git/diff-service';
@@ -11,6 +12,7 @@ import type { IpcContext } from '../../ipc/ipc-context';
 import type { BridgeSession } from '../session/bridge-session';
 import type { SubscriptionRegistry } from '../session/subscription-registry';
 import { sendEvent } from './send-event';
+import { toWireJson } from './wire-mappers';
 
 // Cache DiffService instances per directory so the merge-base cache persists
 // across calls, mirroring src/main/ipc/handlers/git-diff.ts's own cache.
@@ -76,10 +78,13 @@ export async function handleReadDiff(
       oldPath: entry.oldPath,
       scope: payload.scope,
     });
-    return { type: 'capability-response', requestId: request.requestId, ok: true, payload: content as unknown as JsonValue };
+    // GitFileContentResult is a structurally exact mirror of DiffFileContentWire.
+    const contentPayload: DiffFileContentWire = content;
+    return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(contentPayload) };
   }
 
-  const fileList = await service.getDiffFiles({ worktreePath, projectPath: project.path, baseBranch, scope: payload.scope });
+  // GitDiffFilesResult is a structurally exact mirror of DiffFileListWire.
+  const fileList: DiffFileListWire = await service.getDiffFiles({ worktreePath, projectPath: project.path, baseBranch, scope: payload.scope });
 
   const watchPath = gitDirectory;
   // Use the per-subscriber teardown DiffWatcher.subscribe returns, NOT
@@ -91,5 +96,5 @@ export async function handleReadDiff(
   });
   subscriptions.set(subscriptionKey, unsubscribeDiff);
 
-  return { type: 'capability-response', requestId: request.requestId, ok: true, payload: fileList as unknown as JsonValue };
+  return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(fileList) };
 }
