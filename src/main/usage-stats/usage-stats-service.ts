@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import type {
+  LiveSessionRow,
   ProjectUsageSummary,
   UsageCustomWindow,
   UsageDashboardStats,
@@ -43,6 +44,14 @@ import {
  * CREATE and migrate a database for a never-opened project - and a project
  * whose read throws is reported in `skippedProjects` instead of failing the
  * whole payload.
+ *
+ * The optional `liveSessions` param (populated by the IPC handler from the
+ * live `SessionManager`, empty for the MCP command handler) merges in-flight
+ * sessions into each project's ledger rows BEFORE aggregation, so the
+ * SESSIONS KPI and Live view include running sessions the ledger cannot see
+ * yet. De-duped by `sessionRecordId` so a session already snapshotted into
+ * `usage_history` by the periodic metrics timer is replaced by its live
+ * value, never double-counted.
  */
 
 /** Per-project read surface; the DI seam the unit tests fake. */
@@ -64,7 +73,47 @@ export interface UsageStatsService {
     period: UsageTimePeriod,
     drill?: UsageDayDrill | null,
     customWindow?: UsageCustomWindow | null,
+    liveSessions?: LiveSessionRow[],
   ): UsageDashboardStats;
+}
+
+/** A live session as a synthetic ledger row (churn fields 0 - git stats are
+ *  captured only at finalization, never live). */
+function liveSessionToUsageHistoryRow(live: LiveSessionRow): UsageHistoryRow {
+  return {
+    sessionRecordId: live.sessionRecordId,
+    sessionStartedAt: live.startedAtIso,
+    totalCostUsd: live.costUsd,
+    totalInputTokens: live.inputTokens,
+    totalOutputTokens: live.outputTokens,
+    totalDurationMs: live.totalDurationMs,
+    toolCallCount: live.toolCallCount,
+    modelId: live.modelId,
+    modelDisplayName: live.modelDisplayName,
+    linesAdded: 0,
+    linesRemoved: 0,
+    filesChanged: 0,
+    compactionCount: 0,
+    agent: live.agent,
+    effort: live.effort,
+  };
+}
+
+/**
+ * Merge live (in-flight) sessions into a project's ledger rows for the
+ * current window, keyed by `sessionRecordId` - a running session's live
+ * value REPLACES any snapshot the periodic metrics timer already wrote to
+ * `usage_history` for the same id, rather than adding both (a session is
+ * "the current thing happening", not two separate contributions). Ledger
+ * rows the live cache has no entry for (already-finalized sessions) pass
+ * through unchanged.
+ */
+function mergeLiveSessions(ledgerRows: UsageHistoryRow[], liveRows: LiveSessionRow[]): UsageHistoryRow[] {
+  if (liveRows.length === 0) return ledgerRows;
+  const merged = new Map<string, UsageHistoryRow>();
+  for (const row of ledgerRows) merged.set(row.sessionRecordId, row);
+  for (const live of liveRows) merged.set(live.sessionRecordId, liveSessionToUsageHistoryRow(live));
+  return [...merged.values()];
 }
 
 export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService {
@@ -80,6 +129,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
     let toolCallCount = 0;
     let linesAdded = 0;
     let linesRemoved = 0;
+    let filesChanged = 0;
     let totalDurationMs = 0;
     let lastActiveMs: number | null = null;
     const tokensByAgent = new Map<string, number>();
@@ -90,6 +140,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       toolCallCount += row.toolCallCount;
       linesAdded += row.linesAdded;
       linesRemoved += row.linesRemoved;
+      filesChanged += row.filesChanged;
       totalDurationMs += row.totalDurationMs ?? 0;
       const startedMs = Date.parse(row.sessionStartedAt);
       if (!Number.isNaN(startedMs) && (lastActiveMs === null || startedMs > lastActiveMs)) {
@@ -117,6 +168,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       toolCallCount,
       linesAdded,
       linesRemoved,
+      filesChanged,
       totalDurationMs,
       lastActiveMs,
       topAgent,
@@ -128,6 +180,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
     period: UsageTimePeriod,
     drill: UsageDayDrill | null = null,
     customWindow: UsageCustomWindow | null = null,
+    liveSessions: LiveSessionRow[] = [],
   ): UsageDashboardStats {
     const nowMs = now();
     const bucketing = resolveBucketing(period, nowMs);
@@ -195,7 +248,9 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       if (!deps.projectDbExists(project.id)) continue;
       try {
         const reader = deps.openReader(project.id);
-        const rows = reader.listUsageRows(sinceIso, untilIso);
+        const ledgerRows = reader.listUsageRows(sinceIso, untilIso);
+        const liveForProject = liveSessions.filter((live) => live.projectId === project.id);
+        const rows = mergeLiveSessions(ledgerRows, liveForProject);
         const groups = reader.listTurnGroups(sinceMs, TURN_GROUP_MS, untilMs);
         combinedUsageRows.push(...rows);
         combinedGroups.push(...groups);

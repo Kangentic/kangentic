@@ -4,7 +4,7 @@ import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
-import { captureGitStats } from './git-stats-capture';
+import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
 import { WorktreeManager, type GitWaitProgress } from '../../git/worktree-manager';
 import { slugify } from '../../../shared/slugify';
 import { getProjectDb } from '../../db/database';
@@ -91,8 +91,11 @@ async function suspendLiveSessionForRespawn(args: {
   taskId: string;
   liveSessionId: string;
   record: SessionRecord | undefined | null;
+  task: Task;
+  projectPath: string | null;
+  defaultBaseBranch: string;
 }): Promise<void> {
-  const { context, tasks, sessionRepo, usageHistoryRepo, taskId, liveSessionId, record } = args;
+  const { context, tasks, sessionRepo, usageHistoryRepo, taskId, liveSessionId, record, task, projectPath, defaultBaseBranch } = args;
   if (record && record.agent_session_id
       && (record.status === 'running' || record.status === 'exited')) {
     captureSessionMetrics(
@@ -106,6 +109,7 @@ async function suspendLiveSessionForRespawn(args: {
     );
     refineTranscriptTokens(context.sessionManager, sessionRepo, liveSessionId, record.id);
     refineTranscriptToolCounts(context.sessionManager, sessionRepo, liveSessionId, record.id);
+    captureGitChurn(task, sessionRepo, usageHistoryRepo, record.id, projectPath, defaultBaseBranch);
     markRecordSuspended(sessionRepo, record.id, 'system');
   } else if (record && record.status === 'queued') {
     markRecordExited(sessionRepo, record.id);
@@ -248,6 +252,9 @@ export async function handleTaskMove(
       const db = getProjectDb(resolvedProjectId);
       const sessionRepo = new SessionRepository(db);
       const usageHistoryRepo = new UsageHistoryRepository(db);
+      // Resolved once per move and threaded into every git-churn capture site
+      // below so they all resolve the base branch identically.
+      const effectiveDefaultBranch = resolveDefaultBaseBranch(context, resolvedProjectPath);
 
       // Analytics: track critical-path transitions only.
       // Read agent from task.agent (set at spawn) and model from the latest
@@ -354,17 +361,14 @@ export async function handleTaskMove(
             console.log(`[TASK_MOVE] Preserved exited session ${record.id.slice(0, 8)} for future resume`);
           }
         }
-        // Capture git diff stats (best-effort, async)
+        // Capture git churn (fire-and-forget, best-effort). In the PR flow the
+        // branch is usually already merged by the time a task reaches Done, so
+        // this mostly just re-confirms whatever an earlier suspend/move already
+        // captured; the no-clobber guard means a now-empty diff here can never
+        // wipe that earlier real capture.
         const latestRecord = sessionRepo.getLatestForTask(task.id);
         if (latestRecord) {
-          try {
-            const effectiveConfig = context.configManager.getEffectiveConfig(resolvedProjectPath || undefined);
-            const boardDefaultBranch = context.boardConfigManager.getDefaultBaseBranch();
-            const effectiveDefaultBranch = boardDefaultBranch || effectiveConfig.git.defaultBaseBranch;
-            await captureGitStats(task, sessionRepo, usageHistoryRepo, latestRecord.id, resolvedProjectPath, effectiveDefaultBranch);
-          } catch {
-            // Git stats capture is best-effort
-          }
+          captureGitChurn(task, sessionRepo, usageHistoryRepo, latestRecord.id, resolvedProjectPath, effectiveDefaultBranch);
         }
 
         // Delete the local worktree to reclaim disk. Preserve branch_name and
@@ -404,6 +408,7 @@ export async function handleTaskMove(
             );
             refineTranscriptTokens(context.sessionManager, sessionRepo, task.session_id, record.id);
             refineTranscriptToolCounts(context.sessionManager, sessionRepo, task.session_id, record.id);
+            captureGitChurn(task, sessionRepo, usageHistoryRepo, record.id, resolvedProjectPath, effectiveDefaultBranch);
             markRecordSuspended(sessionRepo, record.id, 'system');
           } else if (record && record.status === 'queued') {
             markRecordExited(sessionRepo, record.id);
@@ -475,6 +480,7 @@ export async function handleTaskMove(
             );
             refineTranscriptTokens(context.sessionManager, sessionRepo, task.session_id, activeRecord.id);
             refineTranscriptToolCounts(context.sessionManager, sessionRepo, task.session_id, activeRecord.id);
+            captureGitChurn(task, sessionRepo, usageHistoryRepo, activeRecord.id, resolvedProjectPath, effectiveDefaultBranch);
             markRecordSuspended(sessionRepo, activeRecord.id, 'system');
           } else if (activeRecord && activeRecord.status === 'queued') {
             markRecordExited(sessionRepo, activeRecord.id);
@@ -525,6 +531,7 @@ export async function handleTaskMove(
             );
             refineTranscriptTokens(context.sessionManager, sessionRepo, task.session_id, sessionRecord.id);
             refineTranscriptToolCounts(context.sessionManager, sessionRepo, task.session_id, sessionRecord.id);
+            captureGitChurn(task, sessionRepo, usageHistoryRepo, sessionRecord.id, resolvedProjectPath, effectiveDefaultBranch);
             markRecordSuspended(sessionRepo, sessionRecord.id, 'system');
           } else if (sessionRecord && sessionRecord.status === 'queued') {
             markRecordExited(sessionRepo, sessionRecord.id);
@@ -606,6 +613,9 @@ export async function handleTaskMove(
               taskId: task.id,
               liveSessionId: task.session_id,
               record: activeRecord,
+              task,
+              projectPath: resolvedProjectPath,
+              defaultBaseBranch: effectiveDefaultBranch,
             });
             console.log(
               `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`
@@ -667,6 +677,9 @@ export async function handleTaskMove(
               taskId: task.id,
               liveSessionId: task.session_id,
               record: activeRecord,
+              task,
+              projectPath: resolvedProjectPath,
+              defaultBaseBranch: effectiveDefaultBranch,
             });
             console.log(
               `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`

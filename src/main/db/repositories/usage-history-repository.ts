@@ -62,8 +62,8 @@ export class UsageHistoryRepository {
    * mirrors what the user already sees in the sessions table).
    *
    * Git stat columns are intentionally NOT in the UPDATE clause: they are
-   * owned by `updateGitStats` (called later from the post-suspend captureGitStats
-   * path) and must not be clobbered by a re-capture.
+   * owned by `setTaskGitStats` (called later from the finalization-path
+   * captureGitChurn) and must not be clobbered by a re-capture.
    */
   recordSessionUsage(input: RecordSessionUsageInput): void {
     this.db.prepare(`
@@ -117,6 +117,41 @@ export class UsageHistoryRepository {
          SET lines_added = ?, lines_removed = ?, files_changed = ?
        WHERE session_record_id = ?
     `).run(stats.linesAdded, stats.linesRemoved, stats.filesChanged, sessionRecordId);
+  }
+
+  /**
+   * Write git churn to exactly ONE row per task lineage: `canonicalRecordId`
+   * (the record finalizing right now) gets the stats, every other record id
+   * in `recordIds` (the task's other session records) is zeroed. Git churn is
+   * branch-cumulative, so writing it to every `--resume` record and letting
+   * the dashboard's flat SUM add them together would double-count; this
+   * keeps the invariant that at most one `usage_history` row per task carries
+   * non-zero churn, matching the flat SUM in `computeKpis`.
+   *
+   * If the canonical record has no history row (e.g. a cost-less leg that
+   * never called `recordSessionUsage`), siblings are left untouched rather
+   * than zeroed - an earlier leg's real churn must not be wiped just because
+   * the LATEST leg happened to have no billable usage.
+   */
+  setTaskGitStats(recordIds: string[], canonicalRecordId: string, stats: UsageHistoryGitStatsInput): void {
+    const write = this.db.transaction((allRecordIds: string[], canonicalId: string) => {
+      const result = this.db.prepare(`
+        UPDATE usage_history
+           SET lines_added = ?, lines_removed = ?, files_changed = ?
+         WHERE session_record_id = ?
+      `).run(stats.linesAdded, stats.linesRemoved, stats.filesChanged, canonicalId);
+      if (result.changes === 0) return;
+
+      const siblings = allRecordIds.filter((recordId) => recordId !== canonicalId);
+      if (siblings.length === 0) return;
+      const placeholders = siblings.map(() => '?').join(', ');
+      this.db.prepare(`
+        UPDATE usage_history
+           SET lines_added = 0, lines_removed = 0, files_changed = 0
+         WHERE session_record_id IN (${placeholders})
+      `).run(...siblings);
+    });
+    write(recordIds, canonicalRecordId);
   }
 
   /**

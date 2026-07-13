@@ -16,7 +16,6 @@ import {
 } from 'lucide-react';
 import type { UsageDashboardStats, UsageStatsScopeKind, UsageTimePeriod } from '../../../shared/types';
 import { useSessionStore } from '../../stores/session-store';
-import { useLiveUsageAggregate } from '../../hooks/useLiveUsageAggregate';
 import { useValuePulse } from '../../hooks/useValuePulse';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
@@ -182,11 +181,13 @@ interface KpiTilesProps {
 /**
  * KPI stat tiles: three hero tiles (Tokens, Cost, Burn Rate - large value,
  * vs-previous-period delta, sparkline filling the tile) over a compact
- * secondary strip. Live layering follows the old footer semantics exactly:
- * for 'live' the token/cost tiles show ONLY in-memory running-session usage;
- * for DB periods the payload totals get the live sessions layered on top (so
- * the current run is reflected before it finalizes). Live ticks re-render
- * only this component (primitive useShallow selector), never the charts.
+ * secondary strip. Live sessions are merged server-side into `payload.kpis`
+ * (usage-stats-service's `liveSessions` param, keyed by `sessionRecordId` so
+ * a running session's live value replaces rather than doubles its own
+ * ledger snapshot) - `kpis` is therefore already the complete number for
+ * every period, live included, and this component reads it directly with no
+ * additive layering. The only renderer-local piece is the "N active now"
+ * subtitle on the Sessions tile, a cosmetic count from the live session list.
  */
 export function KpiTiles({
   payload,
@@ -202,23 +203,24 @@ export function KpiTiles({
 }: KpiTilesProps) {
   const sessions = useSessionStore((state) => state.sessions);
 
-  const liveFilter = useMemo<ReadonlySet<string> | 'all'>(() => {
-    if (!includeLive) return new Set<string>();
-    if (scopeKind !== 'project' || !effectiveProjectId) return 'all';
-    return new Set(
-      sessions.filter((session) => session.projectId === effectiveProjectId).map((session) => session.id),
-    );
+  // Cosmetic-only: the server already counts these sessions into
+  // `kpis.sessionCount` for the headline; this mirrors that scoping (project
+  // vs all, running/queued only) purely to label how many are live right now.
+  const liveSessionCount = useMemo(() => {
+    if (!includeLive) return 0;
+    return sessions.filter((session) => {
+      if (session.status !== 'running' && session.status !== 'queued') return false;
+      if (scopeKind === 'project' && effectiveProjectId) return session.projectId === effectiveProjectId;
+      return true;
+    }).length;
   }, [includeLive, scopeKind, effectiveProjectId, sessions]);
-
-  const live = useLiveUsageAggregate(liveFilter);
 
   const kpis = payload?.kpis ?? null;
   const previous = payload?.previousKpis ?? null;
-  const isLive = period === 'live' && includeLive;
-  const displayInput = isLive ? live.input : (kpis?.totalInputTokens ?? 0) + live.input;
-  const displayOutput = isLive ? live.output : (kpis?.totalOutputTokens ?? 0) + live.output;
-  const displayCost = isLive ? live.cost : (kpis?.totalCostUsd ?? 0) + live.cost;
-  const costKnown = (kpis?.costKnown ?? false) || live.cost > 0;
+  const displayInput = kpis?.totalInputTokens ?? 0;
+  const displayOutput = kpis?.totalOutputTokens ?? 0;
+  const displayCost = kpis?.totalCostUsd ?? 0;
+  const costKnown = kpis?.costKnown ?? false;
 
   const cacheDenominator =
     (kpis?.cacheReadTokens ?? 0) + (kpis?.cacheCreationTokens ?? 0) + (kpis?.turnInputTokens ?? 0);
@@ -326,8 +328,8 @@ export function KpiTiles({
         <CompactTile
           label="Sessions"
           icon={<SquareTerminal size={14} />}
-          value={String(isLive ? live.count : kpis?.sessionCount ?? 0)}
-          sub={!isLive && live.count > 0 ? `${live.count} active now` : undefined}
+          value={String(kpis?.sessionCount ?? 0)}
+          sub={liveSessionCount > 0 ? `${liveSessionCount} active now` : undefined}
           delta={sessionsDelta}
           deltaBaseline={deltaBaseline}
           resetKey={resetKey}

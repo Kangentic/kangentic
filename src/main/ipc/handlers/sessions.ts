@@ -13,6 +13,7 @@ import { handleTaskMove } from './task-move';
 import { trackEvent } from '../../analytics/analytics';
 import { parseModelId } from '../../../shared/model-id';
 import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
+import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
 import { markRecordExited, markRecordSuspended, promoteRecord, recoverStaleSessionId } from '../../transition-engine/session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
 import { applySuspendDbWrites, reconcileTaskSessionRef } from './session-reconcile';
@@ -607,6 +608,20 @@ export function registerSessionHandlers(context: IpcContext): void {
           );
           refineTranscriptTokens(context.sessionManager, sessionRepo, sessionId, metricsRecord.id);
           refineTranscriptToolCounts(context.sessionManager, sessionRepo, sessionId, metricsRecord.id);
+
+          // Natural /exit or crash-exit: covers sessions that finalize without
+          // ever going through a suspend or move (e.g. the agent exits on its
+          // own mid-column). Only possible when `session` was still in the
+          // manager at exit time (it carries `taskId` directly); the
+          // exit-by-agent-id fallback below has no manager entry to resolve a
+          // task from.
+          if (session) {
+            const taskForChurn = new TaskRepository(db).getById(session.taskId);
+            if (taskForChurn) {
+              const project = context.projectRepo.getById(resolvedProjectId);
+              captureGitChurn(taskForChurn, sessionRepo, usageHistoryRepo, metricsRecord.id, project?.path ?? null, resolveDefaultBaseBranch(context, project?.path));
+            }
+          }
         }
       } catch {
         // DB may be closed during shutdown

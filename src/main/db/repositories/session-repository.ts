@@ -396,12 +396,51 @@ export class SessionRepository {
     );
   }
 
-  /** Update git diff stats for a session record. */
+  /**
+   * Update git diff stats for a single session record, unconditionally.
+   * Superseded as the churn-write entry point by `setTaskGitStats` (which keeps
+   * exactly one non-zero row per task lineage); kept as the low-level single-row
+   * primitive, mirroring `UsageHistoryRepository.updateGitStats`.
+   */
   updateGitStats(id: string, stats: { linesAdded: number; linesRemoved: number; filesChanged: number }): void {
     this.db.prepare(`
       UPDATE sessions SET lines_added = ?, lines_removed = ?, files_changed = ?
       WHERE id = ?
     `).run(stats.linesAdded, stats.linesRemoved, stats.filesChanged, id);
+  }
+
+  /**
+   * Write git churn to exactly ONE row per task lineage: `canonicalRecordId`
+   * gets the stats, every other record id in `recordIds` is zeroed. Mirrors
+   * `UsageHistoryRepository.setTaskGitStats` for the `sessions` table. This
+   * also fixes a latent over-count in `getSummaryForTask` / `listAllSummaries`,
+   * which SUM `lines_added`/`lines_removed` across every record: once churn is
+   * consolidated onto a single record, that SUM equals the branch's actual
+   * churn instead of adding the same branch-cumulative number in more than
+   * once across resume legs.
+   *
+   * Unlike `UsageHistoryRepository.setTaskGitStats`, this omits the
+   * `changes === 0` guard on the canonical UPDATE: a task's `sessions` rows
+   * always exist for every id in `recordIds` (they are read from
+   * `listForTaskNewestFirst`) and are only ever deleted atomically as a whole
+   * (`deleteByTaskId`), so the canonical UPDATE always matches a row.
+   */
+  setTaskGitStats(recordIds: string[], canonicalRecordId: string, stats: { linesAdded: number; linesRemoved: number; filesChanged: number }): void {
+    const write = this.db.transaction((allRecordIds: string[], canonicalId: string) => {
+      this.db.prepare(`
+        UPDATE sessions SET lines_added = ?, lines_removed = ?, files_changed = ?
+        WHERE id = ?
+      `).run(stats.linesAdded, stats.linesRemoved, stats.filesChanged, canonicalId);
+
+      const siblings = allRecordIds.filter((recordId) => recordId !== canonicalId);
+      if (siblings.length === 0) return;
+      const placeholders = siblings.map(() => '?').join(', ');
+      this.db.prepare(`
+        UPDATE sessions SET lines_added = 0, lines_removed = 0, files_changed = 0
+        WHERE id IN (${placeholders})
+      `).run(...siblings);
+    });
+    write(recordIds, canonicalRecordId);
   }
 
   /**

@@ -14,6 +14,7 @@ type ProjectColumnKey =
   | 'costShare'
   | 'blendedRate'
   | 'lines'
+  | 'files'
   | 'toolCalls'
   | 'avgSession'
   | 'topAgent'
@@ -107,6 +108,14 @@ const COLUMNS: DataTableColumn<ProjectComparisonRow, ProjectColumnKey>[] = [
     ),
   },
   {
+    key: 'files',
+    label: 'Files',
+    align: 'right',
+    headerTitle: 'Files changed by agent sessions (git diff vs the base branch)',
+    sortValue: (row) => row.filesChanged,
+    render: (row) => <span className="tabular-nums">{formatTokenCount(row.filesChanged)}</span>,
+  },
+  {
     key: 'toolCalls',
     label: 'Tool Calls',
     align: 'right',
@@ -176,6 +185,7 @@ export function PerProjectTable({
         toolCallCount: project.toolCallCount ?? 0,
         linesAdded: project.linesAdded ?? 0,
         linesRemoved: project.linesRemoved ?? 0,
+        filesChanged: project.filesChanged ?? 0,
         totalDurationMs: project.totalDurationMs ?? 0,
         lastActiveMs: project.lastActiveMs ?? null,
         topAgent: project.topAgent ?? null,

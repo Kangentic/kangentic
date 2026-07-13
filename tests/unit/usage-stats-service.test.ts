@@ -13,6 +13,7 @@ import { LIVE_WINDOW_MS, TURN_GROUP_MS } from '../../src/main/usage-stats/bucket
 import { computePeriodCutoff } from '../../src/shared/period-cutoff';
 import type { UsageHistoryRow } from '../../src/main/db/repositories/usage-history-repository';
 import type { GroupedTurnUsageRow } from '../../src/main/retrieval/conversation/conversation-usage-store';
+import type { LiveSessionRow } from '../../src/shared/types';
 
 function makeRow(overrides: Partial<UsageHistoryRow> = {}): UsageHistoryRow {
   return {
@@ -30,6 +31,24 @@ function makeRow(overrides: Partial<UsageHistoryRow> = {}): UsageHistoryRow {
     filesChanged: 1,
     compactionCount: 0,
     agent: 'claude',
+    effort: null,
+    ...overrides,
+  };
+}
+
+function makeLiveSession(overrides: Partial<LiveSessionRow> = {}): LiveSessionRow {
+  return {
+    sessionRecordId: 'live-1',
+    projectId: 'p1',
+    startedAtIso: new Date().toISOString(),
+    inputTokens: 10,
+    outputTokens: 5,
+    costUsd: 0,
+    totalDurationMs: null,
+    toolCallCount: 1,
+    modelId: null,
+    modelDisplayName: null,
+    agent: null,
     effort: null,
     ...overrides,
   };
@@ -192,6 +211,22 @@ describe('usage-stats service: app-wide rollup', () => {
     ]);
   });
 
+  it('sums filesChanged into each perProject summary (previously dropped)', () => {
+    const { service } = makeService([
+      {
+        id: 'p1',
+        name: 'One',
+        rows: [
+          makeRow({ sessionRecordId: 'a', filesChanged: 2 }),
+          makeRow({ sessionRecordId: 'b', filesChanged: 3 }),
+        ],
+      },
+    ]);
+    const stats = service.getDashboardStats({ kind: 'all' }, 'all');
+
+    expect(stats.perProject?.[0]).toEqual(expect.objectContaining({ filesChanged: 5 }));
+  });
+
   it("All Time buckets adapt to the data span: a two-week history renders DAILY, not three weekly bars", () => {
     const nowMs = Date.now();
     const dayMs = 24 * 3_600_000;
@@ -294,5 +329,85 @@ describe('usage-stats service: app-wide rollup', () => {
     expect(stats.byModel).toEqual([]);
     expect(stats.byAgent).toEqual([]);
     expect(stats.byEffort).toEqual([]);
+  });
+});
+
+describe('usage-stats service: live session overlay', () => {
+  it('merges a live session additively with a ledger row that has a DIFFERENT session id', () => {
+    const { service } = makeService([
+      { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'finalized-1', totalInputTokens: 100, totalOutputTokens: 40 })] },
+    ]);
+    const stats = service.getDashboardStats(
+      { kind: 'project', projectId: 'p1' },
+      'today',
+      null,
+      null,
+      [makeLiveSession({ sessionRecordId: 'live-1', projectId: 'p1', inputTokens: 500, outputTokens: 200 })],
+    );
+
+    expect(stats.kpis.sessionCount).toBe(2);
+    expect(stats.kpis.totalInputTokens).toBe(600);
+    expect(stats.kpis.totalOutputTokens).toBe(240);
+  });
+
+  it('a live session REPLACES (never adds to) an already-snapshotted ledger row for the same session id', () => {
+    const { service } = makeService([
+      { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'shared-id', totalInputTokens: 100, totalOutputTokens: 40 })] },
+    ]);
+    const stats = service.getDashboardStats(
+      { kind: 'project', projectId: 'p1' },
+      'today',
+      null,
+      null,
+      [makeLiveSession({ sessionRecordId: 'shared-id', projectId: 'p1', inputTokens: 500, outputTokens: 200 })],
+    );
+
+    // ONE row - the live value wins, never 100+500.
+    expect(stats.kpis.sessionCount).toBe(1);
+    expect(stats.kpis.totalInputTokens).toBe(500);
+    expect(stats.kpis.totalOutputTokens).toBe(200);
+  });
+
+  it('scopes live sessions to the matching project in an app-wide rollup', () => {
+    const { service } = makeService([
+      { id: 'p1', name: 'One', rows: [] },
+      { id: 'p2', name: 'Two', rows: [] },
+    ]);
+    const stats = service.getDashboardStats(
+      { kind: 'all' },
+      'today',
+      null,
+      null,
+      [makeLiveSession({ sessionRecordId: 'live-p1', projectId: 'p1' })],
+    );
+
+    const p1Summary = stats.perProject?.find((project) => project.projectId === 'p1');
+    const p2Summary = stats.perProject?.find((project) => project.projectId === 'p2');
+    expect(p1Summary?.sessionCount).toBe(1);
+    expect(p2Summary?.sessionCount).toBe(0);
+  });
+
+  it('a live session never contributes churn (git stats are captured only at finalization)', () => {
+    const { service } = makeService([{ id: 'p1', name: 'One', rows: [] }]);
+    const stats = service.getDashboardStats(
+      { kind: 'project', projectId: 'p1' },
+      'today',
+      null,
+      null,
+      [makeLiveSession()],
+    );
+
+    expect(stats.kpis.linesAdded).toBe(0);
+    expect(stats.kpis.linesRemoved).toBe(0);
+    expect(stats.kpis.filesChanged).toBe(0);
+  });
+
+  it('defaults to no live overlay when liveSessions is omitted (MCP command handler call shape)', () => {
+    const { service } = makeService([
+      { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'finalized-1' })] },
+    ]);
+    const stats = service.getDashboardStats({ kind: 'project', projectId: 'p1' }, 'today');
+
+    expect(stats.kpis.sessionCount).toBe(1);
   });
 });

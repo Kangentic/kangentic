@@ -374,6 +374,36 @@ describe('DiffService', () => {
     });
   });
 
+  describe('getChurnSummary', () => {
+    it('reuses getDiffFiles(scope: "branch") and maps to linesAdded/linesRemoved/filesChanged', async () => {
+      mockGit.raw.mockResolvedValue('abc123\n');
+      mockGit.diffSummary.mockResolvedValue(makeDiffSummary([
+        { file: 'src/a.ts', insertions: 10, deletions: 3 },
+        { file: 'src/b.ts', insertions: 5, deletions: 0 },
+      ]));
+      mockGit.diff.mockResolvedValue('M\tsrc/a.ts\nA\tsrc/b.ts\n');
+      mockGit.status.mockResolvedValue({ not_added: [] });
+
+      const result = await service.getChurnSummary('main');
+
+      expect(result).toEqual({ linesAdded: 15, linesRemoved: 3, filesChanged: 2 });
+      // branch scope: merge-base resolution, same as the diff panel.
+      expect(mockGit.raw).toHaveBeenCalledWith(['merge-base', 'origin/main', 'HEAD']);
+    });
+
+    it('includes uncommitted + untracked changes (branch scope consults git status)', async () => {
+      mockGit.raw.mockResolvedValue('abc123\n');
+      mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
+      mockGit.diff.mockResolvedValue('');
+      mockGit.status.mockResolvedValue({ not_added: ['src/brand-new.ts'] });
+      vi.mocked(fs.promises.readFile).mockResolvedValue(Buffer.from('line1\nline2\n') as never);
+
+      const result = await service.getChurnSummary('main');
+
+      expect(result).toEqual({ linesAdded: 2, linesRemoved: 0, filesChanged: 1 });
+    });
+  });
+
   describe('getFileContent', () => {
     it('fetches original and modified for a modified file', async () => {
       mockGit.raw.mockResolvedValue('abc123\n');

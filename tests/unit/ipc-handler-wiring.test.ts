@@ -93,7 +93,8 @@ vi.mock('../../src/main/ipc/handlers/backlog', () => ({
   abortBacklogPromotion: vi.fn(),
 }));
 vi.mock('../../src/main/ipc/handlers/git-stats-capture', () => ({
-  captureGitStats: vi.fn(),
+  captureGitChurn: vi.fn(),
+  resolveDefaultBaseBranch: vi.fn(() => 'main'),
 }));
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),

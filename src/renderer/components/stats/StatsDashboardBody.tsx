@@ -70,12 +70,14 @@ export function StatsDashboardBody() {
     return () => clearInterval(interval);
   }, [period, loadDashboardStats]);
 
-  // Watch-it-happen: new usage pushes (tokens ticking on running sessions)
-  // trigger a debounced refetch so the charts extend while the user watches.
+  // Watch-it-happen: new usage pushes (tokens ticking on running sessions) OR
+  // the live session list itself changing (a new spawn, or one finalizing)
+  // trigger a debounced refetch - either means the server-merged live overlay
+  // (usage-stats-service's liveSessions param) will differ in the next payload.
   useEffect(() => {
     let debounce: ReturnType<typeof setTimeout> | null = null;
     const unsubscribe = useSessionStore.subscribe((state, previous) => {
-      if (state.sessionUsage === previous.sessionUsage) return;
+      if (state.sessionUsage === previous.sessionUsage && state.sessions === previous.sessions) return;
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(() => {
         if (!document.hidden) void loadDashboardStats({ force: true });
@@ -340,7 +342,7 @@ export function StatsDashboardBody() {
           className="flex items-center gap-1.5 text-[11px] text-fg-faint w-fit cursor-help"
           title={
             'Costs are API-equivalent as reported by agents; subscription sessions may report $0.\n' +
-            'Totals cover finalized sessions; running sessions tick into the tiles live and fold in when they finalize.\n' +
+            'Totals include finalized sessions plus any currently running, refreshed live as they progress.\n' +
             'Trend lines use exact per-turn tokens, which measure differently from the session snapshots behind the totals.'
           }
           data-testid="stats-about-numbers"

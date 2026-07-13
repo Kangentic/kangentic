@@ -214,6 +214,83 @@ describe('UsageHistoryRepository.updateGitStats', () => {
   });
 });
 
+describe('UsageHistoryRepository.setTaskGitStats', () => {
+  /**
+   * Unlike `createMockDb` above (which always returns `{ changes: 1 }`), these
+   * tests need to control whether the CANONICAL update reports a matched row,
+   * so the mock distinguishes the canonical `WHERE session_record_id = ?`
+   * update from the sibling `WHERE session_record_id IN (...)` zero-out by
+   * SQL shape, and also stubs `db.transaction` (better-sqlite3's real
+   * transaction wrapper just invokes the callback synchronously).
+   */
+  function createMockDbForSetTaskGitStats(canonicalChanges: number): {
+    db: Database.Database;
+    runCalls: Array<{ sql: string; params: unknown[] }>;
+  } {
+    const runCalls: Array<{ sql: string; params: unknown[] }> = [];
+    const db = {
+      prepare: vi.fn((sql: string) => ({
+        run: vi.fn((...params: unknown[]) => {
+          runCalls.push({ sql, params });
+          const isSiblingZeroOut = sql.includes(' IN (');
+          return { changes: isSiblingZeroOut ? 1 : canonicalChanges };
+        }),
+      })),
+      transaction: vi.fn((fn: (...args: unknown[]) => unknown) => (...args: unknown[]) => fn(...args)),
+    } as unknown as Database.Database;
+    return { db, runCalls };
+  }
+
+  it('writes the canonical record and zeros every other record id', () => {
+    const { db, runCalls } = createMockDbForSetTaskGitStats(1);
+    const repository = new UsageHistoryRepository(db);
+
+    repository.setTaskGitStats(['record-A', 'record-B', 'record-C'], 'record-B', {
+      linesAdded: 10,
+      linesRemoved: 2,
+      filesChanged: 3,
+    });
+
+    expect(runCalls).toHaveLength(2);
+    expect(runCalls[0].sql).toMatch(/UPDATE\s+usage_history/i);
+    expect(runCalls[0].sql).toMatch(/WHERE\s+session_record_id\s*=\s*\?/i);
+    expect(runCalls[0].params).toEqual([10, 2, 3, 'record-B']);
+
+    expect(runCalls[1].sql).toMatch(/session_record_id\s+IN\s*\(\?,\s*\?\)/i);
+    // The zeroed values are literals in the SQL, not bound params - only the
+    // sibling ids are bound.
+    expect(runCalls[1].params).toEqual(['record-A', 'record-C']);
+  });
+
+  it('does NOT zero siblings when the canonical record has no history row (changes === 0)', () => {
+    const { db, runCalls } = createMockDbForSetTaskGitStats(0);
+    const repository = new UsageHistoryRepository(db);
+
+    repository.setTaskGitStats(['record-A', 'record-B'], 'record-B', {
+      linesAdded: 5,
+      linesRemoved: 1,
+      filesChanged: 1,
+    });
+
+    // Only the canonical (no-op) UPDATE ran - the sibling zero-out never fires,
+    // so an earlier leg's real churn on record-A is left untouched.
+    expect(runCalls).toHaveLength(1);
+  });
+
+  it('is a no-op sibling write when the canonical id is the only record for the task', () => {
+    const { db, runCalls } = createMockDbForSetTaskGitStats(1);
+    const repository = new UsageHistoryRepository(db);
+
+    repository.setTaskGitStats(['record-B'], 'record-B', {
+      linesAdded: 1,
+      linesRemoved: 1,
+      filesChanged: 1,
+    });
+
+    expect(runCalls).toHaveLength(1);
+  });
+});
+
 describe('UsageHistoryRepository.listRowsAfter', () => {
   it('issues a WHERE-less SELECT when since is null (All Time), oldest first', () => {
     const { db, statements } = createMockDb();

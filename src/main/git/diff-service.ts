@@ -281,6 +281,21 @@ export class DiffService {
     };
   }
 
+  /**
+   * Branch churn vs base (merge-base), including uncommitted + untracked
+   * changes - the same scope the Changes panel shows. Reuses getMergeBase +
+   * getDiffFiles so churn capture (git-stats-capture.ts) and the diff panel
+   * share one merge-base implementation instead of two diverging copies.
+   */
+  async getChurnSummary(baseBranch: string): Promise<{ linesAdded: number; linesRemoved: number; filesChanged: number }> {
+    const result = await this.getDiffFiles({ baseBranch, scope: 'branch', projectPath: this.gitDirectory });
+    return {
+      linesAdded: result.totalInsertions,
+      linesRemoved: result.totalDeletions,
+      filesChanged: result.files.length,
+    };
+  }
+
   async getFileContent(input: GitFileContentInput): Promise<GitFileContentResult> {
     const git = simpleGit(this.gitDirectory);
     const { baseBranch, filePath, status, oldPath, commitOid } = input;

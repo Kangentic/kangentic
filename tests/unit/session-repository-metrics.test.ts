@@ -668,3 +668,55 @@ describe('listAllSummaries lifetime rollup', () => {
     expect(summary.exitedAt).toBe('2026-04-03T13:00:00Z');
   });
 });
+
+describe('SessionRepository.setTaskGitStats', () => {
+  /** better-sqlite3's real `db.transaction(fn)` returns a function that just
+   *  invokes `fn` synchronously - this stub mirrors that. */
+  function createMockDb(): { db: Database.Database; runCalls: Array<{ sql: string; params: unknown[] }> } {
+    const runCalls: Array<{ sql: string; params: unknown[] }> = [];
+    const db = {
+      prepare: vi.fn((sql: string) => ({
+        run: vi.fn((...params: unknown[]) => {
+          runCalls.push({ sql, params });
+          return { changes: 1 };
+        }),
+      })),
+      transaction: vi.fn((fn: (...args: unknown[]) => unknown) => (...args: unknown[]) => fn(...args)),
+    } as unknown as Database.Database;
+    return { db, runCalls };
+  }
+
+  it('writes the canonical record and zeros every other record id (one row per task lineage)', () => {
+    const { db, runCalls } = createMockDb();
+    const repository = new SessionRepository(db);
+
+    repository.setTaskGitStats(['record-A', 'record-B', 'record-C'], 'record-B', {
+      linesAdded: 10,
+      linesRemoved: 2,
+      filesChanged: 3,
+    });
+
+    expect(runCalls).toHaveLength(2);
+    expect(runCalls[0].sql).toMatch(/UPDATE\s+sessions/i);
+    expect(runCalls[0].sql).toMatch(/WHERE\s+id\s*=\s*\?/i);
+    expect(runCalls[0].params).toEqual([10, 2, 3, 'record-B']);
+
+    expect(runCalls[1].sql).toMatch(/id\s+IN\s*\(\?,\s*\?\)/i);
+    // The zeroed values are literals in the SQL, not bound params - only the
+    // sibling ids are bound.
+    expect(runCalls[1].params).toEqual(['record-A', 'record-C']);
+  });
+
+  it('is a no-op sibling write when the canonical id is the only record for the task', () => {
+    const { db, runCalls } = createMockDb();
+    const repository = new SessionRepository(db);
+
+    repository.setTaskGitStats(['record-B'], 'record-B', {
+      linesAdded: 1,
+      linesRemoved: 1,
+      filesChanged: 1,
+    });
+
+    expect(runCalls).toHaveLength(1);
+  });
+});

@@ -1,46 +1,76 @@
-import { simpleGit } from 'simple-git';
+import { DiffService } from '../../git/diff-service';
 import type { SessionRepository } from '../../db/repositories/session-repository';
 import type { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import type { Task } from '../../../shared/types';
+import type { IpcContext } from '../ipc-context';
 
 /**
- * Capture git diff stats (lines added/removed, files changed) by comparing
- * the task's branch against its base branch and write them to BOTH the
- * `sessions` row and the `usage_history` row for the same `recordId`.
- *
- * The history mirror call is a silent no-op if no history row exists for the
- * record (e.g. the session was captured with no usage at all and skipped the
- * history entirely).
- *
- * Best-effort: returns early if there is no git directory; callers wrap this
- * in try/catch so a git error never breaks the surrounding task-move flow.
+ * Resolve the effective default base branch for a project: the team-shared
+ * board config default, falling back to the per-project/global config, then
+ * 'main'. Centralized here (rather than re-derived at every finalization call
+ * site) so churn capture always resolves the base the same way the worktree
+ * and diff panel do.
  */
-export async function captureGitStats(
+export function resolveDefaultBaseBranch(context: IpcContext, projectPath: string | null | undefined): string {
+  const boardDefaultBranch = context.boardConfigManager.getDefaultBaseBranch();
+  const effectiveConfig = context.configManager.getEffectiveConfig(projectPath || undefined);
+  return boardDefaultBranch || effectiveConfig.git.defaultBaseBranch || 'main';
+}
+
+/**
+ * Capture git churn (lines added/removed, files changed) for a task, and
+ * write it to BOTH the `sessions` row and the `usage_history` row for
+ * `canonicalRecordId` - the record id finalizing right now (the caller's
+ * fresh capture point), NOT necessarily the task's only session record.
+ *
+ * Fire-and-forget (mirrors `refineTranscriptTokens`): reads the task's full
+ * record-id list synchronously up front (while the task + sessions still
+ * exist), then does the git diff off the task lock so it never blocks a
+ * suspend/move/exit finalization path. Safe to call from every finalization
+ * point (suspend, move, handoff, respawn, natural exit) because:
+ *
+ * - Churn is branch-cumulative (`git diff <base>...<HEAD>` over the whole
+ *   worktree), so writing it to every `--resume` record and letting the
+ *   dashboard SUM would double-count. Instead this writes ONLY to
+ *   `canonicalRecordId` and zeros out every other record for the same task
+ *   (see `setTaskGitStats`), keeping exactly one non-zero row per task
+ *   lineage - consistent with the snapshot-token design in
+ *   `captureSessionMetrics`.
+ * - A no-clobber guard: an all-zero result (a git error, or a capture that
+ *   runs after the branch is already merged - e.g. move-to-Done in the PR
+ *   flow, where the worktree is gone and HEAD is already past the merge-base)
+ *   is treated as "nothing to report," not "the branch has 0 churn," so it
+ *   can never wipe a real capture made earlier in the task's life.
+ *
+ * Best-effort: returns early if there is no git directory; every failure is
+ * swallowed so a git error never breaks the calling finalization flow.
+ */
+export function captureGitChurn(
   task: Task,
   sessionRepo: SessionRepository,
   usageHistoryRepo: UsageHistoryRepository,
-  recordId: string,
+  canonicalRecordId: string,
   projectPath: string | null | undefined,
   defaultBaseBranch?: string,
-): Promise<void> {
-  const gitDir = task.worktree_path ?? projectPath;
-  if (!gitDir) return;
+): void {
+  try {
+    const gitDir = task.worktree_path ?? projectPath;
+    if (!gitDir) return;
 
-  const baseBranch = task.base_branch || defaultBaseBranch || 'main';
-  const git = simpleGit(gitDir);
+    const recordIds = sessionRepo.listForTaskNewestFirst(task.id).map((record) => record.id);
+    const baseBranch = task.base_branch || defaultBaseBranch || 'main';
 
-  // Compare all changes (committed + uncommitted) against the merge-base.
-  // Three-dot syntax `main...` means `git diff $(git merge-base main HEAD)`,
-  // which shows only changes introduced on the task branch, excluding any
-  // new commits on the base branch since the fork point.
-  const diffResult = await git.diffSummary([baseBranch + '...']);
-
-  const stats = {
-    linesAdded: diffResult.insertions,
-    linesRemoved: diffResult.deletions,
-    filesChanged: diffResult.changed,
-  };
-  sessionRepo.updateGitStats(recordId, stats);
-  // Mirror to the history so productivity stats survive task deletion.
-  usageHistoryRepo.updateGitStats(recordId, stats);
+    void new DiffService(gitDir)
+      .getChurnSummary(baseBranch)
+      .then((stats) => {
+        if (stats.linesAdded === 0 && stats.linesRemoved === 0 && stats.filesChanged === 0) return;
+        sessionRepo.setTaskGitStats(recordIds, canonicalRecordId, stats);
+        usageHistoryRepo.setTaskGitStats(recordIds, canonicalRecordId, stats);
+      })
+      .catch(() => {
+        // Git stats capture is best-effort
+      });
+  } catch {
+    // Never break the calling finalization flow
+  }
 }

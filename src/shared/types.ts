@@ -1216,11 +1216,37 @@ export interface ProjectUsageSummary {
   toolCallCount: number;
   linesAdded: number;
   linesRemoved: number;
+  filesChanged: number;
   totalDurationMs: number;
   /** Most recent session start in range (epoch ms); null when no sessions. */
   lastActiveMs: number | null;
   /** Dominant agent by tokens in range; null when none recorded. */
   topAgent: string | null;
+}
+
+/**
+ * One in-flight (running/queued) session, snapshotted from the live
+ * `SessionManager` for the usage-dashboard's server-side live overlay. Churn
+ * fields are intentionally absent: git stats are captured at finalization,
+ * not live. Merged into the ledger by `sessionRecordId` (the same id a
+ * finalized session lands under in `usage_history.session_record_id`), so a
+ * session already snapshotted into the ledger by the periodic metrics timer
+ * is replaced by its live row rather than double-counted.
+ */
+export interface LiveSessionRow {
+  sessionRecordId: string;
+  projectId: string;
+  /** ISO session start time. */
+  startedAtIso: string;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  totalDurationMs: number | null;
+  toolCallCount: number;
+  modelId: string | null;
+  modelDisplayName: string | null;
+  agent: string | null;
+  effort: string | null;
 }
 
 /**

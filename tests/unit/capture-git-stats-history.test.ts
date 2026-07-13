@@ -1,17 +1,21 @@
 /**
- * Tests that `captureGitStats` mirrors git diff stats to the usage_history
- * table in addition to the sessions table.
+ * Tests for `captureGitChurn` (src/main/ipc/handlers/git-stats-capture.ts).
  *
- * The function is a small helper in `src/main/ipc/handlers/git-stats-capture.ts`
- * with three external dependencies: `simple-git` (mocked), `SessionRepository`
- * (interface mock), and `UsageHistoryRepository` (interface mock). No
- * `handleTaskMove` scaffolding is needed - testing through the surrounding
- * IPC handler would require mocking ~17 unrelated modules.
+ * The function is fire-and-forget: it reads the task's session-record ids
+ * synchronously, then calls `void new DiffService(...).getChurnSummary(...).then(...)`
+ * without blocking the caller. Each test awaits a `setImmediate`-based tick
+ * (same pattern as session-metrics-refine-tokens.test.ts) so the promise
+ * chain can settle before asserting on the repo writes.
  *
- * Pins the regression risk identified in the audit: a developer could remove
- * the second `usageHistoryRepo.updateGitStats` call thinking it is redundant
- * with the session-repo write, silently dropping productivity stats from the
- * period selector for any deleted task.
+ * Pins two regression risks:
+ *   1. The no-clobber guard: an all-zero diff result (a git error, or a
+ *      capture that runs after the branch is already merged) must write to
+ *      NEITHER repo, so it can never wipe a real capture made earlier in the
+ *      task's life.
+ *   2. One-row-per-task consolidation: `setTaskGitStats` is called with the
+ *      full record-id list and the canonical id, so exactly one record ends
+ *      up non-zero (never every `--resume` record, which would double-count
+ *      under the dashboard's flat SUM).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -20,29 +24,40 @@ import type { SessionRepository } from '../../src/main/db/repositories/session-r
 import type { UsageHistoryRepository } from '../../src/main/db/repositories/usage-history-repository';
 
 // ---------------------------------------------------------------------------
-// Mock simple-git BEFORE importing the module under test (vi.mock is hoisted).
+// Mock DiffService BEFORE importing the module under test (vi.mock is hoisted).
 // ---------------------------------------------------------------------------
 
-const mockDiffSummary = vi.fn(async () => ({
-  insertions: 42,
-  deletions: 7,
-  changed: 3,
+const { mockGetChurnSummary, mockDiffServiceCtor } = vi.hoisted(() => ({
+  mockGetChurnSummary: vi.fn(async () => ({ linesAdded: 42, linesRemoved: 7, filesChanged: 3 })),
+  mockDiffServiceCtor: vi.fn(),
 }));
 
-vi.mock('simple-git', () => ({
-  simpleGit: vi.fn(() => ({ diffSummary: mockDiffSummary })),
-  default: vi.fn(() => ({ diffSummary: mockDiffSummary })),
+vi.mock('../../src/main/git/diff-service', () => ({
+  DiffService: class {
+    constructor(gitDirectory: string) {
+      mockDiffServiceCtor(gitDirectory);
+    }
+    getChurnSummary(baseBranch: string) {
+      return mockGetChurnSummary(baseBranch);
+    }
+  },
 }));
 
 // ---------------------------------------------------------------------------
 // Import under test (after the mock is registered)
 // ---------------------------------------------------------------------------
 
-import { captureGitStats } from '../../src/main/ipc/handlers/git-stats-capture';
+import { captureGitChurn } from '../../src/main/ipc/handlers/git-stats-capture';
 
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
+
+/** Await one setImmediate so the fire-and-forget promise chain inside
+ *  captureGitChurn can settle before assertions run. */
+function flushAsync(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -70,62 +85,84 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
-function makeRepos() {
-  const sessionUpdateGitStats = vi.fn();
-  const historyUpdateGitStats = vi.fn();
-  const sessionRepo = { updateGitStats: sessionUpdateGitStats } as unknown as SessionRepository;
-  const usageHistoryRepo = { updateGitStats: historyUpdateGitStats } as unknown as UsageHistoryRepository;
-  return { sessionRepo, usageHistoryRepo, sessionUpdateGitStats, historyUpdateGitStats };
+function makeRepos(recordIds: string[] = ['record-001']) {
+  const sessionSetTaskGitStats = vi.fn();
+  const historySetTaskGitStats = vi.fn();
+  const listForTaskNewestFirst = vi.fn(() => recordIds.map((id) => ({ id })));
+  const sessionRepo = {
+    setTaskGitStats: sessionSetTaskGitStats,
+    listForTaskNewestFirst,
+  } as unknown as SessionRepository;
+  const usageHistoryRepo = { setTaskGitStats: historySetTaskGitStats } as unknown as UsageHistoryRepository;
+  return { sessionRepo, usageHistoryRepo, sessionSetTaskGitStats, historySetTaskGitStats, listForTaskNewestFirst };
 }
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('captureGitStats - history mirror', () => {
+describe('captureGitChurn', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDiffSummary.mockResolvedValue({ insertions: 42, deletions: 7, changed: 3 });
+    mockGetChurnSummary.mockResolvedValue({ linesAdded: 42, linesRemoved: 7, filesChanged: 3 });
   });
 
-  it('writes the same stats to BOTH SessionRepository and UsageHistoryRepository', async () => {
-    const { sessionRepo, usageHistoryRepo, sessionUpdateGitStats, historyUpdateGitStats } = makeRepos();
+  it('writes churn to BOTH repos, keyed by the full record-id list and the canonical id', async () => {
+    const { sessionRepo, usageHistoryRepo, sessionSetTaskGitStats, historySetTaskGitStats } =
+      makeRepos(['record-001', 'record-000']);
     const task = makeTask();
 
-    await captureGitStats(task, sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
+    captureGitChurn(task, sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
+    await flushAsync();
 
     const expectedStats = { linesAdded: 42, linesRemoved: 7, filesChanged: 3 };
-    expect(sessionUpdateGitStats).toHaveBeenCalledTimes(1);
-    expect(historyUpdateGitStats).toHaveBeenCalledTimes(1);
-    expect(sessionUpdateGitStats).toHaveBeenCalledWith('record-001', expectedStats);
-    expect(historyUpdateGitStats).toHaveBeenCalledWith('record-001', expectedStats);
+    expect(sessionSetTaskGitStats).toHaveBeenCalledTimes(1);
+    expect(historySetTaskGitStats).toHaveBeenCalledTimes(1);
+    expect(sessionSetTaskGitStats).toHaveBeenCalledWith(['record-001', 'record-000'], 'record-001', expectedStats);
+    expect(historySetTaskGitStats).toHaveBeenCalledWith(['record-001', 'record-000'], 'record-001', expectedStats);
   });
 
-  it('returns early without calling either repo when there is no git directory', async () => {
-    const { sessionRepo, usageHistoryRepo, sessionUpdateGitStats, historyUpdateGitStats } = makeRepos();
+  it('no-clobber guard: an all-zero diff result writes to NEITHER repo', async () => {
+    mockGetChurnSummary.mockResolvedValueOnce({ linesAdded: 0, linesRemoved: 0, filesChanged: 0 });
+    const { sessionRepo, usageHistoryRepo, sessionSetTaskGitStats, historySetTaskGitStats } = makeRepos();
+    const task = makeTask();
+
+    captureGitChurn(task, sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
+    await flushAsync();
+
+    expect(sessionSetTaskGitStats).not.toHaveBeenCalled();
+    expect(historySetTaskGitStats).not.toHaveBeenCalled();
+  });
+
+  it('returns early without touching DiffService or either repo when there is no git directory', async () => {
+    const { sessionRepo, usageHistoryRepo, sessionSetTaskGitStats, historySetTaskGitStats, listForTaskNewestFirst } =
+      makeRepos();
     // No worktree_path AND no projectPath argument.
     const task = makeTask({ worktree_path: null });
 
-    await captureGitStats(task, sessionRepo, usageHistoryRepo, 'record-001', null, 'main');
+    captureGitChurn(task, sessionRepo, usageHistoryRepo, 'record-001', null, 'main');
+    await flushAsync();
 
-    expect(sessionUpdateGitStats).not.toHaveBeenCalled();
-    expect(historyUpdateGitStats).not.toHaveBeenCalled();
+    expect(mockDiffServiceCtor).not.toHaveBeenCalled();
+    expect(listForTaskNewestFirst).not.toHaveBeenCalled();
+    expect(sessionSetTaskGitStats).not.toHaveBeenCalled();
+    expect(historySetTaskGitStats).not.toHaveBeenCalled();
   });
 
   it('uses the task worktree path when present, falling back to project path', async () => {
     const { sessionRepo, usageHistoryRepo } = makeRepos();
-    const { simpleGit } = await import('simple-git');
-    const simpleGitMock = vi.mocked(simpleGit);
 
     const taskWithWorktree = makeTask({ worktree_path: '/mock/worktree-A' });
-    await captureGitStats(taskWithWorktree, sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
-    expect(simpleGitMock).toHaveBeenLastCalledWith('/mock/worktree-A');
+    captureGitChurn(taskWithWorktree, sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
+    await flushAsync();
+    expect(mockDiffServiceCtor).toHaveBeenLastCalledWith('/mock/worktree-A');
 
-    simpleGitMock.mockClear();
+    mockDiffServiceCtor.mockClear();
 
     const taskWithoutWorktree = makeTask({ worktree_path: null });
-    await captureGitStats(taskWithoutWorktree, sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
-    expect(simpleGitMock).toHaveBeenLastCalledWith('/mock/project');
+    captureGitChurn(taskWithoutWorktree, sessionRepo, usageHistoryRepo, 'record-001', '/mock/project', 'main');
+    await flushAsync();
+    expect(mockDiffServiceCtor).toHaveBeenLastCalledWith('/mock/project');
   });
 
   it('uses the task base_branch when set, falling back to defaultBaseBranch then "main"', async () => {
@@ -133,29 +170,33 @@ describe('captureGitStats - history mirror', () => {
 
     // task.base_branch wins over defaultBaseBranch.
     const taskWithBase = makeTask({ base_branch: 'develop' });
-    await captureGitStats(taskWithBase, sessionRepo, usageHistoryRepo, 'r1', '/mock/project', 'master');
-    expect(mockDiffSummary).toHaveBeenLastCalledWith(['develop...']);
+    captureGitChurn(taskWithBase, sessionRepo, usageHistoryRepo, 'r1', '/mock/project', 'master');
+    await flushAsync();
+    expect(mockGetChurnSummary).toHaveBeenLastCalledWith('develop');
 
     // Falls back to defaultBaseBranch when task.base_branch is null.
-    mockDiffSummary.mockClear();
+    mockGetChurnSummary.mockClear();
     const taskNoBase = makeTask({ base_branch: null });
-    await captureGitStats(taskNoBase, sessionRepo, usageHistoryRepo, 'r1', '/mock/project', 'release');
-    expect(mockDiffSummary).toHaveBeenLastCalledWith(['release...']);
+    captureGitChurn(taskNoBase, sessionRepo, usageHistoryRepo, 'r1', '/mock/project', 'release');
+    await flushAsync();
+    expect(mockGetChurnSummary).toHaveBeenLastCalledWith('release');
 
     // Falls back to "main" when both are null/undefined.
-    mockDiffSummary.mockClear();
-    await captureGitStats(taskNoBase, sessionRepo, usageHistoryRepo, 'r1', '/mock/project', undefined);
-    expect(mockDiffSummary).toHaveBeenLastCalledWith(['main...']);
+    mockGetChurnSummary.mockClear();
+    captureGitChurn(taskNoBase, sessionRepo, usageHistoryRepo, 'r1', '/mock/project', undefined);
+    await flushAsync();
+    expect(mockGetChurnSummary).toHaveBeenLastCalledWith('main');
   });
 
-  it('passes the diffSummary numbers through unchanged (no rounding/coercion)', async () => {
-    const { sessionRepo, usageHistoryRepo, sessionUpdateGitStats, historyUpdateGitStats } = makeRepos();
-    mockDiffSummary.mockResolvedValueOnce({ insertions: 0, deletions: 0, changed: 0 });
+  it('passes the diff numbers through unchanged (no rounding/coercion)', async () => {
+    mockGetChurnSummary.mockResolvedValueOnce({ linesAdded: 1, linesRemoved: 0, filesChanged: 1 });
+    const { sessionRepo, usageHistoryRepo, sessionSetTaskGitStats, historySetTaskGitStats } = makeRepos();
 
-    await captureGitStats(makeTask(), sessionRepo, usageHistoryRepo, 'record-zero', '/mock/project', 'main');
+    captureGitChurn(makeTask(), sessionRepo, usageHistoryRepo, 'record-x', '/mock/project', 'main');
+    await flushAsync();
 
-    const expectedStats = { linesAdded: 0, linesRemoved: 0, filesChanged: 0 };
-    expect(sessionUpdateGitStats).toHaveBeenCalledWith('record-zero', expectedStats);
-    expect(historyUpdateGitStats).toHaveBeenCalledWith('record-zero', expectedStats);
+    const expectedStats = { linesAdded: 1, linesRemoved: 0, filesChanged: 1 };
+    expect(sessionSetTaskGitStats).toHaveBeenCalledWith(['record-001'], 'record-x', expectedStats);
+    expect(historySetTaskGitStats).toHaveBeenCalledWith(['record-001'], 'record-x', expectedStats);
   });
 });
