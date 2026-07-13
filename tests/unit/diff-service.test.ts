@@ -22,12 +22,37 @@ vi.mock('node:fs', () => ({
   default: {
     promises: {
       readFile: vi.fn(),
+      stat: vi.fn(),
+      open: vi.fn(),
     },
   },
 }));
 
+// Isolates the offload-threshold decision (diff-service.ts) from the
+// worker's own behavior (covered separately in line-count-client.test.ts).
+const { mockCountFiles } = vi.hoisted(() => ({ mockCountFiles: vi.fn() }));
+
+vi.mock('../../src/main/git/line-count/line-count-client', () => ({
+  lineCountClient: { countFiles: mockCountFiles },
+}));
+
 import fs from 'node:fs';
+import path from 'node:path';
 import { DiffService } from '../../src/main/git/diff-service';
+
+/** Backs the countFileLines bounded stat+open read path (see
+ *  src/main/git/line-count/count-lines.ts) with a single in-memory buffer, so
+ *  an untracked-file test can simulate its content without touching disk. */
+function mockUntrackedFileContent(content: Buffer): void {
+  vi.mocked(fs.promises.stat).mockResolvedValue({ size: content.length } as never);
+  vi.mocked(fs.promises.open).mockResolvedValue({
+    read: vi.fn(async (buffer: Buffer, offset: number, length: number, position: number) => {
+      content.copy(buffer, offset, position, position + length);
+      return { bytesRead: length, buffer };
+    }),
+    close: vi.fn().mockResolvedValue(undefined),
+  } as never);
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -263,8 +288,8 @@ describe('DiffService', () => {
       ]));
       mockGit.diff.mockResolvedValue('M\tsrc/existing.ts\n');
       mockGit.status.mockResolvedValue({ not_added: ['src/brand-new.ts'] });
-      // Mock readFile to return a buffer with 3 lines (2 newlines + content after last)
-      vi.mocked(fs.promises.readFile).mockResolvedValue(Buffer.from('line1\nline2\nline3') as never);
+      // 3 lines (2 newlines + content after the last, unterminated line)
+      mockUntrackedFileContent(Buffer.from('line1\nline2\nline3'));
 
       const result = await service.getDiffFiles({
         projectPath: '/project',
@@ -289,7 +314,7 @@ describe('DiffService', () => {
       mockGit.status.mockResolvedValue({ not_added: ['image.png'] });
       // Buffer with a null byte in the first 8KB
       const binaryBuffer = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x00, 0x0A]);
-      vi.mocked(fs.promises.readFile).mockResolvedValue(binaryBuffer as never);
+      mockUntrackedFileContent(binaryBuffer);
 
       const result = await service.getDiffFiles({
         projectPath: '/project',
@@ -327,7 +352,7 @@ describe('DiffService', () => {
       mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
       mockGit.diff.mockResolvedValue('');
       mockGit.status.mockResolvedValue({ not_added: ['deleted-before-read.ts'] });
-      vi.mocked(fs.promises.readFile).mockRejectedValue(new Error('ENOENT'));
+      vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
 
       const result = await service.getDiffFiles({
         projectPath: '/project',
@@ -349,7 +374,7 @@ describe('DiffService', () => {
       mockGit.diff.mockResolvedValue('');
       mockGit.status.mockResolvedValue({ not_added: ['src/file.ts'] });
       // File with trailing newline: 2 lines
-      vi.mocked(fs.promises.readFile).mockResolvedValue(Buffer.from('line1\nline2\n') as never);
+      mockUntrackedFileContent(Buffer.from('line1\nline2\n'));
 
       const result = await service.getDiffFiles({
         projectPath: '/project',
@@ -357,6 +382,91 @@ describe('DiffService', () => {
       });
 
       expect(result.files[0].insertions).toBe(2);
+    });
+
+    describe('untracked line-count offload (UNTRACKED_OFFLOAD_THRESHOLD_BYTES)', () => {
+      it('delegates to the line-count worker, with joined absolute paths, when aggregate untracked bytes exceed the offload threshold', async () => {
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
+        mockGit.diff.mockResolvedValue('');
+        mockGit.status.mockResolvedValue({ not_added: ['big-file.bin'] });
+        // A single 3MB untracked file - aggregate (3MB) > the 2MB threshold.
+        vi.mocked(fs.promises.stat).mockResolvedValue({ size: 3 * 1024 * 1024 } as never);
+        const absolutePath = path.join('/project', 'big-file.bin');
+        mockCountFiles.mockResolvedValue([{ path: absolutePath, insertions: 42, binary: false }]);
+
+        await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+
+        expect(mockCountFiles).toHaveBeenCalledWith([absolutePath]);
+      });
+
+      it('does NOT delegate to the line-count worker when aggregate untracked bytes are under the offload threshold', async () => {
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
+        mockGit.diff.mockResolvedValue('');
+        mockGit.status.mockResolvedValue({ not_added: ['small-file.txt'] });
+        // A handful of bytes, well under the 2MB threshold.
+        mockUntrackedFileContent(Buffer.from('a\nb\n'));
+
+        await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+
+        expect(mockCountFiles).not.toHaveBeenCalled();
+      });
+
+      it('falls back to inline counting when the worker is unavailable (countFiles resolves null)', async () => {
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
+        mockGit.diff.mockResolvedValue('');
+        mockGit.status.mockResolvedValue({ not_added: ['big-file.bin'] });
+        // Force the offload branch (large reported size)...
+        vi.mocked(fs.promises.stat).mockResolvedValue({ size: 3 * 1024 * 1024 } as never);
+        // ...but the worker is unavailable (not spawned / crashed / timed out).
+        mockCountFiles.mockResolvedValue(null);
+        // The inline countFileLines fallback reads via fs.promises.open/read;
+        // only the actually-returned bytes are scanned regardless of the
+        // inflated stat() size above (see count-lines.test.ts's short-read
+        // coverage), so this content resolves deterministically to 3 lines.
+        const content = Buffer.from('line1\nline2\nline3\n');
+        vi.mocked(fs.promises.open).mockResolvedValue({
+          read: vi.fn(async (buffer: Buffer, offset: number, _length: number, position: number) => {
+            content.copy(buffer, offset, position, position + content.length);
+            return { bytesRead: content.length, buffer };
+          }),
+          close: vi.fn().mockResolvedValue(undefined),
+        } as never);
+
+        const result = await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+
+        // The offload was attempted (and declined the worker's result), then
+        // fell through to inline counting instead of losing the file.
+        expect(mockCountFiles).toHaveBeenCalled();
+        expect(result.files[0]).toEqual({
+          path: 'big-file.bin',
+          status: 'U',
+          insertions: 3,
+          deletions: 0,
+          binary: false,
+        });
+      });
+
+      it('maps worker results back to the original relative untracked paths by index, not by the entry.path field', async () => {
+        mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
+        mockGit.diff.mockResolvedValue('');
+        mockGit.status.mockResolvedValue({ not_added: ['src/big-one.bin', 'assets/big-two.bin'] });
+        // 2 files * 1.5MB = 3MB aggregate, over the 2MB threshold.
+        vi.mocked(fs.promises.stat).mockResolvedValue({ size: 1.5 * 1024 * 1024 } as never);
+        // Deliberately mismatched `path` fields on the worker's entries, so a
+        // regression that zips by entry.path (instead of untrackedPaths[index])
+        // would surface as a wrong path in the result.
+        mockCountFiles.mockResolvedValue([
+          { path: 'garbage-value-should-be-ignored-0', insertions: 10, binary: false },
+          { path: 'garbage-value-should-be-ignored-1', insertions: 0, binary: true },
+        ]);
+
+        const result = await service.getDiffFiles({ projectPath: '/project', baseBranch: 'main' });
+
+        expect(result.files).toEqual([
+          { path: 'src/big-one.bin', status: 'U', insertions: 10, deletions: 0, binary: false },
+          { path: 'assets/big-two.bin', status: 'U', insertions: 0, deletions: 0, binary: true },
+        ]);
+      });
     });
 
     it('skips malformed name-status lines', async () => {

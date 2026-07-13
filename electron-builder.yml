@@ -52,6 +52,7 @@ asarUnpack:
   - "node_modules/onnxruntime-node/**"
   - "node_modules/onnxruntime-web/**"
   - ".vite/build/embed-worker.js"
+  - ".vite/build/line-count-worker.js"
   - ".vite/build/event-bridge.js"
   - ".vite/build/status-bridge.js"
   - ".vite/build/plugins/**"

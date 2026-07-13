@@ -32,6 +32,7 @@ import { loadReactDevTools } from './devtools';
 import { syncShutdownCleanup, startHardShutdownFailsafe } from './shutdown';
 import { prRefreshScheduler } from './pr/pr-refresh-scheduler';
 import { retrievalService } from './retrieval/retrieval-service';
+import { lineCountClient } from './git/line-count/line-count-client';
 import { setProjectDbInitializer } from './db/database';
 import { loadVecExtension } from './retrieval/vec-extension';
 import { restoreShellEnv } from './shell-env';
@@ -1027,6 +1028,9 @@ function getShutdownDependencies() {
       // Stop conversation-memory indexing synchronously: drop pending finalize
       // timers and abandon any in-flight sweep (recovered on next open).
       retrievalService.dispose();
+      // Synchronously kill the line-count worker (if spawned); in-flight
+      // counts abandon and their callers fall back to inline counting.
+      lineCountClient.dispose();
       // Stop accepting new MCP requests synchronously. The server's close()
       // is non-blocking; in-flight requests are abandoned, which is fine
       // because they're idempotent (the agent will retry on reconnect or

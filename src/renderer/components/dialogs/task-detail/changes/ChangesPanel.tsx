@@ -185,7 +185,22 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // the restore effect and suppress error display during live updates.
   const initialFetchDoneRef = useRef(false);
 
+  // Guards against overlapping diffFiles fetches. A rapid string of fs.watch
+  // fires (e.g. an agent writing many files in a burst) would otherwise queue
+  // multiple concurrent git subprocess calls whose responses can resolve out
+  // of order. While a fetch is in flight, a new call just marks a pending
+  // re-fetch and returns; the pending fetch runs once the in-flight one
+  // completes, through fetchFilesRef so it always picks up the latest
+  // scope/selection rather than the params captured when it was queued.
+  const filesFetchInFlightRef = useRef(false);
+  const filesFetchPendingRef = useRef(false);
+
   const fetchFiles = useCallback(async () => {
+    if (filesFetchInFlightRef.current) {
+      filesFetchPendingRef.current = true;
+      return;
+    }
+    filesFetchInFlightRef.current = true;
     try {
       if (!initialFetchDoneRef.current) {
         setError(null);
@@ -200,6 +215,12 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       setFiles(result.files);
       setTotalInsertions(result.totalInsertions);
       setTotalDeletions(result.totalDeletions);
+      // A working-scope, no-commit-selected fetch is exactly the query
+      // fetchUncommittedCount would make - derive the badge count here so the
+      // watcher cascade doesn't fire a second diffFiles call for it.
+      if (!changesSelectedCommit && scope === 'working') {
+        setUncommittedFileCount(result.files.length);
+      }
       initialFetchDoneRef.current = true;
       setLoaded(true);
     } catch (fetchError) {
@@ -207,6 +228,12 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       // updates (e.g. git lock contention) are silently ignored.
       if (!initialFetchDoneRef.current) {
         setError(fetchError instanceof Error ? fetchError.message : 'Failed to load diff');
+      }
+    } finally {
+      filesFetchInFlightRef.current = false;
+      if (filesFetchPendingRef.current) {
+        filesFetchPendingRef.current = false;
+        void fetchFilesRef.current();
       }
     }
   }, [worktreePath, projectPath, baseBranch, scope, changesSelectedCommit]);
@@ -314,13 +341,23 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // re-subscribe on every commit-selection change (see that effect's comment).
   const selectedCommitRef = useRef(changesSelectedCommit);
   selectedCommitRef.current = changesSelectedCommit;
+  // Scope ref for the same subscription effect, to decide whether fetchFiles's
+  // result already covers the Uncommitted-row count (see onDiffChanged below).
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
 
   // Fetch file list + branch context + the Uncommitted-row count on mount, and
   // re-fetch whenever the scope, base branch, or commit selection changes.
   useEffect(() => {
     fetchFilesRef.current();
     fetchBranchSummaryRef.current();
-    fetchUncommittedCountRef.current();
+    // fetchFiles already derives uncommittedFileCount for a working-scope,
+    // no-commit fetch (see its body), so firing the separate query too would be
+    // a second, redundant diffFiles call. Only fire it for the cases fetchFiles
+    // doesn't cover, mirroring the onDiffChanged watcher guard below.
+    if (changesSelectedCommit || scope !== 'working') {
+      fetchUncommittedCountRef.current();
+    }
   }, [worktreePath, projectPath, baseBranch, scope, changesSelectedCommit]);
 
   // Restore content for the persisted selected file after files load.
@@ -378,15 +415,23 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       // Entries are not deleted - they're served immediately as stale-while-revalidate.
       cacheGenerationRef.current += 1;
       fetchBranchSummaryRef.current();
-      fetchUncommittedCountRef.current();
       // A selected commit's diff is immutable - skip the file/content refetch
       // while browsing one; only the Uncommitted (working-diff) detail needs it.
       if (!selectedCommitRef.current) {
         fetchFilesRef.current();
+        // When scope is 'working', the fetchFiles call above already derives
+        // uncommittedFileCount from its own result - firing this too would be
+        // a second, redundant diffFiles call on every watcher fire. Any other
+        // scope needs the separate working-scope query.
+        if (scopeRef.current !== 'working') {
+          fetchUncommittedCountRef.current();
+        }
         const currentFile = selectedFileRef.current;
         if (currentFile) {
           fetchFileContentRef.current(currentFile);
         }
+      } else {
+        fetchUncommittedCountRef.current();
       }
     });
 

@@ -2,6 +2,16 @@ import simpleGit from 'simple-git';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { GitDiffFilesInput, GitDiffFilesResult, GitDiffFileEntry, GitDiffScope, GitDiffStatus, GitFileContentInput, GitFileContentResult } from '../../shared/types';
+import { countFileLines } from './line-count/count-lines';
+import { lineCountClient } from './line-count/line-count-client';
+
+/** Above this combined untracked-file byte size, counting is delegated to the
+ *  line-count utilityProcess worker instead of running inline, so a large or
+ *  numerous untracked tree (an untracked `resources/`, a generated bundle)
+ *  never runs its byte-scan on the main event loop (which owns
+ *  better-sqlite3, the PTYs, and IPC). Below it, counting inline is cheap
+ *  enough that the worker's IPC round-trip would only add latency. */
+const UNTRACKED_OFFLOAD_THRESHOLD_BYTES = 2 * 1024 * 1024;
 
 const EXTENSION_LANGUAGE_MAP: Record<string, string> = {
   '.ts': 'typescript', '.tsx': 'typescript', '.mts': 'typescript', '.cts': 'typescript',
@@ -243,33 +253,7 @@ export class DiffService {
       ? gitStatus.not_added.filter((filePath) => !trackedPaths.has(filePath))
       : [];
 
-    const untrackedEntries = await Promise.all(
-      untrackedPaths.map(async (filePath): Promise<GitDiffFileEntry> => {
-        const absolutePath = path.join(this.gitDirectory, filePath);
-        try {
-          const buffer = await fs.promises.readFile(absolutePath);
-          // Binary detection: check first 8KB for null bytes (same heuristic as git)
-          const checkLength = Math.min(buffer.length, 8192);
-          let isBinary = false;
-          for (let index = 0; index < checkLength; index++) {
-            if (buffer[index] === 0) { isBinary = true; break; }
-          }
-          // Count newline bytes directly on the buffer to avoid a full string allocation.
-          // Add 1 for the last line if the file doesn't end with a newline.
-          let insertions = 0;
-          if (!isBinary) {
-            for (let index = 0; index < buffer.length; index++) {
-              if (buffer[index] === 0x0A) insertions++;
-            }
-            if (buffer.length > 0 && buffer[buffer.length - 1] !== 0x0A) insertions++;
-          }
-          return { path: filePath, status: 'U', insertions, deletions: 0, binary: isBinary };
-        } catch {
-          // File may have been deleted between status and read
-          return { path: filePath, status: 'U', insertions: 0, deletions: 0, binary: false };
-        }
-      }),
-    );
+    const untrackedEntries = await this.countUntrackedEntries(untrackedPaths);
 
     files.push(...untrackedEntries);
     const untrackedInsertions = untrackedEntries.reduce((sum, entry) => sum + entry.insertions, 0);
@@ -279,6 +263,58 @@ export class DiffService {
       totalInsertions: summary.insertions + untrackedInsertions,
       totalDeletions: summary.deletions,
     };
+  }
+
+  /**
+   * Counts inserted lines (and detects binary content) for every untracked
+   * path relative to `gitDirectory`. Small untracked sets are counted inline
+   * (cheap enough that a worker round-trip would only add latency); once the
+   * aggregate size crosses UNTRACKED_OFFLOAD_THRESHOLD_BYTES, the batch is
+   * delegated to the line-count worker so the scan never runs on the main
+   * event loop. Falls back to inline counting if the worker is unavailable.
+   */
+  private async countUntrackedEntries(untrackedPaths: string[]): Promise<GitDiffFileEntry[]> {
+    if (untrackedPaths.length === 0) return [];
+
+    const absolutePaths = untrackedPaths.map((filePath) => path.join(this.gitDirectory, filePath));
+    const sizes = await Promise.all(
+      absolutePaths.map(async (absolutePath) => {
+        try {
+          const stats = await fs.promises.stat(absolutePath);
+          return stats.size;
+        } catch {
+          return 0;
+        }
+      }),
+    );
+    const aggregateBytes = sizes.reduce((sum, size) => sum + size, 0);
+
+    if (aggregateBytes > UNTRACKED_OFFLOAD_THRESHOLD_BYTES) {
+      const workerEntries = await lineCountClient.countFiles(absolutePaths);
+      if (workerEntries) {
+        return workerEntries.map((entry, index) => ({
+          path: untrackedPaths[index],
+          status: 'U' as const,
+          insertions: entry.insertions,
+          deletions: 0,
+          binary: entry.binary,
+        }));
+      }
+      // Worker unavailable (not spawned, crashed, timed out) - fall through
+      // to inline counting so the diff still resolves.
+    }
+
+    return Promise.all(
+      untrackedPaths.map(async (filePath, index): Promise<GitDiffFileEntry> => {
+        try {
+          const result = await countFileLines(absolutePaths[index]);
+          return { path: filePath, status: 'U', insertions: result.insertions, deletions: 0, binary: result.binary };
+        } catch {
+          // File may have been deleted between status and read
+          return { path: filePath, status: 'U', insertions: 0, deletions: 0, binary: false };
+        }
+      }),
+    );
   }
 
   /**

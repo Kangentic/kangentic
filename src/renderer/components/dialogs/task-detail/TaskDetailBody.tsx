@@ -1,4 +1,4 @@
-import { Suspense, lazy, useRef } from 'react';
+import { Suspense, lazy, useEffect, useRef } from 'react';
 import { Loader2, Play, RotateCcw } from 'lucide-react';
 import { TerminalTab } from '../../terminal/TerminalTab';
 import { ContextBar } from '../../terminal/ContextBar';
@@ -20,8 +20,45 @@ import { useSessionStore } from '../../../stores/session-store';
 import { useTaskSplitResize } from '../../../hooks/useTaskSplitResize';
 import { PanelErrorBoundary } from '../../PanelErrorBoundary';
 import { usePopOut } from '../../../pop-out/usePopOut';
+import { onIdle } from '../../../utils/on-idle';
 
 const ChangesPanel = lazy(() => import('./changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
+
+// hmr-safe: reset-on-HMR just re-fires the already-resolved dynamic import below - resolves instantly from the module cache (a no-op unless ChangesPanel's own module graph also changed in the same HMR batch).
+let hasWarmedChangesPanel = false;
+
+/** Warm the Changes panel's lazy chunk (and its Monaco module graph) once per
+ *  session, off the interaction path, so the first real Changes open never
+ *  pays for the synchronous monaco-editor parse/eval on the click. Idle-time
+ *  only: never competes with an in-flight task-detail interaction. */
+function warmChangesPanelOnIdle(): void {
+  if (hasWarmedChangesPanel) return;
+  hasWarmedChangesPanel = true;
+  onIdle(() => {
+    void import('./changes/ChangesPanel');
+  });
+}
+
+/** Suspense fallback for the lazy ChangesPanel chunk: a two-pane shell
+ *  (file rail + diff area) that mirrors the panel's real layout, so a cold
+ *  open (chunk not yet warmed) paints instantly instead of a bare spinner
+ *  that gives no sense of what's loading. */
+function ChangesPanelSkeleton() {
+  return (
+    <div className="flex h-full" data-testid="changes-panel-skeleton">
+      <div className="w-[220px] flex-shrink-0 border-r border-edge p-2 space-y-1.5">
+        {Array.from({ length: 6 }, (_, index) => (
+          <div key={index} className="h-4 rounded bg-surface-hover animate-pulse" style={{ opacity: 1 - index * 0.1 }} />
+        ))}
+      </div>
+      <div className="flex-1 min-w-0 p-3 space-y-2">
+        {Array.from({ length: 10 }, (_, index) => (
+          <div key={index} className="h-3.5 rounded bg-surface-hover animate-pulse" style={{ width: `${60 + (index * 13) % 35}%` }} />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 interface TaskDetailBodyProps {
   task: Task;
@@ -95,6 +132,11 @@ export function TaskDetailBody({
   const splitContainerRef = useRef<HTMLDivElement>(null);
   const { ratio: splitRatio, isResizing: isSplitResizing, onResizeStart: onSplitResizeStart } =
     useTaskSplitResize(task.id, splitContainerRef);
+  // Warm the Changes panel's chunk as soon as a task detail is open, so a later
+  // click into Changes resolves the lazy import instantly.
+  useEffect(() => {
+    warmChangesPanelOnIdle();
+  }, []);
   // The right panel (Changes diff / Browser) opens and closes instantly, like a
   // split pane in VS Code / JetBrains. Opening it reflows the split - the
   // terminal resizes and re-fits its canvas - and an entrance animation only
@@ -191,13 +233,7 @@ export function TaskDetailBody({
 
   const changesContent = (
     <PanelErrorBoundary label="Changes panel">
-      <Suspense
-        fallback={
-          <div className="flex items-center justify-center h-full">
-            <Loader2 size={20} className="animate-spin text-fg-muted" />
-          </div>
-        }
-      >
+      <Suspense fallback={<ChangesPanelSkeleton />}>
         <ChangesPanel
           entityId={task.id}
           isFocused={isFocused}

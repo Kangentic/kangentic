@@ -214,9 +214,16 @@ async function start() {
       entryPoints: [path.join(projectDir, 'src/main/retrieval/embedder/embed-worker.ts')],
       outfile: path.join(projectDir, '.vite/build/embed-worker.js'),
     }),
+    // Untracked-file line-count worker (Electron utilityProcess entry), same
+    // dev-parity reasoning as the embed worker above.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/git/line-count/line-count-worker.ts')],
+      outfile: path.join(projectDir, '.vite/build/line-count-worker.js'),
+    }),
   ]);
   console.timeEnd('[dev] esbuild');
-  console.log('[dev] Main + preload + embed worker built');
+  console.log('[dev] Main + preload + embed worker + line-count worker built');
 
   // Copy external scripts (bridges + adapter plugins) next to the bundle, the
   // same step scripts/build.js runs. Without this, dev runs whatever stale copy

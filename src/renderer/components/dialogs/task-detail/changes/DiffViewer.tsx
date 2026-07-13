@@ -16,6 +16,7 @@ import {
   saveDiffScroll,
 } from '../../../../utils/diff-scroll-memory';
 import { copyDiffSelection } from '../../../../utils/diff-clipboard';
+import { selectDiffAlgorithmOptions } from './diff-render-options';
 
 interface DiffViewerProps {
   original: string;
@@ -182,15 +183,17 @@ export function DiffViewer({
 
   // Live diff-rendering options derived from the global config. ignoreTrimWhitespace
   // is a diff-COMPUTATION option, so it applies when the diff loads. The diff
-  // algorithm is fixed to 'advanced' (Monaco's modern word-level diff, always on -
-  // there is no meaningful on/off toggle for it). hideUnchangedRegions is a
-  // VIEW-fold option handled separately (see applyCollapseFold): Monaco only folds
-  // on a false->true transition, so passing it as a construction option that
+  // algorithm defaults to 'advanced' (Monaco's modern word-level diff) but drops to
+  // the cheaper 'legacy' line diff with a bounded computation time for a large diff
+  // (see selectDiffAlgorithmOptions) so a huge file resolves faster instead of
+  // paying for the full word-level diff. hideUnchangedRegions is a VIEW-fold option
+  // handled separately (see applyCollapseFold): Monaco only folds on a
+  // false->true transition, so passing it as a construction option that
   // @monaco-editor/react re-applies on every render never folds a diff that loads
   // while collapse is already on.
   const diffRenderOptions = {
     ignoreTrimWhitespace: ignoreWhitespace,
-    diffAlgorithm: 'advanced' as const,
+    ...selectDiffAlgorithmOptions(original.length, modified.length),
   };
 
   const collapseUnchangedRef = useRef(collapseUnchanged);

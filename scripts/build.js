@@ -86,8 +86,16 @@ async function build() {
       entryPoints: [path.join(projectDir, 'src/main/retrieval/embedder/embed-worker.ts')],
       outfile: path.join(projectDir, '.vite/build/embed-worker.js'),
     }),
+    // The untracked-file line-count worker also runs in an Electron
+    // utilityProcess (see src/main/git/line-count/line-count-client.ts), so
+    // it is bundled as its own entry next to the main bundle.
+    esbuild.build({
+      ...esbuildCommon,
+      entryPoints: [path.join(projectDir, 'src/main/git/line-count/line-count-worker.ts')],
+      outfile: path.join(projectDir, '.vite/build/line-count-worker.js'),
+    }),
   ]);
-  console.log('[build] Main + preload + embed worker built');
+  console.log('[build] Main + preload + embed worker + line-count worker built');
 
   // Copy external scripts (bridges + adapter plugins) that run outside the
   // esbuild bundle as raw .js/.mjs and must sit next to the bundle. The copy
