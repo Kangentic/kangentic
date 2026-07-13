@@ -243,6 +243,64 @@ test.describe('usage dashboard', () => {
     }
   });
 
+  test('per-project table Files column renders each project\'s summed filesChanged value', async () => {
+    // Bug #2 of the usage-dashboard fix: per-project filesChanged was never
+    // summed/displayed. The default fixture's cost-sort keeps "Mock Project"
+    // first; its Files cell (column index 7: project, tokensIn, tokensOut,
+    // cost, costShare, blendedRate, lines, files) must show the fixture's
+    // filesChanged value, not a defensive-fallback 0.
+    const { browser, page } = await launchWithState(twoProjectPreConfig());
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+      await page.locator('[data-testid="stats-scope-trigger"]').click();
+      await page.locator('[data-testid="stats-scope-option-all"]').click();
+      await expect(page.locator('[data-testid="per-project-table"]')).toBeVisible({ timeout: 10000 });
+
+      const firstRow = page.locator('[data-testid="per-project-row"]').first();
+      await expect(firstRow).toContainText('Mock Project');
+      await expect(firstRow.locator('td').nth(7)).toHaveText('47');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the Sessions tile shows "N active now" for live running/queued sessions scoped to the current project', async () => {
+    // Bug #3 of the usage-dashboard fix: live (in-flight) sessions were
+    // undercounted in the SESSIONS KPI. The merge into `kpis.sessionCount`
+    // itself is server-side and unit-tested (usage-stats-service.test.ts);
+    // this proves the renderer's own remaining piece, the cosmetic "N active
+    // now" subtitle on the Sessions tile, correctly counts a live session
+    // scoped to the open project.
+    const liveSessionPreConfig = `${twoProjectPreConfig()}
+      window.__mockPreConfigure(function (state) {
+        state.sessions.push({
+          id: 'live-session-usage-1',
+          taskId: 'task-live-usage-1',
+          projectId: '${PROJECT_A}',
+          pid: 4242,
+          status: 'running',
+          shell: 'bash',
+          cwd: '/mock/usage-a',
+          startedAt: new Date().toISOString(),
+          exitCode: null,
+          resuming: false,
+          isolatedSwimlaneId: null,
+          agentSessionId: null,
+        });
+      });
+    `;
+    const { browser, page } = await launchWithState(liveSessionPreConfig);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await openDashboard(page);
+
+      await expect(page.locator('[data-testid="kpi-sessions"]')).toContainText('1 active now', { timeout: 10000 });
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('the custom month-window picker applies a bounded range, survives scope cycling, and clears via the period pills', async () => {
     const { browser, page } = await launchWithState(twoProjectPreConfig());
     try {

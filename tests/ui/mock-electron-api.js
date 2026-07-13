@@ -1674,8 +1674,8 @@
           ],
           perProject: scope.kind === 'all'
             ? [
-                { projectId: 'mock-project-1', projectName: 'Mock Project', inputTokens: 100000, outputTokens: 30000, costUsd: 9.0, sessionCount: 5, toolCallCount: 220, linesAdded: 900, linesRemoved: 250, totalDurationMs: 3 * hourMs, lastActiveMs: nowMs - hourMs, topAgent: 'claude' },
-                { projectId: 'mock-project-2', projectName: 'Other Project', inputTokens: 50000, outputTokens: 12000, costUsd: 3.34, sessionCount: 2, toolCallCount: 95, linesAdded: 300, linesRemoved: 90, totalDurationMs: hourMs, lastActiveMs: nowMs - 26 * hourMs, topAgent: 'codex' },
+                { projectId: 'mock-project-1', projectName: 'Mock Project', inputTokens: 100000, outputTokens: 30000, costUsd: 9.0, sessionCount: 5, toolCallCount: 220, linesAdded: 900, linesRemoved: 250, filesChanged: 47, totalDurationMs: 3 * hourMs, lastActiveMs: nowMs - hourMs, topAgent: 'claude' },
+                { projectId: 'mock-project-2', projectName: 'Other Project', inputTokens: 50000, outputTokens: 12000, costUsd: 3.34, sessionCount: 2, toolCallCount: 95, linesAdded: 300, linesRemoved: 90, filesChanged: 12, totalDurationMs: hourMs, lastActiveMs: nowMs - 26 * hourMs, topAgent: 'codex' },
               ]
             : undefined,
         };

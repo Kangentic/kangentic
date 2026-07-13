@@ -160,7 +160,16 @@ function makeContext(sessionSuspend: ReturnType<typeof vi.fn> = vi.fn(async () =
       suspend: sessionSuspend,
       getSession: vi.fn(() => null),
     },
-    configManager: { getEffectiveConfig: vi.fn(() => ({ agent: { permissionMode: 'acceptEdits' } })) },
+    configManager: {
+      getEffectiveConfig: vi.fn(() => ({
+        agent: { permissionMode: 'acceptEdits' },
+        git: { defaultBaseBranch: 'main' },
+      })),
+    },
+    // applySuspendDbWrites resolves the churn-capture base branch via
+    // resolveDefaultBaseBranch(context, projectPath), which reads
+    // boardConfigManager before falling back to configManager's git default.
+    boardConfigManager: { getDefaultBaseBranch: vi.fn(() => null) },
     terminalSubmitScheduler: { cancel: vi.fn(), scheduleKeystrokes: vi.fn() },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     projectRepo: { getById: vi.fn(() => ({ id: PROJECT_ID, default_agent: 'claude', default_model: null, default_effort: null })) },
