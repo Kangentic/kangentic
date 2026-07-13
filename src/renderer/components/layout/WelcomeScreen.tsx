@@ -3,7 +3,7 @@ import { FolderOpen, FileText, GitBranch, Terminal, CheckCircle, CircleAlert, Co
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { agentInstallUrl, agentLoginCommand } from '../../utils/agent-display-name';
-import logoSrc from '@kangentic/branding/assets/brandmark-small.svg?url';
+import { BrandMark } from '../BrandMark';
 
 /** Reusable detection card used for both Git and agent entries */
 function DetectionCard({ name, testId, found, version, installUrl, loading, authenticated, loginCommand }: {
@@ -153,7 +153,7 @@ export function WelcomeScreen() {
     <div className="flex-1 flex justify-center items-start pt-[12vh] text-fg-faint overflow-y-auto">
       <div className="text-center max-w-md">
         <div className="flex items-center justify-center gap-2.5 mb-1">
-          <img src={logoSrc} alt="" className="w-9 h-9" />
+          <BrandMark className="w-9 h-9 text-fg" />
           <span className="text-3xl font-bold text-fg leading-none">Kangentic</span>
           {appVersion && <span className="text-xs text-fg-faint/50 self-end mb-0.5">v{appVersion}</span>}
         </div>

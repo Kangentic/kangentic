@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { ListPlus, ArrowRightLeft, Eye, Lightbulb } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
-import logoSrc from '@kangentic/branding/assets/brandmark-small.svg?url';
+import { BrandMark } from '../BrandMark';
 
 const DISPLAY_DURATION_MS = 15000;
 const FADE_DURATION_MS = 500;
@@ -118,7 +118,7 @@ export function WelcomeOverlay() {
         <div className="px-12 pt-10 pb-8 text-center">
           {/* Logo */}
           <div className="flex justify-center mb-4">
-            <img src={logoSrc} alt="" className="w-10 h-10" />
+            <BrandMark className="w-10 h-10 text-fg" />
           </div>
 
           <h2 className="text-2xl font-bold text-fg mb-1.5">

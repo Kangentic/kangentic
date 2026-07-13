@@ -4,12 +4,23 @@ import { App } from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { readPopOutDescriptor } from './pop-out/read-descriptor';
 import { PopOutSurfaceRoot } from './pop-out/PopOutSurfaceRoot';
+import faviconHref from '@kangentic/branding/assets/brandmark-small.svg?url';
 import './index.css';
 
 window.addEventListener('unhandledrejection', (event) => {
   const message = event.reason instanceof Error ? event.reason.message : String(event.reason);
   window.electronAPI?.analytics?.trackRendererError(message);
 });
+
+// Dev-server tab / devtools favicon (the packaged app icon is the native BrowserWindow icon,
+// unaffected). `?url` so Vite hashes it into the build graph and it resolves in both dev and prod.
+if (!document.querySelector('link[rel="icon"]')) {
+  const iconLink = document.createElement('link');
+  iconLink.rel = 'icon';
+  iconLink.type = 'image/svg+xml';
+  iconLink.href = faviconHref;
+  document.head.appendChild(iconLink);
+}
 
 // A pop-out window (usage stats, git changes, the Browser pane) carries a surface
 // descriptor via additionalArguments / URL hash; mount its minimal root instead of

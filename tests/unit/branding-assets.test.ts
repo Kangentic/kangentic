@@ -12,8 +12,13 @@ const REPO_ROOT = path.resolve(__dirname, '../..');
 const BRANDING_ROOT = path.join(REPO_ROOT, 'node_modules', '@kangentic', 'branding');
 const DESKTOP_ASSETS_DIR = path.join(BRANDING_ROOT, 'resources', 'desktop');
 const REQUIRED_DESKTOP_ICONS = ['icon.ico', 'icon.icns', 'icon.png'];
-const IN_APP_LOGO_ASSET = path.join(BRANDING_ROOT, 'assets', 'brandmark-small.svg');
-const IN_APP_LOGO_IMPORTERS = [
+const FAVICON_ASSET = path.join(BRANDING_ROOT, 'assets', 'brandmark-small.svg');
+const THEMED_MARK_ASSETS = [
+  path.join(BRANDING_ROOT, 'assets', 'brandmark-mono.svg'),
+  path.join(BRANDING_ROOT, 'assets', 'brandmark-mono-amber.svg'),
+];
+const BRAND_MARK_COMPONENT = 'src/renderer/components/BrandMark.tsx';
+const BRAND_MARK_IMPORTERS = [
   'src/renderer/components/layout/TitleBar.tsx',
   'src/renderer/components/layout/WelcomeScreen.tsx',
   'src/renderer/components/board/WelcomeOverlay.tsx',
@@ -121,18 +126,38 @@ describe('@kangentic/branding desktop assets', () => {
     expect(windowUtilsSource.includes("'@kangentic'") && windowUtilsSource.includes("'branding'")).toBe(true);
   });
 
-  it('ships the in-app nav/header mark and every renderer importer references it', () => {
+  it('ships the dev-server favicon asset and index.tsx references it', () => {
     expect(
-      fs.existsSync(IN_APP_LOGO_ASSET),
-      '@kangentic/branding is missing assets/brandmark-small.svg (the documented in-app nav/header mark)',
+      fs.existsSync(FAVICON_ASSET),
+      '@kangentic/branding is missing assets/brandmark-small.svg (the documented dev-server favicon source)',
     ).toBe(true);
-    const notReferencing = IN_APP_LOGO_IMPORTERS.filter((relativePath) => {
+    const indexSource = fs.readFileSync(path.join(REPO_ROOT, 'src/renderer/index.tsx'), 'utf-8');
+    expect(
+      indexSource.includes('@kangentic/branding/assets/brandmark-small.svg'),
+      'src/renderer/index.tsx should import the favicon from @kangentic/branding, not a local asset',
+    ).toBe(true);
+  });
+
+  it('ships the themed in-app mark and BrandMark and its importers reference it', () => {
+    const missing = THEMED_MARK_ASSETS.filter((assetPath) => !fs.existsSync(assetPath));
+    expect(
+      missing,
+      `@kangentic/branding is missing themed brandmark assets:\n${missing.join('\n')}`,
+    ).toEqual([]);
+
+    const brandMarkSource = fs.readFileSync(path.join(REPO_ROOT, BRAND_MARK_COMPONENT), 'utf-8');
+    expect(
+      brandMarkSource.includes('@kangentic/branding/assets/brandmark-mono-amber.svg'),
+      `${BRAND_MARK_COMPONENT} should import the theme-tinting brandmark from @kangentic/branding`,
+    ).toBe(true);
+
+    const notReferencing = BRAND_MARK_IMPORTERS.filter((relativePath) => {
       const source = fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf-8');
-      return !source.includes('@kangentic/branding/assets/brandmark-small.svg');
+      return !source.includes('BrandMark');
     });
     expect(
       notReferencing,
-      `These renderer files should import the brandmark from @kangentic/branding, not a local asset:\n${notReferencing.join('\n')}`,
+      `These renderer files should render the shared BrandMark component:\n${notReferencing.join('\n')}`,
     ).toEqual([]);
   });
 });

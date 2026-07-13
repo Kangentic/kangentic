@@ -10,7 +10,7 @@ import { selectCurrentProjectTransientSessionIds } from '../../stores/session-st
 import { isWorktreePath } from '../../../shared/git-utils';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { useFormattedCombo } from '../../hooks/useKeybinding';
-import logoSrc from '@kangentic/branding/assets/brandmark-small.svg?url';
+import { BrandMark } from '../BrandMark';
 
 const isMac = window.electronAPI.platform === 'darwin';
 
@@ -177,7 +177,7 @@ export function TitleBar({
          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
       {/* Branding -- logo + app name */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        <img src={logoSrc} alt="Kangentic" className="w-5 h-5" />
+        <BrandMark className="w-5 h-5 text-fg-secondary" />
         <span className="text-sm font-semibold text-fg-secondary">Kangentic</span>
         {/*
           Dev-only (preview): the original task's title after the wordmark, in a muted
