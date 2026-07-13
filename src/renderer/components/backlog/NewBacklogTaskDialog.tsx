@@ -49,7 +49,6 @@ interface NewBacklogTaskDialogProps {
 
 // Non-task sentinel key for the maximize toggle (the backlog dialog has no task
 // row). One key covers both create and edit-backlog modes; it is one surface.
-// Mirrors CommandBarOverlay's COMMAND_TERMINAL_ENTITY_ID precedent.
 const NEW_BACKLOG_TASK_ENTITY_ID = 'new-backlog-task-dialog';
 
 export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate }: NewBacklogTaskDialogProps) {

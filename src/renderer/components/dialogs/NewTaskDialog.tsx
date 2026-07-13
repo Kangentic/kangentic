@@ -39,8 +39,7 @@ interface NewTaskDialogProps {
 }
 
 // Non-task sentinel key for the maximize toggle (the create dialog has no task
-// yet). Mirrors CommandBarOverlay's COMMAND_TERMINAL_ENTITY_ID precedent so the
-// flag lives in the same `maximizedTasks` store set and survives HMR.
+// yet), so the flag lives in the same `maximizedTasks` store set and survives HMR.
 const NEW_TASK_ENTITY_ID = 'new-task-dialog';
 
 export function NewTaskDialog({ swimlaneId, onClose }: NewTaskDialogProps) {

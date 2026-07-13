@@ -18,7 +18,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('../../src/renderer/stores/project-store', () => ({
   useProjectStore: { getState: () => ({ currentProject: null }) },
 }));
-import { createTaskChangesPanelSlice } from '../../src/renderer/stores/session-store/task-changes-panel-slice';
+import { createTaskChangesPanelSlice, commandTerminalChangesEntityId } from '../../src/renderer/stores/session-store/task-changes-panel-slice';
 import type { TaskChangesPanelSlice } from '../../src/renderer/stores/session-store/task-changes-panel-slice';
 
 // ---------------------------------------------------------------------------
@@ -103,6 +103,29 @@ describe('toggleBrowserOpen', () => {
   it('starts with an empty browserOpenTasks set', () => {
     const { getState } = createTestStore();
     expect(getState().browserOpenTasks.size).toBe(0);
+  });
+
+  it('toggles changesOpenTasks independently per Command Terminal window slot id', () => {
+    // Guards against the bug where every Command Terminal window shared one
+    // 'command-terminal' entity id: toggling one window's Changes pill opened
+    // every window's panel. Each window now derives its own id via
+    // commandTerminalChangesEntityId(slot), so they must toggle independently,
+    // like any other pair of entity ids.
+    const { actions, getState } = createTestStore();
+    const slotOneEntityId = commandTerminalChangesEntityId('slot-1');
+    const slotTwoEntityId = commandTerminalChangesEntityId('slot-2');
+
+    actions.toggleChangesOpen(slotOneEntityId);
+    expect(getState().changesOpenTasks.has(slotOneEntityId)).toBe(true);
+    expect(getState().changesOpenTasks.has(slotTwoEntityId)).toBe(false);
+
+    actions.toggleChangesOpen(slotTwoEntityId);
+    expect(getState().changesOpenTasks.has(slotOneEntityId)).toBe(true);
+    expect(getState().changesOpenTasks.has(slotTwoEntityId)).toBe(true);
+
+    actions.toggleChangesOpen(slotOneEntityId);
+    expect(getState().changesOpenTasks.has(slotOneEntityId)).toBe(false);
+    expect(getState().changesOpenTasks.has(slotTwoEntityId)).toBe(true);
   });
 });
 

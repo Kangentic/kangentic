@@ -2,12 +2,13 @@ import { Maximize2, Minimize2 } from 'lucide-react';
 import { useFormattedCombo } from '../../hooks/useKeybinding';
 
 /**
- * Shared layout + control for the dialog maximize toggle (#184). Used by the
- * Task Detail dialog (view and edit modes) and the create dialogs (New Task,
- * New Backlog Task). Maximize state is tracked in the session store's
- * `maximizedTasks` set, keyed by task id for the detail dialog and by a
- * non-task sentinel id for the create dialogs (mirroring the command
- * terminal's `COMMAND_TERMINAL_ENTITY_ID`).
+ * Shared layout + toggle button for maximizable surfaces (#184).
+ * `MaximizeToggleButton` is the generic control (used by the task-detail and
+ * conversation windows, the window title bar, and the sentinel dialogs below).
+ * `maximizedDialogLayout` pairs with the session store's `maximizedTasks` set,
+ * which is keyed by a non-task sentinel id and holds only the create dialogs
+ * (New Task, New Backlog Task) and the Edit Columns dialog. (The task-detail and
+ * Command Terminal windows maximize through the window manager, not this set.)
  */
 
 export interface MaximizedDialogLayout {

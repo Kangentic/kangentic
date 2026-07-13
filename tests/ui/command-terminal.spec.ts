@@ -492,6 +492,35 @@ async function activeProjectId(page: Page): Promise<string | null> {
   });
 }
 
+/** Command-terminal window ids in the singleton store, keyed by slot anchor. Lets
+ *  a test scope a Playwright locator to one specific window's WindowFrame
+ *  (`data-testid="window-frame-<id>"`) when two windows are open side by side. */
+async function commandWindowIdBySlot(page: Page): Promise<Record<string, string>> {
+  return page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores?: { commandWindow?: { getState: () => { windows: Record<string, { anchor: string }> } } };
+    }).__zustandStores;
+    const windows = stores?.commandWindow?.getState().windows ?? {};
+    const bySlot: Record<string, string> = {};
+    for (const [id, managedWindow] of Object.entries(windows)) {
+      bySlot[managedWindow.anchor] = id;
+    }
+    return bySlot;
+  });
+}
+
+/** The Changes-panel entity ids currently marked open in the session store
+ *  (`changesOpenTasks`), as a plain array for assertion. */
+async function changesOpenEntityIds(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores?: { session?: { getState: () => { changesOpenTasks: Set<string> } } };
+    }).__zustandStores;
+    const set = stores?.session?.getState().changesOpenTasks ?? new Set<string>();
+    return Array.from(set);
+  });
+}
+
 test.describe('Command Terminal', () => {
   // ---------------------------------------------------------------------------
   // TitleBar Button - these two tests use different base preconfigs so each
@@ -1278,6 +1307,58 @@ test.describe('Command Terminal', () => {
         // Pop one out: both terminals remain, the popped one is just floating now.
         await page.getByTestId('command-bar-popout').first().click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2);
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Per-window Changes panel isolation - each Command Terminal window derives its
+  // own Changes-panel entity id from its durable slot
+  // (`commandTerminalChangesEntityId(slot)` => 'command-terminal::slot-N'), so
+  // toggling Changes on one window must not affect another window's panel. Uses
+  // the kebab "Show changes" / "Hide changes" menu item rather than the header
+  // pill: the pill can fold into the kebab once two windows are docked
+  // side-by-side and narrower than the priority-plus floor, but the kebab trigger
+  // is a protected trailing control (see useHeaderPillOverflow) and is always
+  // rendered, so it is the stable way to drive this regardless of window width.
+  // ---------------------------------------------------------------------------
+  test.describe('Per-window Changes panel isolation', () => {
+    test('toggling Changes on one window does not open it on another window', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await page.getByTestId('quick-session-button').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
+
+        const idsBySlot = await commandWindowIdBySlot(page);
+        expect(Object.keys(idsBySlot).sort()).toEqual(['slot-1', 'slot-2']);
+        const windowOneFrame = page.getByTestId(`window-frame-${idsBySlot['slot-1']}`);
+        const windowTwoFrame = page.getByTestId(`window-frame-${idsBySlot['slot-2']}`);
+
+        // Open window 1's Changes panel via its own kebab menu.
+        await windowOneFrame.getByTitle('Actions').click();
+        await page.getByText('Show changes', { exact: true }).click();
+
+        // Store-level assertion: only window 1's per-slot entity id is open -
+        // proves the toggle scheduled against 'command-terminal::slot-1', not a
+        // shared 'command-terminal' id that would also cover window 2.
+        await expect.poll(() => changesOpenEntityIds(page), { timeout: 3000 }).toEqual(['command-terminal::slot-1']);
+
+        // UI-level assertion: window 2's own kebab still reads "Show changes"
+        // (unaffected). This exercises the real render path (the changesOpen
+        // selector read inside CommandTerminalWindow), not just the store.
+        await windowTwoFrame.getByTitle('Actions').click();
+        await expect(page.getByText('Show changes', { exact: true })).toBeVisible();
+
+        // And window 1's own kebab now reads "Hide changes", confirming its
+        // toggle round-tripped through the real component, not just the store.
+        await windowTwoFrame.getByTitle('Actions').click(); // close window 2's menu first
+        await windowOneFrame.getByTitle('Actions').click();
+        await expect(page.getByText('Hide changes', { exact: true })).toBeVisible();
       } finally {
         await browser.close();
       }

@@ -88,6 +88,7 @@ const setDetailViewStateMock = vi.fn(async (_taskId: string, _state: TaskDetailV
 
 // Import after the global stub so the store module sees the mocked window.
 import { useSessionStore } from '../../src/renderer/stores/session-store';
+import { commandTerminalChangesEntityId } from '../../src/renderer/stores/session-store/task-changes-panel-slice';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -326,5 +327,58 @@ describe('changesSelectedCommit - persists to and hydrates from detail_view_stat
     useSessionStore.getState().hydrateDetailViewStateForTasks([task]);
 
     expect(useSessionStore.getState().changesSelectedCommit['task-hydrate-default']).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Behavior 4: a Command Terminal window's per-slot entity id is excluded from
+// detail_view_state persistence, the same as the old shared 'command-terminal'
+// sentinel was. Each window now gets its own id via commandTerminalChangesEntityId
+// (e.g. 'command-terminal::slot-1'), so the exclusion check must recognize the
+// whole family, not just the single old literal.
+// Red condition: revert isNonTaskDetailViewId to a bare
+// `NON_TASK_DETAIL_VIEW_IDS.has(taskId)` (no prefix check) and this test fails -
+// the per-slot id no longer matches, so scheduleDetailViewSave stops skipping it
+// and setDetailViewStateMock is called twice instead of once.
+//
+// The second test below pins the OTHER branch of isNonTaskDetailViewId's OR: the
+// fixed-literal NON_TASK_DETAIL_VIEW_IDS.has(entityId) set (the create dialogs and
+// the Edit Columns dialog), which the first test does not exercise.
+// Red condition: drop 'board-manager-dialog' from NON_TASK_DETAIL_VIEW_IDS (or
+// break the `||` into only the startsWith check) and this test fails -
+// scheduleDetailViewSave stops skipping the sentinel id and setDetailViewStateMock
+// is called twice instead of once.
+// ---------------------------------------------------------------------------
+
+describe('commandTerminalChangesEntityId - excluded from detail_view_state persistence', () => {
+  beforeEach(() => {
+    vi.advanceTimersByTime(1000);
+    resetSliceState();
+  });
+
+  it('does not schedule a setDetailViewState save for a per-slot command-terminal id, but does for a real task id', () => {
+    const slotOneEntityId = commandTerminalChangesEntityId('slot-1');
+    const slotTwoEntityId = commandTerminalChangesEntityId('slot-2');
+
+    useSessionStore.getState().toggleChangesOpen(slotOneEntityId);
+    useSessionStore.getState().toggleChangesOpen(slotTwoEntityId);
+    useSessionStore.getState().toggleChangesOpen('task-1');
+
+    vi.advanceTimersByTime(1000);
+
+    expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
+    const [taskId] = setDetailViewStateMock.mock.calls[0];
+    expect(taskId).toBe('task-1');
+  });
+
+  it('does not schedule a setDetailViewState save for a fixed sentinel id (board-manager-dialog), but does for a real task id', () => {
+    useSessionStore.getState().toggleChangesOpen('board-manager-dialog');
+    useSessionStore.getState().toggleChangesOpen('task-1');
+
+    vi.advanceTimersByTime(1000);
+
+    expect(setDetailViewStateMock).toHaveBeenCalledTimes(1);
+    const [taskId] = setDetailViewStateMock.mock.calls[0];
+    expect(taskId).toBe('task-1');
   });
 });

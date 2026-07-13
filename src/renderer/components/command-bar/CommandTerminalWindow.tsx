@@ -34,6 +34,7 @@ import { FileDropOverlay } from '../terminal/FileDropOverlay';
 import { ContextBar } from '../terminal/ContextBar';
 import { useSessionStore } from '../../stores/session-store';
 import { transientKey } from '../../stores/session-store/transient-session-slice';
+import { commandTerminalChangesEntityId } from '../../stores/session-store/task-changes-panel-slice';
 import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -50,10 +51,6 @@ import { useCommandTerminalLayer } from './command-terminal-context';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 
 const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPanel').then((module) => ({ default: module.ChangesPanel })));
-
-/** The entity id the transient Command Terminal uses for its changes panel +
- *  per-entity UI flags (matches the old `CommandBarOverlay`). */
-const COMMAND_TERMINAL_ENTITY_ID = 'command-terminal';
 
 /**
  * The centered stop glyph: one small rounded square, sized + colored to sit dead
@@ -111,6 +108,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // `slot-2`, ...). It pairs the persistent window to its ephemeral PTY across
   // hide/reopen and project switches; the transient session is keyed by it.
   const slot = managedWindow.anchor;
+  // This window's own Changes-panel entity id (namespaced by slot), so the
+  // open flag and per-entity panel state (selected file, scroll, scope, ...)
+  // never leak across Command Terminal windows.
+  const commandTerminalEntityId = commandTerminalChangesEntityId(slot);
   const useStore = useLayerStore();
   const toggleMaximizeWindow = useStore((state) => state.toggleMaximizeWindow);
   const closeWindow = useStore((state) => state.closeWindow);
@@ -139,9 +140,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
   // Resolve to the main repo root if the current project is a worktree.
   const projectPath = useMemo(() => (rawProjectPath ? resolveProjectRoot(rawProjectPath) : null), [rawProjectPath]);
   const shortcuts = useBoardStore((s) => s.shortcuts);
-  const changesOpen = useSessionStore((s) => s.changesOpenTasks.has(COMMAND_TERMINAL_ENTITY_ID));
+  const changesOpen = useSessionStore((s) => s.changesOpenTasks.has(commandTerminalEntityId));
   const toggleChangesOpen = useSessionStore((s) => s.toggleChangesOpen);
-  const handleToggleChanges = useCallback(() => toggleChangesOpen(COMMAND_TERMINAL_ENTITY_ID), [toggleChangesOpen]);
+  const handleToggleChanges = useCallback(() => toggleChangesOpen(commandTerminalEntityId), [toggleChangesOpen, commandTerminalEntityId]);
 
   const maximizeCombo = useFormattedCombo('panel.maximize');
   const spawnedRef = useRef(false);
@@ -709,7 +710,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
                 }
               >
                 <ChangesPanel
-                  entityId={COMMAND_TERMINAL_ENTITY_ID}
+                  entityId={commandTerminalEntityId}
                   projectPath={projectPath}
                   baseBranch="HEAD"
                 />

@@ -55,11 +55,12 @@ export interface TaskChangesPanelSlice {
    */
   changesHistoryHeight: Record<string, number>;
   /**
-   * Entity IDs whose dialog is maximized (persists across dialog open/close).
-   * Keyed by task ID for the task detail dialog, and by a non-task sentinel id
-   * for the command terminal ('command-terminal'), the create dialogs
-   * ('new-task-dialog', 'new-backlog-task-dialog'), and the Edit Columns dialog
-   * ('board-manager-dialog').
+   * Non-task sentinel ids whose dialog is maximized (persists across dialog
+   * open/close). Holds only the create dialogs ('new-task-dialog',
+   * 'new-backlog-task-dialog') and the Edit Columns dialog
+   * ('board-manager-dialog'). The task-detail window and the Command Terminal
+   * maximize through the window manager (`toggleMaximizeWindow`), not this set,
+   * so it never holds a real task id.
    */
   maximizedTasks: Set<string>;
   /**
@@ -142,13 +143,32 @@ function buildDetailViewBlob(state: SessionStore, taskId: string): TaskDetailVie
 }
 
 /**
- * Non-task entity ids that share the Changes-panel setters (the create dialogs,
- * the Command Terminal, and the Edit Columns dialog) but have no `tasks` row to
- * persist into. They must not schedule a `detail_view_state` save: the DB UPDATE
- * would be a no-op, and the Command Terminal would otherwise emit a spurious IPC
- * write on every Changes interaction.
+ * Prefix for the Command Terminal's per-window Changes-panel entity ids. Each
+ * window/slot gets its own id (`command-terminal::slot-1`, `command-terminal::slot-2`,
+ * ...) so `changesOpenTasks` and the per-entity Changes-panel state (selected
+ * file, scroll, scope, viewed marks, tree width, history height) never leak
+ * across windows the way a single shared id used to.
  */
-const NON_TASK_DETAIL_VIEW_IDS = new Set(['new-task-dialog', 'new-backlog-task-dialog', 'command-terminal', 'board-manager-dialog']);
+const COMMAND_TERMINAL_ENTITY_PREFIX = 'command-terminal';
+
+/** Build a Command Terminal window's own Changes-panel entity id from its durable slot id. */
+export function commandTerminalChangesEntityId(slot: string): string {
+  return `${COMMAND_TERMINAL_ENTITY_PREFIX}::${slot}`;
+}
+
+/**
+ * Non-task entity ids that share the Changes-panel setters (the create dialogs
+ * and the Edit Columns dialog) but have no `tasks` row to persist into, plus
+ * every Command Terminal window id (`command-terminal::<slot>`). They must not
+ * schedule a `detail_view_state` save: the DB UPDATE would be a no-op, and the
+ * Command Terminal would otherwise emit a spurious IPC write on every Changes
+ * interaction.
+ */
+const NON_TASK_DETAIL_VIEW_IDS = new Set(['new-task-dialog', 'new-backlog-task-dialog', 'board-manager-dialog']);
+
+function isNonTaskDetailViewId(entityId: string): boolean {
+  return NON_TASK_DETAIL_VIEW_IDS.has(entityId) || entityId.startsWith(`${COMMAND_TERMINAL_ENTITY_PREFIX}::`);
+}
 
 /**
  * Schedule a debounced persist of a task's detail-view layout. Captures the
@@ -156,7 +176,7 @@ const NON_TASK_DETAIL_VIEW_IDS = new Set(['new-task-dialog', 'new-backlog-task-d
  * Sentinel (non-task) ids are ignored - they have no `tasks` row to write.
  */
 function scheduleDetailViewSave(taskId: string, get: () => SessionStore): void {
-  if (NON_TASK_DETAIL_VIEW_IDS.has(taskId)) return;
+  if (isNonTaskDetailViewId(taskId)) return;
   const projectId = useProjectStore.getState().currentProject?.id ?? null;
   detailViewPendingSaves.set(taskId, { state: buildDetailViewBlob(get(), taskId), projectId });
   const existing = detailViewSaveTimers.get(taskId);
