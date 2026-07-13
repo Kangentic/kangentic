@@ -8,7 +8,6 @@ extraMetadata:
 
 directories:
   output: out
-  buildResources: resources
 
 # Only include build output + native modules (matches old forge.config.ts ignore function)
 files:
@@ -58,9 +57,9 @@ asarUnpack:
   - ".vite/build/plugins/**"
 
 extraResources:
-  - from: resources/icon.png
+  - from: node_modules/@kangentic/branding/resources/desktop/icon.png
     to: icon.png
-  - from: resources/icon.ico
+  - from: node_modules/@kangentic/branding/resources/desktop/icon.ico
     to: icon.ico
 
 # We rebuild better-sqlite3 manually; node-pty uses NAPI prebuilts
@@ -70,7 +69,7 @@ afterSign: build/afterSign.js
 
 win:
   target: nsis
-  icon: resources/icon.ico
+  icon: node_modules/@kangentic/branding/resources/desktop/icon.ico
   signtoolOptions:
     sign: build/windowsSign.js
 
@@ -84,7 +83,7 @@ mac:
   target:
     - dmg
     - zip
-  icon: resources/icon.icns
+  icon: node_modules/@kangentic/branding/resources/desktop/icon.icns
   category: public.app-category.developer-tools
   hardenedRuntime: true
   gatekeeperAssess: false
@@ -100,7 +99,7 @@ linux:
   target:
     - deb
     - rpm
-  icon: resources/icon.png
+  icon: node_modules/@kangentic/branding/resources/desktop/icon.png
   category: Development
 
 deb:

@@ -26,7 +26,7 @@ export function resolveIconPath(): string {
   const iconFilename = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
   return app.isPackaged
     ? path.join(process.resourcesPath, iconFilename)
-    : path.join(app.getAppPath(), 'resources', iconFilename);
+    : path.join(app.getAppPath(), 'node_modules', '@kangentic', 'branding', 'resources', 'desktop', iconFilename);
 }
 
 /** Resolve the renderer's built index.html for a given Vite build name (production

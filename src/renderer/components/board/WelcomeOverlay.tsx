@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { ListPlus, ArrowRightLeft, Eye, Lightbulb } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
-import logoSrc from '../../assets/logo-32.png';
+import logoSrc from '@kangentic/branding/assets/brandmark-small.svg?url';
 
 const DISPLAY_DURATION_MS = 15000;
 const FADE_DURATION_MS = 500;

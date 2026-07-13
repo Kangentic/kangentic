@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://www.kangentic.com"><img src="resources/icon-256.png" alt="Kangentic Logo" width="128" /></a>
+  <a href="https://www.kangentic.com"><img src="https://www.kangentic.com/logo.png" alt="Kangentic Logo" width="128" /></a>
 </p>
 
 <h1 align="center"><a href="https://www.kangentic.com">Kangentic</a></h1>
@@ -25,7 +25,7 @@
 <p align="center">AI coding agents can build features, fix bugs, and refactor entire modules autonomously. With git worktrees you can run many of them in parallel, but now the bottleneck is <strong>you</strong>: juggling terminals across projects to track which agents are stuck, finished, or waiting for approval. Kangentic replaces that with a Kanban command center. One board shows every agent's status, output, and progress. Respond when needed; let them work autonomously the rest of the time.</p>
 
 <p align="center">
-  <a href="https://www.kangentic.com"><img src="resources/kanban-demo.png" alt="Kangentic Kanban Board" width="800" /></a>
+  <a href="https://www.kangentic.com"><img src="https://www.kangentic.com/og-image.png" alt="Kangentic Kanban Board" width="800" /></a>
 </p>
 <p align="center">
   <a href="https://www.youtube.com/watch?v=jviSrT47F0o"><img src="https://img.shields.io/badge/%E2%96%B6%20Watch%20Demo-YouTube-red.svg?style=for-the-badge&logo=youtube" alt="Watch Demo" /></a>

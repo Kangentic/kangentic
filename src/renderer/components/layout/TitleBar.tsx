@@ -10,7 +10,7 @@ import { selectCurrentProjectTransientSessionIds } from '../../stores/session-st
 import { isWorktreePath } from '../../../shared/git-utils';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { useFormattedCombo } from '../../hooks/useKeybinding';
-import logoSrc from '../../assets/logo-32.png';
+import logoSrc from '@kangentic/branding/assets/brandmark-small.svg?url';
 
 const isMac = window.electronAPI.platform === 'darwin';
 

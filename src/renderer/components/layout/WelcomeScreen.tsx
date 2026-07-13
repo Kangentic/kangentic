@@ -3,7 +3,7 @@ import { FolderOpen, FileText, GitBranch, Terminal, CheckCircle, CircleAlert, Co
 import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { agentInstallUrl, agentLoginCommand } from '../../utils/agent-display-name';
-import logoSrc from '../../assets/logo-32.png';
+import logoSrc from '@kangentic/branding/assets/brandmark-small.svg?url';
 
 /** Reusable detection card used for both Git and agent entries */
 function DetectionCard({ name, testId, found, version, installUrl, loading, authenticated, loginCommand }: {

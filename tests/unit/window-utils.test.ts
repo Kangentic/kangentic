@@ -1,15 +1,23 @@
 /**
- * Unit tests for resolvePopOutBounds / savePopOutBounds in src/main/window-utils.ts --
- * the pop-out window engine's bounds-persistence pair (mirrors resolveWindowBounds / the
- * main window's saveBounds, but keyed per PopOutKind and read-merge-write so a save for
- * one kind never clobbers a sibling kind's saved bounds). These lock the behavior the
- * pop-out engine introduced: reverting either function to a stub, or dropping the
- * read-merge-write sibling preservation in savePopOutBounds, must fail these tests.
+ * Unit tests for resolvePopOutBounds / savePopOutBounds / resolveIconPath in
+ * src/main/window-utils.ts.
  *
- * fs.readFileSync, PATHS.configFile, and electron's screen APIs are all mocked so the
+ * resolvePopOutBounds / savePopOutBounds are the pop-out window engine's bounds-persistence
+ * pair (mirrors resolveWindowBounds / the main window's saveBounds, but keyed per PopOutKind
+ * and read-merge-write so a save for one kind never clobbers a sibling kind's saved bounds).
+ * These lock the behavior the pop-out engine introduced: reverting either function to a stub,
+ * or dropping the read-merge-write sibling preservation in savePopOutBounds, must fail these
+ * tests.
+ *
+ * resolveIconPath locks the @kangentic/branding desktop-icon migration's dev (unpackaged)
+ * path.join segment order: reverting it to the old local resources/ layout, or scrambling the
+ * segment order/count, must fail the dedicated test below.
+ *
+ * fs.readFileSync, PATHS.configFile, and electron's screen/app APIs are all mocked so the
  * suite is pure Node -- no real file writes, no real Electron, no OS-specific paths.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'node:path';
 import type { AppConfig } from '../../src/shared/types';
 import type { ConfigManager } from '../../src/main/config/config-manager';
 import type { BrowserWindow } from 'electron';
@@ -30,7 +38,7 @@ vi.mock('electron', () => ({
 
 import fs from 'node:fs';
 import { screen } from 'electron';
-import { resolvePopOutBounds, savePopOutBounds } from '../../src/main/window-utils';
+import { resolveIconPath, resolvePopOutBounds, savePopOutBounds } from '../../src/main/window-utils';
 
 interface FakeDisplay {
   id: number;
@@ -198,5 +206,25 @@ describe('savePopOutBounds', () => {
     // Highest-value assertion: a save for 'changes' must not drop the sibling 'stats'
     // entry (read-merge-write), regardless of AppConfig's dictionary merge semantics.
     expect(savedConfig.popOutBounds?.stats).toEqual(previousStats);
+  });
+});
+
+describe('resolveIconPath', () => {
+  // Derived from process.platform (not hardcoded) so this passes on both local Windows and
+  // CI's headless Linux runner, per cross-platform-parity.
+  const expectedIconFilename = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
+
+  it('dev (unpackaged) resolves to the @kangentic/branding desktop icon for this platform', () => {
+    // The mocked electron.app has isPackaged: false and getAppPath() -> '/mock/app'.
+    const expectedPath = path.join(
+      '/mock/app',
+      'node_modules',
+      '@kangentic',
+      'branding',
+      'resources',
+      'desktop',
+      expectedIconFilename,
+    );
+    expect(resolveIconPath()).toBe(expectedPath);
   });
 });
