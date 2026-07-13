@@ -2115,6 +2115,38 @@
         // original, modified, language? }, or per-scope via
         // window.__mockGitDiffByScope = { working: {...}, staged: {...}, branch: {...} }.
         // Default stays empty.
+
+        // Test hook: record every diffFiles call (scope + commitOid + whether
+        // the request carries a 'commitOid' key at all) so a test can assert
+        // how many calls actually fired, with what params, and from which
+        // call site - used to verify ChangesPanel's fetchFiles
+        // in-flight/pending-rerun guard (a burst of fs.watch fires while a
+        // call is in flight must coalesce into a single queued rerun, not one
+        // call per fire). fetchFiles always passes a literal `commitOid:
+        // changesSelectedCommit ?? undefined` key (present even when
+        // undefined); the separate, unguarded fetchUncommittedCount never
+        // includes that key - hasCommitOidKey lets a test isolate fetchFiles's
+        // own call sequence from fetchUncommittedCount's independent calls.
+        if (typeof window !== 'undefined') {
+          window.__mockGitDiffFilesCalls = window.__mockGitDiffFilesCalls || [];
+          window.__mockGitDiffFilesCalls.push({
+            scope: request && request.scope,
+            commitOid: (request && request.commitOid) || null,
+            hasCommitOidKey: Object.prototype.hasOwnProperty.call(request || {}, 'commitOid'),
+          });
+        }
+        // Test hook: make diffFiles return a controlled promise so a test can
+        // hold a call in flight and observe the overlapping-fetch guard. Set
+        // window.__mockGitDiffFilesDeferred = true before triggering the
+        // call; each call then hangs until its own resolver (appended to
+        // window.__mockGitDiffFilesResolvers, in call order) is invoked.
+        if (typeof window !== 'undefined' && window.__mockGitDiffFilesDeferred) {
+          var diffFilesResolveRef;
+          var diffFilesPending = new Promise(function (res) { diffFilesResolveRef = res; });
+          window.__mockGitDiffFilesResolvers = window.__mockGitDiffFilesResolvers || [];
+          window.__mockGitDiffFilesResolvers.push(diffFilesResolveRef);
+          await diffFilesPending;
+        }
         var fixture = resolveGitDiffFixture(request);
         if (fixture && Array.isArray(fixture.files)) {
           var totalInsertions = 0;
