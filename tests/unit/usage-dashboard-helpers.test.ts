@@ -37,7 +37,9 @@ import {
   deriveModelStack,
   deriveTokenTypeStack,
   foldBreakdownForDonut,
+  isModelStackEmpty,
   type BreakdownEntry,
+  type ModelStack,
 } from '../../src/renderer/components/stats/useStatsData';
 import type { CostSeriesPoint, TokenSeriesPoint, UsageDashboardStats } from '../../src/shared/types';
 
@@ -190,6 +192,44 @@ describe('deriveTokenTypeStack', () => {
     const stack = deriveTokenTypeStack([], (bucketStartMs) => `t${bucketStartMs}`);
     expect(stack.rows).toHaveLength(0);
     expect(stack.series).toHaveLength(4);
+  });
+});
+
+describe('isModelStackEmpty', () => {
+  // Live's per-bucket rows are DENSE (a row per 5-minute slot even with no
+  // activity), so this must check VALUES, not row count - the real-world
+  // regression this guards is a quiet-but-present window (rows exist, every
+  // value is 0) being mistaken for non-empty by a length-only check.
+  it('is true when every row is all-zero across every series entry, even with multiple present rows', () => {
+    const stack: ModelStack = {
+      series: [
+        { key: 'stack0', label: 'Input', colorVar: '--kng-chart-1' },
+        { key: 'stack1', label: 'Output', colorVar: '--kng-chart-2' },
+      ],
+      rows: [
+        { x: 0, label: 't0', stack0: 0, stack1: 0 },
+        { x: 1, label: 't1', stack0: 0, stack1: 0 },
+      ],
+    };
+    expect(isModelStackEmpty(stack)).toBe(true);
+  });
+
+  it('is false when any row has a nonzero value in any series entry', () => {
+    const stack: ModelStack = {
+      series: [
+        { key: 'stack0', label: 'Input', colorVar: '--kng-chart-1' },
+        { key: 'stack1', label: 'Output', colorVar: '--kng-chart-2' },
+      ],
+      rows: [
+        { x: 0, label: 't0', stack0: 0, stack1: 0 },
+        { x: 1, label: 't1', stack0: 0, stack1: 5 },
+      ],
+    };
+    expect(isModelStackEmpty(stack)).toBe(false);
+  });
+
+  it('is vacuously true for an empty rows array', () => {
+    expect(isModelStackEmpty({ series: [], rows: [] })).toBe(true);
   });
 });
 

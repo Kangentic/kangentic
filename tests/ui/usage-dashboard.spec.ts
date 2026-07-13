@@ -590,10 +590,13 @@ test.describe('usage dashboard', () => {
     }
   });
 
-  test('Live default period disables per-bucket drilling, retitles by token type, and uses token-count empty messages', async () => {
-    // Phase 1: default (non-empty) fixture at the default Live period. The
-    // left card retitles to a token-type stack, and its bars are NOT
-    // drillable (Live buckets are 5 minutes wide, so a day drill is nonsense).
+  test('Live default period fills the token-type and cumulative cards from tokenSeries, disables per-bucket drilling, and uses token-count empty messages', async () => {
+    // Phase 1: default (non-empty) fixture at the default Live period. Both
+    // cards read from tokenSeries (the bug this diff fixes: costSeries is
+    // empty in Live, so both previously rendered empty placeholders). The
+    // left card retitles to a token-type stack with its own legend, and
+    // NEITHER card is drillable (Live buckets are 5 minutes wide, so a day
+    // drill is nonsense).
     {
       const { browser, page } = await launchWithState(twoProjectPreConfig());
       try {
@@ -602,12 +605,39 @@ test.describe('usage dashboard', () => {
         await openDashboard(page);
 
         await expect(page.locator('[data-testid="chart-daily"]')).toContainText('Tokens by type', { timeout: 10000 });
+        // The legend switches from model names to the fixed token-type labels
+        // (deriveTokenTypeStack's series), the actual wiring this diff added.
+        const legend = page.locator('[data-testid="chart-daily-legend"]');
+        await expect(legend).toContainText('Input');
+        await expect(legend).toContainText('Output');
+        await expect(legend).toContainText('Cache read');
+        await expect(legend).toContainText('Cache write');
+        await expect(legend).not.toContainText('Mock Large');
 
         await page.locator('[data-testid="chart-daily"] .recharts-rectangle').first().click();
         // Bounded negative check (no bare waitForTimeout): onBucketClick is
         // undefined in Live, so nothing async could produce a drill chip
         // later; the timeout budget still covers a mistaken async wiring.
         await expect(page.locator('[data-testid="stats-drill-chip"]')).not.toBeVisible({ timeout: 2000 });
+
+        // The Cumulative card must render the tokenSeries-derived running sum
+        // (a rising area), not the empty placeholder: this is the exact card
+        // that previously stayed blank in Live.
+        const cumulativeCard = page.locator('[data-testid="chart-cumulative"]');
+        await expect(cumulativeCard).not.toContainText('recorded');
+        await expect(cumulativeCard.locator('.recharts-area-area')).toBeVisible({ timeout: 10000 });
+        // Neither Live card accepts a day drill: their chart containers never
+        // pick up the onBucketClick cursor-pointer affordance.
+        await expect(cumulativeCard.locator('[role="img"]')).not.toHaveClass(/cursor-pointer/);
+        await expect(page.locator('[data-testid="chart-daily"] [role="img"]')).not.toHaveClass(/cursor-pointer/);
+
+        // Toggling the Cost/Tokens metric while still in Live re-keys the
+        // Cumulative card's title and value source, but it must STAY
+        // populated from tokenSeries either way (not silently go empty).
+        await page.locator('[data-testid="stats-metric-group"] button:has-text("Tokens")').click();
+        await expect(cumulativeCard).toContainText('Cumulative tokens');
+        await expect(cumulativeCard).not.toContainText('recorded');
+        await expect(cumulativeCard.locator('.recharts-area-area')).toBeVisible({ timeout: 10000 });
       } finally {
         await browser.close();
       }

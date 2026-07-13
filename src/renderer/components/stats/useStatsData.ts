@@ -213,6 +213,17 @@ export function deriveTokenTypeStack(
   return { series, rows };
 }
 
+/**
+ * True when a ModelStack's rows are all dense-zero (every series entry is 0
+ * in every row), used for the Live per-bucket card's empty-state gate. Rows
+ * are dense there (a row for every 5-minute slot even with no activity), so a
+ * length check alone would call a quiet-but-present window non-empty; this
+ * checks values, not row count. An empty `rows` array is vacuously empty too.
+ */
+export function isModelStackEmpty(stack: ModelStack): boolean {
+  return stack.rows.every((row) => stack.series.every((entry) => (row[entry.key] as number) === 0));
+}
+
 /** Sparkline input: total tokens per bucket. */
 export function deriveTokenSparkline(tokenSeries: TokenSeriesPoint[]): TimePoint[] {
   return tokenSeries.map((point) => ({

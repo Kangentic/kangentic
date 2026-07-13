@@ -14,7 +14,7 @@ import { StatsScopePicker } from './StatsScopePicker';
 import { useWindowResizing } from '../../hooks/useWindowResizing';
 import { KngLineAreaChart } from './charts/KngLineAreaChart';
 import { KngBarChart } from './charts/KngBarChart';
-import { formatBucketLabel, useStatsData } from './useStatsData';
+import { formatBucketLabel, isModelStackEmpty, useStatsData } from './useStatsData';
 
 /** Poll cadence while the page is visible (live watches the trailing window). */
 const LIVE_POLL_MS = 15_000;
@@ -141,8 +141,7 @@ export function StatsDashboardBody() {
   // cards fall back to tokenSeries-derived data (populated in Live).
   const perBucketStack = isLivePeriod ? data.tokenTypeStack : data.modelStack;
   const perBucketEmpty = isLivePeriod
-    ? perBucketStack.rows.every((row) =>
-        perBucketStack.series.every((entry) => (row[entry.key] as number) === 0))
+    ? isModelStackEmpty(perBucketStack)
     : perBucketStack.rows.length === 0;
   const cumulativePoints = isLivePeriod ? data.cumulativeFromTokens : data.cumulative;
   const cumulativeEmpty = isLivePeriod
