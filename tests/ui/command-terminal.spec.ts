@@ -1097,6 +1097,61 @@ test.describe('Command Terminal', () => {
         await browser.close();
       }
     });
+
+    test('the New terminal icon stays uncolored while an active terminal lights up the toggle', async () => {
+      // tone="rest" is hardcoded on the "New terminal" button (TitleBar.tsx):
+      // it must never pick up the aggregate activity color/animation that the
+      // toggle button carries, even while a real terminal in this project is
+      // actively working. This guards against a future edit that accidentally
+      // wires this button's tone to `transientActivityTone` (a plausible
+      // copy-paste mistake since both buttons share the CommandTerminalIcon glyph).
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Open the layer (spawns the first transient terminal).
+        await page.getByTestId('quick-session-button').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+
+        const entries = await transientEntriesFor(page, MULTI_PROJECT_ID);
+        expect(entries).toHaveLength(1);
+        const sessionId = entries[0].sessionId;
+
+        // Drive the spawned terminal's activity to 'thinking' via the mocked
+        // onActivity channel (the same channel App.tsx wires to updateActivity).
+        await page.evaluate(
+          ({ sessionId, projectId }) => {
+            const win = window as unknown as {
+              __mockFireActivity: (
+                sessionId: string,
+                state: string,
+                reason: string | null,
+                projectId: string,
+                taskId: string | null,
+                taskTitle: string | null,
+              ) => void;
+            };
+            win.__mockFireActivity(sessionId, 'thinking', null, projectId, null, null);
+          },
+          { sessionId, projectId: MULTI_PROJECT_ID },
+        );
+
+        // The toggle button reflects the aggregate activity: color + data-activity
+        // flip to 'thinking' once the store hydrates.
+        const toggleIcon = page.getByTestId('quick-session-icon');
+        await expect(toggleIcon).toHaveAttribute('data-activity', 'thinking', { timeout: 3000 });
+        await expect(toggleIcon).toHaveClass(/text-active/);
+
+        // The "New terminal" icon must stay uncolored and report 'rest' regardless.
+        const newTerminalIcon = page.getByTestId('quick-session-new-terminal-icon');
+        await expect(newTerminalIcon).toHaveAttribute('data-activity', 'rest');
+        await expect(newTerminalIcon).toHaveAttribute('data-plus', 'true');
+        await expect(newTerminalIcon).not.toHaveClass(/text-active/);
+        await expect(newTerminalIcon).not.toHaveClass(/text-attention/);
+      } finally {
+        await browser.close();
+      }
+    });
   });
 
   // ---------------------------------------------------------------------------
