@@ -38,12 +38,15 @@ interface PendingPress {
  *  dismiss surface: the settings panel, the command/search
  *  palettes, and any modal backdrop sit ABOVE the shell and are NOT marked, so a click
  *  on them (or on a backdrop to dismiss them) never closes the window beneath. The
- *  terminal panel is likewise unmarked, so it never dismisses. Within a surface, it is
- *  still not dead space when the target is a task card, a window/popover, a real
- *  control or a `[data-no-dismiss]` element (a column header strip + its drag handle),
- *  or anything showing a pointer cursor (`cursor` is inherited, so a child of a
- *  clickable element reports `pointer` too, auto-excluding clickable `<div>`s like
- *  project rows and group headers with no per-element marker). */
+ *  terminal panel (`TerminalPanel.tsx`) marks itself CONDITIONALLY: it is a dismiss
+ *  surface whenever no live xterm pane is mounted (empty state, collapsed strip,
+ *  Activity tab, or a session owned by a window), and unmarked only while a live
+ *  terminal pane and its context bar are mounted, so clicking a running terminal never
+ *  dismisses. Within a surface, it is still not dead space when the target is a task
+ *  card, a window/popover, a real control or a `[data-no-dismiss]` element (a column
+ *  header strip + its drag handle), or anything showing a pointer cursor (`cursor` is
+ *  inherited, so a child of a clickable element reports `pointer` too, auto-excluding
+ *  clickable `<div>`s like project rows and group headers with no per-element marker). */
 function isDismissibleDeadArea(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) return false;
   if (target.closest('#window-layer-root')) return false; // a task-detail window frame (portaled popovers also self-exclude via the layer guard)
@@ -59,7 +62,7 @@ function isDismissibleDeadArea(target: EventTarget | null): boolean {
 /**
  * Click-outside (light-dismiss) for modeless task-detail windows. Mounted once in
  * `WindowLayer`. A clean click on dead space anywhere in the app shell (everywhere
- * but the terminal panel and action controls) closes open windows per the user's
+ * but a live terminal pane and action controls) closes open windows per the user's
  * `windowLightDismiss` policy, routed through each window's unsaved-edits guard (the
  * close registry). The session/PTY is untouched: closing only releases the
  * dialog-session claim, so the terminal returns to the bottom panel and reopening

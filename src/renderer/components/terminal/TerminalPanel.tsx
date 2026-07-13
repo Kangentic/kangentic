@@ -118,16 +118,29 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
 
   if (activeSessions.length === 0) {
     return (
-      <div className="h-full bg-surface flex items-center justify-center text-fg-disabled text-sm">
+      <div
+        data-testid="terminal-panel-empty"
+        data-dismiss-surface
+        className="h-full bg-surface flex items-center justify-center text-fg-disabled text-sm"
+      >
         No active sessions. Drag a task into a working column to start an agent.
       </div>
     );
   }
 
   const isActivityActive = effectiveActiveId === ACTIVITY_TAB;
+  // A live xterm pane (and its ContextBar) is mounted only when content is shown, a real
+  // session tab is active, and no detail window owns it (see the pane filter below and the
+  // ContextBar gate). Only in that state must the panel NOT dismiss the window on a dead-space
+  // click; otherwise (empty tab bar / collapsed strip / Activity tab / owned-by-window) it is a
+  // dismiss surface like the rest of the app shell. As with every other marked surface, a new
+  // clickable child here must carry `cursor-pointer` or `data-no-dismiss`, or a click on it will
+  // also dismiss.
+  const hasLiveTerminal =
+    showContent && effectiveActiveId != null && !isActivityActive && !dialogSessionIds.includes(effectiveActiveId);
 
   return (
-    <div className="h-full flex flex-col bg-surface">
+    <div className="h-full flex flex-col bg-surface" data-dismiss-surface={hasLiveTerminal ? undefined : ''}>
       {/* Tab bar */}
       <div className="flex items-center border-b border-edge flex-shrink-0">
         <div className="flex items-center overflow-x-auto flex-shrink min-w-0">
@@ -239,6 +252,7 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
               .map((session) => (
                 <div
                   key={session.id}
+                  data-testid="terminal-session-pane"
                   className="absolute inset-0"
                 >
                   <TerminalTab
