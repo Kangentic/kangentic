@@ -76,7 +76,12 @@ describe('DiffService', () => {
   let service: DiffService;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    // resetAllMocks (not clearAllMocks) also drops each mock's configured
+    // implementation/resolved-value - clearAllMocks only clears call history,
+    // so a mockResolvedValue set by one test (e.g. mockUntrackedFileContent's
+    // fs.promises.stat/open) would otherwise silently leak into the next test
+    // that never configures those mocks itself.
+    vi.resetAllMocks();
     service = new DiffService('/project');
     // Default merge-base mock - tests can override as needed
     mockGit.raw.mockResolvedValue('abc123\n');
@@ -506,7 +511,7 @@ describe('DiffService', () => {
       mockGit.diffSummary.mockResolvedValue(makeDiffSummary([]));
       mockGit.diff.mockResolvedValue('');
       mockGit.status.mockResolvedValue({ not_added: ['src/brand-new.ts'] });
-      vi.mocked(fs.promises.readFile).mockResolvedValue(Buffer.from('line1\nline2\n') as never);
+      mockUntrackedFileContent(Buffer.from('line1\nline2\n'));
 
       const result = await service.getChurnSummary('main');
 
