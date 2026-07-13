@@ -324,8 +324,18 @@ test.describe('usage dashboard', () => {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
       await openDashboard(page);
 
-      // The default fixture's cost buckets are daily, so the stacked bars are
-      // drillable. Click a bar segment.
+      // Live's per-bucket cards are never drillable (5-minute buckets), so
+      // switch to a non-Live period first. The default fixture's cost buckets
+      // are daily regardless of period, so the stacked bars stay drillable.
+      await page.locator('[data-testid="stats-period-group"] button:has-text("This Week")').click();
+      await expect
+        .poll(async () => {
+          const calls = await getCalls(page);
+          return calls[calls.length - 1]?.period ?? '';
+        }, { timeout: 5000 })
+        .toBe('week');
+
+      // Click a bar segment.
       await page.locator('[data-testid="chart-daily"] .recharts-rectangle').first().click();
 
       // Drill chip appears and the refetch carries the drill day.
@@ -577,6 +587,85 @@ test.describe('usage dashboard', () => {
       await expect(page.locator('[data-testid="kpi-cost"] .recharts-area-area')).toBeVisible({ timeout: 10000 });
     } finally {
       await browser.close();
+    }
+  });
+
+  test('Live default period disables per-bucket drilling, retitles by token type, and uses token-count empty messages', async () => {
+    // Phase 1: default (non-empty) fixture at the default Live period. The
+    // left card retitles to a token-type stack, and its bars are NOT
+    // drillable (Live buckets are 5 minutes wide, so a day drill is nonsense).
+    {
+      const { browser, page } = await launchWithState(twoProjectPreConfig());
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        // Default period on open is Live: do not switch periods here.
+        await openDashboard(page);
+
+        await expect(page.locator('[data-testid="chart-daily"]')).toContainText('Tokens by type', { timeout: 10000 });
+
+        await page.locator('[data-testid="chart-daily"] .recharts-rectangle').first().click();
+        // Bounded negative check (no bare waitForTimeout): onBucketClick is
+        // undefined in Live, so nothing async could produce a drill chip
+        // later; the timeout budget still covers a mistaken async wiring.
+        await expect(page.locator('[data-testid="stats-drill-chip"]')).not.toBeVisible({ timeout: 2000 });
+      } finally {
+        await browser.close();
+      }
+    }
+
+    // Phase 2: an empty tokenSeries fixture (no agent turns recorded yet).
+    // Both per-bucket Live cards fall back to their tokens-aware empty
+    // message; costKnown: false forces the tokens metric so the cumulative
+    // card's empty message is the tokens variant, not the cost variant.
+    {
+      const emptyLiveFixture = `
+        (function () {
+          window.electronAPI.usage.__dashboardStatsFixture = function (scope, period) {
+            var now = Date.now();
+            var hour = 3600000;
+            return {
+              scope: scope,
+              period: period,
+              rangeStartMs: now - 2 * hour,
+              rangeEndMs: now,
+              bucketSizeMs: hour,
+              costBucketSizeMs: 86400000,
+              generatedAtMs: now,
+              kpis: {
+                totalCostUsd: 0, costKnown: false,
+                totalInputTokens: 0, totalOutputTokens: 0, totalTokens: 0,
+                sessionCount: 0, toolCallCount: 0,
+                linesAdded: 0, linesRemoved: 0, filesChanged: 0,
+                compactionCount: 0, totalDurationMs: 0,
+                turnInputTokens: 0, turnOutputTokens: 0,
+                cacheCreationTokens: 0, cacheReadTokens: 0,
+                burnRateTokensPerHour: null, burnRateUsdPerHour: null,
+              },
+              previousKpis: null,
+              tokenSeries: [],
+              costSeries: [],
+              byModel: [],
+              byAgent: [],
+              byEffort: [],
+            };
+          };
+        })();
+      `;
+      const { browser, page } = await launchWithState(twoProjectPreConfig() + emptyLiveFixture);
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await openDashboard(page);
+
+        await expect(page.locator('[data-testid="chart-daily"]')).toContainText(
+          'No agent turns recorded in the last 2 hours',
+          { timeout: 10000 },
+        );
+        await expect(page.locator('[data-testid="chart-cumulative"]')).toContainText(
+          'No tokens recorded in the last 2 hours',
+        );
+      } finally {
+        await browser.close();
+      }
     }
   });
 

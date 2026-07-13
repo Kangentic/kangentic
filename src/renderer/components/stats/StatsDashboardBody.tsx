@@ -100,7 +100,7 @@ export function StatsDashboardBody() {
 
   const coldLoading = loading && !payload;
   // A drill or custom window bounds its own range, so live-specific
-  // presentation (empty cost cards, the trailing-2h subtitle) does not apply.
+  // presentation (empty cost cards, token-series-derived chart data) does not apply.
   const isLivePeriod = period === 'live' && !drill && !customWindow;
   const xFormatter = useCallback(
     (ms: number) => formatBucketLabel(ms, payload?.bucketSizeMs ?? 3_600_000),
@@ -136,6 +136,21 @@ export function StatsDashboardBody() {
   const drillLabel = drill
     ? new Date(drill.dayStartMs).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
     : null;
+
+  // Live has no finalized costSeries, so the by-model stack and cumulative
+  // cards fall back to tokenSeries-derived data (populated in Live).
+  const perBucketStack = isLivePeriod ? data.tokenTypeStack : data.modelStack;
+  const perBucketEmpty = isLivePeriod
+    ? perBucketStack.rows.every((row) =>
+        perBucketStack.series.every((entry) => (row[entry.key] as number) === 0))
+    : perBucketStack.rows.length === 0;
+  const cumulativePoints = isLivePeriod ? data.cumulativeFromTokens : data.cumulative;
+  const cumulativeEmpty = isLivePeriod
+    ? cumulativePoints.every((point) => point.y === 0)
+    : cumulativePoints.length === 0;
+  // Live buckets are 5 minutes wide: a click would mint a bogus day drill on
+  // a 5-minute boundary, so neither Live card is drillable.
+  const canDrillTimeCards = !isLivePeriod && canDrillCostBuckets;
 
   return (
     <>
@@ -199,16 +214,16 @@ export function StatsDashboardBody() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           <ChartCard
-            title={`${effectiveMetric === 'cost' ? 'Cost' : 'Tokens'} per ${costBucketNoun} by model`}
+            title={isLivePeriod ? 'Tokens by type' : `${effectiveMetric === 'cost' ? 'Cost' : 'Tokens'} per ${costBucketNoun} by model`}
             loading={coldLoading}
-            empty={!coldLoading && data.modelStack.rows.length === 0}
-            emptyMessage={isLivePeriod ? 'Totals per hour/day appear in Today / Week / Month / All Time' : 'No usage recorded yet'}
+            empty={!coldLoading && perBucketEmpty}
+            emptyMessage={isLivePeriod ? 'No agent turns recorded in the last 2 hours' : 'No usage recorded yet'}
             testId="chart-daily"
           >
             <div className="h-full flex flex-col">
-              {data.modelStack.series.length > 1 && (
+              {perBucketStack.series.length > 1 && (
                 <div className="flex flex-wrap gap-x-3 gap-y-0.5 mb-1 flex-shrink-0" data-testid="chart-daily-legend">
-                  {data.modelStack.series.map((entry) => (
+                  {perBucketStack.series.map((entry) => (
                     <span key={entry.key} className="flex items-center gap-1 text-[11px] text-fg-muted">
                       <span
                         aria-hidden
@@ -222,11 +237,11 @@ export function StatsDashboardBody() {
               )}
               <div className="flex-1 min-h-0">
                 <KngBarChart
-                  series={data.modelStack.series}
-                  rows={data.modelStack.rows}
-                  yFormatter={yFormatter}
-                  ariaLabel={`${metricNoun} per ${costBucketNoun}, stacked by model`}
-                  onBucketClick={canDrillCostBuckets ? handleDrillDay : undefined}
+                  series={perBucketStack.series}
+                  rows={perBucketStack.rows}
+                  yFormatter={isLivePeriod ? formatTokenCount : yFormatter}
+                  ariaLabel={isLivePeriod ? 'tokens per 5 minutes, stacked by token type' : `${metricNoun} per ${costBucketNoun}, stacked by model`}
+                  onBucketClick={canDrillTimeCards ? handleDrillDay : undefined}
                   animate={animateCharts}
                 />
               </div>
@@ -236,18 +251,24 @@ export function StatsDashboardBody() {
           <ChartCard
             title={effectiveMetric === 'cost' ? 'Cumulative spend' : 'Cumulative tokens'}
             loading={coldLoading}
-            empty={!coldLoading && data.cumulative.length === 0}
-            emptyMessage={isLivePeriod ? 'Cumulative totals appear in Today / Week / Month / All Time' : 'No usage recorded yet'}
+            empty={!coldLoading && cumulativeEmpty}
+            emptyMessage={
+              isLivePeriod
+                ? effectiveMetric === 'cost'
+                  ? 'No spend recorded in the last 2 hours'
+                  : 'No tokens recorded in the last 2 hours'
+                : 'No usage recorded yet'
+            }
             testId="chart-cumulative"
           >
             <KngLineAreaChart
-              points={data.cumulative}
+              points={cumulativePoints}
               colorVar="--kng-accent"
               yFormatter={yFormatter}
-              xFormatter={costXFormatter}
+              xFormatter={isLivePeriod ? xFormatter : costXFormatter}
               seriesLabel={`cumulative ${metricNoun}`}
               ariaLabel={`Cumulative ${metricNoun} over the selected range`}
-              onBucketClick={canDrillCostBuckets ? handleDrillDay : undefined}
+              onBucketClick={canDrillTimeCards ? handleDrillDay : undefined}
               animate={animateCharts}
             />
           </ChartCard>
@@ -285,7 +306,6 @@ export function StatsDashboardBody() {
 
         <ChartCard
           title={`Burn rate (${metricNoun}/hr)`}
-          subtitle={isLivePeriod ? 'Trailing 2 hours, 5-minute buckets' : undefined}
           loading={coldLoading}
           empty={!coldLoading && data.burnRate.every((point) => point.y === 0)}
           emptyMessage="No agent turns recorded in this range"

@@ -22,9 +22,11 @@
  * Options: --days N (default 14), --config-dir <path> (default per-OS kangentic dir),
  *          --seed N (PRNG seed, default 42 - reruns are deterministic).
  *
- * The last seeded "session" of today ends within the trailing 2 hours so the
- * Live range has data too. Safe to run while the app is open (WAL); the
- * dashboard's poll picks the rows up within ~30s, or switch ranges to refetch.
+ * A dense trailing-2h block tiles several short sessions across the full live
+ * window so the Live range's per-bucket and cumulative charts have data across
+ * most buckets, not just one thin tail session. Safe to run while the app is
+ * open (WAL); the dashboard's poll picks the rows up within ~30s, or switch
+ * ranges to refetch.
  *
  * NOTE: open the project in the app at least once after updating Kangentic so
  * migrations have added the usage_history.agent column; the script refuses to
@@ -64,6 +66,9 @@ function parseArgs(argv) {
   }
   return args;
 }
+
+/** Trailing live window, mirrors LIVE_WINDOW_MS in src/main/usage-stats/bucketing.ts. */
+const LIVE_WINDOW_MS = 120 * 60_000;
 
 /** Deterministic PRNG (mulberry32) so reruns produce identical data. */
 function makeRandom(seed) {
@@ -150,6 +155,60 @@ function seedProject(configDir, project, days, random) {
     let turnCounter = 0;
     const nowMs = Date.now();
 
+    // Writes one session's turns + its usage_history row. Shared by the daily
+    // history loop and the dense live-window block below so both feed the
+    // same two ledgers the dashboard reads.
+    function insertSeededSession(sessionId, profile, startMs, turnCount) {
+      const durationMs = turnCount * (30_000 + Math.floor(random() * 90_000));
+
+      let sessionInput = 0;
+      let sessionOutput = 0;
+      for (let turnIndex = 0; turnIndex < turnCount; turnIndex++) {
+        const ts = Math.min(startMs + Math.floor((durationMs * turnIndex) / turnCount), nowMs);
+        const inputTokens = 500 + Math.floor(random() * 6_000);
+        const outputTokens = 200 + Math.floor(random() * 2_500);
+        sessionInput += inputTokens;
+        sessionOutput += outputTokens;
+        insertTurn.run(
+          `seed-turn-${sessionId}-${turnCounter++}`,
+          null,
+          sessionId,
+          null,
+          profile.modelId,
+          ts,
+          inputTokens,
+          outputTokens,
+          Math.floor(inputTokens * 0.4),
+          Math.floor(inputTokens * (8 + random() * 10)),
+          new Date(ts).toISOString(),
+        );
+      }
+
+      const totalTokens = sessionInput + sessionOutput;
+      const costUsd = (totalTokens / 1_000_000) * profile.costPerMTokens * (0.8 + random() * 0.4);
+      insertSession.run(
+        `seed-usage-row-${sessionId}`,
+        sessionId,
+        new Date(Math.min(startMs + durationMs, nowMs)).toISOString(),
+        new Date(startMs).toISOString(),
+        'main',
+        Math.round(costUsd * 10_000) / 10_000,
+        // Snapshot-style tokens: the last context window, not the cumulative sum.
+        Math.floor(sessionInput / Math.max(1, turnCount / 3)),
+        Math.floor(sessionOutput / Math.max(1, turnCount / 3)),
+        durationMs,
+        Math.floor(turnCount * (1 + random() * 2)),
+        profile.modelId,
+        profile.modelDisplayName,
+        Math.floor(random() * 400),
+        Math.floor(random() * 120),
+        Math.floor(random() * 20),
+        random() < 0.15 ? 1 : 0,
+        profile.agent,
+        pickEffort(random, profile),
+      );
+    }
+
     db.exec('BEGIN');
     try {
       for (let dayOffset = days - 1; dayOffset >= 0; dayOffset--) {
@@ -162,67 +221,31 @@ function seedProject(configDir, project, days, random) {
         for (let sessionIndex = 0; sessionIndex < sessionsToday; sessionIndex++) {
           const profile = pickProfile(random);
 
-          // Session start spread over local working hours (9:00 - 19:00);
-          // today's LAST session starts inside the trailing live window.
-          const isLiveWindowSession = dayOffset === 0 && sessionIndex === sessionsToday - 1;
+          // Session start spread over local working hours (9:00 - 19:00).
           const startHour = 9 + Math.floor(random() * 10);
-          const startMs = isLiveWindowSession
-            ? nowMs - Math.floor(random() * 60) * 60_000 - 10 * 60_000
-            : new Date(day.getFullYear(), day.getMonth(), day.getDate(), startHour, Math.floor(random() * 60)).getTime();
+          const startMs = new Date(day.getFullYear(), day.getMonth(), day.getDate(), startHour, Math.floor(random() * 60)).getTime();
           if (startMs > nowMs) continue;
           const sessionId = `seed-usage-${project.id.slice(0, 8)}-${dayOffset}-${sessionCounter++}`;
-
           const turnCount = 4 + Math.floor(random() * 20);
-          const durationMs = turnCount * (30_000 + Math.floor(random() * 90_000));
-
-          let sessionInput = 0;
-          let sessionOutput = 0;
-          for (let turnIndex = 0; turnIndex < turnCount; turnIndex++) {
-            const ts = Math.min(startMs + Math.floor((durationMs * turnIndex) / turnCount), nowMs);
-            const inputTokens = 500 + Math.floor(random() * 6_000);
-            const outputTokens = 200 + Math.floor(random() * 2_500);
-            sessionInput += inputTokens;
-            sessionOutput += outputTokens;
-            insertTurn.run(
-              `seed-turn-${sessionId}-${turnCounter++}`,
-              null,
-              sessionId,
-              null,
-              profile.modelId,
-              ts,
-              inputTokens,
-              outputTokens,
-              Math.floor(inputTokens * 0.4),
-              Math.floor(inputTokens * (8 + random() * 10)),
-              new Date(ts).toISOString(),
-            );
-          }
-
-          const totalTokens = sessionInput + sessionOutput;
-          const costUsd = (totalTokens / 1_000_000) * profile.costPerMTokens * (0.8 + random() * 0.4);
-          insertSession.run(
-            `seed-usage-row-${sessionId}`,
-            sessionId,
-            new Date(Math.min(startMs + durationMs, nowMs)).toISOString(),
-            new Date(startMs).toISOString(),
-            'main',
-            Math.round(costUsd * 10_000) / 10_000,
-            // Snapshot-style tokens: the last context window, not the cumulative sum.
-            Math.floor(sessionInput / Math.max(1, turnCount / 3)),
-            Math.floor(sessionOutput / Math.max(1, turnCount / 3)),
-            durationMs,
-            Math.floor(turnCount * (1 + random() * 2)),
-            profile.modelId,
-            profile.modelDisplayName,
-            Math.floor(random() * 400),
-            Math.floor(random() * 120),
-            Math.floor(random() * 20),
-            random() < 0.15 ? 1 : 0,
-            profile.agent,
-            pickEffort(random, profile),
-          );
+          insertSeededSession(sessionId, profile, startMs, turnCount);
         }
       }
+
+      // Dense trailing-2h live window: tile several short sessions across the
+      // full LIVE_WINDOW_MS so the Live period's per-bucket (token-type) and
+      // cumulative chart cards have data across most of the ~24 five-minute
+      // buckets, not just one thin tail session.
+      const liveSessionCount = 3;
+      const liveSliceMs = LIVE_WINDOW_MS / liveSessionCount;
+      for (let liveIndex = 0; liveIndex < liveSessionCount; liveIndex++) {
+        const profile = pickProfile(random);
+        const sliceStartMs = nowMs - LIVE_WINDOW_MS + liveIndex * liveSliceMs;
+        const startMs = Math.min(sliceStartMs + Math.floor(random() * liveSliceMs * 0.3), nowMs);
+        const sessionId = `seed-usage-${project.id.slice(0, 8)}-live-${sessionCounter++}`;
+        const turnCount = 6 + Math.floor(random() * 4);
+        insertSeededSession(sessionId, profile, startMs, turnCount);
+      }
+
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');

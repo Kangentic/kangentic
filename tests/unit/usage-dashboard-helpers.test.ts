@@ -33,7 +33,9 @@ import {
   deriveBurnRateSeries,
   deriveCostSparkline,
   deriveCumulative,
+  deriveCumulativeFromTokenSeries,
   deriveModelStack,
+  deriveTokenTypeStack,
   foldBreakdownForDonut,
   type BreakdownEntry,
 } from '../../src/renderer/components/stats/useStatsData';
@@ -152,6 +154,42 @@ describe('chart series derivations', () => {
     ];
     expect(deriveCumulative(costSeries, 'cost').map((point) => point.y)).toEqual([1, 3, 3]);
     expect(deriveCumulative(costSeries, 'tokens').map((point) => point.y)).toEqual([15, 45, 45]);
+  });
+
+  it('deriveCumulativeFromTokenSeries sums the token series, so Cumulative populates in Live', () => {
+    const tokenSeries: TokenSeriesPoint[] = [
+      { bucketStartMs: 0, inputTokens: 10, outputTokens: 5, cacheCreationTokens: 0, cacheReadTokens: 0, allocatedCostUsd: 1, turnCount: 1 },
+      { bucketStartMs: 1, inputTokens: 20, outputTokens: 10, cacheCreationTokens: 0, cacheReadTokens: 0, allocatedCostUsd: 2, turnCount: 1 },
+      { bucketStartMs: 2, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, allocatedCostUsd: 0, turnCount: 0 },
+    ];
+    expect(deriveCumulativeFromTokenSeries(tokenSeries, 'cost').map((point) => point.y)).toEqual([1, 3, 3]);
+    expect(deriveCumulativeFromTokenSeries(tokenSeries, 'tokens').map((point) => point.y)).toEqual([15, 45, 45]);
+    expect(deriveCumulativeFromTokenSeries(tokenSeries, 'tokens').map((point) => point.x)).toEqual([0, 1, 2]);
+  });
+});
+
+describe('deriveTokenTypeStack', () => {
+  it('stacks input / output / cache-read / cache-write per bucket in slot colors', () => {
+    const tokenSeries: TokenSeriesPoint[] = [
+      { bucketStartMs: 1000, inputTokens: 100, outputTokens: 50, cacheCreationTokens: 20, cacheReadTokens: 200, allocatedCostUsd: 0.5, turnCount: 2 },
+      { bucketStartMs: 2000, inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0, allocatedCostUsd: 0, turnCount: 0 },
+    ];
+    const stack = deriveTokenTypeStack(tokenSeries, (bucketStartMs) => `t${bucketStartMs}`);
+    expect(stack.series.map((entry) => entry.label)).toEqual(['Input', 'Output', 'Cache read', 'Cache write']);
+    expect(stack.series.map((entry) => entry.colorVar)).toEqual([
+      '--kng-chart-1',
+      '--kng-chart-2',
+      '--kng-chart-3',
+      '--kng-chart-6',
+    ]);
+    expect(stack.rows[0]).toMatchObject({ x: 1000, label: 't1000', stack0: 100, stack1: 50, stack2: 200, stack3: 20 });
+    expect(stack.rows[1]).toMatchObject({ label: 't2000', stack0: 0, stack1: 0, stack2: 0, stack3: 0 });
+  });
+
+  it('stays dense and never gap-fills an empty series', () => {
+    const stack = deriveTokenTypeStack([], (bucketStartMs) => `t${bucketStartMs}`);
+    expect(stack.rows).toHaveLength(0);
+    expect(stack.series).toHaveLength(4);
   });
 });
 

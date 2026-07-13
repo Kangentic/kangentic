@@ -169,6 +169,50 @@ export function deriveCumulative(
   });
 }
 
+/** Running sum over the turn-derived token series, so the Cumulative card
+ *  populates in Live where costSeries (and thus `deriveCumulative`) is empty. */
+export function deriveCumulativeFromTokenSeries(
+  tokenSeries: TokenSeriesPoint[],
+  metric: UsageMetricMode,
+): TimePoint[] {
+  let runningTotal = 0;
+  return tokenSeries.map((point) => {
+    runningTotal += metric === 'cost' ? point.allocatedCostUsd : point.inputTokens + point.outputTokens;
+    return { x: point.bucketStartMs, y: runningTotal };
+  });
+}
+
+/**
+ * Per-bucket TOKEN-TYPE stack (input / output / cache read / cache write) in
+ * the ModelStack shape, so KngBarChart renders it unchanged. Used for the
+ * Live per-bucket card, where per-model cost splits are unavailable; this is
+ * always a tokens view regardless of the cost/tokens toggle.
+ */
+export function deriveTokenTypeStack(
+  tokenSeries: TokenSeriesPoint[],
+  formatLabel: (bucketStartMs: number) => string,
+): ModelStack {
+  // Slot 6 (not the sequential slot 4) for Cache write: slot 4 is also a
+  // green and sits alongside slot 2 (Output) with only a floor-band CVD
+  // separation (validated via the dataviz palette validator); slot 6 (red)
+  // clears CVD separation cleanly on every theme with no other slot reused.
+  const series: ModelStackSeries[] = [
+    { key: 'stack0', label: 'Input', colorVar: CHART_SLOT_VARS[0] },
+    { key: 'stack1', label: 'Output', colorVar: CHART_SLOT_VARS[1] },
+    { key: 'stack2', label: 'Cache read', colorVar: CHART_SLOT_VARS[2] },
+    { key: 'stack3', label: 'Cache write', colorVar: CHART_SLOT_VARS[5] },
+  ];
+  const rows: ModelStackRow[] = tokenSeries.map((point) => ({
+    x: point.bucketStartMs,
+    label: formatLabel(point.bucketStartMs),
+    stack0: point.inputTokens,
+    stack1: point.outputTokens,
+    stack2: point.cacheReadTokens,
+    stack3: point.cacheCreationTokens,
+  }));
+  return { series, rows };
+}
+
 /** Sparkline input: total tokens per bucket. */
 export function deriveTokenSparkline(tokenSeries: TokenSeriesPoint[]): TimePoint[] {
   return tokenSeries.map((point) => ({
@@ -208,6 +252,10 @@ export interface StatsDerivedData {
   /** Stacked-by-model daily bars (colors/ranking shared with the donut). */
   modelStack: ModelStack;
   cumulative: TimePoint[];
+  /** Cumulative running sum from tokenSeries, for the Live card (costSeries empty). */
+  cumulativeFromTokens: TimePoint[];
+  /** Per-bucket token-type stack for the Live per-bucket card (ModelStack shape). */
+  tokenTypeStack: ModelStack;
   tokenSparkline: TimePoint[];
   costSparkline: TimePoint[];
   byModelSlices: DonutSlice[];
@@ -228,6 +276,8 @@ export function useStatsData(effectiveMetric: UsageMetricMode): StatsDerivedData
         burnRate: [],
         modelStack: { series: [], rows: [] },
         cumulative: [],
+        cumulativeFromTokens: [],
+        tokenTypeStack: { series: [], rows: [] },
         tokenSparkline: [],
         costSparkline: [],
         byModelSlices: [],
@@ -254,6 +304,11 @@ export function useStatsData(effectiveMetric: UsageMetricMode): StatsDerivedData
         (bucketStartMs) => formatBucketLabel(bucketStartMs, payload.costBucketSizeMs),
       ),
       cumulative: deriveCumulative(payload.costSeries, effectiveMetric),
+      cumulativeFromTokens: deriveCumulativeFromTokenSeries(payload.tokenSeries, effectiveMetric),
+      tokenTypeStack: deriveTokenTypeStack(
+        payload.tokenSeries,
+        (bucketStartMs) => formatBucketLabel(bucketStartMs, payload.bucketSizeMs),
+      ),
       tokenSparkline: deriveTokenSparkline(payload.tokenSeries),
       costSparkline: deriveCostSparkline(payload.tokenSeries),
       byModelSlices,
