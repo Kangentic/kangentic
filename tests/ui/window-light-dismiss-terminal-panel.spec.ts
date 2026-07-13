@@ -412,122 +412,19 @@ test('selecting the Activity tab makes the panel dead space light-dismiss the op
   }
 });
 
-// ---------------------------------------------------------------------------
-// Test D: a session claimed by its own task-detail window (`dialogSessionIds`)
-// makes the dead space a dismiss surface even while `showContent` stays true
-// (covers the `!dialogSessionIds.includes(effectiveActiveId)` term of
-// `hasLiveTerminal`).
-//
-// A direct store poke (`useSessionStore.getState().claimDialogSession(id)`,
-// mirroring how `setPolicy` pokes the config store) was tried first and
-// rejected: `useWindowSessionClaims.ts` reconciles `dialogSessionIds` to
-// exactly the set of sessions owned by currently-open windows on every
-// `windows`/`sessions` change, so a poke that doesn't correspond to a real
-// open window is stomped back to `[]` on the very next effect pass. The
-// non-flaky way to reach this state is the real mechanism: open the
-// task-detail window for the task that OWNS the running session.
-// `useTaskSessionState`'s `useLayoutEffect` (`claimDialogSession`) then runs
-// synchronously before paint - not a race against a timer - and the claim
-// persists deterministically for as long as the window stays open (the
-// steady "one xterm per session" state documented in CLAUDE.md), which is
-// exactly the condition this term guards against.
-// ---------------------------------------------------------------------------
-
-const DIALOG_OWNED_PROJECT_ID = `proj-term-dialog-owned-${RUN_SUFFIX}`;
-const DIALOG_OWNED_SESSION_TASK_ID = `task-term-dialog-owned-sess-${RUN_SUFFIX}`;
-const DIALOG_OWNED_SESSION_ID = `sess-term-dialog-owned-${RUN_SUFFIX}`;
-
-function buildDialogOwnedPreConfig(): string {
-  return `
-    window.__mockPreConfigure(function (state) {
-      var ts = new Date().toISOString();
-
-      state.projects.push({
-        id: '${DIALOG_OWNED_PROJECT_ID}',
-        name: 'Dialog Owned Session Dismiss Test',
-        path: '/mock/dialog-owned-dismiss-test',
-        github_url: null,
-        default_agent: 'claude',
-        last_opened: ts,
-        created_at: ts,
-      });
-
-      var laneIds = {};
-      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
-        var id = 'lane-tdo-' + i;
-        laneIds[s.name] = id;
-        state.swimlanes.push(Object.assign({}, s, { id: id, position: i, created_at: ts }));
-      });
-
-      // Task with a running session -> its terminal auto-mounts in the
-      // bottom panel (the only session, unclaimed by any window).
-      state.sessions.push({
-        id: '${DIALOG_OWNED_SESSION_ID}',
-        taskId: '${DIALOG_OWNED_SESSION_TASK_ID}',
-        projectId: '${DIALOG_OWNED_PROJECT_ID}',
-        pid: 5003,
-        status: 'running',
-        shell: 'bash',
-        cwd: '/mock/dialog-owned-dismiss-test',
-        startedAt: ts,
-        exitCode: null,
-        resuming: false,
-        isolatedSwimlaneId: null,
-      });
-      state.tasks.push({
-        id: '${DIALOG_OWNED_SESSION_TASK_ID}',
-        display_id: 1,
-        title: 'Dialog Owned Session Task',
-        description: '',
-        swimlane_id: laneIds['Executing'],
-        position: 0,
-        agent: 'claude',
-        session_id: '${DIALOG_OWNED_SESSION_ID}',
-        worktree_path: null,
-        branch_name: null,
-        pr_number: null,
-        pr_url: null,
-        base_branch: null,
-        archived_at: null,
-        created_at: ts,
-        updated_at: ts,
-      });
-      state.activityCache['${DIALOG_OWNED_SESSION_ID}'] = 'idle';
-
-      return { currentProjectId: '${DIALOG_OWNED_PROJECT_ID}' };
-    });
-  `;
-}
-
-test('a window that claims its own session (dialogSessionIds) makes the panel dead space light-dismiss even while showContent stays true', async () => {
-  const { browser, page } = await launchWithState(buildDialogOwnedPreConfig());
-  try {
-    await page.locator('[data-swimlane-name="Executing"]').waitFor({ state: 'visible', timeout: 15000 });
-    await setPolicy(page, 'single');
-
-    // Before any window opens, the session's terminal auto-mounts in the
-    // bottom panel (unclaimed).
-    await page.locator('[data-testid="terminal-session-pane"]').waitFor({ state: 'visible', timeout: 5000 });
-
-    // Opening the task-detail window for the task that OWNS this session
-    // claims it into dialogSessionIds synchronously on mount (see the
-    // comment above this test block for why this - not a store poke - is
-    // the deterministic way to reach this state).
-    await openWindow(page, 'Dialog Owned Session Task');
-    await pollWindowCount(page, 1);
-
-    // The panel's pane mount filter excludes any session in
-    // dialogSessionIds, so it unmounts even though effectiveActiveId is
-    // unchanged and showContent is still true.
-    await page.locator('[data-testid="terminal-session-pane"]').waitFor({ state: 'hidden', timeout: 5000 });
-
-    // The now-empty pane container has no data-testid; its class list is
-    // unique within the marked dismiss-surface root (BacklogView/DiffViewer,
-    // the only elements sharing individual classes, are not mounted here).
-    const panelPaneContainer = '[data-dismiss-surface] .flex-1.min-h-0.relative';
-    await dispatchCleanClickOn(page, panelPaneContainer);
-    await pollWindowCount(page, 0);
-  } finally {
-    await browser.close();
-  }
-});
+// NOTE: an earlier revision of this file included a "Test D" targeting the
+// `!dialogSessionIds.includes(effectiveActiveId)` term of `hasLiveTerminal`
+// (a session claimed by its own task-detail window). It was removed: that
+// term can only be false while `showContent` stays true during the ~200ms
+// force-collapse CSS transition (`AppLayout.tsx`'s `shouldForceCollapseTerminal`
+// unconditionally force-collapses the whole panel the instant
+// `dialogSessionIds.length > 0`, independent of which session is active), so
+// the state is architecturally transient, not a stable one a test can wait
+// for without racing the transition. It failed intermittently on CI
+// (`TimeoutError` waiting for the pane container, because by the time the
+// test reached the click the transition had already finished and the whole
+// `{showContent && (...)}` block had unmounted). The term is still
+// implicitly protected: Test B exercises the same boolean expression with
+// this term true (session NOT owned), and the panel's actual force-collapse
+// behavior this term is coupled to is covered by
+// `tests/ui/terminal-no-flash-on-switch.spec.ts`.
