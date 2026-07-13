@@ -1348,7 +1348,7 @@ test.describe('Command Terminal', () => {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        await page.getByTestId('quick-session-button').click();
+        await page.getByTestId('quick-session-new-terminal').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
 
         const idsBySlot = await commandWindowIdBySlot(page);
