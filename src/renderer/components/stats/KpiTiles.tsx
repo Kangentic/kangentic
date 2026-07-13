@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { UsageDashboardStats, UsageStatsScopeKind, UsageTimePeriod } from '../../../shared/types';
 import { useSessionStore } from '../../stores/session-store';
+import { useLiveUsageAggregate } from '../../hooks/useLiveUsageAggregate';
 import { useValuePulse } from '../../hooks/useValuePulse';
 import { formatTokenCount } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
@@ -181,13 +182,20 @@ interface KpiTilesProps {
 /**
  * KPI stat tiles: three hero tiles (Tokens, Cost, Burn Rate - large value,
  * vs-previous-period delta, sparkline filling the tile) over a compact
- * secondary strip. Live sessions are merged server-side into `payload.kpis`
- * (usage-stats-service's `liveSessions` param, keyed by `sessionRecordId` so
- * a running session's live value replaces rather than doubles its own
- * ledger snapshot) - `kpis` is therefore already the complete number for
- * every period, live included, and this component reads it directly with no
- * additive layering. The only renderer-local piece is the "N active now"
- * subtitle on the Sessions tile, a cosmetic count from the live session list.
+ * secondary strip.
+ *
+ * Two distinct live-data paths, kept deliberately separate:
+ * - Tokens/Cost: layered CLIENT-SIDE via `useLiveUsageAggregate`, which reads
+ *   the push-fed `sessionUsage` cache with zero IPC round-trip - required for
+ *   instant reactivity (a pushed usage tick must repaint within one animation
+ *   frame; see `useValuePulse`'s resetKey contract). For 'live' the tiles show
+ *   ONLY in-memory running-session usage; for DB periods the payload totals
+ *   get the live sessions layered on top.
+ * - Sessions: read from `payload.kpis.sessionCount` directly - the server
+ *   (`usage-stats-service.ts`) already folds in-flight sessions into this
+ *   count (deduped against the ledger), so no client-side layering is needed
+ *   or wanted here. The "N active now" subtitle is a purely cosmetic
+ *   restatement of how many of that count are live right now.
  */
 export function KpiTiles({
   payload,
@@ -203,6 +211,16 @@ export function KpiTiles({
 }: KpiTilesProps) {
   const sessions = useSessionStore((state) => state.sessions);
 
+  const liveFilter = useMemo<ReadonlySet<string> | 'all'>(() => {
+    if (!includeLive) return new Set<string>();
+    if (scopeKind !== 'project' || !effectiveProjectId) return 'all';
+    return new Set(
+      sessions.filter((session) => session.projectId === effectiveProjectId).map((session) => session.id),
+    );
+  }, [includeLive, scopeKind, effectiveProjectId, sessions]);
+
+  const live = useLiveUsageAggregate(liveFilter);
+
   // Cosmetic-only: the server already counts these sessions into
   // `kpis.sessionCount` for the headline; this mirrors that scoping (project
   // vs all, running/queued only) purely to label how many are live right now.
@@ -217,10 +235,11 @@ export function KpiTiles({
 
   const kpis = payload?.kpis ?? null;
   const previous = payload?.previousKpis ?? null;
-  const displayInput = kpis?.totalInputTokens ?? 0;
-  const displayOutput = kpis?.totalOutputTokens ?? 0;
-  const displayCost = kpis?.totalCostUsd ?? 0;
-  const costKnown = kpis?.costKnown ?? false;
+  const isLive = period === 'live' && includeLive;
+  const displayInput = isLive ? live.input : (kpis?.totalInputTokens ?? 0) + live.input;
+  const displayOutput = isLive ? live.output : (kpis?.totalOutputTokens ?? 0) + live.output;
+  const displayCost = isLive ? live.cost : (kpis?.totalCostUsd ?? 0) + live.cost;
+  const costKnown = (kpis?.costKnown ?? false) || live.cost > 0;
 
   const cacheDenominator =
     (kpis?.cacheReadTokens ?? 0) + (kpis?.cacheCreationTokens ?? 0) + (kpis?.turnInputTokens ?? 0);

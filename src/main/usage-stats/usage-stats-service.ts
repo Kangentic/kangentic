@@ -46,12 +46,26 @@ import {
  * whole payload.
  *
  * The optional `liveSessions` param (populated by the IPC handler from the
- * live `SessionManager`, empty for the MCP command handler) merges in-flight
- * sessions into each project's ledger rows BEFORE aggregation, so the
- * SESSIONS KPI and Live view include running sessions the ledger cannot see
- * yet. De-duped by `sessionRecordId` so a session already snapshotted into
- * `usage_history` by the periodic metrics timer is replaced by its live
- * value, never double-counted.
+ * live `SessionManager`, empty for the MCP command handler) fixes the
+ * SESSIONS KPI undercount: a running session has no `usage_history` row
+ * until it finalizes, so the count of ledger rows alone misses it. This
+ * layer ONLY affects `sessionCount` (here and in each `perProject` entry) -
+ * cost/tokens/lines/files/burn-rate stay purely ledger-derived, computed
+ * exactly as before. Two reasons the merge is deliberately this narrow:
+ *
+ * 1. The renderer's KpiTiles already gets instant-reactivity for cost/tokens
+ *    from its own client-side live overlay (`useLiveUsageAggregate`, fed by
+ *    pushed `session:usage` events with zero IPC round-trip) - correctly, and
+ *    a pre-existing UI test (`use-value-pulse-reset-key.spec.ts`) pins that a
+ *    local `sessionUsage` store mutation must repaint the Cost tile within a
+ *    single animation frame. Folding live sessions into `totalCostUsd` here
+ *    too would double-count against that client-side overlay.
+ * 2. The originally-reported gap was specifically the SESSIONS KPI/Live view
+ *    undercounting live agents - cost/tokens were never reported wrong.
+ *
+ * De-duped by `sessionRecordId` against the ledger rows already read for the
+ * same window, so a session already snapshotted into `usage_history` by the
+ * periodic metrics timer is not counted twice.
  */
 
 /** Per-project read surface; the DI seam the unit tests fake. */
@@ -77,43 +91,17 @@ export interface UsageStatsService {
   ): UsageDashboardStats;
 }
 
-/** A live session as a synthetic ledger row (churn fields 0 - git stats are
- *  captured only at finalization, never live). */
-function liveSessionToUsageHistoryRow(live: LiveSessionRow): UsageHistoryRow {
-  return {
-    sessionRecordId: live.sessionRecordId,
-    sessionStartedAt: live.startedAtIso,
-    totalCostUsd: live.costUsd,
-    totalInputTokens: live.inputTokens,
-    totalOutputTokens: live.outputTokens,
-    totalDurationMs: live.totalDurationMs,
-    toolCallCount: live.toolCallCount,
-    modelId: live.modelId,
-    modelDisplayName: live.modelDisplayName,
-    linesAdded: 0,
-    linesRemoved: 0,
-    filesChanged: 0,
-    compactionCount: 0,
-    agent: live.agent,
-    effort: live.effort,
-  };
-}
-
-/**
- * Merge live (in-flight) sessions into a project's ledger rows for the
- * current window, keyed by `sessionRecordId` - a running session's live
- * value REPLACES any snapshot the periodic metrics timer already wrote to
- * `usage_history` for the same id, rather than adding both (a session is
- * "the current thing happening", not two separate contributions). Ledger
- * rows the live cache has no entry for (already-finalized sessions) pass
- * through unchanged.
- */
-function mergeLiveSessions(ledgerRows: UsageHistoryRow[], liveRows: LiveSessionRow[]): UsageHistoryRow[] {
-  if (liveRows.length === 0) return ledgerRows;
-  const merged = new Map<string, UsageHistoryRow>();
-  for (const row of ledgerRows) merged.set(row.sessionRecordId, row);
-  for (const live of liveRows) merged.set(live.sessionRecordId, liveSessionToUsageHistoryRow(live));
-  return [...merged.values()];
+/** Count of `liveRows` not already represented among `ledgerRows` (by
+ *  `sessionRecordId`) - the number to ADD to a ledger-derived session count
+ *  so a running session is counted exactly once. */
+function countUnrepresentedLiveSessions(ledgerRows: UsageHistoryRow[], liveRows: LiveSessionRow[]): number {
+  if (liveRows.length === 0) return 0;
+  const ledgerIds = new Set(ledgerRows.map((row) => row.sessionRecordId));
+  let count = 0;
+  for (const live of liveRows) {
+    if (!ledgerIds.has(live.sessionRecordId)) count += 1;
+  }
+  return count;
 }
 
 export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService {
@@ -122,6 +110,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
   function summarizeProject(
     project: { id: string; name: string },
     rows: UsageHistoryRow[],
+    liveSessionCount: number,
   ): ProjectUsageSummary {
     let inputTokens = 0;
     let outputTokens = 0;
@@ -164,7 +153,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       inputTokens,
       outputTokens,
       costUsd,
-      sessionCount: rows.length,
+      sessionCount: rows.length + liveSessionCount,
       toolCallCount,
       linesAdded,
       linesRemoved,
@@ -240,6 +229,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
     const previousGroups: GroupedTurnUsageRow[] = [];
     const perProject: ProjectUsageSummary[] = [];
     const skippedProjects: Array<{ projectId: string; projectName: string }> = [];
+    let liveSessionCountTotal = 0;
 
     for (const project of targets) {
       // A registered-but-never-opened (or externally deleted) project has no
@@ -248,9 +238,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       if (!deps.projectDbExists(project.id)) continue;
       try {
         const reader = deps.openReader(project.id);
-        const ledgerRows = reader.listUsageRows(sinceIso, untilIso);
-        const liveForProject = liveSessions.filter((live) => live.projectId === project.id);
-        const rows = mergeLiveSessions(ledgerRows, liveForProject);
+        const rows = reader.listUsageRows(sinceIso, untilIso);
         const groups = reader.listTurnGroups(sinceMs, TURN_GROUP_MS, untilMs);
         combinedUsageRows.push(...rows);
         combinedGroups.push(...groups);
@@ -258,7 +246,10 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
           previousUsageRows.push(...reader.listUsageRows(previousWindow.sinceIso, previousWindow.untilIso));
           previousGroups.push(...reader.listTurnGroups(previousWindow.sinceMs, TURN_GROUP_MS, previousWindow.untilMs));
         }
-        if (scope.kind === 'all') perProject.push(summarizeProject(project, rows));
+        const liveForProject = liveSessions.filter((live) => live.projectId === project.id);
+        const projectLiveCount = countUnrepresentedLiveSessions(rows, liveForProject);
+        liveSessionCountTotal += projectLiveCount;
+        if (scope.kind === 'all') perProject.push(summarizeProject(project, rows, projectLiveCount));
       } catch (error) {
         console.warn(`[usage-stats] Skipping unreadable project DB ${project.id}:`, error);
         skippedProjects.push({ projectId: project.id, projectName: project.name });
@@ -308,6 +299,12 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       combinedUsageRows.map((row) => [row.sessionRecordId, row.totalCostUsd]),
     );
 
+    const kpis = computeKpis(combinedUsageRows, combinedGroups, sessionCostUsd, rangeEndMs - rangeStartMs);
+    // See the file-level JSDoc: live sessions are added to sessionCount only,
+    // never to cost/tokens (those get instant client-side live layering from
+    // KpiTiles' own sessionUsage overlay, which this would otherwise double).
+    kpis.sessionCount += liveSessionCountTotal;
+
     const stats: UsageDashboardStats = {
       scope,
       period,
@@ -316,7 +313,7 @@ export function createUsageStatsService(deps: UsageStatsDeps): UsageStatsService
       bucketSizeMs: NOMINAL_BUCKET_MS[tokenBucketKind],
       costBucketSizeMs: NOMINAL_BUCKET_MS[costBucketKind],
       generatedAtMs: nowMs,
-      kpis: computeKpis(combinedUsageRows, combinedGroups, sessionCostUsd, rangeEndMs - rangeStartMs),
+      kpis,
       previousKpis: previousWindow
         ? computeKpis(
             previousUsageRows,

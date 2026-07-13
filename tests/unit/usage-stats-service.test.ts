@@ -332,43 +332,49 @@ describe('usage-stats service: app-wide rollup', () => {
   });
 });
 
-describe('usage-stats service: live session overlay', () => {
-  it('merges a live session additively with a ledger row that has a DIFFERENT session id', () => {
+describe('usage-stats service: live session count overlay', () => {
+  // The originally-reported gap was specifically the SESSIONS KPI/Live view
+  // undercounting live agents, so the live merge is scoped to `sessionCount`
+  // ONLY (both the headline kpis and each perProject entry). Cost/tokens stay
+  // purely ledger-derived: KpiTiles layers live cost/tokens itself client-side
+  // (useLiveUsageAggregate, fed by pushed usage events with zero IPC
+  // round-trip, required for instant reactivity) - merging them here too
+  // would double-count against that client-side overlay.
+
+  it('adds a live session (different id) to sessionCount, without touching cost/tokens', () => {
     const { service } = makeService([
-      { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'finalized-1', totalInputTokens: 100, totalOutputTokens: 40 })] },
+      { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'finalized-1', totalInputTokens: 100, totalOutputTokens: 40, totalCostUsd: 1 })] },
     ]);
     const stats = service.getDashboardStats(
       { kind: 'project', projectId: 'p1' },
       'today',
       null,
       null,
-      [makeLiveSession({ sessionRecordId: 'live-1', projectId: 'p1', inputTokens: 500, outputTokens: 200 })],
+      [makeLiveSession({ sessionRecordId: 'live-1', projectId: 'p1', inputTokens: 500, outputTokens: 200, costUsd: 5 })],
     );
 
     expect(stats.kpis.sessionCount).toBe(2);
-    expect(stats.kpis.totalInputTokens).toBe(600);
-    expect(stats.kpis.totalOutputTokens).toBe(240);
+    expect(stats.kpis.totalInputTokens).toBe(100);
+    expect(stats.kpis.totalOutputTokens).toBe(40);
+    expect(stats.kpis.totalCostUsd).toBe(1);
   });
 
-  it('a live session REPLACES (never adds to) an already-snapshotted ledger row for the same session id', () => {
+  it('does NOT double-count a live session already snapshotted into the ledger for the same id', () => {
     const { service } = makeService([
-      { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'shared-id', totalInputTokens: 100, totalOutputTokens: 40 })] },
+      { id: 'p1', name: 'One', rows: [makeRow({ sessionRecordId: 'shared-id' })] },
     ]);
     const stats = service.getDashboardStats(
       { kind: 'project', projectId: 'p1' },
       'today',
       null,
       null,
-      [makeLiveSession({ sessionRecordId: 'shared-id', projectId: 'p1', inputTokens: 500, outputTokens: 200 })],
+      [makeLiveSession({ sessionRecordId: 'shared-id', projectId: 'p1' })],
     );
 
-    // ONE row - the live value wins, never 100+500.
     expect(stats.kpis.sessionCount).toBe(1);
-    expect(stats.kpis.totalInputTokens).toBe(500);
-    expect(stats.kpis.totalOutputTokens).toBe(200);
   });
 
-  it('scopes live sessions to the matching project in an app-wide rollup', () => {
+  it('scopes live sessions to the matching project in an app-wide rollup, and rolls up into the headline count', () => {
     const { service } = makeService([
       { id: 'p1', name: 'One', rows: [] },
       { id: 'p2', name: 'Two', rows: [] },
@@ -385,21 +391,7 @@ describe('usage-stats service: live session overlay', () => {
     const p2Summary = stats.perProject?.find((project) => project.projectId === 'p2');
     expect(p1Summary?.sessionCount).toBe(1);
     expect(p2Summary?.sessionCount).toBe(0);
-  });
-
-  it('a live session never contributes churn (git stats are captured only at finalization)', () => {
-    const { service } = makeService([{ id: 'p1', name: 'One', rows: [] }]);
-    const stats = service.getDashboardStats(
-      { kind: 'project', projectId: 'p1' },
-      'today',
-      null,
-      null,
-      [makeLiveSession()],
-    );
-
-    expect(stats.kpis.linesAdded).toBe(0);
-    expect(stats.kpis.linesRemoved).toBe(0);
-    expect(stats.kpis.filesChanged).toBe(0);
+    expect(stats.kpis.sessionCount).toBe(1);
   });
 
   it('defaults to no live overlay when liveSessions is omitted (MCP command handler call shape)', () => {
