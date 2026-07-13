@@ -15,14 +15,16 @@ import logoSrc from '@kangentic/branding/assets/brandmark-small.svg?url';
 const isMac = window.electronAPI.platform === 'darwin';
 
 interface TitleBarProps {
-  /** Context-aware: opens the Command Terminal layer when closed, or spawns
-   *  another terminal when already open. */
+  /** Toggles the Command Terminal layer: opens it when closed, hides it when open. */
   onQuickSession?: () => void;
   onOpenSearch?: () => void;
   commandBarOpen?: boolean;
-  /** Whether another Command Terminal can be opened (below the cap). Drives the
-   *  `+` affordance shown while the layer is open. */
-  canSpawnMore?: boolean;
+  /** Spawns another Command Terminal (up to the cap). Only called while the
+   *  layer is open; the button that triggers it renders only then. */
+  onSpawnAdditionalTerminal?: () => void;
+  /** Whether another Command Terminal can be opened (below the cap). Disables
+   *  the "New terminal" button without unmounting it. */
+  canSpawnMoreTerminals?: boolean;
 }
 
 /**
@@ -30,18 +32,19 @@ interface TitleBarProps {
  * IN the glyph rather than in a separate corner badge. The stroke color is the
  * aggregate activity of the project's terminals (green while working / warm amber
  * when one needs you / muted rest, via the --kng-active / --kng-attention tokens),
- * and the working border MARCHES (a dash flows around the
- * perimeter). The center morphs from the shell prompt to a `+` when the layer is
- * open and another terminal can be spawned, so the add affordance reads as part of
- * the icon (no clashing blue corner dot). 24 viewBox at strokeWidth 2 to match the
- * neighbouring lucide icons.
+ * and the working border MARCHES (a dash flows around the perimeter). The center
+ * morphs from the shell prompt to a `+` when rendered for the "New terminal"
+ * button, so that button reads as a terminal glyph (not a bare plus). 24 viewBox
+ * at strokeWidth 2 to match the neighbouring lucide icons.
  */
 function CommandTerminalIcon({
   tone,
-  showPlus,
+  showPlus = false,
+  testId = 'quick-session-icon',
 }: {
   tone: 'rest' | 'thinking' | 'idle';
-  showPlus: boolean;
+  showPlus?: boolean;
+  testId?: string;
 }): React.ReactNode {
   // `tone` is a derived PRESENTATIONAL union (rest | thinking | idle); the idle-vs-active
   // bucketing already happened upstream via isActive / requiresUserInteraction when this
@@ -60,7 +63,7 @@ function CommandTerminalIcon({
       strokeLinecap="round"
       strokeLinejoin="round"
       className={colorClass}
-      data-testid="quick-session-icon"
+      data-testid={testId}
       data-activity={tone}
       data-plus={showPlus ? 'true' : 'false'}
       aria-hidden="true"
@@ -94,7 +97,13 @@ function CommandTerminalIcon({
   );
 }
 
-export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpawnMore }: TitleBarProps) {
+export function TitleBar({
+  onQuickSession,
+  onOpenSearch,
+  commandBarOpen,
+  onSpawnAdditionalTerminal,
+  canSpawnMoreTerminals,
+}: TitleBarProps) {
   const currentProject = useProjectStore((s) => s.currentProject);
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
@@ -137,9 +146,6 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpaw
   // When the stats dashboard is detached into its own window, this button
   // focuses that window instead of toggling the (suppressed) in-app overlay.
   const statsPopOut = usePopOut('stats', {});
-
-  // While the layer is open and below the cap, the button spawns ANOTHER terminal.
-  const spawnsAnother = !!commandBarOpen && !!canSpawnMore;
 
   const isWorktree = currentProject?.path ? isWorktreePath(currentProject.path) : false;
 
@@ -210,6 +216,53 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpaw
       <div className="flex-1" />
 
       <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+        {/* "New terminal" + the Command Terminal toggle are the LEFT-MOST icons
+            in this row on purpose: this row is right-anchored (the flex-1
+            spacer eats the space to its left), so an element's on-screen
+            position is fixed by whatever comes AFTER it, not before it. Keeping
+            this pair first means the conditional "New terminal" button
+            mounting/unmounting as the layer opens/closes never shifts Quick
+            Find / mic / stats / settings / the window controls - only this
+            pair's own position moves. "New terminal" sits to the LEFT of the
+            toggle (reads outward from the toggle as the layer gains a spawn
+            affordance) and reuses the same terminal glyph with the center `+`
+            variant, rather than a bare plus icon, so it still reads as "add a
+            Command Terminal" and not a generic add action. */}
+        {currentProject && commandBarOpen && onSpawnAdditionalTerminal && (
+          <>
+            <button
+              onClick={onSpawnAdditionalTerminal}
+              disabled={!canSpawnMoreTerminals}
+              className="relative p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-muted disabled:cursor-not-allowed"
+              title={canSpawnMoreTerminals ? 'New Command Terminal' : 'Command Terminal limit reached'}
+              aria-label="New Command Terminal"
+              data-testid="quick-session-new-terminal"
+            >
+              {/* Uncolored/unanimated on purpose: the activity glyph communicates
+                  "an existing terminal needs you", which doesn't apply to a fresh
+                  terminal that doesn't exist yet. Only the toggle button carries
+                  the aggregate activity tone. */}
+              <CommandTerminalIcon tone="rest" showPlus testId="quick-session-new-terminal-icon" />
+            </button>
+            {/* Separates the transient "New terminal" action from the permanent
+                icon cluster to its right (mounts/unmounts together with the
+                button above, so it never leaves an orphan divider). */}
+            <div className="w-px h-4 bg-edge mx-1" data-testid="quick-session-new-terminal-divider" />
+          </>
+        )}
+        {currentProject && onQuickSession && (
+          <button
+            onClick={onQuickSession}
+            className="relative p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
+            title={commandBarOpen ? 'Hide Command Terminal' : `Command Terminal (${commandTerminalCombo})`}
+            aria-label={commandBarOpen ? 'Hide Command Terminal' : 'Command Terminal'}
+            data-testid="quick-session-button"
+          >
+            {/* The activity color lives IN the glyph (stroke color = aggregate
+                activity), so there is no separate corner badge to clash or clutter. */}
+            <CommandTerminalIcon tone={transientActivityTone} />
+          </button>
+        )}
         {onOpenSearch && (
           <button
             onClick={onOpenSearch}
@@ -220,20 +273,6 @@ export function TitleBar({ onQuickSession, onOpenSearch, commandBarOpen, canSpaw
             data-testid="open-search-button"
           >
             <Command size={20} />
-          </button>
-        )}
-        {currentProject && onQuickSession && (
-          <button
-            onClick={onQuickSession}
-            className="relative p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
-            title={spawnsAnother ? 'New command terminal' : `Command Terminal (${commandTerminalCombo})`}
-            aria-label={spawnsAnother ? 'New command terminal' : 'Command Terminal'}
-            data-testid="quick-session-button"
-          >
-            {/* The activity color and the `+` add affordance both live IN the
-                glyph (color = activity, center = `+` when another can be spawned),
-                so there is no separate corner badge to clash or clutter. */}
-            <CommandTerminalIcon tone={transientActivityTone} showPlus={spawnsAnother} />
           </button>
         )}
         {dictationEnabled && (

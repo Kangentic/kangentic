@@ -62,18 +62,22 @@ export function AppLayout() {
   });
   const terminal = useTerminalResize(config, detailWindowsOpen, currentProject?.id ?? null);
   const commandBar = useCommandBar();
-  // Destructured for the callback's dep list: `open` is stable, `isOpen` changes;
+  // Destructured for the callback's dep list: `open`/`close` are stable, `isOpen` changes;
   // depending on the fresh `commandBar` object would rebuild the callback every render.
-  const { isOpen: commandBarIsOpen, open: openCommandBar } = commandBar;
+  const { isOpen: commandBarIsOpen, open: openCommandBar, close: closeCommandBar } = commandBar;
   // Live count of Command Terminal windows (the store is a module singleton that
-  // outlives the layer's mount), so the "+" affordance disables at the cap.
+  // outlives the layer's mount), so the title-bar "New terminal" button disables
+  // at the cap without needing the layer mounted.
   const commandWindowCount = commandWindowManager.store((state) => Object.keys(state.windows).length);
-  // The title-bar terminal button is context-aware: open the layer when closed,
-  // spawn another terminal when already open.
+  // The title-bar terminal button is a plain open/close toggle, so there is always
+  // a discoverable one-click way to hide the layer even when a window is maximized
+  // over the backdrop. "Spawn another terminal" is a separate, adjacent title-bar
+  // button (only rendered while the layer is open) so the two actions are never
+  // overloaded onto one control again.
   const handleCommandTerminalButton = useCallback(() => {
-    if (commandBarIsOpen) spawnAdditionalCommandTerminal();
+    if (commandBarIsOpen) closeCommandBar();
     else openCommandBar();
-  }, [commandBarIsOpen, openCommandBar]);
+  }, [commandBarIsOpen, openCommandBar, closeCommandBar]);
   // Plain Ctrl+F focuses the board search on the board view; otherwise it falls
   // back to the global search palette (resolved inside useSearchPalette).
   const handlePlainFindKey = useCallback(() => {
@@ -116,7 +120,8 @@ export function AppLayout() {
         onQuickSession={handleCommandTerminalButton}
         onOpenSearch={searchPalette.open}
         commandBarOpen={commandBar.isOpen}
-        canSpawnMore={commandWindowCount < MAX_COMMAND_TERMINALS}
+        onSpawnAdditionalTerminal={spawnAdditionalCommandTerminal}
+        canSpawnMoreTerminals={commandWindowCount < MAX_COMMAND_TERMINALS}
       />
 
       <div className="flex flex-1 min-h-0">

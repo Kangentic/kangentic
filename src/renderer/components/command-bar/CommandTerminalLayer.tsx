@@ -49,7 +49,7 @@ const COMMAND_LAYER_OPTIONS: WindowManagerLayerOptions = {
 };
 
 /** How many Command Terminals can run at once (per project). The slot allocator
- *  and the title-bar "+" affordance both honor this cap. */
+ *  and the title-bar "New terminal" button both honor this cap. */
 export const MAX_COMMAND_TERMINALS = 4;
 
 /** Lowest free `slot-N` among the windows already open, or null at the cap. */
@@ -59,12 +59,6 @@ function nextFreeSlot(usedSlots: Set<string>): string | null {
     if (!usedSlots.has(slot)) return slot;
   }
   return null;
-}
-
-/** True when another Command Terminal can be opened (below the cap). Reads the
- *  module-singleton store, so it works whether or not the layer is mounted. */
-export function canSpawnAdditionalCommandTerminal(): boolean {
-  return Object.keys(commandWindowManager.store.getState().windows).length < MAX_COMMAND_TERMINALS;
 }
 
 /** Open a Command Terminal in a specific slot and SPLIT it into the existing

@@ -105,20 +105,41 @@ won't be found.
   window's Stop control destroys THAT window's session and closes the window; Stopping the last
   window hides the layer. The header is responsive (priority-plus via `useHeaderPillOverflow`): only
   Stop + title + the window controls (kebab, layout menu, pop-out, maximize) are protected; the
-  pills AND the branch picker fold into the kebab as the window narrows, down to the min width. Each
-  window has full task-detail parity: tile-layout menu, pop-out (`untileWindow`: the clicked pane
-  floats at its current rect; the survivors STAY DOCKED and keep their absolute widths by shrinking
-  the footprint - no rescale - except a 2-pane group fully dissolves so both float), and a
-  min-pane-width floor on tiling (seam-drag clamp in `TileSplitter` + a footprint grow on spawn).
-  Both behaviors live in the shared engine, so task-detail windows get them too. The title-bar terminal button is context-aware: it opens the layer when
-  closed, and spawns another terminal (up to the cap) when open. The title-bar glyph is a custom
-  SVG (`CommandTerminalIcon` in `TitleBar.tsx`): its stroke color is the aggregate activity of the
-  project's terminals (active-green working / attention-amber needs-you / muted rest, via the
-  central `--kng-active` / `--kng-attention` tokens) and the working border
-  MARCHES (`@keyframes march-border` + a `pathLength`-normalized stroke-dash). The `+` add
-  affordance lives in the CENTER of the glyph (replacing the shell prompt) when the layer is open
-  and below the cap, not a corner badge, so it never clashes with the activity color. This replaces
-  the old background dot. GEOMETRY is global but POPULATION is per-project: the window layout blob
+  pills AND the branch picker fold into the kebab as the window narrows, down to the min width.
+  The divider precedes the window-frame cluster (kebab, THEN divider, THEN tile-layout/pop-out/
+  maximize), mirroring `TaskDetailHeader`'s divider placement - not a divider isolating just the
+  last control. Each window has full task-detail parity: tile-layout menu, pop-out
+  (`untileWindow`: the clicked pane floats at its current rect; the survivors STAY DOCKED and keep
+  their absolute widths by shrinking the footprint - no rescale - except a 2-pane group fully
+  dissolves so both float), and a min-pane-width floor on tiling (seam-drag clamp in
+  `TileSplitter` + a footprint grow on spawn). Both behaviors live in the shared engine, so
+  task-detail windows get them too. The title bar hosts TWO adjacent, purpose-built buttons
+  instead of one overloaded control: a plain open/close TOGGLE (`useCommandBar().open`/`close`,
+  `TitleBar.tsx`'s `quick-session-button`) that never spawns a terminal, so there is always a
+  discoverable one-click way to hide the layer even when a window is maximized over the backdrop;
+  and, rendered only while the layer is open, a "New terminal" button positioned to its LEFT
+  (`quick-session-new-terminal`, calling `spawnAdditionalCommandTerminal()`), disabled at
+  `MAX_COMMAND_TERMINALS`. Both share the custom `CommandTerminalIcon` SVG glyph (not a bare
+  lucide icon): the toggle always shows the shell-prompt variant, while "New terminal" passes
+  `showPlus` to render the center-`+` variant (`data-plus` on the svg), so the spawn affordance
+  still reads as "add a Command Terminal" rather than a generic plus. Only the TOGGLE carries the
+  aggregate activity tone/color/march-animation (`tone={transientActivityTone}`); "New terminal"
+  is hardcoded `tone="rest"` (uncolored, unanimated) since it represents an action, not the state
+  of any existing terminal - a fresh terminal has no activity to reflect. A thin divider (matching
+  the one before the Windows min/max/close controls) sits right after "New terminal", so it reads
+  as a transient action distinct from the permanent icon cluster to its right (toggle, Quick Find,
+  mic, stats, settings); the divider mounts/unmounts together with the button so it never leaves
+  an orphan line when the layer is closed. This pair is the LEFT-MOST icons in the title bar's
+  right-aligned button row (before Quick Find), deliberately: that row is right-anchored (a
+  `flex-1` spacer eats the space to its left), so an element's on-screen distance from the window
+  edge is fixed by whatever comes AFTER it, never before it. Keeping "New terminal" + the divider
+  + the toggle first means the conditionally-mounted "New terminal" button
+  appearing/disappearing as the layer opens/closes never shifts Quick Find, the mic, stats,
+  settings, or the OS window controls - only this pair's own position moves. The toggle glyph's
+  stroke color is the aggregate activity of the project's terminals (active-green working /
+  attention-amber needs-you / muted rest, via the central `--kng-active` / `--kng-attention`
+  tokens) and the working border MARCHES (`@keyframes march-border` + a `pathLength`-normalized
+  stroke-dash). GEOMETRY is global but POPULATION is per-project: the window layout blob
   is shared, yet WHICH slots get windows is reconciled to the current project's live transient
   sessions on open (`reconcileCommandTerminalWindows` +
   `planCommandWindowReconciliation` in `command-window-reconcile.ts`). Project switching keeps every

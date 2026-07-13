@@ -643,6 +643,11 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             anchorRef={kebabWrapRef}
           />
 
+          {/* Divider + window controls: tile layout + pop-out (tiled only) +
+              maximize. Mirrors TaskDetailHeader's divider placement (right
+              after the kebab, before the window-frame cluster). */}
+          <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
+
           <WindowLayoutMenu onApply={applyTilePreset} canTileMultiple={windowCount >= 2} />
 
           {isTiled && (
@@ -657,7 +662,6 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             </button>
           )}
 
-          <div className="w-px h-5 bg-surface-hover flex-shrink-0" />
           <button
             onClick={handleToggleMaximized}
             className="p-1.5 text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover rounded transition-colors flex-shrink-0"

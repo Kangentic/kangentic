@@ -949,38 +949,54 @@ test.describe('Command Terminal', () => {
 
   // ---------------------------------------------------------------------------
   // Multiple terminals (Phase 2) - exercises the headline new behavior:
-  // multiple Command Terminal windows per project, spawned via the + badge.
+  // multiple Command Terminal windows per project, spawned via the title-bar
+  // "New terminal" button (a separate control from the open/close toggle).
   //
   // Uses a per-test browser with a deterministic spawnTransient override
   // that returns a unique session id per call (counter incremented in closure),
   // since spawning a 2nd terminal calls spawnTransient again.
   // ---------------------------------------------------------------------------
   test.describe('Multiple terminals', () => {
-    test('the centered + add affordance shows while the layer is open and below the cap', async () => {
-      // The `+` lives IN the title-bar terminal glyph (data-plus on
-      // quick-session-icon), not a corner badge. It appears only when the layer is
-      // OPEN and another terminal can be spawned (below the cap).
+    test('the title-bar button toggles the layer open and closed; New terminal only shows while open', async () => {
+      // The title-bar terminal button is a plain open/close toggle now - it
+      // never spawns a terminal, so its own glyph always shows the shell prompt
+      // (data-plus=false). "New terminal" is a separate, adjacent button (with
+      // its own terminal-plus glyph) that only exists in the DOM while the
+      // layer is open.
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
 
-        // The `+` is off before the layer is open (clicking would just open it).
         await expect(page.getByTestId('quick-session-icon')).toHaveAttribute('data-plus', 'false');
+        await expect(page.getByTestId('quick-session-new-terminal')).toHaveCount(0);
+        await expect(page.getByTestId('quick-session-new-terminal-divider')).toHaveCount(0);
 
-        // Open the layer
-        await page.keyboard.press('Control+Shift+P');
+        // Click opens the layer; "New terminal" appears alongside the toggle,
+        // using the terminal-plus glyph variant.
+        await page.getByTestId('quick-session-button').click();
         await expect(page.getByTestId('command-terminal-window')).toBeVisible();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+        await expect(page.getByTestId('quick-session-new-terminal')).toBeVisible();
+        await expect(page.getByTestId('quick-session-new-terminal-icon')).toHaveAttribute('data-plus', 'true');
+        await expect(page.getByTestId('quick-session-icon')).toHaveAttribute('data-plus', 'false');
+        // The divider mounts together with "New terminal" - never an orphan line.
+        await expect(page.getByTestId('quick-session-new-terminal-divider')).toBeVisible();
 
-        // Open and below the cap: the glyph shows the centered `+`.
-        await expect(page.getByTestId('quick-session-icon')).toHaveAttribute('data-plus', 'true', { timeout: 3000 });
+        // Click again hides it (the discoverable close, even when maximized),
+        // and "New terminal" disappears with it.
+        await page.getByTestId('quick-session-button').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+        await expect(page.getByTestId('quick-session-new-terminal')).toHaveCount(0);
+        await expect(page.getByTestId('quick-session-new-terminal-divider')).toHaveCount(0);
       } finally {
         await browser.close();
       }
     });
 
-    test('clicking the title-bar button while open spawns a second terminal', async () => {
-      // With the layer OPEN, clicking quick-session-button calls spawnAdditionalCommandTerminal
-      // which opens a new window in the next free slot and tiles them columns.
+    test('the title-bar New terminal button spawns a second terminal', async () => {
+      // With the layer open, clicking the title-bar "New terminal" button calls
+      // spawnAdditionalCommandTerminal, which opens a new window in the next
+      // free slot and tiles them side by side.
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -992,8 +1008,8 @@ test.describe('Command Terminal', () => {
         // Wait for one window to be present
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
 
-        // Click the title-bar button to spawn a second terminal
-        await page.getByTestId('quick-session-button').click();
+        // Click the title-bar "New terminal" button to spawn a second terminal
+        await page.getByTestId('quick-session-new-terminal').click();
 
         // Second window should appear; total count goes 1 -> 2
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
@@ -1017,7 +1033,7 @@ test.describe('Command Terminal', () => {
         // Open and spawn two terminals
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        await page.getByTestId('quick-session-button').click();
+        await page.getByTestId('quick-session-new-terminal').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
 
         // Click Stop on the FIRST window
@@ -1050,14 +1066,15 @@ test.describe('Command Terminal', () => {
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
         // The backdrop should also be gone
         await expect(page.getByTestId('command-window-backdrop')).not.toBeVisible({ timeout: 3000 });
+        // "New terminal" is gone too (it only exists while the layer is open)
+        await expect(page.getByTestId('quick-session-new-terminal')).toHaveCount(0);
       } finally {
         await browser.close();
       }
     });
 
-    test('the centered + add affordance disappears at the cap (MAX_COMMAND_TERMINALS = 4)', async () => {
-      // When 4 windows are open (the cap), canSpawnMore=false and the glyph drops
-      // the centered `+` (data-plus="false").
+    test('the title-bar New terminal button disables at the cap (MAX_COMMAND_TERMINALS = 4)', async () => {
+      // When 4 windows are open (the cap), the "New terminal" button disables.
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -1065,17 +1082,17 @@ test.describe('Command Terminal', () => {
         // Open the first window
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-        await expect(page.getByTestId('quick-session-icon')).toHaveAttribute('data-plus', 'true', { timeout: 3000 });
+        await expect(page.getByTestId('quick-session-new-terminal')).toBeEnabled();
 
         // Spawn up to 4 windows total (3 more clicks)
         for (let iteration = 0; iteration < 3; iteration += 1) {
-          await page.getByTestId('quick-session-button').click();
+          await page.getByTestId('quick-session-new-terminal').click();
           await expect(page.getByTestId('command-terminal-window')).toHaveCount(iteration + 2, { timeout: 5000 });
         }
 
-        // At cap (4 windows) - the centered `+` is gone.
+        // At cap (4 windows) - the title-bar "New terminal" button is disabled.
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(4);
-        await expect(page.getByTestId('quick-session-icon')).toHaveAttribute('data-plus', 'false', { timeout: 3000 });
+        await expect(page.getByTestId('quick-session-new-terminal')).toBeDisabled({ timeout: 3000 });
       } finally {
         await browser.close();
       }
@@ -1115,7 +1132,7 @@ test.describe('Command Terminal', () => {
       // Two terminals in Project A (2 windows, 2 tracked A sessions).
       await page.keyboard.press('Control+Shift+P');
       await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-      await page.getByTestId('quick-session-button').click();
+      await page.getByTestId('quick-session-new-terminal').click();
       await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
       await expect
         .poll(async () => (await transientEntriesFor(page, PROJECT_A_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
@@ -1159,7 +1176,7 @@ test.describe('Command Terminal', () => {
       // Two terminals in Project A; capture their session ids.
       await page.keyboard.press('Control+Shift+P');
       await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
-      await page.getByTestId('quick-session-button').click();
+      await page.getByTestId('quick-session-new-terminal').click();
       await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
       await expect
         .poll(async () => (await transientEntriesFor(page, PROJECT_A_ID)).length, { timeout: 5000, intervals: [100, 200, 500] })
@@ -1298,7 +1315,7 @@ test.describe('Command Terminal', () => {
         await expect(page.getByTestId('command-bar-popout')).toHaveCount(0);
 
         // Spawning a second docks both into the first's footprint (tiled).
-        await page.getByTestId('quick-session-button').click();
+        await page.getByTestId('quick-session-new-terminal').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
 
         // Tiled terminals expose the pop-out (untile) control.
