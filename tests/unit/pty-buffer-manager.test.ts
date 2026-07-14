@@ -179,7 +179,7 @@ describe('PtyBufferManager', () => {
       return manager;
     }
 
-    it('defers sampling until the post-resize repaint lands and quiesces', async () => {
+    it('defers sampling until a marker-less post-resize repaint lands and quiesces', async () => {
       vi.useFakeTimers();
       const manager = armWidthChange();
 
@@ -192,8 +192,11 @@ describe('PtyBufferManager', () => {
       await vi.advanceTimersByTimeAsync(16);
       expect(settled).toBe(false);
 
-      // The SIGWINCH repaint lands.
-      manager.onData(SESSION, '\x1b[2Jrepaint at 190 cols');
+      // The SIGWINCH repaint lands WITHOUT a full-frame marker (no \x1b[2J or
+      // \x1b[H), so the marker-based early settle does not apply and the wait
+      // falls back to the quiesce heuristic. (A marker-bearing repaint settles
+      // immediately - covered by the streaming early-settle test below.)
+      manager.onData(SESSION, 'repaint at 190 cols');
 
       // Data just arrived: not yet quiesced.
       await vi.advanceTimersByTimeAsync(16);
@@ -206,6 +209,252 @@ describe('PtyBufferManager', () => {
 
       // The sample now includes the fitted-width repaint, not just the stale frame.
       expect(manager.getScrollback(SESSION)).toContain('repaint at 190 cols');
+
+      vi.useRealTimers();
+    });
+
+    it('settles early when a streaming session lands a post-resize full-frame marker (never quiesces)', async () => {
+      vi.useFakeTimers();
+      const manager = armWidthChange();
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      // Marker-free streaming: bytes keep arriving so the quiesce heuristic
+      // can never fire.
+      manager.onData(SESSION, 'streaming output without a marker');
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+      manager.onData(SESSION, 'more streaming output');
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // The SIGWINCH repaint lands mid-stream WITH the full-frame marker: the
+      // wait settles on the next poll, ~48ms in - far before the 50ms quiesce
+      // could ever be satisfied (data never stops) and far before the 400ms
+      // deadline it used to burn.
+      manager.onData(SESSION, '\x1b[2Jrepaint at 190 cols');
+      await vi.advanceTimersByTimeAsync(16);
+      await waitPromise;
+      expect(settled).toBe(true);
+      expect(manager.getScrollback(SESSION)).toContain('repaint at 190 cols');
+
+      vi.useRealTimers();
+    });
+
+    it('settles early when a streaming session lands a post-resize BARE cursor-home marker (\\x1b[H, no \\x1b[2J)', async () => {
+      vi.useFakeTimers();
+      const manager = armWidthChange();
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      // Marker-free streaming: bytes keep arriving so the quiesce heuristic
+      // can never fire.
+      manager.onData(SESSION, 'streaming output without a marker');
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+      manager.onData(SESSION, 'more streaming output');
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // The SIGWINCH repaint lands mid-stream with a BARE cursor-home
+      // (\x1b[H, no \x1b[2J clear anywhere in the post-resize bytes): the
+      // wait settles on the next poll via the \x1b[H arm of the marker
+      // check, same as the \x1b[2J case above.
+      manager.onData(SESSION, '\x1b[Hrepaint at 190 cols');
+      await vi.advanceTimersByTimeAsync(16);
+      await waitPromise;
+      expect(settled).toBe(true);
+      expect(manager.getScrollback(SESSION)).toContain('repaint at 190 cols');
+
+      vi.useRealTimers();
+    });
+
+    it('does not early-settle on a parameterized cursor-home (\\x1b[1;1H is not the bare \\x1b[H marker)', async () => {
+      vi.useFakeTimers();
+      // armWidthChange already put the entry-gate \x1b[2J in the buffer
+      // BEFORE the resize; the post-resize bytes below intentionally carry
+      // no \x1b[2J so only the \x1b[H arm is under test.
+      const manager = armWidthChange();
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      // Streaming every 32ms with a PARAMETERIZED cursor-home (\x1b[1;1H) in
+      // every chunk: quiesce never fires, and a parameterized home must not
+      // satisfy the bare \x1b[H marker check (indexOf('\x1b[H', ...) cannot
+      // substring-match \x1b[1;1H - a broader regex-style matcher would
+      // false-positive here and settle early).
+      for (let feedIndex = 0; feedIndex < 12; feedIndex += 1) {
+        manager.onData(SESSION, '\x1b[1;1Hparameterized home, not a full-frame marker');
+        await vi.advanceTimersByTimeAsync(32);
+        expect(settled).toBe(false);
+      }
+
+      // Only the 400ms deadline resolves it - the parameterized home never
+      // triggers the early settle.
+      await vi.advanceTimersByTimeAsync(32);
+      await waitPromise;
+      expect(settled).toBe(true);
+
+      vi.useRealTimers();
+    });
+
+    it('defers the early settle while a synchronized-output frame is open, settling once it closes', async () => {
+      vi.useFakeTimers();
+      const manager = armWidthChange();
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      // The repaint marker arrives INSIDE an open DEC 2026 frame: sampling now
+      // would tear the frame, so the early settle must hold off.
+      manager.onData(SESSION, '\x1b[?2026h\x1b[2Jrepaint at 190 cols');
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // Streaming continues (quiesce can never fire) with the frame still open.
+      manager.onData(SESSION, 'more diff bytes inside the frame');
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // The frame closes: the very next poll settles on the frame boundary.
+      manager.onData(SESSION, '\x1b[?2026l');
+      await vi.advanceTimersByTimeAsync(16);
+      await waitPromise;
+      expect(settled).toBe(true);
+
+      vi.useRealTimers();
+    });
+
+    it('ignores a marker that predates the resize: marker-free streaming runs to the deadline', async () => {
+      vi.useFakeTimers();
+      // armWidthChange put a \x1b[2J in the buffer BEFORE the resize; only
+      // bytes appended AFTER the resize may satisfy the early settle.
+      const manager = armWidthChange();
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      // Marker-free streaming every 32ms: quiesce never fires, and the
+      // pre-resize marker must not early-settle the wait (an offset bug -
+      // scanning from index 0 - would settle on the very first poll).
+      for (let feedIndex = 0; feedIndex < 12; feedIndex += 1) {
+        manager.onData(SESSION, 'marker-free diff bytes');
+        await vi.advanceTimersByTimeAsync(32);
+        expect(settled).toBe(false);
+      }
+
+      // Only the 400ms deadline resolves it.
+      await vi.advanceTimersByTimeAsync(32);
+      await waitPromise;
+      expect(settled).toBe(true);
+
+      vi.useRealTimers();
+    });
+
+    it('survives a mid-wait scrollback trim: the scan offset shifts with the trimmed prefix', async () => {
+      vi.useFakeTimers();
+      const manager = new PtyBufferManager({ onFlush: vi.fn() });
+      manager.initSession(SESSION, '', 120);
+      // A large pre-resize TUI buffer, just below the 768KB write-path trim
+      // threshold, so the resize stamps a large scan offset (~717KB).
+      manager.onData(SESSION, '\x1b[2J' + 'x'.repeat(700 * 1024));
+      expect(manager.onResize(SESSION, 190)).toBe(true);
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // A flood pushes the buffer past the trim threshold mid-wait: onData
+      // slices the scrollback down to 512KB, so every retained character
+      // shifts left. Without the offset adjustment the stamped offset (~717KB)
+      // would now point PAST where new bytes land (~512KB) and the marker
+      // below would be invisible to the scan.
+      manager.onData(SESSION, 'y'.repeat(100 * 1024));
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // The repaint marker lands after the trim and must still be detected
+      // (early settle well before quiesce or the deadline).
+      manager.onData(SESSION, '\x1b[2Jrepaint after trim');
+      await vi.advanceTimersByTimeAsync(16);
+      await waitPromise;
+      expect(settled).toBe(true);
+
+      vi.useRealTimers();
+    });
+
+    it('a stacked resize (second width change before the first repaint is consumed) requires marker AND quiesce', async () => {
+      vi.useFakeTimers();
+      const manager = armWidthChange(); // 120 -> 190 stamps the first pending repaint
+      // Rapid ping-pong (close/reopen): a second width change lands before any
+      // repaint for the first one arrived.
+      expect(manager.onResize(SESSION, 260)).toBe(true);
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      // The PREVIOUS width's repaint arrives late (a post-resize marker):
+      // marker alone must NOT settle a stacked wait - sampling here would
+      // replay the 190-col frame into the 260-col terminal.
+      manager.onData(SESSION, '\x1b[2Jrepaint at 190 cols (stale width)');
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // The correct-width repaint lands too; data has not quiesced yet.
+      manager.onData(SESSION, '\x1b[2Jrepaint at 260 cols');
+      await vi.advanceTimersByTimeAsync(16);
+      expect(settled).toBe(false);
+
+      // Data goes quiet: marker AND quiesce now hold -> settles before the
+      // deadline, with BOTH repaints in the sample (tail = correct width).
+      await vi.advanceTimersByTimeAsync(80);
+      await waitPromise;
+      expect(settled).toBe(true);
+      expect(manager.getScrollback(SESSION)).toContain('repaint at 260 cols');
+
+      vi.useRealTimers();
+    });
+
+    it('a stacked resize with continuous streaming falls back to the deadline (no marker-only early settle)', async () => {
+      vi.useFakeTimers();
+      const manager = armWidthChange();
+      expect(manager.onResize(SESSION, 260)).toBe(true);
+
+      let settled = false;
+      const waitPromise = manager.waitForResizeRepaint(SESSION).then(() => {
+        settled = true;
+      });
+
+      // Marker-bearing frames keep arriving every 32ms (never quiet): a
+      // stacked wait must not settle on them - it runs to the 400ms ceiling,
+      // by which point the final-width repaint is in the sample.
+      for (let feedIndex = 0; feedIndex < 12; feedIndex += 1) {
+        manager.onData(SESSION, '\x1b[2Jrepaint frame while streaming continues');
+        await vi.advanceTimersByTimeAsync(32);
+        expect(settled).toBe(false);
+      }
+      await vi.advanceTimersByTimeAsync(32);
+      await waitPromise;
+      expect(settled).toBe(true);
 
       vi.useRealTimers();
     });

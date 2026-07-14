@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useTerminal } from '../../hooks/useTerminal';
+import { TERMINAL_BACKGROUND, useTerminal } from '../../hooks/useTerminal';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from './FileDropOverlay';
 import { useConfigStore } from '../../stores/config-store';
@@ -81,6 +81,16 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
   // PTY output from accumulating in xterm behind the overlay.
   const [terminalReady, setTerminalReady] = useState(() => hasFirstOutput || hasUsage);
 
+  // For an already-running session, terminalReady starts true so the
+  // LaunchOverlay never shows - which used to leave the whole mount-time
+  // fit -> replay -> refit -> held-byte-flush sequence painting live (the
+  // occasional open-flash). The replay veil below covers the terminal from
+  // mount until the first scrollback settle so only the settled frame is
+  // ever shown. Never reset once lifted: later reloads (resize cleanup,
+  // parked reveal) repaint in place and must not re-veil.
+  const [replaySettled, setReplaySettled] = useState(false);
+  const handleScrollbackSettled = useCallback(() => setReplaySettled(true), []);
+
   const { terminalRef, initTerminal, fit, flushResize, focus, reloadScrollback, scrollbackPending, suppressDataRef } = useTerminal({
     sessionId,
     fontFamily: config.terminal.fontFamily,
@@ -90,6 +100,7 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     shellName: sessionShell,
     releaseEscapeWhenPointerOutside,
     pasteImageTemplate,
+    onScrollbackSettled: handleScrollbackSettled,
   });
 
   // Sync suppressDataRef with overlay state: suppress all PTY data while overlay is showing.
@@ -297,6 +308,21 @@ export function TerminalTab({ sessionId, taskId, active, releaseEscapeWhenPointe
     <div ref={containerRef} className="h-full w-full bg-surface relative">
       <div ref={terminalRef} className="h-full w-full" />
       <FileDropOverlay {...fileDrop} />
+      {/* Replay veil: covers the mount-time replay window (first fit, chunked
+          scrollback write, afterWrite refit, held-byte flush, DOM-to-WebGL
+          promotion) so a warm session's terminal appears once, settled, with
+          no intermediate frame. Same fixed color as the terminal background,
+          so it reads as the empty terminal, not a flash of its own; no
+          transition, per restore-no-animation-replay. Rendered BEFORE
+          LaunchOverlay so the cold-start overlay (same z-10, later sibling)
+          paints above it. */}
+      {!replaySettled && (
+        <div
+          data-testid="terminal-replay-veil"
+          className="pointer-events-none absolute inset-0 z-10"
+          style={{ backgroundColor: TERMINAL_BACKGROUND }}
+        />
+      )}
       {/* Placeholder overlay while Claude CLI is loading (before first usage report).
           Stays visible until scrollback replay + clear are both done.
           z-10 ensures it paints above xterm's WebGL canvas layers. */}

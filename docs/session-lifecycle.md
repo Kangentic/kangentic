@@ -301,7 +301,14 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   sampling (`PtyBufferManager.waitForResizeRepaint`), so a terminal restored right after a resize
   replays the frame at the fitted width instead of a stale narrow one. The wait arms only when the
   scrollback shows a TUI (a `\x1b[2J` clear) and is bounded by a max-wait ceiling, so a missing or
-  slow repaint can only delay a first paint, never hang the read. A resize that arrives before the
+  slow repaint can only delay a first paint, never hang the read. An actively streaming session
+  never quiesces, so the wait also settles EARLY the moment a full-frame repaint marker (`\x1b[2J`
+  or `\x1b[H`) lands in the bytes appended after the resize, outside any open synchronized-output
+  frame - instead of burning the whole ceiling and sampling mid-repaint. STACKED resizes (a second
+  width change while the previous repaint is still pending, e.g. rapidly closing and reopening a
+  task detail ping-pongs the PTY between the dialog and bottom-panel widths) disable the
+  marker-only settle - the first marker may be the previous width's late repaint - and require
+  marker AND quiesce, falling back to the ceiling while streaming. A resize that arrives before the
   PTY exists (the renderer mounts before the auto-resume spawn lands) is stashed and applied at
   spawn, so the PTY starts at the fitted size and no corrective resize is needed.
 - **DEC private mode and alt-screen re-assert on replay.** `xterm.reset()` on the renderer wipes
@@ -323,6 +330,13 @@ The handoff is transparent to the user - the task card shows spawn progress phas
   drop-and-ack (its window can span the whole agent startup). A generation-aware `afterWrite` and a
   bounded watchdog timer additionally guard against a stale or stuck replay leaving
   `scrollbackPendingRef` true indefinitely, which would otherwise drop all live output forever.
+- **Replay veil for a warm mount.** For an already-running session, `TerminalTab`'s launch overlay
+  never shows (`terminalReady` starts true), so the whole mount-time fit -> replay -> refit ->
+  held-byte-flush sequence used to paint live, occasionally as a visible flash. `TerminalTab` now
+  covers the terminal with a veil (fixed terminal-background color, no spinner or transition) from
+  mount until `useTerminal` fires its first `onScrollbackSettled` notification, so only the settled
+  frame is ever shown. Every settle path (afterWrite, IPC-rejection catch, watchdog) funnels
+  through one `settleScrollback` chokepoint, so the veil always lifts.
 
 ## Key Constants
 

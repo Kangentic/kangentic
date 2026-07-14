@@ -21,6 +21,12 @@
  *   5. Stuck-replay watchdog: if the chunked write's completion callback never
  *      fires, a backstop timer force-clears pending and resumes the incoming
  *      queue so live output isn't dropped indefinitely.
+ *   6. Settle notification (settleScrollback): every terminal settle path
+ *      (afterWrite, catch, watchdog) funnels through one helper that clears
+ *      pending, kicks the queue (except on catch), and THEN notifies
+ *      onScrollbackSettled - the signal TerminalTab uses to lift its replay
+ *      veil. Exactly one notification per completed operation; a stale
+ *      generation never notifies.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -70,9 +76,28 @@ interface PathHooks {
   onEffects?: () => void;
   /** Represents incomingResumeRef.current?.() - the incoming queue's kick(). */
   onResume?: () => void;
+  /** Represents onScrollbackSettledRef.current?.() - the settle notification
+   *  TerminalTab uses to lift its replay veil. */
+  onSettled?: () => void;
 }
 
-function armWatchdog(refs: Refs, scrollbackGeneration: number, onResume: () => void): void {
+/** Mirrors useTerminal's settleScrollback chokepoint. Ordering is load-bearing:
+ *  pending clears BEFORE the kick (the incoming queue's shouldHold reads it),
+ *  and the settle notification fires AFTER the kick. The catch paths pass
+ *  shouldKickIncomingQueue=false. */
+function makeSettleScrollback(
+  refs: Refs,
+  onResume: () => void,
+  onSettled: () => void,
+): (shouldKickIncomingQueue: boolean) => void {
+  return (shouldKickIncomingQueue: boolean) => {
+    refs.scrollbackPendingRef.current = false;
+    if (shouldKickIncomingQueue) onResume();
+    onSettled();
+  };
+}
+
+function armWatchdog(refs: Refs, scrollbackGeneration: number, settleScrollback: (shouldKickIncomingQueue: boolean) => void): void {
   if (refs.scrollbackWatchdogRef.current) clearTimeout(refs.scrollbackWatchdogRef.current);
   refs.scrollbackWatchdogRef.current = setTimeout(() => {
     refs.scrollbackWatchdogRef.current = null;
@@ -81,8 +106,7 @@ function armWatchdog(refs: Refs, scrollbackGeneration: number, onResume: () => v
       // for this replay bails at its generation guard instead of re-running its
       // side effects after the watchdog already force-recovered.
       refs.scrollbackGenerationRef.current += 1;
-      refs.scrollbackPendingRef.current = false;
-      onResume();
+      settleScrollback(true);
     }
   }, SCROLLBACK_WATCHDOG_MS);
 }
@@ -97,9 +121,11 @@ function clearWatchdog(refs: Refs): void {
 /** Mirrors the reloadScrollback path (no suppressScrollback gate). */
 async function runReloadScrollbackPath(refs: Refs, ipc: MockIpc, hooks: PathHooks): Promise<void> {
   const onResume = hooks.onResume ?? (() => {});
+  const onSettled = hooks.onSettled ?? (() => {});
+  const settleScrollback = makeSettleScrollback(refs, onResume, onSettled);
   refs.scrollbackPendingRef.current = true;
   const scrollbackGeneration = ++refs.scrollbackGenerationRef.current;
-  armWatchdog(refs, scrollbackGeneration, onResume);
+  armWatchdog(refs, scrollbackGeneration, settleScrollback);
 
   const resizePromise = ipc.resize();
   const scrollbackPromise = ipc.getScrollback();
@@ -117,8 +143,7 @@ async function runReloadScrollbackPath(refs: Refs, ipc: MockIpc, hooks: PathHook
         if (refs.scrollbackGenerationRef.current !== scrollbackGeneration) return;
         clearWatchdog(refs);
         hooks.onEffects?.();
-        refs.scrollbackPendingRef.current = false;
-        onResume();
+        settleScrollback(true);
       };
       if (scrollback) {
         hooks.onWrite(scrollback, afterWrite);
@@ -129,7 +154,7 @@ async function runReloadScrollbackPath(refs: Refs, ipc: MockIpc, hooks: PathHook
     .catch(() => {
       if (refs.scrollbackGenerationRef.current !== scrollbackGeneration) return;
       clearWatchdog(refs);
-      refs.scrollbackPendingRef.current = false;
+      settleScrollback(false);
     });
 }
 
@@ -141,9 +166,11 @@ async function runInitScrollbackPath(
   hooks: PathHooks,
 ): Promise<void> {
   const onResume = hooks.onResume ?? (() => {});
+  const onSettled = hooks.onSettled ?? (() => {});
+  const settleScrollback = makeSettleScrollback(refs, onResume, onSettled);
   refs.scrollbackPendingRef.current = true;
   const scrollbackGeneration = ++refs.scrollbackGenerationRef.current;
-  armWatchdog(refs, scrollbackGeneration, onResume);
+  armWatchdog(refs, scrollbackGeneration, settleScrollback);
 
   const resizePromise = ipc.resize();
   const scrollbackPromise = suppressScrollback
@@ -158,8 +185,7 @@ async function runInitScrollbackPath(
         if (refs.scrollbackGenerationRef.current !== scrollbackGeneration) return;
         clearWatchdog(refs);
         hooks.onEffects?.();
-        refs.scrollbackPendingRef.current = false;
-        onResume();
+        settleScrollback(true);
       };
       if (scrollback) {
         hooks.onWrite(scrollback, afterWrite);
@@ -170,7 +196,7 @@ async function runInitScrollbackPath(
     .catch(() => {
       if (refs.scrollbackGenerationRef.current !== scrollbackGeneration) return;
       clearWatchdog(refs);
-      refs.scrollbackPendingRef.current = false;
+      settleScrollback(false);
     });
 }
 
@@ -435,7 +461,7 @@ describe('useTerminal scrollback orchestration', () => {
       };
 
       // Path A's IPC resolves and its outer .then body runs (capturing
-      // afterWrite), but the chunked write's completion is held by the test --
+      // afterWrite), but the chunked write's completion is held by the test -
       // simulating an in-flight xterm.write callback that hasn't fired yet.
       await runReloadScrollbackPath(refs, ipcA, {
         onWrite: (_scrollback, afterWrite) => { capturedAfterWriteA = afterWrite; },
@@ -666,6 +692,128 @@ describe('useTerminal scrollback orchestration', () => {
       expect(effects).not.toHaveBeenCalled();
       expect(resume).toHaveBeenCalledOnce();
       expect(refs.scrollbackPendingRef.current).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Gap 6: settle notification (the replay-veil lift signal)
+  // -------------------------------------------------------------------------
+  describe('settle notification (onScrollbackSettled)', () => {
+    it('fires exactly once after a successful replay, after the queue resume', async () => {
+      const callOrder: string[] = [];
+      const ipc: MockIpc = {
+        resize: vi.fn().mockResolvedValue(undefined),
+        getScrollback: vi.fn().mockResolvedValue('replayed frame'),
+      };
+
+      await runInitScrollbackPath(refs, ipc, false, {
+        onWrite: syncWrite(),
+        onResume: () => callOrder.push('resume'),
+        onSettled: () => {
+          callOrder.push('settled');
+          // Pending must already be false when the notification fires: the
+          // reveal render it schedules must not race the drop/hold gate.
+          expect(refs.scrollbackPendingRef.current).toBe(false);
+        },
+      });
+
+      expect(callOrder).toEqual(['resume', 'settled']);
+    });
+
+    it('fires on the empty-scrollback path', async () => {
+      const settled = vi.fn();
+      const ipc: MockIpc = {
+        resize: vi.fn().mockResolvedValue(undefined),
+        getScrollback: vi.fn().mockResolvedValue(''),
+      };
+
+      await runReloadScrollbackPath(refs, ipc, { onWrite: vi.fn(), onSettled: settled });
+
+      expect(settled).toHaveBeenCalledOnce();
+    });
+
+    it('fires on the suppressed (cold-start) init path', async () => {
+      const settled = vi.fn();
+      const ipc: MockIpc = {
+        resize: vi.fn().mockResolvedValue(undefined),
+        getScrollback: vi.fn().mockResolvedValue('never fetched'),
+      };
+
+      await runInitScrollbackPath(refs, ipc, true, { onWrite: vi.fn(), onSettled: settled });
+
+      expect(ipc.getScrollback).not.toHaveBeenCalled();
+      expect(settled).toHaveBeenCalledOnce();
+    });
+
+    it('fires on IPC rejection, without a queue resume', async () => {
+      const settled = vi.fn();
+      const resume = vi.fn();
+      const ipc: MockIpc = {
+        resize: vi.fn().mockRejectedValue(new Error('session killed')),
+        getScrollback: vi.fn().mockResolvedValue('output'),
+      };
+
+      await runInitScrollbackPath(refs, ipc, false, {
+        onWrite: syncWrite(),
+        onResume: resume,
+        onSettled: settled,
+      });
+
+      expect(settled).toHaveBeenCalledOnce();
+      expect(resume).not.toHaveBeenCalled();
+      expect(refs.scrollbackPendingRef.current).toBe(false);
+    });
+
+    it('fires on watchdog force-recovery', async () => {
+      vi.useFakeTimers();
+      const settled = vi.fn();
+      const ipc: MockIpc = {
+        resize: vi.fn().mockResolvedValue(undefined),
+        getScrollback: vi.fn().mockResolvedValue('stuck frame'),
+      };
+
+      await runInitScrollbackPath(refs, ipc, false, {
+        // Never invokes afterWrite - simulates a dropped xterm.write callback.
+        onWrite: () => {},
+        onSettled: settled,
+      });
+      expect(settled).not.toHaveBeenCalled();
+
+      vi.runAllTimers();
+      expect(settled).toHaveBeenCalledOnce();
+
+      vi.useRealTimers();
+    });
+
+    it('does not fire from a stale generation: exactly one settle when a reload supersedes the mount replay', async () => {
+      let capturedAfterWriteA!: () => void;
+      const settledA = vi.fn();
+      const ipcA: MockIpc = {
+        resize: vi.fn().mockResolvedValue(undefined),
+        getScrollback: vi.fn().mockResolvedValue('mount replay frame'),
+      };
+
+      // The mount replay's chunked write is held in flight.
+      await runInitScrollbackPath(refs, ipcA, false, {
+        onWrite: (_scrollback, afterWrite) => { capturedAfterWriteA = afterWrite; },
+        onSettled: settledA,
+      });
+      expect(settledA).not.toHaveBeenCalled();
+
+      // A reload supersedes it (e.g. overlay lift) and completes.
+      const settledB = vi.fn();
+      const ipcB: MockIpc = {
+        resize: vi.fn().mockResolvedValue(undefined),
+        getScrollback: vi.fn().mockResolvedValue('reload frame'),
+      };
+      await runReloadScrollbackPath(refs, ipcB, { onWrite: syncWrite(), onSettled: settledB });
+      expect(settledB).toHaveBeenCalledOnce();
+
+      // The abandoned mount replay's afterWrite finally fires: its generation
+      // guard bails before the settle, so no second notification.
+      capturedAfterWriteA();
+      expect(settledA).not.toHaveBeenCalled();
+      expect(settledB).toHaveBeenCalledOnce();
     });
   });
 });

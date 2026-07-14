@@ -31,8 +31,26 @@ const MAX_BYTES_PER_FLUSH = 256 * 1024;
  * closes. So getScrollback waits for the repaint bytes to land and quiesce
  * before sampling, bounded so a missing repaint can never hang the read.
  *
+ * An actively streaming session never quiesces, so the wait also settles EARLY
+ * the moment a full-frame repaint marker (\x1b[2J clear or \x1b[H cursor-home)
+ * lands in the bytes appended AFTER the resize (offset-tracked via
+ * pendingRepaintScrollbackLength), provided no synchronized-output frame (DEC
+ * 2026) is still open - that flag aligns the sample to a frame boundary.
+ * Without the early settle, a streaming session always burned the full
+ * MAX_WAIT and then sampled mid/pre-repaint anyway.
+ *
+ * STACKED resizes (a second width change while the previous repaint is still
+ * pending - e.g. rapidly closing and reopening a task detail ping-pongs the
+ * PTY between the dialog and bottom-panel widths) disable the marker-only
+ * early settle: the first post-resize marker can be the PREVIOUS width's
+ * repaint arriving late, and sampling on it replays a stale-width frame that
+ * the real repaint then visibly corrects. When pendingRepaintStacked is set,
+ * settling requires the marker AND a quiesce (both repaints landed and
+ * stopped), falling back to the MAX_WAIT deadline while streaming.
+ *
  *  - QUIESCE: no new data for this long counts as "the repaint has landed".
  *    ~3 flush ticks (16ms each), long enough to bridge a multi-chunk redraw.
+ *    Fallback for repaints without a recognizable full-frame marker.
  *  - MAX_WAIT: hard ceiling from wait entry. A width change with no repaint
  *    (or a genuinely slow one) adds at most this to a first paint.
  *  - STALE: a pending-repaint stamp older than this is treated as settled - the
@@ -155,6 +173,18 @@ interface BufferState {
    *  cleared by waitForResizeRepaint once the post-resize repaint has settled.
    *  Drives the repaint-settle in getScrollback. */
   pendingRepaintAt: number | null;
+  /** scrollback.length at the moment of the pending width-changing resize, or
+   *  null when none is pending. Lets waitForResizeRepaint scan only the bytes
+   *  appended AFTER the resize for a full-frame repaint marker (early settle
+   *  while the session streams). Adjusted downward when the scrollback is
+   *  trimmed mid-wait; cleared together with pendingRepaintAt. */
+  pendingRepaintScrollbackLength: number | null;
+  /** True when the pending width change landed while a PREVIOUS repaint was
+   *  still unconsumed (rapid resize ping-pong). Disables the marker-only
+   *  early settle for this wait: the next marker may be the previous width's
+   *  repaint, so settling requires marker AND quiesce (see the constants doc
+   *  above). Cleared together with pendingRepaintAt. */
+  pendingRepaintStacked: boolean;
   /** Timestamp (Date.now()) of the most recent onData, or null before any data.
    *  Used by waitForResizeRepaint to detect that the SIGWINCH repaint has
    *  landed (data after the resize stamp) and then quiesced. */
@@ -183,6 +213,15 @@ interface BufferState {
   modeParseCarry: string;
 }
 
+/** Clear the pending-repaint tracking as one unit. The three fields are set
+ *  together in onResize and must never be cleared piecemeal - a survivor
+ *  would make the NEXT wait settle in the wrong mode. */
+function clearPendingRepaint(state: BufferState): void {
+  state.pendingRepaintAt = null;
+  state.pendingRepaintScrollbackLength = null;
+  state.pendingRepaintStacked = false;
+}
+
 /**
  * Manages per-session PTY output buffering and scrollback accumulation.
  *
@@ -204,6 +243,8 @@ export class PtyBufferManager {
       scrollback: previousScrollback,
       lastCols: initialCols,
       pendingRepaintAt: null,
+      pendingRepaintScrollbackLength: null,
+      pendingRepaintStacked: false,
       lastDataAt: null,
       tuiStartIndex: previousScrollback ? 0 : -1,
       // Start empty/false even on carry-over: the new process re-emits its own modes.
@@ -249,10 +290,17 @@ export class PtyBufferManager {
     // post-resize redraw has landed (data after the resize) and then quiesced.
     state.lastDataAt = Date.now();
     if (state.scrollback.length > SCROLLBACK_TRIM_THRESHOLD) {
+      const lengthBeforeTrim = state.scrollback.length;
       state.scrollback = state.scrollback.slice(-MAX_SCROLLBACK);
       const safeStart = findSafeStartIndex(state.scrollback);
       if (safeStart > 0) {
         state.scrollback = state.scrollback.slice(safeStart);
+      }
+      // Shift the post-resize scan offset by the trimmed prefix so a
+      // repaint-settle wait in flight keeps scanning the right region.
+      if (state.pendingRepaintScrollbackLength !== null) {
+        const removedCharacters = lengthBeforeTrim - state.scrollback.length;
+        state.pendingRepaintScrollbackLength = Math.max(0, state.pendingRepaintScrollbackLength - removedCharacters);
       }
       // Reset cached index after truncation
       state.tuiStartIndex = -1;
@@ -305,7 +353,12 @@ export class PtyBufferManager {
     const colsChanged = cols !== state.lastCols;
     state.lastCols = cols;
     if (colsChanged) {
+      // A width change on top of a still-pending repaint means two repaints
+      // are (or may be) in flight; mark the wait so it cannot early-settle on
+      // the first (possibly previous-width) marker.
+      state.pendingRepaintStacked = state.pendingRepaintAt !== null;
       state.pendingRepaintAt = Date.now();
+      state.pendingRepaintScrollbackLength = state.scrollback.length;
     }
     return colsChanged;
   }
@@ -333,7 +386,7 @@ export class PtyBufferManager {
     // A stamp older than STALE means the repaint has long since landed (or
     // never will) - clear it and sample now rather than wait pointlessly.
     if (entryTime - stamp > REPAINT_STALE_MS) {
-      state.pendingRepaintAt = null;
+      clearPendingRepaint(state);
       return;
     }
 
@@ -341,7 +394,7 @@ export class PtyBufferManager {
     // cannot distinguish "marker absent" from "marker at index 0"). No marker
     // means no full-screen repaint to wait for.
     if (!state.scrollback.includes('\x1b[2J')) {
-      state.pendingRepaintAt = null;
+      clearPendingRepaint(state);
       return;
     }
 
@@ -358,10 +411,32 @@ export class PtyBufferManager {
           return;
         }
         const now = Date.now();
-        const settled =
+        // Early settle for a STREAMING session (which never quiesces): the
+        // bytes appended after the resize contain a full-frame repaint marker
+        // (\x1b[2J clear or BARE \x1b[H cursor-home; indexOf with the literal
+        // \x1b[H cannot false-match a parameterized \x1b[1;1H, and only the
+        // bare form accelerates the settle - a parameterized home falls
+        // through like a marker-less repaint) and no synchronized-output
+        // frame is open, so the sample lands on a frame boundary at the NEW
+        // width. Marker-less repaints fall through to the quiesce/deadline
+        // fallbacks below.
+        const scanOffset = current.pendingRepaintScrollbackLength;
+        const markerSampleSafe =
+          scanOffset !== null &&
+          !current.synchronizedOpen &&
+          (current.scrollback.indexOf('\x1b[2J', scanOffset) !== -1 ||
+            current.scrollback.indexOf('\x1b[H', scanOffset) !== -1);
+        const quiesced =
           current.lastDataAt !== null &&
           current.lastDataAt > stamp &&
           now - current.lastDataAt >= REPAINT_QUIESCE_MS;
+        // Stacked resizes: the first post-resize marker may belong to the
+        // PREVIOUS width's repaint, so require the marker AND quiesce (both
+        // repaints landed and stopped) before sampling. A single resize keeps
+        // the fast marker-or-quiesce settle.
+        const settled = current.pendingRepaintStacked
+          ? markerSampleSafe && quiesced
+          : markerSampleSafe || quiesced;
         if (settled || now >= deadline) {
           // Only clear the stamp this wait was anchored to. A second
           // width-changing resize during this wait re-stamps pendingRepaintAt
@@ -369,7 +444,9 @@ export class PtyBufferManager {
           // unconditionally would let the next getScrollback skip the wait and
           // sample that newer repaint stale. Leave a newer stamp in place so it
           // gets its own settle.
-          if (current.pendingRepaintAt === stamp) current.pendingRepaintAt = null;
+          if (current.pendingRepaintAt === stamp) {
+            clearPendingRepaint(current);
+          }
           resolve();
           return;
         }

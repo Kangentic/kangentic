@@ -46,9 +46,14 @@ function nextTransientRendererKey(): number {
   return transientRendererKeyCounter;
 }
 
+/** Fixed terminal background, exported for surfaces that must match it exactly
+ *  (e.g. TerminalTab's replay veil). NOT a theme token: the terminal stays dark
+ *  on every app theme, so a veil using a theme surface color would flash. */
+export const TERMINAL_BACKGROUND = '#18181b';
+
 /** Fixed dark terminal theme -- Claude Code's TUI is designed for dark backgrounds. */
 const TERMINAL_THEME = {
-  background: '#18181b',
+  background: TERMINAL_BACKGROUND,
   foreground: '#e4e4e7',
   // Light cursor. It was the background color (#18181b) - i.e. invisible - which is
   // why no cursor ever showed. cursorAccent is the dark background so the character
@@ -89,6 +94,12 @@ interface UseTerminalOptions {
    *  a ref (not captured at attach time) since the agent list loads asynchronously and can
    *  resolve after `enableTerminalClipboard` has already attached its key handler. */
   pasteImageTemplate?: string;
+  /** Fired every time a scrollback operation (mount replay, reload, watchdog
+   *  force-recovery, or IPC-rejection recovery) settles, i.e. whenever
+   *  scrollbackPendingRef flips back to false. TerminalTab uses the first
+   *  firing to lift its replay veil so only the settled frame is ever shown.
+   *  Read live via a ref, so the callback never goes stale. */
+  onScrollbackSettled?: () => void;
 }
 
 /** Restore a saved scroll position (from HMR) or pin to the bottom.
@@ -139,6 +150,24 @@ export function useTerminal(options: UseTerminalOptions) {
    *  asynchronously after the terminal has already initialized. */
   const pasteImageTemplateRef = useRef(options.pasteImageTemplate);
   pasteImageTemplateRef.current = options.pasteImageTemplate;
+  /** Updated every render (same pattern as pasteImageTemplateRef) so the settle
+   *  paths attached by initTerminal/reloadScrollback always call the caller's
+   *  current callback. */
+  const onScrollbackSettledRef = useRef(options.onScrollbackSettled);
+  onScrollbackSettledRef.current = options.onScrollbackSettled;
+
+  /** Single chokepoint for "a scrollback operation has settled". Ordering is
+   *  load-bearing: pending must clear BEFORE the kick (the incoming queue's
+   *  shouldHold reads it), and the settle notification fires AFTER the kick so
+   *  the held-byte drain has begun before the caller schedules any reveal
+   *  render. The catch paths pass shouldKickIncomingQueue=false (an IPC
+   *  rejection means the session is gone; there is nothing held worth
+   *  flushing). */
+  const settleScrollback = useCallback((shouldKickIncomingQueue: boolean) => {
+    scrollbackPendingRef.current = false;
+    if (shouldKickIncomingQueue) incomingResumeRef.current?.();
+    onScrollbackSettledRef.current?.();
+  }, []);
 
   const initTerminal = useCallback(() => {
     if (!terminalRef.current || xtermRef.current) return;
@@ -241,8 +270,7 @@ export function useTerminal(options: UseTerminalOptions) {
           // or catch for this replay bails at its generation guard instead of
           // re-running fit / scroll / focus after we already force-recovered.
           scrollbackGenerationRef.current += 1;
-          scrollbackPendingRef.current = false;
-          incomingResumeRef.current?.();
+          settleScrollback(true);
         }
       }, SCROLLBACK_WATCHDOG_MS);
 
@@ -289,11 +317,10 @@ export function useTerminal(options: UseTerminalOptions) {
             if (xtermRef.current) {
               isAtBottomRef.current = restoreScrollPosition(xtermRef.current, options.sessionId);
             }
-            scrollbackPendingRef.current = false;
             // Flush any live bytes the incoming queue held during the replay
             // (see shouldHold in the queue effect below) now that the replay
             // frame is fully painted, so they apply strictly after it.
-            incomingResumeRef.current?.();
+            settleScrollback(true);
             // Focus the terminal after the full init chain completes. No
             // corrective resize: main already sampled the settled frame at the
             // fitted width, and a same-dims resize is a documented no-op (POSIX
@@ -318,13 +345,13 @@ export function useTerminal(options: UseTerminalOptions) {
             clearTimeout(scrollbackWatchdogRef.current);
             scrollbackWatchdogRef.current = null;
           }
-          scrollbackPendingRef.current = false;
+          settleScrollback(false);
         });
     } else {
       // No session -- just fit immediately
       fitAddon.fit();
     }
-  }, [options.sessionId, options.fontFamily, options.fontSize, options.scrollbackLines, options.cursorStyle, options.shellName, options.releaseEscapeWhenPointerOutside]);
+  }, [options.sessionId, options.fontFamily, options.fontSize, options.scrollbackLines, options.cursorStyle, options.shellName, options.releaseEscapeWhenPointerOutside, settleScrollback]);
 
   // Set up data listener. Inbound PTY data flows through a bounded queue that
   // writes capped slices paced by xterm.write's completion callback, yielding
@@ -531,8 +558,7 @@ export function useTerminal(options: UseTerminalOptions) {
         // or catch for this replay bails at its generation guard instead of
         // re-running fit / scroll / focus after we already force-recovered.
         scrollbackGenerationRef.current += 1;
-        scrollbackPendingRef.current = false;
-        incomingResumeRef.current?.();
+        settleScrollback(true);
       }
     }, SCROLLBACK_WATCHDOG_MS);
     xtermRef.current.reset();
@@ -578,11 +604,10 @@ export function useTerminal(options: UseTerminalOptions) {
           if (xtermRef.current) {
             isAtBottomRef.current = restoreScrollPosition(xtermRef.current, options.sessionId);
           }
-          scrollbackPendingRef.current = false;
           // Flush any live bytes the incoming queue held during the reload
           // (see shouldHold in the queue effect below) now that the replay
           // frame is fully painted, so they apply strictly after it.
-          incomingResumeRef.current?.();
+          settleScrollback(true);
           // Focus after the reload completes (unless the caller opted out).
           // No corrective resize: when a resize was sent above, main sampled
           // the settled frame; a same-dims resize is a no-op either way.
@@ -609,9 +634,9 @@ export function useTerminal(options: UseTerminalOptions) {
           clearTimeout(scrollbackWatchdogRef.current);
           scrollbackWatchdogRef.current = null;
         }
-        scrollbackPendingRef.current = false;
+        settleScrollback(false);
       });
-  }, [options.sessionId]);
+  }, [options.sessionId, settleScrollback]);
 
   // Reveal catch-up: when this session's terminal transitions parked ->
   // visible, repaint from scrollback. While parked, main dropped the session's

@@ -27,7 +27,7 @@ import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
 import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopover';
 import { useHeaderPillOverflow, type HeaderPillSpec } from '../dialogs/task-detail/useHeaderPillOverflow';
 import { WindowLayoutMenu } from '../dialogs/WindowLayoutMenu';
-import { useTerminal } from '../../hooks/useTerminal';
+import { TERMINAL_BACKGROUND, useTerminal } from '../../hooks/useTerminal';
 import { useKeybinding, useFormattedCombo } from '../../hooks/useKeybinding';
 import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { FileDropOverlay } from '../terminal/FileDropOverlay';
@@ -692,7 +692,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized, titleBarPoin
             to the terminal's column width, so it overflows the window and fit() reads
             the stale (too-wide) size and never reduces columns. overflow-hidden clips
             the brief pre-fit overflow. Mirrors the Changes panel sibling. */}
-        <div ref={terminalPaneRef} className={`${changesOpen ? 'w-1/2' : 'flex-1'} relative min-w-0 overflow-hidden`} style={{ backgroundColor: '#18181b' }}>
+        <div ref={terminalPaneRef} className={`${changesOpen ? 'w-1/2' : 'flex-1'} relative min-w-0 overflow-hidden`} style={{ backgroundColor: TERMINAL_BACKGROUND }}>
           {!terminalReady && <LaunchOverlay label="Starting Command Terminal..." />}
           <FileDropOverlay {...fileDrop} />
           <div
