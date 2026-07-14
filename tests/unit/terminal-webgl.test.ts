@@ -11,6 +11,8 @@ import type { Terminal } from '@xterm/xterm';
 import {
   attachWebglRenderer,
   getTerminalRendererReport,
+  applyWebglAttachmentPlan,
+  onWebglAttachmentsChanged,
 } from '../../src/renderer/utils/terminal-webgl';
 
 interface FakeAddon {
@@ -235,5 +237,248 @@ describe('attachWebglRenderer', () => {
     // Advancing past the would-be retry does nothing (no new addon).
     vi.advanceTimersByTime(10_000);
     expect(addons).toHaveLength(1);
+  });
+});
+
+describe('budget suspend/resume', () => {
+  const emptyPlan = { attachKeys: new Set<string>(), suspendKeys: new Set<string>() };
+  const suspendPlan = (...keys: string[]) => ({ ...emptyPlan, suspendKeys: new Set(keys) });
+  const attachPlan = (...keys: string[]) => ({ ...emptyPlan, attachKeys: new Set(keys) });
+
+  it('suspend keeps the status entry and never counts as a context loss', () => {
+    const { createAddon, addons } = makeAddonFactory(['ok']);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-suspend', {
+      createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+    expect(getTerminalRendererReport()['k-suspend'].renderer).toBe('webgl');
+
+    applyWebglAttachmentPlan(suspendPlan('k-suspend'));
+    const status = getTerminalRendererReport()['k-suspend'];
+    expect(status.renderer).toBe('dom');
+    expect(status.suspendedByBudget).toBe(true);
+    expect(status.contextLossCount).toBe(0);
+    expect(status.permanentDomFallback).toBe(false);
+    expect(addons[0].disposed).toBe(true);
+    dispose();
+  });
+
+  it('suspend cancels a pending context-loss retry so it cannot fire while suspended', () => {
+    const { createAddon, addons } = makeAddonFactory(['ok']);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-suspend-retry', {
+      createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+
+    addons[0].triggerLoss(); // arms the +2000ms retry
+    expect(vi.getTimerCount()).toBe(1);
+
+    applyWebglAttachmentPlan(suspendPlan('k-suspend-retry'));
+    expect(vi.getTimerCount()).toBe(0);
+
+    // Advancing past every backoff slot re-attaches nothing.
+    vi.advanceTimersByTime(20_000);
+    expect(addons).toHaveLength(1);
+    const status = getTerminalRendererReport()['k-suspend-retry'];
+    expect(status.renderer).toBe('dom');
+    expect(status.suspendedByBudget).toBe(true);
+    expect(status.permanentDomFallback).toBe(false);
+    dispose();
+  });
+
+  it('ignores a loss event that fires after a suspend', () => {
+    const { createAddon, addons } = makeAddonFactory(['ok']);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-late-loss', {
+      createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+
+    applyWebglAttachmentPlan(suspendPlan('k-late-loss'));
+    addons[0].triggerLoss(); // stray loss from the already-disposed addon
+
+    const status = getTerminalRendererReport()['k-late-loss'];
+    expect(status.contextLossCount).toBe(0);
+    expect(status.permanentDomFallback).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+    dispose();
+  });
+
+  it('resume re-attaches a suspended terminal', () => {
+    const { createAddon, addons } = makeAddonFactory(['ok', 'ok']);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-resume', {
+      createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+
+    applyWebglAttachmentPlan(suspendPlan('k-resume'));
+    applyWebglAttachmentPlan(attachPlan('k-resume'));
+
+    const status = getTerminalRendererReport()['k-resume'];
+    expect(status.renderer).toBe('webgl');
+    expect(status.suspendedByBudget).toBe(false);
+    expect(addons).toHaveLength(2);
+    dispose();
+  });
+
+  it('a failed resume stays budget-suspended without escalating, and a later resume recovers', () => {
+    const { createAddon, addons } = makeAddonFactory(['ok', 'throw', 'ok']);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-resume-fail', {
+      createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+
+    applyWebglAttachmentPlan(suspendPlan('k-resume-fail'));
+    applyWebglAttachmentPlan(attachPlan('k-resume-fail')); // tryAttach throws
+
+    const afterFailure = getTerminalRendererReport()['k-resume-fail'];
+    expect(afterFailure.renderer).toBe('dom');
+    expect(afterFailure.suspendedByBudget).toBe(true);
+    expect(afterFailure.permanentDomFallback).toBe(false);
+    expect(afterFailure.contextLossCount).toBe(0);
+    // No retry ladder armed: the coordinator's next plan application retries.
+    expect(vi.getTimerCount()).toBe(0);
+
+    applyWebglAttachmentPlan(attachPlan('k-resume-fail')); // succeeds
+    const afterRecovery = getTerminalRendererReport()['k-resume-fail'];
+    expect(afterRecovery.renderer).toBe('webgl');
+    expect(afterRecovery.suspendedByBudget).toBe(false);
+    expect(addons).toHaveLength(2);
+    dispose();
+  });
+
+  it('suspend and resume are no-ops for a permanently-DOM terminal', () => {
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-permanent-plan', {
+      createAddon: () => { throw new Error('WebGL unavailable'); },
+      retryDelaysMs: RETRY_DELAYS,
+    });
+    expect(getTerminalRendererReport()['k-permanent-plan'].permanentDomFallback).toBe(true);
+
+    applyWebglAttachmentPlan(suspendPlan('k-permanent-plan'));
+    expect(getTerminalRendererReport()['k-permanent-plan'].suspendedByBudget).toBe(false);
+
+    applyWebglAttachmentPlan(attachPlan('k-permanent-plan'));
+    const status = getTerminalRendererReport()['k-permanent-plan'];
+    expect(status.renderer).toBe('dom');
+    expect(status.permanentDomFallback).toBe(true);
+    dispose();
+  });
+
+  it('an over-budget initial attach starts suspended without requesting a context', () => {
+    const first = makeAddonFactory(['ok']);
+    const disposeFirst = attachWebglRenderer(fakeTerminal, 'k-cap-1', {
+      createAddon: first.createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+      attachBudget: 1,
+    });
+    expect(getTerminalRendererReport()['k-cap-1'].renderer).toBe('webgl');
+
+    const secondFactory = vi.fn(makeFakeAddon);
+    const disposeSecond = attachWebglRenderer(fakeTerminal, 'k-cap-2', {
+      createAddon: secondFactory,
+      retryDelaysMs: RETRY_DELAYS,
+      attachBudget: 1,
+    });
+
+    const status = getTerminalRendererReport()['k-cap-2'];
+    expect(status.renderer).toBe('dom');
+    expect(status.suspendedByBudget).toBe(true);
+    expect(status.permanentDomFallback).toBe(false);
+    expect(secondFactory).not.toHaveBeenCalled();
+
+    disposeFirst();
+    disposeSecond();
+  });
+
+  it('applies suspends before resumes so the live count never overshoots the cap', () => {
+    const first = makeAddonFactory(['ok']);
+    const disposeFirst = attachWebglRenderer(fakeTerminal, 'k-swap-1', {
+      createAddon: first.createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+      attachBudget: 1,
+    });
+    // Second starts suspended (over the cap of 1); its factory records whether
+    // the first addon was already freed when the resume acquires.
+    const secondAddons: FakeAddon[] = [];
+    let firstFreedAtAcquire = false;
+    const disposeSecond = attachWebglRenderer(fakeTerminal, 'k-swap-2', {
+      createAddon: () => {
+        firstFreedAtAcquire = first.addons[0].disposed;
+        const addon = makeFakeAddon();
+        secondAddons.push(addon);
+        return addon;
+      },
+      retryDelaysMs: RETRY_DELAYS,
+      attachBudget: 1,
+    });
+    expect(getTerminalRendererReport()['k-swap-2'].suspendedByBudget).toBe(true);
+
+    applyWebglAttachmentPlan({ attachKeys: new Set(['k-swap-2']), suspendKeys: new Set(['k-swap-1']) });
+
+    expect(getTerminalRendererReport()['k-swap-1'].renderer).toBe('dom');
+    expect(getTerminalRendererReport()['k-swap-1'].suspendedByBudget).toBe(true);
+    expect(getTerminalRendererReport()['k-swap-2'].renderer).toBe('webgl');
+    expect(secondAddons).toHaveLength(1);
+    expect(firstFreedAtAcquire).toBe(true);
+
+    disposeFirst();
+    disposeSecond();
+  });
+
+  it('leaves keys the plan does not name untouched', () => {
+    const { createAddon } = makeAddonFactory(['ok']);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-unnamed', {
+      createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+
+    applyWebglAttachmentPlan(suspendPlan('k-some-other-key'));
+    expect(getTerminalRendererReport()['k-unnamed'].renderer).toBe('webgl');
+    expect(getTerminalRendererReport()['k-unnamed'].suspendedByBudget).toBe(false);
+    dispose();
+  });
+
+  it('notifies attachment listeners on register and dispose, and unsubscribes cleanly', () => {
+    const listener = vi.fn();
+    const unsubscribe = onWebglAttachmentsChanged(listener);
+
+    const { createAddon } = makeAddonFactory(['ok']);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-notify', {
+      createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    dispose();
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    unsubscribe();
+    const { createAddon: createAgain } = makeAddonFactory(['ok']);
+    const disposeAgain = attachWebglRenderer(fakeTerminal, 'k-notify-2', {
+      createAddon: createAgain,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+    disposeAgain();
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('resume on an already-attached terminal is a no-op (does not rebuild the live WebGL context)', () => {
+    const { createAddon, addons } = makeAddonFactory(['ok']);
+    const dispose = attachWebglRenderer(fakeTerminal, 'k-resume-noop', {
+      createAddon,
+      retryDelaysMs: RETRY_DELAYS,
+    });
+    expect(getTerminalRendererReport()['k-resume-noop'].renderer).toBe('webgl');
+    expect(addons).toHaveLength(1);
+
+    // The coordinator re-applies its plan on every run, so attachKeys usually
+    // still names terminals that are already live. Resuming an already-attached
+    // terminal must NOT dispose and rebuild its addon (the common hot path).
+    applyWebglAttachmentPlan(attachPlan('k-resume-noop'));
+    applyWebglAttachmentPlan(attachPlan('k-resume-noop'));
+
+    expect(getTerminalRendererReport()['k-resume-noop'].renderer).toBe('webgl');
+    expect(addons).toHaveLength(1);
+    expect(addons[0].disposed).toBe(false);
+    dispose();
   });
 });

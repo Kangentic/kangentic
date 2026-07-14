@@ -247,6 +247,49 @@ describe('deriveFocusedSessionIds', () => {
     );
     expect(result).toEqual([]);
   });
+
+  it('filters parked sessions out of the dialog set (rule 1)', () => {
+    const result = deriveFocusedSessionIds(
+      makeFocusedInput({
+        dialogSessionIds: ['sess-a', 'sess-b', 'sess-c'],
+        parkedSessionIds: new Set(['sess-b']),
+      }),
+    );
+    expect(result).toEqual(['sess-a', 'sess-c']);
+  });
+
+  it('filters parked sessions out of the transient set (rule 4)', () => {
+    const result = deriveFocusedSessionIds(
+      makeFocusedInput({
+        commandBarVisible: true,
+        transientSessionIds: ['sess-t1', 'sess-t2'],
+        parkedSessionIds: new Set(['sess-t1']),
+      }),
+    );
+    expect(result).toEqual(['sess-t2']);
+  });
+
+  it('derives an empty set when every window session is parked (main emits everything; parked queues ack-and-drop)', () => {
+    const result = deriveFocusedSessionIds(
+      makeFocusedInput({
+        activeView: 'backlog',
+        dialogSessionIds: ['sess-a', 'sess-b'],
+        parkedSessionIds: new Set(['sess-a', 'sess-b']),
+      }),
+    );
+    expect(result).toEqual([]);
+  });
+
+  it('behaves as before when parkedSessionIds is omitted', () => {
+    const result = deriveFocusedSessionIds(
+      makeFocusedInput({
+        dialogSessionIds: ['sess-a'],
+        commandBarVisible: true,
+        transientSessionIds: ['sess-t1'],
+      }),
+    );
+    expect(result).toEqual(['sess-a', 'sess-t1']);
+  });
 });
 
 // ---------------------------------------------------------------------------

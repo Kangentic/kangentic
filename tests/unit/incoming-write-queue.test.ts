@@ -226,6 +226,36 @@ describe('createIncomingWriteQueue', () => {
     expect(totalAcked).toBe(expected.length);
   });
 
+  // useTerminal.ts wiring: shouldDrop also includes isTerminalParked(sessionId)
+  // (parked-terminals.ts). A parked (off-view) terminal must ack-and-drop -
+  // never hold - so an indefinitely-parked window cannot wedge the main-process
+  // backpressure watermarks; the dropped bytes accumulate in main's scrollback
+  // ring and the reveal-time reloadScrollback repaints them.
+  it('a parked terminal acks-and-drops live bytes, then writes live bytes again once revealed', async () => {
+    const { term, writes } = fakeTerminal();
+    const ack = vi.fn();
+    let parked = true;
+    const queue = createIncomingWriteQueue({
+      getTerminal: () => term,
+      shouldDrop: () => parked,
+      ack,
+      chunkSize: 4,
+    });
+
+    queue.push('streamed-while-parked');
+    await flush();
+    expect(writes).toEqual([]);
+    const ackedWhileParked = ack.mock.calls.reduce((sum, call) => sum + call[0], 0);
+    expect(ackedWhileParked).toBe('streamed-while-parked'.length);
+
+    // Reveal: the stale frame is repainted by reloadScrollback (not the queue);
+    // new live bytes flow through normally again.
+    parked = false;
+    queue.push('live');
+    await flush();
+    expect(writes.join('')).toBe('live');
+  });
+
   it('an overlay with no active replay still drops-and-acks immediately (unaffected by the replay-hold change)', async () => {
     const { term, writes } = fakeTerminal();
     const ack = vi.fn();

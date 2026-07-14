@@ -6,6 +6,7 @@ import { copySelectionToClipboard, enableTerminalClipboard, stripOsc52Sequences 
 import { createWriteBatcher, type WriteBatcher } from '../utils/write-batcher';
 import { createIncomingWriteQueue, writeChunkedToTerminal } from '../utils/incoming-write-queue';
 import { isBoardDragActive, onBoardDragEnd } from '../lib/session-update-coalescer';
+import { isTerminalParked, onTerminalReveal } from '../utils/parked-terminals';
 import { noteTerminalFocus } from '../utils/dictation-target';
 import { registerTerminalCapture, unregisterTerminalCapture, type TerminalCaptureReader } from '../utils/terminal-capture-registry';
 import '@xterm/xterm/css/xterm.css';
@@ -336,11 +337,15 @@ export function useTerminal(options: UseTerminalOptions) {
 
     const queue = createIncomingWriteQueue({
       getTerminal: () => xtermRef.current,
-      // Only an overlay (agent startup) drops onData - it can last many
-      // seconds and is recovered by the overlay-lift reloadScrollback, so
-      // holding it would pause the PTY for the whole startup. Dropped slices
-      // are still acked inside the queue.
-      shouldDrop: () => suppressDataRef.current,
+      // Drop (ack-and-discard) for states that can last indefinitely, where
+      // holding would pause the PTY at the backpressure high-water and block
+      // the agent's stdout: an overlay (agent startup) and a PARKED terminal
+      // (window off-view on Backlog or occluded by a maximized window - see
+      // parked-terminals.ts). Both are recovered by a reloadScrollback (on
+      // overlay lift / on reveal): the main process keeps accumulating the
+      // dropped bytes in the per-session scrollback ring. Dropped slices are
+      // still acked inside the queue.
+      shouldDrop: () => suppressDataRef.current || isTerminalParked(sessionId),
       // While a board drag OR a scrollback replay is in flight, HOLD (not
       // drop) inbound writes. For a replay, getScrollback() drains the
       // server-side pending buffer, so anything still arriving here is either
@@ -507,9 +512,15 @@ export function useTerminal(options: UseTerminalOptions) {
   // full-screen TUI's accumulated resize redraws AFTER resizing has settled:
   // the PTY is already the right size, so a resize here would only trigger more
   // TUI redraws (re-polluting the buffer with duplicated frames).
-  const reloadScrollback = useCallback((reloadOptions?: { skipResize?: boolean }) => {
+  //
+  // `skipFocus` suppresses the end-of-reload focus steal. Used by the
+  // parked -> visible reveal catch-up: a Backlog -> Board switch can reveal
+  // many windows at once, and N terminals must not fight over focus (and a
+  // quiet arrival should not move focus at all - restore-no-animation-replay).
+  const reloadScrollback = useCallback((reloadOptions?: { skipResize?: boolean; skipFocus?: boolean }) => {
     if (!options.sessionId || !xtermRef.current || !fitAddonRef.current) return;
     const skipResize = reloadOptions?.skipResize ?? false;
+    const skipFocus = reloadOptions?.skipFocus ?? false;
     scrollbackPendingRef.current = true;
     const scrollbackGeneration = ++scrollbackGenerationRef.current;
     if (scrollbackWatchdogRef.current) clearTimeout(scrollbackWatchdogRef.current);
@@ -572,12 +583,14 @@ export function useTerminal(options: UseTerminalOptions) {
           // (see shouldHold in the queue effect below) now that the replay
           // frame is fully painted, so they apply strictly after it.
           incomingResumeRef.current?.();
-          // Focus after the reload completes. No corrective resize: when a
-          // resize was sent above, main sampled the settled frame; a same-dims
-          // resize is a no-op either way.
-          requestAnimationFrame(() => {
-            xtermRef.current?.focus();
-          });
+          // Focus after the reload completes (unless the caller opted out).
+          // No corrective resize: when a resize was sent above, main sampled
+          // the settled frame; a same-dims resize is a no-op either way.
+          if (!skipFocus) {
+            requestAnimationFrame(() => {
+              xtermRef.current?.focus();
+            });
+          }
         };
         if (scrollback && xtermRef.current) {
           // Chunked so a 512KB replay (tab/window switch, resize) doesn't parse
@@ -599,6 +612,22 @@ export function useTerminal(options: UseTerminalOptions) {
         scrollbackPendingRef.current = false;
       });
   }, [options.sessionId]);
+
+  // Reveal catch-up: when this session's terminal transitions parked ->
+  // visible, repaint from scrollback. While parked, main dropped the session's
+  // PTY data at the emit gate (focused-set narrowing) and this queue
+  // acked-and-discarded any stragglers, so the xterm's content is stale; the
+  // ring buffer has the truth. skipResize: the PTY was never resized while
+  // parked (the window stayed mounted at its size). If the terminal has not
+  // initialized yet, reloadScrollback's guards make this a no-op and the
+  // mount-time replay paints instead.
+  useEffect(() => {
+    const sessionId = options.sessionId;
+    if (!sessionId) return;
+    return onTerminalReveal(sessionId, () => {
+      reloadScrollback({ skipResize: true, skipFocus: true });
+    });
+  }, [options.sessionId, reloadScrollback]);
 
   const focus = useCallback(() => {
     xtermRef.current?.focus();
