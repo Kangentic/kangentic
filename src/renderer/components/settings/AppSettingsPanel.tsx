@@ -52,7 +52,11 @@ export const APP_TABS: SettingsTabDefinition[] = [
   { id: 'mcpServer', label: 'MCP Server', icon: Plug, tooltip: 'Applies to all projects' },
   { id: 'browserAutomation', label: 'Agent Browser', icon: MousePointerClick, tooltip: 'Applies to all projects' },
   { id: 'notifications', label: 'Notifications', icon: Bell, tooltip: 'Applies to all projects' },
-  { id: 'mobile', label: 'Mobile Devices', icon: Smartphone, tooltip: 'Applies to all projects' },
+  // Dev-only until the mobile app launches (paired gates: settings-registry
+  // entries, and the service reconcile in register-all.ts / system.ts).
+  ...(__KANGENTIC_DEV__
+    ? ([{ id: 'mobile', label: 'Mobile Devices', icon: Smartphone, tooltip: 'Applies to all projects' }] satisfies SettingsTabDefinition[])
+    : []),
   { id: 'privacy', label: 'Privacy', icon: ShieldCheck, tooltip: 'Applies to all projects' },
   { id: 'developer', label: 'Developer', icon: Bug, tooltip: 'Applies to all projects' },
 ];

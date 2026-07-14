@@ -147,7 +147,10 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
 
   const effectiveConfig = context.configManager.getEffectiveConfig(context.currentProjectPath ?? undefined);
   mobileBridgeService.reconcile({
-    enabled: effectiveConfig.mobileBridge?.enabled ?? false,
+    // Dev-only until the mobile app launches: a production build never
+    // enables the bridge regardless of persisted config (paired gates:
+    // system.ts's config:set reconcile and the renderer's settings tab).
+    enabled: __KANGENTIC_DEV__ && (effectiveConfig.mobileBridge?.enabled ?? false),
     relayUrl: effectiveConfig.mobileBridge?.relayUrl ?? '',
   });
 
