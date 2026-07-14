@@ -403,6 +403,47 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
   });
 
   // =========================================================================
+  // settingsSourceLane threading (fromLane, not toLane, reaches spawnAgent)
+  //
+  // freezeAdvancedOverridesOnFirstSpawn resolves still-inherited Advanced
+  // fields against the lane the task left, never the destination the New
+  // Task / Edit dialog never showed the user. task-move.ts must thread the
+  // SOURCE lane (captured once at Phase 1 as `fromLane`) through every
+  // MoveSpawnPlan return site to the eventual spawnAgent call as
+  // `settingsSourceLane`. Red-green: reverting task-move.ts's
+  // `settingsSourceLane: fromLane ?? null` to omit the field (or pass toLane)
+  // makes this test fail; restoring it makes it pass.
+  // =========================================================================
+
+  it('threads the SOURCE lane (Planning), not the destination (Executing), to spawnAgent as settingsSourceLane', async () => {
+    const { planningLane, swimlaneRepo } = makeLanes();
+    setActiveRecord('plan');
+    const taskRepo = makeTaskRepo();
+    const context = makeContext(taskRepo, swimlaneRepo);
+    vi.mocked(prepareInjectionPlan).mockReturnValue({
+      sequence: [],
+      verifier: null,
+      verifiedPrefixLength: 0,
+      needsRestartForModel: true,
+    });
+
+    await handleTaskMove(context as never, {
+      taskId: 'task-aaa00001',
+      targetSwimlaneId: EXECUTING_LANE_ID,
+      targetPosition: 0,
+    });
+
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    const spawnArg = mockSpawnAgent.mock.calls[0][0] as {
+      settingsSourceLane?: Swimlane | null;
+      toLane: Swimlane;
+    };
+    expect(spawnArg.settingsSourceLane?.id).toBe(PLANNING_LANE_ID);
+    expect(spawnArg.settingsSourceLane?.id).toBe(planningLane.id);
+    expect(spawnArg.settingsSourceLane?.id).not.toBe(spawnArg.toLane.id);
+  });
+
+  // =========================================================================
   // continuationPrompt threading (model-change restart path)
   // =========================================================================
 

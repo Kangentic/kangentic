@@ -111,6 +111,7 @@ const mockEnsureTaskBranchCheckout = vi.fn(async () => {});
 const mockBuildAutoCommandVars = vi.fn(() => ({}));
 const mockCreateTransitionEngine = vi.fn();
 const mockCleanupTaskResources = vi.fn(async () => {});
+const mockFreezeAdvancedOverridesOnFirstSpawn = vi.fn();
 
 vi.mock('../../src/main/ipc/helpers', () => ({
   getProjectRepos: (...args: unknown[]) => mockGetProjectRepos(...args),
@@ -124,7 +125,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
     model: task?.model_override ?? lane?.model_override,
     effort: task?.effort_override ?? lane?.effort_override,
   })),
-  freezeAdvancedOverridesOnFirstSpawn: vi.fn(),
+  freezeAdvancedOverridesOnFirstSpawn: (...args: unknown[]) => mockFreezeAdvancedOverridesOnFirstSpawn(...args),
 }));
 
 vi.mock('../../src/main/agent/shared', () => ({
@@ -382,6 +383,7 @@ describe('TASK_CREATE handler', () => {
     expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
     expect(mockCreateTransitionEngine).not.toHaveBeenCalled();
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    expect(mockFreezeAdvancedOverridesOnFirstSpawn).not.toHaveBeenCalled();
   });
 
   it('skips lock block when currentProjectPath is null', async () => {
@@ -475,6 +477,45 @@ describe('TASK_CREATE handler', () => {
       // (undefined here because the mock swimlane fixture doesn't set them).
       { model: targetLane.model_override, effort: targetLane.effort_override },
     );
+  });
+
+  // =========================================================================
+  // Freeze Advanced overrides call site (freeze-on-first-spawn wiring)
+  //
+  // A task created directly in a spawn column reaches executeTransition
+  // without ever going through spawnAgent, so task-crud.ts calls
+  // freezeAdvancedOverridesOnFirstSpawn itself, ahead of resolveSpawnOverrides.
+  // The New Task dialog displayed inherit values against the CREATION column,
+  // so that column (not some other lane) must be the settingsLane, and
+  // hasSessionRecord must be false (a brand-new task can never have a prior
+  // session row). Red-green: commenting out the freeze call in task-crud.ts
+  // makes this test fail (mockFreezeAdvancedOverridesOnFirstSpawn never
+  // called); restoring it makes it pass again.
+  // =========================================================================
+
+  it('calls freezeAdvancedOverridesOnFirstSpawn with the creation column as settingsLane and hasSessionRecord:false', async () => {
+    await callCreateHandler(context, {
+      swimlane_id: 'lane-doing',
+      title: 'Freeze wiring task',
+    });
+
+    expect(mockFreezeAdvancedOverridesOnFirstSpawn).toHaveBeenCalledTimes(1);
+    const freezeArg = mockFreezeAdvancedOverridesOnFirstSpawn.mock.calls[0][0] as {
+      task: { id: string };
+      hasSessionRecord: boolean;
+      settingsLane: MockSwimlane;
+      project: { id: string } | null;
+      globalPermissionMode: () => string;
+      tasks: MockTaskRepo;
+    };
+    expect(freezeArg.task).toMatchObject({ id: 'task-new' });
+    expect(freezeArg.hasSessionRecord).toBe(false);
+    // The creation column IS the settings lane - not some other lane.
+    expect(freezeArg.settingsLane).toBe(targetLane);
+    expect(freezeArg.project).toMatchObject({ id: 'proj-123' });
+    expect(freezeArg.tasks).toBe(taskRepo);
+    // globalPermissionMode is a lazy accessor reading the effective config.
+    expect(freezeArg.globalPermissionMode()).toBe('acceptEdits');
   });
 
   // =========================================================================
