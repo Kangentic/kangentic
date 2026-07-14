@@ -132,6 +132,17 @@ test.afterAll(async () => {
 
 test.describe('Changes panel: per-file history popover', () => {
   test('View history lists the commits that touched the file; selecting one scopes the detail to that commit', async () => {
+    // This test chains dialog mount, Changes panel mount, a right-click
+    // context menu, a fetched history popover, a commit-detail selection, and
+    // a close - each step waiting on real DOM/programmatic state (never a
+    // fixed sleep). Individually-budgeted waits (up to 8000ms) don't protect
+    // the ENCLOSING test: the ui project's default per-test timeout is
+    // 15000ms, so under CI worker contention a single slow mount (observed:
+    // the file-tree row missed its 8000ms budget on attempt 1, passed at
+    // retry) can exhaust the whole test's budget regardless of its own
+    // per-step timeout. test.slow() triples the enclosing budget to 45000ms,
+    // which is the envelope that actually needed to change.
+    test.slow();
     const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=File History Task').first();
     await card.click();
 

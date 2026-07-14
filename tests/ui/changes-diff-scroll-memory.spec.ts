@@ -133,6 +133,20 @@ test.afterAll(async () => {
 
 test.describe('Changes view: diff scroll memory', () => {
   test('first open reveals the first change centered; revisit restores scroll', async () => {
+    // This test chains 8 sequential waits (dialog mount, Changes panel mount,
+    // Monaco diff-editor construction, two file switches, two scroll-position
+    // reveals, dialog close), each individually budgeted up to 10000ms to
+    // absorb CI worker contention (see the diff-editor-area comment below and
+    // its history in a523964b). Bumping an individual waitFor timeout does
+    // nothing for the ENCLOSING test: the ui project's default per-test
+    // timeout is 15000ms, so a single slow step (observed: Monaco construction
+    // taking 6.5-10.7s under contention) already exhausts the whole test's
+    // budget before the remaining steps run, independent of their own
+    // per-step timeouts. test.slow() triples the enclosing budget to 45000ms,
+    // which is what actually needed to change - every wait here is already a
+    // conditional poll on real DOM/programmatic state, not a fixed sleep, so
+    // there is no further step to restructure.
+    test.slow();
     const card = page
       .locator('[data-swimlane-name="Code Review"]')
       .locator('text=Diff Scroll Task')
